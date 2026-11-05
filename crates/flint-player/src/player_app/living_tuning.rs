@@ -35,6 +35,10 @@ pub struct LivingTune {
     steps_queued: u32,
     /// Whether the pose overlay is showing.
     pub overlay: bool,
+    /// Whether the left button's press picked a tree (#248), so its release
+    /// stops there too.
+    #[cfg(feature = "debug-hud")]
+    pub(super) click_held: bool,
     /// While the boil is switched off: the amounts it'll come back to.
     pub(super) boil_off: Option<(f32, f32)>,
     /// A boil asked for before there was a renderer to give it to.
@@ -947,8 +951,8 @@ pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
 pub(super) mod panel {
     use super::{species_def_of, KnobRead, LivingView, PlayerApp};
     use flint_debug_ui::{
-        DebugPanel, Knob, KnobFlags, KnobSources, LivingKnobs, LivingPanelAction, LivingPropRow,
-        LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
+        DebugPanel, Knob, KnobFlags, KnobSources, LivingKnobs, LivingPanelAction,
+        LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
     };
     use flint_procgen::{LivingPropId, LivingShadows};
 
@@ -1044,6 +1048,7 @@ pub(super) mod panel {
                         lineage_seed: props.lineage_seed(id),
                         position: prop.position(),
                         height: props.rest_height(id).unwrap_or(0.0),
+                        reach: props.rest_reach(id).unwrap_or(0.0),
                         beats,
                         step: clock.step,
                         glide: clock.glide,
@@ -1068,8 +1073,98 @@ pub(super) mod panel {
             })
         }
 
+        /// The tree picked in the world (#248), value by value as it reads them
+        /// now, by the same `LivingProps::resolved` that `flint render --report
+        /// json` reads, and the zones it stands in.
+        pub(in super::super) fn living_picked_state(
+            &self,
+            name: &str,
+        ) -> Option<LivingPickedState> {
+            let living = self.procgen_resolver.living_props();
+            let i = (living.props().iter()).position(|prop| prop.entity_name() == name)?;
+            let prop = &living.props()[i];
+            let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+            let resolved = living.resolved(LivingPropId(i), field);
+            let view = LivingView::of(std::slice::from_ref(&resolved), false);
+            let zones = field.map_or_else(Vec::new, |(field, time)| {
+                (field.zones_in(prop.position(), time).into_iter())
+                    .map(|(zone, weight)| (zone.to_string(), weight))
+                    .collect()
+            });
+            Some(LivingPickedState {
+                name: name.to_string(),
+                zones,
+                knobs: LivingKnobs::from_preset(&view.knobs(self.living_boil())),
+                sources: sources_of(&view),
+            })
+        }
+
+        /// Pick the living prop under `at`, in egui points, the nearest if
+        /// several are, as a click in the world does (#248). Returns whether one
+        /// was there: a click that finds none goes on to the game.
+        pub(in super::super) fn pick_living_at(&mut self, at: egui::Pos2) -> bool {
+            let rows = self.living_rows();
+            let screen = self.living_screen();
+            let view_proj = self.camera.view_projection_matrix();
+            let Some(i) = flint_debug_ui::pick_prop(&rows, &view_proj, screen, at) else {
+                return false;
+            };
+            self.pick_living(Some(&rows[i].name))
+        }
+
+        /// Pick the prop at the view centre, as F8 does with the cursor captured.
+        pub(in super::super) fn pick_living_at_centre(&mut self) -> bool {
+            let centre = self.living_screen().center();
+            self.pick_living_at(centre)
+        }
+
+        /// The screen in egui points, as the overlay projects onto it.
+        fn living_screen(&self) -> egui::Rect {
+            let (w, h) = self.input.screen_size();
+            let ppp = self.egui_ctx.pixels_per_point();
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32 / ppp, h as f32 / ppp))
+        }
+
+        /// Pick a prop by name, or let go with `None`. The panel turns to its
+        /// species. Returns whether one is picked.
+        pub(in super::super) fn pick_living(&mut self, name: Option<&str>) -> bool {
+            self.mirror_living_panel();
+            let picked = self.living_panel().is_some_and(|panel| panel.select(name));
+            self.mirror_living_panel();
+            picked
+        }
+
+        /// The next prop by name, or the one before, as Shift+F8 does.
+        pub(in super::super) fn pick_next_living(&mut self, forward: bool) -> bool {
+            self.mirror_living_panel();
+            let picked = (self.living_panel()).is_some_and(|panel| panel.select_next(forward));
+            self.mirror_living_panel();
+            picked
+        }
+
+        /// The name of the prop picked in the world, if one is.
+        pub(in super::super) fn picked_living(&self) -> Option<String> {
+            let panel = self.debug_panels.iter().find_map(|panel| {
+                (panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL)
+                    .then(|| panel.as_any().downcast_ref::<LivingPropsDebugPanel>())
+                    .flatten()
+            })?;
+            panel.selected().map(str::to_string)
+        }
+
+        /// Whether a click is the Living Props panel's to take (#248): its panel
+        /// is open, the cursor is free, and there are props to pick.
+        pub(in super::super) fn living_wants_clicks(&self) -> bool {
+            !self.cursor_captured
+                && !self.procgen_resolver.living_props().is_empty()
+                && self.debug_panels.iter().any(|panel| {
+                    panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL && panel.is_open()
+                })
+        }
+
         /// Apply what the panel asked for last frame and show it what's true now.
-        /// It costs nothing while the panel's closed and there's no overlay.
+        /// It costs nothing while the panel's closed, there's no overlay and no
+        /// tree is picked.
         pub(in super::super) fn drain_living_panel(&mut self) {
             let Some(panel) = self.living_panel() else {
                 return;
@@ -1077,16 +1172,24 @@ pub(super) mod panel {
             let actions = panel.take_actions();
             panel.clear_dirty();
             let showing = panel.is_open();
+            let picking = panel.selected().is_some();
             for action in actions {
                 self.apply_living_action(action);
             }
             if !showing {
                 // Closing it is what looks in the folder again next time.
                 self.living_tune.preset_names = None;
-                if !self.living_tune.overlay {
+                if !self.living_tune.overlay && !picking {
                     return;
                 }
             }
+            self.mirror_living_panel();
+        }
+
+        /// Show the panel what's true now.
+        fn mirror_living_panel(&mut self) {
+            let picked = self.picked_living();
+            let picked = picked.and_then(|name| self.living_picked_state(&name));
             let view = self.living_view(None);
             let knobs = view.knobs(self.living_boil());
             let mixed = mixed_of(&view);
@@ -1152,6 +1255,7 @@ pub(super) mod panel {
                     health,
                     paint_pass,
                     ink_pass,
+                    picked,
                     unsaved_global: unsaved.global,
                     unsaved: unsaved.edits.iter().map(|edit| edit.to_string()).collect(),
                 });

@@ -1781,12 +1781,13 @@ impl PlayerApp {
                 super::living_ab::paint_labels(ctx, ab);
             }
 
-            // The pose overlay (#218), in the world and under every panel.
+            // The pose overlay (#218) and a picked tree's marks and window
+            // (#248), in the world and under every panel.
             #[cfg(feature = "debug-hud")]
-            for panel in &debug_panels {
+            for panel in debug_panels.iter_mut() {
                 if let Some(living) = panel
-                    .as_any()
-                    .downcast_ref::<flint_debug_ui::LivingPropsDebugPanel>()
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::LivingPropsDebugPanel>()
                 {
                     living.paint_overlay(ctx, &view_proj);
                 }

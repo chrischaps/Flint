@@ -15,7 +15,8 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 | `F5` | Freeze or unfreeze a scene's [living props](#living-props-f3), as the panel's **Freeze** | player |
 | `F6` | Living Props [A/B](#comparing-two-presets-ab): show the other preset, starting a comparison if none is running | player |
 | `F7` | Living Props A/B: split the view, A left and B right, or put it back | player |
-| `Escape` | Releases the mouse so panels can be clicked; clicking the world recaptures it | player |
+| `F8` | Living Props: [pick the tree](#picking-a-tree-in-the-world) at the view centre, as a click would with the cursor free. `Shift+F8` picks the next tree by name, for a click that missed | player |
+| `Escape` | Lets go of a picked tree first. Otherwise it releases the mouse so panels can be clicked; clicking the world recaptures it | player |
 
 Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player logs a note instead of failing.
 
@@ -47,7 +48,7 @@ Scene-component panels are created **only when their driving component is presen
 | Dead Calm | `dead_calm` | Dead-calm state |
 | Rendering & Effects | always, when a renderer exists | See below |
 | Particles | `particle_emitter` or `particle_effect` | Alive counts per effect instance, play / stop / burst, the global particle budget, and a draw toggle that keeps simulating while hiding the result |
-| Living Props | `living_prop` | Every knob of a grove live, the warped clock as a curve, freeze and single-step, a pose overlay, and presets saved as TOML. [Below](#living-props-f3) |
+| Living Props | `living_prop` | Every knob of a grove live, the warped clock as a curve, freeze and single-step, a pose overlay, picking a tree in the world to tune its species, and presets saved as TOML. [Below](#living-props-f3) |
 | Music Guide | active music session | Upcoming input windows and per-channel targets |
 | Manifest Map | active music session | Suite structure, playhead, this run's history |
 
@@ -83,7 +84,7 @@ Finding the sweet spot between boil and morph means turning knobs while watching
 
 ![The panel beside a frozen grove, with the pose overlay on: each prop's lineage and the two poses it's between, over its crown](../images/living-panel.png)
 
-At the top is the warped clock, drawn as what it is: one step's worth of hold, then the ease to the next pose, with the prop riding it as a dot and each branch level a little ahead under `per_level` stagger. It follows one prop; pick another in **Props**, which lists all of them with their lineage seed, pose and ring.
+At the top is the warped clock, drawn as what it is: one step's worth of hold, then the ease to the next pose, with the prop riding it as a dot and each branch level a little ahead under `per_level` stagger. It follows one prop: the tree you [picked](#picking-a-tree-in-the-world), or one picked in **Props**, which lists all of them with their lineage seed, pose and ring.
 
 | Section | Knobs |
 |---------|-------|
@@ -119,7 +120,7 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 - The shading boil and the shadows are greyed out under **Whole scene only**, with the reason: the boil is one screen pass over the whole frame, and shadows are the scene's `[living] shadows`, one choice for every living prop.
 - The pose overlay labels only that species' trees, so you can see which ones you're changing, and the clock readout follows one of them.
 
-**Props** groups the trees by species, each group folded under its name and count, and a filter narrows them to a name or a species and opens what it finds. A group's **tune** picks that species above. **As loaded** puts every species' own values back as the scene set them, panel edits included.
+**Props** groups the trees by species, each group folded under its name and count, and a filter narrows them to a name or a species and opens what it finds. A group's **tune** picks that species above, and a tree's name picks that tree, as a click on it in the world would. **As loaded** puts every species' own values back as the scene set them, panel edits included.
 
 **Freeze** stops the clock everything woozy runs on, and nothing else: the game goes on, so you can walk around a held pose. Knobs still work, and echoes and variance show at once. **Step** then moves every prop on by exactly one beat, however long a beat is where it stands, which you can read off the clock: `beat 4.753` becomes `beat 5.753`.
 
@@ -130,6 +131,21 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 **Commit to File** writes the look into the scene itself: each species' values to its `[living.species.<spec>]`, and the grove's to `[wooze]`, `[living]` and the boil's three keys in `[post_process]`. It writes only what the file doesn't already say, one line a value, and leaves every other line, comment and the order of the file as they were, so a commit reads as a short `git diff`. A cleared species value is taken out, and a species table left empty goes. A level with values the file doesn't have wears a `*` on the **Tuning** row (`Global *`, `grove_thorn 11 *`), the line beside the button counts them, and hovering the button lists each one. Two cases are said rather than written: a scene with no `[post_process]` keeps its boil unwritten, since making one would turn passes on, and a value taken out of the scene that a preset the scene names still sets is named, to take out there too. On the web a commit is an error, as saving a preset is. Scripts commit with `commit_living()`. The file's format is in [Saved presets](../concepts/procgen.md#saved-presets). Scripts can do all of this too: [Living Props API](../concepts/scripting.md#living-props-api).
 
 The status line says how the rings are taking it, and turns red if a frame has ever gone short of a pose. A step far below a frame's worth of poses can outrun any budget, and that's what it would show. The same counts close a run: `--exit-after` prints `frames missing a pose in use` and `kept their last bones`.
+
+#### Picking a tree in the world
+
+When one tree looks wrong you're looking at the tree, not at its row, and you may not know its species. With the panel open, click it.
+
+![Woozy Grove with oak_06 picked: a ring on the ground under it and fainter ones under the other oaks, its window beside it with its clock, the zone it stands in and every value it reads with the layer it comes from, and the panel turned to grove_oak](../images/living-pick.png)
+
+- **The panel turns to its species**, as picking it under **Tuning** would, and the clock readout follows that tree. Its name is at the top of the panel with a **×** to let it go.
+- **A ring lies on the ground under it**, at its crown's reach, and a fainter one under every other tree of its species in view, so you can see what a species slider will change.
+- **A window hangs beside it**, joined to its crown by a thread: its name, species and lineage, its clock, the pose it's on, the zone it stands in (or none), and every value a species can set as this tree reads it, each with the layer it comes from. These are the values and labels `flint render --report json` gives the same prop: `spec`, `entity`, `global`, `zone:<name>` or `species`. The window follows the tree as you move, keeps on screen and out from under the panel, and while the tree is off screen it isn't drawn and the panel says `off screen` instead.
+- **The window's sliders set its species' own values**, the same as the panel's at that species: the tree's species changes and no other species does, frozen or running. A `species` mark has its **×** here too. There are no per-tree values: a slider changes every tree of the species.
+
+A click is the picker's only while the Living Props panel is open and the cursor is free, and only when it lands on a tree. Anywhere else it goes to the game as before. With the cursor captured, `F8` picks the tree at the view centre. The pick is in screen space, since living props have no colliders: each tree is its trunk line from foot to crown top, widening to its crown's reach, and the nearest one under the cursor wins. A wide crown in front can win over the trunk you meant, so `Shift+F8` steps through the grove by name. `Escape` lets go first; the next `Escape` releases the mouse as usual. Picking works while frozen, so you can walk around a held pose with it picked.
+
+Nothing is drawn or computed for picking until a tree is picked.
 
 #### Comparing two presets (A/B)
 
