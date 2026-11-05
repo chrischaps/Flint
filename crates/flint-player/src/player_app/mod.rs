@@ -305,6 +305,8 @@ pub struct PlayerApp {
     wooze_missing_warned: bool,
     // Shallow wooze (#215): the clocks of the meshes on the field with no poses.
     shallow_wooze: shallow_wooze::ShallowWooze,
+    // The shading boil's beats (#214), on the same clock as the field.
+    boil_clock: flint_core::wooze::BoilClock,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,

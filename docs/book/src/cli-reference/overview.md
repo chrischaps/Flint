@@ -215,7 +215,7 @@ Built-in panels:
 | Reality | `reality` | Read-only active render-mode tear and mix, trigger-mode and end-now buttons, mix pin |
 | Visitor | `raft_visitor` | Read-only phase/day plus a trigger-visit button |
 | Dead Calm | `dead_calm` | Read-only phase/calm plus trigger and end-now buttons |
-| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
+| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, contour, shading boil, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
 | Music Guide | `music_session` | Upcoming pulse/press/flick windows with countdown, per-channel targets beside the live stick and trigger state (`` ` ``) |
 | Manifest Map | `music_session` | Full-width bottom strip: sections, bar ruler, tempo/meter changes, re-entry points, playhead and this run's judged pulses and seams (`\`) |
 
@@ -309,6 +309,17 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
+| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
+| `--contour` | off | Enable the contour pass |
+| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |

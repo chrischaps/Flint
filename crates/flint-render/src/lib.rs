@@ -10,6 +10,7 @@ pub mod billboard_pipeline;
 pub mod bitmap_font;
 mod camera;
 mod context;
+pub mod contour;
 mod debug;
 pub mod frustum;
 pub mod gpu_select;
@@ -130,6 +131,23 @@ mod tests {
                 }
             }
             assert_eq!(material_sampler, Some((2, 4)), "{name}: material_sampler at group 2, binding 4");
+        }
+    }
+
+    /// Both of the shading boil's passes, on the validator the player's GPU runs.
+    #[test]
+    fn shading_boil_shaders_validate() {
+        for source in [
+            include_str!("contour_shader.wgsl"),
+            include_str!("kuwahara_shader.wgsl"),
+        ] {
+            let module = naga::front::wgsl::parse_str(source).expect("failed to parse");
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect("failed validation");
         }
     }
 

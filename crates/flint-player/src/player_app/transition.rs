@@ -422,6 +422,7 @@ impl PlayerApp {
             self.shallow_wooze.clear();
             renderer.set_shallow_wooze(std::iter::empty());
             super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
+            self.boil_clock = Default::default();
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
                 &mut self.world,
@@ -502,6 +503,7 @@ impl PlayerApp {
                 );
                 renderer.ensure_kuwahara_resources(&context.device, &context.queue);
                 renderer.ensure_fxaa_resources(&context.device);
+                renderer.ensure_contour_resources(&context.device);
             }
         }
 

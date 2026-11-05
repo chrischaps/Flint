@@ -93,6 +93,30 @@ pub struct PostProcessConfig {
     pub kuwahara_sharpness: f32,
     pub kuwahara_hardness: f32,
     pub kuwahara_anisotropy: f32,
+    /// How far each drawing moves the paint, as a share of the radius (#214).
+    pub kuwahara_boil: f32,
+    /// Ink lines over the scene (#214); the pass runs only with this on.
+    pub contour_enabled: bool,
+    /// Half a line's width, in pixels at 1080p.
+    pub contour_width: f32,
+    /// How strong an edge must be before it starts to ink.
+    pub contour_threshold: f32,
+    /// How dark the ink goes, 0 to 1.
+    pub contour_strength: f32,
+    /// How much edges in luminance count, against edges in depth.
+    pub contour_luma: f32,
+    /// The ink's colour, linear.
+    pub contour_color: [f32; 3],
+    /// Metres at which a line has faded by half, so distance doesn't go solid.
+    pub contour_fade: f32,
+    /// How far each drawing moves the lines (#214).
+    pub contour_boil: f32,
+    /// Film frames each drawing is held: 1, 2 or 3.
+    pub boil_on: u32,
+    /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
+    /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
+    /// does, and its amount of 0 turns both boils off.
+    pub boil: flint_core::wooze::BoilFrame,
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the
@@ -174,6 +198,17 @@ impl Default for PostProcessConfig {
             kuwahara_sharpness: 8.0,
             kuwahara_hardness: 8.0,
             kuwahara_anisotropy: 1.0,
+            kuwahara_boil: 0.0,
+            contour_enabled: false,
+            contour_width: 1.25,
+            contour_threshold: 0.08,
+            contour_strength: 0.9,
+            contour_luma: 0.5,
+            contour_color: [0.015, 0.012, 0.02],
+            contour_fade: 30.0,
+            contour_boil: 0.0,
+            boil_on: 2,
+            boil: Default::default(),
             render_mode: 0,
             mode_mix: 0.0,
             mode_params: [0.0; 4],
@@ -246,6 +281,16 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
     config.kuwahara_hardness = pp_def.kuwahara_hardness;
     config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
+    config.kuwahara_boil = pp_def.kuwahara_boil;
+    config.contour_enabled = pp_def.contour_enabled;
+    config.contour_width = pp_def.contour_width;
+    config.contour_threshold = pp_def.contour_threshold;
+    config.contour_strength = pp_def.contour_strength;
+    config.contour_luma = pp_def.contour_luma;
+    config.contour_color = pp_def.contour_color;
+    config.contour_fade = pp_def.contour_fade;
+    config.contour_boil = pp_def.contour_boil;
+    config.boil_on = pp_def.boil_on;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;
@@ -416,7 +461,10 @@ pub struct KuwaharaUniforms {
     pub sharpness: f32,
     pub hardness: f32,
     pub anisotropy: f32,
-    pub _pad: [f32; 2],
+    /// Which drawing this is (#214).
+    pub boil_seed: u32,
+    /// How far the paint moves this frame, as a share of the radius. 0 is off.
+    pub boil: f32,
 }
 
 /// SSAO texture format (single-channel occlusion).
@@ -986,6 +1034,8 @@ pub struct PostProcessResources {
     pub volumetric_blur_view: wgpu::TextureView,
     // Kuwahara textures (full resolution, Rgba16Float) — only allocated when enabled
     pub kuwahara: Option<KuwaharaTextures>,
+    // Contour output (Rgba16Float) — only allocated when enabled (#214)
+    pub contour: Option<crate::contour::ContourTextures>,
     // FXAA intermediate (full resolution, surface format) — only allocated when enabled
     pub fxaa: Option<FxaaResources>,
     /// The chain's bind groups, kept until a resize replaces it (#139).
@@ -1054,6 +1104,8 @@ pub struct PostProcessPipeline {
     pub volumetric_black_view: wgpu::TextureView,
     // Kuwahara filter pipelines and resources — only allocated when enabled
     pub kuwahara: Option<KuwaharaPipelines>,
+    // Contour pipeline — only created when enabled (#214)
+    pub contour: Option<crate::contour::ContourPipeline>,
     // FXAA pipeline — only created when enabled (ADR 0050)
     pub fxaa: Option<FxaaPipeline>,
 }
@@ -2067,6 +2119,7 @@ impl PostProcessPipeline {
             volumetric_black_view,
             ground_fog_empty_view,
             kuwahara,
+            contour: None,
             // FXAA is created on demand via ensure_fxaa_resources (ADR 0050)
             fxaa: None,
         }
@@ -2691,7 +2744,8 @@ impl PostProcessPipeline {
             sharpness: config.kuwahara_sharpness,
             hardness: config.kuwahara_hardness,
             anisotropy: config.kuwahara_anisotropy,
-            _pad: [0.0; 2],
+            boil_seed: config.boil.seed,
+            boil: config.kuwahara_boil.max(0.0) * config.boil.amount,
         };
         queue.write_buffer(&kp.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         fullscreen_pass(
@@ -2710,6 +2764,48 @@ impl PostProcessPipeline {
                 ),
             ],
         );
+    }
+
+    /// Whether the contour pass runs this frame, and so whether the composite
+    /// reads its output: it's on, and its pipeline and texture exist.
+    fn contour_active(&self, resources: &PostProcessResources, config: &PostProcessConfig) -> bool {
+        config.enabled
+            && config.contour_enabled
+            && self.contour.is_some()
+            && resources.contour.is_some()
+    }
+
+    /// Ink the scene (#214), over the Kuwahara filter's result if that ran. Returns
+    /// early (no-op) if the pipeline or texture wasn't allocated.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_contour(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        resources: &PostProcessResources,
+        config: &PostProcessConfig,
+        depth_view: &wgpu::TextureView,
+        depth_owned: bool,
+        camera: &Camera,
+    ) {
+        if !self.contour_active(resources, config) {
+            return;
+        }
+        if let Some(contour) = &self.contour {
+            contour.run(
+                device,
+                queue,
+                encoder,
+                resources,
+                config,
+                painted_scene(resources, config),
+                (&self.linear_sampler, &self.depth_sampler),
+                depth_view,
+                depth_owned,
+                (camera.near, camera.far),
+            );
+        }
     }
 
     /// Run the composite pass: combine HDR scene + bloom + SSAO + volumetric + fog → tonemapped sRGB surface.
@@ -2894,32 +2990,28 @@ impl PostProcessPipeline {
             })
         });
 
-        // Kuwahara: use filtered result if enabled and allocated, raw HDR otherwise
-        let kuwahara_view = (config.enabled && config.kuwahara_enabled)
-            .then_some(resources.kuwahara.as_ref())
-            .flatten()
-            .map(|kt| &kt.output_view);
-        let scene_view = kuwahara_view.unwrap_or(&resources.hdr_view);
-        let scene_bg = resources.binds.get(
-            "composite scene",
-            u64::from(kuwahara_view.is_some()),
-            || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Composite Scene BG"),
-                    layout: &self.composite_scene_bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(scene_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
-                        },
-                    ],
-                })
-            },
-        );
+        // The scene as the passes before this left it: inked, painted or raw HDR.
+        let inked = self.contour_active(resources, config);
+        let (scene_view, scene_variant) = match (inked, resources.contour.as_ref()) {
+            (true, Some(contour)) => (&contour.output_view, 2),
+            _ => painted_scene(resources, config),
+        };
+        let scene_bg = resources.binds.get("composite scene", scene_variant, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Composite Scene BG"),
+                layout: &self.composite_scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(scene_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            })
+        });
 
         // Use bloom mip[0] if available and bloom enabled, otherwise use black texture
         let bloom_on = config.bloom_enabled && !resources.bloom_mips.is_empty();
@@ -2975,9 +3067,25 @@ pub struct VolumetricShadow<'a> {
     pub lights: &'a wgpu::Buffer,
 }
 
+/// The scene colour before any ink: the Kuwahara filter's if it ran, or the raw
+/// HDR buffer. With a number for the bind group cache to tell them apart.
+fn painted_scene<'a>(
+    resources: &'a PostProcessResources,
+    config: &PostProcessConfig,
+) -> (&'a wgpu::TextureView, u64) {
+    let kuwahara_view = (config.enabled && config.kuwahara_enabled)
+        .then_some(resources.kuwahara.as_ref())
+        .flatten()
+        .map(|kt| &kt.output_view);
+    (
+        kuwahara_view.unwrap_or(&resources.hdr_view),
+        u64::from(kuwahara_view.is_some()),
+    )
+}
+
 /// Record one full-screen triangle into `target`, cleared to `clear` first
 /// or blended over what's there, with `groups` bound in order.
-fn fullscreen_pass(
+pub(crate) fn fullscreen_pass(
     encoder: &mut wgpu::CommandEncoder,
     label: &str,
     target: &wgpu::TextureView,
@@ -3161,6 +3269,8 @@ impl PostProcessResources {
             volumetric_blur_texture,
             volumetric_blur_view,
             kuwahara,
+            // So is the contour's (#214)
+            contour: None,
             // FXAA intermediate is allocated on demand (ADR 0050)
             fxaa: None,
             binds: Default::default(),
@@ -3249,6 +3359,44 @@ mod tests {
     /// at 272..304 (ADR 0101), ground fog rows (color+density / origin+size
     /// / floor base, ceiling, falloff, steps / texel, max lod, enabled, pad)
     /// at 304..368 (ADR 0106).
+    #[test]
+    fn boil_uniforms_match_wgsl_layout() {
+        // Kuwahara's seed and amount ride the two floats that padded it, so its
+        // buffer is the size it always was.
+        assert_eq!(std::mem::size_of::<KuwaharaUniforms>(), 32);
+        // texel/width/threshold, colour/strength, near/far/luma/boil, seed/fade/pad.
+        assert_eq!(std::mem::size_of::<crate::contour::ContourUniforms>(), 64);
+    }
+
+    /// Boil is opt-in twice over: a scene asks for it, and has a field.
+    #[test]
+    fn boil_and_contour_default_off() {
+        let config = PostProcessConfig::default();
+        assert!(!config.contour_enabled);
+        assert_eq!(config.kuwahara_boil, 0.0);
+        assert_eq!(config.contour_boil, 0.0);
+        assert_eq!(config.boil, Default::default());
+    }
+
+    /// A width is authored at 1080p, and the field's jitter scales the boil.
+    #[test]
+    fn contour_uniforms_scale_with_the_frame_and_the_field() {
+        let mut config = PostProcessConfig {
+            contour_width: 2.0,
+            contour_boil: 0.5,
+            ..Default::default()
+        };
+        config.boil.amount = 1.5;
+        config.boil.seed = 9;
+        let u = crate::contour::ContourUniforms::new(&config, 1920, 540, 0.1, 100.0);
+        assert_eq!(u.width, 1.0);
+        assert_eq!(u.boil, 0.75);
+        assert_eq!(u.seed, 9);
+        config.boil.amount = 0.0;
+        let still = crate::contour::ContourUniforms::new(&config, 1920, 540, 0.1, 100.0);
+        assert_eq!(still.boil, 0.0);
+    }
+
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
         assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 368);

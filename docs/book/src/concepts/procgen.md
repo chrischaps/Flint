@@ -442,6 +442,8 @@ remove_wooze_zone("spot", 1.0);                              // and out
 
 Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
 
+**Paint and ink read it too.** The [shading boil](post-processing.md#shading-boil) runs the Kuwahara filter and contour lines on the field's beat, as hard as its `jitter` says, where the camera stands.
+
 ### Shallow wooze
 
 A hand-made bench next to a boiling tree looks pasted in, and a mesh with no skeleton has no poses to drift between. Shallow wooze gives it a little of the same drift: each vertex moves through world-space noise on the field's clock.

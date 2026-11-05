@@ -79,6 +79,17 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy, 0--1 |
+| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
+| `--contour` | off | Enable the contour pass |
+| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--render-mode <0-5>` | `0` | Stylized render mode |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
@@ -209,7 +220,7 @@ Headless rendering uses the same wgpu PBR pipeline as the interactive viewer:
 - **Cascaded shadow mapping** for directional light shadows, with PCSS when the light has an `angular_size`
 - **glTF mesh rendering** with full material support
 - **Skinned mesh rendering** at bind pose (no animation is evaluated headlessly)
-- **The full post-processing chain**, including Kuwahara and FXAA when enabled
+- **The full post-processing chain**, including Kuwahara, contour and FXAA when enabled
 
 The only difference from interactive rendering is that the output goes to a texture-to-buffer copy instead of a swapchain surface.
 

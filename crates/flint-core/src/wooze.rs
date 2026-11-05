@@ -245,6 +245,69 @@ impl Cycle {
     }
 }
 
+/// Film frames to one beat of the field. Six is what ones, twos and threes all
+/// divide, so a drawing lands on every beat whichever a scene picks, and the
+/// `linklater` preset's quarter-second step is exactly 24 frames a second.
+pub const FILM_FRAMES_PER_BEAT: u32 = 6;
+
+/// Which drawing the shading boil (#214) is on, and how hard it boils.
+///
+/// The default is no boil at all, which is what a scene with no field gets.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BoilFrame {
+    /// The drawing: the same for as long as it's held, and new when it changes.
+    pub seed: u32,
+    /// How much of the authored boil shows, the field's `jitter` here and now.
+    pub amount: f32,
+    /// The field's step here and now in seconds, or 0 with no field.
+    pub step: f32,
+}
+
+/// The shading boil's clock: beats of the field, like any other consumer's, so a
+/// change of step bends it from where it stands. It runs on game time, so a drawing
+/// lasts as long at 30 frames a second as at 144.
+///
+/// Whole beats are kept apart from the part of one, because a single running float
+/// loses precision as it grows, and after a couple of hours a drawing would start
+/// to land a frame late.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BoilClock {
+    beats: u64,
+    part: f64,
+}
+
+impl BoilClock {
+    /// `dt` seconds later, at the tempo of `sample`.
+    #[inline]
+    pub fn tick(&mut self, dt: f64, sample: &WoozeSample) {
+        self.part += dt / f64::from(sample.step.max(STEP_MIN));
+        let carried = self.part.floor();
+        self.part -= carried;
+        self.beats += carried as u64;
+    }
+
+    /// The drawing now, held for `on` film frames: 1, 2 or 3, and anything else
+    /// is taken as the nearest of them. The nudge keeps a frame that lands exactly
+    /// on a change from falling short of it by a rounding error, which would hold
+    /// one drawing for a frame too long and the next for a frame too few.
+    pub fn drawing(&self, on: u32) -> u64 {
+        let per_beat = u64::from(FILM_FRAMES_PER_BEAT);
+        let into_beat = (self.part * per_beat as f64 + 1e-9).floor() as u64;
+        (self.beats * per_beat + into_beat) / u64::from(on.clamp(1, 3))
+    }
+
+    /// What the passes need to know this frame, from the field where the viewer
+    /// stands. The boil's strength is the field's `jitter`, its layer of fast small
+    /// motion, so a zone can hold its trees still and go on boiling their lines.
+    pub fn frame(&self, sample: &WoozeSample, on: u32) -> BoilFrame {
+        BoilFrame {
+            seed: self.drawing(on) as u32,
+            amount: sample.jitter,
+            step: sample.step,
+        }
+    }
+}
+
 /// What [`Cycle::read`] says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CycleNow {
@@ -701,6 +764,114 @@ fn read_point(value: &toml::Value) -> Option<[f32; 3]> {
         return None;
     }
     toml_vec3(value).filter(|p| p.iter().all(|a| a.is_finite()))
+}
+
+#[cfg(test)]
+mod boil_tests {
+    use super::*;
+
+    fn at(step: f32, jitter: f32) -> WoozeSample {
+        WoozeSample {
+            step,
+            jitter,
+            ..WoozeSample::NEUTRAL
+        }
+    }
+
+    /// The drawing after each of `frames` film frames at 24 frames a second.
+    fn drawings(frames: usize, step: f32, on: u32) -> Vec<u64> {
+        let sample = at(step, 1.0);
+        let mut clock = BoilClock::default();
+        (0..frames)
+            .map(|_| {
+                clock.tick(1.0 / 24.0, &sample);
+                clock.drawing(on)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn on_twos_a_drawing_lasts_two_film_frames_and_on_threes_three() {
+        // A quarter-second step is six film frames at 24 a second.
+        assert_eq!(drawings(8, 0.25, 1), [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(drawings(8, 0.25, 2), [0, 1, 1, 2, 2, 3, 3, 4]);
+        assert_eq!(drawings(8, 0.25, 3), [0, 0, 1, 1, 1, 2, 2, 2]);
+    }
+
+    #[test]
+    fn hours_of_rounding_never_lengthen_or_shorten_a_drawing() {
+        // Two hours of film.
+        let all = drawings(24 * 60 * 60 * 2, 0.25, 2);
+        for pair in all.windows(2) {
+            assert!(pair[1] - pair[0] <= 1);
+        }
+        // Each drawing past the first is held for exactly two frames.
+        for chunk in all[1..all.len() - 1].chunks(2) {
+            assert_eq!(chunk[0], chunk[1]);
+        }
+    }
+
+    #[test]
+    fn a_drawing_lasts_the_same_time_at_any_frame_rate() {
+        let sample = at(0.25, 1.0);
+        for fps in [30.0, 60.0, 144.0, 240.0] {
+            let mut clock = BoilClock::default();
+            for _ in 0..(fps as usize) {
+                clock.tick(1.0 / fps, &sample);
+            }
+            assert_eq!(clock.drawing(2), 12, "at {fps} frames a second");
+        }
+    }
+
+    #[test]
+    fn every_cadence_lands_on_the_beat() {
+        let sample = at(0.5, 1.0);
+        for on in 1..=3 {
+            let mut clock = BoilClock::default();
+            clock.tick(sample.step as f64 * 3.0, &sample);
+            assert_eq!(clock.drawing(on), u64::from(3 * FILM_FRAMES_PER_BEAT / on));
+        }
+    }
+
+    #[test]
+    fn a_change_of_step_bends_the_clock_and_does_not_move_it() {
+        let mut clock = BoilClock::default();
+        clock.tick(1.0, &at(0.25, 1.0));
+        let before = clock.drawing(2);
+        clock.tick(0.0, &at(1.5, 1.0));
+        assert_eq!(clock.drawing(2), before);
+    }
+
+    #[test]
+    fn a_cadence_outside_the_three_is_taken_as_the_nearest() {
+        let mut clock = BoilClock::default();
+        clock.tick(1.0, &at(0.25, 1.0));
+        assert_eq!(clock.drawing(0), clock.drawing(1));
+        assert_eq!(clock.drawing(9), clock.drawing(3));
+    }
+
+    #[test]
+    fn the_frame_takes_its_strength_from_jitter_alone() {
+        // A zone can hold its trees still and go on boiling their lines.
+        let still_trees = WoozeSample {
+            amplitude: 0.0,
+            jitter: 1.5,
+            step: 0.25,
+            glide: 0.3,
+        };
+        let frame = BoilClock::default().frame(&still_trees, 2);
+        assert_eq!(frame.amount, 1.5);
+        assert_eq!(frame.step, 0.25);
+        assert_eq!(BoilFrame::default().amount, 0.0);
+    }
+
+    #[test]
+    fn the_seed_wraps_rather_than_saturating() {
+        let mut clock = BoilClock::default();
+        // Past u32::MAX drawings: the pattern goes on changing.
+        clock.beats = ((1u64 << 32) + 2) / u64::from(FILM_FRAMES_PER_BEAT);
+        assert_eq!(clock.frame(&at(0.25, 1.0), 1).seed, 2);
+    }
 }
 
 #[cfg(test)]

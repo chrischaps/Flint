@@ -198,6 +198,40 @@ pub struct PostProcessDef {
     pub kuwahara_hardness: f32,
     #[serde(default = "default_kuwahara_anisotropy")]
     pub kuwahara_anisotropy: f32,
+    /// How far each drawing moves the paint in a scene with a `[wooze]` table: a
+    /// share of the radius, turning the strokes too. 0 holds it still.
+    #[serde(default)]
+    pub kuwahara_boil: f32,
+    /// Ink lines over the scene, from breaks in depth and luminance (#214).
+    #[serde(default)]
+    pub contour_enabled: bool,
+    /// Half a line's width, in pixels at 1080p.
+    #[serde(default = "default_contour_width")]
+    pub contour_width: f32,
+    /// How strong an edge must be before it starts to ink. Lower draws more.
+    #[serde(default = "default_contour_threshold")]
+    pub contour_threshold: f32,
+    /// How dark the ink goes, 0 to 1.
+    #[serde(default = "default_contour_strength")]
+    pub contour_strength: f32,
+    /// How much edges in luminance count, against edges in depth. 0 is silhouettes only.
+    #[serde(default = "default_contour_luma")]
+    pub contour_luma: f32,
+    /// The ink's colour, linear.
+    #[serde(default = "default_contour_color")]
+    pub contour_color: [f32; 3],
+    /// Metres at which a line has faded by half, so that distant foliage doesn't
+    /// go solid with ink. 0 never fades.
+    #[serde(default = "default_contour_fade")]
+    pub contour_fade: f32,
+    /// How far each drawing moves the lines in a scene with a `[wooze]` table,
+    /// and how much it changes their width and pressure. 0 holds them still.
+    #[serde(default)]
+    pub contour_boil: f32,
+    /// Film frames each drawing is held: 1, 2 or 3 ("on twos"). A beat of the
+    /// field's `step` is six film frames.
+    #[serde(default = "default_boil_on")]
+    pub boil_on: u32,
     /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
     #[serde(default)]
     pub film_grain: f32,
@@ -330,6 +364,34 @@ fn default_kuwahara_hardness() -> f32 {
 
 fn default_kuwahara_anisotropy() -> f32 {
     1.0
+}
+
+fn default_contour_width() -> f32 {
+    1.25
+}
+
+fn default_contour_threshold() -> f32 {
+    0.08
+}
+
+fn default_contour_strength() -> f32 {
+    0.9
+}
+
+fn default_contour_luma() -> f32 {
+    0.5
+}
+
+fn default_contour_color() -> [f32; 3] {
+    [0.015, 0.012, 0.02]
+}
+
+fn default_contour_fade() -> f32 {
+    30.0
+}
+
+fn default_boil_on() -> u32 {
+    2
 }
 
 /// Camera configuration for the scene
