@@ -1553,18 +1553,21 @@ impl ApplicationHandler for GenPreviewApp {
 // ─── ECS helper ─────────────────────────────────────────────────────────────
 
 /// Build a minimal ECS world with one entity referencing the "procgen_preview" mesh.
-fn build_mesh_world(submesh_count: usize) -> FlintWorld {
+/// The asset a one-mesh [`build_mesh_world`] world draws.
+pub(super) const PREVIEW_ASSET: &str = "procgen_preview";
+
+pub(super) fn build_mesh_world(submesh_count: usize) -> FlintWorld {
     let mut world = FlintWorld::new();
 
     let count = submesh_count.max(1);
     for i in 0..count {
         let asset_name = if count == 1 {
-            "procgen_preview".to_string()
+            PREVIEW_ASSET.to_string()
         } else {
             format!("procgen_preview_{i}")
         };
         let entity_name = if count == 1 {
-            "procgen_preview".to_string()
+            PREVIEW_ASSET.to_string()
         } else {
             format!("procgen_preview_{i}")
         };

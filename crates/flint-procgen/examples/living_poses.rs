@@ -9,18 +9,14 @@
 //!
 //! `--amount`, `--steady` and `--keep-size` override the spec's `[living]
 //! variance`. Everything goes through the public contract (`structure`,
-//! `full_pose`, `with_variance`, `posed_segments`, `posed_leaf_mesh`), so what
-//! this writes is what a caller of `LivingGenerator` gets. Each pose's mesh is
-//! rebuilt from scratch; the skinned mesh that makes this cheap is #209.
+//! `full_pose`, `with_variance`, `posed_mesh`), so what this writes is what a
+//! caller of `LivingGenerator` gets. Each pose's mesh is rebuilt from scratch;
+//! the skinned mesh that makes this cheap is #209.
 
-use flint_procgen::algorithms::mesh_builder::MeshBuilder;
-use flint_procgen::generators::tree::branches::segments_to_mesh;
-use flint_procgen::generators::tree::{
-    generate_trunk, join_bark_and_leaves, BranchParams, TrunkParams,
-};
+use flint_procgen::generators::tree::{generate_trunk, TrunkParams};
 use flint_procgen::{
-    mesh_to_glb, BoundingBox, BranchSegment, LivingGenerator, LivingPose, LivingSkeleton, MeshData,
-    ProcGenSpec, SeededRng, TreeGenerator, VarianceConfig,
+    mesh_to_glb, BoundingBox, LivingGenerator, LivingPose, LivingSkeleton, ProcGenSpec, SeededRng,
+    SegmentPose, TreeGenerator, VarianceConfig,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -69,22 +65,15 @@ fn main() -> Res<()> {
         skeleton.leaf_bindings.len()
     );
 
-    // The trunk is the lineage's, so every pose shares this one mesh.
+    // Only the JSON still needs the trunk's spine: posed_mesh builds its own.
     let trunk_params = TrunkParams::from_toml(&spec.params)?;
     let trunk = generate_trunk(&trunk_params, &mut SeededRng::new(lineage).fork("trunk"))?;
-    let radial = BranchParams::from_toml(&spec.params)?.radial_segments;
-    let tree = |segments: &[BranchSegment], leaves: &MeshData| -> Res<MeshData> {
-        let mut bark = MeshBuilder::new();
-        bark.merge(&trunk.mesh);
-        bark.merge(&segments_to_mesh(segments, radial)?);
-        bark.compute_normals();
-        bark.compute_tangents();
-        let mut bark = bark.build();
-        bark.materials = trunk.mesh.materials.clone();
-        Ok(join_bark_and_leaves(&bark, leaves))
-    };
 
-    let rest = tree(&skeleton.segments, &skeleton.leaf_mesh)?;
+    let at_rest = LivingPose {
+        shape_seed: lineage,
+        segments: vec![SegmentPose::IDENTITY; skeleton.segments.len()],
+    };
+    let rest = TreeGenerator.posed_mesh(&spec, &skeleton, &at_rest)?;
     std::fs::write(out.join("rest.glb"), mesh_to_glb(&rest)?)?;
 
     let rest_box = skeleton.rest_bounds();
@@ -105,10 +94,7 @@ fn main() -> Res<()> {
             turned[rest.depth as usize] += 2.0 * p.rotation[3].clamp(-1.0, 1.0).acos();
             counted[rest.depth as usize] += 1;
         }
-        let posed = tree(
-            &skeleton.posed_segments(&pose)?,
-            &skeleton.posed_leaf_mesh(&pose)?,
-        )?;
+        let posed = TreeGenerator.posed_mesh(&spec, &skeleton, &pose)?;
         std::fs::write(
             out.join(format!("pose{shape_seed}.glb")),
             mesh_to_glb(&posed)?,

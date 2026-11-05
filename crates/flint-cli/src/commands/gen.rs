@@ -16,6 +16,7 @@ use serde::Serialize;
 
 use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
+use super::gen_strip::{self, StripOptions};
 
 /// Human lines go to stdout, unless stdout is carrying something a program
 /// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
@@ -206,6 +207,65 @@ pub struct GenArgs {
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
     #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
+
+    /// Render a [living] spec over time as one labelled contact sheet, a PNG:
+    /// hold-and-glide evaluated per frame from the spec's step, glide and
+    /// stagger, the whole mesh rebuilt each frame, one fixed camera
+    #[arg(
+        long,
+        help_heading = "Living props",
+        conflicts_with_all = [
+            "ai_step", "batch", "format", "print_spec", "register", "save_spec", "seed",
+            "validate",
+        ]
+    )]
+    pub strip: bool,
+
+    /// With --strip: how many frames
+    #[arg(
+        long,
+        default_value_t = 48,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(1..=1024),
+        help_heading = "Living props"
+    )]
+    pub frames: u32,
+
+    /// With --strip: frames per second of game time
+    #[arg(
+        long,
+        default_value_t = 24.0,
+        requires = "strip",
+        value_parser = parse_fps,
+        help_heading = "Living props"
+    )]
+    pub fps: f32,
+
+    /// With --strip: columns in the grid [default: whatever makes a 4:3 sheet]
+    #[arg(
+        long,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(1..=256),
+        help_heading = "Living props"
+    )]
+    pub columns: Option<u32>,
+
+    /// With --strip: each frame's width and height in pixels
+    #[arg(
+        long,
+        default_value_t = 240,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(32..=2048),
+        help_heading = "Living props"
+    )]
+    pub cell_size: u32,
+}
+
+fn parse_fps(s: &str) -> std::result::Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(fps) if fps.is_finite() && fps > 0.0 => Ok(fps),
+        _ => Err(format!("'{s}' isn't a frame rate above 0")),
+    }
 }
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
@@ -303,13 +363,34 @@ pub fn run(args: GenArgs) -> Result<()> {
     for issue in &issues {
         eprintln!("warning: {label}: {issue}");
     }
-    let living_issue = living_issue(generator, &spec);
+    // A strip refuses a spec that can't live, so it has no need of the warning.
+    let living_issue = if args.strip {
+        None
+    } else {
+        living_issue(generator, &spec)
+    };
     if let Some(issue) = &living_issue {
         eprintln!("warning: {label}: {issue}");
     }
     let ignored = issues.len() + usize::from(living_issue.is_some());
     if args.strict && ignored > 0 {
         bail!("{ignored} spec parameter(s) would be ignored (--strict)");
+    }
+
+    if args.strip {
+        return gen_strip::run(
+            generator,
+            &spec,
+            &label,
+            StripOptions {
+                frames: args.frames,
+                fps: args.fps,
+                columns: args.columns,
+                cell_size: args.cell_size,
+            },
+            args.output.as_deref(),
+            args.dry_run,
+        );
     }
 
     let kind = generator.output_kind();

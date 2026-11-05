@@ -93,6 +93,10 @@ Flint uses an **edit -> validate -> play** loop:
    #   Claude sees a headless render of what the spec builds each round and the refine
    #   loops while the measured distance falls (--refine-rounds N; #183)
    flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
+   flint gen specs/examples/oak_living.procgen.toml --strip -o strip.png  # a [living] spec over time, as one labelled
+                                                             #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
+                                                             #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
+                                                             #   --columns N --cell-size 240; byte-identical per machine, #210)
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
