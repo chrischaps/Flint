@@ -96,12 +96,32 @@ pub trait LivingGenerator: Send + Sync {
     /// ids and parents, and the leaf cards bound to them.
     fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
 
-    /// One variant of `skeleton`, as per-segment transforms relative to it.
-    /// The same arguments give the same bits.
-    fn pose(
+    /// One variant of `skeleton` as this shape seed grows it, undamped: every
+    /// segment as far from rest as the seed took it. A ring kept in this form
+    /// can be re-held at a new variance with
+    /// [`LivingSkeleton::with_variance`] and no regrowing, which is what makes
+    /// the variance knobs live. The same arguments give the same bits.
+    fn full_pose(
         &self,
         spec: &ProcGenSpec,
         skeleton: &LivingSkeleton,
         shape_seed: u64,
     ) -> Result<LivingPose>;
+
+    /// One variant of `skeleton`, as per-segment transforms relative to it,
+    /// held to the spec's `[living] variance` (its defaults if the spec has
+    /// no `[living]` table). The same arguments give the same bits.
+    fn pose(
+        &self,
+        spec: &ProcGenSpec,
+        skeleton: &LivingSkeleton,
+        shape_seed: u64,
+    ) -> Result<LivingPose> {
+        let full = self.full_pose(spec, skeleton, shape_seed)?;
+        let variance = spec
+            .living
+            .as_ref()
+            .map_or_else(Default::default, |living| living.variance);
+        skeleton.with_variance(&full, &variance)
+    }
 }

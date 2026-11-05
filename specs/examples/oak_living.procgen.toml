@@ -99,5 +99,6 @@ jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
 
 # How much of each pose's difference is left (amount), how much of that is
 # held back from the trunk side (steady: 0 even, 1 all at the tips), and
-# whether each pose is scaled back to the lineage's size (keep_size).
+# whether each pose is scaled back to the lineage's size (keep_size). For a
+# pose exactly as its shape seed grew it: amount = 1, steady = 0, keep_size = false.
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
