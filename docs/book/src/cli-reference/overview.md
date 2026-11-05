@@ -415,6 +415,8 @@ integrated GPU.
 | `--sequence <file.sequence.toml>` | (none) | Play a sequence of timestamped animator events |
 | `--sequence-loop` | `false` | Loop the sequence regardless of its `loop` setting |
 | `--anim-time <s>` | (none) | With `--render`: sample the animation (or replay the sequence) at this time |
+| `--pose-bone <joint:x,y,z>` | (none) | Turn a joint in its own frame, in degrees; repeatable. Works without a clip |
+| `--show-skeleton` | off | Draw the skeleton over the model, posed joints and everything past them in orange |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
 
 ### Particle Editor Flags

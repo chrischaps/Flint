@@ -102,6 +102,12 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
                     );
                 }
             }
+            // A living spec's rest mesh: its [[lod]] can't apply until it plays.
+            GeneratorOutput::SkinnedMesh(mesh) => {
+                assert!(spec.living.is_some(), "{file}");
+                mesh.validate().unwrap();
+                assert!(mesh.bone_count() > 1, "{file}: a tree with no branches");
+            }
             GeneratorOutput::ImageSet(maps) => {
                 assert_eq!(maps.len(), 3, "{file}: color, normal, roughness");
                 for map in maps {

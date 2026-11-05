@@ -28,6 +28,7 @@ nul
 
 # Test screenshots and render output
 screenshots/
+renders/
 
 # Raw/source assets (untracked)
 raw_assets/

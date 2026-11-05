@@ -403,7 +403,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     )?;
 
     if let Some(seed_val) = args.seed {
-        spec = spec_with_seed(&spec, seed_val);
+        spec = spec_with_lineage(&spec_with_seed(&spec, seed_val), seed_val);
     }
 
     if args.print_spec || args.save_spec.is_some() {
@@ -451,11 +451,15 @@ pub fn run(args: GenArgs) -> Result<()> {
             let skeleton = alive
                 .structure(&spec, living.lineage_seed)
                 .with_context(|| format!("{label}: couldn't grow the living structure"))?;
+            let rig = alive
+                .rig(&spec, living.lineage_seed)
+                .with_context(|| format!("{label}: couldn't skin the living structure"))?;
             say!();
             say!(
-                "Living:     lineage {}: {} segments, {} leaf cards, a ring of {} poses",
+                "Living:     lineage {}: {} segments on {} bones, {} leaf cards, a ring of {} poses",
                 living.lineage_seed,
                 skeleton.segments.len(),
+                rig.mesh.bone_count(),
                 skeleton.leaf_bindings.len(),
                 living.pose_ring
             );
@@ -519,7 +523,10 @@ pub fn run(args: GenArgs) -> Result<()> {
         let tag = batch_total
             .map(|n| format!("[{}/{}] ", i + 1, n))
             .unwrap_or_default();
-        let seed_spec = spec_with_seed(&spec, seed);
+        let mut seed_spec = spec_with_seed(&spec, seed);
+        if batch_total.is_some() {
+            seed_spec = spec_with_lineage(&seed_spec, seed);
+        }
 
         // The cache: this spec + seed was registered before, by the
         // generator revision running now, and the store still holds every
@@ -578,6 +585,9 @@ pub fn run(args: GenArgs) -> Result<()> {
 
         if batch_total.is_some() {
             say!("{tag}Generating seed {seed}...");
+        } else if let (Some(living), None) = (&seed_spec.living, &living_issue) {
+            // Its `[seed]` plays no part: the tree grows from the lineage.
+            say!("Lineage:    {}", living.lineage_seed);
         } else {
             say!("Seed:       {}", describe_resolved_seed(&spec, seed));
         }
@@ -634,6 +644,17 @@ fn spec_with_seed(spec: &ProcGenSpec, seed: u64) -> ProcGenSpec {
         value: Some(seed),
         derive_from: None,
     };
+    s
+}
+
+/// A seed asked for on the command line picks a living spec's lineage: that's
+/// the seed its tree grows from, so without this every seed bakes one tree.
+/// A spec's own `[seed]` doesn't, because `lineage_seed` is its identity.
+fn spec_with_lineage(spec: &ProcGenSpec, seed: u64) -> ProcGenSpec {
+    let mut s = spec.clone();
+    if let Some(living) = s.living.as_mut() {
+        living.lineage_seed = seed;
+    }
     s
 }
 

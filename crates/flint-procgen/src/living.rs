@@ -12,6 +12,7 @@ use flint_core::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::generator::LivingGenerator;
+use crate::skinning::SkinnedMeshData;
 use crate::spec::{LivingConfig, ProcGenSpec, Stagger, VarianceConfig};
 use crate::types::{BoundingBox, BranchSegment, MeshData};
 use crate::{ProcGenError, Result};
@@ -459,6 +460,123 @@ fn balancing_scale(rest: &BoundingBox, now: &BoundingBox) -> f32 {
     } else {
         1.0
     }
+}
+
+/// One lineage's skinned rest mesh and how its poses reach the bones.
+///
+/// Bone 0 is the trunk, which every pose leaves still. After it comes a bone
+/// per segment, parents first, unless the tree has more segments than
+/// [`MAX_SKINNED_BONES`](crate::MAX_SKINNED_BONES) leaves room for: then its
+/// smallest twigs ride the bone of their nearest ancestor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LivingRig {
+    /// The rest mesh, in the same place as the tree `generate` would bake.
+    pub mesh: SkinnedMeshData,
+    /// `segment_bones[id]` is the bone that moves segment `id`.
+    pub segment_bones: Vec<u16>,
+    /// `bone_segments[bone]` is the segment a bone follows; `None` for the trunk.
+    pub bone_segments: Vec<Option<u32>>,
+}
+
+impl LivingRig {
+    /// `pose` as bone matrices (column-major, what the skinned pipeline
+    /// uploads), written over `out`. Each takes a rest vertex to where the
+    /// pose puts it, and all of a pose's scale is in here: the skeleton's
+    /// local transforms can't hold it, since a parent's stretch would shear
+    /// its children.
+    ///
+    /// A segment's bone turns it by the pose's rotation, stretches it along
+    /// itself by the length scale and across by the radius scale, and puts
+    /// its head on the posed end of its parent. So a tube stays joined under
+    /// any pose, and blending two poses first keeps that true.
+    pub fn palette(
+        &self,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+        out: &mut Vec<[[f32; 4]; 4]>,
+    ) -> Result<()> {
+        let posed = skeleton.posed_segments(pose)?;
+        out.clear();
+        out.extend(self.bone_segments.iter().map(|segment| match segment {
+            None => IDENTITY_BONE,
+            Some(id) => {
+                let id = *id as usize;
+                let (rest, p) = (&skeleton.segments[id], &pose.segments[id]);
+                segment_bone(rest.start, rest.direction(), p, posed[id].start)
+            }
+        }));
+        Ok(())
+    }
+
+    /// The rest mesh moved by `palette` on the CPU, the way the GPU does it:
+    /// a mesh to look at or measure, not a way to draw a pose every frame.
+    pub fn skinned_mesh(&self, palette: &[[[f32; 4]; 4]]) -> MeshData {
+        let mut mesh = self.mesh.rest_mesh();
+        for (out, v) in mesh.vertices.iter_mut().zip(&self.mesh.vertices) {
+            let mut blend = [[0.0f32; 4]; 4];
+            for (joint, weight) in v.joint_indices.iter().zip(&v.joint_weights) {
+                if *weight > 0.0 {
+                    for (column, bone) in blend.iter_mut().zip(&palette[*joint as usize]) {
+                        for (c, b) in column.iter_mut().zip(bone) {
+                            *c += b * weight;
+                        }
+                    }
+                }
+            }
+            let apply = |p: [f32; 3], w: f32| -> [f32; 3] {
+                std::array::from_fn(|r| {
+                    blend[0][r] * p[0] + blend[1][r] * p[1] + blend[2][r] * p[2] + blend[3][r] * w
+                })
+            };
+            out.position = apply(v.position, 1.0);
+            out.normal = Vec3::from_array(apply(v.normal, 0.0))
+                .normalized()
+                .to_array();
+            let t = Vec3::from_array(apply([v.tangent[0], v.tangent[1], v.tangent[2]], 0.0))
+                .normalized();
+            out.tangent = [t.x, t.y, t.z, v.tangent[3]];
+        }
+        mesh.recompute_bounds();
+        mesh
+    }
+}
+
+const IDENTITY_BONE: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+/// The bone matrix for a segment leaving `head` along unit `dir` at rest, and
+/// leaving `posed_head` under `p`: turn * stretch about the head, where a
+/// stretch of `l` along `dir` and `r` across it is `r I + (l - r) dir dir^T`.
+fn segment_bone(head: Vec3, dir: Vec3, p: &SegmentPose, posed_head: Vec3) -> [[f32; 4]; 4] {
+    let (l, r) = (p.length_scale, p.radius_scale);
+    let d = dir.to_array();
+    let mut linear = [[0.0f32; 3]; 3];
+    for (c, column) in linear.iter_mut().enumerate() {
+        let mut stretched = [0.0f32; 3];
+        for (row, s) in stretched.iter_mut().enumerate() {
+            *s = (l - r) * d[row] * d[c] + if row == c { r } else { 0.0 };
+        }
+        *column = quat_rotate_vec3(&p.rotation, stretched);
+    }
+    let h = head.to_array();
+    let moved: [f32; 3] =
+        std::array::from_fn(|r| linear[0][r] * h[0] + linear[1][r] * h[1] + linear[2][r] * h[2]);
+    let translation = posed_head.to_array();
+    [
+        [linear[0][0], linear[0][1], linear[0][2], 0.0],
+        [linear[1][0], linear[1][1], linear[1][2], 0.0],
+        [linear[2][0], linear[2][1], linear[2][2], 0.0],
+        [
+            translation[0] - moved[0],
+            translation[1] - moved[1],
+            translation[2] - moved[2],
+            1.0,
+        ],
+    ]
 }
 
 #[cfg(test)]

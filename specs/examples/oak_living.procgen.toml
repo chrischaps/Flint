@@ -11,11 +11,15 @@
 # grammars report themselves unsupported.
 #
 #   flint gen specs/examples/oak_living.procgen.toml --dry-run    # checks [living], counts the skeleton
+#   flint gen specs/examples/oak_living.procgen.toml -o oak.glb   # the skinned rest mesh
+#   flint edit oak.glb --pose-bone seg_0001:0,0,55 --show-skeleton
 #   flint gen specs/examples/oak_living.procgen.toml --strip -o strip.png   # 48 frames of it on one sheet
 #   cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses
 #
-# A plain `flint gen` still bakes one still tree from [seed] and doesn't read
-# [living]. The runtime that plays it is coming through epic #206.
+# `flint gen` bakes the lineage's rest mesh, skinned to a bone per segment. It
+# grows from lineage_seed, so [seed] plays no part, and --seed or --batch pick
+# the lineage instead. [[lod]] doesn't apply: a skinned rest is one level. The
+# runtime that plays it is coming through epic #206.
 
 generator = "tree_v1"
 

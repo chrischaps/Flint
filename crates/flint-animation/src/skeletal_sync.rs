@@ -13,7 +13,7 @@ use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Per-entity skeletal playback state (alias for the shared [`ClipPlaybackState`])
 pub type SkeletalPlaybackState = ClipPlaybackState;
@@ -103,6 +103,9 @@ pub struct SkeletalSync {
     /// Runtime-only per-layer mute flags (previewer solo/mute). Kept out of
     /// `ClipPlaybackState` so `sync_from_world` never clobbers them.
     mutes: HashMap<EntityId, Vec<bool>>,
+    /// Rotations put on joints by hand (the previewer's bone posing), `[entity]
+    /// [joint]`, on top of whatever the clips and layers say.
+    joint_offsets: HashMap<EntityId, BTreeMap<usize, [f32; 4]>>,
     /// In-flight layer weight ramps, `[entity][layer]`. Like `mutes`, kept
     /// outside the playback state: `sync_from_world` copies every layer's
     /// weight from the ECS each frame, so the ramp is *driven* by the ECS
@@ -134,6 +137,16 @@ impl LayerFade {
     }
 }
 
+/// Turn `skeleton`'s local poses by `offsets`. Callers restore the poses after
+/// computing matrices, as they do for layers, so turns never accumulate.
+fn apply_joint_offsets(skeleton: &mut Skeleton, offsets: &BTreeMap<usize, [f32; 4]>) {
+    for (&joint, offset) in offsets {
+        if let Some(pose) = skeleton.local_poses.get_mut(joint) {
+            pose.rotation = quat_normalize(&quat_mul(&pose.rotation, offset));
+        }
+    }
+}
+
 impl SkeletalSync {
     pub fn new() -> Self {
         Self::default()
@@ -147,6 +160,7 @@ impl SkeletalSync {
         self.completed_blends.clear();
         self.contributions.clear();
         self.mutes.clear();
+        self.joint_offsets.clear();
         self.fades.clear();
         self.completed_fades.clear();
     }
@@ -235,6 +249,34 @@ impl SkeletalSync {
             .unwrap_or_default();
         state.layer_weight = state.layers.first().map(|l| l.weight).unwrap_or(1.0);
         state.layer_time = state.layers.first().map(|l| l.time).unwrap_or(0.0);
+    }
+
+    /// Turn a joint by `rotation` in its own frame, on top of what the clips
+    /// say, or give it back with `None`. Bone matrices are recomputed here, so
+    /// this works on a skeleton with no clip to advance it.
+    pub fn set_joint_offset(
+        &mut self,
+        entity_id: EntityId,
+        joint: usize,
+        rotation: Option<[f32; 4]>,
+    ) {
+        let offsets = self.joint_offsets.entry(entity_id).or_default();
+        match rotation {
+            Some(q) => offsets.insert(joint, q),
+            None => offsets.remove(&joint),
+        };
+        let Some(skeleton) = self.skeletons.get_mut(&entity_id) else {
+            return;
+        };
+        let held = skeleton.local_poses.clone();
+        apply_joint_offsets(skeleton, offsets);
+        skeleton.compute_bone_matrices();
+        skeleton.local_poses = held;
+    }
+
+    /// The joints turned by [`Self::set_joint_offset`].
+    pub fn joint_offsets(&self, entity_id: &EntityId) -> Option<&BTreeMap<usize, [f32; 4]>> {
+        self.joint_offsets.get(entity_id)
     }
 
     /// Register a skeletal clip by name
@@ -638,6 +680,9 @@ impl SkeletalSync {
             state.layer_time = state.layers.first().map(|l| l.time).unwrap_or(0.0);
 
             // Compute final bone matrices
+            if let Some(offsets) = self.joint_offsets.get(&entity_id) {
+                apply_joint_offsets(skeleton, offsets);
+            }
             skeleton.compute_bone_matrices();
 
             // Un-apply the layers from the persistent pose buffer (see
@@ -1171,6 +1216,32 @@ mod tests {
     // ── Layer tests ─────────────────────────────────────────────────
 
     /// root -> child, both at rest identity.
+    #[test]
+    fn a_joint_offset_turns_a_clipless_skeleton_and_what_hangs_from_it() {
+        let mut sync = SkeletalSync::new();
+        let eid = EntityId::new();
+        let mut skeleton = two_joint_skeleton();
+        skeleton.rest_poses[1].translation = [0.0, 1.0, 0.0];
+        skeleton.local_poses = skeleton.rest_poses.clone();
+        skeleton.compute_bone_matrices();
+        sync.add_skeleton(eid, skeleton);
+
+        // A quarter turn about Z at the root swings the child from +Y to -X.
+        let quarter =
+            flint_core::quat::quat_from_axis_angle([0.0, 0.0, 1.0], std::f32::consts::FRAC_PI_2);
+        sync.set_joint_offset(eid, 0, Some(quarter));
+        let at = sync.skeleton(&eid).unwrap().global_matrices[1][3];
+        assert!((at[0] + 1.0).abs() < 1e-5 && at[1].abs() < 1e-5, "{at:?}");
+
+        // Nothing piled up in the pose buffer, and it gives back cleanly.
+        let held = &sync.skeleton(&eid).unwrap().local_poses[0].rotation;
+        assert_eq!(*held, [0.0, 0.0, 0.0, 1.0]);
+        sync.set_joint_offset(eid, 0, None);
+        let at = sync.skeleton(&eid).unwrap().global_matrices[1][3];
+        assert!(at[0].abs() < 1e-5 && (at[1] - 1.0).abs() < 1e-5, "{at:?}");
+        assert!(sync.joint_offsets(&eid).unwrap().is_empty());
+    }
+
     fn two_joint_skeleton() -> Skeleton {
         Skeleton {
             joint_names: vec!["root".into(), "child".into()],

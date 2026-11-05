@@ -5,7 +5,7 @@
 //! parameters come from [`ProcGenSpec`]. This keeps generators `Send + Sync`
 //! and safe for future parallel generation.
 
-use crate::living::{LivingPose, LivingSkeleton};
+use crate::living::{LivingPose, LivingRig, LivingSkeleton};
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::rng::SeededRng;
 use crate::spec::ProcGenSpec;
@@ -96,6 +96,11 @@ pub trait LivingGenerator: Send + Sync {
     /// The skeleton every pose of this lineage shares: segments with stable
     /// ids and parents, and the leaf cards bound to them.
     fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
+
+    /// The skinned rest mesh of this lineage and how a pose moves its bones,
+    /// so a pose can be drawn by uploading bone matrices, not rebuilding a
+    /// mesh.
+    fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig>;
 
     /// One variant of `skeleton` as this shape seed grows it, undamped: every
     /// segment as far from rest as the seed took it. A ring kept in this form

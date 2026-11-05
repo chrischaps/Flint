@@ -43,8 +43,10 @@ pub fn skinned_mesh_to_glb(mesh: &SkinnedMeshData) -> Result<Vec<u8>> {
         crate::ProcGenError::InvalidMesh(format!("skinned mesh validation failed: {e}"))
     })?;
 
-    let bin_data = build_skinned_buffer(mesh);
-    let root = build_skinned_gltf_root(mesh, bin_data.len());
+    let mut bin_data = build_skinned_buffer(mesh);
+    let textures = embed_normal_maps(mesh.materials.iter(), &mut bin_data)?;
+    let mut root = build_skinned_gltf_root(mesh, bin_data.len(), &textures);
+    push_embedded_textures(&mut root, &textures);
     write_glb(&root, &bin_data)
 }
 
@@ -96,7 +98,11 @@ fn build_skinned_buffer(mesh: &SkinnedMeshData) -> Vec<u8> {
 }
 
 /// Build the glTF JSON root for a skinned mesh with skeleton.
-fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) -> json::Root {
+fn build_skinned_gltf_root(
+    mesh: &SkinnedMeshData,
+    buffer_byte_length: usize,
+    textures: &[EmbeddedTexture],
+) -> json::Root {
     let mut root = json::Root::default();
     root.asset.generator = Some("Flint Procgen".into());
 
@@ -299,7 +305,7 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
     // ─── Primitives & materials ─────────────────────────────────────────
     let primitives = if mesh.submeshes.is_empty() {
         let mat_data = mesh.materials.first().cloned().unwrap_or_default();
-        let mat_idx = root.push(material_from_data(&mat_data, &[]));
+        let mat_idx = root.push(material_from_data(&mat_data, textures));
         vec![Primitive {
             attributes,
             extensions: None,
@@ -318,7 +324,7 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
                     .get(sub.material_index)
                     .cloned()
                     .unwrap_or_default();
-                let mat_idx = root.push(material_from_data(&mat_data, &[]));
+                let mat_idx = root.push(material_from_data(&mat_data, textures));
 
                 let sub_idx_acc = root.push(json::Accessor {
                     buffer_view: Some(idx_view_idx),
@@ -446,12 +452,18 @@ fn meshes_to_glb_inner(meshes: &[&MeshData]) -> Result<Vec<u8>> {
     }
 
     let mut bin_data = build_buffer(meshes);
-    let textures = embed_normal_maps(meshes, &mut bin_data)?;
+    let materials = meshes.iter().flat_map(|m| &m.materials);
+    let textures = embed_normal_maps(materials, &mut bin_data)?;
     let mut root = build_gltf_root(meshes, bin_data.len(), &textures);
-    // Images go after the meshes' views; materials already refer to their
-    // textures by these indices.
+    push_embedded_textures(&mut root, &textures);
+    write_glb(&root, &bin_data)
+}
+
+/// Add the images and textures for `textures`. They go after the meshes'
+/// views; materials already refer to their textures by these indices.
+fn push_embedded_textures(root: &mut json::Root, textures: &[EmbeddedTexture]) {
     let buffer = json::Index::new(0);
-    for tex in &textures {
+    for tex in textures {
         let view = root.push(json::buffer::View {
             buffer,
             byte_length: USize64::from(tex.byte_length),
@@ -478,7 +490,6 @@ fn meshes_to_glb_inner(meshes: &[&MeshData]) -> Result<Vec<u8>> {
             extras: Default::default(),
         });
     }
-    write_glb(&root, &bin_data)
 }
 
 /// A material's normal map, PNG-encoded into the binary buffer.
@@ -489,15 +500,15 @@ struct EmbeddedTexture<'a> {
     byte_length: usize,
 }
 
-/// Append each distinct normal map among the meshes' materials to `buf` as a
-/// PNG. LODs clone their materials, so equal maps are stored once; the i-th
-/// entry becomes glTF texture i.
+/// Append each distinct normal map among `materials` to `buf` as a PNG. LODs
+/// clone their materials, so equal maps are stored once; the i-th entry
+/// becomes glTF texture i.
 fn embed_normal_maps<'a>(
-    meshes: &[&'a MeshData],
+    materials: impl Iterator<Item = &'a MaterialData>,
     buf: &mut Vec<u8>,
 ) -> Result<Vec<EmbeddedTexture<'a>>> {
     let mut textures: Vec<EmbeddedTexture<'a>> = Vec::new();
-    for mat in meshes.iter().flat_map(|m| &m.materials) {
+    for mat in materials {
         let Some(image) = mat.normal_map.as_ref() else {
             continue;
         };

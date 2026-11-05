@@ -361,22 +361,7 @@ impl GenPreviewApp {
 
                     // Convert skinned mesh to regular MeshData for preview
                     // (renders the rest-pose geometry without skinning)
-                    let mesh = flint_procgen::MeshData {
-                        vertices: skinned
-                            .vertices
-                            .iter()
-                            .map(|v| flint_procgen::Vertex {
-                                position: v.position,
-                                normal: v.normal,
-                                tangent: v.tangent,
-                                uv: v.uv,
-                            })
-                            .collect(),
-                        indices: skinned.indices.clone(),
-                        materials: skinned.materials.clone(),
-                        submeshes: skinned.submeshes.clone(),
-                        bounding_box: skinned.bounding_box,
-                    };
+                    let mesh = skinned.rest_mesh();
                     self.upload_mesh(&mesh, 0);
                     self.last_mesh = Some(mesh);
                     self.last_images.clear();

@@ -758,6 +758,8 @@ pub struct TreeOutput {
     pub branch_tip_directions: Vec<Vec3>,
     /// All branch segments (for along-branch leaf placement).
     pub branch_segments: Vec<BranchSegment>,
+    /// How many of `mesh`'s vertices are the trunk's. They come first.
+    pub trunk_vertices: usize,
 }
 
 // ─── Combined Tree Generation ───────────────────────────────────────────────
@@ -793,6 +795,7 @@ pub fn generate_tree(
     // Preserve bark material
     let mut mesh = builder.build();
     mesh.materials = trunk.mesh.materials.clone();
+    let trunk_vertices = trunk.mesh.vertices.len();
 
     Ok(TreeOutput {
         mesh,
@@ -800,6 +803,7 @@ pub fn generate_tree(
         branch_tips: branch_output.tip_positions,
         branch_tip_directions: branch_output.tip_directions,
         branch_segments: branch_output.segments,
+        trunk_vertices,
     })
 }
 
@@ -820,9 +824,10 @@ impl Generator for TreeGenerator {
 
     /// 1: the first tree. 2: a sway that reaches the tip, bark that tiles
     /// (#22). 3: limbs along the trunk, one tube each (#23). 4: two-sided
-    /// leaf cards in season shades, LODs that keep the trunk (#24).
+    /// leaf cards in season shades, LODs that keep the trunk (#24). 5: a
+    /// supported `[living]` spec bakes its skinned rest (#209).
     fn revision(&self) -> u32 {
-        4
+        5
     }
 
     fn output_kind(&self) -> OutputKind {
@@ -834,6 +839,16 @@ impl Generator for TreeGenerator {
     }
 
     fn generate(&self, spec: &ProcGenSpec, rng: &mut SeededRng) -> Result<GeneratorOutput> {
+        // A living spec's identity is its lineage, not `rng`, and what it
+        // bakes is the rest mesh its poses move. One that can't live falls
+        // through to a still tree, and `flint gen` says `[living]` is ignored.
+        if let Some(living) = &spec.living {
+            if self.check_living(spec).is_ok() {
+                let rig = self.rig(spec, living.lineage_seed)?;
+                return Ok(GeneratorOutput::SkinnedMesh(rig.mesh));
+            }
+        }
+
         // 1. Parse params
         let trunk_params = TrunkParams::from_toml(&spec.params)?;
         let branch_params = BranchParams::from_toml(&spec.params)?;
