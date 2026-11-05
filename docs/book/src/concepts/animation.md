@@ -225,6 +225,15 @@ flint edit models/starthing.gltf --render out.png --clip WalkCycle --layer StarC
 # --layer clip[:weight[:mask[:mode]]], repeatable, in order
 ```
 
+The panel's **Pose a bone** picks a joint and turns it with X, Y and Z sliders, in the joint's own frame and on top of whatever the clips say. It needs no clip, so it's the way to try a skeleton that has none, such as a [living tree](procgen.md#living-props). The same from the command line, headless if you add `--render`:
+
+```bash
+flint edit models/oak.glb --pose-bone seg_0001:0,0,55 --show-skeleton
+# --pose-bone joint:x,y,z in degrees, repeatable
+```
+
+A posed joint and everything past it draw orange in the skeleton overlay.
+
 #### Layer fades
 
 A layer's `weight` is a live dial, so a script that sets it pops the pose. To

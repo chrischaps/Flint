@@ -8,10 +8,12 @@
 //! ```
 //!
 //! `--amount`, `--steady` and `--keep-size` override the spec's `[living]
-//! variance`. Everything goes through the public contract (`structure`,
+//! variance`. Everything goes through the public contract (`structure`, `rig`,
 //! `full_pose`, `with_variance`, `posed_segments`, `posed_leaf_mesh`), so what
-//! this writes is what a caller of `LivingGenerator` gets. Each pose's mesh is
-//! rebuilt from scratch; the skinned mesh that makes this cheap is #209.
+//! this writes is what a caller of `LivingGenerator` gets. `poseN.glb` is
+//! rebuilt from scratch, and `poseN_skinned.glb` is `skinned.glb` moved by that
+//! pose's bone matrices, so the pair shows what skinning gives up against an
+//! exact rebuild. It also prints how far the poses deform the mesh.
 
 use flint_procgen::algorithms::mesh_builder::MeshBuilder;
 use flint_procgen::generators::tree::branches::segments_to_mesh;
@@ -19,8 +21,8 @@ use flint_procgen::generators::tree::{
     generate_trunk, join_bark_and_leaves, BranchParams, TrunkParams,
 };
 use flint_procgen::{
-    mesh_to_glb, BoundingBox, BranchSegment, LivingGenerator, LivingPose, LivingSkeleton, MeshData,
-    ProcGenSpec, SeededRng, TreeGenerator, VarianceConfig,
+    mesh_to_glb, skinned_mesh_to_glb, BoundingBox, BranchSegment, LivingGenerator, LivingPose,
+    LivingSkeleton, MeshData, ProcGenSpec, SeededRng, TreeGenerator, VarianceConfig,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -87,8 +89,20 @@ fn main() -> Res<()> {
     let rest = tree(&skeleton.segments, &skeleton.leaf_mesh)?;
     std::fs::write(out.join("rest.glb"), mesh_to_glb(&rest)?)?;
 
+    let rig = TreeGenerator.rig(&spec, lineage)?;
+    std::fs::write(out.join("skinned.glb"), skinned_mesh_to_glb(&rig.mesh)?)?;
+    eprintln!(
+        "skinned: {} bones, {} vertices, {} triangles",
+        rig.mesh.bone_count(),
+        rig.mesh.vertex_count(),
+        rig.mesh.triangle_count()
+    );
+
     let rest_box = skeleton.rest_bounds();
     let mut pose_json = Vec::new();
+    let mut palette = Vec::new();
+    let (mut lengths, mut radii) = (Vec::new(), Vec::new());
+    let (mut widths, mut full_widths) = (Vec::new(), Vec::new());
     let levels = skeleton.max_depth() as usize + 1;
     let (mut turned, mut counted) = (vec![0.0f32; levels], vec![0u32; levels]);
     for shape_seed in 0..poses {
@@ -101,9 +115,25 @@ fn main() -> Res<()> {
             sides[1] * 100.0,
             sides[2] * 100.0,
         );
+        rig.palette(&skeleton, &pose, &mut palette)?;
+        std::fs::write(
+            out.join(format!("pose{shape_seed}_skinned.glb")),
+            mesh_to_glb(&rig.skinned_mesh(&palette))?,
+        )?;
         for (rest, p) in skeleton.segments.iter().zip(&pose.segments) {
             turned[rest.depth as usize] += 2.0 * p.rotation[3].clamp(-1.0, 1.0).acos();
             counted[rest.depth as usize] += 1;
+            lengths.push(p.length_scale);
+            radii.push(p.radius_scale);
+            if let Some(parent) = rest.parent {
+                let parent = parent as usize;
+                widths.push(joint_width(&pose.segments[parent].rotation, &p.rotation));
+                let f = &full.segments;
+                full_widths.push(joint_width(
+                    &f[parent].rotation,
+                    &f[rest.id as usize].rotation,
+                ));
+            }
         }
         let posed = tree(
             &skeleton.posed_segments(&pose)?,
@@ -125,6 +155,11 @@ fn main() -> Res<()> {
             );
         }
     }
+
+    report("length scale", &mut lengths);
+    report("radius scale", &mut radii);
+    report("joint ring width", &mut widths);
+    report("undamped", &mut full_widths);
 
     let doc = json!({
         "spec": spec.meta.name,
@@ -152,6 +187,31 @@ fn side_differences(rest: &BoundingBox, now: &BoundingBox) -> [f32; 3] {
         (now.max - now.min).to_array(),
     );
     [0, 1, 2].map(|axis| now[axis] / rest[axis] - 1.0)
+}
+
+/// How wide a ring shared half and half by two bones stays, in the plane of
+/// the bend, under this turn between them: 1 is untouched, and 0 is the
+/// pinch of two bones half a turn apart.
+fn joint_width(a: &[f32; 4], b: &[f32; 4]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    // cos(half the angle between them) is |dot| for unit quaternions.
+    dot.abs().min(1.0)
+}
+
+fn report(label: &str, values: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+    values.sort_by(f32::total_cmp);
+    let at = |q: f32| values[((values.len() - 1) as f32 * q) as usize];
+    eprintln!(
+        "{label:>17}: min {:.3}  p5 {:.3}  p50 {:.3}  p95 {:.3}  max {:.3}",
+        at(0.0),
+        at(0.05),
+        at(0.5),
+        at(0.95),
+        at(1.0)
+    );
 }
 
 fn pose_to_json(pose: &LivingPose) -> serde_json::Value {

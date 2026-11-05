@@ -274,6 +274,10 @@ pub fn upload_output(
             Some(mesh) => sink.upload_mesh(name, mesh),
             None => return Err("it produced no LODs".into()),
         },
+        // It draws holding still: uploading it skinned is #211.
+        (GeneratorOutput::SkinnedMesh(skinned), AssetKind::Model) => {
+            sink.upload_mesh(name, &skinned.rest_mesh())
+        }
         (GeneratorOutput::Image(image), _) => sink.upload_image(name, image),
         (GeneratorOutput::ImageSet(images), _) if !images.is_empty() => {
             for (i, image) in images.iter().enumerate() {

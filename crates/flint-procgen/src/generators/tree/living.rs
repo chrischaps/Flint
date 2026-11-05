@@ -9,18 +9,26 @@
 //! way and draws only angles from the RNG: every seed grows the same segments
 //! in the same order (#207). `generate` itself is untouched.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
+use flint_core::quat::{quat_conjugate, quat_mul, quat_normalize, quat_rotate_vec3};
 use flint_core::Vec3;
 
 use crate::generator::LivingGenerator;
-use crate::living::{LeafBinding, LivingPose, LivingSkeleton, SegmentPose};
+use crate::living::{LeafBinding, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
+use crate::skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 use crate::spec::ProcGenSpec;
 use crate::types::{BranchSegment, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
 
-use super::branches::{extract_tips, grow_branch_segments};
+use super::branches::{extract_tips, grow_branch_segments, tube_influences};
 use super::leaves::{card_index_count, generate_leaves};
+use super::lod::join_bark_and_leaves;
 use super::trunk::trunk_spine;
-use super::{BranchMethod, BranchParams, LeafParams, TreeGenerator, TrunkParams, TrunkSpine};
+use super::{
+    generate_tree, BranchMethod, BranchParams, LeafParams, TreeGenerator, TrunkParams, TrunkSpine,
+};
 
 impl LivingGenerator for TreeGenerator {
     fn check_living(&self, spec: &ProcGenSpec) -> Result<()> {
@@ -68,6 +76,57 @@ impl LivingGenerator for TreeGenerator {
             leaf_mesh,
             card_index_count: card_indices,
             leaf_bindings,
+        })
+    }
+
+    fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig> {
+        let skeleton = self.structure(spec, lineage_seed)?;
+        let branch = BranchParams::from_toml(&spec.params)?;
+        let trunk = TrunkParams::from_toml(&spec.params)?;
+        let tree = generate_tree(&trunk, &branch, &mut SeededRng::new(lineage_seed))?;
+
+        let (segment_bones, bone_segments) =
+            assign_bones(&skeleton.segments, MAX_SKINNED_BONES - 1);
+        let joints = joint_table(
+            &skeleton,
+            tree.trunk_vertices,
+            &tube_influences(&skeleton.segments, branch.radial_segments),
+            &segment_bones,
+        );
+
+        let rest = join_bark_and_leaves(&tree.mesh, &skeleton.leaf_mesh);
+        if joints.len() != rest.vertices.len() {
+            return Err(ProcGenError::InvalidMesh(format!(
+                "skinned {} vertices of a tree with {}",
+                joints.len(),
+                rest.vertices.len()
+            )));
+        }
+        let mesh = SkinnedMeshData {
+            vertices: rest
+                .vertices
+                .iter()
+                .zip(&joints)
+                .map(|(v, (joint_indices, joint_weights))| SkinnedVertex {
+                    position: v.position,
+                    normal: v.normal,
+                    tangent: v.tangent,
+                    uv: v.uv,
+                    joint_indices: *joint_indices,
+                    joint_weights: *joint_weights,
+                })
+                .collect(),
+            indices: rest.indices,
+            materials: rest.materials,
+            submeshes: rest.submeshes,
+            bounding_box: rest.bounding_box,
+            skeleton: skeleton_def(&skeleton.segments, &bone_segments, &segment_bones),
+        };
+        mesh.validate()?;
+        Ok(LivingRig {
+            mesh,
+            segment_bones,
+            bone_segments,
         })
     }
 
@@ -153,6 +212,127 @@ fn rotation_between(a: Vec3, b: Vec3) -> [f32; 4] {
         return [p.x, p.y, p.z, 0.0];
     }
     flint_core::quat::quat_normalize(&[axis.x, axis.y, axis.z, 1.0 + c])
+}
+
+/// Which bone each segment rides, and which segment each bone follows, with
+/// at most `budget` bones for segments and bone 0 left for the trunk.
+///
+/// While there are too many, the shortest segment with nothing left hanging
+/// from it folds into its parent: the tree loses the bones that show least,
+/// from the tips in, and a bone's parent always survives it.
+fn assign_bones(segments: &[BranchSegment], budget: usize) -> (Vec<u16>, Vec<Option<u32>>) {
+    let mut folded = vec![false; segments.len()];
+    let excess = segments.len().saturating_sub(budget);
+    if excess > 0 {
+        let mut children = vec![0usize; segments.len()];
+        for parent in segments.iter().filter_map(|s| s.parent) {
+            children[parent as usize] += 1;
+        }
+        // Lengths are never negative, so their bits order as they do.
+        let terminal = |s: &BranchSegment| Reverse((s.length().to_bits(), s.id));
+        let mut ready: BinaryHeap<_> = segments
+            .iter()
+            .filter(|s| children[s.id as usize] == 0)
+            .map(terminal)
+            .collect();
+        for _ in 0..excess {
+            let Some(Reverse((_, id))) = ready.pop() else {
+                break;
+            };
+            folded[id as usize] = true;
+            if let Some(parent) = segments[id as usize].parent {
+                children[parent as usize] -= 1;
+                if children[parent as usize] == 0 {
+                    ready.push(terminal(&segments[parent as usize]));
+                }
+            }
+        }
+    }
+
+    let mut segment_bones = Vec::with_capacity(segments.len());
+    let mut bone_segments = vec![None];
+    for s in segments {
+        let bone = if folded[s.id as usize] {
+            s.parent.map_or(0, |parent| segment_bones[parent as usize])
+        } else {
+            bone_segments.push(Some(s.id));
+            (bone_segments.len() - 1) as u16
+        };
+        segment_bones.push(bone);
+    }
+    (segment_bones, bone_segments)
+}
+
+/// The rest skeleton: the trunk at the origin, then each bone at its
+/// segment's start with +Y along the segment, relative to its parent's bone.
+/// Its transforms hold no scale, so turning a bone turns everything past it.
+fn skeleton_def(
+    segments: &[BranchSegment],
+    bone_segments: &[Option<u32>],
+    segment_bones: &[u16],
+) -> SkeletonDef {
+    let frame = |s: &BranchSegment| rotation_between(Vec3::UP, s.direction());
+    let bones = bone_segments
+        .iter()
+        .map(|bone| {
+            let Some(id) = bone else {
+                return BoneDef {
+                    name: "trunk".into(),
+                    ..BoneDef::default()
+                };
+            };
+            let s = &segments[*id as usize];
+            let (parent_bone, parent_head, parent_frame) = match s.parent {
+                Some(p) => {
+                    let parent = &segments[p as usize];
+                    (segment_bones[p as usize], parent.start, frame(parent))
+                }
+                None => (0, Vec3::ZERO, SegmentPose::IDENTITY.rotation),
+            };
+            let to_parent = quat_conjugate(&parent_frame);
+            BoneDef {
+                name: format!("seg_{id:04}"),
+                parent: Some(parent_bone as usize),
+                rest_translation: quat_rotate_vec3(&to_parent, (s.start - parent_head).to_array()),
+                rest_rotation: quat_normalize(&quat_mul(&to_parent, &frame(s))),
+                rest_scale: [1.0, 1.0, 1.0],
+            }
+        })
+        .collect();
+    SkeletonDef { bones }
+}
+
+/// Each vertex's joints and weights, in the order of the tree's mesh: the
+/// trunk on bone 0, the branch tubes as `tubes` says, then each leaf card
+/// wholly on the bone of the segment it's bound to. A vertex whose two
+/// segments ride one bone just has that bone.
+fn joint_table(
+    skeleton: &LivingSkeleton,
+    trunk_vertices: usize,
+    tubes: &[(u32, Option<u32>)],
+    segment_bones: &[u16],
+) -> Vec<([u16; 4], [f32; 4])> {
+    const TRUNK: ([u16; 4], [f32; 4]) = ([0, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]);
+    let rigid = |bone: u16| ([bone, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]);
+
+    let mut joints = vec![TRUNK; trunk_vertices];
+    joints.extend(tubes.iter().map(|&(a, b)| {
+        let a = segment_bones[a as usize];
+        match b.map(|b| segment_bones[b as usize]) {
+            Some(b) if b != a => ([a, b, 0, 0], [0.5, 0.5, 0.0, 0.0]),
+            _ => rigid(a),
+        }
+    }));
+
+    let first_leaf = joints.len();
+    joints.resize(first_leaf + skeleton.leaf_mesh.vertices.len(), TRUNK);
+    for (k, card) in skeleton.leaf_bindings.iter().enumerate() {
+        let bone = rigid(segment_bones[card.segment as usize]);
+        for v in skeleton.card_vertices(k) {
+            joints[first_leaf + v as usize] = bone;
+        }
+    }
+    joints
 }
 
 /// Bind each leaf card to the segment nearest its centre.
@@ -799,6 +979,470 @@ mod tests {
             .with_variance(&full, &spec.living.as_ref().unwrap().variance)
             .unwrap();
         assert_eq!(TreeGenerator.pose(&spec, &skeleton, 4).unwrap(), retuned);
+    }
+
+    // ── The skinned rest (#209) ─────────────────────────────────────────
+
+    fn rig_of(spec: &ProcGenSpec) -> LivingRig {
+        TreeGenerator.rig(spec, LINEAGE).unwrap()
+    }
+
+    fn weights_sum_to_one(mesh: &SkinnedMeshData, name: &str) {
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            let sum: f32 = v.joint_weights.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-6,
+                "{name}: vertex {i}'s weights sum to {sum}"
+            );
+            for (joint, weight) in v.joint_indices.iter().zip(&v.joint_weights) {
+                assert!(*weight >= 0.0);
+                assert!(*weight == 0.0 || (*joint as usize) < mesh.skeleton.bones.len());
+            }
+        }
+    }
+
+    #[test]
+    fn weights_sum_to_one_on_every_vertex() {
+        for spec in lsystem_specs() {
+            for lineage in [LINEAGE, 1, 12345] {
+                let rig = TreeGenerator.rig(&spec, lineage).unwrap();
+                weights_sum_to_one(&rig.mesh, &spec.meta.name);
+            }
+        }
+    }
+
+    #[test]
+    fn the_living_example_bakes_a_skinned_mesh_from_its_lineage() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        // Whatever seed the caller's RNG has: the tree is the lineage's.
+        for seed in [0, 42, 999] {
+            match TreeGenerator
+                .generate(&spec, &mut SeededRng::new(seed))
+                .unwrap()
+            {
+                GeneratorOutput::SkinnedMesh(mesh) => assert_eq!(mesh, rig_of(&spec).mesh),
+                other => panic!("expected a skinned mesh, got {:?}", other.kind()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_spec_without_living_still_bakes_a_still_tree() {
+        for spec in lsystem_specs() {
+            assert!(spec.living.is_none());
+            let out = TreeGenerator
+                .generate(&spec, &mut SeededRng::new(LINEAGE))
+                .unwrap();
+            assert!(matches!(out, GeneratorOutput::Mesh(_)));
+        }
+    }
+
+    #[test]
+    fn a_living_table_on_a_spec_that_cant_live_still_bakes_a_still_tree() {
+        let mut spec = load("specs/examples/oak_living.procgen.toml");
+        spec.params
+            .as_table_mut()
+            .unwrap()
+            .insert("lsystem_preset".into(), "stochastic_plant".into());
+        let out = TreeGenerator
+            .generate(&spec, &mut SeededRng::new(LINEAGE))
+            .unwrap();
+        assert!(matches!(out, GeneratorOutput::Mesh(_)));
+    }
+
+    #[test]
+    fn the_rest_mesh_is_exactly_the_tree_generate_bakes() {
+        for spec in lsystem_specs() {
+            let baked = match TreeGenerator
+                .generate(&spec, &mut SeededRng::new(LINEAGE))
+                .unwrap()
+            {
+                GeneratorOutput::Mesh(mesh) => mesh,
+                other => panic!("expected a mesh, got {:?}", other.kind()),
+            };
+            assert_eq!(rig_of(&spec).mesh.rest_mesh(), baked);
+        }
+    }
+
+    #[test]
+    fn the_oak_gets_a_bone_per_segment_under_the_trunk() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        assert_eq!(rig.mesh.bone_count(), skeleton.segments.len() + 1);
+        assert_eq!(rig.mesh.skeleton.bones[0].name, "trunk");
+        assert_eq!(rig.mesh.skeleton.bones[0].parent, None);
+        for (s, bone) in skeleton.segments.iter().zip(&rig.segment_bones) {
+            assert_eq!(rig.bone_segments[*bone as usize], Some(s.id));
+            let def = &rig.mesh.skeleton.bones[*bone as usize];
+            let parent = def.parent.unwrap();
+            assert!(parent < *bone as usize, "a parent comes before its child");
+            match s.parent {
+                Some(p) => assert_eq!(parent, rig.segment_bones[p as usize] as usize),
+                None => assert_eq!(parent, 0),
+            }
+        }
+    }
+
+    #[test]
+    fn each_bone_sits_on_its_segment_pointing_along_it() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let world = rig.mesh.skeleton.compute_world_transforms();
+        for s in &skeleton.segments {
+            let m = &world[rig.segment_bones[s.id as usize] as usize];
+            let head = Vec3::new(m[12], m[13], m[14]);
+            let along = Vec3::new(m[4], m[5], m[6]);
+            assert!(close(head, s.start, 1e-3), "segment {}", s.id);
+            assert!(close(along, s.direction(), 1e-3), "segment {}", s.id);
+        }
+    }
+
+    /// Distance from `p` to the segment.
+    fn gap_to(p: Vec3, s: &BranchSegment) -> f32 {
+        let ab = s.end - s.start;
+        let t = ((p - s.start).dot(&ab) / ab.dot(&ab).max(1e-9)).clamp(0.0, 1.0);
+        (p - (s.start + ab * t)).length()
+    }
+
+    #[test]
+    fn tube_vertices_are_skinned_to_the_segments_they_wrap() {
+        for spec in lsystem_specs() {
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            let rig = rig_of(&spec);
+            let trunk = TrunkParams::from_toml(&spec.params).unwrap();
+            let branch = BranchParams::from_toml(&spec.params).unwrap();
+            let tree = generate_tree(&trunk, &branch, &mut SeededRng::new(LINEAGE)).unwrap();
+
+            let first_tube = tree.trunk_vertices;
+            let first_leaf = rig.mesh.vertices.len() - skeleton.leaf_mesh.vertices.len();
+            assert!(first_tube > 0 && first_leaf > first_tube);
+
+            for v in &rig.mesh.vertices[..first_tube] {
+                assert_eq!(v.joint_indices[0], 0, "the trunk moves on its own bone");
+                assert_eq!(v.joint_weights, [1.0, 0.0, 0.0, 0.0]);
+            }
+
+            let mut shared = 0;
+            for (i, v) in rig.mesh.vertices[first_tube..first_leaf].iter().enumerate() {
+                let p = Vec3::from_array(v.position);
+                let influences: Vec<&BranchSegment> = v
+                    .joint_indices
+                    .iter()
+                    .zip(&v.joint_weights)
+                    .filter(|(_, w)| **w > 0.0)
+                    .map(|(j, _)| {
+                        let id = rig.bone_segments[*j as usize].expect("a tube on the trunk bone");
+                        &skeleton.segments[id as usize]
+                    })
+                    .collect();
+                // A ring sits at its radius from the segments it joins.
+                let radius = influences
+                    .iter()
+                    .map(|s| s.radius_start.max(s.radius_end))
+                    .fold(0.0f32, f32::max);
+                for s in &influences {
+                    assert!(
+                        gap_to(p, s) <= radius * 1.01 + 1e-4,
+                        "{}: tube vertex {i} is {} from segment {}, radius {radius}",
+                        spec.meta.name,
+                        gap_to(p, s),
+                        s.id
+                    );
+                }
+                if let [a, b] = influences[..] {
+                    shared += 1;
+                    assert_eq!(v.joint_weights, [0.5, 0.5, 0.0, 0.0]);
+                    assert!(close(a.end, b.start, 1e-3), "a ring shared by a non-joint");
+                }
+            }
+            assert!(
+                shared > 0,
+                "{}: no ring is shared at a joint",
+                spec.meta.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_leaf_card_rides_one_bone_whole() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let first_leaf = rig.mesh.vertices.len() - skeleton.leaf_mesh.vertices.len();
+        for (k, card) in skeleton.leaf_bindings.iter().enumerate() {
+            let bone = rig.segment_bones[card.segment as usize];
+            for v in skeleton.card_vertices(k) {
+                let vertex = &rig.mesh.vertices[first_leaf + v as usize];
+                assert_eq!(vertex.joint_indices[0], bone, "card {k}");
+                assert_eq!(vertex.joint_weights, [1.0, 0.0, 0.0, 0.0], "card {k}");
+            }
+        }
+    }
+
+    fn palette_of(
+        rig: &LivingRig,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+    ) -> Vec<[[f32; 4]; 4]> {
+        let mut palette = Vec::new();
+        rig.palette(skeleton, pose, &mut palette).unwrap();
+        palette
+    }
+
+    fn transform(m: &[[f32; 4]; 4], p: Vec3) -> Vec3 {
+        let a = p.to_array();
+        Vec3::from_array(std::array::from_fn(|r| {
+            m[0][r] * a[0] + m[1][r] * a[1] + m[2][r] * a[2] + m[3][r]
+        }))
+    }
+
+    #[test]
+    fn the_rest_pose_moves_nothing() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let rest = LivingPose {
+            shape_seed: 0,
+            segments: vec![SegmentPose::IDENTITY; skeleton.segments.len()],
+        };
+        let moved = rig.skinned_mesh(&palette_of(&rig, &skeleton, &rest));
+        for (a, b) in moved.vertices.iter().zip(&rig.mesh.vertices) {
+            let (a, b) = (Vec3::from_array(a.position), Vec3::from_array(b.position));
+            assert!(close(a, b, 1e-5), "{a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn a_pose_puts_every_bone_where_the_pose_rebuilds_its_segment() {
+        for spec in lsystem_specs() {
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            let rig = rig_of(&spec);
+            for shape_seed in 0..16 {
+                let full = TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap();
+                let held = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+                for pose in [full, held] {
+                    let posed = skeleton.posed_segments(&pose).unwrap();
+                    let palette = palette_of(&rig, &skeleton, &pose);
+                    for (rest, now) in skeleton.segments.iter().zip(&posed) {
+                        let bone = &palette[rig.segment_bones[rest.id as usize] as usize];
+                        assert!(
+                            close(transform(bone, rest.start), now.start, 1e-3)
+                                && close(transform(bone, rest.end), now.end, 1e-3),
+                            "{} seed {shape_seed} segment {}",
+                            spec.meta.name,
+                            rest.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rings are single vertices shared by the two segments they join, so a
+    /// limb can only come apart if those segments disagree about where their
+    /// joint is. They mustn't, and a limb leaving another (whose base is its
+    /// own ring, inside the parent) has to stay on it.
+    #[test]
+    fn no_pose_tears_a_joint_and_leaves_ride_their_branch() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let first_leaf = rig.mesh.vertices.len() - skeleton.leaf_mesh.vertices.len();
+        for shape_seed in 0..SHAPE_SEEDS {
+            // Undamped: the hardest a pose can pull on a joint.
+            let pose = TreeGenerator
+                .full_pose(&spec, &skeleton, shape_seed)
+                .unwrap();
+            let posed = skeleton.posed_segments(&pose).unwrap();
+            let palette = palette_of(&rig, &skeleton, &pose);
+
+            // Both sides of every joint put the joint in one place.
+            for (rest, now) in skeleton.segments.iter().zip(&posed) {
+                let Some(parent) = rest.parent else { continue };
+                let parent_bone = &palette[rig.segment_bones[parent as usize] as usize];
+                let own_bone = &palette[rig.segment_bones[rest.id as usize] as usize];
+                let (a, b) = (
+                    transform(parent_bone, rest.start),
+                    transform(own_bone, rest.start),
+                );
+                assert!(
+                    close(a, b, 2e-3),
+                    "seed {shape_seed} joint {}: {a:?} vs {b:?}",
+                    rest.id
+                );
+                assert!(close(b, now.start, 2e-3));
+            }
+
+            // A card's centre lands where the #208 rebuild puts its anchor,
+            // give or take its offset from the branch.
+            let skinned = rig.skinned_mesh(&palette);
+            for (k, card) in skeleton.leaf_bindings.iter().enumerate().step_by(37) {
+                let s = &posed[card.segment as usize];
+                let anchor = s.start + (s.end - s.start) * card.along;
+                let verts = skeleton.card_vertices(k);
+                let centre = verts
+                    .iter()
+                    .map(|&v| Vec3::from_array(skinned.vertices[first_leaf + v as usize].position))
+                    .fold(Vec3::ZERO, |sum, p| sum + p)
+                    * (1.0 / verts.len() as f32);
+                let p = &pose.segments[card.segment as usize];
+                let stretch = p.length_scale.max(p.radius_scale).max(1.0);
+                assert!(
+                    (centre - anchor).length() <= card.offset.length() * stretch + 1e-3,
+                    "card {k}, seed {shape_seed}"
+                );
+            }
+        }
+    }
+
+    /// Two bones sharing a ring keep cos(turn / 2) of its width, which is the
+    /// dot product of their rotations. The variance is what makes that safe:
+    /// undamped, a joint can turn nearly half way round and pinch flat.
+    #[test]
+    fn the_default_variance_keeps_every_joint_open() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let narrowest = |pose: &LivingPose| {
+            skeleton
+                .segments
+                .iter()
+                .filter_map(|s| {
+                    let a = &pose.segments[s.parent? as usize].rotation;
+                    let b = &pose.segments[s.id as usize].rotation;
+                    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+                    Some(dot.abs())
+                })
+                .fold(1.0f32, f32::min)
+        };
+        let (mut held, mut full) = (1.0f32, 1.0f32);
+        for shape_seed in 0..SHAPE_SEEDS {
+            held = held.min(narrowest(
+                &TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap(),
+            ));
+            full = full.min(narrowest(
+                &TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap(),
+            ));
+        }
+        assert!(held > 0.6, "a held joint narrows to {held}");
+        assert!(
+            full < 0.1,
+            "undamped joints stay at {full}: no test of this"
+        );
+    }
+
+    #[test]
+    fn a_huge_tree_folds_its_smallest_twigs_to_stay_in_budget() {
+        let mut spec = load("specs/examples/oak_living.procgen.toml");
+        spec.params
+            .as_table_mut()
+            .unwrap()
+            .insert("lsystem_iterations".into(), 6.into());
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        assert!(
+            skeleton.segments.len() > MAX_SKINNED_BONES,
+            "{} segments is no test of the budget",
+            skeleton.segments.len()
+        );
+        let rig = rig_of(&spec);
+        assert_eq!(rig.mesh.bone_count(), MAX_SKINNED_BONES);
+        weights_sum_to_one(&rig.mesh, "huge");
+        crate::skinned_mesh_to_glb(&rig.mesh).unwrap();
+
+        for s in &skeleton.segments {
+            let bone = rig.segment_bones[s.id as usize];
+            match rig.bone_segments[bone as usize] {
+                // Its own bone: so is its parent's, all the way up.
+                Some(id) if id == s.id => {
+                    if let Some(p) = s.parent {
+                        let up = rig.segment_bones[p as usize] as usize;
+                        assert_eq!(
+                            rig.bone_segments[up],
+                            Some(p),
+                            "a kept bone lost its parent"
+                        );
+                    }
+                }
+                // Folded: the bone it rides is its nearest kept ancestor.
+                _ => {
+                    let up = s.parent.map_or(0, |p| rig.segment_bones[p as usize]);
+                    assert_eq!(bone, up);
+                }
+            }
+        }
+
+        // A pose still lands on the bones that are left, with nothing torn.
+        let pose = TreeGenerator.pose(&spec, &skeleton, 3).unwrap();
+        let posed = skeleton.posed_segments(&pose).unwrap();
+        let palette = palette_of(&rig, &skeleton, &pose);
+        for id in rig.bone_segments.iter().flatten() {
+            let (rest, now) = (&skeleton.segments[*id as usize], &posed[*id as usize]);
+            let bone = &palette[rig.segment_bones[*id as usize] as usize];
+            assert!(close(transform(bone, rest.end), now.end, 1e-3));
+        }
+    }
+
+    #[test]
+    fn assign_bones_folds_tips_before_what_they_hang_from() {
+        let seg = |id: u32, parent: Option<u32>, length: f32| BranchSegment {
+            start: Vec3::ZERO,
+            end: Vec3::new(0.0, length, 0.0),
+            radius_start: 0.1,
+            radius_end: 0.1,
+            depth: 1,
+            id,
+            parent,
+        };
+        // 0 -> 1 -> (2 short, 3 long)
+        let segments = [
+            seg(0, None, 1.0),
+            seg(1, Some(0), 0.1),
+            seg(2, Some(1), 0.2),
+            seg(3, Some(1), 0.5),
+        ];
+
+        let (bones, kept) = assign_bones(&segments, 3);
+        assert_eq!(bones, vec![1, 2, 2, 3], "the shortest tip goes first");
+        assert_eq!(kept, vec![None, Some(0), Some(1), Some(3)]);
+
+        // Segment 1 is shorter than both tips, but they hang from it.
+        let (bones, kept) = assign_bones(&segments, 1);
+        assert_eq!(bones, vec![1, 1, 1, 1]);
+        assert_eq!(kept, vec![None, Some(0)]);
+
+        let (bones, _) = assign_bones(&segments, 0);
+        assert_eq!(bones, vec![0, 0, 0, 0], "everything can ride the trunk");
+    }
+
+    #[test]
+    fn the_skinned_glb_keeps_its_bones_and_its_bark() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let rig = rig_of(&spec);
+        let glb = crate::skinned_mesh_to_glb(&rig.mesh).unwrap();
+        let (doc, buffers, images) = gltf::import_slice(&glb).unwrap();
+
+        let skin = doc.skins().next().expect("a skin");
+        assert_eq!(skin.joints().count(), rig.mesh.bone_count());
+        assert_eq!(doc.images().count(), images.len());
+        assert!(
+            doc.materials().any(|m| m.normal_texture().is_some()),
+            "the bark lost its normal map"
+        );
+
+        let mesh = doc.meshes().next().unwrap();
+        assert_eq!(mesh.primitives().count(), rig.mesh.submeshes.len());
+        let primitive = mesh.primitives().next().unwrap();
+        let reader = primitive.reader(|b| Some(&buffers[b.index()]));
+        let weights: Vec<[f32; 4]> = reader.read_weights(0).unwrap().into_f32().collect();
+        assert_eq!(weights.len(), rig.mesh.vertices.len());
+        for w in &weights {
+            assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        }
     }
 
     #[test]

@@ -414,6 +414,39 @@ fn a_mesh_named_as_a_texture_is_refused() {
     assert_eq!(reason, "a mesh can't be drawn as a texture");
 }
 
+/// Until #211 uploads it skinned, a living spec in a scene is still a tree.
+#[test]
+fn a_skinned_mesh_draws_holding_still() {
+    let mesh = flint_procgen::SkinnedMeshData {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+        materials: Vec::new(),
+        submeshes: Vec::new(),
+        bounding_box: flint_procgen::BoundingBox::from_positions(&[]),
+        skeleton: flint_procgen::SkeletonDef { bones: Vec::new() },
+    };
+    let mut sink = Recorder::default();
+    upload_output(
+        "oak",
+        AssetKind::Model,
+        &GeneratorOutput::SkinnedMesh(mesh.clone()),
+        &mut sink,
+    )
+    .unwrap();
+    assert!(sink.meshes.contains_key("oak"));
+
+    let refused = upload_output(
+        "oak",
+        AssetKind::Texture,
+        &GeneratorOutput::SkinnedMesh(mesh),
+        &mut sink,
+    );
+    assert_eq!(
+        refused.unwrap_err(),
+        "a skinned mesh can't be drawn as a texture"
+    );
+}
+
 #[test]
 fn image_sets_name_their_maps() {
     assert_eq!(image_set_name("brick", 0, ChannelSemantics::Color), "brick");

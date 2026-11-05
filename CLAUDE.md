@@ -74,9 +74,9 @@ Flint uses an **edit -> validate -> play** loop:
    Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.particles.toml`, `.glb`, `.gltf`.
    Common flags: `--width`, `--height`, `--no-grid`, `--watch`, `--seed`, `--no-inspector`, `--auto-orbit`.
    Scene viewer applies the scene's `[post_process]` block on load. **F4 opens the Rendering & Effects menu** (ADR 0053) — every render/post toggle plus its non-binary parameters (SSAO radius/samples, DoF, bloom, fog, grade/grain/FXAA, kuwahara, render modes, shadows + resolution, lighting levers, FOV, debug shading mode), an authored-vs-viewer-default post toggle, DoF-follow (focus plane tracks the last selected entity; values are plain view distances since the ADR 0055 depth fix), and a Particles section (the viewer simulates `particle_emitter` / `particle_effect` entities live; ADR 0068). WASD orbit, Q/E zoom — while an entity is selected, W/E/R switch gizmo mode instead of orbiting. It also seeds the orbit camera from the scene's authored `[camera]` block (Space returns to that framing; ADR 0051 in game repos using this pattern), and supports `--auto-orbit` turntable with O toggle and [ / ] speed like the model previewer.
-   Model flags: `--clip <name>`, `--layer clip[:weight[:mask[:mode]]]` (repeatable), `--sequence <file.sequence.toml>`, `--sequence-loop`, `--anim-time <s>` (with `--render`; replays a sequence deterministically), `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
+   Model flags: `--clip <name>`, `--layer clip[:weight[:mask[:mode]]]` (repeatable), `--sequence <file.sequence.toml>`, `--sequence-loop`, `--anim-time <s>` (with `--render`; replays a sequence deterministically), `--pose-bone joint:x,y,z` (degrees, in the joint's frame, repeatable; no clip needed), `--show-skeleton`, `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
    A `*.sequence.toml` lists timestamped animator events (`blend`/`layer`/`speed`/`cue`); the previewer gets a Sequence panel (seek slider + event markers, R = restart), the player auto-loads them from `animations/` and scripts use `play_sequence` / `on_sequence_cue`. Layer weights can ramp via `fade_target`/`fade_duration` (`fade_anim_layer`).
-   The model previewer has a Layers stack (clip/weight/Add-Over/mask/solo-mute per row) and a "Skeleton colour" combo that paints the armature by last writer / layer weight / mask / keyed joints.
+   The model previewer has a Layers stack (clip/weight/Add-Over/mask/solo-mute per row), a "Skeleton colour" combo that paints the armature by last writer / layer weight / mask / keyed joints, and "Pose a bone" sliders (posed joints and everything past them draw orange).
    Scene flags: `--spline` (opens spline/track editor).
    Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
 
@@ -85,6 +85,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml -o tree.glb
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen specs/examples/oak_living.procgen.toml -o oak.glb  # a [living] spec bakes its skinned rest (lineage_seed; --seed picks the lineage)
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
    flint gen --ai-create "twisted dead tree" -o tree.glb     # agent writes the spec (ANTHROPIC_API_KEY;
                                                              #   --ai-provider mock is offline and free)

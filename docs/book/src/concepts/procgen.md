@@ -171,6 +171,7 @@ A generator opts in by implementing `LivingGenerator` next to `Generator`:
 
 ```rust
 fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
+fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig>;
 fn full_pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
 ```
 
@@ -208,7 +209,24 @@ A runtime can keep a ring of `full_pose`s and call `LivingSkeleton::with_varianc
 
 `flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
 
-To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB and prints how far its box moved and how far each level turned. `--amount`, `--steady` and `--keep-size` override the spec.
+### The skinned rest mesh
+
+Otherwise `flint gen` writes the lineage's rest mesh as a skinned GLB. It's the same geometry as the still tree `flint gen --seed <lineage>` bakes without a `[living]` table, plus joints and weights, so it holds still until something poses it. It grows from `lineage_seed`, so `[seed]` plays no part, and `--seed` or `--batch` pick the lineage instead.
+
+- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), so a tree with more segments folds its shortest twigs into their parents' bones, from the tips in. `LivingRig::segment_bones` says which bone moves a segment.
+- **Weights.** A ring where a limb carries on from one segment to the next is shared half and half by the two bones, and a limb's first and last rings belong to their own segment. Rings are single vertices, so a joint can't tear. A leaf card rides the bone of its segment, whole.
+- **Poses.** `LivingRig::palette` turns a pose into bone matrices, ready to upload, and `skinned_mesh` applies them on the CPU. All of a pose's scale lives in those matrices: glTF's parent-child transforms can't carry a stretch without shearing the children, so the GLB's skeleton holds none.
+
+A skinned rest has one level: `[[lod]]` doesn't apply, and `flint gen --validate` warns if it's over the spec's level-0 target. Two bones sharing a ring also pinch it when they turn far apart, keeping `cos(turn / 2)` of its width in the plane of the bend. An undamped pose has joints close to half a turn, and the default `variance` keeps the oak's above about 70% of their width. A held pose's `keep_size` scale reaches the bones too, so a leaf card stretches with its segment by that much, up to about 10% along it. Until the runtime uploads it skinned, a scene that uses a living spec draws the rest mesh as a still tree.
+
+To try it, pose a bone by hand:
+
+```bash
+flint gen specs/examples/oak_living.procgen.toml -o oak.glb
+flint edit oak.glb --pose-bone seg_0001:0,0,55 --show-skeleton
+```
+
+To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes the skinned mesh, then each pose twice as a GLB: `poseN.glb` rebuilt from scratch and `poseN_skinned.glb` moved by its bone matrices. It also prints how far each box moved, how far each level turned and how far the pose deforms the mesh. `--amount`, `--steady` and `--keep-size` override the spec.
 
 ## `flint gen`
 

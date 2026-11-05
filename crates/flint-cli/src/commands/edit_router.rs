@@ -153,6 +153,14 @@ pub struct EditArgs {
     #[arg(long)]
     pub anim_time: Option<f32>,
 
+    /// Models: turn a joint in its own frame, `joint:x,y,z` in degrees (repeatable)
+    #[arg(long = "pose-bone")]
+    pub pose_bones: Vec<String>,
+
+    /// Models: draw the skeleton over the model, posed joints in their own colour
+    #[arg(long)]
+    pub show_skeleton: bool,
+
     /// Loop the --sequence regardless of its `loop` setting (model)
     #[arg(long)]
     pub sequence_loop: bool,
@@ -269,6 +277,8 @@ pub fn run(args: EditArgs) -> Result<()> {
                 sequence: args.sequence,
                 sequence_loop: args.sequence_loop,
                 auto_orbit: args.auto_orbit,
+                pose_bones: args.pose_bones,
+                show_skeleton: args.show_skeleton,
             })
         }
     }

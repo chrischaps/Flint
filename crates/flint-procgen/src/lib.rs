@@ -38,7 +38,7 @@ pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
-pub use living::{LeafBinding, LivingPose, LivingSkeleton, SegmentPose};
+pub use living::{LeafBinding, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
     AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,
@@ -47,7 +47,7 @@ pub use registry::GeneratorRegistry;
 pub use resolver::ProcGenResolver;
 pub use rng::SeededRng;
 pub use seed::Seed;
-pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex};
+pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 pub use spec::{
     discover_specs, DriftConfig, JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig,
     SeedMode, SpecMeta, Stagger, VarianceConfig,
