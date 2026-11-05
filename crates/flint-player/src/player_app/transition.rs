@@ -290,6 +290,7 @@ impl PlayerApp {
         self.animation.clear();
         self.particles.clear();
         self.procgen_resolver.clear_queue();
+        self.procgen_resolver.clear_living_props();
 
         // Clear world
         self.world = FlintWorld::new();
@@ -298,6 +299,8 @@ impl PlayerApp {
         self.terrain = None;
         if let Some(renderer) = &mut self.scene_renderer {
             renderer.clear_terrain();
+            // Entity ids are never reused, so the old scene's bones are garbage.
+            renderer.clear_entity_bone_buffers();
             renderer.unload_grass();
         }
 
@@ -412,7 +415,7 @@ impl PlayerApp {
             // Procgen before the model loader: catalog > procgen > file (#32).
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
-                &self.world,
+                &mut self.world,
                 &mut self.procgen_resolver,
                 self.procgen_mode,
                 super::procgen_assets::GpuSink {

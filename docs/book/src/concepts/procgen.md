@@ -219,7 +219,7 @@ Otherwise `flint gen` writes the lineage's rest mesh as a skinned GLB. It's the 
 - **Weights.** A ring where a limb carries on from one segment to the next is shared half and half by the two bones, and a limb's first and last rings belong to their own segment. Rings are single vertices, so a joint can't tear. A leaf card rides the bone of its segment, whole.
 - **Poses.** `LivingRig::palette` turns a pose into bone matrices, ready to upload, and `skinned_mesh` applies them on the CPU. All of a pose's scale lives in those matrices: glTF's parent-child transforms can't carry a stretch without shearing the children, so the GLB's skeleton holds none.
 
-A skinned rest has one level: `[[lod]]` doesn't apply, and `flint gen --validate` warns if it's over the spec's level-0 target. Two bones sharing a ring also pinch it when they turn far apart, keeping `cos(turn / 2)` of its width in the plane of the bend. An undamped pose has joints close to half a turn, and the default `variance` keeps the oak's above about 70% of their width. A held pose's `keep_size` scale reaches the bones too, so a leaf card stretches with its segment by that much, up to about 10% along it. Until the runtime uploads it skinned, a scene that uses a living spec draws the rest mesh as a still tree.
+A skinned rest has one level: `[[lod]]` doesn't apply, and `flint gen --validate` warns if it's over the spec's level-0 target. Two bones sharing a ring also pinch it when they turn far apart, keeping `cos(turn / 2)` of its width in the plane of the bend. An undamped pose has joints close to half a turn, and the default `variance` keeps the oak's above about 70% of their width. A held pose's `keep_size` scale reaches the bones too, so a leaf card stretches with its segment by that much, up to about 10% along it. In a scene, an entity draws this mesh skinned only if it has a [`living_prop`](#in-a-scene-the-living_prop-component); without one, nothing would move its bones, so it draws as the still tree it is.
 
 To try it, pose a bone by hand:
 
@@ -255,6 +255,48 @@ Under each cell are a bar for how far the blend has gone (one per branch level u
 A strip reads `[living]` and ignores `[seed]`, so `--seed` doesn't apply, and it takes no run mode that writes something else (`--batch`, `--validate`, `--register`, `--format`). `--strict` still refuses unknown params. A spec with no `[living]` table, or one that can't live, is an error.
 
 To look at a lineage's poses as files, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes the skinned mesh, then each pose twice as a GLB: `poseN.glb` rebuilt from scratch and `poseN_skinned.glb` moved by its bone matrices. It also prints how far each box moved, how far each level turned and how far the pose deforms the mesh. `--amount`, `--steady` and `--keep-size` override the spec.
+
+### In a scene: the `living_prop` component
+
+An entity becomes a living prop with a `living_prop` component, on a model whose asset names a spec with a `[living]` table:
+
+```toml
+[entities.oak_07.transform]
+position = [12.0, 0.0, -4.0]
+
+[entities.oak_07.model]
+asset = "oak_living"
+
+[entities.oak_07.living_prop]
+lineage_seed = 9           # which tree this is. Unset: the spec's lineage_seed
+# pose_ring = 8            # how many poses to keep ready. Unset: the spec's
+# phase_offset = 0.25      # how far into its step cycle it runs, 0 to 1. Unset: from the entity's name
+# stagger = "per_branch"   # none | per_level | per_branch. Unset: the spec's
+```
+
+An entity's lineage says which tree it is, and its name says which way it moves: its shape seeds come from the name and the step index, never from an entity id or the wall clock. So two props of a lineage are the same tree moving differently, a prop looks the same on every run, and a slow frame can only change when a pose is ready, not which pose it is.
+
+What a prop costs:
+
+- **One mesh a lineage.** The rest mesh goes up once, as `<spec>@<lineage>` (`oak_living@9`), through the same path as a skinned GLB. The player rewrites the entity's `model.asset` to that name when it loads. It takes the oak about 25 ms to build, in a release build, and there's no disk tier for it yet.
+- **One bone buffer a prop.** That's the prop's own skeleton instance. Nothing writes it per frame until something moves it.
+- **One ring a prop.** Poses are kept a few steps ahead of the prop's clock, which stops when the game pauses, plus one spare, so that a beat leaves the ring full. A ring is raised to whatever the prop's stagger can reach.
+
+At load the player builds every lineage and fills every ring, so the first frame finds them full: 40 oaks on 5 lineages take about 500 ms. `--procgen-defer` shows a placeholder under each lineage's name instead and does the same work on the queue, one lineage a frame and then the poses.
+
+In play, each frame fills the emptiest rings first with whatever the asset queue left of the frame budget (`runtime_max_generation_ms_per_frame`, 4 ms by default). A pose of the oak takes about 1.2 ms in a release build, and a grove needs `props / step` of them a second, so 40 oaks at a 0.5 s step need about 1.3 a frame at 60 fps. Poses have their own cache, apart from the meshes: a grove makes 80 a second, and they'd push the meshes out. It keeps 8 MB, so coming back to a scene doesn't regenerate them. A pose can't be cut short, so the budget is a soft cap: the fill stops when the slowest recent pose wouldn't fit, and a pose slower than that still runs over, on a frame or two a minute. A debug build is far slower, so it gets one pose a frame and overruns the budget.
+
+A prop whose spec can't live, or whose component has a bad field, stays a still model, with a warning saying why. A catalog entry for the same name wins, as it does anywhere.
+
+`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from `demo/living_props.scene.toml`:
+
+```
+[living] 40 props on 5 lineages, 8 poses a ring: 3900 of 3900 frames ended full, never more than 0 short, 0 frames missing a pose in use
+[living] 5200 poses made, 0 from cache, 0 failed: avg 1.30 ms/frame, worst 4.57 ms, budget 4 ms, over it on 1 frames
+[living] 240 skinned draws this frame
+```
+
+Props stand in their rest pose for now: the poses in the rings aren't drawn yet. Headless `flint render` doesn't run the resolver, so it doesn't draw living props; use `flint-player --screenshot`.
 
 ## `flint gen`
 
@@ -392,7 +434,7 @@ Headless `flint render` does not run the resolver. For snapshots of procgen-back
 - **Generators**: `tree`, `texture` (patterns, node graph, map derivation) and `creature` (body parts, limb chains, skeleton builder), registered through `GeneratorRegistry`.
 - **Spec, seed and RNG**: `ProcGenSpec`, `Seed`, `SeededRng`.
 - **Output**: `MeshData`, `ImageData`, `SkinnedMeshData`, GLB export with LOD chains and skins.
-- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue), used by the player.
+- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue, `LivingProps`), used by the player.
 - **Validation**: `validate_output` with style-guide constraints.
 
 `flint-procgen-ai` sits on top for tool-time spec creation and refinement from prompts; it is not linked into the player.

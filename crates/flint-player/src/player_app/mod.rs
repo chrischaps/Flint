@@ -29,6 +29,7 @@ mod music_guide_panel;
 mod music_session;
 mod pacing;
 mod perf;
+pub mod living_props;
 mod persist;
 pub mod render_scale;
 mod touch_overlay;

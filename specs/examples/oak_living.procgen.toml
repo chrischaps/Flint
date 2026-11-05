@@ -18,8 +18,11 @@
 #
 # `flint gen` bakes the lineage's rest mesh, skinned to a bone per segment. It
 # grows from lineage_seed, so [seed] plays no part, and --seed or --batch pick
-# the lineage instead. [[lod]] doesn't apply: a skinned rest is one level. The
-# runtime that plays it is coming through epic #206.
+# the lineage instead. [[lod]] doesn't apply: a skinned rest is one level.
+#
+# In a scene, give an entity `model.asset = "oak_living"` and a `living_prop`
+# component, as demo/living_props.scene.toml does. It stands in its rest pose
+# with a ring of poses kept ready; blending them is coming through epic #206.
 
 generator = "tree_v1"
 

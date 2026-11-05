@@ -436,7 +436,7 @@ impl PlayerApp {
         // Procgen before the model loader: catalog > procgen > file (#32).
         super::procgen_assets::resolve_scene(
             &self.scene_path,
-            &self.world,
+            &mut self.world,
             &mut self.procgen_resolver,
             self.procgen_mode,
             super::procgen_assets::GpuSink {
