@@ -119,7 +119,122 @@ impl LivingKnobs {
             }),
         }
     }
+
+    /// Only the knobs that moved from `before`, as a preset whose unset fields
+    /// leave a knob alone: the one a hand turned, and nothing it happened to
+    /// carry along. A knob in `touched` counts as moved whatever its number,
+    /// since a `mixed` knob shows one prop's value and setting every prop to it
+    /// is still a change.
+    pub fn moved(&self, before: &LivingKnobs, touched: &KnobFlags) -> WoozePreset {
+        fn pick<T: PartialEq + Clone>(now: &T, was: &T, touched: bool) -> Option<T> {
+            (touched || now != was).then(|| now.clone())
+        }
+        let t = touched;
+        let echoes = LivingEchoesDef {
+            count: pick(&self.echo_count, &before.echo_count, t.echo_count),
+            spread: pick(&self.echo_spread, &before.echo_spread, t.echo_spread),
+            alpha: pick(&self.echo_alpha, &before.echo_alpha, t.echo_alpha),
+        };
+        let variance = LivingVarianceDef {
+            amount: pick(
+                &self.variance_amount,
+                &before.variance_amount,
+                t.variance_amount,
+            ),
+            steady: pick(
+                &self.variance_steady,
+                &before.variance_steady,
+                t.variance_steady,
+            ),
+            keep_size: pick(&self.keep_size, &before.keep_size, t.keep_size),
+        };
+        let boil = BoilDef {
+            enabled: pick(&self.boil_on, &before.boil_on, false),
+            kuwahara: pick(&self.boil_paint, &before.boil_paint, false),
+            contour: pick(&self.boil_ink, &before.boil_ink, false),
+            on: pick(&self.boil_cadence, &before.boil_cadence, false),
+        };
+        WoozePreset {
+            wooze: WoozeKnobs {
+                amplitude: pick(&self.amplitude, &before.amplitude, t.amplitude),
+                step: pick(&self.step, &before.step, t.step),
+                glide: pick(&self.glide, &before.glide, t.glide),
+                jitter: pick(&self.jitter, &before.jitter, t.jitter),
+            },
+            living: LivingDef {
+                shadows: None,
+                stagger: pick(&self.stagger, &before.stagger, t.stagger),
+                echoes: (echoes != LivingEchoesDef::default()).then_some(echoes),
+                variance: (variance != LivingVarianceDef::default()).then_some(variance),
+            },
+            boil: (boil != BoilDef::default()).then_some(boil),
+        }
+    }
 }
+
+/// One flag per knob that can differ from prop to prop: which ones the props
+/// disagree on, or which ones a hand touched this frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KnobFlags {
+    pub step: bool,
+    pub glide: bool,
+    pub amplitude: bool,
+    pub jitter: bool,
+    pub stagger: bool,
+    pub echo_count: bool,
+    pub echo_spread: bool,
+    pub echo_alpha: bool,
+    pub variance_amount: bool,
+    pub variance_steady: bool,
+    pub keep_size: bool,
+}
+
+impl KnobFlags {
+    /// Whether any of the clock's four is set.
+    pub fn any_clock(&self) -> bool {
+        self.step || self.glide || self.amplitude || self.jitter
+    }
+
+    /// The knobs `preset` sets.
+    pub fn set_by(preset: &WoozePreset) -> Self {
+        let echoes = preset.living.echoes.unwrap_or_default();
+        let variance = preset.living.variance.unwrap_or_default();
+        Self {
+            step: preset.wooze.step.is_some(),
+            glide: preset.wooze.glide.is_some(),
+            amplitude: preset.wooze.amplitude.is_some(),
+            jitter: preset.wooze.jitter.is_some(),
+            stagger: preset.living.stagger.is_some(),
+            echo_count: echoes.count.is_some(),
+            echo_spread: echoes.spread.is_some(),
+            echo_alpha: echoes.alpha.is_some(),
+            variance_amount: variance.amount.is_some(),
+            variance_steady: variance.steady.is_some(),
+            keep_size: variance.keep_size.is_some(),
+        }
+    }
+
+    /// These, less the ones in `other`.
+    pub fn without(self, other: &KnobFlags) -> Self {
+        Self {
+            step: self.step && !other.step,
+            glide: self.glide && !other.glide,
+            amplitude: self.amplitude && !other.amplitude,
+            jitter: self.jitter && !other.jitter,
+            stagger: self.stagger && !other.stagger,
+            echo_count: self.echo_count && !other.echo_count,
+            echo_spread: self.echo_spread && !other.echo_spread,
+            echo_alpha: self.echo_alpha && !other.echo_alpha,
+            variance_amount: self.variance_amount && !other.variance_amount,
+            variance_steady: self.variance_steady && !other.variance_steady,
+            keep_size: self.keep_size && !other.keep_size,
+        }
+    }
+}
+
+/// What a `mixed` knob says when hovered.
+const MIXED: &str = "The species disagree here, so this shows the first prop's value. \
+Moving it sets it on every prop; the knobs beside it stay each species' own.";
 
 /// One prop's place on its clock.
 #[derive(Debug, Clone, PartialEq)]
@@ -166,7 +281,13 @@ pub struct LivingHealth {
 /// What's true now, from the host.
 #[derive(Debug, Clone, Default)]
 pub struct LivingPanelState {
+    /// Every knob. Where the props disagree, the first prop's value.
     pub knobs: LivingKnobs,
+    /// The knobs the props disagree on, which the panel shows as `mixed`.
+    pub mixed: KnobFlags,
+    /// Whether the scene has no `[wooze]` table, so each prop runs its spec's
+    /// clock until a clock knob gives it a field.
+    pub no_field: bool,
     pub frozen: bool,
     pub overlay: bool,
     pub rows: Vec<LivingPropRow>,
@@ -182,8 +303,9 @@ pub struct LivingPanelState {
 /// What the user asked for; applied by the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LivingPanelAction {
-    /// Every knob, as the panel now has them.
-    Set(LivingKnobs),
+    /// The knobs a hand moved, and only those: unset fields leave a knob as
+    /// each prop has it.
+    Set(WoozePreset),
     Freeze(bool),
     /// Move the clock on by exactly one beat.
     Step,
@@ -320,24 +442,60 @@ impl LivingPropsDebugPanel {
 
     fn knobs_ui(&mut self, ui: &mut egui::Ui) {
         let mut k = self.state.knobs.clone();
+        let mixed = self.state.mixed;
+        let mut touched = KnobFlags::default();
 
         section(ui, "Clock", true, |ui| {
-            ui.add(
+            touched.step = knob(
+                ui,
                 egui::Slider::new(&mut k.step, 0.05..=4.0)
                     .logarithmic(true)
                     .text("step (s)"),
+                mixed.step,
             );
-            ui.add(egui::Slider::new(&mut k.glide, 0.0..=1.0).text("glide"));
-            ui.add(egui::Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"));
-            ui.add(egui::Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"));
-            egui::ComboBox::from_label("stagger")
-                .selected_text(k.stagger.clone())
+            touched.glide = knob(
+                ui,
+                egui::Slider::new(&mut k.glide, 0.0..=1.0).text("glide"),
+                mixed.glide,
+            );
+            touched.amplitude = knob(
+                ui,
+                egui::Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"),
+                mixed.amplitude,
+            );
+            touched.jitter = knob(
+                ui,
+                egui::Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"),
+                mixed.jitter,
+            );
+            let shown = if mixed.stagger {
+                "mixed".to_string()
+            } else {
+                k.stagger.clone()
+            };
+            let combo = egui::ComboBox::from_label("stagger")
+                .selected_text(shown)
                 .show_ui(ui, |ui| {
+                    let mut picked = false;
                     for (name, says) in STAGGERS {
-                        ui.selectable_value(&mut k.stagger, name.to_string(), name)
-                            .on_hover_text(says);
+                        picked |= ui
+                            .selectable_value(&mut k.stagger, name.to_string(), name)
+                            .on_hover_text(says)
+                            .clicked();
                     }
+                    picked
                 });
+            touched.stagger = combo.inner.unwrap_or(false);
+            if mixed.stagger {
+                combo.response.on_hover_text(MIXED);
+            }
+            if self.state.no_field && mixed.any_clock() {
+                ui.weak(
+                    "No [wooze] table: each species runs its spec's clock. Turning any of \
+                     these gives the scene one field, from the first prop's clock, so all \
+                     four even out across the grove.",
+                );
+            }
         });
 
         section(ui, "Shading boil", true, |ui| {
@@ -363,16 +521,42 @@ impl LivingPropsDebugPanel {
         });
 
         section(ui, "Echoes", true, |ui| {
-            ui.add(egui::Slider::new(&mut k.echo_count, 0..=16).text("count"));
+            touched.echo_count = knob(
+                ui,
+                egui::Slider::new(&mut k.echo_count, 0..=16).text("count"),
+                mixed.echo_count,
+            );
             // To where an echo has faded out: flint_procgen::MAX_ECHO_SPREAD.
-            ui.add(egui::Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"));
-            ui.add(egui::Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"));
+            touched.echo_spread = knob(
+                ui,
+                egui::Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"),
+                mixed.echo_spread,
+            );
+            touched.echo_alpha = knob(
+                ui,
+                egui::Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"),
+                mixed.echo_alpha,
+            );
         });
 
         section(ui, "Variance", true, |ui| {
-            ui.add(egui::Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"));
-            ui.add(egui::Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"));
-            ui.checkbox(&mut k.keep_size, "keep size");
+            touched.variance_amount = knob(
+                ui,
+                egui::Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"),
+                mixed.variance_amount,
+            );
+            touched.variance_steady = knob(
+                ui,
+                egui::Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
+                mixed.variance_steady,
+            );
+            let keep = ui.add(
+                egui::Checkbox::new(&mut k.keep_size, "keep size").indeterminate(mixed.keep_size),
+            );
+            touched.keep_size = keep.changed();
+            if mixed.keep_size {
+                keep.on_hover_text(MIXED);
+            }
             if ui
                 .small_button("Unheld")
                 .on_hover_text("amount 1, steady 0, keep size off: each pose as it grew")
@@ -381,12 +565,20 @@ impl LivingPropsDebugPanel {
                 k.variance_amount = 1.0;
                 k.variance_steady = 0.0;
                 k.keep_size = false;
+                touched.variance_amount = true;
+                touched.variance_steady = true;
+                touched.keep_size = true;
             }
         });
 
-        if k != self.state.knobs {
-            self.state.knobs = k.clone();
-            self.push(LivingPanelAction::Set(k));
+        // A touch says a knob moved where its number alone can't: a `mixed` one
+        // set to the value it showed, or Unheld on a knob already there.
+        let moved = k.moved(&self.state.knobs, &touched);
+        if moved != WoozePreset::default() {
+            self.state.knobs = k;
+            // What moved is now the same on every prop.
+            self.state.mixed = mixed.without(&KnobFlags::set_by(&moved));
+            self.push(LivingPanelAction::Set(moved));
         }
     }
 
@@ -542,6 +734,17 @@ fn section(ui: &mut egui::Ui, title: &str, default_open: bool, add: impl FnOnce(
     egui::CollapsingHeader::new(title)
         .default_open(default_open)
         .show(ui, add);
+}
+
+/// A slider that reads `mixed` when the props disagree on it. Returns whether a
+/// hand moved it.
+fn knob(ui: &mut egui::Ui, slider: egui::Slider<'_>, mixed: bool) -> bool {
+    if !mixed {
+        return ui.add(slider).changed();
+    }
+    ui.add(slider.custom_formatter(|_, _| "mixed".to_string()))
+        .on_hover_text(MIXED)
+        .changed()
 }
 
 /// How far toward the next pose a part is, `frac` of the way through a step: the
@@ -810,29 +1013,134 @@ mod tests {
         asked
     }
 
-    /// Every slider, checkbox and shortcut in the column sends a whole set of knobs
-    /// with that one moved, and the host gets to read which from the set.
+    /// How many knobs a preset sets.
+    fn count_set(preset: &WoozePreset) -> usize {
+        let f = KnobFlags::set_by(preset);
+        let boil = preset.boil.unwrap_or_default();
+        [
+            f.step,
+            f.glide,
+            f.amplitude,
+            f.jitter,
+            f.stagger,
+            f.echo_count,
+            f.echo_spread,
+            f.echo_alpha,
+            f.variance_amount,
+            f.variance_steady,
+            f.keep_size,
+            boil.enabled.is_some(),
+            boil.kuwahara.is_some(),
+            boil.contour.is_some(),
+            boil.on.is_some(),
+        ]
+        .into_iter()
+        .filter(|set| *set)
+        .count()
+    }
+
+    /// Every slider, checkbox and shortcut in the column sends the knob it moved
+    /// and nothing else (#244): a whole set would flatten a grove's species.
     #[test]
-    fn pressing_down_the_sliders_moves_every_knob() {
+    fn pressing_down_the_sliders_moves_every_knob_one_at_a_time() {
         let mut panel = LivingPropsDebugPanel::new();
         panel.refresh(state());
-        let before = panel.state().knobs.clone();
         let asked = press_down(&mut panel, 60.0);
-        let last = asked
+        let sets: Vec<WoozePreset> = asked
             .iter()
-            .rev()
-            .find_map(|action| match action {
-                LivingPanelAction::Set(knobs) => Some(knobs.clone()),
+            .filter_map(|action| match action {
+                LivingPanelAction::Set(moved) => Some(moved.clone()),
                 _ => None,
             })
-            .expect("pressing a slider turned it");
-        let moved = |read: fn(&LivingKnobs) -> f32| read(&last) != read(&before);
-        assert!(moved(|k| k.step), "{last:?}");
-        assert!(moved(|k| k.echo_count as f32), "{last:?}");
-        assert!(moved(|k| k.echo_spread), "{last:?}");
-        assert!(moved(|k| k.echo_alpha), "{last:?}");
-        assert!(moved(|k| k.variance_amount), "{last:?}");
-        assert!(moved(|k| k.variance_steady), "{last:?}");
+            .collect();
+        assert!(!sets.is_empty(), "pressing a slider turned it");
+        let mut all = KnobFlags::default();
+        for moved in &sets {
+            // One knob, or Unheld's three.
+            let n = count_set(moved);
+            assert!(n == 1 || n == 3, "{n} knobs in {moved:?}");
+            let f = KnobFlags::set_by(moved);
+            all = KnobFlags {
+                step: all.step || f.step,
+                echo_count: all.echo_count || f.echo_count,
+                echo_spread: all.echo_spread || f.echo_spread,
+                echo_alpha: all.echo_alpha || f.echo_alpha,
+                variance_amount: all.variance_amount || f.variance_amount,
+                variance_steady: all.variance_steady || f.variance_steady,
+                ..all
+            };
+        }
+        assert!(all.step && all.echo_count && all.echo_spread && all.echo_alpha);
+        assert!(all.variance_amount && all.variance_steady, "{sets:?}");
+    }
+
+    #[test]
+    fn a_knob_moved_from_before_is_the_only_one_set() {
+        let before = LivingKnobs::default();
+        let mut after = before.clone();
+        after.glide = 0.9;
+        let moved = after.moved(&before, &KnobFlags::default());
+        assert_eq!(moved.wooze.glide, Some(0.9));
+        assert_eq!(count_set(&moved), 1, "{moved:?}");
+        assert_eq!(
+            after.moved(&after, &KnobFlags::default()),
+            WoozePreset::default()
+        );
+        // Touched, it's sent at the value it already had.
+        let touched = KnobFlags {
+            keep_size: true,
+            ..Default::default()
+        };
+        let moved = after.moved(&after, &touched);
+        assert_eq!(moved.living.variance.unwrap().keep_size, Some(true));
+        assert_eq!(count_set(&moved), 1);
+    }
+
+    /// Every piece of text a frame drew.
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Text(text) => Some(text.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_knob_the_species_disagree_on_reads_mixed() {
+        let ctx = egui::Context::default();
+        let draw = |panel: &mut LivingPropsDebugPanel| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
+                ..Default::default()
+            };
+            // Collapsing headers open on the second frame.
+            let _ = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            });
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            });
+            texts(&output)
+        };
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(state());
+        assert!(!draw(&mut panel).iter().any(|t| t == "mixed"));
+
+        let mut mixed = state();
+        mixed.mixed = KnobFlags {
+            stagger: true,
+            echo_count: true,
+            echo_spread: true,
+            variance_amount: true,
+            ..Default::default()
+        };
+        panel.refresh(mixed);
+        let said = draw(&mut panel);
+        assert_eq!(said.iter().filter(|t| *t == "mixed").count(), 4, "{said:?}");
+        assert!(!panel.is_dirty(), "showing mixed asks for nothing");
     }
 
     #[test]

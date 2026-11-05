@@ -12,7 +12,7 @@
 //! at speed.
 
 use flint_core::wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
-use flint_procgen::{EchoConfig, LivingPropId, VarianceConfig};
+use flint_procgen::{EchoConfig, LivingPropId, Stagger, VarianceConfig};
 use flint_scene::{
     list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef,
     LivingVarianceDef, WoozeKnobs, WoozePreset,
@@ -36,7 +36,7 @@ pub struct LivingTune {
     /// A boil asked for before there was a renderer to give it to.
     boil_waiting: Option<BoilDef>,
     /// The knobs as the scene loaded, to go back to.
-    at_load: Option<WoozePreset>,
+    at_load: Option<AtLoad>,
     /// What came of the last save or load, for the panel.
     pub status: Option<String>,
     /// The presets on offer, as of when the panel opened or last saved one. Not
@@ -45,8 +45,35 @@ pub struct LivingTune {
     preset_names: Option<Vec<String>>,
 }
 
+/// Every knob as the scene loaded, prop by prop where props can differ: a grove
+/// of several species goes back to several.
+#[derive(Debug, Clone)]
+struct AtLoad {
+    /// The field's knobs and the boil, one of each per scene. In a scene with no
+    /// field the clock's are unset, and `clocks` has them instead.
+    knobs: WoozePreset,
+    /// Each prop's clock, in a scene that had no field to give them one.
+    clocks: Option<Vec<WoozeSample>>,
+    /// Each prop's echoes, and its stagger.
+    echoes: Vec<EchoConfig>,
+    staggers: Vec<Stagger>,
+    /// Each lineage's variance.
+    variances: Vec<VarianceConfig>,
+}
+
+/// Whether the values `read` gives for `items` aren't all the same.
+fn disagree<T, V: PartialEq>(items: &[T], read: impl Fn(&T) -> V) -> bool {
+    let mut values = items.iter().map(read);
+    match values.next() {
+        Some(first) => values.any(|value| value != first),
+        None => false,
+    }
+}
+
 impl PlayerApp {
-    /// Every knob as it stands now, all of them set.
+    /// Every knob as it stands now, all of them set. Where props disagree, as
+    /// [`Self::living_mixed`] says, it's the first prop's value or the first
+    /// lineage's.
     pub(super) fn living_knobs(&self) -> WoozePreset {
         let props = self.procgen_resolver.living_props();
         let first = props.props().first();
@@ -81,6 +108,95 @@ impl PlayerApp {
             },
             boil: Some(boil),
         }
+    }
+
+    /// The knobs the props disagree on: echoes and stagger from prop to prop,
+    /// variance from lineage to lineage, and in a scene with no field, the
+    /// clocks their specs gave them.
+    pub(super) fn living_mixed(&self) -> flint_debug_ui::KnobFlags {
+        let living = self.procgen_resolver.living_props();
+        let props = living.props();
+        let variances = living.variances();
+        let no_field = self.wooze.is_none();
+        let clock =
+            |read: fn(&WoozeSample) -> f32| no_field && disagree(props, |p| read(&p.wooze()));
+        flint_debug_ui::KnobFlags {
+            step: clock(|w| w.step),
+            glide: clock(|w| w.glide),
+            amplitude: clock(|w| w.amplitude),
+            jitter: clock(|w| w.jitter),
+            stagger: disagree(props, |p| p.stagger()),
+            echo_count: disagree(props, |p| p.echo_config().count),
+            echo_spread: disagree(props, |p| p.echo_config().spread),
+            echo_alpha: disagree(props, |p| p.echo_config().alpha),
+            variance_amount: disagree(&variances, |v| v.amount),
+            variance_steady: disagree(&variances, |v| v.steady),
+            keep_size: disagree(&variances, |v| v.keep_size),
+        }
+    }
+
+    /// The knobs every prop agrees on, as a preset, and the names of the ones
+    /// left out: what a file can say for the whole grove without flattening its
+    /// species. Loading it leaves each species its own of the rest.
+    pub(super) fn living_shared_knobs(&self) -> (WoozePreset, Vec<&'static str>) {
+        let mut knobs = self.living_knobs();
+        let mixed = self.living_mixed();
+        let mut left_out = Vec::new();
+        let mut out = |is: bool, name: &'static str| {
+            if is {
+                left_out.push(name);
+            }
+            is
+        };
+        let wooze = &mut knobs.wooze;
+        for (is, name, value) in [
+            (mixed.step, "step", &mut wooze.step),
+            (mixed.glide, "glide", &mut wooze.glide),
+            (mixed.amplitude, "amplitude", &mut wooze.amplitude),
+            (mixed.jitter, "jitter", &mut wooze.jitter),
+        ] {
+            if out(is, name) {
+                *value = None;
+            }
+        }
+        if out(mixed.stagger, "stagger") {
+            knobs.living.stagger = None;
+        }
+        if let Some(echoes) = &mut knobs.living.echoes {
+            if out(mixed.echo_count, "echoes.count") {
+                echoes.count = None;
+            }
+            for (is, name, value) in [
+                (mixed.echo_spread, "echoes.spread", &mut echoes.spread),
+                (mixed.echo_alpha, "echoes.alpha", &mut echoes.alpha),
+            ] {
+                if out(is, name) {
+                    *value = None;
+                }
+            }
+        }
+        if let Some(variance) = &mut knobs.living.variance {
+            for (is, name, value) in [
+                (
+                    mixed.variance_amount,
+                    "variance.amount",
+                    &mut variance.amount,
+                ),
+                (
+                    mixed.variance_steady,
+                    "variance.steady",
+                    &mut variance.steady,
+                ),
+            ] {
+                if out(is, name) {
+                    *value = None;
+                }
+            }
+            if out(mixed.keep_size, "variance.keep_size") {
+                variance.keep_size = None;
+            }
+        }
+        (knobs, left_out)
     }
 
     /// The boil's knobs. The amounts it has while switched off are the ones it
@@ -158,42 +274,52 @@ impl PlayerApp {
         problems
     }
 
+    /// Stagger, echoes and variance. A field that's set goes to every prop, and
+    /// one that isn't stays as each prop has it: moving echo `count` in a grove
+    /// of several species leaves each its own `spread` and `alpha`.
     fn tune_props(&mut self, living: &LivingDef) -> Vec<String> {
         let mut problems = Vec::new();
+        // Once, however many props it's wrong for.
+        let mut say = |problem: String| {
+            if !problems.contains(&problem) {
+                problems.push(problem);
+            }
+        };
         let props = self.procgen_resolver.living_props_mut();
         if let Some(name) = living.stagger.as_deref() {
             match stagger_of(name) {
                 Some(stagger) => props.set_stagger(stagger),
-                None => problems.push(format!(
+                None => say(format!(
                     "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
                 )),
             }
         }
         if let Some(wanted) = living.echoes {
-            let now = props
-                .props()
-                .first()
-                .map_or_else(EchoConfig::default, |prop| prop.echo_config());
-            let echoes = EchoConfig {
-                count: wanted.count.unwrap_or(now.count),
-                spread: wanted.spread.unwrap_or(now.spread),
-                alpha: wanted.alpha.unwrap_or(now.alpha),
-            };
-            match echoes.check() {
-                Ok(()) => props.set_echoes(echoes),
-                Err((key, reason)) => problems.push(format!("echoes.{key} = {reason}")),
+            for i in 0..props.props().len() {
+                let id = LivingPropId(i);
+                let now = props.prop(id).echo_config();
+                let echoes = EchoConfig {
+                    count: wanted.count.unwrap_or(now.count),
+                    spread: wanted.spread.unwrap_or(now.spread),
+                    alpha: wanted.alpha.unwrap_or(now.alpha),
+                };
+                match echoes.check() {
+                    Ok(()) => props.set_echoes_of(id, echoes),
+                    Err((key, reason)) => say(format!("echoes.{key} = {reason}")),
+                }
             }
         }
         if let Some(wanted) = living.variance {
-            let now = props.variance().unwrap_or_default();
-            let variance = VarianceConfig {
-                amount: wanted.amount.unwrap_or(now.amount),
-                steady: wanted.steady.unwrap_or(now.steady),
-                keep_size: wanted.keep_size.unwrap_or(now.keep_size),
-            };
-            match variance.check() {
-                Ok(()) => props.set_variance(variance),
-                Err((key, reason)) => problems.push(format!("variance.{key} = {reason}")),
+            for (lineage, now) in props.variances().into_iter().enumerate() {
+                let variance = VarianceConfig {
+                    amount: wanted.amount.unwrap_or(now.amount),
+                    steady: wanted.steady.unwrap_or(now.steady),
+                    keep_size: wanted.keep_size.unwrap_or(now.keep_size),
+                };
+                match variance.check() {
+                    Ok(()) => props.set_variance_of(lineage, variance),
+                    Err((key, reason)) => say(format!("variance.{key} = {reason}")),
+                }
             }
         }
         problems
@@ -224,8 +350,12 @@ impl PlayerApp {
 
     /// Save every knob as a preset. Returns the file and what a scene needs to
     /// say to load it.
+    ///
+    /// A knob the props disagree on is left out, so loading the file leaves each
+    /// species its own: saving per-species values is #249's.
     pub(super) fn save_living_preset(&mut self, name: &str) -> Result<PathBuf, String> {
-        write_preset(Path::new(&self.scene_path), name, &self.living_knobs())
+        let (knobs, _) = self.living_shared_knobs();
+        write_preset(Path::new(&self.scene_path), name, &knobs)
     }
 
     /// Load a preset file, or a built-in, which holds only the field's knobs. A
@@ -249,12 +379,54 @@ impl PlayerApp {
         self.tune_living(&found)
     }
 
-    /// Put the knobs back as the scene loaded them.
+    /// Every knob as it stands, prop by prop, to go back to.
+    fn living_at_load(&self) -> AtLoad {
+        let living = self.procgen_resolver.living_props();
+        let props = living.props();
+        let mut knobs = self.living_knobs();
+        knobs.living = LivingDef::default();
+        let clocks = self.wooze.is_none().then(|| {
+            knobs.wooze = WoozeKnobs::default();
+            props.iter().map(|prop| prop.wooze()).collect()
+        });
+        AtLoad {
+            knobs,
+            clocks,
+            echoes: props.iter().map(|prop| prop.echo_config()).collect(),
+            staggers: props.iter().map(|prop| prop.stagger()).collect(),
+            variances: living.variances(),
+        }
+    }
+
+    /// Put the knobs back as the scene loaded them: each prop's echoes and
+    /// stagger, each lineage's variance, and in a scene that had no field, each
+    /// prop's own clock.
     pub(super) fn reset_living_knobs(&mut self) {
-        if let Some(at_load) = self.living_tune.at_load.clone() {
-            if let Err(problem) = self.tune_living(&at_load) {
-                tracing::warn!("Living Props: {problem}");
+        let Some(at_load) = self.living_tune.at_load.clone() else {
+            return;
+        };
+        if let Err(problem) = self.tune_living(&at_load.knobs) {
+            tracing::warn!("Living Props: {problem}");
+        }
+        if let Some(clocks) = &at_load.clocks {
+            // A clock knob may since have given the scene a field it didn't have.
+            self.wooze = None;
+            let props = self.procgen_resolver.living_props_mut();
+            let count = props.props().len();
+            for (i, clock) in clocks.iter().enumerate().take(count) {
+                props.set_wooze_of(LivingPropId(i), *clock);
             }
+        }
+        let props = self.procgen_resolver.living_props_mut();
+        let count = props.props().len();
+        let each = at_load.echoes.iter().zip(&at_load.staggers);
+        for (i, (echoes, stagger)) in each.enumerate().take(count) {
+            props.set_echoes_of(LivingPropId(i), *echoes);
+            props.set_stagger_of(LivingPropId(i), *stagger);
+        }
+        let lineages = props.variances().len();
+        for (lineage, variance) in at_load.variances.iter().enumerate().take(lineages) {
+            props.set_variance_of(lineage, *variance);
         }
     }
 
@@ -275,7 +447,7 @@ impl PlayerApp {
             }
         }
         if self.living_tune.at_load.is_none() && !self.procgen_resolver.living_props().is_empty() {
-            self.living_tune.at_load = Some(self.living_knobs());
+            self.living_tune.at_load = Some(self.living_at_load());
         }
         let steps = std::mem::take(&mut self.living_tune.steps_queued);
         if steps == 0 {
@@ -388,6 +560,8 @@ pub(super) mod panel {
                 }
             }
             let knobs = self.living_knobs();
+            let mixed = self.living_mixed();
+            let no_field = self.wooze.is_none();
             let rows = self.living_rows();
             let names = match self.living_tune.preset_names.clone() {
                 Some(names) => names,
@@ -422,6 +596,8 @@ pub(super) mod panel {
             if let Some(panel) = self.living_panel() {
                 panel.refresh(flint_debug_ui::LivingPanelState {
                     knobs: flint_debug_ui::LivingKnobs::from_preset(&knobs),
+                    mixed,
+                    no_field,
                     frozen,
                     overlay,
                     rows,
@@ -434,11 +610,11 @@ pub(super) mod panel {
             }
         }
 
-        fn apply_living_action(&mut self, action: LivingPanelAction) {
+        pub(in super::super) fn apply_living_action(&mut self, action: LivingPanelAction) {
             let tune = &mut self.living_tune;
             match action {
-                LivingPanelAction::Set(knobs) => {
-                    if let Err(problem) = self.tune_living(&knobs.to_preset()) {
+                LivingPanelAction::Set(moved) => {
+                    if let Err(problem) = self.tune_living(&moved) {
                         self.living_tune.status = Some(problem);
                     }
                 }
@@ -476,6 +652,13 @@ pub(super) mod panel {
             "Saved {}. In a scene: [wooze] preset = \"{name}\"",
             path.display()
         );
+        let (_, left_out) = app.living_shared_knobs();
+        if !left_out.is_empty() {
+            said.push_str(&format!(
+                ". Left out, as the species differ: {}",
+                left_out.join(", ")
+            ));
+        }
         let scene = flint_core::vfs::read_to_string(&app.scene_path)
             .ok()
             .and_then(|text| toml::from_str::<flint_scene::SceneFile>(&text).ok());
