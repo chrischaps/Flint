@@ -199,12 +199,18 @@ impl LivingClock {
     /// can be drawing on: ahead by its stagger, and blending toward the pose
     /// after that. A window of poses has to span this many steps and one more.
     pub fn reach(&self, max_depth: u32) -> u64 {
+        self.reach_across(max_depth, 0.0)
+    }
+
+    /// [`reach`](Self::reach) for parts whose clocks stand as much as `span`
+    /// steps apart: a prop's echoes, measured from the farthest behind.
+    pub fn reach_across(&self, max_depth: u32, span: f64) -> u64 {
         let ahead = match self.stagger {
             Stagger::None => 0.0,
             Stagger::PerLevel => f64::from(max_depth) * STAGGER_PER_LEVEL,
             Stagger::PerBranch => 1.0,
         };
-        ahead.ceil() as u64 + 1
+        (ahead + span).ceil() as u64 + 1
     }
 }
 

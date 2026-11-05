@@ -189,9 +189,10 @@ stagger = "per_level"     # none | per_level | per_branch
 drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
 jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
+echoes = { count = 6, spread = 0.9, alpha = 0.2 }
 ```
 
-These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending. `jitter` drives the leaf cards' boil, and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending. `jitter` drives the leaf cards' boil, `echoes` draws the faint copies ([below](#echoes)), and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
 
 `variance` is what keeps the silhouette. A freshly grown pose is a different-looking tree, so each segment is pulled back toward the lineage's own shape, keeping only this share of its difference:
 
@@ -240,7 +241,7 @@ flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o
 
 ![24 frames of the living oak on one contact sheet, with a bar for each branch level under each frame](../images/living-strip.png)
 
-Each frame evaluates the hold-and-glide clock on the CPU, blends the two poses either side per segment, rebuilds the whole mesh and renders it. The camera is fixed and frames every frame's bounds, so what changes between cells is the prop. The same spec gives a byte-identical PNG on the same machine and driver.
+Each frame evaluates the hold-and-glide clock on the CPU, blends the two poses either side per segment, rebuilds the whole mesh and renders it. With [echoes](#echoes) on, which is the default, it instead sends the rest mesh up once and draws each frame from bone palettes, through the same skinned draw as the player, with the prop and each echo a palette of its own. The camera is fixed and frames every frame's bounds, so what changes between cells is the prop. The same spec gives a byte-identical PNG on the same machine and driver.
 
 The clock is the design's warped time, with `s` for `step` and `g` for `glide`:
 
@@ -288,7 +289,7 @@ In play, each frame fills the emptiest rings first with whatever the asset queue
 
 A prop whose spec can't live, or whose component has a bad field, stays a still model, with a warning saying why. A catalog entry for the same name wins, as it does anywhere.
 
-`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from `demo/living_props.scene.toml`:
+`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from `demo/living_props.scene.toml` with its echoes off:
 
 ```
 [living] 40 props on 5 lineages, 8 poses a ring: 3900 of 3900 frames ended full, never more than 0 short, 0 frames missing a pose in use
@@ -322,6 +323,7 @@ The clock reads `step` and `glide` from the spec, and a scene can override them 
 step = 0.5            # seconds between pose targets, for every prop
 glide = 0.0           # how much of a step is spent easing, for every prop
 shadows = "blended"   # blended | drift
+echoes = { count = 0 }   # over each spec's, a field at a time: count, spread, alpha
 ```
 
 A bad value here gets a warning and means its default. A misspelt key fails the scene's load.
@@ -338,6 +340,39 @@ The fast layer boils the leaf cards on a clock of its own, `jitter.step` and `ji
 ### Shadows
 
 A tree's shadow follows what's drawn by default, stagger and leaf jitter included, at no extra cost. Whether a whole shadow boiling reads as life or as noise is a question for each scene, so `[living] shadows = "drift"` gives the shadow bones of its own: a slower pose at half the speed, with no stagger and no jitter. It adds about 0.05 ms a frame for 40 oaks.
+
+### Echoes
+
+Every living prop draws faint copies of itself in its own colours, each sampled a little before or after now on its clock, so they drift with it. It's a moving version of Pep Ventosa's layered tree photographs: one tree, with where it's just been and where it's about to go showing softly around its edge.
+
+![Two moments of the living oak on a contact sheet, each crown soft at the edge with faint copies of itself](../images/living-echoes.png)
+
+```toml
+[living]
+echoes = { count = 6, spread = 0.9, alpha = 0.2 }   # the default; count = 0 turns them off
+```
+
+- **`count`** copies, up to 16. They come in pairs, one behind now and one ahead. An odd count's spare is behind.
+- **`spread`** is how far the farthest copy is from now, in steps of the clock, up to 1.82. The pairs bunch toward now: six at 0.9 sit at about ±0.25, ±0.56 and ±0.9.
+- **`alpha`** is the opacity a copy would have at now. Each is drawn at `alpha × (1 − |offset| × 0.55)`, so at the defaults they run from 0.17 down to 0.10.
+
+Each echo is the prop's own blend, at its own place on the clock: every part with its stagger, and every leaf card with its bones and its turn. It keeps the prop's current tints. Its bones have a buffer of their own, written only on a frame they move. A ring's window starts as far behind now as the farthest echo, so it spans the same number of poses a little earlier, and echoes make no more poses than the prop would.
+
+They draw after everything opaque, tree by tree from the back, with each tree's farthest offset first. They test against depth and don't write it, so they can't hide each other and the part of a copy behind its own tree stays hidden. Only front faces are drawn: a two-sided leaf card would otherwise count twice and muddy the crown. They cast no shadow, and debug shading views leave them out.
+
+`count = 0` costs nothing and draws nothing. Against the build before echoes existed, the bench is pixel for pixel the same, and a strip is byte for byte the same.
+
+Each echo is another palette and a draw per part, so what count does is worth knowing. 40 oaks, uncapped at 1600 x 900 on an RTX 5070 laptop, two alternating runs of each:
+
+| Echoes per tree | Frame | Blending and upload | GPU | Draws | Triangles |
+|---|---|---|---|---|---|
+| 0 | 2.0 to 4.1 ms | 0.3 to 0.6 ms | 1.5 ms | 241 | 0.5 M |
+| 2 | 3.1 to 7.0 ms | 1.0 to 1.7 ms | 1.8 ms | 721 | 1.6 M |
+| 4 | 4.8 to 7.6 ms | 1.8 to 2.4 ms | 2.2 to 2.5 ms | 1201 | 2.6 M |
+| 6 | 5.7 to 7.8 ms | 2.3 to 3.0 ms | 2.5 to 3.2 ms | 1681 | 3.7 M |
+| 12 | 10.9 to 12.5 ms | 4.9 to 5.6 ms | 3.5 to 4.2 ms | 3121 | 6.8 M |
+
+At the default six, a 60 s run at the display's rate held 60 fps, with 1 frame in 3480 over 1.5x the median. Most of what echoes add is CPU: nearly every palette moves on nearly every frame under `per_level` stagger, about 260 writes of 16 KB, or some 250 MB/s up to the GPU. Off-screen props still blend and draw. Dropping echoes by distance is the first thing to reach for if a scene needs the room. `--exit-after` prints how many echoes and draws a scene has.
 
 ## `flint gen`
 

@@ -9,7 +9,7 @@ mod prefab;
 mod saver;
 
 pub use format::{
-    CameraDef, EntityDef, LivingDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata,
+    CameraDef, EntityDef, LivingDef, LivingEchoesDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata,
 };
 pub use loader::{load_scene, load_scene_string, reload_scene, reload_scene_string};
 pub use patcher::SceneDocument;

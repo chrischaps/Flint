@@ -45,7 +45,7 @@ pub use living::{
     STAGGER_PER_LEVEL,
 };
 pub use living_props::{
-    BlendFrame, LineageDone, LivingDefaults, LivingProp, LivingPropId, LivingPropRequest,
+    BlendFrame, EchoOverride, LineageDone, LivingDefaults, LivingProp, LivingPropId, LivingPropRequest,
     LivingProps, LivingShadows, LivingStats, PropBlend, POSE_CACHE_BYTES,
 };
 pub use output::{GeneratorOutput, OutputKind};
@@ -58,7 +58,7 @@ pub use rng::SeededRng;
 pub use seed::Seed;
 pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 pub use spec::{
-    discover_specs, DriftConfig, JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig,
+    discover_specs, DriftConfig, EchoConfig, EchoCopy, JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig,
     SeedMode, SpecMeta, Stagger, VarianceConfig,
 };
 pub use types::{

@@ -10,6 +10,7 @@
 #   [living]
 #   glide = 0.0            # snap on the beat; the spec's 0.3 holds, then glides
 #   shadows = "drift"      # a slower shadow, with no stagger or jitter
+#   echoes = { count = 0 } # no faint copies; also takes spread and alpha
 #
 # The spec is specs/examples/oak_living.procgen.toml; an
 # entity's `lineage_seed` says which tree it is, and its name which way it moves.
