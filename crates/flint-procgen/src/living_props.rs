@@ -974,6 +974,8 @@ struct BuiltLineage {
     rig: Arc<LivingRig>,
     /// How tall it stands at rest. Kept, since working it out poses the whole tree.
     rest_height: f32,
+    /// How far its rest pose reaches from the trunk, sideways (#248).
+    rest_reach: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -1165,6 +1167,13 @@ impl LivingProps {
     pub fn rest_height(&self, id: LivingPropId) -> Option<f32> {
         let built = self.lineages[self.props[id.0].lineage].built.as_ref()?;
         Some(built.rest_height)
+    }
+
+    /// How far a prop reaches sideways from its trunk at rest, once its lineage
+    /// is built: half its crown's width, for picking it on screen (#248).
+    pub fn rest_reach(&self, id: LivingPropId) -> Option<f32> {
+        let built = self.lineages[self.props[id.0].lineage].built.as_ref()?;
+        Some(built.rest_reach)
     }
 
     /// How many distinct trees the props grow from.
@@ -2377,11 +2386,16 @@ fn build_lineage(
         .ok_or_else(|| format!("its generator '{}' can't live", spec.generator))?;
     let skeleton = generator.structure(spec, seed).map_err(|e| e.to_string())?;
     let rig = generator.rig(spec, seed).map_err(|e| e.to_string())?;
-    let rest_height = skeleton.rest_bounds().max.y;
+    let rest = skeleton.rest_bounds();
+    let rest_height = rest.max.y;
+    let rest_reach = [rest.min.x, rest.max.x, rest.min.z, rest.max.z]
+        .into_iter()
+        .fold(0.0_f32, |reach, side| reach.max(side.abs()));
     Ok(BuiltLineage {
         skeleton: Arc::new(skeleton),
         rig: Arc::new(rig),
         rest_height,
+        rest_reach,
     })
 }
 

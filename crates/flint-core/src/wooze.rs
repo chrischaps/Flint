@@ -558,6 +558,19 @@ impl WoozeField {
         said
     }
 
+    /// The zones that reach `position` at `time`, in the order they apply, each
+    /// with how much of itself it gives there, 0 to 1: what a tree picked in the
+    /// world stands in (#248), whether or not one of them has the last word.
+    pub fn zones_in(&self, position: [f32; 3], time: f64) -> Vec<(&str, f32)> {
+        self.zones
+            .iter()
+            .filter_map(|zone| {
+                let weight = zone.weight(position) * zone.strength.at(time);
+                (weight > 0.0).then_some((zone.name.as_str(), weight))
+            })
+            .collect()
+    }
+
     /// Change global knobs from a table of any of `amplitude`, `step`, `glide`,
     /// `jitter` and `preset`, heading for them over `seconds` from `time`. The
     /// preset applies first and the others on top. Nothing changes on an error.
@@ -1056,6 +1069,27 @@ mod tests {
             .unwrap();
         assert_eq!(field.sample([0.0, 0.0, 12.0], 0.0).glide, 0.1);
         assert_eq!(field.sample([0.0, 0.0, 14.0], 0.0).glide, 0.8);
+
+        // What a picked tree stands in (#248): both at the core, in order, and
+        // only the pocket a little way out; nothing far off.
+        let names = |p: [f32; 3]| -> Vec<String> {
+            let zones = field.zones_in(p, 0.0);
+            assert!(
+                zones.iter().all(|(_, w)| *w > 0.0 && *w <= 1.0),
+                "{zones:?}"
+            );
+            zones
+                .into_iter()
+                .map(|(name, _)| name.to_string())
+                .collect()
+        };
+        let pocket = field.zones()[0].name().to_string();
+        assert_eq!(
+            names([0.0, 0.0, 12.0]),
+            [pocket.clone(), "core".to_string()]
+        );
+        assert_eq!(names([0.0, 0.0, 14.0]), [pocket]);
+        assert!(names([0.0, 0.0, 400.0]).is_empty());
     }
 
     #[test]
