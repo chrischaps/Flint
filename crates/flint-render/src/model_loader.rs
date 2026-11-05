@@ -296,7 +296,7 @@ fn expand_nodes_animated(
         node_map.insert(node.name.clone(), child_id);
         index_to_entity.insert(entry.node_idx, child_id);
 
-        println!("  Expanded node: {} (animated, local TRS)", child_name);
+        eprintln!("  Expanded node: {} (animated, local TRS)", child_name);
 
         // Push children for traversal
         for &c in node.children.iter().rev() {
@@ -464,7 +464,7 @@ pub fn load_models_from_world(
                     .map(|b| format!(", bounds: {}", b))
                     .unwrap_or_default();
 
-                println!(
+                eprintln!(
                     "Loaded model: {} ({} meshes, {} nodes{}{})",
                     asset_name,
                     import_result.meshes.len(),
@@ -624,7 +624,7 @@ pub fn load_textures_from_world(
 
             match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
                 Ok(true) => {
-                    println!("Loaded texture: {}", tex_name);
+                    eprintln!("Loaded texture: {}", tex_name);
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -647,7 +647,7 @@ pub fn load_textures_from_world(
                         &companion_path,
                     ) {
                         Ok(true) => {
-                            println!("Loaded texture: {}", companion_name);
+                            eprintln!("Loaded texture: {}", companion_name);
                         }
                         Ok(false) => {}
                         Err(e) => {

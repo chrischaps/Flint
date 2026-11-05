@@ -323,6 +323,11 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
+| `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
+| `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
+| `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
+| `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
+| `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices and the wooze values it read. Everything else moves to stderr |
 | `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
 | `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |
@@ -345,7 +350,8 @@ When no camera flags are given, the render starts from the scene's `[camera]` bl
 > **bind pose** headlessly. To capture a posed frame of a rigged model, use the
 > model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
 > (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
-> exception: `--particle-time 2` steps every emitter before the capture.
+> exception: `--particle-time 2` steps every emitter before the capture. So are
+> living props, which draw at time 0 or at `--time`.
 
 ## The `edit` Command
 

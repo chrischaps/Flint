@@ -298,6 +298,20 @@ impl ProcGenResolver {
         self.queue.budget_ms()
     }
 
+    /// One step of living props with no frame budget: every pose the rings want
+    /// is there when this returns. For a capture, where nobody is waiting on the
+    /// frame and a pose arriving late would change the picture (#216).
+    pub fn step_living_now(
+        &mut self,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) -> Vec<LineageDone> {
+        if self.living.is_empty() {
+            return Vec::new();
+        }
+        self.living.tick(dt, f64::INFINITY, &self.registry, wooze)
+    }
+
     /// The scene's living props and how their rings have fared.
     pub fn living_props(&self) -> &LivingProps {
         &self.living

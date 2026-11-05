@@ -745,9 +745,12 @@ impl PlayerApp {
     fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
         let base = self.capture.path.clone()?;
         let now = self.clock.total_time;
+        // Tolerance so `--screenshot-at` means the frame at that time: 210 steps of
+        // 1/60 add up to a hair under 3.5, and the next frame is a step too late.
+        let reached = now + 1e-6 >= self.capture.at;
         match self.capture.every {
             None => {
-                if self.capture.taken || now < self.capture.at {
+                if self.capture.taken || !reached {
                     return None;
                 }
                 self.capture.taken = true;
@@ -755,7 +758,7 @@ impl PlayerApp {
             }
             Some(every) => {
                 if !self.capture.taken {
-                    if now < self.capture.at {
+                    if !reached {
                         return None;
                     }
                     self.capture.taken = true;
