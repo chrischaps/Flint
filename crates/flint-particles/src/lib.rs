@@ -120,7 +120,7 @@ impl RuntimeSystem for ParticleSystem {
         self.sync.sync_from_world(world);
         let count = self.sync.emitter_count();
         if count > 0 {
-            println!(
+            eprintln!(
                 "[particles] Discovered {count} emitter(s) across {} effect instance(s)",
                 self.sync.instance_count()
             );

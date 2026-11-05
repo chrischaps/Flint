@@ -30,6 +30,8 @@ use image::{Rgb, RgbImage};
 
 use super::gen_preview::{build_mesh_world, PREVIEW_ASSET};
 use super::gen_store;
+use super::gif_writer;
+use super::render_plan;
 
 /// What `--strip` was asked for.
 #[derive(Debug, Clone, Copy)]
@@ -134,12 +136,12 @@ struct Layout {
     height: u32,
 }
 
-const MARGIN: u32 = 28;
+pub(super) const MARGIN: u32 = 28;
 const GUTTER: u32 = 16;
 const GLYPH_WIDTH: u32 = 5;
-const GLYPH_HEIGHT: u32 = 7;
+pub(super) const GLYPH_HEIGHT: u32 = 7;
 /// Two strips of film perforations, above and below the frames.
-const PERFORATION_BAND: u32 = 26;
+pub(super) const PERFORATION_BAND: u32 = 26;
 
 impl Layout {
     fn new(frames: u32, columns: Option<u32>, cell: u32, bar_rows: u32) -> Self {
@@ -219,6 +221,14 @@ pub fn run(
         .with_context(|| format!("{label}: --strip needs a living prop"))?;
 
     let output = output_path(spec, output)?;
+    let animated = render_plan::is_gif(&output.to_string_lossy());
+    if animated && options.fps > render_plan::GIF_MAX_FPS {
+        bail!(
+            "a GIF can't play {} fps; it stops at {}",
+            options.fps,
+            render_plan::GIF_MAX_FPS
+        );
+    }
     let skeleton = alive
         .structure(spec, living.lineage_seed)
         .with_context(|| format!("{label}: couldn't grow the living structure"))?;
@@ -250,16 +260,23 @@ pub fn run(
             living.echoes.alpha
         );
     }
-    println!(
-        "Strip:      {} frames at {} fps, {} x {} cells of {} px, {} x {} px",
-        options.frames,
-        options.fps,
-        layout.columns,
-        layout.rows,
-        options.cell_size,
-        layout.width,
-        layout.height
-    );
+    if animated {
+        println!(
+            "Strip:      {} frames at {} fps, {} px, as a GIF",
+            options.frames, options.fps, options.cell_size,
+        );
+    } else {
+        println!(
+            "Strip:      {} frames at {} fps, {} x {} cells of {} px, {} x {} px",
+            options.frames,
+            options.fps,
+            layout.columns,
+            layout.rows,
+            options.cell_size,
+            layout.width,
+            layout.height
+        );
+    }
     if dry_run {
         println!("Output:     {}", output.display());
         return Ok(());
@@ -298,6 +315,15 @@ pub fn run(
         )
         .with_context(|| format!("{label}: couldn't render its echoes"))?
     };
+    if animated {
+        gif_writer::write(&output, &frames, options.fps)?;
+        println!(
+            "Output:     {} ({:.1} s)",
+            output.display(),
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(());
+    }
     let sheet = compose(spec, living, &options, &layout, &infos, &frames);
 
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -333,9 +359,9 @@ fn output_path(spec: &ProcGenSpec, output: Option<&str>) -> Result<PathBuf> {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("png"));
-    if !is_png {
+    if !is_png && !render_plan::is_gif(&path.to_string_lossy()) {
         bail!(
-            "--strip writes one PNG; {} doesn't end in .png",
+            "--strip writes one PNG or an animated GIF; {} doesn't end in .png or .gif",
             path.display()
         );
     }
@@ -576,12 +602,12 @@ fn fit_view(points: &[Vec3], yaw: f32, pitch: f32, fov: f32) -> (Vec3, f32) {
 
 // ── The sheet ──────────────────────────────────────────────────────────────
 
-const PAPER: Rgb<u8> = Rgb([18, 16, 14]);
+pub(super) const PAPER: Rgb<u8> = Rgb([18, 16, 14]);
 const PERFORATION: Rgb<u8> = Rgb([46, 41, 36]);
 const BAR_EMPTY: Rgb<u8> = Rgb([40, 36, 32]);
-const AMBER: Rgb<u8> = Rgb([232, 176, 74]);
-const BONE: Rgb<u8> = Rgb([207, 198, 180]);
-const DIM: Rgb<u8> = Rgb([130, 120, 106]);
+pub(super) const AMBER: Rgb<u8> = Rgb([232, 176, 74]);
+pub(super) const BONE: Rgb<u8> = Rgb([207, 198, 180]);
+pub(super) const DIM: Rgb<u8> = Rgb([130, 120, 106]);
 
 fn compose(
     spec: &ProcGenSpec,
@@ -662,7 +688,7 @@ fn key(stagger: Stagger) -> &'static str {
 }
 
 /// A row of film sprocket holes, centred in its band.
-fn draw_perforations(sheet: &mut RgbImage, y: u32) {
+pub(super) fn draw_perforations(sheet: &mut RgbImage, y: u32) {
     const WIDTH: u32 = 14;
     const HEIGHT: u32 = 8;
     const PITCH: u32 = 28;
@@ -731,7 +757,14 @@ fn fill_rect(sheet: &mut RgbImage, x: u32, y: u32, width: u32, height: u32, colo
 }
 
 /// Draw `text`, clipped to the sheet, and return the x just past it.
-fn draw_text(sheet: &mut RgbImage, x: u32, y: u32, scale: u32, color: Rgb<u8>, text: &str) -> u32 {
+pub(super) fn draw_text(
+    sheet: &mut RgbImage,
+    x: u32,
+    y: u32,
+    scale: u32,
+    color: Rgb<u8>,
+    text: &str,
+) -> u32 {
     let mut pen = x;
     for c in text.chars() {
         for (row, bits) in glyph(c).iter().enumerate() {
@@ -754,7 +787,7 @@ fn draw_text(sheet: &mut RgbImage, x: u32, y: u32, scale: u32, color: Rgb<u8>, t
 }
 
 /// Draw `text` so it ends at `right`.
-fn draw_text_right(
+pub(super) fn draw_text_right(
     sheet: &mut RgbImage,
     right: u32,
     y: u32,
