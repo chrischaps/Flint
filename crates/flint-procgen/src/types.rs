@@ -227,6 +227,14 @@ pub struct BranchSegment {
     pub radius_end: f32,
     /// Branching depth (0 = trunk, incremented at each Push).
     pub depth: u32,
+    /// This segment's index in its tree. The tree generator fills it in once
+    /// the tree is grown (`generators::tree::branches::link_segments`), so
+    /// it's 0 on the raw output of an algorithm. On the L-system path the
+    /// same index means the same segment for every seed (#207).
+    pub id: u32,
+    /// The earlier segment whose end this one starts from, or `None` when it
+    /// leaves the trunk. Filled in with `id`.
+    pub parent: Option<u32>,
 }
 
 impl BranchSegment {

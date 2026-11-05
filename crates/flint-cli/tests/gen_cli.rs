@@ -102,6 +102,84 @@ fn texture_spec_writes_one_png_per_map() {
     }
 }
 
+/// The living oak example with its `[living]` table replaced, or `None` to
+/// keep it. Written to a scratch file so each case can break it its own way.
+fn living_spec(dir: &Path, living: Option<&str>) -> PathBuf {
+    let src = std::fs::read_to_string(repo_root().join("specs/examples/oak_living.procgen.toml"))
+        .unwrap();
+    let text = match living {
+        None => src,
+        Some(table) => {
+            // At the start of a line: the header comment names it too.
+            let cut = src
+                .find("\n[living]")
+                .expect("the example has a [living] table");
+            format!("{}\n[living]\n{table}\n", &src[..cut])
+        }
+    };
+    let path = dir.join("living.procgen.toml");
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn dry_run_counts_a_living_spec_skeleton() {
+    let dir = scratch("living_ok");
+    let o = gen(&[s(&living_spec(&dir, None)), "--dry-run"]);
+    let t = text(&o);
+    assert!(o.status.success(), "{t}");
+    assert!(
+        t.contains("lineage 7: 243 segments") && t.contains("a ring of 8 poses"),
+        "{t}"
+    );
+}
+
+#[test]
+fn dry_run_refuses_a_malformed_living_table_and_names_the_key() {
+    let dir = scratch("living_bad");
+    for (table, key) in [
+        ("lineage_seed = 7\npose_rng = 8", "pose_rng"),
+        ("pose_ring = 8", "lineage_seed"),
+        ("lineage_seed = 7\npose_ring = 1", "living.pose_ring"),
+        ("lineage_seed = 7\nstagger = \"per_twig\"", "stagger"),
+        (
+            "lineage_seed = 7\nvariance = { amount = 2.0 }",
+            "living.variance.amount",
+        ),
+        (
+            "lineage_seed = 7\ndrift = { params = [\"branch_angel\"] }",
+            "branch_angel",
+        ),
+    ] {
+        let o = gen(&[s(&living_spec(&dir, Some(table))), "--dry-run"]);
+        let t = text(&o);
+        assert!(!o.status.success(), "{table:?} passed:\n{t}");
+        assert!(t.contains(key), "{table:?} didn't name {key}:\n{t}");
+    }
+}
+
+#[test]
+fn living_on_a_colonized_tree_warns_and_strict_refuses() {
+    let dir = scratch("living_pine");
+    let pine =
+        std::fs::read_to_string(repo_root().join("specs/examples/pine_tree.procgen.toml")).unwrap();
+    let pine = pine.split("[[lod]]").next().unwrap();
+    let path = dir.join("pine.procgen.toml");
+    std::fs::write(&path, format!("{pine}\n[living]\nlineage_seed = 7\n")).unwrap();
+
+    let o = gen(&[s(&path), "--dry-run"]);
+    let t = text(&o);
+    assert!(o.status.success(), "the bake is still good:\n{t}");
+    assert!(
+        t.contains("[living] would be ignored") && t.contains("space colonization"),
+        "{t}"
+    );
+    assert!(!t.contains("Living:"), "{t}");
+
+    let o = gen(&[s(&path), "--dry-run", "--strict"]);
+    assert!(!o.status.success(), "{}", text(&o));
+}
+
 #[test]
 fn dry_run_prints_the_estimate_and_writes_nothing() {
     let dir = scratch("dry");

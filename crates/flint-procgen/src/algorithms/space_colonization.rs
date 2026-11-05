@@ -505,6 +505,8 @@ pub fn branch_graph_to_segments(nodes: &[BranchNode]) -> Vec<BranchSegment> {
                 radius_start: parent.radius,
                 radius_end: node.radius,
                 depth: node.depth,
+                id: 0,
+                parent: None,
             })
         })
         .collect()

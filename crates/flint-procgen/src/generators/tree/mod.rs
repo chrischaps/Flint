@@ -7,6 +7,7 @@
 mod bark;
 pub mod branches;
 pub mod leaves;
+mod living;
 pub mod lod;
 mod trunk;
 
@@ -18,7 +19,7 @@ pub use trunk::{generate_trunk, TrunkOutput};
 
 use crate::algorithms::lsystem::grammar::{self, Grammar};
 use crate::algorithms::mesh_builder::MeshBuilder;
-use crate::generator::{GenerationCost, Generator};
+use crate::generator::{GenerationCost, Generator, LivingGenerator};
 use crate::generators::util::{
     parse_hex_color, toml_f32, toml_string, toml_string_array, toml_u32,
 };
@@ -828,6 +829,10 @@ impl Generator for TreeGenerator {
         OutputKind::Mesh
     }
 
+    fn as_living(&self) -> Option<&dyn LivingGenerator> {
+        Some(self)
+    }
+
     fn generate(&self, spec: &ProcGenSpec, rng: &mut SeededRng) -> Result<GeneratorOutput> {
         // 1. Parse params
         let trunk_params = TrunkParams::from_toml(&spec.params)?;
@@ -1490,6 +1495,7 @@ target_triangles = 200
             .generate(
                 &ProcGenSpec {
                     lod: None,
+                    living: None,
                     ..spec.clone()
                 },
                 &mut SeededRng::new(spec.seed.value.unwrap_or(42)),
@@ -1634,6 +1640,7 @@ branch_levels = 2
                 } else {
                     ProcGenSpec {
                         lod: None,
+                        living: None,
                         ..spec.clone()
                     }
                 };

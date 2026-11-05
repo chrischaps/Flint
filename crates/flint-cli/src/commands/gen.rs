@@ -303,11 +303,13 @@ pub fn run(args: GenArgs) -> Result<()> {
     for issue in &issues {
         eprintln!("warning: {label}: {issue}");
     }
-    if args.strict && !issues.is_empty() {
-        bail!(
-            "{} spec parameter(s) would be ignored (--strict)",
-            issues.len()
-        );
+    let living_issue = living_issue(generator, &spec);
+    if let Some(issue) = &living_issue {
+        eprintln!("warning: {label}: {issue}");
+    }
+    let ignored = issues.len() + usize::from(living_issue.is_some());
+    if args.strict && ignored > 0 {
+        bail!("{ignored} spec parameter(s) would be ignored (--strict)");
     }
 
     let kind = generator.output_kind();
@@ -362,6 +364,21 @@ pub fn run(args: GenArgs) -> Result<()> {
             format_bytes(cost.estimated_texture_bytes)
         );
         say!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
+        if let (Some(living), None, Some(alive)) =
+            (&spec.living, &living_issue, generator.as_living())
+        {
+            let skeleton = alive
+                .structure(&spec, living.lineage_seed)
+                .with_context(|| format!("{label}: couldn't grow the living structure"))?;
+            say!();
+            say!(
+                "Living:     lineage {}: {} segments, {} leaf cards, a ring of {} poses",
+                living.lineage_seed,
+                skeleton.segments.len(),
+                skeleton.leaf_bindings.len(),
+                living.pose_ring
+            );
+        }
         return Ok(());
     }
 
@@ -554,6 +571,21 @@ fn generate_and_get_output(
 
 /// Look up the spec's generator, or explain which spec named an unknown one
 /// and what the choices are.
+/// Why a spec's `[living]` table would have no effect, if it wouldn't. The
+/// bake is still good, so this warns rather than fails.
+fn living_issue(generator: &dyn Generator, spec: &ProcGenSpec) -> Option<String> {
+    spec.living.as_ref()?;
+    let reason = match generator.as_living() {
+        None => format!(
+            "not a living prop: generator '{}' can't separate a structure from its poses; \
+             it gets shallow wooze only",
+            spec.generator
+        ),
+        Some(living) => living.check_living(spec).err()?.to_string(),
+    };
+    Some(format!("[living] would be ignored: {reason}"))
+}
+
 fn resolve_generator<'a>(
     registry: &'a GeneratorRegistry,
     spec: &ProcGenSpec,

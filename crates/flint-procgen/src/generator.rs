@@ -5,6 +5,7 @@
 //! parameters come from [`ProcGenSpec`]. This keeps generators `Send + Sync`
 //! and safe for future parallel generation.
 
+use crate::living::{LivingPose, LivingSkeleton};
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::rng::SeededRng;
 use crate::spec::ProcGenSpec;
@@ -68,4 +69,39 @@ pub trait Generator: Send + Sync {
     fn estimate_cost(&self, _spec: &ProcGenSpec) -> GenerationCost {
         GenerationCost::default()
     }
+
+    /// This generator's living side, for callers holding a `dyn Generator`
+    /// from the registry. `None` for one that can't separate a structure
+    /// from its poses.
+    fn as_living(&self) -> Option<&dyn LivingGenerator> {
+        None
+    }
+}
+
+/// A generator whose output can keep drifting: one fixed structure (its
+/// identity, from a lineage seed) and a stream of poses that vary only
+/// continuous values (from shape seeds). Topology can't be interpolated, so
+/// this split is what gives procgen a time axis.
+///
+/// Optional: a generator that can't make the split doesn't implement it.
+/// Like [`Generator`], it's stateless and deterministic.
+pub trait LivingGenerator: Send + Sync {
+    /// Whether this spec can be split, and if not, why:
+    /// [`ProcGenError::LivingUnsupported`](crate::ProcGenError) names the
+    /// reason. [`structure`](Self::structure) and [`pose`](Self::pose) refuse
+    /// the same specs.
+    fn check_living(&self, spec: &ProcGenSpec) -> Result<()>;
+
+    /// The skeleton every pose of this lineage shares: segments with stable
+    /// ids and parents, and the leaf cards bound to them.
+    fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
+
+    /// One variant of `skeleton`, as per-segment transforms relative to it.
+    /// The same arguments give the same bits.
+    fn pose(
+        &self,
+        spec: &ProcGenSpec,
+        skeleton: &LivingSkeleton,
+        shape_seed: u64,
+    ) -> Result<LivingPose>;
 }
