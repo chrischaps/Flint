@@ -828,6 +828,12 @@ impl PlayerApp {
                     "no renderer active — nothing to tune",
                 );
             }
+            // Living Props A/B (#238): F5 freezes the living clock, F6 flips
+            // between the two presets, F7 splits the view between them. F6 and
+            // F7 start a comparison of the panel's picks if none is running.
+            KeyCode::F5 => self.toggle_living_freeze(),
+            KeyCode::F6 => self.living_ab_key(false),
+            KeyCode::F7 => self.living_ab_key(true),
             KeyCode::F11 => {
                 if let Some(window) = &self.window {
                     if window.fullscreen().is_some() {

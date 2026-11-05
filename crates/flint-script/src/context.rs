@@ -297,6 +297,20 @@ pub enum ScriptCommand {
     LoadLivingPreset {
         name: String,
     },
+    /// Compare two presets on the same grove (#238). An empty name is the knobs
+    /// as they stand.
+    CompareLiving {
+        a: String,
+        b: String,
+    },
+    /// Show the other side of the comparison.
+    FlipLiving,
+    /// Show both sides at once, A left and B right, or one at a time.
+    SplitLiving {
+        split: bool,
+    },
+    /// End the comparison, keeping the side that's shown.
+    StopComparingLiving,
     LoadScene {
         path: String,
     },

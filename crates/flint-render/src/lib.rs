@@ -34,6 +34,7 @@ pub mod shadow;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;
+pub mod split_view;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
 pub mod water_body;
@@ -84,6 +85,7 @@ pub use scene_renderer::{
     DEFAULT_CLEAR_COLOR,
 };
 pub use skinned_pipeline::SkinnedPipeline;
+pub use split_view::SplitView;
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;

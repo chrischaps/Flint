@@ -35,7 +35,7 @@ struct Member {
 }
 
 /// Every group's clock, and who's in each group.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ShallowWooze {
     clocks: HashMap<EntityId, ShallowClock>,
     members: Vec<Member>,
@@ -111,6 +111,11 @@ impl ShallowWooze {
     /// Forget everything, for a new scene.
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// What each entity draws with, as of the last [`Self::advance`].
+    pub fn draws(&self) -> &[(EntityId, ShallowWoozeDraw)] {
+        &self.draws
     }
 
     /// How many entities were drawn with it this frame, for `--exit-after`.

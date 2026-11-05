@@ -4052,6 +4052,40 @@ fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             });
         });
     }
+    // A/B (#238): compare_living("", "linklater") puts the knobs as they stand
+    // beside a preset; flip_living() swaps which is shown, split_living(true)
+    // shows both, A left; stop_comparing_living() keeps what's shown.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("compare_living", move |a: &str, b: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::CompareLiving {
+                a: a.to_string(),
+                b: b.to_string(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("flip_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::FlipLiving);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("split_living", move |split: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SplitLiving { split });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_comparing_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StopComparingLiving);
+        });
+    }
 
     // set_wooze(knobs: Map), set_wooze(knobs: Map, seconds)
     {

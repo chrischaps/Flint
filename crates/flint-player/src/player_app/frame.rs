@@ -596,6 +596,42 @@ impl PlayerApp {
             &self.camera,
             &view,
         );
+        // A split A/B (#238): this drawing is the side being shown, so it goes
+        // to the GPU now, and the other side draws over its half after it.
+        if let Some(ab) = self.living_tune.ab.as_deref_mut().filter(|ab| ab.is_split()) {
+            let first = std::mem::replace(
+                &mut encoder,
+                context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Split Frame Encoder"),
+                    }),
+            );
+            context.queue.submit(std::iter::once(first.finish()));
+            let frame_copy = output.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(context.hud_format),
+                ..Default::default()
+            });
+            super::living_ab::draw_other_side(
+                super::living_ab::OtherSide {
+                    ab,
+                    resolver: &mut self.procgen_resolver,
+                    blend: &mut self.living_blend,
+                    world: &self.world,
+                    camera: &self.camera,
+                    own_boil: boil,
+                    own_shallow: &self.shallow_wooze,
+                },
+                renderer,
+                &context.device,
+                &context.queue,
+                &mut encoder,
+                &context.depth_view,
+                &frame_copy,
+                (output.texture.width(), output.texture.height()),
+                (context.view_format, context.hud_format),
+            );
+        }
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.perf {
             perf.mark(super::perf::Phase::Render);
@@ -716,6 +752,22 @@ impl PlayerApp {
         }
         if let Some(line) = super::living_props::knobs_report(&props.stats(), props) {
             eprintln!("{line}");
+        }
+        // The other side of an A/B (#238): its rings, and its own blending.
+        if let (Some(ab), Some(stats)) = (self.living_ab_state(), self.hidden_side_stats()) {
+            let hidden = if ab.showing_b { "A" } else { "B" };
+            eprintln!(
+                "[living] A/B {}split: hidden side {hidden}: {} of {} frames full, {} missing a pose \
+                 in use, {} poses made, {} from cache; blending {:.3} ms/frame over {} frames",
+                if ab.split { "" } else { "not " },
+                stats.frames_full,
+                stats.frames,
+                stats.frames_starved,
+                stats.poses_made,
+                stats.poses_from_cache,
+                stats.blend_total_ms / stats.blend_frames.max(1) as f64,
+                stats.blend_frames,
+            );
         }
         if let Some(field) = &self.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
@@ -1445,7 +1497,7 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick_procgen(&mut self, living_dt: f64) {
-        self.before_living_tick();
+        let living_dt = living_dt + self.before_living_tick();
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1522,6 +1574,8 @@ impl PlayerApp {
                 );
             }
         }
+        // The other side of an A/B (#238), on the same dt, after the scene's own.
+        self.tick_hidden_side(living_dt);
     }
 
     #[profiling::function]
@@ -1626,6 +1680,7 @@ impl PlayerApp {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
+        let ab_state = self.living_ab_state();
 
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else {
@@ -1720,6 +1775,11 @@ impl PlayerApp {
 
             // On-screen touch controls (#133), over the game's UI.
             super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
+
+            // Which preset is where, while two are compared (#238).
+            if let Some(ab) = &ab_state {
+                super::living_ab::paint_labels(ctx, ab);
+            }
 
             // The pose overlay (#218), in the world and under every panel.
             #[cfg(feature = "debug-hud")]

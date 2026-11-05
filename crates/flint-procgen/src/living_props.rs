@@ -61,6 +61,9 @@ const REHOLD_PASS_REST: u8 = 2;
 /// poses to halve.
 const POSE_ESTIMATE_DECAY: f64 = 0.99;
 
+/// A leaf part's tint as no tint step can be: one that has to be sent again.
+const TINT_UNSENT: i32 = i32::MIN;
+
 /// What a scene's `living_prop` component asks for. Anything left `None` comes
 /// from the spec's `[living]` table, except the phase offset, which comes from
 /// the entity's name so that a grove doesn't move in step.
@@ -1570,6 +1573,88 @@ impl LivingProps {
         self.reholding
     }
 
+    /// The same props on the same clocks, for a second look at them beside these
+    /// (#238): the knobs of one can then turn without the other's. Its lineages,
+    /// rings and poses are these, and shared, since a pose is an `Arc`. Its pose
+    /// cache starts empty: the two take turns with one, through
+    /// [`ProcGenResolver::process_living_beside`](crate::ProcGenResolver::process_living_beside),
+    /// since a pose doesn't depend on any knob and either side can use the other's.
+    pub fn fork(&self) -> Self {
+        Self {
+            lineages: self.lineages.clone(),
+            props: self.props.clone(),
+            // Each side keeps its own species values (#246), as it does the rest.
+            species: self.species.clone(),
+            cache: PoseCache::new(self.cache.max_bytes),
+            time: self.time,
+            pose_estimate_ms: self.pose_estimate_ms,
+            stats: LivingStats::default(),
+            defaults: self.defaults.clone(),
+            reholding: self.reholding,
+            rehold_cursor: self.rehold_cursor,
+            rehold_pass: self.rehold_pass,
+            rehold_turn: self.rehold_turn,
+        }
+    }
+
+    /// Lend each other a pose cache: what one side made, the other finds.
+    pub fn swap_cache(&mut self, other: &mut LivingProps) {
+        std::mem::swap(&mut self.cache, &mut other.cache);
+    }
+
+    /// Forget what every bone buffer, echo and tint was last given, so that the
+    /// next blend writes all of it: the buffers now hold something else, such as
+    /// the other side of an A/B (#238). No clock moves and no cycle starts over, so
+    /// what's written is what would have been anyway.
+    pub fn redraw_all(&mut self) {
+        for prop in &mut self.props {
+            prop.redraw();
+            // Not cleared: a cleared tint reads as step 0, and a part really on
+            // step 0 would then never be sent, keeping the other side's.
+            prop.drawn.tints.fill(TINT_UNSENT);
+            prop.echoes_changed = true;
+        }
+    }
+
+    /// Start every part's cycle over at the beat it's on, reading the field as it
+    /// is from the next tick: what a part keeps of the glide and drift it started
+    /// its cycle with is gone, and it shows the knobs as they are now. For a look
+    /// that has to be what its preset says at once, not from each part's next
+    /// beat (#238). Where the knobs haven't changed since a cycle began, nothing
+    /// it draws changes.
+    pub fn restart_cycles(&mut self) {
+        for prop in &mut self.props {
+            prop.drawn.bones.parts.clear();
+            prop.shadow_cycle = Cycle::default();
+            for echo in &mut prop.echoes {
+                echo.drawn.parts.clear();
+            }
+            prop.redraw();
+        }
+    }
+
+    /// Finish what knobs have started, with no budget: every pose held to the
+    /// current variance, every waiting clock started and every ring full. For a
+    /// look that has to be shown as it is now, not as it'll be in a second.
+    pub(crate) fn settle_now(&mut self, registry: &GeneratorRegistry) {
+        // Each round can only start clocks and reshape rings toward what they
+        // already want, so a few rounds always do; the bound is for safety.
+        for _ in 0..16 {
+            while self.reholding && self.rehold_one() {}
+            while self.fill_one(registry).is_some() {}
+            self.start_what_is_ready();
+            let waiting = self.props.iter().any(LivingProp::is_waiting);
+            let missing = self
+                .props
+                .iter()
+                .any(|p| p.ring.as_ref().is_some_and(|r| r.next_missing().is_some()));
+            if !self.reholding && !waiting && !missing {
+                break;
+            }
+        }
+        self.pose_estimate_ms = 0.0;
+    }
+
     /// Move every prop's clock on by exactly `beats` of its own steps, however
     /// long those are, and the seconds its jitter reads by `seconds`. For
     /// single-stepping: with `dt` at 0 it's the only thing moving the clock.
@@ -1732,8 +1817,10 @@ impl LivingProps {
         blend.first_bone = moved.first_bone;
         self.stats.blends_starved += u64::from(moved.starved);
 
-        // Each part's own beat, and what's new goes up as a material change.
-        prop.drawn.tints.resize(rig.leaf_parts.len(), 0);
+        // Each part's own beat, and what's new goes up as a material change. A
+        // part's first blend always sends its tint, so nothing is assumed of
+        // what the renderer holds: after an A/B flip (#238) it's the other side's.
+        prop.drawn.tints.resize(rig.leaf_parts.len(), TINT_UNSENT);
         for (i, part) in rig.leaf_parts.iter().enumerate() {
             let step = jitter.tint_step(prop.stream, i, t);
             if step != prop.drawn.tints[i] {
@@ -2529,6 +2616,133 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
             wrote += usize::from(props.blend_echo(id, echo, frame).is_some());
         }
         wrote
+    }
+
+    /// A prop's bone buffers, its own first, and the tints it sent.
+    type Drawn = (Vec<Vec<[[f32; 4]; 4]>>, Vec<(usize, [f32; 3])>);
+
+    /// Everything a prop's buffers would hold now, written whole: its bones, then
+    /// each echo's, then its tints.
+    fn everything_drawn(props: &mut LivingProps, id: LivingPropId) -> Drawn {
+        props.redraw_all();
+        let mut frame = BlendFrame::default();
+        let blend = props.blend_prop(id, &mut frame);
+        assert_eq!(
+            blend.first_bone,
+            Some(0),
+            "a redraw writes the whole palette"
+        );
+        assert_eq!(blend.echo_count, Some(props.prop(id).echo_count()));
+        let tints = frame.tints.clone();
+        let mut bones = vec![frame.bones.clone()];
+        for echo in 0..props.prop(id).echo_count() {
+            assert_eq!(props.blend_echo(id, echo, &mut frame), Some(0));
+            bones.push(frame.bones.clone());
+        }
+        (bones, tints)
+    }
+
+    #[test]
+    fn a_redraw_writes_everything_and_moves_nothing() {
+        let (mut resolver, id) = running("count = 3", 5.3);
+        let props = resolver.living_props_mut();
+        let mut frame = BlendFrame::default();
+        props.blend_prop(id, &mut frame);
+        // Nothing has moved, so nothing would be written.
+        assert_eq!(props.blend_prop(id, &mut frame).first_bone, None);
+        let once = everything_drawn(props, id);
+        assert_eq!(everything_drawn(props, id), once);
+    }
+
+    #[test]
+    fn a_fork_on_the_same_knobs_draws_the_same_bones_and_finds_its_poses_made() {
+        let (mut resolver, id) = running("count = 3", 4.0);
+        let mut side = resolver.living_props().fork();
+        for _ in 0..240 {
+            resolver.process_living(1.0 / 60.0);
+            resolver.process_living_beside(&mut side, 1.0 / 60.0, None);
+        }
+        assert_eq!(
+            side.prop(id).beats(),
+            resolver.living_props().prop(id).beats()
+        );
+        let ours = everything_drawn(resolver.living_props_mut(), id);
+        assert_eq!(everything_drawn(&mut side, id), ours);
+        let stats = side.stats();
+        assert_eq!(stats.poses_made, 0, "the scene made them first: {stats:?}");
+        assert!(stats.poses_from_cache > 0, "{stats:?}");
+        assert_eq!(stats.frames_starved, 0, "{stats:?}");
+    }
+
+    #[test]
+    fn a_fork_keeps_the_species_values_and_turns_its_own() {
+        let (resolver, id) = running("count = 2, spread = 0.2", 1.0);
+        let mut props = resolver.living_props().fork();
+        let species = props.species_of(id).to_string();
+        let slow = SpeciesOverride {
+            clock: ClockOverride {
+                step: Some(1.5),
+                ..ClockOverride::default()
+            },
+            ..SpeciesOverride::default()
+        };
+        assert!(props.set_species(&species, slow));
+        let side = props.fork();
+        assert_eq!(
+            side.resolved(id, None),
+            props.resolved(id, None),
+            "carried over"
+        );
+
+        let mut side = side;
+        let quick = SpeciesOverride {
+            clock: ClockOverride {
+                step: Some(0.25),
+                ..ClockOverride::default()
+            },
+            ..SpeciesOverride::default()
+        };
+        side.set_species(&species, quick);
+        assert_ne!(side.resolved(id, None), props.resolved(id, None));
+        assert_eq!(
+            props.resolved(id, None),
+            props.fork().resolved(id, None),
+            "left alone"
+        );
+    }
+
+    #[test]
+    fn a_fork_turns_its_own_knobs_and_settles_them_at_once() {
+        let (mut resolver, id) = running("count = 2, spread = 0.2", 6.0);
+        let before = everything_drawn(resolver.living_props_mut(), id);
+        let mut side = resolver.living_props().fork();
+        side.set_echoes(EchoConfig {
+            count: 6,
+            spread: 1.2,
+            alpha: 0.3,
+        });
+        side.set_stagger(Stagger::PerBranch);
+        side.set_variance(VarianceConfig {
+            amount: 1.0,
+            steady: 0.0,
+            keep_size: false,
+        });
+        assert!(side.prop(id).is_waiting() && side.is_reholding());
+        resolver.settle_living_now(Some(&mut side));
+        let prop = side.prop(id);
+        assert!(!prop.is_waiting() && !side.is_reholding());
+        assert_eq!(prop.echo_count(), 6);
+        assert_eq!(prop.ready(), prop.ring_len(), "full");
+
+        // Settled is still: ticks that move no clock change nothing it draws.
+        let settled = everything_drawn(&mut side, id);
+        for _ in 0..30 {
+            resolver.process_living_beside(&mut side, 0.0, None);
+        }
+        assert_eq!(everything_drawn(&mut side, id), settled);
+        // And the scene's own look never heard of it.
+        assert_eq!(everything_drawn(resolver.living_props_mut(), id), before);
+        assert_eq!(resolver.living_props().prop(id).echo_count(), 2);
     }
 
     #[test]
@@ -3908,6 +4122,40 @@ value = 1
         assert!(seen.len() <= 9, "{} tints", seen.len());
     }
 
+    #[test]
+    fn a_redraw_sends_every_leaf_tint_even_one_on_step_zero() {
+        let spec = std::fs::read_to_string(OAK).unwrap();
+        let mut resolver = resolver_with(&spec);
+        let mut req = request(1, "oak");
+        req.spec_name = "oak_living".into();
+        let id = resolver.add_living_prop(req).unwrap().0;
+        resolver.make_living_now();
+        // With no jitter every part sits on step 0, the value a cleared memory of
+        // what was sent would read as.
+        let still = WoozeField::new(WoozeSample {
+            jitter: 0.0,
+            ..WoozeSample::NEUTRAL
+        });
+        let mut frame = BlendFrame::default();
+        resolver.process_living_in(1.0 / 60.0, Some((&still, 0.0)));
+        let sent = |resolver: &mut ProcGenResolver, frame: &mut BlendFrame| {
+            resolver.living_props_mut().blend_prop(id, frame);
+            frame.tints.len()
+        };
+        let leaves = resolver
+            .living_props()
+            .rig_of(id)
+            .unwrap()
+            .1
+            .leaf_parts
+            .len();
+        assert!(leaves > 0);
+        sent(&mut resolver, &mut frame);
+        assert_eq!(sent(&mut resolver, &mut frame), 0, "nothing new to send");
+        resolver.living_props_mut().redraw_all();
+        assert_eq!(sent(&mut resolver, &mut frame), leaves, "all of them again");
+    }
+
     // ---- The wooze field (#213) ----
 
     fn field(global: &str, zones: &[&str]) -> WoozeField {
@@ -4204,7 +4452,8 @@ value = 1
             for f in 0..120 {
                 tick_with(&mut resolver, &field, f64::from(f) / 60.0, 1.0 / 60.0);
                 resolver.living_props_mut().blend_prop(id, &mut frame);
-                for (_, tint) in &frame.tints {
+                // A first blend sends every part's tint, the identity included.
+                for (_, tint) in frame.tints.iter().filter(|(_, tint)| *tint != [1.0; 3]) {
                     seen.insert(tint.map(f32::to_bits));
                 }
                 let t =

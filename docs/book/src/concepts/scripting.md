@@ -502,6 +502,10 @@ The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s control
 | `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
 | `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on. Not on the web, which has nowhere to put it |
 | `load_living_preset(name)` | Load a preset file or a built-in, live |
+| `compare_living(a, b)` | Put preset `a` and preset `b` on the same grove, showing A ([A/B](../guides/debug-panels.md#comparing-two-presets-ab)). `""` is the knobs as they stand |
+| `flip_living()` | Show the other side, on the same clock and camera |
+| `split_living(split)` | Show both at once, A left and B right, or one at a time |
+| `stop_comparing_living()` | End the comparison, keeping the side that's shown |
 
 ```rust
 tune_living(#{

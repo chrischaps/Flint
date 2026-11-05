@@ -380,7 +380,18 @@ pub fn upload_blends(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) {
-    let props = resolver.living_props_mut();
+    upload_props(resolver.living_props_mut(), frame, renderer, device, queue);
+}
+
+/// [`upload_blends`] for any set of props: the scene's, or the other side of an
+/// A/B (#238), whose bones go into the same buffers.
+pub fn upload_props(
+    props: &mut LivingProps,
+    frame: &mut BlendFrame,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
     if props.is_empty() {
         return;
     }

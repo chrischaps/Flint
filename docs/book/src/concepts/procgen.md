@@ -478,6 +478,8 @@ A file holds numbers as briefly as they read back to the same bits, so what you 
 
 `flint validate` fails on a preset file with a misspelt key or a value out of range, naming the preset. The player warns and goes without it, and `flint bundle` packs `wooze/`.
 
+To choose between two presets, put them side by side: the panel's [A/B](../guides/debug-panels.md#comparing-two-presets-ab), or `flint-player <scene> --compare linklater,misty --split`, shows both on the same grove at the same moment, and `F6` flips between them.
+
 ### Species values
 
 A grove is one world made of different things. `[living.species.<spec>]` gives one species values of its own, so the thorns can be twitchier than the oaks without editing a spec:

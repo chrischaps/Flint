@@ -423,7 +423,7 @@ impl PlayerApp {
             renderer.set_shallow_wooze(std::iter::empty());
             super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
             self.boil_clock = Default::default();
-            self.living_tune = Default::default();
+            self.living_tune.for_new_scene();
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
                 &mut self.world,

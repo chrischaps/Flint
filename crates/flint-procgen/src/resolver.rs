@@ -312,6 +312,39 @@ impl ProcGenResolver {
         self.living.tick(dt, f64::INFINITY, &self.registry, wooze)
     }
 
+    /// [`process_living_in`](Self::process_living_in) for a second look at the
+    /// scene's props (#238), made with [`LivingProps::fork`]: its own knobs, the
+    /// same clock and frame budget, and the scene's pose cache, so a pose either
+    /// side has made the other finds. Its lineages are built, so nothing comes back.
+    pub fn process_living_beside(
+        &mut self,
+        side: &mut LivingProps,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) {
+        if side.is_empty() {
+            return;
+        }
+        let left = self.queue.budget_ms() - self.queue.stats().budget_used_ms;
+        self.living.swap_cache(side);
+        side.tick(dt, left, &self.registry, wooze);
+        self.living.swap_cache(side);
+    }
+
+    /// Finish what the knobs of the scene's props have started, now and with no
+    /// budget: see [`LivingProps::settle_now`]. With `side`, that side's instead,
+    /// on the scene's pose cache.
+    pub fn settle_living_now(&mut self, side: Option<&mut LivingProps>) {
+        match side {
+            Some(side) => {
+                self.living.swap_cache(side);
+                side.settle_now(&self.registry);
+                self.living.swap_cache(side);
+            }
+            None => self.living.settle_now(&self.registry),
+        }
+    }
+
     /// The frame's whole budget, for tests that want it tight or wide.
     #[cfg(test)]
     pub(crate) fn frame_budget_for_test(&mut self, budget_ms: f64) {

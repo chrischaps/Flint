@@ -300,6 +300,28 @@ pub struct LivingPanelState {
     pub paint_pass: bool,
     /// Whether the ink pass is on.
     pub ink_pass: bool,
+    /// Two presets being compared (#238), if they are.
+    pub ab: Option<LivingAbState>,
+}
+
+/// How an A/B comparison stands (#238). A name of "" is the knobs as they stood.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LivingAbState {
+    pub a: String,
+    pub b: String,
+    /// Whether B is the side shown and tuned.
+    pub showing_b: bool,
+    /// Whether both are on screen, A left.
+    pub split: bool,
+}
+
+/// What a side is called in the panel.
+fn side_name(name: &str) -> &str {
+    if name.is_empty() {
+        "as it was"
+    } else {
+        name
+    }
 }
 
 /// What the user asked for; applied by the host.
@@ -316,6 +338,16 @@ pub enum LivingPanelAction {
     Reset,
     Save(String),
     Load(String),
+    /// Compare preset A with preset B (#238); "" is the knobs as they stand.
+    Compare(String, String),
+    /// The presets F6 and F7 would compare, as picked.
+    PickAb(String, String),
+    /// Show the other side.
+    Flip,
+    /// Both sides at once, or one.
+    Split(bool),
+    /// End the comparison, keeping what's shown.
+    StopComparing,
 }
 
 pub struct LivingPropsDebugPanel {
@@ -328,6 +360,9 @@ pub struct LivingPropsDebugPanel {
     picked: String,
     /// The name to save under.
     save_as: String,
+    /// What A and B are picked to be, before a comparison starts. `None` until
+    /// the presets on offer are known.
+    ab_picks: Option<(String, String)>,
     actions: Vec<LivingPanelAction>,
 }
 
@@ -346,6 +381,7 @@ impl LivingPropsDebugPanel {
             focus: 0,
             picked: String::new(),
             save_as: "grove".to_string(),
+            ab_picks: None,
             actions: Vec::new(),
         }
     }
@@ -623,6 +659,83 @@ impl LivingPropsDebugPanel {
         });
     }
 
+    /// Two presets on the same grove: pick them, compare, flip, split.
+    fn ab_ui(&mut self, ui: &mut egui::Ui) {
+        section(ui, "A/B", true, |ui| {
+            let names = self.state.preset_names.clone();
+            if let Some(ab) = self.state.ab.clone() {
+                ui.horizontal(|ui| {
+                    let tuned = if ab.showing_b { "B" } else { "A" };
+                    ui.label(format!("A {}  ·  B {}", side_name(&ab.a), side_name(&ab.b)));
+                    ui.weak(format!("tuning {tuned}"));
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(if ab.showing_b { "Show A" } else { "Show B" })
+                        .on_hover_text("F6: the other preset, same camera, same moment")
+                        .clicked()
+                    {
+                        self.push(LivingPanelAction::Flip);
+                    }
+                    let mut split = ab.split;
+                    if ui
+                        .checkbox(&mut split, "Split")
+                        .on_hover_text("F7: A on the left, B on the right, at once")
+                        .changed()
+                    {
+                        self.push(LivingPanelAction::Split(split));
+                    }
+                    if ui
+                        .button("Stop")
+                        .on_hover_text("Keep the side that's shown")
+                        .clicked()
+                    {
+                        self.push(LivingPanelAction::StopComparing);
+                    }
+                });
+                if ab.split {
+                    ui.weak("The knobs above turn the side with the dot.");
+                }
+                return;
+            }
+            let (mut a, mut b) = self.ab_picks.clone().unwrap_or_else(|| {
+                let b = names
+                    .iter()
+                    .find(|n| *n == "linklater")
+                    .or(names.first())
+                    .cloned()
+                    .unwrap_or_default();
+                (String::new(), b)
+            });
+            let was = (a.clone(), b.clone());
+            for (letter, pick, with_now) in [("A", &mut a, true), ("B", &mut b, false)] {
+                egui::ComboBox::from_label(letter)
+                    .selected_text(side_name(pick).to_string())
+                    .show_ui(ui, |ui| {
+                        if with_now {
+                            ui.selectable_value(pick, String::new(), "as it was")
+                                .on_hover_text("The knobs as they stand when it starts");
+                        }
+                        for name in &names {
+                            ui.selectable_value(pick, name.clone(), name.as_str());
+                        }
+                    });
+            }
+            // The first frame only learns the defaults; a pick is a change.
+            if (a.clone(), b.clone()) != was {
+                self.push(LivingPanelAction::PickAb(a.clone(), b.clone()));
+            }
+            self.ab_picks = Some((a.clone(), b.clone()));
+            if ui
+                .add_enabled(!b.is_empty(), egui::Button::new("Compare"))
+                .on_hover_text("F6 flips between them, F7 splits the view")
+                .clicked()
+            {
+                self.push(LivingPanelAction::Compare(a, b));
+            }
+        });
+    }
+
     fn rows_ui(&mut self, ui: &mut egui::Ui) {
         section(ui, "Props", false, |ui| {
             egui::ScrollArea::vertical()
@@ -704,6 +817,7 @@ impl DebugPanel for LivingPropsDebugPanel {
         ui.separator();
         self.knobs_ui(ui);
         self.presets_ui(ui);
+        self.ab_ui(ui);
         self.rows_ui(ui);
     }
 

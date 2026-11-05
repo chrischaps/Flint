@@ -177,6 +177,22 @@ impl PlayerApp {
                         tracing::warn!(target: "script", "load_living_preset: {problem}");
                     }
                 }
+                ScriptCommand::CompareLiving { a, b } => {
+                    if let Err(problem) = self.compare_living(&a, &b) {
+                        tracing::warn!(target: "script", "compare_living: {problem}");
+                    }
+                }
+                ScriptCommand::FlipLiving => {
+                    if !self.flip_living() {
+                        tracing::warn!(target: "script", "flip_living: nothing is being compared");
+                    }
+                }
+                ScriptCommand::SplitLiving { split } => {
+                    if !self.split_living(split) {
+                        tracing::warn!(target: "script", "split_living: nothing is being compared");
+                    }
+                }
+                ScriptCommand::StopComparingLiving => self.stop_comparing_living(),
                 ScriptCommand::LoadScene { path } => {
                     if self.transition_phase.is_idle() {
                         println!("[transition] Starting exit transition → {}", path);
