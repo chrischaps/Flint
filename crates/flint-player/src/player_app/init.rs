@@ -107,6 +107,7 @@ impl PlayerApp {
             wooze: None,
             wooze_time: 0.0,
             wooze_missing_warned: false,
+            shallow_wooze: Default::default(),
             boil_clock: Default::default(),
             pp_vignette_override: None,
             pp_bloom_override: None,
@@ -447,6 +448,7 @@ impl PlayerApp {
             .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
         self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
         self.wooze_time = 0.0;
+        super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
         self.boil_clock = Default::default();
         super::procgen_assets::resolve_scene(
             &self.scene_path,

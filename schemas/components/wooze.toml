@@ -7,8 +7,8 @@
 # as a sphere needing a radius, are checked by `flint_core::wooze`.
 #
 # A scene with a `[wooze]` table has every living prop follow it, whatever each
-# spec's `[living]` table says about step and glide. A scene without one samples
-# nothing and pays nothing.
+# spec's `[living]` table says about step and glide, and every `shallow_wooze` mesh
+# too. A scene without one samples nothing and pays nothing.
 #
 #   [wooze]
 #   preset = "linklater"     # linklater | boil | morph | calm

@@ -464,6 +464,7 @@ impl SceneRenderer {
                 blend_mode,
                 sort_depth: 0.0,
                 casts_shadow: Self::ecs_casts_shadow(world, entity_id),
+                wooze: None,
             };
 
             if is_transparent {

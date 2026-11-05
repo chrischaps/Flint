@@ -32,6 +32,9 @@ use crate::postprocess::{
 use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
+use crate::wooze_pipeline::{
+    grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms, WoozePipelineSet,
+};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
@@ -93,6 +96,8 @@ pub(super) struct DrawCall {
     sort_depth: f32,
     /// World-space bounds for frustum culling. `None` draws are never culled.
     world_aabb: Option<([f32; 3], [f32; 3])>,
+    /// Its drift this frame, if its entity has shallow wooze (#215).
+    wooze: Option<ShallowWoozeUniforms>,
 }
 
 /// Transform + material GPU resources of one draw of one entity, kept
@@ -185,6 +190,18 @@ impl TransformTarget {
                 queue.write_buffer(buffer, 0, bytemuck::bytes_of(uniforms));
             }
             TransformTarget::Slot(slot) => arena.stage(*slot, bytemuck::bytes_of(uniforms)),
+        }
+    }
+
+    /// Put shallow wooze's drift in the rest of the slot (#215). Only cached draws
+    /// have the room, and only they can have drift.
+    fn write_wooze(&self, arena: &mut TransformArena, wooze: &ShallowWoozeUniforms) {
+        if let TransformTarget::Slot(slot) = self {
+            arena.stage_at(
+                *slot,
+                std::mem::size_of::<TransformUniforms>(),
+                bytemuck::bytes_of(wooze),
+            );
         }
     }
 
@@ -352,6 +369,8 @@ struct SkinnedDrawCall {
     sort_depth: f32,
     /// As [`DrawCall::casts_shadow`].
     casts_shadow: bool,
+    /// As [`DrawCall::wooze`].
+    wooze: Option<ShallowWoozeUniforms>,
 }
 
 /// One faint copy of a skinned entity (#228): bones of its own and how opaque
@@ -422,6 +441,11 @@ pub struct LightingLevers {
 pub struct SceneRenderer {
     pipeline: RenderPipeline,
     skinned_pipeline: Option<SkinnedPipeline>,
+    /// Shallow wooze (#215): each entity's drift this frame, from the caller, and
+    /// the pipelines its draws use, built when the first one needs them.
+    shallow_wooze: HashMap<flint_core::EntityId, ShallowWoozeDraw>,
+    wooze_standard: Option<WoozePipelineSet>,
+    wooze_skinned: Option<WoozePipelineSet>,
     billboard_pipeline: Option<BillboardPipeline>,
     archetype_visuals: HashMap<String, ArchetypeVisual>,
     mesh_cache: MeshCache,
@@ -739,6 +763,9 @@ impl SceneRenderer {
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            shallow_wooze: HashMap::new(),
+            wooze_standard: None,
+            wooze_skinned: None,
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
@@ -2219,6 +2246,9 @@ impl SceneRenderer {
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            shallow_wooze: HashMap::new(),
+            wooze_standard: None,
+            wooze_skinned: None,
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
@@ -3463,6 +3493,8 @@ impl SceneRenderer {
         // Sort & batch sprite2d instances
         self.batch_sprite2d_instances(device, tex_cache_ref, sprite2d_collected);
 
+        self.apply_shallow_wooze(device);
+
         // Drop cached resources nothing used this frame (despawned entities,
         // entities that changed shape/model).
         let frame = self.extract_frame;
@@ -3472,6 +3504,84 @@ impl SceneRenderer {
 
         // Put texture cache back
         self.texture_cache = tex_cache;
+    }
+
+    /// Replace which entities have shallow wooze this frame, and how far along
+    /// each is (#215). What's named here shows from the next `update_from_world`.
+    /// An empty list, the default, costs a scene nothing.
+    pub fn set_shallow_wooze(
+        &mut self,
+        draws: impl IntoIterator<Item = (flint_core::EntityId, ShallowWoozeDraw)>,
+    ) {
+        self.shallow_wooze.clear();
+        self.shallow_wooze.extend(draws);
+    }
+
+    /// Which of shallow wooze's pipelines exist: standard, skinned and shadow.
+    #[cfg(test)]
+    pub(crate) fn wooze_built(&self) -> (bool, bool, bool) {
+        (
+            self.wooze_standard.is_some(),
+            self.wooze_skinned.is_some(),
+            self.shadow_pass
+                .as_ref()
+                .is_some_and(|sp| sp.wooze.is_some()),
+        )
+    }
+
+    /// Give this frame's draws of woozy entities their drift, grow their bounds to
+    /// match, and build the pipelines they need the first time they need them.
+    fn apply_shallow_wooze(&mut self, device: &wgpu::Device) {
+        if self.shallow_wooze.is_empty() {
+            return;
+        }
+        let map = &self.shallow_wooze;
+        let drift = |id: Option<flint_core::EntityId>| Some(map.get(&id?)?.uniforms());
+
+        let mut any_standard = false;
+        for draw in self
+            .entity_draws
+            .iter_mut()
+            .chain(self.transparent_draws.iter_mut())
+            .filter(|d| !d.is_wireframe)
+        {
+            let Some(wooze) = drift(draw.entity_id) else {
+                continue;
+            };
+            if let Some(bounds) = &mut draw.world_aabb {
+                grow_bounds(bounds, &wooze);
+            }
+            draw.wooze = Some(wooze);
+            any_standard = true;
+        }
+
+        let mut any_skinned = false;
+        for draw in self
+            .skinned_entity_draws
+            .iter_mut()
+            .chain(self.transparent_skinned_draws.iter_mut())
+        {
+            let Some(wooze) = drift(draw.entity_id) else {
+                continue;
+            };
+            draw.wooze = Some(wooze);
+            any_skinned = true;
+        }
+
+        if any_standard && self.wooze_standard.is_none() {
+            self.wooze_standard = Some(WoozePipelineSet::standard(device, &self.pipeline));
+        }
+        if any_skinned && self.wooze_skinned.is_none() {
+            if let Some(skinned) = &self.skinned_pipeline {
+                self.wooze_skinned =
+                    Some(WoozePipelineSet::skinned(device, &self.pipeline, skinned));
+            }
+        }
+        if any_standard || any_skinned {
+            if let Some(shadow_pass) = &mut self.shadow_pass {
+                shadow_pass.ensure_wooze(device);
+            }
+        }
     }
 
     /// Transform + material resources for one draw of `key`, created on
@@ -3518,9 +3628,9 @@ impl SceneRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &page,
                             offset: slot.offset(),
-                            size: wgpu::BufferSize::new(
-                                std::mem::size_of::<TransformUniforms>() as u64
-                            ),
+                            // The whole slot: a plain draw reads its first 208
+                            // bytes, and shallow wooze's the 48 past them too.
+                            size: wgpu::BufferSize::new(crate::bind_cache::SLOT_STRIDE),
                         }),
                     }],
                     label: Some("Transform Bind Group (arena)"),
@@ -3634,6 +3744,7 @@ impl SceneRenderer {
             blend_mode,
             sort_depth: 0.0,
             world_aabb: None,
+            wooze: None,
         }
     }
 
@@ -3699,6 +3810,7 @@ impl SceneRenderer {
             blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
             world_aabb: None,
+            wooze: None,
         }
     }
 

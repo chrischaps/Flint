@@ -716,6 +716,11 @@ impl PlayerApp {
         }
         if let Some(field) = &self.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
+            eprintln!(
+                "[wooze] shallow: {} entities on {} clocks",
+                self.shallow_wooze.draw_count(),
+                self.shallow_wooze.clock_count()
+            );
         }
         if let Some(renderer) = &self.scene_renderer {
             eprintln!(
@@ -1474,6 +1479,13 @@ impl PlayerApp {
             }
             let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
             let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
+            // Hand-made meshes read the same field on the same dt (#215).
+            if let (Some(field), Some(renderer)) = (&self.wooze, &mut self.scene_renderer) {
+                let draws =
+                    self.shallow_wooze
+                        .advance(&self.world, field, self.wooze_time, living_dt);
+                renderer.set_shallow_wooze(draws.iter().copied());
+            }
             if !lineages.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)

@@ -39,6 +39,7 @@ pub mod terrain_pipeline;
 pub mod water_body;
 mod texture_cache;
 pub mod world_line_pipeline;
+mod wooze_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
@@ -83,6 +84,7 @@ pub use scene_renderer::{
     DEFAULT_CLEAR_COLOR,
 };
 pub use skinned_pipeline::SkinnedPipeline;
+pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
 pub use sprite2d_pipeline::{

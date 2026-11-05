@@ -317,6 +317,60 @@ pub struct CycleNow {
     pub weight: f32,
 }
 
+/// The hold-and-glide clock of something with no poses of its own (#215), such
+/// as a hand-made mesh that shallow wooze displaces.
+///
+/// It counts beats the way a living prop does, from the same field and with the
+/// same `dt`, so it keeps the same tempo as any prop standing beside it, through
+/// every change of step. It has no phase offset of its own: two clocks in the same
+/// place read the same target and weight, so the world-space noise they displace
+/// by is one continuous field, and a lantern set on a bench stays set on it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShallowClock {
+    beats: f64,
+    cycle: Cycle,
+}
+
+impl ShallowClock {
+    /// A clock starting at `time` where `sample` was read. Started late, as
+    /// something a script spawned is, it lands on the beat the scene has reached
+    /// if the step hasn't changed, and not on a phase of its own.
+    pub fn starting(time: f64, sample: &WoozeSample) -> Self {
+        Self {
+            beats: time.max(0.0) / f64::from(sample.step.max(STEP_MIN)),
+            cycle: Cycle::default(),
+        }
+    }
+
+    /// Move on by `dt` seconds at the place `sample` was read.
+    #[inline]
+    pub fn advance(&mut self, dt: f64, sample: &WoozeSample) -> ShallowNow {
+        self.beats += dt / f64::from(sample.step.max(STEP_MIN));
+        let now = self.cycle.read(self.beats, sample);
+        ShallowNow {
+            index: now.index,
+            weight: now.weight,
+            amplitude: self.cycle.shown(now.weight),
+        }
+    }
+
+    /// How many beats it has counted.
+    pub fn beats(&self) -> f64 {
+        self.beats
+    }
+}
+
+/// What [`ShallowClock::advance`] says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShallowNow {
+    /// The target being held or left.
+    pub index: u64,
+    /// How far toward the next target, 0 to 1.
+    pub weight: f32,
+    /// How much of its authored drift shows, 0 to 1.
+    pub amplitude: f32,
+}
+
 /// A value on its way from one number to another, so that a sample is a pure
 /// function of time however a script has moved things.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -826,6 +880,64 @@ mod tests {
 
     fn table(src: &str) -> toml::Table {
         src.parse().unwrap()
+    }
+
+    #[test]
+    fn a_shallow_clock_holds_then_glides_on_the_beat() {
+        let sample = WoozeSample {
+            step: 1.0,
+            glide: 0.5,
+            ..WoozeSample::NEUTRAL
+        };
+        let mut clock = ShallowClock::starting(0.0, &sample);
+        let held = clock.advance(0.25, &sample);
+        assert_eq!((held.index, held.weight), (0, 0.0));
+        let gliding = clock.advance(0.5, &sample);
+        assert_eq!(gliding.index, 0);
+        assert_eq!(
+            gliding.weight, 0.5,
+            "halfway through a glide of half a step"
+        );
+        let next = clock.advance(0.5, &sample);
+        assert_eq!((next.index, next.weight), (1, 0.0));
+    }
+
+    #[test]
+    fn a_shallow_clocks_amplitude_changes_without_a_pop() {
+        // As with a prop's part: a new amplitude arrives with the next target, so
+        // the beat itself moves nothing.
+        let mut sample = WoozeSample {
+            amplitude: 1.0,
+            step: 1.0,
+            glide: 1.0,
+            jitter: 0.0,
+        };
+        let mut clock = ShallowClock::starting(0.0, &sample);
+        let dt = 1.0 / 120.0;
+        let mut last = clock.advance(dt, &sample).amplitude;
+        for frame in 0..480 {
+            if frame == 60 {
+                sample.amplitude = 0.25;
+            }
+            let shown = clock.advance(dt, &sample).amplitude;
+            assert!(
+                (shown - last).abs() < 0.03,
+                "frame {frame}: {last} to {shown}"
+            );
+            last = shown;
+        }
+        assert_eq!(last, 0.25);
+    }
+
+    #[test]
+    fn a_shallow_clock_started_late_is_where_one_started_early_would_be() {
+        let sample = WoozeSample::NEUTRAL;
+        let mut early = ShallowClock::starting(0.0, &sample);
+        for _ in 0..600 {
+            early.advance(0.01, &sample);
+        }
+        let late = ShallowClock::starting(6.0, &sample);
+        assert!((early.beats() - late.beats()).abs() < 1e-9);
     }
 
     fn field_with(zone: &str) -> WoozeField {
