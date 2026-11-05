@@ -272,6 +272,25 @@ pub enum ScriptCommand {
         name: String,
         seconds: f64,
     },
+    /// Turn Living Props' knobs (#218): a table shaped like a `.wooze.toml`, with
+    /// any of `wooze`, `living` and `boil`.
+    TuneLiving {
+        knobs: toml::Value,
+    },
+    /// Stop or start the clock living props run on.
+    FreezeLiving {
+        frozen: bool,
+    },
+    /// Move that clock on by exactly one beat.
+    StepLiving,
+    /// Save every Living Props knob as `wooze/<name>.wooze.toml`.
+    SaveLivingPreset {
+        name: String,
+    },
+    /// Load a preset file or a built-in, live.
+    LoadLivingPreset {
+        name: String,
+    },
     LoadScene {
         path: String,
     },

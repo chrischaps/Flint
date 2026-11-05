@@ -493,6 +493,12 @@ impl WoozeField {
         &self.zones
     }
 
+    /// The field's global values at `time`, before any zone: what `set_global`
+    /// moves, and what a debug panel shows.
+    pub fn global(&self, time: f64) -> WoozeSample {
+        WoozeSample::from_array(self.base.map(|ramp| ramp.at(time)))
+    }
+
     /// How woozy `position` is at `time`, in whichever clock the caller keeps
     /// this field on. A pure function: the same arguments give the same bits.
     pub fn sample(&self, position: [f32; 3], time: f64) -> WoozeSample {

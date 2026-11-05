@@ -152,6 +152,30 @@ impl PlayerApp {
                         }
                     });
                 }
+                ScriptCommand::TuneLiving { knobs } => {
+                    let tuned = knobs
+                        .try_into::<flint_scene::WoozePreset>()
+                        .map_err(|e| e.to_string())
+                        .and_then(|tune| self.tune_living(&tune));
+                    if let Err(problem) = tuned {
+                        tracing::warn!(target: "script", "tune_living: {problem}");
+                    }
+                }
+                ScriptCommand::FreezeLiving { frozen } => self.living_tune.frozen = frozen,
+                ScriptCommand::StepLiving => self.step_living(),
+                ScriptCommand::SaveLivingPreset { name } => {
+                    match self.save_living_preset(&name) {
+                        Ok(path) => println!("[living] saved {}", path.display()),
+                        Err(problem) => {
+                            tracing::warn!(target: "script", "save_living_preset: {problem}");
+                        }
+                    }
+                }
+                ScriptCommand::LoadLivingPreset { name } => {
+                    if let Err(problem) = self.load_living_preset(&name) {
+                        tracing::warn!(target: "script", "load_living_preset: {problem}");
+                    }
+                }
                 ScriptCommand::LoadScene { path } => {
                     if self.transition_phase.is_idle() {
                         println!("[transition] Starting exit transition → {}", path);

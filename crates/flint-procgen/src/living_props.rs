@@ -15,6 +15,20 @@
 //! seed comes from the entity's *name* and the step index, never from an
 //! entity id or the wall clock, so the budget only decides which frame a pose
 //! is ready on, and never which pose it is.
+//!
+//! # Turning knobs while it runs (#218)
+//!
+//! A ring keeps each pose as its shape seed grew it, beside the same pose held
+//! to the lineage's variance. A new variance re-holds what's there, a few poses
+//! a frame out of the same budget, with no regrowing, and the cache keeps only
+//! the first form, so a change reaches a cached pose on its way out. With
+//! `keep_size` a re-hold costs nearly what growing a pose does, so the poses in
+//! use go first, across the whole grove: that's the part anyone can see.
+//!
+//! New echoes or a new stagger can need poses a ring hasn't got: a wider spread
+//! wants steps it has already left behind. So the ring grows first, to cover what
+//! the prop is doing and what it's about to do, and the prop keeps its old clocks
+//! until the new ones have every pose they'd read. No frame goes without one.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -29,13 +43,17 @@ use crate::living::{
     SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
 };
 use crate::registry::GeneratorRegistry;
-use crate::spec::{EchoConfig, EchoCopy, ProcGenSpec, Stagger};
+use crate::spec::{EchoConfig, EchoCopy, ProcGenSpec, Stagger, VarianceConfig};
 use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
 /// the oak is under 6 KB, so this is about 1,400 of them: a grove's rings four
 /// times over.
 pub const POSE_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The re-hold pass that reaches poses nothing is reading yet, which take turns
+/// with making new ones. See [`LivingProp::rehold_span`].
+const REHOLD_PASS_REST: u8 = 2;
 
 /// How fast the pose estimate forgets its slowest pose, each pose. Poses vary
 /// by a factor of two, so an estimate that forgets within a frame or two lets a
@@ -85,6 +103,11 @@ pub struct LivingDefaults {
     pub shadows: LivingShadows,
     /// The scene's word on echoes, over each spec's, a field at a time.
     pub echoes: EchoOverride,
+    /// The scene's word on stagger, over each spec's and each prop's own: it's
+    /// what a tuned preset holds, and has to look the same when it loads.
+    pub stagger: Option<Stagger>,
+    /// The scene's word on variance, over each spec's, a field at a time.
+    pub variance: VarianceOverride,
 }
 
 /// A scene's `[living] echoes`: whichever of a spec's fields it sets. The wooze
@@ -97,6 +120,27 @@ pub struct EchoOverride {
     pub spread: Option<f32>,
     /// The opacity of a copy at now. `None`: the spec's.
     pub alpha: Option<f32>,
+}
+
+/// A scene's `[living] variance`: whichever of a spec's fields it sets.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct VarianceOverride {
+    /// How much of each pose's difference is left. `None`: the spec's.
+    pub amount: Option<f32>,
+    /// How much of that is held back from the trunk. `None`: the spec's.
+    pub steady: Option<f32>,
+    /// Whether poses keep the base's size. `None`: the spec's.
+    pub keep_size: Option<bool>,
+}
+
+impl VarianceOverride {
+    fn over(&self, spec: VarianceConfig) -> VarianceConfig {
+        VarianceConfig {
+            amount: self.amount.unwrap_or(spec.amount),
+            steady: self.steady.unwrap_or(spec.steady),
+            keep_size: self.keep_size.unwrap_or(spec.keep_size),
+        }
+    }
 }
 
 impl EchoOverride {
@@ -133,6 +177,8 @@ pub struct PropBlend {
     pub first_bone: Option<usize>,
     /// Whether to write [`BlendFrame::shadow_bones`].
     pub shadow_changed: bool,
+    /// How many echoes it draws now, if that may have changed since last frame.
+    pub echo_count: Option<usize>,
 }
 
 /// What a prop's bones and materials last held, so that nothing moved means
@@ -195,6 +241,8 @@ pub struct LivingStats {
     pub poses_from_cache: u64,
     /// Poses that couldn't be made, which hold the rest pose instead.
     pub pose_failures: u64,
+    /// Poses held again at a new variance, with no regrowing (#218).
+    pub poses_reheld: u64,
     /// Frames a prop kept its last bones, for want of a pose. Counted per prop.
     pub blends_starved: u64,
     /// Frames blending has run.
@@ -225,8 +273,19 @@ pub struct LivingStats {
 #[derive(Debug, Clone)]
 struct PoseRing {
     first: u64,
-    slots: Vec<Option<Arc<LivingPose>>>,
+    slots: Vec<Option<RingPose>>,
     ready: usize,
+}
+
+/// One pose in a ring, in both of its forms.
+#[derive(Debug, Clone)]
+struct RingPose {
+    /// As its shape seed grew it. It never changes, so a new variance starts here.
+    full: Arc<LivingPose>,
+    /// Held to the lineage's variance: what a prop draws.
+    held: Arc<LivingPose>,
+    /// Which of the lineage's variances `held` is at.
+    generation: u64,
 }
 
 impl PoseRing {
@@ -256,7 +315,41 @@ impl PoseRing {
         if !self.contains(index) {
             return None;
         }
-        self.slots[self.slot(index)].as_ref()
+        self.slots[self.slot(index)].as_ref().map(|pose| &pose.held)
+    }
+
+    /// Whether it holds every pose from `first` for `count` steps.
+    fn holds(&self, first: u64, count: u64) -> bool {
+        (first..first + count).all(|index| self.get(index).is_some())
+    }
+
+    /// A window at `first` of `len` poses and the spare, keeping whatever both
+    /// windows have. Unlike [`slide_to`](Self::slide_to) this can move back, and
+    /// what's now missing behind is what gets made next.
+    fn reshape(&mut self, first: u64, len: usize) {
+        if first == self.first && len == self.len() {
+            return;
+        }
+        let mut new = Self::new(first, len);
+        for index in self.first..self.first + self.slots.len() as u64 {
+            if new.contains(index) {
+                let slot = self.slot(index);
+                if let Some(pose) = self.slots[slot].take() {
+                    new.put(index, pose);
+                }
+            }
+        }
+        *self = new;
+    }
+
+    /// The earliest of `count` steps from `first` whose pose isn't at `generation`.
+    fn next_stale(&self, first: u64, count: u64, generation: u64) -> Option<u64> {
+        (first..first + count).find(|&index| {
+            self.contains(index)
+                && self.slots[self.slot(index)]
+                    .as_ref()
+                    .is_some_and(|pose| pose.generation != generation)
+        })
     }
 
     /// Move the window forward, dropping the poses it leaves behind.
@@ -282,7 +375,7 @@ impl PoseRing {
         (self.first..self.first + self.slots.len() as u64).find(|&i| self.get(i).is_none())
     }
 
-    fn put(&mut self, index: u64, pose: Arc<LivingPose>) {
+    fn put(&mut self, index: u64, pose: RingPose) {
         let slot = self.slot(index);
         if self.slots[slot].replace(pose).is_none() {
             self.ready += 1;
@@ -327,6 +420,34 @@ pub struct LivingProp {
     drawn: DrawnState,
     /// Farthest from now first, which is the order they draw in.
     echoes: Vec<PropEcho>,
+    /// What its echoes are set to, or are about to be, in the units a person
+    /// turns: [`Self::echoes`] is what those work out to.
+    echo_config: EchoConfig,
+    /// How deep its lineage's tree is, once built. A ring's size depends on it.
+    max_depth: u32,
+    /// Clocks it's been asked for and is waiting on poses to start.
+    pending: Option<PendingClocks>,
+    /// Whether its echoes have changed since it last blended.
+    echoes_changed: bool,
+}
+
+/// New clocks for a prop, held back until its ring has what they read.
+#[derive(Debug, Clone)]
+struct PendingClocks {
+    stagger: Stagger,
+    copies: Vec<EchoCopy>,
+}
+
+/// What a set of clocks asks of a prop's stream of poses, at this moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RingNeeds {
+    /// The earliest step any part of it can be reading.
+    first: u64,
+    /// How many steps from there it can read: without these it would starve.
+    reads: u64,
+    /// How many poses a ring for it keeps. At least `reads`, and the prop's
+    /// `pose_ring`.
+    len: u64,
 }
 
 impl LivingProp {
@@ -408,30 +529,176 @@ impl LivingProp {
         t + f64::from(self.echoes[index].copy.offset) * self.jitter_step
     }
 
-    /// How many steps behind now the farthest echo is. A ring's window starts
-    /// there, so a pose stays until the last echo has finished with it.
-    fn steps_behind(&self) -> f64 {
+    /// The first step its current clocks can be reading: the farthest echo's.
+    /// A pose stays until the last echo has finished with it.
+    fn in_use_start(&self) -> u64 {
         let behind = self
             .echoes
             .iter()
             .map(|e| -e.copy.offset)
             .fold(0.0, f32::max);
-        f64::from(behind)
+        (self.beats - f64::from(behind)).max(0.0).floor() as u64
     }
 
-    /// How many steps the prop's clocks span, behind now to ahead of it.
-    fn echo_span(&self) -> f64 {
-        let ahead = self
-            .echoes
-            .iter()
-            .map(|e| e.copy.offset)
-            .fold(0.0, f32::max);
-        self.steps_behind() + f64::from(ahead)
-    }
-
-    /// The first step its ring's window needs now.
+    /// The first step its ring's window needs now: what's in use, and what's
+    /// waiting to be.
     fn window_start(&self) -> u64 {
-        (self.beats - self.steps_behind()).max(0.0).floor() as u64
+        let start = self.in_use_start();
+        match &self.pending {
+            None => start,
+            Some(pending) => start.min(
+                self.needs_of(pending.stagger, pending.copies.iter().copied(), false)
+                    .first,
+            ),
+        }
+    }
+
+    /// What this stagger and these echoes ask of the ring now. `drift`: the
+    /// scene's shadows follow the slow pair, up to three steps ahead of now.
+    fn needs_of(
+        &self,
+        stagger: Stagger,
+        copies: impl Iterator<Item = EchoCopy>,
+        drift: bool,
+    ) -> RingNeeds {
+        let (mut behind, mut ahead) = (0.0f32, 0.0f32);
+        for copy in copies {
+            behind = behind.max(-copy.offset);
+            ahead = ahead.max(copy.offset);
+        }
+        let (behind, ahead) = (f64::from(behind), f64::from(ahead));
+        let clock = LivingClock {
+            stagger,
+            ..self.clock
+        };
+        let mut reads = clock.reach_across(self.max_depth, behind + ahead) + 1;
+        if drift {
+            reads = reads.max(4 + behind.ceil() as u64);
+        }
+        RingNeeds {
+            first: (self.beats - behind).max(0.0).floor() as u64,
+            reads,
+            len: u64::from(self.pose_ring).max(reads),
+        }
+    }
+
+    /// The steps a re-hold looks at, in its pass: what the prop itself is drawing,
+    /// then what its echoes are too, then everything else in the ring.
+    fn rehold_span(&self, pass: u8, drift: bool) -> (u64, u64) {
+        match pass {
+            0 => (
+                self.beats.max(0.0).floor() as u64,
+                self.clock.reach(self.max_depth) + 1,
+            ),
+            1 => {
+                let needs = self.needs_now(drift);
+                (needs.first, needs.reads)
+            }
+            _ => self
+                .ring
+                .as_ref()
+                .map_or((0, 0), |ring| (ring.first, ring.slots.len() as u64)),
+        }
+    }
+
+    /// What its current clocks ask of the ring.
+    fn needs_now(&self, drift: bool) -> RingNeeds {
+        self.needs_of(
+            self.clock.stagger,
+            self.echoes.iter().map(|e| e.copy),
+            drift,
+        )
+    }
+
+    /// The first pose its current clocks read that isn't there, or will be read
+    /// next, and how many steps into what they read it is: the fewer, the sooner.
+    /// Only within the ring's window: a step past it has nowhere to go yet.
+    fn next_needed(&self, drift: bool) -> Option<(u64, u64)> {
+        let ring = self.ring.as_ref()?;
+        let needs = self.needs_now(drift);
+        (0..needs.reads + 1)
+            .find(|steps| {
+                let step = needs.first + steps;
+                ring.contains(step) && ring.get(step).is_none()
+            })
+            .map(|steps| (needs.first + steps, steps))
+    }
+
+    /// The window that covers what's in use and what's waiting.
+    fn window(&self, drift: bool) -> (u64, usize) {
+        let now = self.needs_now(drift);
+        let (first, end) = match &self.pending {
+            None => (now.first, now.first + now.len),
+            Some(pending) => {
+                let next = self.needs_of(pending.stagger, pending.copies.iter().copied(), drift);
+                (
+                    now.first.min(next.first),
+                    (now.first + now.len).max(next.first + next.len),
+                )
+            }
+        };
+        (first, (end - first) as usize)
+    }
+
+    /// Make the ring's window the one its clocks want now.
+    fn fit_ring(&mut self, drift: bool) {
+        let (first, len) = self.window(drift);
+        if let Some(ring) = &mut self.ring {
+            ring.reshape(first, len);
+        }
+    }
+
+    /// Start the waiting clocks. An echo that stays where it was keeps its
+    /// cycles, so a change of opacity alone moves nothing.
+    fn start_pending(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        self.clock.stagger = pending.stagger;
+        let old = std::mem::take(&mut self.echoes);
+        self.echoes = pending
+            .copies
+            .into_iter()
+            .enumerate()
+            .map(|(i, copy)| PropEcho {
+                copy,
+                drawn: old
+                    .get(i)
+                    .filter(|was| was.copy.offset == copy.offset)
+                    .map(|was| DrawnBones {
+                        times: Vec::new(),
+                        ..was.drawn.clone()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect();
+        self.echoes_changed = true;
+    }
+
+    /// Whatever it last wrote is out of date, though no clock has moved.
+    fn redraw(&mut self) {
+        self.drawn.bones.times.clear();
+        self.drawn.shadow = None;
+        for echo in &mut self.echoes {
+            echo.drawn.times.clear();
+        }
+    }
+
+    /// What its echoes are set to, as a person would turn them.
+    pub fn echo_config(&self) -> EchoConfig {
+        self.echo_config
+    }
+
+    /// Whether it's still on its old clocks, waiting for poses for new ones.
+    pub fn is_waiting(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The stagger it's on, or about to be.
+    pub fn stagger(&self) -> Stagger {
+        self.pending
+            .as_ref()
+            .map_or(self.clock.stagger, |pending| pending.stagger)
     }
 
     /// The shape seed of step `index`. Two props of a lineage share a
@@ -443,6 +710,15 @@ impl LivingProp {
     /// The pose for step `index`, if it's in the window and ready.
     pub fn pose(&self, index: u64) -> Option<&Arc<LivingPose>> {
         self.ring.as_ref()?.get(index)
+    }
+
+    /// Step `index`'s pose as its shape seed grew it, before any variance.
+    pub fn full_pose(&self, index: u64) -> Option<&Arc<LivingPose>> {
+        let ring = self.ring.as_ref()?;
+        if !ring.contains(index) {
+            return None;
+        }
+        ring.slots[ring.slot(index)].as_ref().map(|pose| &pose.full)
     }
 
     /// The first step in the window: the step the trunk side is leaving.
@@ -469,6 +745,8 @@ impl LivingProp {
 struct BuiltLineage {
     skeleton: Arc<LivingSkeleton>,
     rig: Arc<LivingRig>,
+    /// How tall it stands at rest. Kept, since working it out poses the whole tree.
+    rest_height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -481,6 +759,10 @@ struct Lineage {
     /// `None` until it's built, and for good if it can't be.
     built: Option<BuiltLineage>,
     tried: bool,
+    /// What its poses are held to. Starts as the spec's, with the scene's word.
+    variance: VarianceConfig,
+    /// Counts the changes to `variance`, so a ring can tell what's out of date.
+    generation: u64,
 }
 
 /// Poses that have been generated, apart from the meshes in
@@ -541,6 +823,15 @@ pub struct LivingProps {
     pose_estimate_ms: f64,
     stats: LivingStats,
     defaults: LivingDefaults,
+    /// Whether any ring may hold poses at an old variance.
+    reholding: bool,
+    /// The prop a re-hold has got to, this pass. Those before it are done.
+    rehold_cursor: usize,
+    /// How much of a ring it's on: see [`LivingProp::rehold_span`].
+    rehold_pass: u8,
+    /// Takes turns with filling, once what's in use is done, so that neither can
+    /// starve the other.
+    rehold_turn: bool,
 }
 
 impl LivingProps {
@@ -554,6 +845,10 @@ impl LivingProps {
             pose_estimate_ms: 0.0,
             stats: LivingStats::default(),
             defaults: LivingDefaults::default(),
+            reholding: false,
+            rehold_cursor: 0,
+            rehold_pass: 0,
+            rehold_turn: false,
         }
     }
 
@@ -580,6 +875,12 @@ impl LivingProps {
     /// Which tree a prop grows from.
     pub fn lineage_seed(&self, id: LivingPropId) -> u64 {
         self.lineages[self.props[id.0].lineage].seed
+    }
+
+    /// How tall a prop stands at rest, once its lineage is built.
+    pub fn rest_height(&self, id: LivingPropId) -> Option<f32> {
+        let built = self.lineages[self.props[id.0].lineage].built.as_ref()?;
+        Some(built.rest_height)
     }
 
     /// How many distinct trees the props grow from.
@@ -610,6 +911,91 @@ impl LivingProps {
         self.props.clear();
         self.time = 0.0;
         self.stats = LivingStats::default();
+        self.reholding = false;
+        self.rehold_cursor = 0;
+        self.rehold_pass = 0;
+    }
+
+    /// Give every prop these echoes, as soon as its ring can show them. Until
+    /// then it keeps the ones it has, and a change that needs no new pose takes
+    /// effect on the next tick.
+    pub fn set_echoes(&mut self, echoes: EchoConfig) {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        for prop in &mut self.props {
+            if prop.echo_config == echoes {
+                continue;
+            }
+            prop.echo_config = echoes;
+            let stagger = prop.stagger();
+            prop.pending = Some(PendingClocks {
+                stagger,
+                copies: echoes.copies(),
+            });
+            if prop.ring.is_none() {
+                prop.start_pending();
+            }
+            prop.fit_ring(drift);
+        }
+    }
+
+    /// Put every prop on this stagger, as soon as its ring can show it. A part
+    /// jumps to its new place on the clock: no stagger can change without that.
+    pub fn set_stagger(&mut self, stagger: Stagger) {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        for prop in &mut self.props {
+            if prop.stagger() == stagger {
+                continue;
+            }
+            let copies = match &prop.pending {
+                Some(pending) => pending.copies.clone(),
+                None => prop.echoes.iter().map(|e| e.copy).collect(),
+            };
+            prop.pending = Some(PendingClocks { stagger, copies });
+            if prop.ring.is_none() {
+                prop.start_pending();
+            }
+            prop.fit_ring(drift);
+        }
+    }
+
+    /// Hold every lineage's poses to this variance: what the rings have is
+    /// re-held from its full form, a few poses a frame, and what's made from
+    /// here on starts at it.
+    pub fn set_variance(&mut self, variance: VarianceConfig) {
+        let mut changed = false;
+        for lineage in &mut self.lineages {
+            if lineage.variance != variance {
+                lineage.variance = variance;
+                lineage.generation += 1;
+                changed = true;
+            }
+        }
+        if changed {
+            self.reholding = true;
+            self.rehold_cursor = 0;
+            self.rehold_pass = 0;
+        }
+    }
+
+    /// What the first lineage's poses are held to. Every lineage has this once a
+    /// knob has set it; until then each has its spec's.
+    pub fn variance(&self) -> Option<VarianceConfig> {
+        self.lineages.first().map(|lineage| lineage.variance)
+    }
+
+    /// Whether poses are still being held to a new variance.
+    pub fn is_reholding(&self) -> bool {
+        self.reholding
+    }
+
+    /// Move every prop's clock on by exactly `beats` of its own steps, however
+    /// long those are, and the seconds its jitter reads by `seconds`. For
+    /// single-stepping: with `dt` at 0 it's the only thing moving the clock.
+    pub fn advance_beats(&mut self, beats: f64, seconds: f64) {
+        self.time += seconds;
+        for prop in &mut self.props {
+            prop.beats += beats;
+        }
     }
 
     /// Add a prop whose spec has been checked. Returns its id and the name of
@@ -639,6 +1025,8 @@ impl LivingProps {
                 identity: ContentHash::from_str(&format!("{identity}\n{seed}")),
                 built: None,
                 tried: false,
+                variance: self.defaults.variance.over(living.variance),
+                generation: 0,
             });
             self.lineages.len() - 1
         });
@@ -648,9 +1036,10 @@ impl LivingProps {
             .phase_offset
             .map_or_else(|| name_phase(stream), |phase| phase.rem_euclid(1.0));
         let mut clock = LivingClock::from(living);
-        if let Some(stagger) = request.stagger {
+        if let Some(stagger) = self.defaults.stagger.or(request.stagger) {
             clock.stagger = stagger;
         }
+        let echo_config = self.defaults.echoes.over(living.echoes);
         self.props.push(LivingProp {
             entity: request.entity,
             entity_name: request.entity_name,
@@ -674,10 +1063,7 @@ impl LivingProps {
             },
             shadow_cycle: Cycle::default(),
             drawn: DrawnState::default(),
-            echoes: self
-                .defaults
-                .echoes
-                .over(living.echoes)
+            echoes: echo_config
                 .copies()
                 .into_iter()
                 .map(|copy| PropEcho {
@@ -685,6 +1071,10 @@ impl LivingProps {
                     drawn: DrawnBones::default(),
                 })
                 .collect(),
+            echo_config,
+            max_depth: 0,
+            pending: None,
+            echoes_changed: false,
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }
@@ -711,6 +1101,7 @@ impl LivingProps {
             entity: prop.entity,
             first_bone: None,
             shadow_changed: false,
+            echo_count: std::mem::take(&mut prop.echoes_changed).then_some(prop.echoes.len()),
         };
         frame.tints.clear();
         let (Some(ring), Some(built)) = (&prop.ring, &self.lineages[prop.lineage].built) else {
@@ -890,6 +1281,7 @@ impl LivingProps {
             None
         };
         let worked = done.is_some() || self.fill_within(budget_ms, start, registry);
+        self.start_what_is_ready();
 
         let spent = start.elapsed().as_secs_f64() * 1000.0;
         self.record_frame(spent, budget_ms, worked);
@@ -929,23 +1321,53 @@ impl LivingProps {
     /// Give the emptiest ring its next pose. Returns whether that took
     /// generating (false for a cache hit), or `None` if nothing is missing.
     fn fill_one(&mut self, registry: &GeneratorRegistry) -> Option<bool> {
-        let (index, step) = self
-            .props
-            .iter()
-            .enumerate()
-            .filter_map(|(i, prop)| {
-                let ring = prop.ring.as_ref()?;
-                Some((i, ring.next_missing()?, ring.ready))
-            })
-            .min_by_key(|&(_, _, ready)| ready)
-            .map(|(i, step, _)| (i, step))?;
+        // While a knob is moving, what's being read comes before anything else:
+        // poses a waiting clock wants behind the prop can use up a whole budget
+        // without helping the prop stay ahead. At rest this is never looked at,
+        // and rings fill as they always have.
+        let waiting = self.props.iter().any(LivingProp::is_waiting);
+        let urgent = if self.reholding || waiting {
+            self.pose_needed_soonest()
+        } else {
+            None
+        };
+        if self.reholding && urgent.is_none() {
+            // What's in use goes first, unless clocks are waiting on poses, which
+            // would never start under a knob that keeps moving.
+            let goes_first = if self.rehold_pass < REHOLD_PASS_REST && !waiting {
+                true
+            } else {
+                self.rehold_turn = !self.rehold_turn;
+                self.rehold_turn
+            };
+            if goes_first && self.rehold_one() {
+                return Some(true);
+            }
+        }
+        let missing = urgent.or_else(|| {
+            self.props
+                .iter()
+                .enumerate()
+                .filter_map(|(i, prop)| {
+                    let ring = prop.ring.as_ref()?;
+                    Some((i, ring.next_missing()?, ring.ready))
+                })
+                .min_by_key(|&(_, _, ready)| ready)
+                .map(|(i, step, _)| (i, step))
+        });
+        let Some((index, step)) = missing else {
+            // Nothing is missing, so the frame's room goes to what's left of a
+            // re-hold.
+            return (self.reholding && self.rehold_one()).then_some(true);
+        };
 
         let prop = &self.props[index];
         let lineage = &self.lineages[prop.lineage];
         let shape_seed = prop.shape_seed(step);
         let identity = lineage.identity;
 
-        let (pose, generated) = if let Some(pose) = self.cache.get(identity, shape_seed) {
+        // The cache keeps poses as they grew, so a new variance reaches them too.
+        let (full, generated) = if let Some(pose) = self.cache.get(identity, shape_seed) {
             self.stats.poses_from_cache += 1;
             (pose, false)
         } else {
@@ -955,7 +1377,7 @@ impl LivingProps {
                 .zip(living_side(registry, &lineage.spec))
                 .and_then(|(built, generator)| {
                     generator
-                        .pose(&lineage.spec, &built.skeleton, shape_seed)
+                        .full_pose(&lineage.spec, &built.skeleton, shape_seed)
                         .ok()
                 });
             // Its checks passed when it was added and its lineage built, so
@@ -980,12 +1402,84 @@ impl LivingProps {
             (pose, true)
         };
 
+        let lineage = &self.lineages[self.props[index].lineage];
+        let pose = RingPose {
+            held: hold(lineage, &full),
+            full,
+            generation: lineage.generation,
+        };
         self.props[index]
             .ring
             .as_mut()
             .expect("only a prop with a ring has a missing pose")
             .put(step, pose);
         Some(generated)
+    }
+
+    /// The pose some prop will run out of first: its place, and the step.
+    fn pose_needed_soonest(&self) -> Option<(usize, u64)> {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        self.props
+            .iter()
+            .enumerate()
+            .filter_map(|(i, prop)| {
+                let (step, steps_in) = prop.next_needed(drift)?;
+                Some((i, step, steps_in))
+            })
+            .min_by_key(|&(_, _, steps_in)| steps_in)
+            .map(|(i, step, _)| (i, step))
+    }
+
+    /// Hold the next pose that's at an old variance to the current one, starting
+    /// with what's in use. Returns whether there was one; when there are none
+    /// left, a re-hold is over.
+    fn rehold_one(&mut self) -> bool {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        while self.rehold_pass <= REHOLD_PASS_REST {
+            while let Some(prop) = self.props.get_mut(self.rehold_cursor) {
+                let (first, count) = prop.rehold_span(self.rehold_pass, drift);
+                let lineage = &self.lineages[prop.lineage];
+                let stale = prop
+                    .ring
+                    .as_ref()
+                    .and_then(|ring| ring.next_stale(first, count, lineage.generation));
+                let (Some(index), Some(ring)) = (stale, &mut prop.ring) else {
+                    self.rehold_cursor += 1;
+                    continue;
+                };
+                let slot = ring.slot(index);
+                if let Some(pose) = &mut ring.slots[slot] {
+                    pose.held = hold(lineage, &pose.full);
+                    pose.generation = lineage.generation;
+                }
+                // Nothing on screen reads what the last pass reaches.
+                if self.rehold_pass < REHOLD_PASS_REST {
+                    prop.redraw();
+                }
+                self.stats.poses_reheld += 1;
+                return true;
+            }
+            self.rehold_cursor = 0;
+            self.rehold_pass += 1;
+        }
+        self.reholding = false;
+        false
+    }
+
+    /// Start any waiting clocks whose poses have all arrived, and shrink each
+    /// ring back to what its prop now reads.
+    fn start_what_is_ready(&mut self) {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        for prop in &mut self.props {
+            let (Some(pending), Some(ring)) = (&prop.pending, &prop.ring) else {
+                continue;
+            };
+            let needs = prop.needs_of(pending.stagger, pending.copies.iter().copied(), drift);
+            if ring.holds(needs.first, needs.reads) {
+                prop.start_pending();
+                prop.fit_ring(drift);
+            }
+        }
     }
 
     /// Build the first lineage not yet tried and give its props their rings.
@@ -1011,17 +1505,13 @@ impl LivingProps {
                 let rig = built.rig.clone();
                 let max_depth = built.skeleton.max_depth();
                 lineage.built = Some(built);
+                let drift = self.defaults.shadows == LivingShadows::Drift;
                 for prop in self.props.iter_mut().filter(|p| p.lineage == index) {
-                    let first = prop.window_start();
+                    prop.max_depth = max_depth;
                     // Every pose a staggered part of it or its echoes can be
                     // using has to fit.
-                    let reach = prop.clock.reach_across(max_depth, prop.echo_span());
-                    let mut len = u64::from(prop.pose_ring).max(reach + 1);
-                    // The slow pair is up to three steps ahead of now.
-                    if self.defaults.shadows == LivingShadows::Drift {
-                        len = len.max(4 + prop.steps_behind().ceil() as u64);
-                    }
-                    prop.ring = Some(PoseRing::new(first, len as usize));
+                    let (first, len) = prop.window(drift);
+                    prop.ring = Some(PoseRing::new(first, len));
                 }
                 Ok(rig)
             }
@@ -1051,7 +1541,10 @@ impl LivingProps {
             let short = ring.short();
             all_full &= short == 0;
             self.stats.most_short = self.stats.most_short.max(short);
-            starved |= ring.get(ring.first).is_none() || ring.get(ring.first + 1).is_none();
+            // What its clocks read, which isn't the window's start while the ring
+            // reaches back for clocks that are still waiting on it.
+            let start = prop.in_use_start();
+            starved |= ring.get(start).is_none() || ring.get(start + 1).is_none();
         }
         let stats = &mut self.stats;
         stats.frames += 1;
@@ -1151,6 +1644,16 @@ fn blend_bones(
     moved
 }
 
+/// `full` held to its lineage's variance. A pose of its skeleton can always be
+/// held; one that somehow couldn't keeps its full form, rather than a hole.
+fn hold(lineage: &Lineage, full: &Arc<LivingPose>) -> Arc<LivingPose> {
+    lineage
+        .built
+        .as_ref()
+        .and_then(|built| built.skeleton.with_variance(full, &lineage.variance).ok())
+        .map_or_else(|| full.clone(), Arc::new)
+}
+
 fn living_side<'a>(
     registry: &'a GeneratorRegistry,
     spec: &ProcGenSpec,
@@ -1167,9 +1670,11 @@ fn build_lineage(
         .ok_or_else(|| format!("its generator '{}' can't live", spec.generator))?;
     let skeleton = generator.structure(spec, seed).map_err(|e| e.to_string())?;
     let rig = generator.rig(spec, seed).map_err(|e| e.to_string())?;
+    let rest_height = skeleton.rest_bounds().max.y;
     Ok(BuiltLineage {
         skeleton: Arc::new(skeleton),
         rig: Arc::new(rig),
+        rest_height,
     })
 }
 
@@ -1301,10 +1806,15 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
     fn a_ring_slides_without_losing_what_is_ahead() {
         let mut ring = PoseRing::new(10, 3);
         let pose = |seed| {
-            Arc::new(LivingPose {
+            let pose = Arc::new(LivingPose {
                 shape_seed: seed,
                 segments: Vec::new(),
-            })
+            });
+            RingPose {
+                full: pose.clone(),
+                held: pose,
+                generation: 0,
+            }
         };
         for i in 10..14 {
             assert_eq!(ring.next_missing(), Some(i));
@@ -1335,6 +1845,542 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         ring.slide_to(100);
         assert_eq!(ring.ready, 0);
         assert_eq!(ring.next_missing(), Some(100));
+    }
+
+    fn plain(seed: u64) -> RingPose {
+        let pose = Arc::new(LivingPose {
+            shape_seed: seed,
+            segments: Vec::new(),
+        });
+        RingPose {
+            full: pose.clone(),
+            held: pose,
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn a_ring_can_reach_back_and_keeps_what_both_windows_share() {
+        let mut ring = PoseRing::new(10, 3);
+        for i in 10..14 {
+            ring.put(i, plain(i));
+        }
+        ring.reshape(8, 6);
+        assert_eq!((ring.first, ring.len()), (8, 6));
+        assert_eq!(ring.ready, 4, "kept all four");
+        assert_eq!(ring.next_missing(), Some(8), "what's behind comes first");
+        assert_eq!(ring.get(12).unwrap().shape_seed, 12);
+        assert!(!ring.holds(8, 2));
+        ring.put(8, plain(8));
+        ring.put(9, plain(9));
+        assert!(ring.holds(8, 6));
+
+        // And in again, keeping only what's still in the window.
+        ring.reshape(11, 2);
+        assert_eq!((ring.first, ring.len()), (11, 2));
+        assert_eq!(ring.ready, 3);
+        assert!(ring.get(10).is_none());
+        assert_eq!(ring.get(13).unwrap().shape_seed, 13);
+    }
+
+    fn with_echoes(echoes: &str) -> ProcGenResolver {
+        resolver_with(&sapling(&format!("echoes = {{ {echoes} }}")))
+    }
+
+    /// One prop with its rings full, a little way into its stream so that what's
+    /// behind it matters. Its clock is on a fixed step of half a second.
+    fn running(echoes: &str, seconds: f64) -> (ProcGenResolver, LivingPropId) {
+        let mut resolver = with_echoes(echoes);
+        let id = resolver.add_living_prop(request(1, "oak")).unwrap().0;
+        resolver.make_living_now();
+        run(&mut resolver, seconds, 1.0 / 60.0);
+        (resolver, id)
+    }
+
+    fn no_pose_missed(resolver: &ProcGenResolver) {
+        let stats = resolver.living_props().stats();
+        assert_eq!(stats.frames_starved, 0, "{stats:?}");
+        assert_eq!(stats.blends_starved, 0, "{stats:?}");
+    }
+
+    fn blend_all(
+        resolver: &mut ProcGenResolver,
+        frame: &mut BlendFrame,
+        id: LivingPropId,
+    ) -> usize {
+        let props = resolver.living_props_mut();
+        props.blend_prop(id, frame);
+        let mut wrote = 0;
+        for echo in 0..props.prop(id).echo_count() {
+            wrote += usize::from(props.blend_echo(id, echo, frame).is_some());
+        }
+        wrote
+    }
+
+    #[test]
+    fn a_wider_spread_waits_until_the_ring_has_what_it_reads() {
+        let (mut resolver, id) = running("count = 2, spread = 0.2", 8.0);
+        let props = resolver.living_props_mut();
+        let first_before = props.prop(id).first_step().unwrap();
+        let in_use: Vec<EchoCopy> = (0..2).map(|i| props.prop(id).echo(i)).collect();
+
+        props.set_echoes(EchoConfig {
+            count: 4,
+            spread: WIDE,
+            alpha: 0.2,
+        });
+        let prop = props.prop(id);
+        assert!(prop.is_waiting());
+        assert_eq!(prop.echo_config().count, 4, "a knob reads as turned");
+        assert_eq!(prop.echo_count(), 2, "and the old echoes keep drawing");
+        assert_eq!(prop.echo(0), in_use[0]);
+        assert!(
+            prop.first_step().unwrap() < first_before,
+            "its window has reached back for them"
+        );
+
+        // A frame with no budget can't make them, so nothing has changed.
+        let mut frame = BlendFrame::default();
+        resolver.living_props_mut().stats = LivingStats::default();
+        resolver.frame_budget_for_test(0.0);
+        resolver.process_living(1.0 / 60.0);
+        blend_all(&mut resolver, &mut frame, id);
+        assert!(resolver.living_props().prop(id).is_waiting());
+        assert_eq!(resolver.living_props().prop(id).echo_count(), 2);
+        no_pose_missed(&resolver);
+
+        // Given the room, the ring fills and they start, all at once.
+        resolver.frame_budget_for_test(100.0);
+        resolver.process_living(1.0 / 60.0);
+        blend_all(&mut resolver, &mut frame, id);
+        let prop = resolver.living_props().prop(id);
+        assert!(!prop.is_waiting());
+        assert_eq!(prop.echo_count(), 4);
+        assert_eq!(prop.echo(0).offset, -WIDE);
+        no_pose_missed(&resolver);
+    }
+
+    /// Wide enough to reach well behind, and short of where an echo fades out.
+    const WIDE: f32 = 1.6;
+
+    /// The whole range of both knobs, back and forth, at a budget tight enough to
+    /// matter and with blending the whole way, as a hand on a slider would. The
+    /// ring has to keep up, or hold the old values: no pose is ever missing.
+    #[test]
+    fn sweeping_count_and_spread_across_their_range_misses_no_pose() {
+        let mut resolver = resolver_with(&sapling(
+            "stagger = \"per_branch\"\nechoes = { count = 6, spread = 0.9 }",
+        ));
+        let mut ids = Vec::new();
+        for n in 0..6u64 {
+            let name = format!("oak_{n}");
+            ids.push(resolver.add_living_prop(request(n + 1, &name)).unwrap().0);
+        }
+        resolver.make_living_now();
+        // A pose a frame: well under what a real budget makes, so it has to wait.
+        resolver.frame_budget_for_test(1e-6);
+        let mut frame = BlendFrame::default();
+        let dt = 1.0 / 60.0;
+        let mut most_echoes = 0;
+        let mut waits = 0;
+        for f in 0..1800 {
+            let t = f64::from(f) / 1800.0;
+            // A triangle each, out of step, so every pairing of the two gets a turn.
+            let tri = |x: f64| 1.0 - (2.0 * x.fract() - 1.0).abs();
+            let echoes = EchoConfig {
+                count: (tri(t * 3.0) * f64::from(crate::spec::MAX_ECHOES)).round() as u32,
+                spread: (tri(t * 7.0 + 0.3) * f64::from(crate::spec::MAX_ECHO_SPREAD)) as f32,
+                alpha: 0.2,
+            };
+            resolver.living_props_mut().set_echoes(echoes);
+            resolver.process_living(dt);
+            for id in &ids {
+                blend_all(&mut resolver, &mut frame, *id);
+                let prop = resolver.living_props().prop(*id);
+                most_echoes = most_echoes.max(prop.echo_count());
+                waits += usize::from(prop.is_waiting());
+                assert!(prop.ring_len() >= 3);
+            }
+        }
+        no_pose_missed(&resolver);
+        assert!(most_echoes >= 14, "the sweep got there: {most_echoes}");
+        assert!(waits > 0, "and some of it had to wait for poses");
+
+        // At rest it settles at what it was last told, with a ring its own size.
+        let echoes = EchoConfig {
+            count: 0,
+            spread: 0.0,
+            alpha: 0.2,
+        };
+        resolver.living_props_mut().set_echoes(echoes);
+        resolver.frame_budget_for_test(100.0);
+        resolver.process_living(dt);
+        for id in &ids {
+            let prop = resolver.living_props().prop(*id);
+            assert!(!prop.is_waiting());
+            assert_eq!(prop.echo_count(), 0);
+            assert_eq!(prop.ring_len(), 4, "back to pose_ring");
+        }
+    }
+
+    #[test]
+    fn a_change_of_alpha_keeps_the_echoes_where_they_are() {
+        let (mut resolver, id) = running("count = 2, spread = 0.5, alpha = 0.2", 2.0);
+        let mut frame = BlendFrame::default();
+        blend_all(&mut resolver, &mut frame, id);
+        let offset = resolver.living_props().prop(id).echo(0).offset;
+        let opacity = resolver.living_props().prop(id).echo(0).opacity;
+        let (first, len) = {
+            let prop = resolver.living_props().prop(id);
+            (prop.first_step(), prop.ring_len())
+        };
+
+        resolver.living_props_mut().set_echoes(EchoConfig {
+            count: 2,
+            spread: 0.5,
+            alpha: 0.4,
+        });
+        resolver.process_living(0.0);
+        let prop = resolver.living_props().prop(id);
+        assert!(!prop.is_waiting(), "it needs no new pose");
+        assert_eq!(prop.echo(0).offset, offset);
+        assert!((prop.echo(0).opacity - opacity * 2.0).abs() < 1e-5);
+        assert_eq!((prop.first_step(), prop.ring_len()), (first, len));
+
+        // A clock that's stopped still shows it: an opacity reaches the renderer
+        // with a write, so both echoes have one to send.
+        assert_eq!(blend_all(&mut resolver, &mut frame, id), 2);
+    }
+
+    #[test]
+    fn dropping_echoes_says_how_many_are_left_once() {
+        let (mut resolver, id) = running("count = 4", 1.0);
+        let mut frame = BlendFrame::default();
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+        resolver.living_props_mut().set_echoes(EchoConfig {
+            count: 1,
+            ..EchoConfig::default()
+        });
+        resolver.process_living(0.0);
+        let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+        assert_eq!(blend.echo_count, Some(1));
+        let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+        assert_eq!(blend.echo_count, None);
+    }
+
+    #[test]
+    fn a_new_stagger_grows_the_ring_first_and_starts_in_one_piece() {
+        let mut resolver = resolver_with(&sapling("stagger = \"none\""));
+        let mut small = request(1, "oak");
+        small.pose_ring = Some(2);
+        let id = resolver.add_living_prop(small).unwrap().0;
+        resolver.make_living_now();
+        run(&mut resolver, 4.0, 1.0 / 60.0);
+        assert_eq!(resolver.living_props().prop(id).ring_len(), 2);
+
+        resolver.living_props_mut().set_stagger(Stagger::PerBranch);
+        let prop = resolver.living_props().prop(id);
+        assert_eq!(prop.stagger(), Stagger::PerBranch);
+        assert_eq!(prop.clock().stagger, Stagger::None, "not until it's ready");
+
+        let mut frame = BlendFrame::default();
+        resolver.process_living(1.0 / 60.0);
+        blend_all(&mut resolver, &mut frame, id);
+        let prop = resolver.living_props().prop(id);
+        assert_eq!(prop.clock().stagger, Stagger::PerBranch);
+        assert_eq!(prop.ring_len(), 3, "per-branch reaches further");
+        no_pose_missed(&resolver);
+    }
+
+    fn held_is_what_variance_says(
+        resolver: &ProcGenResolver,
+        id: LivingPropId,
+        want: VarianceConfig,
+    ) {
+        let props = resolver.living_props();
+        let prop = props.prop(id);
+        let (skeleton, _) = props.rig_of(id).unwrap();
+        let first = prop.first_step().unwrap();
+        for index in first..first + prop.ring_len() as u64 {
+            let full = prop.full_pose(index).unwrap();
+            let held = prop.pose(index).unwrap();
+            assert_eq!(
+                **held,
+                skeleton.with_variance(full, &want).unwrap(),
+                "{index}"
+            );
+        }
+    }
+
+    /// A pose is as its seed grew it, in the ring and the cache alike, so a new
+    /// variance reaches all of them and nothing has to grow again.
+    #[test]
+    fn a_new_variance_reaches_every_pose_in_the_ring_and_regrows_none() {
+        let (mut resolver, id) = running("count = 2", 3.0);
+        let start = resolver.living_props().stats();
+        let want = VarianceConfig {
+            amount: 0.9,
+            steady: 0.1,
+            keep_size: true,
+        };
+        resolver.living_props_mut().set_variance(want);
+        assert!(resolver.living_props().is_reholding());
+        resolver.process_living(0.0);
+        assert!(!resolver.living_props().is_reholding());
+        held_is_what_variance_says(&resolver, id, want);
+        let stats = resolver.living_props().stats();
+        assert_eq!(stats.poses_made, start.poses_made, "no regrowing");
+        assert!(stats.poses_reheld >= 5, "{stats:?}");
+
+        // What's made from here on starts at it, whichever way it comes: from the
+        // generator, and from the cache after it was left behind.
+        run(&mut resolver, 2.0, 1.0 / 60.0);
+        held_is_what_variance_says(&resolver, id, want);
+        let back = resolver.living_props().prop(id).first_step().unwrap();
+        resolver.living_props_mut().set_echoes(EchoConfig {
+            count: 2,
+            spread: 1.8,
+            alpha: 0.2,
+        });
+        resolver.process_living(0.0);
+        let stats = resolver.living_props().stats();
+        assert!(
+            resolver.living_props().prop(id).first_step().unwrap() < back,
+            "it reached back into the cache"
+        );
+        assert!(stats.poses_from_cache > 0, "{stats:?}");
+        held_is_what_variance_says(&resolver, id, want);
+    }
+
+    #[test]
+    fn unheld_variance_is_each_pose_exactly_as_it_grew() {
+        let (mut resolver, id) = running("count = 0", 2.0);
+        resolver
+            .living_props_mut()
+            .set_variance(VarianceConfig::FULL);
+        resolver.process_living(0.0);
+        let props = resolver.living_props();
+        let prop = props.prop(id);
+        let (skeleton, _) = props.rig_of(id).unwrap();
+        let spec = ProcGenSpec::parse(&sapling("")).unwrap();
+        let tree = crate::generators::tree::TreeGenerator;
+        let first = prop.first_step().unwrap();
+        for index in first..first + prop.ring_len() as u64 {
+            let grew = LivingGenerator::full_pose(&tree, &spec, skeleton, prop.shape_seed(index));
+            assert_eq!(**prop.pose(index).unwrap(), grew.unwrap(), "{index}");
+        }
+    }
+
+    /// Re-holding comes out of the frame's budget, a share at a time, and a prop
+    /// holding still draws what it gets, without its clock having moved.
+    #[test]
+    fn a_re_hold_spreads_over_frames_and_redraws_a_stopped_prop() {
+        let mut resolver = resolver_with(&sapling("echoes = { count = 2 }"));
+        let mut ids = Vec::new();
+        for n in 0..8u64 {
+            let name = format!("oak_{n}");
+            ids.push(resolver.add_living_prop(request(n + 1, &name)).unwrap().0);
+        }
+        resolver.make_living_now();
+        resolver.process_living(0.0);
+        let mut frame = BlendFrame::default();
+        for id in &ids {
+            blend_all(&mut resolver, &mut frame, *id);
+            assert_eq!(
+                blend_all(&mut resolver, &mut frame, *id),
+                0,
+                "holding still is free"
+            );
+        }
+
+        resolver.living_props_mut().set_variance(VarianceConfig {
+            amount: 0.9,
+            steady: 0.0,
+            keep_size: true,
+        });
+        // No room at all: it waits its turn and can't lose anything.
+        resolver.frame_budget_for_test(0.0);
+        resolver.process_living(0.0);
+        assert!(resolver.living_props().is_reholding());
+        assert_eq!(resolver.living_props().stats().poses_reheld, 0);
+
+        // A frame's worth of room for one is the least it gets: it still finishes.
+        resolver.frame_budget_for_test(1e-6);
+        let mut frames = 0;
+        while resolver.living_props().is_reholding() {
+            resolver.process_living(0.0);
+            frames += 1;
+            assert!(frames < 1000);
+        }
+        assert!(frames > 1, "took {frames} frames");
+        for id in &ids {
+            assert!(
+                blend_all(&mut resolver, &mut frame, *id) > 0,
+                "the new poses go up though no clock has moved"
+            );
+        }
+        no_pose_missed(&resolver);
+    }
+
+    /// A re-hold costs what a pose does, so a whole grove's rings take seconds.
+    /// What the props are drawing has to go first, on every prop, before any ring
+    /// gets finished.
+    #[test]
+    fn a_re_hold_reaches_what_every_prop_is_drawing_first() {
+        let mut resolver = resolver_with(&sapling("echoes = { count = 0 }"));
+        let mut ids = Vec::new();
+        for n in 0..6u64 {
+            let name = format!("oak_{n}");
+            ids.push(resolver.add_living_prop(request(n + 1, &name)).unwrap().0);
+        }
+        resolver.make_living_now();
+        run(&mut resolver, 1.0, 1.0 / 60.0);
+
+        let want = VarianceConfig {
+            amount: 0.9,
+            steady: 0.1,
+            keep_size: true,
+        };
+        resolver.living_props_mut().set_variance(want);
+        let is_current = |resolver: &ProcGenResolver, id: LivingPropId, index: u64| {
+            let props = resolver.living_props();
+            let prop = props.prop(id);
+            let (skeleton, _) = props.rig_of(id).unwrap();
+            let full = prop.full_pose(index).unwrap();
+            **prop.pose(index).unwrap() == skeleton.with_variance(full, &want).unwrap()
+        };
+        // A pose a frame, and enough frames for what's in use and little more.
+        resolver.frame_budget_for_test(1e-6);
+        let in_use = |resolver: &ProcGenResolver, id: LivingPropId| {
+            let prop = resolver.living_props().prop(id);
+            let first = prop.beats().floor() as u64;
+            first..first + prop.clock().reach(2) + 1
+        };
+        let mut frames = 0;
+        while !ids
+            .iter()
+            .all(|id| in_use(&resolver, *id).all(|index| is_current(&resolver, *id, index)))
+        {
+            resolver.process_living(0.0);
+            frames += 1;
+            assert!(frames < 200);
+        }
+        assert!(
+            resolver.living_props().is_reholding(),
+            "it got here with some of the rings still to do"
+        );
+        let last = *ids.last().unwrap();
+        let prop = resolver.living_props().prop(last);
+        let ring_end = prop.first_step().unwrap() + prop.ring_len() as u64;
+        assert!(
+            !is_current(&resolver, last, ring_end - 1),
+            "and hadn't gone on to what nothing is reading yet"
+        );
+    }
+
+    /// A ring about to run out is more urgent than any re-hold.
+    #[test]
+    fn a_ring_about_to_run_out_comes_before_a_re_hold() {
+        let (mut resolver, id) = running("count = 0", 1.0);
+        let props = resolver.living_props_mut();
+        props.props[id.0].ring.as_mut().unwrap().slide_to(2);
+        let first = props.prop(id).beats().floor() as u64;
+        let ring = props.props[id.0].ring.as_mut().unwrap();
+        let (slot, was) = (ring.slot(first + 1), first + 1);
+        if ring.slots[slot].take().is_some() {
+            ring.ready -= 1;
+        }
+        assert_eq!(
+            props.prop(id).next_needed(false).map(|(step, _)| step),
+            Some(was)
+        );
+        props.set_variance(VarianceConfig {
+            amount: 0.9,
+            ..VarianceConfig::default()
+        });
+        resolver.frame_budget_for_test(1e-6);
+        resolver.process_living(0.0);
+        let prop = resolver.living_props().prop(id);
+        assert!(prop.pose(was).is_some(), "the pose came first");
+        assert_eq!(resolver.living_props().stats().pose_failures, 0);
+    }
+
+    /// All of it at once with a pose a frame to do it in: six props at 0.12 s a step
+    /// want 50 poses a second out of 60, under a stagger that reaches far, a new
+    /// variance every frame, and echoes that want poses behind the props. There's
+    /// only room if what's being read wins every time.
+    #[test]
+    fn a_pose_being_read_beats_every_other_use_of_a_tight_budget() {
+        let mut resolver = resolver_with(&sapling(
+            "step = 0.12\nstagger = \"per_branch\"\nechoes = { count = 6, spread = 0.9 }",
+        ));
+        let mut ids = Vec::new();
+        for n in 0..6u64 {
+            let name = format!("oak_{n}");
+            ids.push(resolver.add_living_prop(request(n + 1, &name)).unwrap().0);
+        }
+        resolver.make_living_now();
+        resolver.frame_budget_for_test(1e-6);
+        let mut frame = BlendFrame::default();
+        let tri = |x: f64| 1.0 - (2.0 * x.fract() - 1.0).abs();
+        for f in 0..1800 {
+            let t = f64::from(f) / 1800.0;
+            let props = resolver.living_props_mut();
+            props.set_echoes(EchoConfig {
+                count: (tri(t * 5.0) * 16.0).round() as u32,
+                spread: (tri(t * 9.0 + 0.3) * 1.8) as f32,
+                alpha: 0.2,
+            });
+            props.set_variance(VarianceConfig {
+                amount: tri(t * 7.0) as f32,
+                steady: tri(t * 3.0) as f32,
+                keep_size: f % 200 < 100,
+            });
+            resolver.process_living(1.0 / 60.0);
+            for id in &ids {
+                blend_all(&mut resolver, &mut frame, *id);
+            }
+        }
+        no_pose_missed(&resolver);
+    }
+
+    #[test]
+    fn advancing_by_beats_moves_every_clock_one_whole_step() {
+        let (mut resolver, id) = running("count = 2", 1.0);
+        let before = resolver.living_props().prop(id).beats();
+        let time = resolver.living_props().time();
+        resolver.living_props_mut().advance_beats(1.0, 0.5);
+        assert_eq!(resolver.living_props().prop(id).beats() - before, 1.0);
+        assert_eq!(resolver.living_props().time() - time, 0.5);
+        resolver.process_living(0.0);
+        let prop = resolver.living_props().prop(id);
+        assert!(prop.pose(prop.first_step().unwrap()).is_some(), "ready");
+        no_pose_missed(&resolver);
+    }
+
+    #[test]
+    fn the_scene_can_say_stagger_and_variance_over_the_spec() {
+        let mut resolver = resolver_with(&sapling("stagger = \"none\""));
+        resolver.set_living_defaults(LivingDefaults {
+            stagger: Some(Stagger::PerBranch),
+            variance: VarianceOverride {
+                amount: Some(1.0),
+                steady: None,
+                keep_size: Some(false),
+            },
+            ..Default::default()
+        });
+        let mut own = request(1, "oak");
+        own.stagger = Some(Stagger::None);
+        let id = resolver.add_living_prop(own).unwrap().0;
+        resolver.make_living_now();
+        let props = resolver.living_props();
+        assert_eq!(props.prop(id).clock().stagger, Stagger::PerBranch);
+        let variance = props.variance().unwrap();
+        assert_eq!(variance.amount, 1.0);
+        assert_eq!(variance.steady, 0.5, "from the spec");
+        assert!(!variance.keep_size);
+        held_is_what_variance_says(&resolver, id, variance);
     }
 
     #[test]

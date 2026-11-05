@@ -311,6 +311,9 @@ impl SceneRenderer {
             // all) at the echo's opacity. No more buffers than the opacities
             // and colours in use: a material is shared by its content.
             for (echo, copy) in echoes.into_iter().flatten().enumerate() {
+                if copy.opacity <= 0.0 {
+                    continue;
+                }
                 let mut uniforms = material_uniforms;
                 uniforms.opacity = copy.opacity;
                 let echo_key =

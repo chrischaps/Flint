@@ -6,10 +6,251 @@
 //! warns and goes without it, and `flint validate` fails on it, through
 //! [`WoozeDef::check`].
 
-use crate::format::WoozeDef;
+use crate::format::{LivingDef, SceneFile, WoozeDef, WoozePreset};
+use flint_core::vfs;
 use flint_core::wooze::{preset, WoozeField, WoozeSample};
 use flint_schema::{validate_component_data, SchemaRegistry};
 use std::fmt;
+use std::path::{Path, PathBuf};
+
+/// What a preset file's name ends in: `<name>.wooze.toml`.
+pub const PRESET_SUFFIX: &str = ".wooze.toml";
+
+/// The folder preset files live in, beside a scene or at its game's root.
+const PRESET_DIR: &str = "wooze";
+
+/// The folders a scene's presets can be in, the nearer first: `wooze/` beside it,
+/// for a scene at a game's root, and one level up, for one in `levels/`.
+fn preset_dirs(scene_path: &Path) -> [PathBuf; 2] {
+    let dir = scene_path.parent().unwrap_or_else(|| Path::new(""));
+    [dir.join(PRESET_DIR), dir.join("..").join(PRESET_DIR)]
+}
+
+/// The preset file named `name` that a scene can see, read. `None` if there's no
+/// such file, and it may yet be a built-in. A file comes before a built-in of its
+/// name, as a game's schemas come before the engine's.
+pub fn read_preset(scene_path: &Path, name: &str) -> Option<Result<WoozePreset, String>> {
+    let path = preset_dirs(scene_path)
+        .into_iter()
+        .map(|dir| dir.join(format!("{name}{PRESET_SUFFIX}")))
+        .find(|path| vfs::is_file(path))?;
+    let parsed = vfs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| WoozePreset::parse(&text));
+    Some(parsed.map_err(|e| format!("{}: {e}", path.display())))
+}
+
+/// The preset files a scene can see, by name, in order.
+pub fn list_presets(scene_path: &Path) -> Vec<String> {
+    let mut names: Vec<String> = preset_dirs(scene_path)
+        .iter()
+        .filter(|dir| vfs::is_dir(dir))
+        .filter_map(|dir| vfs::read_dir(dir).ok())
+        .flatten()
+        .filter_map(|path| {
+            let file = path.file_name()?.to_str()?;
+            file.strip_suffix(PRESET_SUFFIX).map(str::to_string)
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Save a preset where a scene can name it, in whichever of its folders exists,
+/// or beside the scene if neither does. Returns the file written. Not for the web,
+/// which has no folders to put it in.
+pub fn write_preset(
+    scene_path: &Path,
+    name: &str,
+    preset: &WoozePreset,
+) -> Result<PathBuf, String> {
+    let fine = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    if name.is_empty() || !name.chars().all(fine) {
+        return Err(format!(
+            "'{name}' can't name a preset: use letters, digits, '_' and '-'"
+        ));
+    }
+    let dirs = preset_dirs(scene_path);
+    let dir = dirs.iter().find(|dir| vfs::is_dir(dir)).unwrap_or(&dirs[0]);
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(format!("{name}{PRESET_SUFFIX}"));
+    std::fs::write(&path, preset.to_toml(name)).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// If a scene's `[wooze] preset` names a file, lay it under the scene's own
+/// tables: whatever the scene says itself stands, as it does over a built-in.
+/// The exception is `[boil]`, since a scene's `[post_process]` has no way to say
+/// it hasn't set a value, and nothing to fill in with no such table: the passes
+/// that boil are off. What's wrong with the file comes back to be named.
+pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeIssue> {
+    let Some(def) = &mut scene.wooze else {
+        return Vec::new();
+    };
+    let Some(name) = def.preset.clone() else {
+        return Vec::new();
+    };
+    let found = match read_preset(scene_path, &name) {
+        None => return Vec::new(),
+        Some(found) => found,
+    };
+    // It's been dealt with, whichever way this goes, so nothing goes looking for
+    // a built-in of that name.
+    def.preset = None;
+    let issue = |message: String| WoozeIssue {
+        zone: None,
+        message: format!("preset '{name}': {message}"),
+    };
+    let preset = match found {
+        Ok(preset) => preset,
+        Err(message) => return vec![issue(message)],
+    };
+    let issues: Vec<WoozeIssue> = preset.problems().into_iter().map(issue).collect();
+
+    def.amplitude = def.amplitude.or(preset.wooze.amplitude);
+    def.step = def.step.or(preset.wooze.step);
+    def.glide = def.glide.or(preset.wooze.glide);
+    def.jitter = def.jitter.or(preset.wooze.jitter);
+
+    let living = scene.living.get_or_insert_with(Default::default);
+    *living = living.clone().over(preset.living);
+
+    if let (Some(boil), Some(post)) = (preset.boil, &mut scene.post_process) {
+        let on = boil.enabled.unwrap_or(true);
+        if let Some(paint) = boil.kuwahara {
+            post.kuwahara_boil = if on { paint } else { 0.0 };
+        }
+        if let Some(ink) = boil.contour {
+            post.contour_boil = if on { ink } else { 0.0 };
+        }
+        if let Some(cadence) = boil.on {
+            post.boil_on = cadence;
+        }
+    }
+    issues
+}
+
+impl LivingDef {
+    /// This table over `under`, a field at a time.
+    pub fn over(self, under: LivingDef) -> LivingDef {
+        LivingDef {
+            shadows: self.shadows.or(under.shadows),
+            stagger: self.stagger.or(under.stagger),
+            echoes: match (self.echoes, under.echoes) {
+                (Some(a), Some(b)) => Some(crate::format::LivingEchoesDef {
+                    count: a.count.or(b.count),
+                    spread: a.spread.or(b.spread),
+                    alpha: a.alpha.or(b.alpha),
+                }),
+                (a, b) => a.or(b),
+            },
+            variance: match (self.variance, under.variance) {
+                (Some(a), Some(b)) => Some(crate::format::LivingVarianceDef {
+                    amount: a.amount.or(b.amount),
+                    steady: a.steady.or(b.steady),
+                    keep_size: a.keep_size.or(b.keep_size),
+                }),
+                (a, b) => a.or(b),
+            },
+        }
+    }
+}
+
+impl WoozePreset {
+    /// A preset file's text. A wrong key is an error, and says which.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        toml::from_str(text).map_err(|e| e.message().to_string())
+    }
+
+    /// What's wrong with its values that the types can't say, for the knobs the
+    /// field doesn't check itself. The player makes do; `flint validate` fails.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if let Some(name) = &self.living.stagger {
+            if !["none", "per_level", "per_branch"].contains(&name.as_str()) {
+                problems.push(format!(
+                    "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
+                ));
+            }
+        }
+        let mut unit = |key: &str, value: Option<f32>| {
+            if let Some(value) = value {
+                if !(0.0..=1.0).contains(&value) {
+                    problems.push(format!("{key} = {value} must be in [0.0, 1.0]"));
+                }
+            }
+        };
+        if let Some(echoes) = self.living.echoes {
+            unit("echoes.alpha", echoes.alpha);
+        }
+        if let Some(variance) = self.living.variance {
+            unit("variance.amount", variance.amount);
+            unit("variance.steady", variance.steady);
+        }
+        if let Some(on) = self.boil.and_then(|boil| boil.on) {
+            if !(1..=3).contains(&on) {
+                problems.push(format!("boil.on = {on} must be 1, 2 or 3"));
+            }
+        }
+        problems
+    }
+
+    /// The file's text. Each number is written as briefly as reads back to the
+    /// same bits, so a value that's saved and loaded looks exactly as it did.
+    pub fn to_toml(&self, name: &str) -> String {
+        fn line(out: &mut String, key: &str, value: Option<impl fmt::Debug>) {
+            if let Some(value) = value {
+                out.push_str(&format!("{key} = {value:?}\n"));
+            }
+        }
+        fn inline(fields: &[(&str, Option<String>)]) -> String {
+            let set: Vec<String> = fields
+                .iter()
+                .filter_map(|(key, value)| value.as_ref().map(|value| format!("{key} = {value}")))
+                .collect();
+            format!("{{ {} }}", set.join(", "))
+        }
+        let number = |value: Option<f32>| value.map(|value| format!("{value:?}"));
+
+        let mut out = format!(
+            "# A saved look for Living Props. In a scene: [wooze] preset = \"{name}\"\n\n[wooze]\n"
+        );
+        line(&mut out, "amplitude", self.wooze.amplitude);
+        line(&mut out, "step", self.wooze.step);
+        line(&mut out, "glide", self.wooze.glide);
+        line(&mut out, "jitter", self.wooze.jitter);
+
+        out.push_str("\n[living]\n");
+        line(&mut out, "shadows", self.living.shadows.as_deref());
+        line(&mut out, "stagger", self.living.stagger.as_deref());
+        if let Some(echoes) = self.living.echoes {
+            let table = inline(&[
+                ("count", echoes.count.map(|count| count.to_string())),
+                ("spread", number(echoes.spread)),
+                ("alpha", number(echoes.alpha)),
+            ]);
+            out.push_str(&format!("echoes = {table}\n"));
+        }
+        if let Some(variance) = self.living.variance {
+            let table = inline(&[
+                ("amount", number(variance.amount)),
+                ("steady", number(variance.steady)),
+                ("keep_size", variance.keep_size.map(|keep| keep.to_string())),
+            ]);
+            out.push_str(&format!("variance = {table}\n"));
+        }
+
+        if let Some(boil) = self.boil {
+            out.push_str("\n[boil]\n");
+            line(&mut out, "enabled", boil.enabled);
+            line(&mut out, "kuwahara", boil.kuwahara);
+            line(&mut out, "contour", boil.contour);
+            line(&mut out, "on", boil.on);
+        }
+        out
+    }
+}
 
 /// Something wrong with a `[wooze]` table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +286,7 @@ impl WoozeDef {
             Some(name) => preset(name).unwrap_or_else(|| {
                 let names: Vec<&str> = flint_core::wooze::PRESETS.iter().map(|p| p.0).collect();
                 issues.push(global(format!(
-                    "preset '{name}' isn't one of {}",
+                    "preset '{name}' isn't a file in wooze/ or one of {}",
                     names.join(", ")
                 )));
                 WoozeSample::NEUTRAL
@@ -141,6 +382,215 @@ fn zone_label(zone: &toml::Value, index: usize) -> String {
     match zone.get("name").and_then(|name| name.as_str()) {
         Some(name) if !name.is_empty() => name.to_string(),
         _ => format!("zone {}", index + 1),
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    use crate::format::{BoilDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs};
+
+    fn tuned() -> WoozePreset {
+        WoozePreset {
+            wooze: WoozeKnobs {
+                amplitude: Some(0.7),
+                // Neither reads back from a rounded decimal.
+                step: Some(1.0 / 3.0),
+                glide: Some(0.1 + 0.2),
+                jitter: Some(2.0),
+            },
+            living: LivingDef {
+                shadows: None,
+                stagger: Some("per_branch".into()),
+                echoes: Some(LivingEchoesDef {
+                    count: Some(3),
+                    spread: Some(1.8),
+                    alpha: Some(0.15),
+                }),
+                variance: Some(LivingVarianceDef {
+                    amount: Some(1.0),
+                    steady: Some(0.0),
+                    keep_size: Some(false),
+                }),
+            },
+            boil: Some(BoilDef {
+                enabled: Some(true),
+                kuwahara: Some(0.5),
+                contour: Some(1.25),
+                on: Some(3),
+            }),
+        }
+    }
+
+    /// A folder of its own, whoever else is running, gone when dropped.
+    struct Folder(PathBuf);
+
+    impl Folder {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("flint_preset_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn scene(&self) -> PathBuf {
+            self.0.join("grove.scene.toml")
+        }
+    }
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_saved_preset_reads_back_to_the_same_bits() {
+        let preset = tuned();
+        let text = preset.to_toml("x");
+        assert_eq!(WoozePreset::parse(&text).unwrap(), preset, "{text}");
+        assert_eq!(preset.problems(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn whole_numbers_stay_floats_and_the_file_says_how_to_use_it() {
+        let text = tuned().to_toml("misty");
+        assert!(text.contains("jitter = 2.0"), "{text}");
+        assert!(text.contains("preset = \"misty\""), "{text}");
+        assert!(text.contains("keep_size = false"), "{text}");
+    }
+
+    #[test]
+    fn a_scene_can_name_what_was_saved_beside_it() {
+        let folder = Folder::new("beside");
+        let scene_path = folder.scene();
+        let path = write_preset(&scene_path, "misty", &tuned()).unwrap();
+        assert!(path.ends_with("wooze/misty.wooze.toml"), "{path:?}");
+        assert_eq!(list_presets(&scene_path), ["misty"]);
+        assert_eq!(read_preset(&scene_path, "misty").unwrap().unwrap(), tuned());
+        assert!(read_preset(&scene_path, "linklater").is_none());
+    }
+
+    #[test]
+    fn a_scene_in_a_levels_folder_finds_the_games_presets() {
+        let folder = Folder::new("levels");
+        let levels = folder.0.join("levels");
+        std::fs::create_dir_all(&levels).unwrap();
+        std::fs::create_dir_all(folder.0.join("wooze")).unwrap();
+        let scene_path = levels.join("grove.scene.toml");
+        write_preset(&scene_path, "misty", &tuned()).unwrap();
+        assert!(folder.0.join("wooze/misty.wooze.toml").is_file());
+        assert!(!levels.join("wooze").exists());
+        assert_eq!(list_presets(&scene_path), ["misty"]);
+    }
+
+    #[test]
+    fn a_preset_needs_a_name_that_can_be_a_file() {
+        let folder = Folder::new("names");
+        for bad in ["", "../up", "a b", "a.b"] {
+            assert!(
+                write_preset(&folder.scene(), bad, &tuned()).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(list_presets(&folder.scene()).is_empty());
+    }
+
+    fn scene_naming(extra: &str) -> SceneFile {
+        toml::from_str(&format!(
+            "[scene]\nname = \"g\"\n[wooze]\npreset = \"misty\"\n{extra}"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_file_fills_in_what_the_scene_left_unsaid() {
+        let folder = Folder::new("fill");
+        write_preset(&folder.scene(), "misty", &tuned()).unwrap();
+        let mut scene = scene_naming(
+            "glide = 0.9\n[living]\nechoes = { count = 1 }\n[post_process]\nbloom_enabled = true\n",
+        );
+        assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
+
+        let wooze = scene.wooze.as_ref().unwrap();
+        assert_eq!(wooze.preset, None);
+        assert_eq!(wooze.glide, Some(0.9), "the scene's own word stands");
+        assert_eq!(wooze.step, Some(1.0 / 3.0));
+        let (field, issues) = wooze.field();
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(field.sample([0.0; 3], 0.0).jitter, 2.0);
+
+        let living = scene.living.as_ref().unwrap();
+        let echoes = living.echoes.unwrap();
+        assert_eq!(echoes.count, Some(1), "a field at a time");
+        assert_eq!(echoes.spread, Some(1.8));
+        assert_eq!(living.stagger.as_deref(), Some("per_branch"));
+        assert_eq!(living.variance.unwrap().amount, Some(1.0));
+
+        let post = scene.post_process.as_ref().unwrap();
+        assert_eq!(post.kuwahara_boil, 0.5);
+        assert_eq!(post.contour_boil, 1.25);
+        assert_eq!(post.boil_on, 3);
+    }
+
+    #[test]
+    fn a_file_beats_a_built_in_of_its_name() {
+        let folder = Folder::new("shadow");
+        write_preset(&folder.scene(), "calm", &tuned()).unwrap();
+        let mut scene: SceneFile =
+            toml::from_str("[scene]\nname = \"g\"\n[wooze]\npreset = \"calm\"\n").unwrap();
+        assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
+        let (field, _) = scene.wooze.unwrap().field();
+        assert_eq!(field.sample([0.0; 3], 0.0).amplitude, 0.7);
+    }
+
+    #[test]
+    fn a_built_in_name_and_no_file_is_left_alone() {
+        let folder = Folder::new("builtin");
+        let mut scene: SceneFile =
+            toml::from_str("[scene]\nname = \"g\"\n[wooze]\npreset = \"boil\"\n").unwrap();
+        assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
+        assert_eq!(scene.wooze.unwrap().preset.as_deref(), Some("boil"));
+    }
+
+    #[test]
+    fn a_bad_file_is_named_and_the_scene_still_loads() {
+        let folder = Folder::new("bad");
+        let dir = folder.0.join("wooze");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("misty.wooze.toml"), "[wooze]\nstepp = 1\n").unwrap();
+        let mut scene = scene_naming("");
+        let issues = apply_preset_file(&mut scene, &folder.scene());
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        let said = issues[0].to_string();
+        assert!(said.contains("misty") && said.contains("stepp"), "{said}");
+        // And nothing goes on to say it isn't a built-in, too.
+        assert!(scene.wooze.unwrap().field().1.is_empty());
+    }
+
+    #[test]
+    fn values_out_of_range_are_named() {
+        let mut preset = tuned();
+        preset.living.stagger = Some("sideways".into());
+        preset.living.variance.as_mut().unwrap().amount = Some(1.5);
+        preset.boil.as_mut().unwrap().on = Some(7);
+        let problems = preset.problems().join("\n");
+        for word in ["sideways", "variance.amount", "boil.on"] {
+            assert!(problems.contains(word), "{word} in {problems}");
+        }
+    }
+
+    #[test]
+    fn boil_off_loads_as_no_boil() {
+        let folder = Folder::new("off");
+        let mut preset = tuned();
+        preset.boil.as_mut().unwrap().enabled = Some(false);
+        write_preset(&folder.scene(), "misty", &preset).unwrap();
+        let mut scene = scene_naming("[post_process]\nbloom_enabled = true\n");
+        apply_preset_file(&mut scene, &folder.scene());
+        let post = scene.post_process.unwrap();
+        assert_eq!((post.kuwahara_boil, post.contour_boil), (0.0, 0.0));
     }
 }
 

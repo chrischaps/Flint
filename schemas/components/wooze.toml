@@ -11,7 +11,8 @@
 # too. A scene without one samples nothing and pays nothing.
 #
 #   [wooze]
-#   preset = "linklater"     # linklater | boil | morph | calm
+#   preset = "linklater"     # linklater | boil | morph | calm, or a saved file:
+#                            # wooze/<name>.wooze.toml, as the F3 panel writes
 #   glide = 0.4              # any global key beats the preset
 #
 #   [[wooze.zone]]
@@ -30,7 +31,7 @@
 description = "A scene's [wooze] table, not a component: how woozy the scene is everywhere, before its zones."
 
 [component.wooze.fields]
-preset = { type = "string", description = "A built-in set of knobs to start from: linklater, boil, morph or calm. Unset: amplitude 1, step 0.5, glide 0.3, jitter 1" }
+preset = { type = "string", description = "A set of knobs to start from: a wooze/<name>.wooze.toml beside the scene or at its game's root, which can also set stagger, echoes, variance and the shading boil, or a built-in: linklater, boil, morph or calm. Unset: amplitude 1, step 0.5, glide 0.3, jitter 1" }
 amplitude = { type = "f32", min = 0.0, max = 1.0, description = "How much of a prop's slow drift shows: 1 is what its spec authored, 0 is its rest pose" }
 step = { type = "f32", min = 0.01, description = "Seconds between pose targets" }
 glide = { type = "f32", min = 0.0, max = 1.0, description = "How much of a step is spent easing: 0 holds and snaps on the beat, 1 never rests" }

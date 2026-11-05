@@ -2635,6 +2635,17 @@ impl SceneRenderer {
         write_bones(queue, &echoes[echo].bones, first, matrices);
     }
 
+    /// Stop drawing an entity's echoes from `count` on. Their buffers stay, ready
+    /// for the next write, so a slider sweeping a count allocates nothing on its
+    /// way back up: an opacity of 0 is what leaves one out at extraction.
+    pub fn set_entity_echo_count(&mut self, entity_id: flint_core::EntityId, count: usize) {
+        if let Some(echoes) = self.entity_echoes.get_mut(&entity_id) {
+            for echo in echoes.iter_mut().skip(count) {
+                echo.opacity = 0.0;
+            }
+        }
+    }
+
     /// Multiply the vertex colour of one part of an entity's skinned mesh by
     /// `tint`. Materials are shared by content, so a few distinct tints cost a
     /// few materials, however many entities use them: keep them few.

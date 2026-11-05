@@ -117,3 +117,67 @@ fn remove_wooze_zone_names_it_and_can_fade() {
         ]
     );
 }
+
+/// The panel's knobs by another door (#218): a script's table is a `.wooze.toml`
+/// by the time it arrives, whatever kinds of number it was written with.
+#[test]
+fn tune_living_takes_what_a_preset_file_holds() {
+    let commands = commands_of(
+        r#"
+        fn on_init() {
+            tune_living(#{
+                wooze: #{ step: 0.25, glide: 1 },
+                living: #{
+                    stagger: "per_branch",
+                    echoes: #{ count: 3, spread: 1.5 },
+                    variance: #{ amount: 1, keep_size: false },
+                },
+                boil: #{ enabled: true, contour: 0.5, on: 3 },
+            });
+        }
+        "#,
+    );
+    let [ScriptCommand::TuneLiving { knobs }] = &commands[..] else {
+        panic!("{commands:?}");
+    };
+    let tune: flint_scene::WoozePreset = knobs.clone().try_into().unwrap();
+    assert_eq!(tune.wooze.step, Some(0.25));
+    assert_eq!(tune.wooze.glide, Some(1.0));
+    assert_eq!(tune.wooze.amplitude, None);
+    assert_eq!(tune.living.stagger.as_deref(), Some("per_branch"));
+    let echoes = tune.living.echoes.unwrap();
+    assert_eq!((echoes.count, echoes.spread), (Some(3), Some(1.5)));
+    let variance = tune.living.variance.unwrap();
+    assert_eq!(variance.amount, Some(1.0));
+    assert_eq!(variance.keep_size, Some(false));
+    let boil = tune.boil.unwrap();
+    assert_eq!((boil.contour, boil.on), (Some(0.5), Some(3)));
+}
+
+#[test]
+fn a_script_can_freeze_step_save_and_load() {
+    let commands = commands_of(
+        r#"
+        fn on_init() {
+            freeze_living(true);
+            step_living();
+            save_living_preset("misty");
+            load_living_preset("calm");
+            freeze_living(false);
+        }
+        "#,
+    );
+    assert!(matches!(
+        commands[..],
+        [
+            ScriptCommand::FreezeLiving { frozen: true },
+            ScriptCommand::StepLiving,
+            ScriptCommand::SaveLivingPreset { .. },
+            ScriptCommand::LoadLivingPreset { .. },
+            ScriptCommand::FreezeLiving { frozen: false },
+        ]
+    ));
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, ScriptCommand::SaveLivingPreset { name } if name == "misty")));
+}

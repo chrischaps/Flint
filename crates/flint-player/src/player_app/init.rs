@@ -109,6 +109,7 @@ impl PlayerApp {
             wooze_missing_warned: false,
             shallow_wooze: Default::default(),
             boil_clock: Default::default(),
+            living_tune: Default::default(),
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -450,6 +451,7 @@ impl PlayerApp {
         self.wooze_time = 0.0;
         super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
         self.boil_clock = Default::default();
+        self.living_tune = Default::default();
         super::procgen_assets::resolve_scene(
             &self.scene_path,
             &mut self.world,
@@ -702,6 +704,7 @@ impl PlayerApp {
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
             self.create_particles_debug_panel();
+            self.create_living_debug_panel();
             // Rendering & Effects (ADR 0053): unconditional — every scene has
             // a renderer to tune. Registered closed; F4 summons it. show_freeze
             // is true here because player scripts drive post fields.

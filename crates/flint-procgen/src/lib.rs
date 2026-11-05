@@ -46,7 +46,7 @@ pub use living::{
 };
 pub use living_props::{
     BlendFrame, EchoOverride, LineageDone, LivingDefaults, LivingProp, LivingPropId, LivingPropRequest,
-    LivingProps, LivingShadows, LivingStats, PropBlend, POSE_CACHE_BYTES,
+    LivingProps, LivingShadows, LivingStats, PropBlend, VarianceOverride, POSE_CACHE_BYTES,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
