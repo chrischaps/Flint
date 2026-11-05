@@ -32,7 +32,7 @@ use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, Impo
 use flint_procgen::{
     AssetKind, BlendFrame, EchoConfig, EchoOverride, LineageDone, LivingDefaults, LivingPropId,
     LivingPropRequest, LivingProps, LivingRig, LivingShadows, LivingStats, ProcGenResolver,
-    Stagger,
+    Stagger, VarianceConfig, VarianceOverride,
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -56,9 +56,60 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
             LivingShadows::Blended
         }
     };
+    let stagger = table.stagger.as_deref().and_then(|name| {
+        let stagger = stagger_of(name);
+        if stagger.is_none() {
+            tracing::warn!(
+                "[living] stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\"; \
+                 using each spec's"
+            );
+        }
+        stagger
+    });
     LivingDefaults {
         shadows,
         echoes: echoes_of(table.echoes.as_ref()),
+        stagger,
+        variance: variance_of(table.variance.as_ref()),
+    }
+}
+
+/// A stagger by the name a spec or a scene knows it by.
+pub fn stagger_of(name: &str) -> Option<Stagger> {
+    toml::Value::String(name.to_string()).try_into().ok()
+}
+
+/// The name a spec or a scene knows a stagger by.
+pub fn stagger_name(stagger: Stagger) -> &'static str {
+    match stagger {
+        Stagger::None => "none",
+        Stagger::PerLevel => "per_level",
+        Stagger::PerBranch => "per_branch",
+    }
+}
+
+/// A scene's `[living] variance` as the resolver wants it, with a bad field named
+/// and then left to each spec.
+fn variance_of(table: Option<&flint_scene::LivingVarianceDef>) -> VarianceOverride {
+    let Some(table) = table else {
+        return VarianceOverride::default();
+    };
+    let fine = |variance: VarianceConfig| match variance.check() {
+        Ok(()) => true,
+        Err((key, reason)) => {
+            tracing::warn!("[living] variance.{key} = {reason}; using each spec's");
+            false
+        }
+    };
+    let base = VarianceConfig::default();
+    VarianceOverride {
+        amount: table
+            .amount
+            .filter(|&amount| fine(VarianceConfig { amount, ..base })),
+        steady: table
+            .steady
+            .filter(|&steady| fine(VarianceConfig { steady, ..base })),
+        keep_size: table.keep_size,
     }
 }
 
@@ -274,6 +325,9 @@ pub fn upload_blends(
     for i in 0..props.props().len() {
         let id = LivingPropId(i);
         let blend = props.blend_prop(id, frame);
+        if let Some(count) = blend.echo_count {
+            renderer.set_entity_echo_count(blend.entity, count);
+        }
         if let Some(first) = blend.first_bone {
             renderer.write_entity_bones(device, queue, blend.entity, first, &frame.bones);
             writes += 1;
@@ -580,6 +634,18 @@ pub fn report(
             stats.blends_starved,
         ),
     ]
+}
+
+/// The `[living]` line for a run whose knobs were turned, if any were.
+pub fn knobs_report(stats: &LivingStats, props: &LivingProps) -> Option<String> {
+    let waiting = props.props().iter().filter(|p| p.is_waiting()).count();
+    (stats.poses_reheld > 0 || waiting > 0).then(|| {
+        format!(
+            "[living] knobs: {} poses held again at a new variance, {waiting} props still waiting \
+             on poses for new clocks",
+            stats.poses_reheld,
+        )
+    })
 }
 
 /// The `[wooze]` line `--exit-after` prints: how far apart the field has put the

@@ -489,6 +489,32 @@ Whether or not the change eases, nothing pops: a prop's parts take a new glide o
 
 A change the field can't use is logged by the player, naming the zone, and changes nothing. So does any of these in a scene with no `[wooze]` table: it has no field to change, and an empty table opts it in.
 
+### Living Props API
+
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s controls, for a script. These reach every prop at once, and a look lab or a test can run them with no panel open.
+
+| Function | Description |
+|----------|-------------|
+| `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is |
+| `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
+| `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
+| `save_living_preset(name)` | Save every knob as `wooze/<name>.wooze.toml`. Not on the web, which has nowhere to put it |
+| `load_living_preset(name)` | Load a preset file or a built-in, live |
+
+```rust
+tune_living(#{
+    wooze: #{ step: 0.25, glide: 0.4 },
+    living: #{
+        stagger: "per_branch",
+        echoes: #{ count: 3, spread: 1.2 },
+        variance: #{ amount: 0.6, keep_size: false },
+    },
+    boil: #{ contour: 1.0, on: 3 },
+});
+```
+
+Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `demo/living_sweep.scene.toml`, whose script moves every knob across its range.
+
 ### Conducted Parameters API
 
 When a scene carries a [`music_session`](music-sessions.md) component, the player fills a per-frame snapshot of the session's state and exposes it to every script through these getters (ADR 0020, conducted-parameters script surface). Without a session every getter returns a neutral value: a clean, settled world with `coherence` and `reassembly` at `1.0`, zero lean, and `1e6` beats until anything upcoming. Bindings written as `1 - conducted_coherence()` therefore show nothing when no music is running, and scripts never need to test for a session.

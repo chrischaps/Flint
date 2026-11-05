@@ -19,9 +19,18 @@ pub fn load_scene<P: AsRef<Path>>(
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
+    fill_in_preset(&mut scene_file, path);
 
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file))
+}
+
+/// Fill in what a `[wooze] preset` file says. A look lab shouldn't refuse to start
+/// over one: what's wrong is named, and `flint validate` fails on it.
+fn fill_in_preset(scene_file: &mut SceneFile, path: &Path) {
+    for issue in crate::wooze::apply_preset_file(scene_file, path) {
+        tracing::warn!("{issue}");
+    }
 }
 
 /// Load a scene from a TOML string (no prefab expansion — no filesystem access)
@@ -51,6 +60,7 @@ pub fn reload_scene<P: AsRef<Path>>(
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
+    fill_in_preset(&mut scene_file, path);
 
     // Clear existing world
     world.clear();

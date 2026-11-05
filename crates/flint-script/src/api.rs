@@ -3978,6 +3978,51 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 // with no [wooze] table has no field to change, and says so.
 
 fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // Living Props' knobs (#218), the F3 panel's by another door. tune_living takes
+    // what a .wooze.toml holds: #{ wooze: #{ step: 0.25 }, living: #{ echoes:
+    // #{ count: 3 } }, boil: #{ on: 2 } }. What it leaves out stays as it is.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tune_living", move |knobs: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::TuneLiving {
+                knobs: map_to_toml(&knobs),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("freeze_living", move |frozen: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::FreezeLiving { frozen });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("step_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StepLiving);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("save_living_preset", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SaveLivingPreset {
+                name: name.to_string(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_living_preset", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::LoadLivingPreset {
+                name: name.to_string(),
+            });
+        });
+    }
+
     // set_wooze(knobs: Map), set_wooze(knobs: Map, seconds)
     {
         let ctx = ctx.clone();

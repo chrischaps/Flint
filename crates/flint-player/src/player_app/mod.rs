@@ -30,6 +30,7 @@ mod music_session;
 mod pacing;
 mod perf;
 pub mod living_props;
+pub(crate) mod living_tuning;
 mod shallow_wooze;
 mod persist;
 pub mod render_scale;
@@ -307,6 +308,8 @@ pub struct PlayerApp {
     shallow_wooze: shallow_wooze::ShallowWooze,
     // The shading boil's beats (#214), on the same clock as the field.
     boil_clock: flint_core::wooze::BoilClock,
+    // What's been done to a running grove by hand (#218).
+    pub(crate) living_tune: living_tuning::LivingTune,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,

@@ -312,6 +312,12 @@ impl ProcGenResolver {
         self.living.tick(dt, f64::INFINITY, &self.registry, wooze)
     }
 
+    /// The frame's whole budget, for tests that want it tight or wide.
+    #[cfg(test)]
+    pub(crate) fn frame_budget_for_test(&mut self, budget_ms: f64) {
+        self.queue.set_budget_ms(budget_ms);
+    }
+
     /// The scene's living props and how their rings have fared.
     pub fn living_props(&self) -> &LivingProps {
         &self.living

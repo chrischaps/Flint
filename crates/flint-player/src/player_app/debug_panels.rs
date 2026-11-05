@@ -34,6 +34,21 @@ impl PlayerApp {
             .push(Box::new(flint_debug_ui::ParticlesDebugPanel::new()));
     }
 
+    /// Create the Living Props panel when the scene has any `living_prop` entity
+    /// (#218). The drain in `living_tuning.rs` mirrors the grove into it.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_living_debug_panel(&mut self) {
+        if self
+            .world
+            .entities_with_component(comp::LIVING_PROP)
+            .is_empty()
+        {
+            return;
+        }
+        self.debug_panels
+            .push(Box::new(flint_debug_ui::LivingPropsDebugPanel::new()));
+    }
+
     /// Create the ocean tuning panel if the scene has an `ocean` component.
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_ocean_debug_panel(&mut self) {

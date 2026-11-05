@@ -449,7 +449,17 @@ fn a_scene_living_table_reads_as_defaults() {
             spread: None,
             alpha: Some(0.5),
         }),
+        stagger: Some("per_branch".into()),
+        variance: Some(flint_scene::LivingVarianceDef {
+            amount: Some(0.5),
+            steady: None,
+            keep_size: Some(false),
+        }),
     }));
+    assert_eq!(read.stagger, Some(flint_procgen::Stagger::PerBranch));
+    assert_eq!(read.variance.amount, Some(0.5));
+    assert_eq!(read.variance.steady, None);
+    assert_eq!(read.variance.keep_size, Some(false));
     assert_eq!(read.shadows, LivingShadows::Drift);
     assert_eq!(read.echoes.count, Some(0));
     assert_eq!(read.echoes.spread, None);
@@ -462,6 +472,12 @@ fn a_scene_living_table_reads_as_defaults() {
             count: Some(99),
             spread: Some(-1.0),
             alpha: Some(2.0),
+        }),
+        stagger: Some("sideways".into()),
+        variance: Some(flint_scene::LivingVarianceDef {
+            amount: Some(1.5),
+            steady: Some(-0.5),
+            keep_size: None,
         }),
     }));
     assert_eq!(bad, LivingDefaults::default());

@@ -8,7 +8,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 | Key | What it toggles | Host |
 |-----|-----------------|------|
-| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles), and every panel a game added | player |
+| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles, Living Props), and every panel a game added | player |
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
 | `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
@@ -20,7 +20,7 @@ The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per
 
 ## Layout
 
-Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over a per-panel weight so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Grass Debug 22, Reality 20, Weather 15, Particles 14, Day / Time 10, and anything else, including every game-supplied panel, 6. The assignment is deterministic and never produces an empty column.
+Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over a per-panel weight so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Living Props 40, Grass Debug 22, Reality 20, Weather 15, Particles 14, Day / Time 10, and anything else, including every game-supplied panel, 6. The assignment is deterministic and never produces an empty column.
 
 A panel can instead ask for the `Bottom` layout, a full-width strip. The Manifest Map uses it; timeline-shaped panels should.
 
@@ -44,6 +44,7 @@ Scene-component panels are created **only when their driving component is presen
 | Dead Calm | `dead_calm` | Dead-calm state |
 | Rendering & Effects | always, when a renderer exists | See below |
 | Particles | `particle_emitter` or `particle_effect` | Alive counts per effect instance, play / stop / burst, the global particle budget, and a draw toggle that keeps simulating while hiding the result |
+| Living Props | `living_prop` | Every knob of a grove live, the warped clock as a curve, freeze and single-step, a pose overlay, and presets saved as TOML. [Below](#living-props-f3) |
 | Music Guide | active music session | Upcoming input windows and per-channel targets |
 | Manifest Map | active music session | Suite structure, playhead, this run's history |
 
@@ -72,6 +73,36 @@ One consolidated home for every render and post-effect control. Its groups, top 
 Every field maps onto a `[post_process]`, `[environment]` or `[camera]` key documented in [Post-Processing](../concepts/post-processing.md) and [File Formats](../formats/overview.md), or onto a `flint render` flag, so a value found in the panel can be authored.
 
 In the scene viewer the same panel gains two extras: a switch between the scene's authored `[post_process]` block and the viewer's own defaults, and **DoF follow**, which keeps the focus plane on the last selected entity.
+
+### Living Props (F3)
+
+Finding the sweet spot between boil and morph means turning knobs while watching. This panel has them all, on a running grove, and keeps a good setting as a file.
+
+![The panel beside a frozen grove, with the pose overlay on: each prop's lineage and the two poses it's between, over its crown](../images/living-panel.png)
+
+At the top is the warped clock, drawn as what it is: one step's worth of hold, then the ease to the next pose, with the prop riding it as a dot and each branch level a little ahead under `per_level` stagger. It follows one prop; pick another in **Props**, which lists all of them with their lineage seed, pose and ring.
+
+| Section | Knobs |
+|---------|-------|
+| Clock | `step`, `glide`, `drift` (the field's `amplitude`), `jitter`, `stagger` |
+| Shading boil | On or off, `paint`, `ink`, and on ones, twos or threes. Paint needs Kuwahara on and ink needs contour on, both in F4, and the panel says so |
+| Echoes | `count`, `spread` and `alpha`, with `count = 0` in reach to compare the grove without them |
+| Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |
+
+**What a knob does right away.** Nothing here pops except stagger, which can't change without moving a part to its new place on the clock.
+
+- `step` bends the clock from where it stands. `glide` and `drift` reach each part on its next beat, as they do when a script moves them.
+- `alpha` applies on the next frame.
+- `count` and `spread` can need poses a ring hasn't got: a wider spread wants steps it has already left behind. The ring grows first, and the props keep their old echoes until the new ones have every pose they'd read, which the status line shows as `waiting on poses`. No frame goes without one.
+- `amount`, `steady` and `keep size` re-hold what the rings have, from each pose as it grew, so nothing regrows and cached poses change too. The poses in use go first across the whole grove, so a change is on screen long before the last ring is done. With `keep size` off that's a frame. With it on a re-hold costs about what growing a pose does, so the budget sets the pace: the grove of 40 oaks takes about 0.9 s at 60 fps and 4 ms a frame. At a lower frame rate there's less budget a second and the same poses to make, so it can take as long as the rings do to turn over, about 4 s at a 0.5 s step.
+
+**Freeze** stops the clock everything woozy runs on, and nothing else: the game goes on, so you can walk around a held pose. Knobs still work, and echoes and variance show at once. **Step** then moves every prop on by exactly one beat, however long a beat is where it stands, which you can read off the clock: `beat 4.753` becomes `beat 5.753`.
+
+**Pose overlay** labels each prop in the world with its lineage and the two poses it's between (`L8  4>5`), after a dial whose needle goes round once a beat. A label that would land on a nearer one stays quiet.
+
+**Presets** saves every knob as `wooze/<name>.wooze.toml`, beside the scene or at its game's root, and says what to write in a scene to load it. **Load** takes one of those or a [built-in](../concepts/procgen.md#the-wooze-field), which holds the clock's knobs only. **As loaded** puts everything back as the scene set it. The file's format is in [Saved presets](../concepts/procgen.md#saved-presets). Scripts can do all of this too: [Living Props API](../concepts/scripting.md#living-props-api).
+
+The status line says how the rings are taking it, and turns red if a frame has ever gone short of a pose. A step far below a frame's worth of poses can outrun any budget, and that's what it would show. The same counts close a run: `--exit-after` prints `frames missing a pose in use` and `kept their last bones`.
 
 ## Live Mirror and Write-Through
 

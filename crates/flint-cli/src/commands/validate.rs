@@ -189,13 +189,13 @@ pub fn run(args: ValidateArgs) -> Result<()> {
 /// with a misspelt key, is an error here, with the parser's words for it.
 fn wooze_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Violation>> {
     let text = std::fs::read_to_string(scene).with_context(|| format!("reading {scene}"))?;
-    let file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
+    let mut file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
+    let preset_issues = flint_scene::apply_preset_file(&mut file, std::path::Path::new(scene));
     let Some(table) = file.wooze else {
         return Ok(Vec::new());
     };
-    Ok(table
-        .check(schemas)
-        .into_iter()
+    let issues = preset_issues.into_iter().chain(table.check(schemas));
+    Ok(issues
         .map(|issue| Violation {
             constraint_name: "wooze".to_string(),
             entity_name: issue.zone.clone().unwrap_or_else(|| "[wooze]".to_string()),

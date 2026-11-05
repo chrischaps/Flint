@@ -714,6 +714,9 @@ impl PlayerApp {
         for line in lines {
             eprintln!("{line}");
         }
+        if let Some(line) = super::living_props::knobs_report(&props.stats(), props) {
+            eprintln!("{line}");
+        }
         if let Some(field) = &self.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
             eprintln!(
@@ -959,7 +962,9 @@ impl PlayerApp {
 
         // Frame-budgeted procgen queue, then whatever it left to living props,
         // whose clock stops when animation does
-        let living_dt = if config.animation == SystemPolicy::Run {
+        #[cfg(feature = "debug-hud")]
+        self.drain_living_panel();
+        let living_dt = if config.animation == SystemPolicy::Run && !self.living_tune.frozen {
             self.clock.delta_time
         } else {
             0.0
@@ -1440,6 +1445,7 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick_procgen(&mut self, living_dt: f64) {
+        self.before_living_tick();
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1635,6 +1641,8 @@ impl PlayerApp {
         let mut extensions = std::mem::take(&mut self.extensions);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
+        #[cfg(feature = "debug-hud")]
+        let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.ui_textures;
         let ui_fonts = &self.ui_fonts;
         let ui_fonts_warned = &mut self.ui_fonts_warned;
@@ -1712,6 +1720,17 @@ impl PlayerApp {
 
             // On-screen touch controls (#133), over the game's UI.
             super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
+
+            // The pose overlay (#218), in the world and under every panel.
+            #[cfg(feature = "debug-hud")]
+            for panel in &debug_panels {
+                if let Some(living) = panel
+                    .as_any()
+                    .downcast_ref::<flint_debug_ui::LivingPropsDebugPanel>()
+                {
+                    living.paint_overlay(ctx, &view_proj);
+                }
+            }
 
             #[cfg(feature = "debug-hud")]
             let debug_width =

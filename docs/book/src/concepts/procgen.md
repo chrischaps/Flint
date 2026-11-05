@@ -208,7 +208,7 @@ On the example oak at the defaults, first-level limbs turn 4° on average and th
 
 `variance = { amount = 1, steady = 0, keep_size = false }` undoes all of it and gives each pose exactly as its shape seed grew it. Leave `keep_size` on with `amount = 1, steady = 0` and you get the same angles at a held size.
 
-A runtime can keep a ring of `full_pose`s and call `LivingSkeleton::with_variance` when a knob moves, with no regrowing.
+The player keeps both forms of each pose in its rings and holds them again with `LivingSkeleton::with_variance` when a knob moves, with no regrowing ([Debug Panels](../guides/debug-panels.md#living-props-f3)).
 
 `flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
 
@@ -445,6 +445,38 @@ remove_wooze_zone("spot", 1.0);                              // and out
 Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
 
 **Paint and ink read it too.** The [shading boil](post-processing.md#shading-boil) runs the Kuwahara filter and contour lines on the field's beat, as hard as its `jitter` says, where the camera stands.
+
+### Saved presets
+
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3) saves a look as a file that a `[wooze]` table can name. `preset = "misty"` looks for `wooze/misty.wooze.toml` beside the scene, then one level up for a scene in `levels/`, and then for a built-in, so a file can stand in for a built-in of its name.
+
+```toml
+# wooze/misty.wooze.toml
+[wooze]
+amplitude = 0.8
+step = 0.3
+glide = 0.65
+jitter = 2.5
+
+[living]
+stagger = "per_branch"
+echoes = { count = 3, spread = 1.2, alpha = 0.35 }
+variance = { amount = 0.8, steady = 0.3, keep_size = false }
+
+[boil]
+enabled = true
+kuwahara = 0.6
+contour = 1.4
+on = 3
+```
+
+The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional.
+
+Whatever a scene says itself still beats its preset, as with a built-in: `glide = 0.4` beside `preset = "misty"` means 0.4, and the panel lists those keys when it saves. There are two exceptions. `stagger` from the scene or a preset beats an entity's own `living_prop` stagger too, since a preset has to look as it did when it was saved. And `[boil]` beats `[post_process]`, whose `kuwahara_boil`, `contour_boil` and `boil_on` have no way to say they weren't set. Whether the passes themselves are on stays with `[post_process]`, and zones stay with the scene, since they belong to a place.
+
+A file holds numbers as briefly as they read back to the same bits, so what you saved is what you get: a run tuned to these values and a fresh run that names the file drew 0 of 518,400 pixels differently at each of 12 moments over 6 s.
+
+`flint validate` fails on a preset file with a misspelt key or a value out of range, naming the preset. The player warns and goes without it, and `flint bundle` packs `wooze/`.
 
 ### Shallow wooze
 

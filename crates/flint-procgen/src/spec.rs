@@ -413,6 +413,16 @@ impl VarianceConfig {
         keep_size: false,
     };
 
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        for (key, value) in [("amount", self.amount), ("steady", self.steady)] {
+            if !(0.0..=1.0).contains(&value) {
+                return Err((key, format!("{value}: must be in [0.0, 1.0]")));
+            }
+        }
+        Ok(())
+    }
+
     /// How much of its difference from the base a segment at `depth` keeps:
     /// `amount × ((1 − steady) + steady × (depth / max_depth)^1.3)`.
     pub fn weight(&self, depth: u32, max_depth: u32) -> f32 {
