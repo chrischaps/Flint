@@ -379,6 +379,13 @@ impl LivingProp {
         self.wooze
     }
 
+    /// Each part's place on the clock as of its last blend, in the skeleton's
+    /// order, trunk first: which poses it was really drawn between. Empty until
+    /// it has posed.
+    pub fn drawn_times(&self) -> &[WarpedTime] {
+        &self.drawn.bones.times
+    }
+
     /// How many echoes it draws.
     pub fn echo_count(&self) -> usize {
         self.echoes.len()
@@ -568,6 +575,11 @@ impl LivingProps {
     /// One prop.
     pub fn prop(&self, id: LivingPropId) -> &LivingProp {
         &self.props[id.0]
+    }
+
+    /// Which tree a prop grows from.
+    pub fn lineage_seed(&self, id: LivingPropId) -> u64 {
+        self.lineages[self.props[id.0].lineage].seed
     }
 
     /// How many distinct trees the props grow from.
@@ -1243,6 +1255,39 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         (first..first + prop.ring_len() as u64)
             .map(|i| prop.pose(i).unwrap().shape_seed)
             .collect()
+    }
+
+    #[test]
+    fn a_capture_step_leaves_no_pose_missing_however_far_it_goes() {
+        let mut resolver = resolver_with(&sapling(""));
+        resolver.add_living_prop(request(1, "first")).unwrap();
+        resolver.make_living_now();
+        // Far past the whole ring in one step, as a capture may be.
+        resolver.step_living_now(30.0, None);
+        let props = resolver.living_props();
+        let prop = &props.props()[0];
+        assert!(prop.ring_len() > 0);
+        assert_eq!(prop.ready(), prop.ring_len());
+        assert!(prop.pose(prop.first_step().unwrap()).is_some());
+        assert_eq!(props.lineage_seed(LivingPropId(0)), 7);
+    }
+
+    #[test]
+    fn what_was_drawn_is_what_it_reports() {
+        let mut resolver = resolver_with(&sapling(""));
+        resolver.add_living_prop(request(1, "first")).unwrap();
+        resolver.make_living_now();
+        resolver.step_living_now(1.0, None);
+        assert!(resolver.living_props().props()[0].drawn_times().is_empty());
+
+        let mut frame = BlendFrame::default();
+        resolver
+            .living_props_mut()
+            .blend_prop(LivingPropId(0), &mut frame);
+        let prop = &resolver.living_props().props()[0];
+        let trunk = prop.drawn_times()[0];
+        assert_eq!(trunk.index, prop.beats().floor() as u64);
+        assert!(prop.pose(trunk.index).is_some());
     }
 
     /// 40 props ticked over `seconds` with a budget wide enough to never bind.

@@ -558,7 +558,7 @@ pub fn resolve_scene(
     // One line a load: how long procgen held the scene up, and where the
     // assets came from (#181: the disk tier is what makes a relaunch fast).
     // Deferred assets are queued, so they appear in none of the three.
-    println!(
+    eprintln!(
         "[procgen] {} asset(s) in {:.0} ms: {} generated, {} from disk, {} from memory",
         requests.len(),
         started.elapsed().as_secs_f64() * 1e3,

@@ -100,6 +100,98 @@ fn echoes_of(table: Option<&flint_scene::LivingEchoesDef>) -> EchoOverride {
     }
 }
 
+/// A scene's living props with no window and no frame budget, for `flint render`
+/// (#216): the same load, the same field and the same step the player takes each
+/// frame, so a capture at a game time shows what the player shows at it.
+pub struct LivingRun {
+    resolver: ProcGenResolver,
+    blend: BlendFrame,
+    field: Option<WoozeField>,
+    /// The clock the field is read on, as the player's `wooze_time`.
+    time: f64,
+}
+
+impl LivingRun {
+    /// Whether `world` has anything for this to run. Everything else about a scene
+    /// that doesn't opt in stays as `flint render` has always drawn it.
+    pub fn wanted_by(world: &FlintWorld) -> bool {
+        world.all_entities().iter().any(|entity| {
+            world
+                .get_components(entity.id)
+                .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+        })
+    }
+
+    /// Resolve the scene's procgen assets as the player does at load, before the
+    /// model loader, with every lineage built and every ring full.
+    pub fn load(
+        scene_path: &str,
+        living: Option<&flint_scene::LivingDef>,
+        wooze: Option<&flint_scene::WoozeDef>,
+        world: &mut FlintWorld,
+        sink: super::procgen_assets::GpuSink<'_>,
+    ) -> Self {
+        let mut resolver = ProcGenResolver::new();
+        resolver.set_living_defaults(defaults_of(living));
+        super::procgen_assets::resolve_scene(
+            scene_path,
+            world,
+            &mut resolver,
+            ProcGenMode::Immediate,
+            sink,
+        );
+        Self {
+            resolver,
+            blend: BlendFrame::default(),
+            field: field_of(wooze),
+            time: 0.0,
+        }
+    }
+
+    /// Lay `knobs` over the scene's global wooze values, before the first step. A
+    /// scene with no `[wooze]` table is treated as if it had an empty one.
+    pub fn change_field(&mut self, knobs: &toml::Table) -> Result<(), String> {
+        self.field
+            .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
+            .set_global(knobs, self.time, 0.0)
+    }
+
+    /// The field, if the scene has one or has been given one.
+    pub fn field(&self) -> Option<&WoozeField> {
+        self.field.as_ref()
+    }
+
+    /// Move the clocks on by `dt` and make whatever poses that calls for. A step of
+    /// 0, as the player's first frame is, reads the field without moving.
+    pub fn step(&mut self, dt: f64) {
+        self.time += dt;
+        let wooze = self.field.as_ref().map(|field| (field, self.time));
+        // Load built every lineage, and no new ones turn up.
+        self.resolver.step_living_now(dt, wooze);
+    }
+
+    /// The clock, in seconds.
+    pub fn time(&self) -> f64 {
+        self.time
+    }
+
+    /// The props as they stand.
+    pub fn props(&self) -> &LivingProps {
+        self.resolver.living_props()
+    }
+
+    /// Blend every prop where its clock stands and write what moved, as a frame of
+    /// the player does.
+    pub fn upload(
+        &mut self,
+        renderer: &mut SceneRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        upload_blends(&mut self.resolver, &mut self.blend, renderer, device, queue);
+    }
+}
+
 /// One frame's blending and upload for every prop, timed for `--exit-after`.
 /// The clock moved in `process_living`, so this draws where it now stands.
 pub fn upload_blends(
@@ -266,7 +358,7 @@ pub fn resolve(
     }
 
     let props = resolver.living_props();
-    println!(
+    eprintln!(
         "[living] {} prop(s) on {} lineage(s)",
         props.props().len(),
         props.lineage_count()
@@ -278,7 +370,7 @@ pub fn resolve(
             apply_lineages(&done, sink);
             let props = resolver.living_props();
             let poses: usize = props.props().iter().map(|p| p.ready()).sum();
-            println!(
+            eprintln!(
                 "[living] {} lineage(s) and {poses} poses in {:.0} ms",
                 done.len(),
                 started.elapsed().as_secs_f64() * 1e3,

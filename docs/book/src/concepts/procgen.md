@@ -253,6 +253,8 @@ t' = floor(t/s) + ease(clamp((frac(t/s) - (1 - g)) / g, 0, 1))
 
 Under each cell are a bar for how far the blend has gone (one per branch level under `per_level`, trunk side on top), the frame number, `t'`, and the two poses. So `glide = 0` shows empty bars and a hard cut on each beat, while `glide = 1` shows bars that rise steadily and a tree that never stops moving.
 
+`-o strip.gif` writes the same frames as an animation instead of a sheet, at `--fps` (up to 50). To see a whole scene over time, or to compare settings at one moment, use [`flint render --time` and `--sweep`](../guides/headless-rendering.md#a-chosen-moment).
+
 A strip reads `[living]` and ignores `[seed]`, so `--seed` doesn't apply, and it takes no run mode that writes something else (`--batch`, `--validate`, `--register`, `--format`). `--strict` still refuses unknown params. A spec with no `[living]` table, or one that can't live, is an error.
 
 To look at a lineage's poses as files, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes the skinned mesh, then each pose twice as a GLB: `poseN.glb` rebuilt from scratch and `poseN_skinned.glb` moved by its bone matrices. It also prints how far each box moved, how far each level turned and how far the pose deforms the mesh. `--amount`, `--steady` and `--keep-size` override the spec.
