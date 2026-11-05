@@ -1171,7 +1171,7 @@ mod scopes {
 
     /// Woozy Grove's living props as the scene commits them, with no window:
     /// its four species, every tree, and its field with its zones.
-    fn woozy_grove(folder: &Path) -> PlayerApp {
+    pub(super) fn woozy_grove(folder: &Path) -> PlayerApp {
         let text = std::fs::read_to_string(repo().join("demo/woozy_grove.scene.toml")).unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
         let mut app = app_with(0, folder);
@@ -1441,5 +1441,367 @@ mod scopes {
         let view = app.living_view(None);
         assert!(view.echo_count.mixed);
         assert_eq!(view.echo_count.layers, ["species"]);
+    }
+}
+
+// ---- Picking a tree in the world (#248) ----
+
+#[cfg(feature = "debug-hud")]
+mod picks {
+    use super::*;
+    use flint_core::Vec3;
+    use flint_debug_ui::{
+        DebugPanel, Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingPropsDebugPanel,
+        PanelScope,
+    };
+    use flint_procgen::{LivingPropId, ResolvedProp};
+    use winit::event::{ElementState, MouseButton};
+
+    /// Woozy Grove with its Living Props panel, on a 1280 x 720 window.
+    fn grove(folder: &Path) -> PlayerApp {
+        let mut app = super::scopes::woozy_grove(folder);
+        app.debug_panels
+            .push(Box::new(LivingPropsDebugPanel::new()));
+        app.input.set_screen_size(1280.0, 720.0);
+        app.camera.aspect = 1280.0 / 720.0;
+        app
+    }
+
+    fn panel(app: &mut PlayerApp) -> &mut LivingPropsDebugPanel {
+        (app.debug_panels.iter_mut())
+            .find_map(|p| p.as_any_mut().downcast_mut::<LivingPropsDebugPanel>())
+            .unwrap()
+    }
+
+    /// The prop standing at `x, z`, by name.
+    fn named_at(app: &PlayerApp, x: f32, z: f32) -> String {
+        let living = app.procgen_resolver.living_props();
+        let prop = (living.props().iter())
+            .find(|p| (p.position()[0] - x).abs() < 0.01 && (p.position()[2] - z).abs() < 0.01)
+            .unwrap_or_else(|| panic!("no prop at {x}, {z}"));
+        prop.entity_name().to_string()
+    }
+
+    fn index_of(app: &PlayerApp, name: &str) -> usize {
+        let living = app.procgen_resolver.living_props();
+        (living.props().iter())
+            .position(|p| p.entity_name() == name)
+            .unwrap()
+    }
+
+    /// Stand `back` metres behind `near` on the line from `far`, at eye height,
+    /// looking through `near`'s crown at `far`'s.
+    fn line_up(app: &mut PlayerApp, near: [f32; 2], far: [f32; 2], back: f32) {
+        let (dx, dz) = (near[0] - far[0], near[1] - far[1]);
+        let len = (dx * dx + dz * dz).sqrt();
+        let (ux, uz) = (dx / len, dz / len);
+        app.camera.position = Vec3::new(near[0] + ux * back, 1.65, near[1] + uz * back);
+        app.camera.target = Vec3::new(far[0], 2.5, far[1]);
+    }
+
+    /// The done-when of #248, headless: against known cameras in Woozy Grove, a
+    /// click picks the tree in front and not the one behind it, from either
+    /// side, and the panel turns to its species.
+    #[test]
+    fn a_click_picks_the_tree_in_front_and_not_the_one_behind() {
+        let folder = Folder::new("pick_front");
+        let mut app = grove(&folder.0);
+        panel(&mut app).toggle();
+        // Two pairs the grove has: two hush trees, and two in the shiver.
+        for (a, b) in [([20.0, 4.0], [23.6, 7.6]), ([-14.8, -12.0], [-20.0, -13.6])] {
+            let (name_a, name_b) = (named_at(&app, a[0], a[1]), named_at(&app, b[0], b[1]));
+            for (near, far, want) in [(a, b, &name_a), (b, a, &name_b)] {
+                line_up(&mut app, near, far, 6.0);
+                assert!(app.pick_living_at_centre(), "{want}: nothing at the centre");
+                assert_eq!(app.picked_living().as_deref(), Some(want.as_str()));
+                let species = app
+                    .procgen_resolver
+                    .living_props()
+                    .species_of(LivingPropId(index_of(&app, want)))
+                    .to_string();
+                assert_eq!(panel(&mut app).scope(), &PanelScope::Species(species));
+            }
+        }
+
+        // A click through the window does the same, in points, and its press
+        // and release go no further; the sky picks nothing and goes on.
+        line_up(&mut app, a_hush(), [23.6, 7.6], 6.0);
+        app.pick_living(None);
+        app.input.mouse_position = (640.0, 360.0);
+        assert!(app.living_takes_click(ElementState::Pressed, MouseButton::Left));
+        assert!(app.living_takes_click(ElementState::Released, MouseButton::Left));
+        assert_eq!(app.picked_living(), Some(named_at(&app, 20.0, 4.0)));
+        app.camera.target = Vec3::new(20.0, 200.0, 4.0);
+        assert!(!app.living_takes_click(ElementState::Pressed, MouseButton::Left));
+        assert!(!app.living_takes_click(ElementState::Released, MouseButton::Left));
+        assert!(!app.pick_living_at_centre(), "the sky has no trees");
+
+        // With the panel shut, a click is the game's, whatever is under it.
+        app.camera.target = Vec3::new(23.6, 2.5, 7.6);
+        panel(&mut app).toggle();
+        assert!(!app.living_takes_click(ElementState::Pressed, MouseButton::Left));
+        // Escape lets go first, and only then would it reach the window.
+        assert!(app.living_let_go());
+        assert_eq!(app.picked_living(), None);
+        assert!(!app.living_let_go());
+    }
+
+    fn a_hush() -> [f32; 2] {
+        [20.0, 4.0]
+    }
+
+    #[test]
+    fn the_cycle_key_goes_through_the_grove_by_name() {
+        let folder = Folder::new("pick_cycle");
+        let mut app = grove(&folder.0);
+        let mut names: Vec<String> = (app.procgen_resolver.living_props().props().iter())
+            .map(|p| p.entity_name().to_string())
+            .collect();
+        names.sort();
+        assert!(app.pick_next_living(true));
+        assert_eq!(app.picked_living().as_ref(), names.first());
+        assert!(app.pick_next_living(true));
+        assert_eq!(app.picked_living().as_ref(), names.get(1));
+        assert!(app.pick_next_living(false));
+        assert!(app.pick_next_living(false));
+        assert_eq!(app.picked_living().as_ref(), names.last(), "round the back");
+    }
+
+    /// Each value and its layer, as `flint render --report json` gives them.
+    fn report_of(prop: &ResolvedProp) -> Vec<(Knob, String, String)> {
+        let n = |v: f32| format!("{v}");
+        vec![
+            (
+                Knob::Amplitude,
+                n(prop.amplitude.value),
+                prop.amplitude.layer.label(),
+            ),
+            (Knob::Step, n(prop.step.value), prop.step.layer.label()),
+            (Knob::Glide, n(prop.glide.value), prop.glide.layer.label()),
+            (
+                Knob::Jitter,
+                n(prop.jitter.value),
+                prop.jitter.layer.label(),
+            ),
+            (
+                Knob::Stagger,
+                super::super::super::living_props::stagger_name(prop.stagger.value).to_string(),
+                prop.stagger.layer.label(),
+            ),
+            (
+                Knob::EchoCount,
+                prop.echo_count.value.to_string(),
+                prop.echo_count.layer.label(),
+            ),
+            (
+                Knob::EchoSpread,
+                n(prop.echo_spread.value),
+                prop.echo_spread.layer.label(),
+            ),
+            (
+                Knob::EchoAlpha,
+                n(prop.echo_alpha.value),
+                prop.echo_alpha.layer.label(),
+            ),
+            (
+                Knob::VarianceAmount,
+                n(prop.variance_amount.value),
+                prop.variance_amount.layer.label(),
+            ),
+            (
+                Knob::VarianceSteady,
+                n(prop.variance_steady.value),
+                prop.variance_steady.layer.label(),
+            ),
+            (
+                Knob::KeepSize,
+                prop.keep_size.value.to_string(),
+                prop.keep_size.layer.label(),
+            ),
+        ]
+    }
+
+    /// The same, as the picked tree's window shows them.
+    fn shown_of(
+        knobs: &LivingKnobs,
+        sources: &flint_debug_ui::KnobSources,
+    ) -> Vec<(Knob, String, String)> {
+        let n = |v: f32| format!("{v}");
+        let value = |knob: Knob| match knob {
+            Knob::Amplitude => n(knobs.amplitude),
+            Knob::Step => n(knobs.step),
+            Knob::Glide => n(knobs.glide),
+            Knob::Jitter => n(knobs.jitter),
+            Knob::Stagger => knobs.stagger.clone(),
+            Knob::EchoCount => knobs.echo_count.to_string(),
+            Knob::EchoSpread => n(knobs.echo_spread),
+            Knob::EchoAlpha => n(knobs.echo_alpha),
+            Knob::VarianceAmount => n(knobs.variance_amount),
+            Knob::VarianceSteady => n(knobs.variance_steady),
+            Knob::KeepSize => knobs.keep_size.to_string(),
+        };
+        Knob::ALL
+            .iter()
+            .map(|knob| {
+                let layers = sources.of(*knob);
+                assert_eq!(layers.len(), 1, "one tree, one layer: {knob:?} {layers:?}");
+                (*knob, value(*knob), layers[0].clone())
+            })
+            .collect()
+    }
+
+    /// What a picked tree's window says is what the report says for it, value
+    /// for value and layer for layer, for every tree in the grove: inside a
+    /// zone, where the zone has the clock's last word, and out of one. And a
+    /// species' own value shows as `species` once one is set.
+    #[test]
+    fn a_picked_trees_values_are_the_reports() {
+        let folder = Folder::new("pick_report");
+        let mut app = grove(&folder.0);
+        let glide = 0.15;
+        let mut k = app
+            .living_picked_state(&named_at(&app, -9.6, 10.4))
+            .unwrap()
+            .knobs;
+        let before = k.clone();
+        k.glide = glide;
+        let species = app
+            .procgen_resolver
+            .living_props()
+            .species_of(LivingPropId(index_of(&app, &named_at(&app, -9.6, 10.4))))
+            .to_string();
+        let moved = k.moved(&before, &KnobFlags::default());
+        app.apply_living_action(LivingPanelAction::Set(
+            PanelScope::Species(species.clone()),
+            moved,
+        ));
+        app.tick_procgen(0.0);
+
+        let (mut zoned, mut open, mut own) = (0, 0, 0);
+        let names: Vec<String> = (app.procgen_resolver.living_props().props().iter())
+            .map(|p| p.entity_name().to_string())
+            .collect();
+        for (i, name) in names.iter().enumerate() {
+            let picked = app.living_picked_state(name).unwrap();
+            let living = app.procgen_resolver.living_props();
+            let field = app.wooze.as_ref().map(|field| (field, app.wooze_time));
+            let resolved = living.resolved(LivingPropId(i), field);
+            assert_eq!(
+                shown_of(&picked.knobs, &picked.sources),
+                report_of(&resolved),
+                "{name}"
+            );
+            // A zone with the last word on a knob is one the tree stands in.
+            for (_, _, layer) in report_of(&resolved) {
+                if let Some(zone) = layer.strip_prefix("zone:") {
+                    assert!(
+                        picked.zones.iter().any(|(z, _)| z == zone),
+                        "{name} in {zone}"
+                    );
+                }
+            }
+            if picked.zones.is_empty() {
+                open += 1;
+            } else {
+                zoned += 1;
+            }
+            own += usize::from(picked.sources.is_own(Knob::Glide));
+        }
+        assert!(
+            zoned > 0 && open > 0,
+            "{zoned} trees in zones, {open} out of them"
+        );
+        let of_species = (0..names.len())
+            .filter(|i| {
+                app.procgen_resolver
+                    .living_props()
+                    .species_of(LivingPropId(*i))
+                    == species
+            })
+            .count();
+        assert_eq!(
+            own, of_species,
+            "the species' own glide is on its trees alone"
+        );
+    }
+
+    /// A slider in the picked tree's window turns its species and no other,
+    /// frozen and at speed.
+    #[test]
+    fn a_slider_beside_a_tree_turns_its_species_alone() {
+        for frozen in [true, false] {
+            let folder = Folder::new(if frozen {
+                "pick_slider_frozen"
+            } else {
+                "pick_slider"
+            });
+            let mut app = grove(&folder.0);
+            app.apply_living_action(LivingPanelAction::Freeze(frozen));
+            let name = named_at(&app, 20.0, 4.0);
+            assert!(app.pick_living(Some(&name)));
+            let i = index_of(&app, &name);
+            let species = app
+                .procgen_resolver
+                .living_props()
+                .species_of(LivingPropId(i))
+                .to_string();
+            let n = app.procgen_resolver.living_props().props().len();
+            let before: Vec<_> = (0..n).map(|i| running(&app, i)).collect();
+
+            // What the window sends for a hand on its step: the panel's state,
+            // as the host mirrored it, through the window's own move.
+            let shown = panel(&mut app).state().picked.clone().unwrap();
+            assert_eq!(shown.name, name);
+            let mut k = shown.knobs.clone();
+            k.step = 0.8;
+            k.echo_count += 2;
+            let moved = k.moved(&shown.knobs, &KnobFlags::default());
+            app.apply_living_action(LivingPanelAction::Set(
+                PanelScope::Species(species.clone()),
+                moved,
+            ));
+            for _ in 0..4 {
+                app.tick_procgen(if frozen { 0.0 } else { 1.0 / 60.0 });
+            }
+            for (j, was) in before.iter().enumerate() {
+                let now = running(&app, j);
+                if app
+                    .procgen_resolver
+                    .living_props()
+                    .species_of(LivingPropId(j))
+                    == species
+                {
+                    assert_eq!(now.0, 0.8, "frozen {frozen}");
+                    assert_eq!(now.2.count, shown.knobs.echo_count + 2);
+                } else {
+                    assert_eq!(now.1, was.1, "frozen {frozen}");
+                    assert_eq!(now.2, was.2);
+                    assert_eq!(now.3, was.3);
+                    if frozen {
+                        assert_eq!(&now, was);
+                    }
+                }
+            }
+            let shown = app.living_picked_state(&name).unwrap();
+            assert_eq!(shown.knobs.step, 0.8);
+            assert_eq!(shown.sources.of(Knob::Step), ["species"]);
+        }
+    }
+
+    /// With nothing picked, the panel shut and no overlay, the drain does what
+    /// it did before #248: nothing.
+    #[test]
+    fn nothing_picked_costs_nothing() {
+        let folder = Folder::new("pick_idle");
+        let mut app = grove(&folder.0);
+        app.drain_living_panel();
+        assert!(
+            panel(&mut app).state().rows.is_empty(),
+            "the panel wasn't mirrored"
+        );
+        assert!(app.pick_living(Some(&named_at(&app, 20.0, 4.0))));
+        assert!(panel(&mut app).state().picked.is_some());
+        app.pick_living(None);
+        assert!(panel(&mut app).state().picked.is_none());
     }
 }

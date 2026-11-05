@@ -16,7 +16,8 @@ pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use living_props_panel::{
     Knob, KnobFlags, KnobSources, LivingAbState, LivingHealth, LivingKnobs, LivingPanelAction,
-    LivingPanelState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
+    LivingPanelState, LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState,
+    PanelScope, pick_prop,
     LIVING_PROPS_DEBUG_PANEL,
 };
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};

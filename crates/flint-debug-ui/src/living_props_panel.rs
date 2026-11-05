@@ -209,6 +209,24 @@ impl KnobFlags {
         }
     }
 
+    /// Set one knob's flag.
+    pub fn set_flag(&mut self, knob: Knob, on: bool) {
+        let flag = match knob {
+            Knob::Amplitude => &mut self.amplitude,
+            Knob::Step => &mut self.step,
+            Knob::Glide => &mut self.glide,
+            Knob::Jitter => &mut self.jitter,
+            Knob::Stagger => &mut self.stagger,
+            Knob::EchoCount => &mut self.echo_count,
+            Knob::EchoSpread => &mut self.echo_spread,
+            Knob::EchoAlpha => &mut self.echo_alpha,
+            Knob::VarianceAmount => &mut self.variance_amount,
+            Knob::VarianceSteady => &mut self.variance_steady,
+            Knob::KeepSize => &mut self.keep_size,
+        };
+        *flag = on;
+    }
+
     /// Whether any of the clock's four is set.
     pub fn any_clock(&self) -> bool {
         self.step || self.glide || self.amplitude || self.jitter
@@ -408,6 +426,8 @@ pub struct LivingPropRow {
     pub position: [f32; 3],
     /// How tall its tree stands at rest.
     pub height: f32,
+    /// How far its crown reaches sideways from the trunk at rest (#248).
+    pub reach: f32,
     /// Where its clock stands, in steps.
     pub beats: f64,
     pub step: f32,
@@ -424,6 +444,21 @@ pub struct LivingPropRow {
     pub echoes: usize,
     /// On its old clocks, waiting for poses for new ones.
     pub waiting: bool,
+}
+
+/// The tree picked in the world (#248), value by value as it reads them: the
+/// spec, the entity, the grove, a zone and its species, together.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LivingPickedState {
+    /// Its entity's name, as its row has it.
+    pub name: String,
+    /// The zones it stands in now, each with how much of itself it gives there.
+    pub zones: Vec<(String, f32)>,
+    /// Every value a species can set, as this tree runs on it.
+    pub knobs: LivingKnobs,
+    /// The one layer each of those values comes from, as `flint render --report
+    /// json`'s `values` names it.
+    pub sources: KnobSources,
 }
 
 /// How the rings are taking it.
@@ -469,6 +504,8 @@ pub struct LivingPanelState {
     pub ink_pass: bool,
     /// Two presets being compared (#238), if they are.
     pub ab: Option<LivingAbState>,
+    /// The tree picked in the world, as the host resolved it (#248).
+    pub picked: Option<LivingPickedState>,
 }
 
 /// How an A/B comparison stands (#238). A name of "" is the knobs as they stood.
@@ -537,6 +574,13 @@ pub struct LivingPropsDebugPanel {
     scope: PanelScope,
     /// What the Props rows are narrowed to: part of a name or a species.
     filter: String,
+    /// The tree picked in the world, by its entity's name (#248).
+    selected: Option<String>,
+    /// Whether the picked tree was on screen when the overlay last painted.
+    picked_on_screen: Option<bool>,
+    /// Where the panel's own column started last frame, so the picked tree's
+    /// window keeps out from under it.
+    panel_left: Option<f32>,
     actions: Vec<LivingPanelAction>,
 }
 
@@ -558,6 +602,9 @@ impl LivingPropsDebugPanel {
             ab_picks: None,
             scope: PanelScope::Global,
             filter: String::new(),
+            selected: None,
+            picked_on_screen: None,
+            panel_left: None,
             actions: Vec::new(),
         }
     }
@@ -569,6 +616,67 @@ impl LivingPropsDebugPanel {
         if matches!(self.scope, PanelScope::Species(_)) && self.picked_species().is_none() {
             self.scope = PanelScope::Global;
         }
+        if let Some(name) = &self.selected {
+            if !self.state.rows.iter().any(|row| &row.name == name) {
+                self.selected = None;
+                self.picked_on_screen = None;
+            }
+        }
+    }
+
+    /// Pick a tree by its entity's name, as a click on it in the world does
+    /// (#248): the panel turns to its species, and its readout follows it. A
+    /// name no row has, or `None`, lets go. Returns whether one is picked.
+    pub fn select(&mut self, name: Option<&str>) -> bool {
+        let found = name.and_then(|name| {
+            (self.state.rows.iter().enumerate()).find(|(_, row)| row.name == name)
+        });
+        let Some((i, row)) = found else {
+            self.selected = None;
+            self.picked_on_screen = None;
+            return false;
+        };
+        self.scope = PanelScope::Species(row.species.clone());
+        self.selected = Some(row.name.clone());
+        self.focus = i;
+        true
+    }
+
+    /// The tree picked in the world, by name, if one is.
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
+    /// Whether the picked tree was on screen when the overlay last painted:
+    /// `None` with nothing picked or before the first paint.
+    pub fn picked_on_screen(&self) -> Option<bool> {
+        self.selected.as_ref().and(self.picked_on_screen)
+    }
+
+    /// Pick the next tree by name, or the one before with `forward` false, as
+    /// the cycle key does when a click missed. With none picked, the first.
+    pub fn select_next(&mut self, forward: bool) -> bool {
+        let mut names: Vec<&str> = self.state.rows.iter().map(|r| r.name.as_str()).collect();
+        if names.is_empty() {
+            return false;
+        }
+        names.sort_unstable();
+        let at = (self.selected.as_deref()).and_then(|name| names.iter().position(|n| *n == name));
+        let n = names.len();
+        let next = match (at, forward) {
+            (None, true) => 0,
+            (None, false) => n - 1,
+            (Some(i), true) => (i + 1) % n,
+            (Some(i), false) => (i + n - 1) % n,
+        };
+        let name = names[next].to_string();
+        self.select(Some(&name))
+    }
+
+    /// The picked tree's row, if one is picked and the host knows it.
+    fn picked_row(&self) -> Option<&LivingPropRow> {
+        let name = self.selected.as_ref()?;
+        self.state.rows.iter().find(|row| &row.name == name)
     }
 
     /// Whose values the knobs turn.
@@ -630,6 +738,9 @@ impl LivingPropsDebugPanel {
     /// The row the readout follows, if the scene has any: one of the picked
     /// species', if one is.
     fn focused(&self) -> Option<&LivingPropRow> {
+        if let Some(row) = self.picked_row() {
+            return Some(row);
+        }
         let rows = &self.state.rows;
         let row = rows.get(self.focus).or_else(|| rows.first());
         match &self.scope {
@@ -698,9 +809,37 @@ impl LivingPropsDebugPanel {
         }
     }
 
+    /// The tree picked in the world, or how to pick one (#248). One picked off
+    /// screen says so here, since its window can't be drawn beside it.
+    fn picked_ui(&mut self, ui: &mut egui::Ui) {
+        if self.state.rows.is_empty() {
+            return;
+        }
+        let Some(row) = self.picked_row().cloned() else {
+            ui.weak("Click a tree to pick it, or F8 for the one at the view centre.");
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("Picked");
+            ui.colored_label(INK, egui::RichText::new(&row.name).strong());
+            ui.weak(&row.species);
+            if self.picked_on_screen == Some(false) {
+                ui.colored_label(FROZEN, "off screen")
+                    .on_hover_text("Turn to it to see its window, or Shift+F8 for the next tree");
+            }
+            if ui
+                .small_button("\u{d7}")
+                .on_hover_text("Let it go (Esc)")
+                .clicked()
+            {
+                self.select(None);
+            }
+        });
+    }
+
     fn clock_section(&mut self, ui: &mut egui::Ui) {
         if let Some(row) = self.focused().cloned() {
-            draw_clock(ui, &row, &self.state.knobs.stagger, self.state.frozen);
+            draw_clock(ui, &row, &self.state.knobs.stagger, self.state.frozen, 76.0);
             ui.monospace(format!(
                 "{}  pose {} > {}  {:>3.0}%",
                 row.name,
@@ -787,63 +926,18 @@ impl LivingPropsDebugPanel {
             };
 
         section(ui, "Clock", true, |ui| {
-            touched.step = row(ui, Knob::Step, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.step, 0.05..=4.0)
-                        .logarithmic(true)
-                        .text("step (s)"),
-                    mixed.step,
-                    says,
-                )
-            });
-            touched.glide = row(ui, Knob::Glide, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.glide, 0.0..=1.0).text("glide"),
-                    mixed.glide,
-                    says,
-                )
-            });
-            touched.amplitude = row(ui, Knob::Amplitude, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"),
-                    mixed.amplitude,
-                    says,
-                )
-            });
-            touched.jitter = row(ui, Knob::Jitter, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"),
-                    mixed.jitter,
-                    says,
-                )
-            });
-            touched.stagger = row(ui, Knob::Stagger, &mut |ui| {
-                let shown = if mixed.stagger {
-                    "mixed".to_string()
-                } else {
-                    k.stagger.clone()
-                };
-                let combo = egui::ComboBox::from_label("stagger")
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        let mut picked = false;
-                        for (name, says) in STAGGERS {
-                            picked |= ui
-                                .selectable_value(&mut k.stagger, name.to_string(), name)
-                                .on_hover_text(says)
-                                .clicked();
-                        }
-                        picked
-                    });
-                if mixed.stagger {
-                    combo.response.on_hover_text(says);
-                }
-                combo.inner.unwrap_or(false)
-            });
+            for knob in [
+                Knob::Step,
+                Knob::Glide,
+                Knob::Amplitude,
+                Knob::Jitter,
+                Knob::Stagger,
+            ] {
+                let moved = row(ui, knob, &mut |ui| {
+                    control(ui, knob, &mut k, mixed.get(knob), says, "living_panel")
+                });
+                touched.set_flag(knob, moved);
+            }
             if species.is_none() && self.state.no_field && mixed.any_clock() {
                 ui.weak(
                     "No [wooze] table: each species runs its spec's clock. Turning any of \
@@ -885,61 +979,21 @@ impl LivingPropsDebugPanel {
         }
 
         section(ui, "Echoes", true, |ui| {
-            touched.echo_count = row(ui, Knob::EchoCount, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.echo_count, 0..=16).text("count"),
-                    mixed.echo_count,
-                    says,
-                )
-            });
-            // To where an echo has faded out: flint_procgen::MAX_ECHO_SPREAD.
-            touched.echo_spread = row(ui, Knob::EchoSpread, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"),
-                    mixed.echo_spread,
-                    says,
-                )
-            });
-            touched.echo_alpha = row(ui, Knob::EchoAlpha, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"),
-                    mixed.echo_alpha,
-                    says,
-                )
-            });
+            for knob in [Knob::EchoCount, Knob::EchoSpread, Knob::EchoAlpha] {
+                let moved = row(ui, knob, &mut |ui| {
+                    control(ui, knob, &mut k, mixed.get(knob), says, "living_panel")
+                });
+                touched.set_flag(knob, moved);
+            }
         });
 
         section(ui, "Variance", true, |ui| {
-            touched.variance_amount = row(ui, Knob::VarianceAmount, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"),
-                    mixed.variance_amount,
-                    says,
-                )
-            });
-            touched.variance_steady = row(ui, Knob::VarianceSteady, &mut |ui| {
-                knob(
-                    ui,
-                    egui::Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
-                    mixed.variance_steady,
-                    says,
-                )
-            });
-            touched.keep_size = row(ui, Knob::KeepSize, &mut |ui| {
-                let keep = ui.add(
-                    egui::Checkbox::new(&mut k.keep_size, "keep size")
-                        .indeterminate(mixed.keep_size),
-                );
-                let changed = keep.changed();
-                if mixed.keep_size {
-                    keep.on_hover_text(says);
-                }
-                changed
-            });
+            for knob in [Knob::VarianceAmount, Knob::VarianceSteady, Knob::KeepSize] {
+                let moved = row(ui, knob, &mut |ui| {
+                    control(ui, knob, &mut k, mixed.get(knob), says, "living_panel")
+                });
+                touched.set_flag(knob, moved);
+            }
             if ui
                 .small_button("Unheld")
                 .on_hover_text("amount 1, steady 0, keep size off: each pose as it grew")
@@ -1196,8 +1250,14 @@ impl LivingPropsDebugPanel {
                     ui.weak("ring");
                     ui.end_row();
                     for (i, row) in members {
-                        if ui.selectable_label(self.focus == *i, &row.name).clicked() {
+                        let picked = self.selected.as_deref() == Some(row.name.as_str());
+                        if ui
+                            .selectable_label(picked || self.focus == *i, &row.name)
+                            .on_hover_text("Pick it, as a click on it in the world would")
+                            .clicked()
+                        {
                             self.focus = *i;
+                            self.select(Some(&row.name));
                         }
                         ui.monospace(row.lineage_seed.to_string());
                         ui.monospace(format!("{} {:.0}%", row.pose, row.weight * 100.0));
@@ -1217,7 +1277,15 @@ impl LivingPropsDebugPanel {
     /// crown, after a small dial of where it stands in its step. The nearest get
     /// to speak first and a label that would land on one stays quiet, so a grove
     /// reads as a grove: every prop is in the panel's Props section regardless.
-    pub fn paint_overlay(&self, ctx: &egui::Context, view_proj: &[[f32; 4]; 4]) {
+    pub fn paint_overlay(&mut self, ctx: &egui::Context, view_proj: &[[f32; 4]; 4]) {
+        if self.selected.is_some() {
+            self.paint_picked(ctx, view_proj);
+        }
+        self.paint_labels(ctx, view_proj);
+    }
+
+    /// Each prop's lineage and poses, if the pose overlay is on.
+    fn paint_labels(&self, ctx: &egui::Context, view_proj: &[[f32; 4]; 4]) {
         if !self.state.overlay {
             return;
         }
@@ -1250,12 +1318,321 @@ impl LivingPropsDebugPanel {
     }
 }
 
+impl LivingPropsDebugPanel {
+    /// The picked tree's marks and window (#248): a ring on the ground under
+    /// it and, fainter, under every tree of its species in view, and beside it a
+    /// window of what it reads, with its species' sliders. A tree off screen
+    /// draws nothing and the panel says so.
+    fn paint_picked(&mut self, ctx: &egui::Context, view_proj: &[[f32; 4]; 4]) {
+        let Some(row) = self.picked_row().cloned() else {
+            self.picked_on_screen = None;
+            return;
+        };
+        let screen = ctx.screen_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("living_picked_marks"),
+        ));
+        let kin = Stroke::new(1.0_f32, shaded(INK, 0.4));
+        for other in (self.state.rows.iter())
+            .filter(|other| other.species == row.species && other.name != row.name)
+        {
+            paint_ring(&painter, other, view_proj, screen, 1.0, kin);
+        }
+        paint_ring(
+            &painter,
+            &row,
+            view_proj,
+            screen,
+            1.0,
+            Stroke::new(2.0_f32, INK),
+        );
+        paint_ring(
+            &painter,
+            &row,
+            view_proj,
+            screen,
+            0.82,
+            Stroke::new(1.0_f32, shaded(INK, 0.55)),
+        );
+        let Some(anchor) = anchor_of(&row, view_proj, screen) else {
+            self.picked_on_screen = Some(false);
+            return;
+        };
+        self.picked_on_screen = Some(true);
+        let room = match self.panel_left.filter(|_| self.open) {
+            Some(left) if left > screen.left() + 200.0 && left < screen.right() => {
+                Rect::from_min_max(screen.min, Pos2::new(left - 6.0, screen.max.y))
+            }
+            _ => screen,
+        };
+        let right = anchor.x < room.center().x;
+        let (pivot, at) = if right {
+            (Align2::LEFT_CENTER, anchor + Vec2::new(28.0, 0.0))
+        } else {
+            (Align2::RIGHT_CENTER, anchor - Vec2::new(28.0, 0.0))
+        };
+        let shown = egui::Area::new(egui::Id::new("living_picked_window"))
+            .order(egui::Order::Middle)
+            .fixed_pos(at)
+            .pivot(pivot)
+            .constrain_to(room.shrink(4.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| self.picked_window(ui, &row));
+            });
+        // A thread from the crown to the window, so a grove of them reads.
+        let window = shown.response.rect;
+        let edge = Pos2::new(
+            if right { window.left() } else { window.right() },
+            anchor.y.clamp(
+                window.top() + 8.0,
+                (window.bottom() - 8.0).max(window.top() + 8.0),
+            ),
+        );
+        painter.line_segment([anchor, edge], Stroke::new(1.0_f32, shaded(INK, 0.6)));
+        painter.circle_filled(anchor, 3.0, INK);
+    }
+
+    /// What the picked tree reads, and its species' sliders.
+    fn picked_window(&mut self, ui: &mut egui::Ui, row: &LivingPropRow) {
+        ui.set_max_width(270.0);
+        // Smaller than the panel's, so it covers as little of the grove as it can.
+        let style = ui.style_mut();
+        style.spacing.slider_width = 104.0;
+        style.spacing.item_spacing.y = 2.0;
+        style.spacing.interact_size.y = 15.0;
+        for (text, size) in [
+            (egui::TextStyle::Body, 12.0),
+            (egui::TextStyle::Button, 12.0),
+            (egui::TextStyle::Monospace, 11.0),
+        ] {
+            if let Some(font) = style.text_styles.get_mut(&text) {
+                font.size = size;
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.colored_label(INK, egui::RichText::new(&row.name).strong());
+            ui.weak(format!("{}  L{}", row.species, row.lineage_seed));
+        });
+        let picked = (self.state.picked.clone()).filter(|p| p.name == row.name);
+        let stagger = picked
+            .as_ref()
+            .map_or_else(|| "none".to_string(), |p| p.knobs.stagger.clone());
+        draw_clock(ui, row, &stagger, self.state.frozen, 54.0);
+        ui.monospace(format!(
+            "pose {} > {}  {:>3.0}%",
+            row.pose,
+            row.pose + 1,
+            row.weight * 100.0
+        ));
+        let Some(picked) = picked else {
+            return;
+        };
+        ui.label(egui::RichText::new(zones_line(&picked.zones)).small());
+        ui.separator();
+        let kin = self
+            .state
+            .rows
+            .iter()
+            .filter(|r| r.species == row.species)
+            .count();
+        ui.weak(format!(
+            "These set {}'s own values: its {kin} trees, no others.",
+            row.species
+        ));
+        let mut k = picked.knobs.clone();
+        let before = k.clone();
+        let mut touched = KnobFlags::default();
+        let mut clear = None;
+        for knob in PANEL_ORDER {
+            ui.horizontal(|ui| {
+                let moved = control(ui, knob, &mut k, false, "", "living_picked");
+                touched.set_flag(knob, moved);
+                if paint_mark(ui, &Mark::From(picked.sources.of(knob).to_vec())) {
+                    clear = Some(knob);
+                }
+            });
+        }
+        let mut moved = k.moved(&before, &touched);
+        moved.boil = None;
+        if moved != WoozePreset::default() {
+            // What moved is the species' own now, until the host says so itself.
+            if let Some(shown) = self.state.picked.as_mut() {
+                let set = KnobFlags::set_by(&moved);
+                shown.knobs = k;
+                for knob in Knob::ALL.into_iter().filter(|knob| set.get(*knob)) {
+                    shown.sources.set(knob, vec!["species".to_string()]);
+                }
+            }
+            let scope = PanelScope::Species(row.species.clone());
+            self.push(LivingPanelAction::Set(scope, moved));
+        }
+        if let Some(knob) = clear {
+            self.push(LivingPanelAction::Clear(row.species.clone(), Some(knob)));
+        }
+        let mut keys = String::from("Esc lets go \u{b7} Shift+F8 the next tree");
+        if !self.open {
+            keys.push_str(" \u{b7} F3 to tune");
+        }
+        ui.weak(egui::RichText::new(keys).small());
+    }
+}
+
+/// The knobs in the order the panel's sections give them.
+const PANEL_ORDER: [Knob; 11] = [
+    Knob::Step,
+    Knob::Glide,
+    Knob::Amplitude,
+    Knob::Jitter,
+    Knob::Stagger,
+    Knob::EchoCount,
+    Knob::EchoSpread,
+    Knob::EchoAlpha,
+    Knob::VarianceAmount,
+    Knob::VarianceSteady,
+    Knob::KeepSize,
+];
+
+/// The zones a tree stands in, as its window says it.
+fn zones_line(zones: &[(String, f32)]) -> String {
+    if zones.is_empty() {
+        return "in no zone: the grove's field".to_string();
+    }
+    let said: Vec<String> = zones
+        .iter()
+        .map(|(name, weight)| {
+            if *weight >= 0.999 {
+                name.clone()
+            } else {
+                format!("{name} {:.0}%", weight * 100.0)
+            }
+        })
+        .collect();
+    format!("in zone {}", said.join(", "))
+}
+
+/// Which prop is under `at` on screen (#248), the nearest if several are: its
+/// index in `rows`. Each prop is the screen-space shape of its tree, its trunk
+/// line from foot to crown top, widening toward the crown to its reach.
+/// Approximate, since a prop has no collider and its shape keeps changing;
+/// the cycle key covers a miss.
+pub fn pick_prop(
+    rows: &[LivingPropRow],
+    view_proj: &[[f32; 4]; 4],
+    screen: Rect,
+    at: Pos2,
+) -> Option<usize> {
+    let mut best: Option<(f32, usize)> = None;
+    for (i, row) in rows.iter().enumerate() {
+        let Some(depth) = hit_depth(row, view_proj, screen, at) else {
+            continue;
+        };
+        if best.is_none_or(|(nearest, _)| depth < nearest) {
+            best = Some((depth, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
+/// How far a prop's reach is, sideways: its rest crown's, or a guess from its
+/// height before its lineage has built.
+fn reach_of(row: &LivingPropRow) -> f32 {
+    if row.reach > 0.0 {
+        row.reach
+    } else {
+        row.height * 0.3
+    }
+}
+
+/// How far off the camera `row` is where `at` lands on it, if it does.
+fn hit_depth(row: &LivingPropRow, m: &[[f32; 4]; 4], screen: Rect, at: Pos2) -> Option<f32> {
+    let [x, y, z] = row.position;
+    let (foot, near_foot) = project_point([x, y, z], m, screen)?;
+    let (top, near_top) = project_point([x, y + row.height.max(0.5), z], m, screen)?;
+    let line = top - foot;
+    let t = if line.length_sq() > 0.0 {
+        ((at - foot).dot(line) / line.length_sq()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let depth = near_foot + (near_top - near_foot) * t;
+    // The trunk's a third of the crown's width; the crown's top is all of it.
+    let radius = (reach_of(row) * focal_of(m, screen) / depth * (0.3 + 0.7 * t)).max(6.0);
+    ((foot + line * t).distance(at) <= radius).then_some(depth)
+}
+
+/// Points per metre at a metre off the camera, across the screen: the length of
+/// clip x's gradient, since a view is a rotation.
+fn focal_of(m: &[[f32; 4]; 4], screen: Rect) -> f32 {
+    let gx = m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0];
+    gx.sqrt() * screen.width() * 0.5
+}
+
+/// Where a world point lands on screen and how far off it is, if it's in front
+/// of the camera: on screen or not.
+fn project_point(p: [f32; 3], m: &[[f32; 4]; 4], screen: Rect) -> Option<(Pos2, f32)> {
+    let clip = |i: usize| m[0][i] * p[0] + m[1][i] * p[1] + m[2][i] * p[2] + m[3][i];
+    let w = clip(3);
+    if w <= 0.1 {
+        return None;
+    }
+    let (x, y) = (clip(0) / w, clip(1) / w);
+    Some((
+        Pos2::new(
+            screen.left() + (x * 0.5 + 0.5) * screen.width(),
+            screen.top() + (0.5 - y * 0.5) * screen.height(),
+        ),
+        w,
+    ))
+}
+
+/// Where a picked tree's window hangs from: its crown top, or partway down if
+/// that's off screen, or its foot. `None` when none of them is on screen.
+fn anchor_of(row: &LivingPropRow, m: &[[f32; 4]; 4], screen: Rect) -> Option<Pos2> {
+    let [x, y, z] = row.position;
+    [1.0, 0.5, 0.0].into_iter().find_map(|up| {
+        let (at, _) = project_point([x, y + row.height * up, z], m, screen)?;
+        screen.contains(at).then_some(at)
+    })
+}
+
+/// A ring on the ground around a tree, at its reach, in perspective. Nothing
+/// if any of it is behind the camera or all of it off screen.
+fn paint_ring(
+    painter: &egui::Painter,
+    row: &LivingPropRow,
+    m: &[[f32; 4]; 4],
+    screen: Rect,
+    scale: f32,
+    stroke: Stroke,
+) {
+    const SIDES: usize = 40;
+    let reach = reach_of(row).max(0.4) * scale;
+    let [x, y, z] = row.position;
+    let points: Option<Vec<Pos2>> = (0..SIDES)
+        .map(|i| {
+            let a = i as f32 / SIDES as f32 * std::f32::consts::TAU;
+            let p = [x + reach * a.cos(), y + 0.05, z + reach * a.sin()];
+            project_point(p, m, screen).map(|(at, _)| at)
+        })
+        .collect();
+    let Some(points) = points else {
+        return;
+    };
+    if !points.iter().any(|p| screen.contains(*p)) {
+        return;
+    }
+    painter.add(Shape::closed_line(points, stroke));
+}
+
 impl DebugPanel for LivingPropsDebugPanel {
     fn name(&self) -> &str {
         LIVING_PROPS_DEBUG_PANEL
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        self.panel_left = Some(ui.max_rect().left());
+        self.picked_ui(ui);
         self.clock_section(ui);
         ui.separator();
         self.scope_ui(ui);
@@ -1305,6 +1682,112 @@ fn knob(ui: &mut egui::Ui, slider: egui::Slider<'_>, mixed: bool, says: &str) ->
     ui.add(slider.custom_formatter(|_, _| "mixed".to_string()))
         .on_hover_text(says)
         .changed()
+}
+
+/// One knob's control, at the range the panel gives it: a slider, the stagger's
+/// combo or keep size's checkbox. `mixed` shows it as `mixed`, saying `says` when
+/// hovered; `salt` keeps two of them, in the panel and beside a picked tree,
+/// apart. Returns whether a hand moved it.
+fn control(
+    ui: &mut egui::Ui,
+    which: Knob,
+    k: &mut LivingKnobs,
+    mixed: bool,
+    says: &str,
+    salt: &str,
+) -> bool {
+    use egui::Slider;
+    match which {
+        Knob::Step => knob(
+            ui,
+            Slider::new(&mut k.step, 0.05..=4.0)
+                .logarithmic(true)
+                .text("step (s)"),
+            mixed,
+            says,
+        ),
+        Knob::Glide => knob(
+            ui,
+            Slider::new(&mut k.glide, 0.0..=1.0).text("glide"),
+            mixed,
+            says,
+        ),
+        Knob::Amplitude => knob(
+            ui,
+            Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"),
+            mixed,
+            says,
+        ),
+        Knob::Jitter => knob(
+            ui,
+            Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"),
+            mixed,
+            says,
+        ),
+        Knob::Stagger => {
+            let shown = if mixed {
+                "mixed".to_string()
+            } else {
+                k.stagger.clone()
+            };
+            let combo = egui::ComboBox::new((salt, "stagger"), "stagger")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    let mut picked = false;
+                    for (name, says) in STAGGERS {
+                        picked |= ui
+                            .selectable_value(&mut k.stagger, name.to_string(), name)
+                            .on_hover_text(says)
+                            .clicked();
+                    }
+                    picked
+                });
+            if mixed {
+                combo.response.on_hover_text(says);
+            }
+            combo.inner.unwrap_or(false)
+        }
+        Knob::EchoCount => knob(
+            ui,
+            Slider::new(&mut k.echo_count, 0..=16).text("count"),
+            mixed,
+            says,
+        ),
+        // To where an echo has faded out: flint_procgen::MAX_ECHO_SPREAD.
+        Knob::EchoSpread => knob(
+            ui,
+            Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"),
+            mixed,
+            says,
+        ),
+        Knob::EchoAlpha => knob(
+            ui,
+            Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"),
+            mixed,
+            says,
+        ),
+        Knob::VarianceAmount => knob(
+            ui,
+            Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"),
+            mixed,
+            says,
+        ),
+        Knob::VarianceSteady => knob(
+            ui,
+            Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
+            mixed,
+            says,
+        ),
+        Knob::KeepSize => {
+            let keep =
+                ui.add(egui::Checkbox::new(&mut k.keep_size, "keep size").indeterminate(mixed));
+            let changed = keep.changed();
+            if mixed {
+                keep.on_hover_text(says);
+            }
+            changed
+        }
+    }
 }
 
 /// The boil's knobs: on or off, paint, ink, and its cadence.
@@ -1385,9 +1868,9 @@ fn eased(frac: f64, glide: f32) -> f32 {
 /// The warped clock as what it is: a step's worth of hold, then the ease to the
 /// next pose, with the prop riding it. With a stagger, each branch level rides it
 /// a little ahead, so what the dial means by "shimmer" is there to see.
-fn draw_clock(ui: &mut egui::Ui, row: &LivingPropRow, stagger: &str, frozen: bool) {
+fn draw_clock(ui: &mut egui::Ui, row: &LivingPropRow, stagger: &str, frozen: bool, height: f32) {
     let width = ui.available_width().min(320.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 76.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
     // Under the labels, so the curve's top never reads through them.
     let plot = Rect::from_min_max(
@@ -1551,6 +2034,7 @@ mod tests {
             lineage_seed: 7,
             position,
             height: 10.0,
+            reach: 3.0,
             beats: 3.5,
             step: 0.5,
             glide: 0.3,
@@ -1884,16 +2368,16 @@ mod tests {
         let mut with_prop = state();
         with_prop.rows = vec![row("oak_1", [0.0, 0.0, -20.0])];
         panel.refresh(with_prop.clone());
-        let shapes = |ctx: &egui::Context, panel: &LivingPropsDebugPanel| {
+        let shapes = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel| {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
         };
-        assert_eq!(shapes(&ctx, &panel), 0);
+        assert_eq!(shapes(&ctx, &mut panel), 0);
         with_prop.overlay = true;
         panel.refresh(with_prop);
-        assert!(shapes(&ctx, &panel) >= 4);
+        assert!(shapes(&ctx, &mut panel) >= 4);
     }
 
     // ---- Scopes (#247) ----
@@ -2116,18 +2600,18 @@ mod tests {
         let mut on = grove();
         on.overlay = true;
         panel.refresh(on);
-        let labels = |panel: &LivingPropsDebugPanel| {
+        let labels = |panel: &mut LivingPropsDebugPanel| {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 panel.paint_overlay(ctx, &view_proj);
             });
             texts(&output)
         };
-        let all = labels(&panel);
+        let all = labels(&mut panel);
         assert_eq!(all.len(), 3, "{all:?}");
         panel.set_scope(PanelScope::Species("thorn".to_string()));
-        assert_eq!(labels(&panel).len(), 2);
+        assert_eq!(labels(&mut panel).len(), 2);
         panel.set_scope(PanelScope::Species("oak".to_string()));
-        assert_eq!(labels(&panel).len(), 1);
+        assert_eq!(labels(&mut panel).len(), 1);
     }
 
     #[test]
@@ -2203,5 +2687,306 @@ mod tests {
         for knob in Knob::ALL {
             assert_eq!(Knob::ALL[knob.index()], knob);
         }
+    }
+
+    // ---- Picking a tree in the world (#248) ----
+
+    /// Looking down -z from `eye`, with a plain perspective: the one the label
+    /// tests use, after a move by -eye.
+    fn looking_from(eye: [f32; 3]) -> [[f32; 4]; 4] {
+        let [x, y, z] = eye;
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, -1.0],
+            [-x, -y, z - 0.2, z],
+        ]
+    }
+
+    const SCREEN: Rect = Rect {
+        min: Pos2::ZERO,
+        max: Pos2::new(800.0, 600.0),
+    };
+
+    /// A tree 8 m tall reaching 3 m sideways, at `position`.
+    fn tree(name: &str, species: &str, position: [f32; 3]) -> LivingPropRow {
+        let mut tree = row(name, position);
+        tree.species = species.to_string();
+        tree.height = 8.0;
+        tree.reach = 3.0;
+        tree
+    }
+
+    #[test]
+    fn a_pick_takes_the_nearest_tree_under_it_and_misses_the_sky() {
+        let view = looking_from([0.0, 2.0, 0.0]);
+        let rows = vec![
+            tree("far", "oak", [0.0, 0.0, -40.0]),
+            tree("near", "oak", [0.0, 0.0, -15.0]),
+            tree("aside", "thorn", [12.0, 0.0, -30.0]),
+        ];
+        // Through both crowns, the near one's.
+        let (crown, _) = project_point([0.0, 6.0, -15.0], &view, SCREEN).unwrap();
+        assert_eq!(pick_prop(&rows, &view, SCREEN, crown), Some(1));
+        // The thorn's crown, out toward its reach: picked. Twice that: not.
+        let (aside, _) = project_point([12.0, 7.0, -30.0], &view, SCREEN).unwrap();
+        assert_eq!(pick_prop(&rows, &view, SCREEN, aside), Some(2));
+        let (wide, _) = project_point([12.0 + 2.6, 7.0, -30.0], &view, SCREEN).unwrap();
+        assert_eq!(
+            pick_prop(&rows, &view, SCREEN, wide),
+            Some(2),
+            "in its crown"
+        );
+        let (out, _) = project_point([12.0 + 6.0, 7.0, -30.0], &view, SCREEN).unwrap();
+        assert_eq!(pick_prop(&rows, &view, SCREEN, out), None, "past its crown");
+        // The sky, and a tree behind the camera, never.
+        assert_eq!(
+            pick_prop(&rows, &view, SCREEN, Pos2::new(400.0, 10.0)),
+            None
+        );
+        let behind = vec![tree("behind", "oak", [0.0, 0.0, 10.0])];
+        assert_eq!(
+            pick_prop(&behind, &view, SCREEN, Pos2::new(400.0, 300.0)),
+            None
+        );
+    }
+
+    /// The grove, with thorn_1 standing in the hush and its species owning its
+    /// echo count.
+    fn picked_grove() -> LivingPanelState {
+        let thorn = LivingKnobs {
+            echo_count: 2,
+            ..Default::default()
+        };
+        let mut sources = all_from("global");
+        sources.set(Knob::EchoCount, vec!["species".to_string()]);
+        sources.set(Knob::Step, vec!["zone:hush".to_string()]);
+        LivingPanelState {
+            rows: vec![
+                tree("oak_1", "oak", [0.0, 0.0, -20.0]),
+                tree("thorn_1", "thorn", [6.0, 0.0, -20.0]),
+                tree("thorn_2", "thorn", [-6.0, 0.0, -25.0]),
+            ],
+            picked: Some(LivingPickedState {
+                name: "thorn_1".to_string(),
+                zones: vec![("hush".to_string(), 1.0)],
+                knobs: thorn,
+                sources,
+            }),
+            ..grove()
+        }
+    }
+
+    /// Paint the overlay for one frame, with `events`, and return what it drew.
+    fn overlay(
+        ctx: &egui::Context,
+        panel: &mut LivingPropsDebugPanel,
+        view: &[[f32; 4]; 4],
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(SCREEN),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| panel.paint_overlay(ctx, view))
+    }
+
+    /// Two frames of it, since a new window is laid out unseen on its first.
+    fn overlay_settled(
+        ctx: &egui::Context,
+        panel: &mut LivingPropsDebugPanel,
+        view: &[[f32; 4]; 4],
+    ) -> egui::FullOutput {
+        overlay(ctx, panel, view, Vec::new());
+        overlay(ctx, panel, view, Vec::new())
+    }
+
+    fn rings(output: &egui::FullOutput) -> usize {
+        (output.shapes.iter())
+            .filter(|clipped| matches!(&clipped.shape, Shape::Path(path) if path.closed && path.points.len() == 40))
+            .count()
+    }
+
+    fn window(ctx: &egui::Context) -> Rect {
+        ctx.memory(|m| m.area_rect(egui::Id::new("living_picked_window")))
+            .expect("the window was drawn")
+    }
+
+    #[test]
+    fn picking_a_tree_turns_to_its_species_and_marks_every_one_of_it() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(picked_grove());
+        let view = looking_from([0.0, 2.0, 0.0]);
+        assert_eq!(
+            rings(&overlay_settled(&ctx, &mut panel, &view)),
+            0,
+            "none picked"
+        );
+        assert!(panel.take_actions().is_empty());
+
+        assert!(panel.select(Some("thorn_1")));
+        assert_eq!(panel.scope(), &PanelScope::Species("thorn".to_string()));
+        assert_eq!(panel.selected(), Some("thorn_1"));
+        let output = overlay_settled(&ctx, &mut panel, &view);
+        // Two thorns, and the picked one's ring twice over; no oak.
+        assert_eq!(rings(&output), 3);
+        assert_eq!(panel.picked_on_screen(), Some(true));
+        let said = texts(&output);
+        for text in [
+            "thorn_1",
+            "in zone hush",
+            "species",
+            "zone:hush",
+            "Esc lets go",
+        ] {
+            assert!(
+                said.iter().any(|t| t.contains(text)),
+                "{text:?} in {said:?}"
+            );
+        }
+        assert!(panel.take_actions().is_empty(), "looking asks for nothing");
+
+        // A name no tree has lets go; so does a tree that's gone.
+        assert!(!panel.select(Some("birch_9")));
+        assert_eq!(panel.selected(), None);
+        panel.select(Some("thorn_2"));
+        let mut gone = picked_grove();
+        gone.rows.retain(|r| r.name != "thorn_2");
+        panel.refresh(gone);
+        assert_eq!(panel.selected(), None);
+    }
+
+    #[test]
+    fn the_window_follows_its_tree_and_never_leaves_the_screen() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(picked_grove());
+        panel.select(Some("thorn_1"));
+        let mut seen = 0;
+        // The camera walks left past the tree, which slides right across the
+        // screen and off it; the window goes with it and stays on the screen.
+        for x in [10.0, 5.0, 0.0, -5.0, -12.0, -20.0] {
+            let view = looking_from([x, 2.0, 0.0]);
+            overlay_settled(&ctx, &mut panel, &view);
+            let (crown, _) = project_point([6.0, 8.0, -20.0], &view, SCREEN).unwrap();
+            if !SCREEN.contains(crown) {
+                assert_eq!(panel.picked_on_screen(), Some(false), "at {x}");
+                continue;
+            }
+            assert_eq!(panel.picked_on_screen(), Some(true), "at {x}");
+            let rect = window(&ctx);
+            assert!(SCREEN.contains_rect(rect), "{rect:?} at {x}");
+            // Beside the crown, on whichever side has room, unless the screen's
+            // edge holds it in.
+            let gap = (rect.left() - crown.x)
+                .abs()
+                .min((rect.right() - crown.x).abs());
+            let held = rect.left() <= 5.0 || rect.right() >= SCREEN.right() - 5.0;
+            assert!(gap <= 40.0 || held, "{gap} from the crown at {x}: {rect:?}");
+            seen += 1;
+        }
+        assert!(seen >= 4, "{seen}");
+
+        // Close under it, its crown in the screen's top corner: held in.
+        let view = looking_from([0.0, 0.5, -12.0]);
+        overlay_settled(&ctx, &mut panel, &view);
+        let (crown, _) = project_point([6.0, 8.0, -20.0], &view, SCREEN).unwrap();
+        assert!(crown.y < 40.0 && crown.x > 600.0, "{crown:?}");
+        assert_eq!(panel.picked_on_screen(), Some(true));
+        assert!(SCREEN.contains_rect(window(&ctx)), "{:?}", window(&ctx));
+
+        // With the panel open down the right, the window keeps out from under
+        // it, even for a tree standing behind the panel's column.
+        panel.toggle();
+        panel.panel_left = Some(600.0);
+        let view = looking_from([-9.0, 2.0, 0.0]);
+        overlay_settled(&ctx, &mut panel, &view);
+        let (crown, _) = project_point([6.0, 8.0, -20.0], &view, SCREEN).unwrap();
+        assert!(crown.x > 650.0, "{crown:?}");
+        let rect = window(&ctx);
+        assert!(rect.right() <= 600.0, "{rect:?} under the panel");
+    }
+
+    #[test]
+    fn a_tree_off_screen_draws_no_window_and_the_panel_says_so() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(picked_grove());
+        panel.select(Some("thorn_1"));
+        // Past the thorns, looking on: they're behind.
+        let away = looking_from([0.0, 2.0, -60.0]);
+        let output = overlay_settled(&ctx, &mut panel, &away);
+        assert_eq!(panel.picked_on_screen(), Some(false));
+        assert!(!texts(&output).iter().any(|t| t.contains("Esc lets go")));
+        assert_eq!(rings(&output), 0);
+        let said = shown(&egui::Context::default(), &mut panel);
+        assert_eq!(says(&said, "off screen"), 1, "{said:?}");
+        assert_eq!(says(&said, "Picked"), 1);
+    }
+
+    /// A hand on a slider in the window: the picked tree's species, that knob
+    /// alone, and no boil. The window's × clears that species' own value.
+    #[test]
+    fn the_windows_sliders_turn_the_trees_species() {
+        let view = looking_from([0.0, 2.0, 0.0]);
+        let fresh = || {
+            let ctx = egui::Context::default();
+            let mut panel = LivingPropsDebugPanel::new();
+            panel.refresh(picked_grove());
+            panel.select(Some("thorn_1"));
+            let output = overlay_settled(&ctx, &mut panel, &view);
+            (ctx, panel, output)
+        };
+        let at = |output: &egui::FullOutput, text: &str| {
+            (output.shapes.iter())
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(t) if t.galley.text() == text => {
+                        Some(Rect::from_min_size(t.pos, t.galley.size()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no {text:?} in {:?}", texts(output)))
+        };
+        let press = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel, at: Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            overlay(ctx, panel, &view, vec![egui::Event::PointerMoved(at)]);
+            overlay(ctx, panel, &view, vec![button(true)]);
+            overlay(ctx, panel, &view, vec![button(false)]);
+            overlay(ctx, panel, &view, vec![egui::Event::PointerGone]);
+            panel.take_actions()
+        };
+
+        let (ctx, mut panel, output) = fresh();
+        let clear = at(&output, "\u{d7}");
+        assert_eq!(
+            press(&ctx, &mut panel, clear.center()),
+            vec![LivingPanelAction::Clear(
+                "thorn".to_string(),
+                Some(Knob::EchoCount)
+            )]
+        );
+
+        // The glide slider's rail, left of its number and its label.
+        let (ctx, mut panel, output) = fresh();
+        let glide = at(&output, "glide");
+        let asked = press(
+            &ctx,
+            &mut panel,
+            Pos2::new(glide.left() - 100.0, glide.center().y),
+        );
+        let [LivingPanelAction::Set(scope, moved)] = asked.as_slice() else {
+            panic!("{asked:?}");
+        };
+        assert_eq!(scope, &PanelScope::Species("thorn".to_string()));
+        assert_eq!(moved.boil, None);
+        assert!(moved.wooze.glide.is_some(), "{moved:?}");
+        assert_eq!(count_set(moved), 1, "{moved:?}");
     }
 }
