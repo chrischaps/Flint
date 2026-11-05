@@ -71,7 +71,13 @@ fn id_of(world: &FlintWorld, name: &str) -> EntityId {
 }
 
 fn request_of(fields: toml::Table) -> Result<LivingPropRequest, String> {
-    read_request(EntityId::from_raw(1), "oak", "sapling", &table(fields))
+    read_request(
+        EntityId::from_raw(1),
+        "oak",
+        [0.0; 3],
+        "sapling",
+        &table(fields),
+    )
 }
 
 #[test]
@@ -315,6 +321,7 @@ fn built_rig(spec: &str) -> std::sync::Arc<LivingRig> {
         .add_living_prop(LivingPropRequest {
             entity: EntityId::from_raw(1),
             entity_name: "a".into(),
+            position: [0.0; 3],
             spec_name: name,
             lineage_seed: None,
             pose_ring: None,
@@ -436,8 +443,6 @@ fn a_scene_living_table_reads_as_defaults() {
 
     assert_eq!(defaults_of(None), LivingDefaults::default());
     let read = defaults_of(Some(&LivingDef {
-        step: Some(0.25),
-        glide: Some(0.0),
         shadows: Some("drift".into()),
         echoes: Some(LivingEchoesDef {
             count: Some(0),
@@ -445,8 +450,6 @@ fn a_scene_living_table_reads_as_defaults() {
             alpha: Some(0.5),
         }),
     }));
-    assert_eq!(read.step, Some(0.25));
-    assert_eq!(read.glide, Some(0.0));
     assert_eq!(read.shadows, LivingShadows::Drift);
     assert_eq!(read.echoes.count, Some(0));
     assert_eq!(read.echoes.spread, None);
@@ -454,8 +457,6 @@ fn a_scene_living_table_reads_as_defaults() {
 
     // A bad knob means its default, with a warning, and doesn't stop the scene.
     let bad = defaults_of(Some(&LivingDef {
-        step: Some(0.0),
-        glide: Some(1.5),
         shadows: Some("yes".into()),
         echoes: Some(LivingEchoesDef {
             count: Some(99),
@@ -464,6 +465,67 @@ fn a_scene_living_table_reads_as_defaults() {
         }),
     }));
     assert_eq!(bad, LivingDefaults::default());
+}
+
+#[test]
+fn a_scene_without_wooze_has_no_field_and_one_with_it_does() {
+    assert!(field_of(None).is_none());
+
+    let scene: flint_scene::SceneFile = toml::from_str(
+        r#"
+[scene]
+name = "grove"
+[wooze]
+preset = "boil"
+[[wooze.zone]]
+name = "broken"
+shape = "sphere"
+[[wooze.zone]]
+name = "good"
+shape = "sphere"
+center = [0, 0, 0]
+radius = 1
+glide = 0.5
+"#,
+    )
+    .unwrap();
+    // The player goes on without what's wrong; `flint validate` is what fails.
+    let field = field_of(scene.wooze.as_ref()).unwrap();
+    assert_eq!(field.zones().len(), 1);
+    assert_eq!(field.zones()[0].name(), "good");
+}
+
+#[test]
+fn the_wooze_line_says_how_far_apart_the_field_put_the_props() {
+    let mut resolver = resolver();
+    for (n, x) in [(1, 0.0), (2, 50.0)] {
+        let mut request = request_of(toml::Table::new()).unwrap();
+        request.entity = EntityId::from_raw(n);
+        request.entity_name = format!("oak_{n}");
+        request.position = [x, 0.0, 0.0];
+        resolver.add_living_prop(request).unwrap();
+    }
+    resolver.make_living_now();
+    let scene: flint_scene::SceneFile = toml::from_str(
+        r#"
+[scene]
+name = "grove"
+[wooze]
+glide = 0.3
+[[wooze.zone]]
+name = "pocket"
+shape = "sphere"
+center = [0, 0, 0]
+radius = 5
+glide = 0.8
+"#,
+    )
+    .unwrap();
+    let field = field_of(scene.wooze.as_ref()).unwrap();
+    resolver.process_living_in(1.0 / 60.0, Some((&field, 0.0)));
+    let line = wooze_report(&field, resolver.living_props());
+    assert!(line.contains("1 zones over 2 props"), "{line}");
+    assert!(line.contains("glide 0.30..0.80"), "{line}");
 }
 
 #[test]

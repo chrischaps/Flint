@@ -192,7 +192,7 @@ variance = { amount = 0.35, steady = 0.8, keep_size = true }
 echoes = { count = 6, spread = 0.9, alpha = 0.2 }
 ```
 
-These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending. `jitter` drives the leaf cards' boil, `echoes` draws the faint copies ([below](#echoes)), and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending, and in a scene with a [wooze field](#the-wooze-field) its `step` and `glide` take over. `jitter` drives the leaf cards' boil, `echoes` draws the faint copies ([below](#echoes)), and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
 
 `variance` is what keeps the silhouette. A freshly grown pose is a different-looking tree, so each segment is pulled back toward the lineage's own shape, keeping only this share of its difference:
 
@@ -316,12 +316,12 @@ t' = floor(t / step) + ease(clamp((frac(t / step) - (1 - glide)) / glide, 0, 1))
 
 A prop whose pose isn't ready keeps its last bones for that frame, and the report counts it. That takes a budget running behind, or poses still coming in under `--procgen-defer`, where a prop can jump once from its rest pose when its ring first fills. The bench below never does it.
 
-The clock reads `step` and `glide` from the spec, and a scene can override them for every prop until the wooze field takes them over (#213):
+The clock reads `step` and `glide` from the spec, or from the [wooze field](#the-wooze-field) in a scene that has one. A prop counts its clock in beats and moves it on by `dt / step` each frame, so a new step changes how fast it runs from here and never where it is.
+
+A scene's `[living]` table says what its props' shadows follow:
 
 ```toml
 [living]
-step = 0.5            # seconds between pose targets, for every prop
-glide = 0.0           # how much of a step is spent easing, for every prop
 shadows = "blended"   # blended | drift
 echoes = { count = 0 }   # over each spec's, a field at a time: count, spread, alpha
 ```
@@ -373,6 +373,74 @@ Each echo is another palette and a draw per part, so what count does is worth kn
 | 12 | 10.9 to 12.5 ms | 4.9 to 5.6 ms | 3.5 to 4.2 ms | 3121 | 6.8 M |
 
 At the default six, a 60 s run at the display's rate held 60 fps, with 1 frame in 3480 over 1.5x the median. Most of what echoes add is CPU: nearly every palette moves on nearly every frame under `per_level` stagger, about 260 writes of 16 KB, or some 250 MB/s up to the GPU. Off-screen props still blend and draw. Dropping echoes by distance is the first thing to reach for if a scene needs the room. `--exit-after` prints how many echoes and draws a scene has.
+
+### The wooze field
+
+Once anything in a scene drifts, anything that holds still looks wrong, so how woozy a place is belongs to the world and not to each prop. A scene with a `[wooze]` table has one function of position and time that everything reads: `flint_core::wooze::WoozeField::sample(position, time)` returns `{ amplitude, step, glide, jitter }`.
+
+```toml
+[wooze]
+preset = "linklater"     # a set of knobs to start from
+glide = 0.4              # any global knob beats the preset
+
+[[wooze.zone]]
+name = "pocket"
+shape = "sphere"
+center = [0, 0, -30]
+radius = 10
+falloff = 16             # metres past the edge to fade out over; 0, the default, is a hard edge
+glide = 0.8              # dreamier in here
+
+[[wooze.zone]]
+name = "hush"
+shape = "box"
+center = [48, 0, -30]
+size = [18, 40, 24]      # full width on each axis
+falloff = 6
+amplitude = 0.2
+step = 1.5
+jitter = 0
+```
+
+| Knob | Range | Means |
+|------|-------|-------|
+| `step` | 0.01 s and up | Seconds between pose targets |
+| `glide` | 0 to 1 | How much of a step is spent easing: 0 holds and snaps, 1 never rests |
+| `amplitude` | 0 to 1 | How much of a prop's slow drift shows: 1 is what its spec authored, 0 is its rest pose |
+| `jitter` | 0 to 4 | How much of a prop's fast jitter shows: 1 is what its spec authored, 0 is none |
+
+The value at a point is the global one with the zones laid over it in the order they're written, each by how far inside it the point is, along a smoothstep through its `falloff`. A knob a zone doesn't name passes through what's below. The field knows nothing about any one consumer, so `step` and `glide` are the same seconds and shares everywhere, and `amplitude` and `jitter` are shares of what each consumer was authored with.
+
+In a scene with a table, the field decides `step` and `glide` for every prop, whatever its spec says. A bare `[wooze]` opts in with amplitude 1, step 0.5, glide 0.3 and jitter 1. A scene with no table has no field: nothing samples it and props keep to their specs.
+
+| Preset | Step | Glide | Amplitude | Jitter | |
+|--------|------|-------|-----------|--------|---|
+| `linklater` | 0.25 | 0.3 | 1 | 1 | A named placeholder, the design's first guess, until the grove finds the real one |
+| `boil` | 0.125 | 0 | 0.6 | 1.5 | Small, fast and snapping |
+| `morph` | 1 | 1 | 1 | 0 | Slow, and never rests |
+| `calm` | 1.5 | 0.6 | 0.35 | 0.25 | Barely there |
+
+**No change pops.** A new step bends each prop's clock from wherever it stands, at once. A new glide or amplitude can't do that, since either one would move a pose that's on screen, so each part of a prop reads them when its own cycle begins and finishes the cycle it's in. Under stagger, a tree takes a change one level at a time. A new amplitude is the one thing that waits a little longer: the pose already on its way arrives as it was promised, and the cycle after it heads for the new value, so a change of amplitude reaches a prop within two steps. Leaf tints keep to the same 9 levels wherever a prop stands, so a grove still shares a few materials.
+
+**From a script.** The field changes at run time through three functions, each of which can take a last argument of seconds to get there over. See the [Wooze API](scripting.md#wooze-api).
+
+```rust
+set_wooze(#{ step: 0.25 });                                  // the whole world, now
+set_wooze(#{ preset: "calm" }, 4.0);                         // come down over 4 s
+set_wooze_zone("pocket", #{ glide: 0.15 }, 2.0);             // change a zone
+set_wooze_zone("spot", #{ shape: "sphere", center: [0, 0, 0], radius: 5.0, glide: 1.0 }, 1.0);  // a new one fades in
+remove_wooze_zone("spot", 1.0);                              // and out
+```
+
+**Checking it.** `flint validate` fails on a malformed table, naming the zone: `wooze zone 'pocket': radius = -6 must be more than 0 metres`. It checks what the field itself needs, such as a sphere having a radius, and then `schemas/components/wooze.toml`, which `flint schema wooze_zone` prints and a game's own schemas can tighten. The player goes on without a bad zone, with a warning, so that a look lab doesn't refuse to start over one knob. A misspelt global key fails the scene's load, the same as in `[living]`.
+
+`--exit-after` adds a line saying how far apart the field has put the props:
+
+```text
+[wooze] 2 zones over 13 props: step 0.25..1.50, glide 0.30..0.80, amplitude 0.20..1.00, jitter 0.00..1.00
+```
+
+Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
 
 ## `flint gen`
 

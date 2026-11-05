@@ -506,15 +506,11 @@ position = [2.5, 1.0, -3.5]
 name = "grove"
 
 [living]
-step = 0.25
-glide = 0.0
 shadows = "drift"
 "#,
         )
         .unwrap();
         let living = file.living.expect("[living] should be present");
-        assert_eq!(living.step, Some(0.25));
-        assert_eq!(living.glide, Some(0.0));
         assert_eq!(living.shadows.as_deref(), Some("drift"));
 
         let bad = toml::from_str::<crate::SceneFile>(
@@ -523,12 +519,12 @@ shadows = "drift"
 name = "grove"
 
 [living]
-gilde = 0.3
+glide = 0.3
 "#,
         );
         assert!(
             bad.is_err(),
-            "a misspelt knob shouldn't pass for its default"
+            "glide is [wooze]'s now, and shouldn't pass for nothing"
         );
     }
 }

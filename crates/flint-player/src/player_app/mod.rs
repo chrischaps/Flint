@@ -296,6 +296,12 @@ pub struct PlayerApp {
     // The scene's `[living]` table, and room to blend its props each frame
     pub scene_living: Option<flint_scene::LivingDef>,
     living_blend: flint_procgen::BlendFrame,
+    // The scene's `[wooze]` table, and the field made from it, sampled on a clock
+    // of its own that stops when animation does. No table: no field, no samples.
+    pub scene_wooze: Option<flint_scene::WoozeDef>,
+    wooze: Option<flint_core::wooze::WoozeField>,
+    wooze_time: f64,
+    wooze_missing_warned: bool,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,

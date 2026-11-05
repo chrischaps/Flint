@@ -7,10 +7,14 @@
 # prints `[living]` lines saying whether the rings stayed full and within the
 # procgen frame budget, and what blending cost. To turn the dial, add a table:
 #
-#   [living]
+#   [wooze]
 #   glide = 0.0            # snap on the beat; the spec's 0.3 holds, then glides
+#
+#   [living]
 #   shadows = "drift"      # a slower shadow, with no stagger or jitter
 #   echoes = { count = 0 } # no faint copies; also takes spread and alpha
+#
+# demo/wooze_field.scene.toml does more with [wooze].
 #
 # The spec is specs/examples/oak_living.procgen.toml; an
 # entity's `lineage_seed` says which tree it is, and its name which way it moves.

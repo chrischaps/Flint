@@ -30,6 +30,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_particle_api(engine, ctx.clone());
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
+    register_wooze_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
     register_data_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
@@ -3965,6 +3966,119 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn("transition_phase", move || -> String {
             let c = crate::lock_or_recover(&ctx);
             c.transition_phase.clone()
+        });
+    }
+}
+
+// ─── Wooze API (#213) ─────────────────────────────────────
+//
+// Takes effect when the frame's commands run, and reaches a living prop on the
+// next cycle of each of its parts, or at once for step, which bends the clock.
+// What's wrong with a table is logged by the player, naming the zone. A scene
+// with no [wooze] table has no field to change, and says so.
+
+fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_wooze(knobs: Map), set_wooze(knobs: Map, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map, seconds: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map, seconds: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds: seconds as f64,
+            });
+        });
+    }
+
+    // set_wooze_zone(name, fields: Map), set_wooze_zone(name, fields: Map, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze_zone", move |name: &str, fields: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWoozeZone {
+                name: name.to_string(),
+                fields: map_to_toml(&fields),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_wooze_zone",
+            move |name: &str, fields: Map, seconds: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetWoozeZone {
+                    name: name.to_string(),
+                    fields: map_to_toml(&fields),
+                    seconds,
+                });
+            },
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_wooze_zone",
+            move |name: &str, fields: Map, seconds: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetWoozeZone {
+                    name: name.to_string(),
+                    fields: map_to_toml(&fields),
+                    seconds: seconds as f64,
+                });
+            },
+        );
+    }
+
+    // remove_wooze_zone(name), remove_wooze_zone(name, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("remove_wooze_zone", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("remove_wooze_zone", move |name: &str, seconds: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds,
+            });
+        });
+    }
+    {
+        engine.register_fn("remove_wooze_zone", move |name: &str, seconds: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds: seconds as f64,
+            });
         });
     }
 }
