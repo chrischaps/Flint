@@ -192,6 +192,70 @@ impl LivingRun {
     }
 }
 
+/// What reads the wooze field besides living props, with no window, for `flint
+/// render`: the shading boil (#214), and shallow wooze (#215) if asked. It steps as
+/// the player's frame does, so a capture at a game time shows what the player shows.
+pub struct WoozeClocks {
+    field: WoozeField,
+    time: f64,
+    boil: flint_core::wooze::BoilClock,
+    shallow: Option<super::shallow_wooze::ShallowWooze>,
+}
+
+impl WoozeClocks {
+    /// The clocks of a scene's `[wooze]` table with `knobs` laid over it, or `None`
+    /// if the scene has no table and nothing is laid over it, so nothing samples.
+    pub fn of_scene(
+        table: Option<&flint_scene::WoozeDef>,
+        knobs: Option<&toml::Table>,
+        shallow: bool,
+    ) -> Result<Option<Self>, String> {
+        let mut field = table.map(|def| def.field().0);
+        if let Some(knobs) = knobs {
+            field
+                .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
+                .set_global(knobs, 0.0, 0.0)?;
+        }
+        Ok(field.map(|field| Self {
+            field,
+            time: 0.0,
+            boil: Default::default(),
+            shallow: shallow.then(Default::default),
+        }))
+    }
+
+    /// Move on by `dt`, with the viewer at `viewer`. Returns what shallow wooze draws
+    /// with now, for `SceneRenderer::set_shallow_wooze`.
+    pub fn step(
+        &mut self,
+        world: &FlintWorld,
+        viewer: [f32; 3],
+        dt: f64,
+    ) -> &[(flint_core::EntityId, flint_render::ShallowWoozeDraw)] {
+        self.time += dt;
+        let sample = self.field.sample(viewer, self.time);
+        self.boil.tick(dt, &sample);
+        match &mut self.shallow {
+            Some(shallow) => shallow.advance(world, &self.field, self.time, dt),
+            None => &[],
+        }
+    }
+
+    /// The boil's drawing where its clock now stands.
+    pub fn boil(&self, viewer: [f32; 3], on: u32) -> flint_core::wooze::BoilFrame {
+        self.boil.frame(&self.field.sample(viewer, self.time), on)
+    }
+
+    /// The boil's drawing at `time`, in one tick at the tempo of that moment, whatever
+    /// the clock says: `--boil-time`.
+    pub fn boil_at(&self, viewer: [f32; 3], time: f64, on: u32) -> flint_core::wooze::BoilFrame {
+        let sample = self.field.sample(viewer, time);
+        let mut clock = flint_core::wooze::BoilClock::default();
+        clock.tick(time, &sample);
+        clock.frame(&sample, on)
+    }
+}
+
 /// One frame's blending and upload for every prop, timed for `--exit-after`.
 /// The clock moved in `process_living`, so this draws where it now stands.
 pub fn upload_blends(

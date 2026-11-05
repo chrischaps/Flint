@@ -1,0 +1,26 @@
+# Shallow wooze (#215): a hand-made or imported mesh drifts with the world.
+#
+# Put this on an entity and its mesh, and everything below it in the hierarchy,
+# moves through world-space noise on the wooze field's clock: it holds, then glides
+# to a new shape, in time with any living prop beside it. Its shadow moves with it.
+#
+# It needs a `[wooze]` table in the scene, which is what makes a scene woozy. With
+# none, this does nothing, and the player says so.
+#
+#   [entities.bench.shallow_wooze]
+#   amplitude = 0.03    # metres at full swing, times the field's amplitude here
+#   wavelength = 1.0    # metres between swells
+#
+# A wavelength well above the mesh's size carries it around whole; one near its size
+# changes its shape. Two meshes with the same wavelength on the same beat move as one
+# continuous field, so a lantern set on a bench stays on it.
+#
+# Only the player draws it. `flint render` shows the mesh at rest, as it does a
+# living prop, and collision and picking don't follow it.
+
+[component.shallow_wooze]
+description = "Displace this mesh, and everything below it, through world-space noise on the wooze field's clock. Needs a [wooze] table in the scene."
+
+[component.shallow_wooze.fields]
+amplitude = { type = "f32", default = 0.03, min = 0.0, description = "Metres at full swing on each axis, times the field's amplitude where it stands. 0 opts this branch out of a component above it" }
+wavelength = { type = "f32", default = 1.0, min = 0.05, description = "Metres between swells of the noise. Well above the mesh's size it moves whole; near its size it changes shape" }

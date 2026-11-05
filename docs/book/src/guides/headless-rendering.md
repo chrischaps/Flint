@@ -79,6 +79,17 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy, 0--1 |
+| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
+| `--contour` | off | Enable the contour pass |
+| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--render-mode <0-5>` | `0` | Stylized render mode |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
@@ -152,11 +163,11 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
 ```
 
-[Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component) and the [wooze field](../concepts/procgen.md#the-wooze-field) run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time) and particles (`--particle-time` overrides those). The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
+[Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component), shallow wooze, the [shading boil](../concepts/post-processing.md) and the [wooze field](../concepts/procgen.md#the-wooze-field) they all read run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time), particles (`--particle-time` overrides those), and `--boil-time` holds the boil on one drawing. The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
 
 It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
 
-Scripts, physics and animation clips don't run, and that's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts, the render names them in a warning.
+Scripts, physics and animation clips don't run, and that's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
 
 A scene with `living_prop` entities draws them in any `flint render`, at time 0 without `--time`. Procgen assets resolve as in the player only in those scenes. Other scenes draw exactly as they did.
 
@@ -287,7 +298,7 @@ Headless rendering uses the same wgpu PBR pipeline as the interactive viewer:
 - **Cascaded shadow mapping** for directional light shadows, with PCSS when the light has an `angular_size`
 - **glTF mesh rendering** with full material support
 - **Skinned mesh rendering** at bind pose (no animation is evaluated headlessly)
-- **The full post-processing chain**, including Kuwahara and FXAA when enabled
+- **The full post-processing chain**, including Kuwahara, contour and FXAA when enabled
 
 The only difference from interactive rendering is that the output goes to a texture-to-buffer copy instead of a swapchain surface.
 

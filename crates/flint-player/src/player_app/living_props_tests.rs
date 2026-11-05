@@ -556,3 +556,33 @@ fn the_report_says_how_it_went() {
     assert!(poses.contains("avg 2.00 ms/frame"), "{poses}");
     assert!(poses.contains("over it on 0 frames"), "{poses}");
 }
+
+/// The shading boil's clock (#214) keeps the field's time: it runs in a scene with
+/// a field, stands still with `dt` at 0 (animation paused), and never starts in a
+/// scene with none, which is what keeps that scene's passes from boiling.
+#[test]
+fn the_boil_clock_runs_with_the_field_and_only_with_it() {
+    let mut app = super::super::PlayerApp::new(
+        flint_ecs::FlintWorld::new(),
+        "boil_test.scene.toml".into(),
+        false,
+        None,
+        None,
+    );
+    app.tick_procgen(1.0);
+    assert_eq!(app.boil_clock.drawing(1), 0, "no field, no clock");
+
+    app.wooze = Some(WoozeField::new(flint_core::wooze::WoozeSample {
+        step: 0.25,
+        ..flint_core::wooze::WoozeSample::NEUTRAL
+    }));
+    app.tick_procgen(0.5);
+    // Half a second is two beats, twelve film frames, six drawings on twos.
+    assert_eq!(app.boil_clock.drawing(2), 6);
+    app.tick_procgen(0.0);
+    assert_eq!(
+        app.boil_clock.drawing(2),
+        6,
+        "a paused clock holds its drawing"
+    );
+}

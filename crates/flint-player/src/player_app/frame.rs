@@ -59,6 +59,19 @@ impl PlayerApp {
 
         let view = context.frame_view(&output.texture);
 
+        // The shading boil's drawing (#214): the field where the viewer stands. With
+        // no field the amount is 0, and neither pass boils.
+        let boil = self
+            .wooze
+            .as_ref()
+            .map(|field| {
+                let sample = field.sample(self.camera.position_array(), self.wooze_time);
+                self.boil_clock
+                    .frame(&sample, renderer.post_process_config().boil_on)
+            })
+            .unwrap_or_default();
+        renderer.set_boil(boil);
+
         // Apply script-driven post-processing overrides before rendering.
         // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
         // stamp entirely so panel edits to contended fields stick; the
@@ -256,6 +269,9 @@ impl PlayerApp {
                     }
                     if flags.fxaa_needs_resources {
                         renderer.ensure_fxaa_resources(&context.device);
+                    }
+                    if flags.contour_needs_resources {
+                        renderer.ensure_contour_resources(&context.device);
                     }
                 }
                 if flags.shadows_changed {
@@ -700,6 +716,11 @@ impl PlayerApp {
         }
         if let Some(field) = &self.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
+            eprintln!(
+                "[wooze] shallow: {} entities on {} clocks",
+                self.shallow_wooze.draw_count(),
+                self.shallow_wooze.clock_count()
+            );
         }
         if let Some(renderer) = &self.scene_renderer {
             eprintln!(
@@ -1418,7 +1439,7 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn tick_procgen(&mut self, living_dt: f64) {
+    pub(super) fn tick_procgen(&mut self, living_dt: f64) {
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1454,8 +1475,20 @@ impl PlayerApp {
                         world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
                     });
             }
+            // So does the shading boil, where the viewer stands (#214).
+            if let Some(field) = &self.wooze {
+                let sample = field.sample(self.camera.position_array(), self.wooze_time);
+                self.boil_clock.tick(living_dt, &sample);
+            }
             let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
             let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
+            // Hand-made meshes read the same field on the same dt (#215).
+            if let (Some(field), Some(renderer)) = (&self.wooze, &mut self.scene_renderer) {
+                let draws =
+                    self.shallow_wooze
+                        .advance(&self.world, field, self.wooze_time, living_dt);
+                renderer.set_shallow_wooze(draws.iter().copied());
+            }
             if !lineages.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)

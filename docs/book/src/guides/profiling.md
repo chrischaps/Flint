@@ -22,7 +22,7 @@ Each line is a **scope**, a stretch of the frame between two timestamps the GPU 
 - `Grass`: the compute that scatters blades, when grass is on.
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
-- `Kuwahara`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
+- `Kuwahara`, `Contour`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
 

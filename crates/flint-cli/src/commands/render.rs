@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3;
-use flint_player::{spline_gen, GpuSink, LivingRun};
+use flint_player::{spline_gen, GpuSink, LivingRun, WoozeClocks};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
@@ -230,6 +230,53 @@ pub struct RenderArgs {
     /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
+
+    /// How far each drawing moves the paint, as a share of the Kuwahara radius
+    /// (0 = still; needs the scene's [wooze] table)
+    #[arg(long)]
+    pub kuwahara_boil: Option<f32>,
+
+    /// Ink lines over the scene, from breaks in depth and luminance
+    #[arg(long)]
+    pub contour: bool,
+
+    /// Half a contour line's width, in pixels at 1080p (enables contour; default: 1.25)
+    #[arg(long)]
+    pub contour_width: Option<f32>,
+
+    /// How strong an edge must be before it inks (enables contour; default: 0.08)
+    #[arg(long)]
+    pub contour_threshold: Option<f32>,
+
+    /// How dark the ink goes, 0-1 (enables contour; default: 0.9)
+    #[arg(long)]
+    pub contour_strength: Option<f32>,
+
+    /// How much edges in luminance count against depth (enables contour; default: 0.5)
+    #[arg(long)]
+    pub contour_luma: Option<f32>,
+
+    /// The ink's colour as linear R,G,B (enables contour)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub contour_color: Option<[f32; 3]>,
+
+    /// Metres at which a line has faded by half (enables contour; 0 = never; default: 30)
+    #[arg(long)]
+    pub contour_fade: Option<f32>,
+
+    /// How far each drawing moves the lines (enables contour; 0 = still; needs the
+    /// scene's [wooze] table)
+    #[arg(long)]
+    pub contour_boil: Option<f32>,
+
+    /// Film frames each boil drawing is held: 1, 2 or 3 (default: 2)
+    #[arg(long)]
+    pub boil_on: Option<u32>,
+
+    /// Seconds of the scene's wooze field to run before capturing, which picks
+    /// the boil's drawing (default 0: same value, same pixels)
+    #[arg(long)]
+    pub boil_time: Option<f64>,
 
     /// Film grain intensity (0 = off; ~0.02-0.05 is subtle)
     #[arg(long)]
@@ -510,22 +557,32 @@ fn stage_warnings(args: &RenderArgs, stage: &Stage) -> Vec<String> {
     if stage.living.is_none() {
         warnings.push("this scene has no living props, so only its other clocks move".to_string());
     }
-    let scripts: Vec<String> = stage
-        .world
-        .all_entities()
-        .into_iter()
-        .filter(|entity| {
-            stage
-                .world
-                .get_components(entity.id)
-                .is_some_and(|comps| comps.get(comp::SCRIPT).is_some())
-        })
-        .map(|entity| entity.name)
-        .collect();
+    let with = |component: &str| -> Vec<String> {
+        stage
+            .world
+            .all_entities()
+            .into_iter()
+            .filter(|entity| {
+                stage
+                    .world
+                    .get_components(entity.id)
+                    .is_some_and(|comps| comps.get(component).is_some())
+            })
+            .map(|entity| entity.name)
+            .collect()
+    };
+    let scripts = with(comp::SCRIPT);
     if !scripts.is_empty() {
         warnings.push(format!(
             "scripts don't run here, so what {} would do to this scene isn't in it",
             scripts.join(", ")
+        ));
+    }
+    let animated = with(comp::ANIMATOR);
+    if !animated.is_empty() {
+        warnings.push(format!(
+            "animation clips don't run here, so {} won't match the player",
+            animated.join(", ")
         ));
     }
     warnings
@@ -593,6 +650,10 @@ struct Stage {
     renderer: SceneRenderer,
     /// `None` in a scene that doesn't opt in, which then draws as it always has.
     living: Option<LivingRun>,
+    /// `None` in a scene with no `[wooze]` table.
+    wooze: Option<WoozeClocks>,
+    /// Game seconds so far, added up step by step as the player's clock is.
+    clock: f64,
     particles: Option<flint_particles::ParticleSystem>,
     /// How many fixed steps the particles have taken.
     particle_steps: u32,
@@ -742,12 +803,19 @@ impl Stage {
                 },
             )
         });
+        let column_knobs = args.sweep.as_ref().map(|sweep| sweep.table(column));
+        if let (Some(run), Some(knobs)) = (&mut living, &column_knobs) {
+            run.change_field(knobs)
+                .map_err(|reason| anyhow!("--sweep: {reason}"))?;
+        }
+        // What else reads the field: the shading boil always, and shallow wooze in a
+        // capture of a moment. A plain render shows those meshes at rest (#215).
+        let moment = args.time.is_some() || args.sweep.is_some();
+        let mut wooze =
+            WoozeClocks::of_scene(scene_file.wooze.as_ref(), column_knobs.as_ref(), moment)
+                .map_err(|reason| anyhow!("--sweep: {reason}"))?;
+        // As the player's first frame: no time passes, and the field is read.
         if let Some(run) = &mut living {
-            if let Some(sweep) = &args.sweep {
-                run.change_field(&sweep.table(column))
-                    .map_err(|reason| anyhow!("--sweep {}: {reason}", sweep.name()))?;
-            }
-            // As the player's first frame: no time passes, and the field is read.
             run.step(0.0);
         }
 
@@ -898,6 +966,43 @@ impl Stage {
                 pp_config.kuwahara_anisotropy = anisotropy;
                 pp_config.kuwahara_enabled = true;
             }
+            if let Some(boil) = args.kuwahara_boil {
+                pp_config.kuwahara_boil = boil;
+            }
+            if args.contour {
+                pp_config.contour_enabled = true;
+            }
+            if let Some(width) = args.contour_width {
+                pp_config.contour_width = width;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(threshold) = args.contour_threshold {
+                pp_config.contour_threshold = threshold;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(strength) = args.contour_strength {
+                pp_config.contour_strength = strength;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(luma) = args.contour_luma {
+                pp_config.contour_luma = luma;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(color) = args.contour_color {
+                pp_config.contour_color = color;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(fade) = args.contour_fade {
+                pp_config.contour_fade = fade;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(boil) = args.contour_boil {
+                pp_config.contour_boil = boil;
+                pp_config.contour_enabled = true;
+            }
+            if let Some(on) = args.boil_on {
+                pp_config.boil_on = on;
+            }
             if let Some(grain) = args.film_grain {
                 pp_config.film_grain = grain;
             }
@@ -914,9 +1019,25 @@ impl Stage {
                 pp_config.fxaa_enabled = true;
             }
 
+            // The shading boil's drawing (#214) comes from the field where the camera
+            // is. --boil-time picks one and holds it, in one tick at the tempo of that
+            // moment. Otherwise each capture stamps the drawing its clock has reached.
+            let boil_wanted = pp_config.kuwahara_boil > 0.0 || pp_config.contour_boil > 0.0;
+            match (&wooze, args.boil_time) {
+                (Some(clocks), Some(time)) => {
+                    pp_config.boil =
+                        clocks.boil_at(camera.position_array(), time.max(0.0), pp_config.boil_on);
+                }
+                (None, _) if boil_wanted => {
+                    say!("This scene has no [wooze] table, so nothing boils.");
+                }
+                _ => {}
+            }
+
             renderer.set_post_process_config(pp_config);
             renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
             renderer.ensure_fxaa_resources(&ctx.device);
+            renderer.ensure_contour_resources(&ctx.device);
         }
 
         // Post time for grain/mode animation. Headless renders leave this 0.0 so
@@ -936,11 +1057,19 @@ impl Stage {
         // Two-bone IK (ADR 0070): pose authored chains before the single frame.
         flint_animation::IkPass::new().run(&mut world);
 
+        // Last, since the model loader expands a GLB into the entities a group holds.
+        if let Some(clocks) = &mut wooze {
+            let draws = clocks.step(&world, camera.position_array(), 0.0);
+            renderer.set_shallow_wooze(draws.iter().copied());
+        }
+
         Ok(Self {
             world,
             camera,
             renderer,
             living,
+            wooze,
+            clock: 0.0,
             particles: None,
             particle_steps: 0,
         })
@@ -954,15 +1083,20 @@ impl Stage {
         t: f64,
         frame_step: f64,
     ) -> Result<image::RgbaImage> {
+        let (steps, rest) = render_plan::steps_within(t - self.clock, frame_step);
+        for _ in 0..steps {
+            self.step_clocks(frame_step);
+        }
+        if rest > 0.0 {
+            self.step_clocks(rest);
+        }
         if let Some(run) = &mut self.living {
-            let (steps, rest) = render_plan::steps_within(t - run.time(), frame_step);
-            for _ in 0..steps {
-                run.step(frame_step);
-            }
-            if rest > 0.0 {
-                run.step(rest);
-            }
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
+        }
+        if let (Some(clocks), None) = (&self.wooze, args.boil_time) {
+            let on = self.renderer.post_process_config().boil_on;
+            self.renderer
+                .set_boil(clocks.boil(self.camera.position_array(), on));
         }
         if args.time.is_some() {
             // The rest of what the player keeps on this clock. Grain has its own flag.
@@ -997,6 +1131,18 @@ impl Stage {
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
             .context("Failed to create image from pixel data")
+    }
+
+    /// One step of everything on the wooze clock, in the order of the player's frame.
+    fn step_clocks(&mut self, dt: f64) {
+        self.clock += dt;
+        if let Some(clocks) = &mut self.wooze {
+            let draws = clocks.step(&self.world, self.camera.position_array(), dt);
+            self.renderer.set_shallow_wooze(draws.iter().copied());
+        }
+        if let Some(run) = &mut self.living {
+            run.step(dt);
+        }
     }
 
     fn step_particles(

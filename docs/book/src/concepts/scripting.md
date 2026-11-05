@@ -474,7 +474,7 @@ frame the effect is active. See
 
 ### Wooze API
 
-Moves the scene's [wooze field](procgen.md#the-wooze-field), which every living prop reads. Each takes an optional last argument of seconds to get there over, an integer or a float. Without it, the change is immediate.
+Moves the scene's [wooze field](procgen.md#the-wooze-field), which every living prop and [shallow wooze](procgen.md#shallow-wooze) mesh reads. Each takes an optional last argument of seconds to get there over, an integer or a float. Without it, the change is immediate.
 
 | Function | Description |
 |----------|-------------|
