@@ -157,6 +157,18 @@ impl LivingClock {
         };
         WarpedTime::at_beat(t / f64::from(self.step) + phase, self.glide)
     }
+
+    /// How many steps past [`at`](Self::at)'s index a part of a tree this deep
+    /// can be drawing on: ahead by its stagger, and blending toward the pose
+    /// after that. A window of poses has to span this many steps and one more.
+    pub fn reach(&self, max_depth: u32) -> u64 {
+        let ahead = match self.stagger {
+            Stagger::None => 0.0,
+            Stagger::PerLevel => f64::from(max_depth) * STAGGER_PER_LEVEL,
+            Stagger::PerBranch => 1.0,
+        };
+        ahead.ceil() as u64 + 1
+    }
 }
 
 /// A lineage's poses over time: generates each pose once, on first need, and

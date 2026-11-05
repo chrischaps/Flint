@@ -25,6 +25,7 @@ pub const ANIMATOR: &str = "animator";
 pub const SKELETON: &str = "skeleton";
 pub const SPRITE_ANIMATOR: &str = "sprite_animator";
 pub const IK_TWO_BONE: &str = "ik_two_bone";
+pub const LIVING_PROP: &str = "living_prop";
 
 // --- Physics ---
 pub const RIGIDBODY: &str = "rigidbody";

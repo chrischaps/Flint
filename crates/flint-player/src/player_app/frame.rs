@@ -671,7 +671,38 @@ impl PlayerApp {
                         );
                     }
                 }
+                self.print_living_report();
             }
+        }
+    }
+
+    /// Whether the rings stayed full and within budget. Silent with no props.
+    fn print_living_report(&self) {
+        let props = self.procgen_resolver.living_props();
+        if props.is_empty() {
+            return;
+        }
+        let ring = props
+            .props()
+            .iter()
+            .map(|p| p.ring_len())
+            .max()
+            .unwrap_or(0);
+        let lines = super::living_props::report(
+            &props.stats(),
+            props.props().len(),
+            props.lineage_count(),
+            ring,
+            self.procgen_resolver.frame_budget_ms(),
+        );
+        for line in lines {
+            eprintln!("{line}");
+        }
+        if let Some(renderer) = &self.scene_renderer {
+            eprintln!(
+                "[living] {} skinned draws this frame",
+                renderer.collect_stats().skinned_draws
+            );
         }
     }
 
@@ -892,8 +923,14 @@ impl PlayerApp {
         self.tick_av_systems(&config, &game_events);
         self.perf_mark(Phase::AnimFx);
 
-        // Frame-budgeted procgen queue
-        self.tick_procgen();
+        // Frame-budgeted procgen queue, then whatever it left to living props,
+        // whose clock stops when animation does
+        let living_dt = if config.animation == SystemPolicy::Run {
+            self.clock.delta_time
+        } else {
+            0.0
+        };
+        self.tick_procgen(living_dt);
 
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
@@ -1368,7 +1405,7 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn tick_procgen(&mut self) {
+    fn tick_procgen(&mut self, living_dt: f64) {
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1392,6 +1429,23 @@ impl PlayerApp {
                     };
                     super::procgen_assets::apply_completed(&completed, &mut sink);
                     super::procgen_assets::apply_failures(&failures, &mut sink);
+                }
+            }
+            let lineages = self.procgen_resolver.process_living(living_dt);
+            if !lineages.is_empty() {
+                if let (Some(renderer), Some(ctx)) =
+                    (&mut self.scene_renderer, &self.render_context)
+                {
+                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                        &self.scene_path,
+                    );
+                    let mut sink = super::procgen_assets::GpuSink {
+                        renderer,
+                        device: &ctx.device,
+                        queue: &ctx.queue,
+                        config: &config,
+                    };
+                    super::living_props::apply_lineages(&lineages, &mut sink);
                 }
             }
         }

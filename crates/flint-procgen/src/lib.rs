@@ -16,6 +16,7 @@ pub mod export_glb;
 mod generator;
 pub mod generators;
 pub mod living;
+pub mod living_props;
 pub mod mock;
 mod output;
 pub mod param_ui;
@@ -41,6 +42,10 @@ pub use generators::tree::TreeGenerator;
 pub use living::{
     LeafBinding, LivingClock, LivingPose, LivingRig, LivingSkeleton, PoseStream, SegmentPose,
     WarpedTime, STAGGER_PER_LEVEL,
+};
+pub use living_props::{
+    LineageDone, LivingProp, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
+    POSE_CACHE_BYTES,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
