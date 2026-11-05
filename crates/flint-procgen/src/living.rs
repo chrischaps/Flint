@@ -5,12 +5,19 @@
 //! Poses are small and relative to the skeleton, so a ring of them can be
 //! cached apart from any mesh and blended per segment without one.
 
-use flint_core::quat::quat_rotate_vec3;
+use flint_core::quat::{quat_nlerp, quat_rotate_vec3};
 use flint_core::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BranchSegment, MeshData};
+use crate::spec::VarianceConfig;
+use crate::types::{BoundingBox, BranchSegment, MeshData};
 use crate::{ProcGenError, Result};
+
+/// How many times [`LivingSkeleton::with_variance`] corrects its size. A
+/// fixed count, so the result doesn't depend on a tolerance. Limbs stay on the
+/// trunk, so the box isn't quite proportional to the scale and one round isn't
+/// enough, but each round leaves only a fraction of the error.
+const KEEP_SIZE_ROUNDS: usize = 4;
 
 /// One segment's transform in a pose, relative to the skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -33,6 +40,20 @@ impl SegmentPose {
         length_scale: 1.0,
         radius_scale: 1.0,
     };
+
+    /// This transform with only `weight` of it left: 0 is the rest pose and 1
+    /// is exactly this one, bit for bit.
+    pub fn pulled(&self, weight: f32) -> Self {
+        if weight >= 1.0 {
+            return *self;
+        }
+        let scale = |s: f32| 1.0 + (s - 1.0) * weight;
+        Self {
+            rotation: quat_nlerp(&Self::IDENTITY.rotation, &self.rotation, weight),
+            length_scale: scale(self.length_scale),
+            radius_scale: scale(self.radius_scale),
+        }
+    }
 }
 
 /// One variant of a prop: a transform per segment, in segment-id order.
@@ -113,22 +134,13 @@ impl LivingSkeleton {
     pub fn posed_leaf_mesh(&self, pose: &LivingPose) -> Result<MeshData> {
         let posed = self.posed_segments(pose)?;
         let mut mesh = self.leaf_mesh.clone();
-        for (k, card) in self.leaf_bindings.iter().enumerate() {
-            let (rest, now) = (
-                &self.segments[card.segment as usize],
-                &posed[card.segment as usize],
-            );
-            let q = &pose.segments[card.segment as usize].rotation;
-            let turn = |v: Vec3| Vec3::from_array(quat_rotate_vec3(q, v.to_array()));
-
-            let rest_centre = rest.start + (rest.end - rest.start) * card.along + card.offset;
-            let centre = now.start + (now.end - now.start) * card.along + turn(card.offset);
+        for k in 0..self.leaf_bindings.len() {
+            let carry = self.card_carry(k, pose, &posed);
             for v in self.card_vertices(k) {
                 let vertex = &mut mesh.vertices[v as usize];
-                let local = Vec3::from_array(vertex.position) - rest_centre;
-                vertex.position = (centre + turn(local)).to_array();
-                vertex.normal = turn(Vec3::from_array(vertex.normal)).to_array();
-                let t = turn(Vec3::new(
+                vertex.position = carry.place(Vec3::from_array(vertex.position)).to_array();
+                vertex.normal = carry.turn(Vec3::from_array(vertex.normal)).to_array();
+                let t = carry.turn(Vec3::new(
                     vertex.tangent[0],
                     vertex.tangent[1],
                     vertex.tangent[2],
@@ -138,6 +150,101 @@ impl LivingSkeleton {
         }
         mesh.recompute_bounds();
         Ok(mesh)
+    }
+
+    /// The box around everything `pose` moves: the branches and the leaf
+    /// cards. The trunk isn't in it, since a pose can't move the trunk.
+    pub fn posed_bounds(&self, pose: &LivingPose) -> Result<BoundingBox> {
+        let posed = self.posed_segments(pose)?;
+        let mut points: Vec<[f32; 3]> =
+            Vec::with_capacity(posed.len() * 2 + self.leaf_bindings.len() * self.card_index_count);
+        for s in &posed {
+            points.push(s.start.to_array());
+            points.push(s.end.to_array());
+        }
+        for k in 0..self.leaf_bindings.len() {
+            let carry = self.card_carry(k, pose, &posed);
+            for v in self.card_vertices(k) {
+                let at = Vec3::from_array(self.leaf_mesh.vertices[v as usize].position);
+                points.push(carry.place(at).to_array());
+            }
+        }
+        Ok(BoundingBox::from_positions(&points))
+    }
+
+    /// [`Self::posed_bounds`] for the rest pose, the size every pose is held to.
+    pub fn rest_bounds(&self) -> BoundingBox {
+        let rest = LivingPose {
+            shape_seed: 0,
+            segments: vec![SegmentPose::IDENTITY; self.segments.len()],
+        };
+        self.posed_bounds(&rest)
+            .expect("the rest pose has one transform per segment")
+    }
+
+    /// The deepest level of the tree, which [`VarianceConfig::weight`] measures
+    /// depth against.
+    pub fn max_depth(&self) -> u32 {
+        self.segments.iter().map(|s| s.depth).max().unwrap_or(0)
+    }
+
+    /// `full` held to `variance`: each segment pulled back toward the rest
+    /// pose, the lineage's base, so only its weight of the difference is left.
+    /// With `keep_size`, every segment's length then takes one shared scale
+    /// that centres the box's sides on the rest pose's.
+    ///
+    /// One scale keeps the tree's proportions and leaves its limbs on the
+    /// trunk, and that is why the box can't match on every side at once. Takes
+    /// the pose from [`full_pose`](crate::LivingGenerator::full_pose).
+    pub fn with_variance(
+        &self,
+        full: &LivingPose,
+        variance: &VarianceConfig,
+    ) -> Result<LivingPose> {
+        self.check_pose(full)?;
+        let max_depth = self.max_depth();
+        let mut pose = LivingPose {
+            shape_seed: full.shape_seed,
+            segments: self
+                .segments
+                .iter()
+                .zip(&full.segments)
+                .map(|(rest, p)| p.pulled(variance.weight(rest.depth, max_depth)))
+                .collect(),
+        };
+        if variance.keep_size {
+            self.hold_size(&mut pose)?;
+        }
+        Ok(pose)
+    }
+
+    /// Scale `pose`'s lengths until its box's most stretched side is over the
+    /// rest pose's by the same fraction its most squeezed side is under.
+    fn hold_size(&self, pose: &mut LivingPose) -> Result<()> {
+        let rest = self.rest_bounds();
+        for _ in 0..KEEP_SIZE_ROUNDS {
+            let scale = balancing_scale(&rest, &self.posed_bounds(pose)?);
+            for s in &mut pose.segments {
+                s.length_scale *= scale;
+            }
+        }
+        Ok(())
+    }
+
+    /// How `pose` carries leaf card `k`, given the segments it poses.
+    fn card_carry(&self, k: usize, pose: &LivingPose, posed: &[BranchSegment]) -> CardCarry {
+        let card = &self.leaf_bindings[k];
+        let (rest, now) = (
+            &self.segments[card.segment as usize],
+            &posed[card.segment as usize],
+        );
+        let rotation = pose.segments[card.segment as usize].rotation;
+        let turned = Vec3::from_array(quat_rotate_vec3(&rotation, card.offset.to_array()));
+        CardCarry {
+            rotation,
+            rest_centre: rest.start + (rest.end - rest.start) * card.along + card.offset,
+            centre: now.start + (now.end - now.start) * card.along + turned,
+        }
     }
 
     fn check_pose(&self, pose: &LivingPose) -> Result<()> {
@@ -152,5 +259,46 @@ impl LivingSkeleton {
                 self.segments.len()
             ),
         })
+    }
+}
+
+/// The rigid move a pose gives one leaf card.
+struct CardCarry {
+    rotation: [f32; 4],
+    rest_centre: Vec3,
+    centre: Vec3,
+}
+
+impl CardCarry {
+    fn turn(&self, v: Vec3) -> Vec3 {
+        Vec3::from_array(quat_rotate_vec3(&self.rotation, v.to_array()))
+    }
+
+    /// Where a point of the card in the rest pose ends up.
+    fn place(&self, rest: Vec3) -> Vec3 {
+        self.centre + self.turn(rest - self.rest_centre)
+    }
+}
+
+/// The scale that centres `now`'s sides on `rest`'s: dividing by the midpoint
+/// of the sides' ratios puts the largest and smallest equally far from 1. A
+/// side with no length in the rest pose has no ratio and doesn't count.
+fn balancing_scale(rest: &BoundingBox, now: &BoundingBox) -> f32 {
+    let (rest, now) = (
+        (rest.max - rest.min).to_array(),
+        (now.max - now.min).to_array(),
+    );
+    let (mut least, mut most) = (f32::INFINITY, 0.0f32);
+    for (now, rest) in now.iter().zip(&rest) {
+        if *rest > 1e-6 && *now > 1e-6 {
+            let ratio = now / rest;
+            least = least.min(ratio);
+            most = most.max(ratio);
+        }
+    }
+    if most > 0.0 {
+        2.0 / (least + most)
+    } else {
+        1.0
     }
 }

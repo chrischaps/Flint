@@ -171,10 +171,10 @@ A generator opts in by implementing `LivingGenerator` next to `Generator`:
 
 ```rust
 fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
-fn pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
+fn full_pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
 ```
 
-`LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. `tree_v1` supports the built-in L-system only, where every seed grows the same segments in the same order. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed, so all three report themselves unsupported.
+`pose` is `full_pose` held to the spec's variance. `LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. `tree_v1` supports the built-in L-system only, where every seed grows the same segments in the same order. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed, so all three report themselves unsupported.
 
 A spec declares it with a `[living]` table. Only `lineage_seed` is required:
 
@@ -188,11 +188,27 @@ jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
 ```
 
-These are the defaults. So far the table is checked and carried: `pose` doesn't apply `drift`, `jitter` or `variance` yet, and nothing plays a ring of poses, so every pose is at full variance. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+These are the defaults. `pose` applies `variance`. `drift` and `jitter` are checked and carried, and nothing plays a ring of poses yet. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+
+`variance` is what keeps the silhouette. A freshly grown pose is a different-looking tree, so each segment is pulled back toward the lineage's own shape, keeping only this share of its difference:
+
+```text
+w = amount × ((1 − steady) + steady × (depth / max_depth)^1.3)
+```
+
+- `amount` is how much is left overall.
+- `steady` is how much of that is held back from the trunk side: 0 is even, 1 puts it all at the tips.
+- `keep_size` then gives every segment's length one shared scale, so the box around the branches and leaves is as far over on its longest side as it is under on its shortest. One scale keeps the tree's proportions and its limbs on the trunk, so the sides can't all match exactly.
+
+On the example oak at the defaults, first-level limbs turn 4° on average and the twigs 29°, and across an 8-pose ring each pose's box stays within 3 to 5% of the base on every side (6 to 12% without `keep_size`, up to 25% at full variance).
+
+`variance = { amount = 1, steady = 0, keep_size = false }` undoes all of it and gives each pose exactly as its shape seed grew it. Leave `keep_size` on with `amount = 1, steady = 0` and you get the same angles at a held size.
+
+A runtime can keep a ring of `full_pose`s and call `LivingSkeleton::with_variance` when a knob moves, with no regrowing.
 
 `flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
 
-To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB.
+To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB and prints how far its box moved and how far each level turned. `--amount`, `--steady` and `--keep-size` override the spec.
 
 ## `flint gen`
 
