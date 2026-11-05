@@ -1,19 +1,22 @@
 //! One lineage of a living prop, as files you can look at: the rest pose and
-//! a few poses as GLBs, and the skeleton and poses as JSON.
+//! a few poses as GLBs, and the skeleton and poses as JSON. It also prints how
+//! far each pose's box moved and how far each level of the tree turned.
 //!
 //! ```text
 //! cargo run -p flint-procgen --example living_poses -- <spec> --out DIR [--poses N] [--lineage N]
+//!     [--amount A] [--steady S] [--keep-size true|false]
 //! ```
 //!
-//! Everything goes through the public contract (`structure`, `pose`,
-//! `posed_mesh`), so what this writes is what a caller
-//! of `LivingGenerator` gets. Each pose's mesh is rebuilt from scratch; the
-//! skinned mesh that makes this cheap is #209.
+//! `--amount`, `--steady` and `--keep-size` override the spec's `[living]
+//! variance`. Everything goes through the public contract (`structure`,
+//! `full_pose`, `with_variance`, `posed_mesh`), so what this writes is what a
+//! caller of `LivingGenerator` gets. Each pose's mesh is rebuilt from scratch;
+//! the skinned mesh that makes this cheap is #209.
 
 use flint_procgen::generators::tree::{generate_trunk, TrunkParams};
 use flint_procgen::{
-    mesh_to_glb, LivingGenerator, LivingPose, LivingSkeleton, ProcGenSpec, SeededRng, SegmentPose,
-    TreeGenerator,
+    mesh_to_glb, BoundingBox, LivingGenerator, LivingPose, LivingSkeleton, ProcGenSpec, SeededRng,
+    SegmentPose, TreeGenerator, VarianceConfig,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -41,9 +44,23 @@ fn main() -> Res<()> {
         (None, None) => return Err("the spec has no [living] table; pass --lineage N".into()),
     };
 
+    let mut variance: VarianceConfig = spec
+        .living
+        .as_ref()
+        .map_or_else(Default::default, |living| living.variance);
+    if let Some(amount) = opt(&args, "--amount") {
+        variance.amount = amount.parse()?;
+    }
+    if let Some(steady) = opt(&args, "--steady") {
+        variance.steady = steady.parse()?;
+    }
+    if let Some(keep_size) = opt(&args, "--keep-size") {
+        variance.keep_size = keep_size.parse()?;
+    }
+
     let skeleton = TreeGenerator.structure(&spec, lineage)?;
     eprintln!(
-        "lineage {lineage}: {} segments, {} leaf cards",
+        "lineage {lineage}: {} segments, {} leaf cards, {variance:?}",
         skeleton.segments.len(),
         skeleton.leaf_bindings.len()
     );
@@ -59,15 +76,40 @@ fn main() -> Res<()> {
     let rest = TreeGenerator.posed_mesh(&spec, &skeleton, &at_rest)?;
     std::fs::write(out.join("rest.glb"), mesh_to_glb(&rest)?)?;
 
+    let rest_box = skeleton.rest_bounds();
     let mut pose_json = Vec::new();
+    let levels = skeleton.max_depth() as usize + 1;
+    let (mut turned, mut counted) = (vec![0.0f32; levels], vec![0u32; levels]);
     for shape_seed in 0..poses {
-        let pose = TreeGenerator.pose(&spec, &skeleton, shape_seed)?;
+        let full = TreeGenerator.full_pose(&spec, &skeleton, shape_seed)?;
+        let pose = skeleton.with_variance(&full, &variance)?;
+        let sides = side_differences(&rest_box, &skeleton.posed_bounds(&pose)?);
+        eprintln!(
+            "pose {shape_seed}: box sides x {:+5.1}%  y {:+5.1}%  z {:+5.1}%",
+            sides[0] * 100.0,
+            sides[1] * 100.0,
+            sides[2] * 100.0,
+        );
+        for (rest, p) in skeleton.segments.iter().zip(&pose.segments) {
+            turned[rest.depth as usize] += 2.0 * p.rotation[3].clamp(-1.0, 1.0).acos();
+            counted[rest.depth as usize] += 1;
+        }
         let posed = TreeGenerator.posed_mesh(&spec, &skeleton, &pose)?;
         std::fs::write(
             out.join(format!("pose{shape_seed}.glb")),
             mesh_to_glb(&posed)?,
         )?;
         pose_json.push(pose_to_json(&pose));
+    }
+
+    for (depth, (angle, n)) in turned.iter().zip(&counted).enumerate() {
+        if *n > 0 {
+            eprintln!(
+                "depth {depth}: turns {:5.1} deg on average, weight {:.3}",
+                (angle / *n as f32).to_degrees(),
+                variance.weight(depth as u32, skeleton.max_depth()),
+            );
+        }
     }
 
     let doc = json!({
@@ -87,6 +129,15 @@ fn main() -> Res<()> {
     });
     std::fs::write(out.join("living.json"), serde_json::to_string(&doc)?)?;
     Ok(())
+}
+
+/// Each side of `now` over `rest`'s, less 1: +0.05 is 5% longer.
+fn side_differences(rest: &BoundingBox, now: &BoundingBox) -> [f32; 3] {
+    let (rest, now) = (
+        (rest.max - rest.min).to_array(),
+        (now.max - now.min).to_array(),
+    );
+    [0, 1, 2].map(|axis| now[axis] / rest[axis] - 1.0)
 }
 
 fn pose_to_json(pose: &LivingPose) -> serde_json::Value {

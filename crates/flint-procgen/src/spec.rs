@@ -273,7 +273,7 @@ pub enum Stagger {
 
 /// `[living] variance` (#229): how much of the difference between poses is
 /// left, and where on the tree.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct VarianceConfig {
     /// How much of each pose's difference from the base is left, 0 to 1.
@@ -281,8 +281,26 @@ pub struct VarianceConfig {
     /// How much of that is held back from the trunk side: 0 even, 1 all at
     /// the tips.
     pub steady: f32,
-    /// Scale each pose so its bounding box matches the base's.
+    /// Scale each pose so its bounding box matches the base's, as near as one
+    /// scale can: the side furthest over is as far over as the side furthest
+    /// under is under.
     pub keep_size: bool,
+}
+
+impl VarianceConfig {
+    /// Nothing held back: a pose is exactly what its shape seed grew.
+    pub const FULL: Self = Self {
+        amount: 1.0,
+        steady: 0.0,
+        keep_size: false,
+    };
+
+    /// How much of its difference from the base a segment at `depth` keeps:
+    /// `amount × ((1 − steady) + steady × (depth / max_depth)^1.3)`.
+    pub fn weight(&self, depth: u32, max_depth: u32) -> f32 {
+        let level = depth as f32 / max_depth.max(1) as f32;
+        self.amount * ((1.0 - self.steady) + self.steady * level.powf(1.3))
+    }
 }
 
 impl Default for VarianceConfig {

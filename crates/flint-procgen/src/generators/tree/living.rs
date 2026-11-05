@@ -75,7 +75,7 @@ impl LivingGenerator for TreeGenerator {
         })
     }
 
-    fn pose(
+    fn full_pose(
         &self,
         spec: &ProcGenSpec,
         skeleton: &LivingSkeleton,
@@ -229,7 +229,7 @@ fn bind_cards(
 mod tests {
     use super::*;
     use crate::generators::tree::{generate_tree, join_bark_and_leaves};
-    use crate::{Generator, GeneratorOutput};
+    use crate::{Generator, GeneratorOutput, LivingConfig, VarianceConfig};
     use std::path::PathBuf;
 
     const SHAPE_SEEDS: u64 = 100;
@@ -412,7 +412,9 @@ mod tests {
         for spec in lsystem_specs() {
             let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
             for shape_seed in 0..8 {
-                let pose = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+                let pose = TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap();
                 let posed = skeleton.posed_segments(&pose).unwrap();
                 let regrown = regrow(&spec, LINEAGE, shape_seed).unwrap();
                 for (a, b) in posed.iter().zip(&regrown) {
@@ -716,6 +718,247 @@ mod tests {
             mesh,
             "the same pose must rebuild the same mesh"
         );
+    }
+
+    /// A spec at the variance under test, with a `[living]` table if it had none.
+    fn at_variance(relative: &str, variance: VarianceConfig) -> ProcGenSpec {
+        let mut spec = load(relative);
+        let mut living = spec.living.take().unwrap_or(LivingConfig {
+            lineage_seed: LINEAGE,
+            pose_ring: 8,
+            step: 0.5,
+            glide: 0.3,
+            drift: Default::default(),
+            jitter: Default::default(),
+            stagger: Default::default(),
+            variance,
+        });
+        living.variance = variance;
+        spec.living = Some(living);
+        spec
+    }
+
+    fn sides(bounds: &crate::BoundingBox) -> [f32; 3] {
+        (bounds.max - bounds.min).to_array()
+    }
+
+    /// For each pose of an 8-pose ring, each side of its box over the rest
+    /// pose's, less 1: +0.05 is 5% longer.
+    fn side_differences(spec: &ProcGenSpec) -> Vec<[f32; 3]> {
+        let skeleton = TreeGenerator.structure(spec, LINEAGE).unwrap();
+        let rest = sides(&skeleton.rest_bounds());
+        (0..8)
+            .map(|shape_seed| {
+                let pose = TreeGenerator.pose(spec, &skeleton, shape_seed).unwrap();
+                let now = sides(&skeleton.posed_bounds(&pose).unwrap());
+                [0, 1, 2].map(|axis| now[axis] / rest[axis] - 1.0)
+            })
+            .collect()
+    }
+
+    /// The largest difference on any side of each pose, sorted.
+    fn worst_per_pose(spec: &ProcGenSpec) -> Vec<f32> {
+        let mut worst: Vec<f32> = side_differences(spec)
+            .iter()
+            .map(|sides| sides.iter().fold(0.0f32, |w, d| w.max(d.abs())))
+            .collect();
+        worst.sort_by(f32::total_cmp);
+        worst
+    }
+
+    const VARIANCE_SPECS: [&str; 3] = [
+        "specs/examples/oak_living.procgen.toml",
+        "specs/oak_tree.procgen.toml",
+        "specs/oak_tree.procgen2.toml",
+    ];
+
+    /// How far a side of the default ring's box may move with `keep_size`.
+    /// The 27-segment oak gets more room: a handful of tips decide its box.
+    fn kept_limit(path: &str) -> f32 {
+        if path.ends_with("procgen2.toml") {
+            0.10
+        } else {
+            0.06
+        }
+    }
+
+    const LOOSE: VarianceConfig = VarianceConfig {
+        amount: 0.35,
+        steady: 0.8,
+        keep_size: false,
+    };
+
+    #[test]
+    fn the_default_ring_holds_its_size() {
+        for path in VARIANCE_SPECS {
+            let kept = worst_per_pose(&at_variance(path, VarianceConfig::default()));
+            let loose = worst_per_pose(&at_variance(path, LOOSE));
+            let full = worst_per_pose(&at_variance(path, VarianceConfig::FULL));
+            eprintln!(
+                "{path}\n  keep_size {kept:.3?}\n  without   {loose:.3?}\n  full      {full:.3?}"
+            );
+            assert!(
+                kept[7] < kept_limit(path),
+                "{path}: keep_size let a side move {kept:?}"
+            );
+            assert!(loose[7] < 0.14, "{path}: without keep_size {loose:?}");
+            assert!(kept[7] < loose[7], "{path}: {kept:?} against {loose:?}");
+            assert!(loose[7] < full[7], "{path}: {loose:?} against {full:?}");
+        }
+    }
+
+    #[test]
+    fn keep_size_centres_the_sides_and_touches_only_length() {
+        for path in VARIANCE_SPECS {
+            let spec = at_variance(path, VarianceConfig::default());
+            for sides in side_differences(&spec) {
+                let over = sides.iter().fold(f32::MIN, |m, d| m.max(*d));
+                let under = sides.iter().fold(f32::MAX, |m, d| m.min(*d));
+                assert!(
+                    (over + under).abs() < 0.005,
+                    "{path}: sides {sides:?} aren't centred"
+                );
+            }
+
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            for shape_seed in 0..8 {
+                let full = TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap();
+                let kept = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+                let unscaled = skeleton.with_variance(&full, &LOOSE).unwrap();
+                let scale = kept.segments[0].length_scale / unscaled.segments[0].length_scale;
+                for (a, b) in kept.segments.iter().zip(&unscaled.segments) {
+                    assert_eq!(a.rotation, b.rotation);
+                    assert_eq!(a.radius_scale, b.radius_scale);
+                    assert!((a.length_scale / b.length_scale / scale - 1.0).abs() < 1e-4);
+                }
+            }
+        }
+    }
+
+    /// The mean angle a pose turns the segments at each depth, over a ring.
+    fn mean_turn_by_depth(spec: &ProcGenSpec) -> Vec<f32> {
+        let skeleton = TreeGenerator.structure(spec, LINEAGE).unwrap();
+        let levels = skeleton.max_depth() as usize + 1;
+        let (mut sum, mut count) = (vec![0.0f32; levels], vec![0u32; levels]);
+        for shape_seed in 0..8 {
+            let pose = TreeGenerator.pose(spec, &skeleton, shape_seed).unwrap();
+            for (rest, p) in skeleton.segments.iter().zip(&pose.segments) {
+                sum[rest.depth as usize] += 2.0 * p.rotation[3].clamp(-1.0, 1.0).acos();
+                count[rest.depth as usize] += 1;
+            }
+        }
+        sum.iter()
+            .zip(&count)
+            .filter(|(_, n)| **n > 0)
+            .map(|(s, n)| s / *n as f32)
+            .collect()
+    }
+
+    #[test]
+    fn first_level_limbs_turn_less_than_the_twigs() {
+        for path in VARIANCE_SPECS {
+            let turns = mean_turn_by_depth(&at_variance(path, VarianceConfig::default()));
+            let (limbs, twigs) = (turns[0], *turns.last().unwrap());
+            assert!(
+                limbs * 2.0 < twigs,
+                "{path}: limbs turn {limbs} rad and twigs {twigs} rad: {turns:?}"
+            );
+            let even = mean_turn_by_depth(&at_variance(path, VarianceConfig::FULL));
+            assert!(
+                even[0] * 0.5 > limbs,
+                "{path}: full variance's limbs {} aren't well above {limbs}",
+                even[0]
+            );
+        }
+    }
+
+    #[test]
+    fn full_variance_is_the_pose_the_seed_grew_bit_for_bit() {
+        for path in VARIANCE_SPECS {
+            let spec = at_variance(path, VarianceConfig::FULL);
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            for shape_seed in 0..8 {
+                let full = TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap();
+                let pose = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+                assert_eq!(pose, full);
+            }
+        }
+    }
+
+    #[test]
+    fn amount_one_with_keep_size_on_moves_every_angle_and_only_rescales() {
+        let spec = at_variance(
+            "specs/examples/oak_living.procgen.toml",
+            VarianceConfig {
+                amount: 1.0,
+                steady: 0.0,
+                keep_size: true,
+            },
+        );
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let full = TreeGenerator.full_pose(&spec, &skeleton, 3).unwrap();
+        let pose = TreeGenerator.pose(&spec, &skeleton, 3).unwrap();
+        for (a, b) in pose.segments.iter().zip(&full.segments) {
+            assert_eq!(a.rotation, b.rotation);
+            assert_eq!(a.radius_scale, b.radius_scale);
+        }
+    }
+
+    #[test]
+    fn amount_zero_is_the_rest_pose() {
+        for keep_size in [false, true] {
+            let spec = at_variance(
+                "specs/examples/oak_living.procgen.toml",
+                VarianceConfig {
+                    amount: 0.0,
+                    steady: 0.8,
+                    keep_size,
+                },
+            );
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            let pose = TreeGenerator.pose(&spec, &skeleton, 5).unwrap();
+            for s in &pose.segments {
+                assert_eq!(s.rotation, SegmentPose::IDENTITY.rotation);
+                assert_eq!(s.radius_scale, 1.0);
+                assert!((s.length_scale - 1.0).abs() < 1e-5, "{}", s.length_scale);
+            }
+        }
+    }
+
+    #[test]
+    fn a_spec_without_a_living_table_takes_the_default_variance() {
+        let spec = load("specs/oak_tree.procgen2.toml");
+        assert!(spec.living.is_none());
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let full = TreeGenerator.full_pose(&spec, &skeleton, 2).unwrap();
+        assert_eq!(
+            TreeGenerator.pose(&spec, &skeleton, 2).unwrap(),
+            skeleton
+                .with_variance(&full, &VarianceConfig::default())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn variance_can_be_retuned_without_regrowing() {
+        let spec = at_variance(
+            "specs/oak_tree.procgen2.toml",
+            VarianceConfig {
+                amount: 0.5,
+                steady: 0.25,
+                keep_size: false,
+            },
+        );
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let full = TreeGenerator.full_pose(&spec, &skeleton, 4).unwrap();
+        let retuned = skeleton
+            .with_variance(&full, &spec.living.as_ref().unwrap().variance)
+            .unwrap();
+        assert_eq!(TreeGenerator.pose(&spec, &skeleton, 4).unwrap(), retuned);
     }
 
     #[test]
