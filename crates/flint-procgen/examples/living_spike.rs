@@ -459,6 +459,8 @@ fn frames(args: &[String]) -> Res<()> {
                     radius_start: a.radius_start * (1.0 - w) + b.radius_start * w,
                     radius_end: a.radius_end * (1.0 - w) + b.radius_end * w,
                     depth: a.depth,
+                    id: 0,
+                    parent: None,
                 });
             }
 

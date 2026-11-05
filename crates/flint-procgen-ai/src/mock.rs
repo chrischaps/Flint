@@ -404,6 +404,7 @@ impl ProcGenAgent for MockAgent {
                 },
                 params,
                 lod: None,
+                living: None,
             })
         })
     }

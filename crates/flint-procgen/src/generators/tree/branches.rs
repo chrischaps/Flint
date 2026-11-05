@@ -151,9 +151,25 @@ pub(super) fn grow_branch_segments(
     trunk: &TrunkSpine,
     rng: &mut SeededRng,
 ) -> Result<Vec<BranchSegment>> {
-    match params.method {
+    let mut segments = match params.method {
         BranchMethod::LSystem => generate_lsystem_branches(params, trunk, rng),
         BranchMethod::SpaceColonization => generate_colonization_branches(params, trunk, rng),
+    }?;
+    link_segments(&mut segments);
+    Ok(segments)
+}
+
+/// Give each segment its id (its index) and its parent: the latest earlier
+/// segment whose end is this one's start, on the same grid [`extract_tips`]
+/// and [`scaffold_limbs`] use to decide two points are one. A segment with
+/// no such parent leaves the trunk.
+pub fn link_segments(segments: &mut [BranchSegment]) {
+    let mut ending_at: HashMap<[i32; 3], u32> = HashMap::with_capacity(segments.len());
+    for (i, seg) in segments.iter_mut().enumerate() {
+        let id = i as u32;
+        seg.id = id;
+        seg.parent = ending_at.get(&quantize_position(seg.start)).copied();
+        ending_at.insert(quantize_position(seg.end), id);
     }
 }
 
@@ -260,6 +276,8 @@ fn generate_lsystem_branches(
                 radius_start: (seg.radius_start * thicken).min(cap),
                 radius_end: (seg.radius_end * thicken).min(cap),
                 depth: seg.depth,
+                id: 0,
+                parent: None,
             });
         }
     }
@@ -315,6 +333,8 @@ fn sleeve_the_tip(segments: &mut Vec<BranchSegment>, trunk: &TrunkSpine) {
             radius_start: r,
             radius_end: joint,
             depth: 1,
+            id: 0,
+            parent: None,
         },
     );
 }
@@ -448,6 +468,8 @@ fn generate_colonization_branches(
             radius_start: nodes[parent].radius.min(cap),
             radius_end: node.radius.min(cap),
             depth: node.depth.max(1),
+            id: 0,
+            parent: None,
         });
     }
     sleeve_the_tip(&mut segments, trunk);
@@ -1095,6 +1117,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.08,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
             BranchSegment {
                 start: Vec3::new(1.0, 6.0, 0.0),
@@ -1102,6 +1126,8 @@ mod tests {
                 radius_start: 0.08,
                 radius_end: 0.05,
                 depth: 2,
+                id: 0,
+                parent: None,
             },
         ];
 
@@ -1209,6 +1235,8 @@ mod tests {
             radius_start: 0.1,
             radius_end: 0.05,
             depth: 0,
+            id: 0,
+            parent: None,
         }];
 
         let tip = Vec3::new(0.0, 5.0, 0.0);
@@ -1229,6 +1257,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.08,
                 depth: 0,
+                id: 0,
+                parent: None,
             },
             BranchSegment {
                 start: Vec3::new(1.0, 0.0, 0.0),
@@ -1236,6 +1266,8 @@ mod tests {
                 radius_start: 0.08,
                 radius_end: 0.05,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
             // Branch: A → D (terminal)
             BranchSegment {
@@ -1244,6 +1276,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.06,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
         ];
 
@@ -1350,6 +1384,8 @@ mod tests {
             radius_start: r0,
             radius_end: r1,
             depth: 1,
+            id: 0,
+            parent: None,
         };
         let a = Vec3::ZERO;
         let b = Vec3::new(0.0, 1.0, 0.0);
@@ -1424,6 +1460,8 @@ mod tests {
             radius_start: 0.2,
             radius_end: 0.1,
             depth: 1,
+            id: 0,
+            parent: None,
         }];
         let mesh = segments_to_mesh(&segments, 6).unwrap();
         let axis = TrunkSpine {

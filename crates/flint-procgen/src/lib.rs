@@ -15,6 +15,7 @@ mod error;
 pub mod export_glb;
 mod generator;
 pub mod generators;
+pub mod living;
 pub mod mock;
 mod output;
 pub mod param_ui;
@@ -32,11 +33,12 @@ pub use cache::{CacheStats, ProcGenCache, ProcGenCacheConfig};
 pub use disk_cache::{DiskCache, DiskCacheConfig, DiskStats};
 pub use error::{ProcGenError, Result};
 pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
-pub use generator::{GenerationCost, Generator};
+pub use generator::{GenerationCost, Generator, LivingGenerator};
 pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
+pub use living::{LeafBinding, LivingPose, LivingSkeleton, SegmentPose};
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
     AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,
@@ -46,7 +48,10 @@ pub use resolver::ProcGenResolver;
 pub use rng::SeededRng;
 pub use seed::Seed;
 pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex};
-pub use spec::{discover_specs, LodLevel, ProcGenSpec, SeedConfig, SeedMode, SpecMeta};
+pub use spec::{
+    discover_specs, DriftConfig, JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig,
+    SeedMode, SpecMeta, Stagger, VarianceConfig,
+};
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,
     Vertex,

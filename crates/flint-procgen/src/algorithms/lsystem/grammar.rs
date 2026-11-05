@@ -422,6 +422,8 @@ pub fn interpret(expanded: &str, config: &TurtleConfig) -> Result<Vec<BranchSegm
                     radius_start: radius,
                     radius_end: radius,
                     depth: t.depth,
+                    id: 0,
+                    parent: None,
                 });
                 if segments.len() > config.max_segments as usize {
                     return Err(ProcGenError::BudgetExceeded(format!(

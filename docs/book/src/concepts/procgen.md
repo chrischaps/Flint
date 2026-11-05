@@ -61,11 +61,12 @@ warning: tavern_brick.procgen.toml: `ops[0].colums` is not a parameter of the br
 
 ## Examples
 
-Four commented specs in `specs/examples/` are the place to start: each opens by saying how its generator thinks, and notes every key that isn't obvious.
+Five commented specs in `specs/examples/` are the place to start: each opens by saying how its generator thinks, and notes every key that isn't obvious.
 
 | Spec | Makes | Shows |
 |------|-------|-------|
 | `oak_tree` | A broad oak, three LODs | `tree_v1` with the built-in L-system |
+| `oak_living` | The same oak as a [living prop](#living-props) | A `[living]` table |
 | `pine_tree` | A Scots pine, three LODs | `tree_v1` with space colonization in a `cone` crown |
 | `stone_wall` | Fieldstone in mortar, three tiling maps | `texture_v1`, the `voronoi_brick` pattern |
 | `wood_plank` | Oak floorboards, three maps | `texture_v1`, a pipeline of ops |
@@ -158,6 +159,40 @@ The output is a skinned GLB with a skeleton the [animation](animation.md) system
 All randomness flows through a `SeededRng` forked by name per stage (`"pattern"`, `"pipeline"`, and so on), so adding a stage never disturbs the numbers an earlier one draws. A `fixed` seed reproduces the asset bit for bit; `derived` hashes a string so a spec can be reseeded by, say, an entity name; `random` is for variants. `flint gen --seed N` overrides whatever the spec says, and `--batch N --seed-start S` writes N sequential-seed variants with the seed inserted into each filename.
 
 Generators are stateless and `Send + Sync`; parameters live in the spec and randomness in the RNG.
+
+## Living Props
+
+A living prop keeps drifting between versions of itself and stays recognisably the same thing. Topology can't be interpolated, so its generator splits it in two with a pair of seeds:
+
+- The **lineage seed** fixes the structure: the trunk, the branch segments with their stable ids and parents, and every leaf card, each bound to its nearest segment. This is the prop's identity, and for a tree it's exactly the tree `flint gen --seed <lineage>` bakes.
+- Each **shape seed** gives a pose: a rotation, length scale and radius scale per segment, relative to the structure. A pose regrows only the branches, on the lineage's trunk, so limbs stay attached and the trunk holds still.
+
+A generator opts in by implementing `LivingGenerator` next to `Generator`:
+
+```rust
+fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
+fn pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
+```
+
+`LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. `tree_v1` supports the built-in L-system only, where every seed grows the same segments in the same order. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed, so all three report themselves unsupported.
+
+A spec declares it with a `[living]` table. Only `lineage_seed` is required:
+
+```toml
+[living]
+lineage_seed = 7          # the prop's identity
+pose_ring = 8             # poses to keep ready, at least 2
+stagger = "per_level"     # none | per_level | per_branch
+drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
+jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
+variance = { amount = 0.35, steady = 0.8, keep_size = true }
+```
+
+These are the defaults. So far the table is checked and carried: `pose` doesn't apply `drift`, `jitter` or `variance` yet, and nothing plays a ring of poses, so every pose is at full variance. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+
+`flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
+
+To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB.
 
 ## `flint gen`
 
