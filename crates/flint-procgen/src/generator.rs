@@ -9,6 +9,7 @@ use crate::living::{LivingPose, LivingRig, LivingSkeleton};
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::rng::SeededRng;
 use crate::spec::ProcGenSpec;
+use crate::types::MeshData;
 use crate::Result;
 
 /// Estimated resource cost of running a generator with a given spec.
@@ -129,4 +130,14 @@ pub trait LivingGenerator: Send + Sync {
             .map_or_else(Default::default, |living| living.variance);
         skeleton.with_variance(&full, &variance)
     }
+
+    /// The whole prop as `pose` holds it, rebuilt from scratch: for offline
+    /// tools, since a mesh per frame is what the skinned rest mesh avoids.
+    /// `pose` may be a blend of two poses.
+    fn posed_mesh(
+        &self,
+        spec: &ProcGenSpec,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+    ) -> Result<MeshData>;
 }

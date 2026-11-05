@@ -12,6 +12,7 @@ pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod gen_refine;
 pub mod gen_store;
+pub mod gen_strip;
 pub mod init;
 pub mod particle_edit;
 pub mod play;

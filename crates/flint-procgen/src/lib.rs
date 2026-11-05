@@ -38,7 +38,10 @@ pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
-pub use living::{LeafBinding, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
+pub use living::{
+    LeafBinding, LivingClock, LivingPose, LivingRig, LivingSkeleton, PoseStream, SegmentPose,
+    WarpedTime, STAGGER_PER_LEVEL,
+};
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
     AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,

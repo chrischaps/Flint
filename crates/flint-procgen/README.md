@@ -106,7 +106,7 @@ target_triangles = 9000
 
 `flint gen --seed N` overrides `[seed]` for one run.
 
-A spec can also have a `[living]` table, which makes it a prop that keeps drifting between versions of itself. See `LivingGenerator` in `src/generator.rs` and [`specs/examples/oak_living.procgen.toml`](../../specs/examples/oak_living.procgen.toml).
+A spec can also have a `[living]` table, which makes it a prop that keeps drifting between versions of itself. See `LivingGenerator` in `src/generator.rs` and [`specs/examples/oak_living.procgen.toml`](../../specs/examples/oak_living.procgen.toml). `flint gen <spec> --strip -o strip.png` renders one over time as a labelled contact sheet; the clock and the blend are `LivingClock` and `PoseStream` in `src/living.rs`.
 
 ## Generator catalog
 
