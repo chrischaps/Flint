@@ -1,0 +1,219 @@
+# The wooze field (#213): one row of oaks walking through one world.
+#
+# Every tree below is the same spec with the same settings, and none says how
+# woozy it is. The scene's [wooze] table does: glide 0.3 everywhere, a dreamy
+# sphere in the middle of the row at glide 0.8 with 16 m of falloff either side,
+# and a calm box at the right-hand end. So the row reads, left to right, as a hold
+# and a quick glide, then longer and longer glides toward a middle that never
+# quite rests, then back out, and then nearly still.
+#
+# A script changes the global step from 0.5 to 0.25 at 12 s, and every tree
+# follows without a jump. See demo/scripts/wooze_director.rhai.
+#
+#   cargo run --release -p flint-player -- demo/wooze_field.scene.toml --schemas schemas --exit-after 20
+#
+# prints a [wooze] line saying how far apart the field has put the props.
+#
+#   cargo run --bin flint -- validate demo/wooze_field.scene.toml
+#
+# checks the table: break a zone and the message names it.
+
+[scene]
+name = "The Wooze Field"
+version = "1.0"
+description = "A row of living oaks through a dreamy sphere and a calm box, with a script changing the step"
+
+[wooze]
+step = 0.5
+glide = 0.3
+
+[[wooze.zone]]
+name = "pocket"
+shape = "sphere"
+center = [0, 0, -30]
+radius = 10
+falloff = 16
+glide = 0.8
+
+[[wooze.zone]]
+name = "hush"
+shape = "box"
+center = [48, 0, -30]
+size = [18, 40, 24]
+falloff = 6
+amplitude = 0.2
+step = 1.5
+jitter = 0
+
+[camera]
+position = [0.0, 3.0, 55.0]
+target = [0.0, 5.0, -30.0]
+fov = 40.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.2
+exposure = 1.2
+vignette_enabled = true
+vignette_intensity = 0.3
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+fog_enabled = true
+fog_color = [0.86, 0.72, 0.52]
+fog_density = 0.004
+fog_start = 40.0
+fog_end = 260.0
+
+# --- Light: late afternoon, low from behind the left shoulder ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.62, -0.52, -0.45]
+color = [1.0, 0.86, 0.66]
+intensity = 2.6
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.4, -0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.4
+
+# --- The ground: a plain box, its top at y = 0 ---
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-200, -0.2, -200]
+max = [200, 0, 200]
+[entities.ground.material]
+color = [0.15, 0.17, 0.07, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The director: changes the step at 12 s ---
+
+[entities.director.script]
+source = "wooze_director.rhai"
+
+# --- The row, left to right ---
+
+[entities.oak_00.transform]
+position = [-48.0, 0.0, -30.0]
+rotation = [0.0, 0.0, 0.0]
+[entities.oak_00.model]
+asset = "oak_living"
+[entities.oak_00.living_prop]
+lineage_seed = 7
+
+[entities.oak_01.transform]
+position = [-40.0, 0.0, -30.0]
+rotation = [0.0, 137.5, 0.0]
+[entities.oak_01.model]
+asset = "oak_living"
+[entities.oak_01.living_prop]
+lineage_seed = 8
+
+[entities.oak_02.transform]
+position = [-32.0, 0.0, -30.0]
+rotation = [0.0, 275.0, 0.0]
+[entities.oak_02.model]
+asset = "oak_living"
+[entities.oak_02.living_prop]
+lineage_seed = 9
+
+[entities.oak_03.transform]
+position = [-24.0, 0.0, -30.0]
+rotation = [0.0, 52.5, 0.0]
+[entities.oak_03.model]
+asset = "oak_living"
+[entities.oak_03.living_prop]
+lineage_seed = 10
+
+[entities.oak_04.transform]
+position = [-16.0, 0.0, -30.0]
+rotation = [0.0, 190.0, 0.0]
+[entities.oak_04.model]
+asset = "oak_living"
+[entities.oak_04.living_prop]
+lineage_seed = 11
+
+[entities.oak_05.transform]
+position = [-8.0, 0.0, -30.0]
+rotation = [0.0, 327.5, 0.0]
+[entities.oak_05.model]
+asset = "oak_living"
+[entities.oak_05.living_prop]
+lineage_seed = 7
+
+[entities.oak_06.transform]
+position = [0.0, 0.0, -30.0]
+rotation = [0.0, 105.0, 0.0]
+[entities.oak_06.model]
+asset = "oak_living"
+[entities.oak_06.living_prop]
+lineage_seed = 8
+
+[entities.oak_07.transform]
+position = [8.0, 0.0, -30.0]
+rotation = [0.0, 242.5, 0.0]
+[entities.oak_07.model]
+asset = "oak_living"
+[entities.oak_07.living_prop]
+lineage_seed = 9
+
+[entities.oak_08.transform]
+position = [16.0, 0.0, -30.0]
+rotation = [0.0, 20.0, 0.0]
+[entities.oak_08.model]
+asset = "oak_living"
+[entities.oak_08.living_prop]
+lineage_seed = 10
+
+[entities.oak_09.transform]
+position = [24.0, 0.0, -30.0]
+rotation = [0.0, 157.5, 0.0]
+[entities.oak_09.model]
+asset = "oak_living"
+[entities.oak_09.living_prop]
+lineage_seed = 11
+
+[entities.oak_10.transform]
+position = [32.0, 0.0, -30.0]
+rotation = [0.0, 295.0, 0.0]
+[entities.oak_10.model]
+asset = "oak_living"
+[entities.oak_10.living_prop]
+lineage_seed = 7
+
+[entities.oak_11.transform]
+position = [40.0, 0.0, -30.0]
+rotation = [0.0, 72.5, 0.0]
+[entities.oak_11.model]
+asset = "oak_living"
+[entities.oak_11.living_prop]
+lineage_seed = 8
+
+[entities.oak_12.transform]
+position = [48.0, 0.0, -30.0]
+rotation = [0.0, 210.0, 0.0]
+[entities.oak_12.model]
+asset = "oak_living"
+[entities.oak_12.living_prop]
+lineage_seed = 9

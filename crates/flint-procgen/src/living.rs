@@ -119,28 +119,21 @@ impl WarpedTime {
     /// The design's formula, with time counted in steps. Before the start
     /// reads as the start.
     fn at_beat(beats: f64, glide: f32) -> Self {
-        let beats = beats.max(0.0);
-        let index = beats.floor();
-        let glide = f64::from(glide);
-        let eased = if glide <= 1e-6 {
-            0.0
-        } else {
-            let x = ((beats - index - (1.0 - glide)) / glide).clamp(0.0, 1.0);
-            x * x * (3.0 - 2.0 * x)
-        };
-        Self {
-            index: index as u64,
-            weight: eased as f32,
-        }
+        let (index, weight) = flint_core::wooze::warp(beats, glide);
+        Self { index, weight }
     }
 }
 
 /// Each branch level's phase offset, as a fraction of a step. The #207 spike's
-/// value; the tuning belongs to the wooze field (#213).
+/// value.
 pub const STAGGER_PER_LEVEL: f64 = 0.15;
 
 /// The clock a living prop drifts on: hold, then glide to the next pose over
 /// the last `glide` of each `step`, with its parts out of phase.
+///
+/// With a fixed step, as the offline tools have, a moment in seconds is enough
+/// to say where it stands. A prop in a scene counts in beats instead and moves
+/// on by `dt / step`, so that a new step bends the clock rather than jumping it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LivingClock {
     /// Seconds between pose targets.
@@ -169,14 +162,18 @@ impl LivingClock {
 
     /// The clock at `t` seconds for one segment, with its phase offset.
     pub fn for_segment(&self, t: f64, segment: &BranchSegment) -> WarpedTime {
-        let phase = match self.stagger {
+        WarpedTime::at_beat(t / f64::from(self.step) + self.phase(segment), self.glide)
+    }
+
+    /// How far ahead of the prop's own beat this segment runs, in beats.
+    pub fn phase(&self, segment: &BranchSegment) -> f64 {
+        match self.stagger {
             Stagger::None => 0.0,
             Stagger::PerLevel => f64::from(segment.depth) * STAGGER_PER_LEVEL,
             // The golden ratio spreads ids evenly around the cycle, so
             // neighbours are never in step and it doesn't depend on the count.
             Stagger::PerBranch => (f64::from(segment.id) * 0.618_033_988_749_894_9).fract(),
-        };
-        WarpedTime::at_beat(t / f64::from(self.step) + phase, self.glide)
+        }
     }
 
     /// [`for_segment`](Self::for_segment) for every segment, written over `out`.
@@ -187,12 +184,11 @@ impl LivingClock {
 
     /// The drift-only pose shadows can follow (`[living] shadows = "drift"`): at
     /// half speed and all at once, it takes every other pose, and is a beat
-    /// ahead so that what it leaves is never behind a ring's window. Returns
-    /// the two poses and how far between them it is.
-    pub fn slow_pair(&self, t: f64) -> (u64, u64, f32) {
-        let slow = WarpedTime::at_beat(t / (2.0 * f64::from(self.step)), self.glide);
-        let from = slow.index * 2 + 1;
-        (from, from + 2, slow.weight)
+    /// ahead so that what it leaves is never behind a ring's window. Given where
+    /// the slow clock stands, a count of half beats, returns the two poses.
+    pub fn slow_pair(slow_index: u64) -> (u64, u64) {
+        let from = slow_index * 2 + 1;
+        (from, from + 2)
     }
 
     /// How many steps past [`at`](Self::at)'s index a part of a tree this deep
@@ -331,6 +327,8 @@ pub struct LivingJitter {
     clock: LivingClock,
     /// `jitter.amplitude`, or 0 if `jitter.targets` left leaf cards out.
     amplitude: f32,
+    /// How much of it this place shows: the wooze field's `jitter`.
+    scale: f32,
 }
 
 impl From<&LivingConfig> for LivingJitter {
@@ -347,15 +345,21 @@ impl From<&LivingConfig> for LivingJitter {
                 stagger: Stagger::None,
             },
             amplitude: if on { config.jitter.amplitude } else { 0.0 },
+            scale: 1.0,
         }
     }
 }
 
 impl LivingJitter {
+    /// This jitter as a place with this `jitter` knob shows it.
+    pub fn scaled(self, scale: f32) -> Self {
+        Self { scale, ..self }
+    }
+
     /// A value from -1 to 1. Each `channel` runs on its own phase: the golden
     /// ratio spreads them around the step, so a prop never jumps all at once.
     fn value(&self, stream: u64, channel: u64, t: f64) -> f32 {
-        if self.amplitude <= 0.0 {
+        if self.amplitude <= 0.0 || self.scale <= 0.0 {
             return 0.0;
         }
         let phase = (channel as f64 * 0.618_033_988_749_894_9).fract();
@@ -378,14 +382,21 @@ impl LivingJitter {
 
     /// The radians a jitter channel's cards are turned through at `t`.
     pub fn card_turn(&self, stream: u64, channel: usize, t: f64) -> f32 {
-        self.value(stream, channel as u64, t) * self.amplitude * CARD_TURN_PER_AMPLITUDE
+        self.value(stream, channel as u64, t)
+            * self.amplitude
+            * self.scale
+            * CARD_TURN_PER_AMPLITUDE
     }
 
     /// A leaf shade's tint step at `t`, from `-TINT_STEPS` to `TINT_STEPS`.
     /// Its channels come after the cards', so a shade and a card never agree.
+    ///
+    /// The scale goes in before the rounding, so that a whole grove shares the
+    /// same few materials wherever it stands in the field: more jitter means the
+    /// far levels come up more often, not that there are more levels.
     pub fn tint_step(&self, stream: u64, part: usize, t: f64) -> i32 {
-        let value = self.value(stream, (JITTER_CHANNELS + part) as u64, t);
-        (value * TINT_STEPS as f32).round() as i32
+        let value = self.value(stream, (JITTER_CHANNELS + part) as u64, t) * self.scale;
+        ((value * TINT_STEPS as f32).round() as i32).clamp(-TINT_STEPS, TINT_STEPS)
     }
 
     /// The multiplier a tint step stands for: warmer one way and cooler the
@@ -1135,6 +1146,7 @@ stagger = "none"
                 stagger: Stagger::None,
             },
             amplitude,
+            scale: 1.0,
         }
     }
 
@@ -1217,10 +1229,15 @@ stagger = "none"
     #[test]
     fn the_slow_pair_stays_ahead_of_the_window_and_arrives_where_it_next_leaves() {
         let c = clock(0.3, Stagger::PerLevel);
-        let mut last = c.slow_pair(0.0);
+        let slow = |t: f64| {
+            let now = WarpedTime::at_beat(t / (2.0 * f64::from(c.step)), c.glide);
+            let (from, to) = LivingClock::slow_pair(now.index);
+            (from, to, now.weight)
+        };
+        let mut last = slow(0.0);
         for frame in 1..3000 {
             let t = f64::from(frame) / 60.0;
-            let (from, to, weight) = c.slow_pair(t);
+            let (from, to, weight) = slow(t);
             let first = c.at(t).index;
             assert!(from >= first, "{from} left the window at {first}");
             assert!(to - first <= 3, "{to} is past a ring of 4 at {first}");

@@ -255,6 +255,23 @@ pub enum ScriptCommand {
         param: String,
         value: f64,
     },
+    /// Change the wooze field's global knobs (#213): any of `amplitude`, `step`,
+    /// `glide`, `jitter` and `preset`, over `seconds`.
+    SetWooze {
+        knobs: toml::Value,
+        seconds: f64,
+    },
+    /// Change a wooze zone, or add it if there's none of that name, over `seconds`.
+    SetWoozeZone {
+        name: String,
+        fields: toml::Value,
+        seconds: f64,
+    },
+    /// Fade a wooze zone out over `seconds` and drop it.
+    RemoveWoozeZone {
+        name: String,
+        seconds: f64,
+    },
     LoadScene {
         path: String,
     },

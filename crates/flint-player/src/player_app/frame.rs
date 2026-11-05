@@ -698,6 +698,9 @@ impl PlayerApp {
         for line in lines {
             eprintln!("{line}");
         }
+        if let Some(field) = &self.wooze {
+            eprintln!("{}", super::living_props::wooze_report(field, props));
+        }
         if let Some(renderer) = &self.scene_renderer {
             eprintln!(
                 "[living] {} skinned draws this frame",
@@ -1438,7 +1441,18 @@ impl PlayerApp {
                     super::procgen_assets::apply_failures(&failures, &mut sink);
                 }
             }
-            let lineages = self.procgen_resolver.process_living(living_dt);
+            // A scene with a wooze field reads it where each prop now stands.
+            if self.wooze.is_some() {
+                self.wooze_time += living_dt;
+                let world = &self.world;
+                self.procgen_resolver
+                    .living_props_mut()
+                    .track_positions(|entity| {
+                        world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
+                    });
+            }
+            let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+            let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
             if !lineages.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)

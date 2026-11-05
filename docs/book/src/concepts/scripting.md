@@ -472,6 +472,23 @@ hot-reloaded script cannot strand the world inside an effect. Call it every
 frame the effect is active. See
 [Post-Processing: Render Modes](post-processing.md#render-modes).
 
+### Wooze API
+
+Moves the scene's [wooze field](procgen.md#the-wooze-field), which every living prop reads. Each takes an optional last argument of seconds to get there over, an integer or a float. Without it, the change is immediate.
+
+| Function | Description |
+|----------|-------------|
+| `set_wooze(knobs)` | Change global knobs. `knobs` is a map of any of `amplitude`, `step`, `glide`, `jitter`, `preset`; a preset applies first and the others on top |
+| `set_wooze(knobs, seconds)` | The same, over `seconds` |
+| `set_wooze_zone(name, fields)` | Change the named zone, keeping what `fields` leaves out, or add it if there's none. A new zone needs `shape`, `center`, `radius` or `size`, and a knob |
+| `set_wooze_zone(name, fields, seconds)` | The same, with a change of knob easing over `seconds` and a new zone fading in. A zone's place and shape move at once |
+| `remove_wooze_zone(name)` | Drop the named zone |
+| `remove_wooze_zone(name, seconds)` | Fade it out over `seconds`, then drop it |
+
+Whether or not the change eases, nothing pops: a prop's parts take a new glide or amplitude when their own cycles begin, and a new step bends their clocks from wherever they stand.
+
+A change the field can't use is logged by the player, naming the zone, and changes nothing. So does any of these in a scene with no `[wooze]` table: it has no field to change, and an empty table opts it in.
+
 ### Conducted Parameters API
 
 When a scene carries a [`music_session`](music-sessions.md) component, the player fills a per-frame snapshot of the session's state and exposes it to every script through these getters (ADR 0020, conducted-parameters script surface). Without a session every getter returns a neutral value: a clean, settled world with `coherence` and `reassembly` at `1.0`, zero lean, and `1e6` beats until anything upcoming. Bindings written as `1 - conducted_coherence()` therefore show nothing when no music is running, and scripts never need to test for a session.

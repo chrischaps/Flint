@@ -1,6 +1,6 @@
 # Constraints
 
-Constraints are declarative validation rules that define what a correct scene looks like. They live in TOML files under `schemas/constraints/` and are checked by `flint validate`.
+Constraints are declarative validation rules that define what a correct scene looks like. They live in TOML files under `schemas/constraints/` and are checked by `flint validate`, which also checks a scene's [`[wooze]` table](procgen.md#the-wooze-field) against its schema.
 
 ## Constraint File Format
 

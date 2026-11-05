@@ -103,6 +103,10 @@ impl PlayerApp {
             scene_post_process: None,
             scene_living: None,
             living_blend: Default::default(),
+            scene_wooze: None,
+            wooze: None,
+            wooze_time: 0.0,
+            wooze_missing_warned: false,
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -223,6 +227,7 @@ impl PlayerApp {
         self.scene_camera = scene_file.camera.clone();
         self.scene_post_process = scene_file.post_process.clone();
         self.scene_living = scene_file.living.clone();
+        self.scene_wooze = scene_file.wooze.clone();
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).
@@ -439,6 +444,8 @@ impl PlayerApp {
         // Procgen before the model loader: catalog > procgen > file (#32).
         self.procgen_resolver
             .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
+        self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
+        self.wooze_time = 0.0;
         super::procgen_assets::resolve_scene(
             &self.scene_path,
             &mut self.world,

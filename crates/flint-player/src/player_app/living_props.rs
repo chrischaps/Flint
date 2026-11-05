@@ -26,11 +26,13 @@
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
+use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
     AssetKind, BlendFrame, EchoConfig, EchoOverride, LineageDone, LivingDefaults, LivingPropId,
-    LivingPropRequest, LivingRig, LivingShadows, LivingStats, ProcGenResolver, Stagger,
+    LivingPropRequest, LivingProps, LivingRig, LivingShadows, LivingStats, ProcGenResolver,
+    Stagger,
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -44,20 +46,6 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
     let Some(table) = table else {
         return LivingDefaults::default();
     };
-    let step = table.step.filter(|step| {
-        let ok = step.is_finite() && *step > 0.0;
-        if !ok {
-            tracing::warn!("[living] step = {step} must be more than 0; using each spec's");
-        }
-        ok
-    });
-    let glide = table.glide.filter(|glide| {
-        let ok = (0.0..=1.0).contains(glide);
-        if !ok {
-            tracing::warn!("[living] glide = {glide} must be from 0 to 1; using each spec's");
-        }
-        ok
-    });
     let shadows = match table.shadows.as_deref() {
         None | Some("blended") => LivingShadows::Blended,
         Some("drift") => LivingShadows::Drift,
@@ -69,11 +57,20 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
         }
     };
     LivingDefaults {
-        step,
-        glide,
         shadows,
         echoes: echoes_of(table.echoes.as_ref()),
     }
+}
+
+/// The field a scene's `[wooze]` table describes, if it has one. For the same
+/// reason as above, what's wrong with it is named and left out, here where
+/// `flint validate` fails on it.
+pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
+    let (field, issues) = table?.field();
+    for issue in issues {
+        tracing::warn!("{issue}; going without it");
+    }
+    Some(field)
 }
 
 /// A scene's `[living] echoes` as the resolver wants it, with a bad field named
@@ -156,6 +153,7 @@ pub fn upload_blends(
 pub fn read_request(
     entity: flint_core::EntityId,
     entity_name: &str,
+    position: [f32; 3],
     spec_name: &str,
     component: &toml::Value,
 ) -> Result<LivingPropRequest, String> {
@@ -195,6 +193,7 @@ pub fn read_request(
     Ok(LivingPropRequest {
         entity,
         entity_name: entity_name.to_string(),
+        position,
         spec_name: spec_name.to_string(),
         lineage_seed,
         pose_ring,
@@ -239,7 +238,10 @@ pub fn resolve(
             );
             continue;
         }
-        let added = read_request(entity.id, name, spec_name, component)
+        let position = world
+            .get_world_position(entity.id)
+            .map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+        let added = read_request(entity.id, name, position, spec_name, component)
             .and_then(|request| resolver.add_living_prop(request));
         match added {
             Ok((_, asset)) => assets.push((entity.id, asset)),
@@ -422,6 +424,40 @@ pub fn report(
             stats.blends_starved,
         ),
     ]
+}
+
+/// The `[wooze]` line `--exit-after` prints: how far apart the field has put the
+/// props, knob by knob, so that a run says whether its zones reached anything.
+pub fn wooze_report(field: &WoozeField, props: &LivingProps) -> String {
+    let range = |read: fn(&flint_core::wooze::WoozeSample) -> f32| {
+        props
+            .props()
+            .iter()
+            .map(|p| read(&p.wooze()))
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), value| {
+                (lo.min(value), hi.max(value))
+            })
+    };
+    let [step, glide, amplitude, jitter] = [
+        range(|s| s.step),
+        range(|s| s.glide),
+        range(|s| s.amplitude),
+        range(|s| s.jitter),
+    ];
+    format!(
+        "[wooze] {} zones over {} props: step {:.2}..{:.2}, glide {:.2}..{:.2}, amplitude \
+         {:.2}..{:.2}, jitter {:.2}..{:.2}",
+        field.zones().len(),
+        props.props().len(),
+        step.0,
+        step.1,
+        glide.0,
+        glide.1,
+        amplitude.0,
+        amplitude.1,
+        jitter.0,
+        jitter.1,
+    )
 }
 
 #[cfg(test)]

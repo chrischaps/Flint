@@ -121,8 +121,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
 
-    // The scene's living props: a global step and glide, and what shadows follow
+    // The scene's living props: what their shadows follow, and how woozy it is
     app.scene_living = scene_file.living.clone();
+    app.scene_wooze = scene_file.wooze.clone();
 
     // Preserve schema paths for scene transitions (includes auto-discovered)
     app.set_schema_paths(all_schemas);

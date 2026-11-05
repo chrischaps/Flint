@@ -24,6 +24,7 @@ pub mod spline;
 pub mod toml_util;
 mod types;
 pub mod vfs;
+pub mod wooze;
 pub mod world_line;
 pub mod world_text;
 

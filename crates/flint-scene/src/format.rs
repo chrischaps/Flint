@@ -16,23 +16,46 @@ pub struct SceneFile {
     #[serde(default)]
     pub living: Option<LivingDef>,
     #[serde(default)]
+    pub wooze: Option<WoozeDef>,
+    #[serde(default)]
     pub prefabs: HashMap<String, PrefabInstance>,
     #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
 }
 
+/// A scene's `[wooze]` table (#213): how woozy it is everywhere, and the zones
+/// that are more or less so. A scene without one has no field and pays nothing.
+/// [`WoozeDef::field`](crate::WoozeDef::field) makes it into one, and
+/// [`WoozeDef::check`](crate::WoozeDef::check) is what `flint validate` runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WoozeDef {
+    /// A built-in set of knobs to start from. Unset: everything as authored.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// How much of a consumer's slow drift shows, 0 to 1.
+    #[serde(default)]
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    #[serde(default)]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1.
+    #[serde(default)]
+    pub glide: Option<f32>,
+    /// How much of a consumer's fast jitter shows.
+    #[serde(default)]
+    pub jitter: Option<f32>,
+    /// `[[wooze.zone]]` entries. Raw, so that one that's wrong can be named
+    /// rather than failing the whole scene's parse with a line number.
+    #[serde(default)]
+    pub zone: Vec<toml::Value>,
+}
+
 /// A scene's `[living]` table: what it says about all its living props, ahead
-/// of any one spec. `step` and `glide` belong to the wooze field once it lands
-/// (#213); until then this is their global default.
+/// of any one spec. How woozy they are is `[wooze]`'s to say.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LivingDef {
-    /// Seconds between pose targets. Unset: each spec's `[living] step`.
-    #[serde(default)]
-    pub step: Option<f32>,
-    /// How much of a step is spent easing, 0 to 1. Unset: each spec's.
-    #[serde(default)]
-    pub glide: Option<f32>,
     /// What the shadows follow: `blended` (what's drawn; the default) or
     /// `drift` (a slower pose with no stagger or jitter).
     #[serde(default)]
@@ -450,6 +473,7 @@ impl SceneFile {
             environment: None,
             post_process: None,
             living: None,
+            wooze: None,
             prefabs: HashMap::new(),
             entities: HashMap::new(),
         }

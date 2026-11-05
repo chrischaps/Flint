@@ -275,11 +275,22 @@ impl ProcGenResolver {
     /// Lineages that finished come back to be uploaded. Does nothing at all in
     /// a scene with no living props.
     pub fn process_living(&mut self, dt: f64) -> Vec<LineageDone> {
+        self.process_living_in(dt, None)
+    }
+
+    /// [`process_living`](Self::process_living) in a scene with a wooze field,
+    /// given with the moment on its own clock to sample it at. `None` for a scene
+    /// with none, in which props keep to their specs and nothing is sampled.
+    pub fn process_living_in(
+        &mut self,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) -> Vec<LineageDone> {
         if self.living.is_empty() {
             return Vec::new();
         }
         let left = self.queue.budget_ms() - self.queue.stats().budget_used_ms;
-        self.living.tick(dt, left, &self.registry)
+        self.living.tick(dt, left, &self.registry, wooze)
     }
 
     /// The milliseconds a frame may spend generating, assets and poses together.

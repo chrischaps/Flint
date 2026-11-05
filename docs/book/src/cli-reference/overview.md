@@ -14,7 +14,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate a scene against constraints |
+| `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |

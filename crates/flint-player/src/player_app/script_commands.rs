@@ -125,6 +125,33 @@ impl PlayerApp {
                         );
                     }
                 }
+                ScriptCommand::SetWooze { knobs, seconds } => {
+                    self.change_wooze(|field, time| {
+                        let table = table_of(&knobs)?;
+                        field.set_global(table, time, seconds)
+                    });
+                }
+                ScriptCommand::SetWoozeZone {
+                    name,
+                    fields,
+                    seconds,
+                } => {
+                    self.change_wooze(|field, time| {
+                        let table = table_of(&fields)?;
+                        field
+                            .set_zone(&name, table, time, seconds)
+                            .map_err(|e| format!("zone '{name}': {e}"))
+                    });
+                }
+                ScriptCommand::RemoveWoozeZone { name, seconds } => {
+                    self.change_wooze(|field, time| {
+                        if field.remove_zone(&name, time, seconds) {
+                            Ok(())
+                        } else {
+                            Err(format!("there's no zone named '{name}' to remove"))
+                        }
+                    });
+                }
                 ScriptCommand::LoadScene { path } => {
                     if self.transition_phase.is_idle() {
                         println!("[transition] Starting exit transition → {}", path);
@@ -179,6 +206,31 @@ impl PlayerApp {
                     self.unload_chunk(&chunk_id);
                 }
             }
+        }
+    }
+
+    /// A script's change to the wooze field. A change that's no good is named and
+    /// changes nothing. A scene with no `[wooze]` table never asked for a field, so
+    /// it doesn't get one; it says so once, since a script may ask every frame.
+    fn change_wooze(
+        &mut self,
+        change: impl FnOnce(&mut flint_core::wooze::WoozeField, f64) -> Result<(), String>,
+    ) {
+        let time = self.wooze_time;
+        match &mut self.wooze {
+            Some(field) => {
+                if let Err(reason) = change(field, time) {
+                    tracing::warn!("A script's change to the wooze field: {reason}");
+                }
+            }
+            None if !self.wooze_missing_warned => {
+                self.wooze_missing_warned = true;
+                tracing::warn!(
+                    "A script tried to change the wooze field, and this scene has none: \
+                     give it a [wooze] table, even an empty one, to opt in"
+                );
+            }
+            None => {}
         }
     }
 
@@ -326,4 +378,10 @@ impl PlayerApp {
             });
         }
     }
+}
+
+fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
+    value
+        .as_table()
+        .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }

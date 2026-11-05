@@ -19,6 +19,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+use flint_core::wooze::{Cycle, WoozeField, WoozeSample};
 use flint_core::{ContentHash, EntityId};
 use web_time::Instant;
 
@@ -51,6 +52,8 @@ pub struct LivingPropRequest {
     pub entity: EntityId,
     /// Its name, which seeds its stream of poses.
     pub entity_name: String,
+    /// Where it stands in the world, which is where it reads the wooze field.
+    pub position: [f32; 3],
     /// The spec's `meta.name`.
     pub spec_name: String,
     /// Which tree this is. `None` for the spec's `lineage_seed`.
@@ -74,14 +77,10 @@ pub enum LivingShadows {
     Drift,
 }
 
-/// What a scene says about its living props, ahead of any one spec. The wooze
-/// field (#213) is where `step` and `glide` go from here.
+/// What a scene says about its living props, ahead of any one spec. How woozy
+/// they are is the wooze field's to say (#213).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct LivingDefaults {
-    /// Seconds between pose targets, for every prop. `None`: each spec's.
-    pub step: Option<f32>,
-    /// How much of a step is spent easing, for every prop. `None`: each spec's.
-    pub glide: Option<f32>,
     /// What the shadows follow.
     pub shadows: LivingShadows,
     /// The scene's word on echoes, over each spec's, a field at a time.
@@ -89,7 +88,7 @@ pub struct LivingDefaults {
 }
 
 /// A scene's `[living] echoes`: whichever of a spec's fields it sets. The wooze
-/// field (#213) is where this goes from here.
+/// field (#213) has no knob for these yet.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EchoOverride {
     /// How many copies. `None`: the spec's.
@@ -115,6 +114,8 @@ impl EchoOverride {
 #[derive(Debug, Default)]
 pub struct BlendFrame {
     times: Vec<WarpedTime>,
+    /// How much of its pose each part shows.
+    shown: Vec<f32>,
     pose: Option<LivingPose>,
     posed: Vec<BranchSegment>,
     /// The bone matrices to write, from [`PropBlend::first_bone`].
@@ -150,6 +151,9 @@ struct DrawnState {
 struct DrawnBones {
     times: Vec<WarpedTime>,
     turns: [f32; JITTER_CHANNELS],
+    /// Each part's cycle, by segment id. Holds what the part started it with, for
+    /// this buffer alone: an echo reaches each beat at a moment of its own.
+    parts: Vec<Cycle>,
 }
 
 /// One faint copy of a prop, and what its own bones last held.
@@ -309,6 +313,19 @@ pub struct LivingProp {
     /// `None` until its lineage is built, since its size depends on the depth.
     ring: Option<PoseRing>,
     jitter: LivingJitter,
+    /// Seconds its jitter runs ahead of the props' clock, fixed when it's added:
+    /// each value already has its own phase, and has no need to bend with the
+    /// step. Only the slow layer does.
+    jitter_ahead: f64,
+    /// The step when it was added, which puts its echoes' jitter in seconds.
+    jitter_step: f64,
+    /// See [`Self::beats`].
+    beats: f64,
+    position: [f32; 3],
+    wooze: WoozeSample,
+    /// The same as [`DrawnBones::parts`] for the drift-only shadow, whose cycle is
+    /// two steps long.
+    shadow_cycle: Cycle,
     drawn: DrawnState,
     /// Farthest from now first, which is the order they draw in.
     echoes: Vec<PropEcho>,
@@ -330,7 +347,8 @@ impl LivingProp {
         &self.asset_name
     }
 
-    /// The clock its parts drift on, read at [`Self::local_time`].
+    /// The clock its parts drift on, read at [`Self::beats`]: as the spec says,
+    /// or as the wooze field last said.
     pub fn clock(&self) -> LivingClock {
         self.clock
     }
@@ -345,9 +363,22 @@ impl LivingProp {
         self.phase_offset
     }
 
-    /// Where this prop's clock stands when the props' clock reads `time`.
-    pub fn local_time(&self, time: f64) -> f64 {
-        time + f64::from(self.phase_offset) * f64::from(self.clock.step)
+    /// Where this prop's clock stands, in steps it has run through. It moves on
+    /// by `dt / step` each frame, so a new step changes how fast it runs from
+    /// here and never where it is.
+    pub fn beats(&self) -> f64 {
+        self.beats
+    }
+
+    /// Where it stands in the world.
+    pub fn position(&self) -> [f32; 3] {
+        self.position
+    }
+
+    /// What the wooze field last said about its place, or what its spec says in
+    /// a scene with no field.
+    pub fn wooze(&self) -> WoozeSample {
+        self.wooze
     }
 
     /// How many echoes it draws.
@@ -360,9 +391,16 @@ impl LivingProp {
         self.echoes[index].copy
     }
 
-    /// Where echo `index`'s clock stands when this prop's reads `t`.
-    pub fn echo_time(&self, index: usize, t: f64) -> f64 {
-        t + f64::from(self.echoes[index].copy.offset) * f64::from(self.clock.step)
+    /// Where echo `index`'s clock stands: an offset counted in steps, so it's the
+    /// same many steps from the prop whatever the step is.
+    pub fn echo_beats(&self, index: usize) -> f64 {
+        self.beats + f64::from(self.echoes[index].copy.offset)
+    }
+
+    /// The seconds echo `index`'s jitter reads when this prop's reads `t`. By the
+    /// step it was added on, since jitter doesn't bend with the step.
+    fn echo_jitter_time(&self, index: usize, t: f64) -> f64 {
+        t + f64::from(self.echoes[index].copy.offset) * self.jitter_step
     }
 
     /// How many steps behind now the farthest echo is. A ring's window starts
@@ -386,10 +424,9 @@ impl LivingProp {
         self.steps_behind() + f64::from(ahead)
     }
 
-    /// The first step its ring's window needs when the props' clock reads `time`.
-    fn window_start(&self, time: f64) -> u64 {
-        let behind = self.steps_behind() * f64::from(self.clock.step);
-        self.clock.at(self.local_time(time) - behind).index
+    /// The first step its ring's window needs now.
+    fn window_start(&self) -> u64 {
+        (self.beats - self.steps_behind()).max(0.0).floor() as u64
     }
 
     /// The shape seed of step `index`. Two props of a lineage share a
@@ -604,8 +641,6 @@ impl LivingProps {
         if let Some(stagger) = request.stagger {
             clock.stagger = stagger;
         }
-        clock.step = self.defaults.step.unwrap_or(clock.step);
-        clock.glide = self.defaults.glide.unwrap_or(clock.glide);
         self.props.push(LivingProp {
             entity: request.entity,
             entity_name: request.entity_name,
@@ -617,6 +652,17 @@ impl LivingProps {
             pose_ring: request.pose_ring.unwrap_or(living.pose_ring),
             ring: None,
             jitter: LivingJitter::from(living),
+            jitter_ahead: f64::from(phase_offset) * f64::from(clock.step),
+            jitter_step: f64::from(clock.step),
+            beats: f64::from(phase_offset),
+            position: request.position,
+            wooze: WoozeSample {
+                amplitude: 1.0,
+                step: clock.step,
+                glide: clock.glide,
+                jitter: 1.0,
+            },
+            shadow_cycle: Cycle::default(),
             drawn: DrawnState::default(),
             echoes: self
                 .defaults
@@ -644,6 +690,11 @@ impl LivingProps {
     /// A pose the clock needs that isn't ready leaves the prop as it was, and
     /// [`LivingStats::blends_starved`] counts it. It can only happen if the
     /// budget has run behind or poses are still coming in under `--procgen-defer`.
+    ///
+    /// Each part reads the field's glide and amplitude when its own cycle begins,
+    /// through its [`Cycle`], so a change reaches a staggered tree a part at a
+    /// time and nothing has to be redrawn until it does: a prop holding through a
+    /// change costs no more than one holding through nothing.
     pub fn blend_prop(&mut self, id: LivingPropId, frame: &mut BlendFrame) -> PropBlend {
         let prop = &mut self.props[id.0];
         let mut blend = PropBlend {
@@ -656,16 +707,19 @@ impl LivingProps {
             return blend;
         };
         let (skeleton, rig) = (&built.skeleton, &built.rig);
-        let t = prop.local_time(self.time);
+        let t = self.time + prop.jitter_ahead;
+        let jitter = prop.jitter.scaled(prop.wooze.jitter);
 
         let moved = blend_bones(
             &prop.clock,
-            &prop.jitter,
+            &jitter,
             prop.stream,
             ring,
             skeleton,
             rig,
             t,
+            prop.beats,
+            &prop.wooze,
             &mut prop.drawn.bones,
             frame,
         );
@@ -675,7 +729,7 @@ impl LivingProps {
         // Each part's own beat, and what's new goes up as a material change.
         prop.drawn.tints.resize(rig.leaf_parts.len(), 0);
         for (i, part) in rig.leaf_parts.iter().enumerate() {
-            let step = prop.jitter.tint_step(prop.stream, i, t);
+            let step = jitter.tint_step(prop.stream, i, t);
             if step != prop.drawn.tints[i] {
                 prop.drawn.tints[i] = step;
                 frame.tints.push((*part, prop.jitter.tint(step)));
@@ -683,7 +737,9 @@ impl LivingProps {
         }
 
         if self.defaults.shadows == LivingShadows::Drift {
-            let (from, to, weight) = prop.clock.slow_pair(t);
+            let slow = prop.shadow_cycle.read(prop.beats / 2.0, &prop.wooze);
+            let (from, to) = LivingClock::slow_pair(slow.index);
+            let weight = slow.weight;
             if prop.drawn.shadow != Some((from, weight)) {
                 let pose = frame.pose.get_or_insert_with(|| LivingPose {
                     shape_seed: 0,
@@ -697,6 +753,11 @@ impl LivingProps {
                     let wanted = if index == 0 { from } else { to };
                     ring.get(wanted).map(|p| &**p)
                 });
+                if found {
+                    for segment in &mut pose.segments {
+                        *segment = segment.pulled(slow.amplitude);
+                    }
+                }
                 if found
                     && rig
                         .palette_into(skeleton, pose, &mut frame.posed, &mut frame.shadow_bones)
@@ -730,17 +791,21 @@ impl LivingProps {
         let (Some(ring), Some(built)) = (&prop.ring, &self.lineages[prop.lineage].built) else {
             return None;
         };
-        let t = prop.echo_time(echo, prop.local_time(self.time));
+        let t = prop.echo_jitter_time(echo, self.time + prop.jitter_ahead);
+        let beats = prop.echo_beats(echo);
+        let jitter = prop.jitter.scaled(prop.wooze.jitter);
         let drawn = &mut prop.echoes[echo].drawn;
         let never_posed = drawn.times.is_empty();
         let moved = blend_bones(
             &prop.clock,
-            &prop.jitter,
+            &jitter,
             prop.stream,
             ring,
             &built.skeleton,
             &built.rig,
             t,
+            beats,
+            &prop.wooze,
             drawn,
             frame,
         );
@@ -772,20 +837,37 @@ impl LivingProps {
         done
     }
 
-    /// One frame: move the clock on by `dt`, slide the rings to it, and
-    /// generate what's missing within `budget_ms`. Lineages come first, since
-    /// nothing can pose before them; one can't be cut short, so a frame builds
-    /// at most one and then stops.
+    /// Tell the props where they stand now, for a scene with a wooze field, in
+    /// which a prop that moves reads the field where it's got to.
+    pub fn track_positions(&mut self, position_of: impl Fn(EntityId) -> Option<[f32; 3]>) {
+        for prop in &mut self.props {
+            if let Some(position) = position_of(prop.entity) {
+                prop.position = position;
+            }
+        }
+    }
+
+    /// One frame: read the wooze field if the scene has one, move the clocks on
+    /// by `dt`, slide the rings to them, and generate what's missing within
+    /// `budget_ms`. Lineages come first, since nothing can pose before them; one
+    /// can't be cut short, so a frame builds at most one and then stops.
     pub(crate) fn tick(
         &mut self,
         dt: f64,
         budget_ms: f64,
         registry: &GeneratorRegistry,
+        wooze: Option<(&WoozeField, f64)>,
     ) -> Vec<LineageDone> {
         self.time += dt;
         let start = Instant::now();
         for prop in &mut self.props {
-            let first = prop.window_start(self.time);
+            if let Some((field, time)) = wooze {
+                prop.wooze = field.sample(prop.position, time);
+                prop.clock.step = prop.wooze.step;
+                prop.clock.glide = prop.wooze.glide;
+            }
+            prop.beats += dt / f64::from(prop.clock.step);
+            let first = prop.window_start();
             if let Some(ring) = &mut prop.ring {
                 ring.slide_to(first);
             }
@@ -919,7 +1001,7 @@ impl LivingProps {
                 let max_depth = built.skeleton.max_depth();
                 lineage.built = Some(built);
                 for prop in self.props.iter_mut().filter(|p| p.lineage == index) {
-                    let first = prop.window_start(self.time);
+                    let first = prop.window_start();
                     // Every pose a staggered part of it or its echoes can be
                     // using has to fit.
                     let reach = prop.clock.reach_across(max_depth, prop.echo_span());
@@ -980,9 +1062,9 @@ struct MovedBones {
     starved: bool,
 }
 
-/// One bone buffer's blend at `t`, a prop's or an echo's: every part reads its
-/// own place on the warped clock, and if none of that has moved nor the jitter
-/// turned, this computes nothing.
+/// One bone buffer's blend, a prop's or an echo's: every part reads its own place
+/// on the warped clock at `beats`, and the jitter reads `t` in seconds. If none of
+/// that has moved, this computes nothing.
 #[allow(clippy::too_many_arguments)]
 fn blend_bones(
     clock: &LivingClock,
@@ -992,6 +1074,8 @@ fn blend_bones(
     skeleton: &LivingSkeleton,
     rig: &LivingRig,
     t: f64,
+    beats: f64,
+    wooze: &WoozeSample,
     drawn: &mut DrawnBones,
     frame: &mut BlendFrame,
 ) -> MovedBones {
@@ -1003,7 +1087,19 @@ fn blend_bones(
     for (channel, turn) in turns.iter_mut().enumerate() {
         *turn = jitter.card_turn(stream, channel, t);
     }
-    clock.times_into(t, &skeleton.segments, &mut frame.times);
+    drawn
+        .parts
+        .resize(skeleton.segments.len(), Cycle::default());
+    frame.times.clear();
+    frame.shown.clear();
+    for (segment, part) in skeleton.segments.iter().zip(&mut drawn.parts) {
+        let now = part.read(beats + clock.phase(segment), wooze);
+        frame.times.push(WarpedTime {
+            index: now.index,
+            weight: now.weight,
+        });
+        frame.shown.push(now.amplitude);
+    }
     let turned = turns != drawn.turns;
     let drifted = frame.times != drawn.times;
 
@@ -1014,6 +1110,11 @@ fn blend_bones(
             segments: Vec::new(),
         });
         let found = pose.blend_from(&frame.times, |index| ring.get(index).map(|p| &**p));
+        if found {
+            for (segment, shown) in pose.segments.iter_mut().zip(&frame.shown) {
+                *segment = segment.pulled(*shown);
+            }
+        }
         let posed = found
             && rig
                 .palette_into(skeleton, pose, &mut frame.posed, &mut frame.bones)
@@ -1125,6 +1226,7 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         LivingPropRequest {
             entity: EntityId::from_raw(n),
             entity_name: name.to_string(),
+            position: [0.0; 3],
             spec_name: "sapling".to_string(),
             lineage_seed: None,
             pose_ring: None,
@@ -1336,7 +1438,7 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         let prop = props.prop(id);
         assert_eq!(prop.ring_len(), 3);
         for i in 0..200 {
-            let t = prop.local_time(f64::from(i) * 0.013);
+            let t = f64::from(i) * 0.013;
             let first = prop.clock().at(t).index;
             for segment in &skeleton.segments {
                 let now = prop.clock().for_segment(t, segment).index;
@@ -1361,8 +1463,7 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         for id in &ids {
             let prop = props.prop(*id);
             assert_eq!(prop.ready(), prop.ring_len());
-            let t = prop.local_time(props.time());
-            assert_eq!(prop.first_step(), Some(prop.clock().at(t).index));
+            assert_eq!(prop.first_step(), Some(prop.beats().floor() as u64));
         }
         let stats = props.stats();
         assert_eq!(stats.frames, 300);
@@ -1704,18 +1805,20 @@ value = 1
             let props = resolver.living_props();
             let prop = props.prop(id);
             let (skeleton, rig) = props.rig_of(id).unwrap();
-            let t = prop.local_time(props.time());
 
             let segments = skeleton
                 .segments
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    let now = prop.clock.for_segment(t, s);
+                    let (index, weight) = flint_core::wooze::warp(
+                        prop.beats() + prop.clock.phase(s),
+                        prop.clock.glide,
+                    );
                     SegmentPose::blend(
-                        &prop.pose(now.index).unwrap().segments[i],
-                        &prop.pose(now.index + 1).unwrap().segments[i],
-                        now.weight,
+                        &prop.pose(index).unwrap().segments[i],
+                        &prop.pose(index + 1).unwrap().segments[i],
+                        weight,
                     )
                 })
                 .collect();
@@ -1802,29 +1905,13 @@ value = 1
 
         // Past the ring, with no frame budget to have filled it.
         let props = resolver.living_props_mut();
-        props.time += 100.0;
         for prop in &mut props.props {
+            prop.beats += 1000.0;
             prop.ring.as_mut().unwrap().slide_to(100_000);
         }
         let blend = props.blend_prop(id, &mut frame);
         assert_eq!(blend.first_bone, None);
         assert_eq!(props.stats().blends_starved, 1);
-    }
-
-    #[test]
-    fn a_scene_default_beats_the_spec() {
-        let defaults = LivingDefaults {
-            step: Some(2.0),
-            glide: Some(0.0),
-            ..Default::default()
-        };
-        let (resolver, id) = one_prop("step = 0.25\nglide = 0.9", defaults);
-        let clock = resolver.living_props().prop(id).clock();
-        assert_eq!((clock.step, clock.glide), (2.0, 0.0));
-
-        let (resolver, id) = one_prop("step = 0.25\nglide = 0.9", LivingDefaults::default());
-        let clock = resolver.living_props().prop(id).clock();
-        assert_eq!((clock.step, clock.glide), (0.25, 0.9));
     }
 
     #[test]
@@ -1901,17 +1988,19 @@ value = 1
                 let props = resolver.living_props();
                 let prop = props.prop(id);
                 let (skeleton, rig) = props.rig_of(id).unwrap();
-                let t = prop.echo_time(echo, prop.local_time(props.time()));
                 let segments = skeleton
                     .segments
                     .iter()
                     .enumerate()
                     .map(|(i, s)| {
-                        let now = prop.clock.for_segment(t, s);
+                        let (index, weight) = flint_core::wooze::warp(
+                            prop.echo_beats(echo) + prop.clock.phase(s),
+                            prop.clock.glide,
+                        );
                         SegmentPose::blend(
-                            &prop.pose(now.index).unwrap().segments[i],
-                            &prop.pose(now.index + 1).unwrap().segments[i],
-                            now.weight,
+                            &prop.pose(index).unwrap().segments[i],
+                            &prop.pose(index + 1).unwrap().segments[i],
+                            weight,
                         )
                     })
                     .collect();
@@ -1964,8 +2053,8 @@ value = 1
             resolver.process_living(1.0 / 60.0);
             let props = resolver.living_props_mut();
             let prop = props.prop(id);
-            let t = prop.local_time(props.time());
-            let (from, to, _) = prop.clock.slow_pair(t);
+            let slow = flint_core::wooze::warp(prop.beats() / 2.0, prop.clock.glide).0;
+            let (from, to) = LivingClock::slow_pair(slow);
             assert!(prop.pose(from).is_some() && prop.pose(to).is_some());
             wrote += u32::from(props.blend_prop(id, &mut frame).shadow_changed);
         }
@@ -1985,15 +2074,13 @@ value = 1
         let prop = props.prop(id_off);
         assert_eq!(prop.echo_count(), 0);
         // The window starts at now, as it did before echoes.
-        let now = prop.clock.at(prop.local_time(props.time())).index;
-        assert_eq!(prop.first_step(), Some(now));
+        assert_eq!(prop.first_step(), Some(prop.beats().floor() as u64));
         assert_eq!(prop.ring_len(), 4);
 
         // With them it starts behind, for the farthest one to read.
         let props = resolver_on.living_props();
         let prop = props.prop(id_on);
-        let now = prop.clock.at(prop.local_time(props.time())).index;
-        assert!(prop.first_step().unwrap() < now);
+        assert!(prop.first_step().unwrap() < prop.beats().floor() as u64);
     }
 
     #[test]
@@ -2080,5 +2167,361 @@ value = 1
         assert!(changes > 30 && changes <= 160, "{changes}");
         // Each distinct tint costs a material per shade, for the whole grove.
         assert!(seen.len() <= 9, "{} tints", seen.len());
+    }
+
+    // ---- The wooze field (#213) ----
+
+    fn field(global: &str, zones: &[&str]) -> WoozeField {
+        let mut field = WoozeField::new(WoozeSample::NEUTRAL);
+        field
+            .set_global(&global.parse().unwrap(), 0.0, 0.0)
+            .unwrap();
+        for zone in zones {
+            field.add_zone(&zone.parse().unwrap()).unwrap();
+        }
+        field
+    }
+
+    /// One frame on `field`, with the bones of each prop that moved.
+    fn tick_with(resolver: &mut ProcGenResolver, field: &WoozeField, time: f64, dt: f64) {
+        resolver.process_living_in(dt, Some((field, time)));
+    }
+
+    const DREAMY: &str = r#"
+        name = "pocket"
+        shape = "sphere"
+        center = [0, 0, 0]
+        radius = 3
+        falloff = 4
+        glide = 0.8
+    "#;
+
+    /// The Done When: props inside a `glide = 0.8` sphere glide dreamier than
+    /// those outside, with a smooth falloff between. A prop at glide `g` moves
+    /// for `g` of its time, so that's what to count.
+    #[test]
+    fn a_zone_makes_the_props_inside_it_glide_longer_with_a_falloff_between() {
+        let extra = format!("stagger = \"none\"\n{NO_JITTER}");
+        let mut resolver = resolver_with(&sapling(&extra));
+        let places = [("in", 0.0), ("edge", 5.0), ("out", 12.0)];
+        let ids: Vec<_> = places
+            .iter()
+            .enumerate()
+            .map(|(n, (name, x))| {
+                let mut prop = request(n as u64, name);
+                prop.position = [*x, 0.0, 0.0];
+                resolver.add_living_prop(prop).unwrap().0
+            })
+            .collect();
+        resolver.make_living_now();
+        let field = field("step = 0.5\nglide = 0.3", &[DREAMY]);
+
+        let mut frame = BlendFrame::default();
+        let mut moving = [0usize; 3];
+        let frames = 600;
+        for f in 0..frames {
+            let time = f64::from(f) / 60.0;
+            tick_with(&mut resolver, &field, time, 1.0 / 60.0);
+            for (i, id) in ids.iter().enumerate() {
+                let blend = resolver.living_props_mut().blend_prop(*id, &mut frame);
+                moving[i] += usize::from(blend.first_bone == Some(0));
+            }
+        }
+        // The frame of each beat moves too, one in the 30 of a step.
+        let share = |i: usize| moving[i] as f32 / frames as f32 - 1.0 / 30.0;
+        assert!((share(0) - 0.8).abs() < 0.04, "inside {}", share(0));
+        // Halfway down the falloff, it's halfway between the two.
+        assert!((share(1) - 0.55).abs() < 0.04, "falloff {}", share(1));
+        assert!((share(2) - 0.3).abs() < 0.04, "outside {}", share(2));
+    }
+
+    /// The tips' largest move on any frame of `seconds` of play, where `change`
+    /// runs on the frame it's given.
+    fn largest_move(
+        resolver: &mut ProcGenResolver,
+        id: LivingPropId,
+        field: &mut WoozeField,
+        seconds: f64,
+        change_at: usize,
+        change: impl Fn(&mut WoozeField, f64),
+    ) -> (f32, usize) {
+        let mut frame = BlendFrame::default();
+        let mut time = 0.0;
+        tick_with(resolver, field, time, 1.0 / 60.0);
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+        let mut bones = frame.bones.clone();
+        let mut worst = (0.0_f32, 0);
+        for f in 0..(seconds * 60.0) as usize {
+            if f == change_at {
+                change(field, time);
+            }
+            time += 1.0 / 60.0;
+            tick_with(resolver, field, time, 1.0 / 60.0);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            if blend.first_bone == Some(0) {
+                let moved = farthest(
+                    &tips(resolver, id, &bones),
+                    &tips(resolver, id, &frame.bones),
+                );
+                if moved > worst.0 {
+                    worst = (moved, f);
+                }
+                bones.clone_from(&frame.bones);
+            }
+        }
+        worst
+    }
+
+    /// The risk in the ticket. Going from a long glide to a short one mid-cycle
+    /// computed from absolute time would jump the eased weight, and a new step
+    /// would jump t' itself. Neither shows here.
+    #[test]
+    fn a_change_of_step_or_glide_at_any_moment_never_pops() {
+        let extra = format!("stagger = \"per_level\"\n{NO_JITTER}");
+        let run = |change: fn(&mut WoozeField, f64), change_at: usize| {
+            let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+            let mut field = field("step = 0.5\nglide = 0.5", &[]);
+            let gap = pose_gap(&resolver, id);
+            let worst = largest_move(&mut resolver, id, &mut field, 6.0, change_at, change);
+            assert!(worst.0 < gap * 0.45, "moved {worst:?} of a gap of {gap}");
+        };
+        // A spread of moments, so one lands in a hold, a glide and on a beat.
+        for change_at in [60, 71, 83, 95, 107, 119] {
+            run(
+                |f, t| {
+                    f.set_global(&"step = 5.0".parse().unwrap(), t, 0.0)
+                        .unwrap()
+                },
+                change_at,
+            );
+            run(
+                |f, t| {
+                    f.set_global(&"glide = 1.0".parse().unwrap(), t, 0.0)
+                        .unwrap()
+                },
+                change_at,
+            );
+            run(
+                |f, t| {
+                    f.set_global(&"glide = 0.2".parse().unwrap(), t, 0.0)
+                        .unwrap()
+                },
+                change_at,
+            );
+            run(
+                |f, t| {
+                    f.set_global(&"amplitude = 0.0".parse().unwrap(), t, 0.0)
+                        .unwrap()
+                },
+                change_at,
+            );
+        }
+    }
+
+    /// The Done When: a script changes the global step at runtime and every prop
+    /// follows on its next cycle, and the clock doesn't jump to get there.
+    #[test]
+    fn a_new_global_step_reaches_every_prop_by_its_next_cycle() {
+        let mut resolver = resolver_with(&sapling(NO_JITTER));
+        let ids: Vec<_> = (0..4)
+            .map(|n| {
+                let mut prop = request(n, &format!("tree_{n}"));
+                prop.position = [n as f32 * 20.0, 0.0, 0.0];
+                resolver.add_living_prop(prop).unwrap().0
+            })
+            .collect();
+        resolver.make_living_now();
+        let mut field = field("step = 0.5", &[]);
+
+        let dt = 1.0 / 60.0;
+        let mut time = 0.0;
+        for _ in 0..60 {
+            time += dt;
+            tick_with(&mut resolver, &field, time, dt);
+        }
+        let before: Vec<f64> = ids
+            .iter()
+            .map(|id| resolver.living_props().prop(*id).beats())
+            .collect();
+        field
+            .set_global(&"step = 2.0".parse().unwrap(), time, 0.0)
+            .unwrap();
+        time += dt;
+        tick_with(&mut resolver, &field, time, dt);
+        for (id, before) in ids.iter().zip(&before) {
+            let prop = resolver.living_props().prop(*id);
+            assert_eq!(prop.clock().step, 2.0);
+            // One frame of the new step, from where it stood: bent, not jumped.
+            let moved = prop.beats() - before;
+            assert!((moved - dt / 2.0).abs() < 1e-9, "{moved}");
+        }
+
+        // A full cycle now takes the new step's 2 s, for every prop.
+        let start: Vec<f64> = ids
+            .iter()
+            .map(|id| resolver.living_props().prop(*id).beats())
+            .collect();
+        for _ in 0..120 {
+            time += dt;
+            tick_with(&mut resolver, &field, time, dt);
+        }
+        for (id, start) in ids.iter().zip(&start) {
+            let beats = resolver.living_props().prop(*id).beats();
+            assert!((beats - start - 1.0).abs() < 1e-9, "{}", beats - start);
+        }
+    }
+
+    /// An echo is a number of steps from its prop, so a new step moves them both
+    /// the same way, and each of its parts has its own cycle to hold on to.
+    #[test]
+    fn an_echo_keeps_its_distance_and_never_pops_through_a_change() {
+        let extra = format!("stagger = \"per_level\"\nechoes = {{ count = 4 }}\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let gap = pose_gap(&resolver, id);
+        let mut field = field("step = 0.5\nglide = 0.5", &[]);
+        let offset = |r: &ProcGenResolver| {
+            let prop = r.living_props().prop(id);
+            prop.echo_beats(3) - prop.beats()
+        };
+        let before = offset(&resolver);
+
+        let dt = 1.0 / 60.0;
+        let mut frame = BlendFrame::default();
+        let mut time = 0.0;
+        let mut bones: Option<Vec<[[f32; 4]; 4]>> = None;
+        let mut worst = 0.0_f32;
+        for f in 0..360 {
+            if f == 95 {
+                field
+                    .set_global(
+                        &"step = 2.0\nglide = 1.0\namplitude = 0.2".parse().unwrap(),
+                        time,
+                        0.0,
+                    )
+                    .unwrap();
+            }
+            time += dt;
+            tick_with(&mut resolver, &field, time, dt);
+            let props = resolver.living_props_mut();
+            props.blend_prop(id, &mut frame);
+            if props.blend_echo(id, 3, &mut frame) == Some(0) {
+                if let Some(last) = &bones {
+                    let moved = farthest(
+                        &tips(&resolver, id, last),
+                        &tips(&resolver, id, &frame.bones),
+                    );
+                    worst = worst.max(moved);
+                }
+                bones = Some(frame.bones.clone());
+            }
+        }
+        assert!((offset(&resolver) - before).abs() < 1e-9);
+        assert!(worst > 0.0, "the echo never moved");
+        assert!(worst < gap * 0.45, "moved {worst} of a gap of {gap}");
+        assert_eq!(resolver.living_props().stats().blends_starved, 0);
+    }
+
+    #[test]
+    fn amplitude_is_how_far_from_rest_a_prop_strays() {
+        let extra = format!("stagger = \"none\"\n{NO_JITTER}");
+        let spread = |amplitude: &str| {
+            let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+            let field = field(amplitude, &[]);
+            tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+            let mut frame = BlendFrame::default();
+            resolver.living_props_mut().blend_prop(id, &mut frame);
+            let (skeleton, rig) = resolver.living_props().rig_of(id).unwrap();
+            let rest = LivingPose {
+                shape_seed: 0,
+                segments: vec![SegmentPose::IDENTITY; skeleton.segments.len()],
+            };
+            let mut rest_bones = Vec::new();
+            rig.palette(skeleton, &rest, &mut rest_bones).unwrap();
+            farthest(
+                &tips(&resolver, id, &rest_bones),
+                &tips(&resolver, id, &frame.bones),
+            )
+        };
+        let none = spread("amplitude = 0.0");
+        let half = spread("amplitude = 0.5");
+        let all = spread("amplitude = 1.0");
+        assert!(none < 1e-4, "{none}");
+        assert!(half > none && all > half, "{none} {half} {all}");
+    }
+
+    #[test]
+    fn the_jitter_knob_scales_the_leaves_and_keeps_to_the_same_few_tints() {
+        let spec = std::fs::read_to_string(OAK).unwrap();
+        let turning = |jitter: &str| {
+            let mut resolver = resolver_with(&spec);
+            let mut req = request(1, "oak");
+            req.spec_name = "oak_living".into();
+            let id = resolver.add_living_prop(req).unwrap().0;
+            resolver.make_living_now();
+            let field = field(jitter, &[]);
+            let mut frame = BlendFrame::default();
+            let mut seen = std::collections::HashSet::new();
+            let mut biggest = 0.0_f32;
+            for f in 0..120 {
+                tick_with(&mut resolver, &field, f64::from(f) / 60.0, 1.0 / 60.0);
+                resolver.living_props_mut().blend_prop(id, &mut frame);
+                for (_, tint) in &frame.tints {
+                    seen.insert(tint.map(f32::to_bits));
+                }
+                let t =
+                    resolver.living_props().prop(id).jitter_ahead + resolver.living_props().time();
+                let jitter_now = resolver
+                    .living_props()
+                    .prop(id)
+                    .jitter()
+                    .scaled(resolver.living_props().prop(id).wooze().jitter);
+                biggest = biggest.max(jitter_now.card_turn(1, 0, t).abs());
+            }
+            (seen.len(), biggest)
+        };
+        let (none_tints, none_turn) = turning("jitter = 0.0");
+        assert_eq!((none_tints, none_turn), (0, 0.0), "no jitter, no boil");
+        let (one_tints, one_turn) = turning("jitter = 1.0");
+        let (more_tints, more_turn) = turning("jitter = 4.0");
+        assert!(one_tints > 0 && one_tints <= 9, "{one_tints}");
+        assert!(more_tints <= 9, "{more_tints} would be a material each");
+        assert!(more_turn > one_turn, "{more_turn} {one_turn}");
+    }
+
+    #[test]
+    fn a_prop_that_moves_reads_the_field_where_it_has_got_to() {
+        let (mut resolver, id) = one_prop(NO_JITTER, LivingDefaults::default());
+        let far = [50.0, 0.0, 0.0];
+        resolver.living_props_mut().track_positions(|_| Some(far));
+        let field = field("glide = 0.3", &[DREAMY]);
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        assert_eq!(resolver.living_props().prop(id).wooze().glide, 0.3);
+
+        resolver
+            .living_props_mut()
+            .track_positions(|_| Some([0.0; 3]));
+        tick_with(&mut resolver, &field, 0.1, 1.0 / 60.0);
+        assert_eq!(resolver.living_props().prop(id).wooze().glide, 0.8);
+        assert_eq!(resolver.living_props().prop(id).clock().glide, 0.8);
+    }
+
+    #[test]
+    fn with_no_field_a_prop_keeps_to_its_spec() {
+        let (mut resolver, id) = one_prop("step = 0.25\nglide = 0.9", LivingDefaults::default());
+        for _ in 0..30 {
+            resolver.process_living(1.0 / 60.0);
+        }
+        let prop = resolver.living_props().prop(id);
+        assert_eq!((prop.clock().step, prop.clock().glide), (0.25, 0.9));
+        assert_eq!(prop.wooze().amplitude, 1.0);
+    }
+
+    #[test]
+    fn a_field_beats_the_spec_wherever_it_covers() {
+        let (mut resolver, id) = one_prop("step = 0.25\nglide = 0.9", LivingDefaults::default());
+        let field = field("step = 2.0\nglide = 0.0", &[]);
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        let clock = resolver.living_props().prop(id).clock();
+        assert_eq!((clock.step, clock.glide), (2.0, 0.0));
     }
 }
