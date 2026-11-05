@@ -417,7 +417,7 @@ In a scene with a table, the field decides `step` and `glide` for every prop, wh
 
 | Preset | Step | Glide | Amplitude | Jitter | |
 |--------|------|-------|-----------|--------|---|
-| `linklater` | 0.25 | 0.3 | 1 | 1 | A named placeholder, the design's first guess, until the grove finds the real one |
+| `linklater` | 0.5 | 0.6 | 0.5 | 1 | The sweet spot between the two below: the crown wanders, and the leaves and lines keep it drawn. [How it was found](#the-sweet-spot-linklater) |
 | `boil` | 0.125 | 0 | 0.6 | 1.5 | Small, fast and snapping |
 | `morph` | 1 | 1 | 1 | 0 | Slow, and never rests |
 | `calm` | 1.5 | 0.6 | 0.35 | 0.25 | Barely there |
@@ -529,9 +529,9 @@ It's 38 living trees in four species, from `demo/specs/`: an oak, a cypress, a b
 
 | Zone | Where | Field | What it's for |
 |------|-------|-------|---------------|
-| None | The clearing | `preset = "linklater"` | The look the epic is after, which follows the preset as it's tuned |
+| None | The clearing | `preset = "linklater"` | [The look the epic is after](#the-sweet-spot-linklater) |
 | `hush` | Left, among the cypress | step 1.6, glide 0.6, amplitude 0.2, jitter 0.15 | How little movement still reads as alive |
-| `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, jitter 0.4 | The morph end of the dial, which never rests |
+| `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, amplitude 1, jitter 0.4 | The morph end of the dial, which never rests |
 | `shiver` | Near right, thorn and birch | step 0.125, glide 0, amplitude 0.7, jitter 2.2 | The boil end of the dial, which never eases |
 
 `demo/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Don't step coarser than 1/60: the character reads mouse look once per physics step, so a frame of two steps turns it twice as far.
@@ -543,6 +543,71 @@ A few things the grove had to work around, which any scene like it will meet:
 - **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
 - **A character always starts facing +Z,** so a scene's way in has to be laid out along it.
 - **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. No system reads a `directional_light` table, and `flint validate` lets one through, so a scene with only that has the renderer's default light and no warning.
+
+### The sweet spot: `linklater`
+
+The grove exists to find one setting that reads as alive and not jerky. The setting it found:
+
+```toml
+[wooze]
+preset = "linklater"     # amplitude 0.5, step 0.5, glide 0.6, jitter 1
+
+[post_process]
+boil_on = 1              # at that step, a new drawing 12 times a second
+```
+
+The strip shows why. Both rows are the same crown at the same moments. In the first guess (amplitude 1, step 0.25, glide 0.3, on twos) the limbs change place between frames and the outline of the crown keeps breaking. In `linklater` the limbs stay about where they were, and the foliage is what re-decides itself.
+
+![The same crown at eighth-second moments, under the first guess above and linklater below](../images/linklater-strip.png)
+
+A strip can't show motion, and motion is the question. This one comes closer: one row of pixels through that crown, stacked over 4 s with time running down. A lurch is a jag, a hold is a straight line and a glide is a curve.
+
+![Slit-scans of the first guess, a jagged zigzag, and of linklater, long soft curves with a fine grain on them](../images/linklater-slit.png)
+
+The first guess is a zigzag four times a second. `linklater` is long curves carrying a fine stair-step, which is the slow layer gliding and the fast layer snapping, as the design asked for.
+
+**What moved it.** Measured over 4 s at 60 fps from the walker's start, at 960 x 540 and with speeds scaled to 1080p. *Speed* is how far the fastest 1% of the picture moves in a frame, by phase correlation per tile. *Change* is how much the busiest 1% of 24-pixel tiles changes in a frame, out of 255 levels. The first three columns of each row are the field's knobs:
+
+| Look | Amplitude | Step | Glide | Boil on | Speed (px/frame) | Change |
+|------|-----------|------|-------|---------|------------------|--------|
+| The first guess | 1 | 0.25 | 0.3 | twos | 15.0 | 34.2 |
+| **`linklater`** | **0.5** | **0.5** | **0.6** | **ones** | **6.3** | **19.8** |
+| Glide 0, otherwise `linklater` | 0.5 | 0.5 | 0 | ones | 12.2 | 25.4 |
+| Glide 0.3 | 0.5 | 0.5 | 0.3 | ones | 6.3 | 20.9 |
+| Glide 1 | 0.5 | 0.5 | 1 | ones | 6.3 | 19.1 |
+| Less drift | 0.35 | 0.5 | 0.6 | ones | 6.0 | 19.4 |
+| More drift, longer glide | 0.7 | 0.5 | 0.85 | ones | 7.0 | 20.2 |
+| Slower | 0.7 | 1 | 0.6 | ones | 5.7 | 15.9 |
+| `boil` | 0.6 | 0.125 | 0 | twos | 17.2 | 38.5 |
+| `morph` | 1 | 1 | 1 | twos | 4.5 | 13.8 |
+
+The numbers narrow the choice, and don't make it. They put `linklater` between the two ends and away from the lurch. The rows near it measure much alike, and it was chosen over them by looking at the strips and scans, and at what each knob is for:
+
+- **Step and amplitude do most of the work.** At a quarter second a pose has to cover its distance in a few frames, however it eases. The design's first guess spent its effort on glide, but glide only matters coming off the floor: 0 doubles the speed, and from 0.3 up it hardly changes. 0.6 is there for the softer corners in the scan, and it still holds for 0.2 s of each step.
+- **The half second is what the boil wanted anyway.** A beat is six film frames, so 0.5 s is 12 film frames a second and `boil_on = 1` draws on every one, which is animation on twos. On twos at this step the drawings come 6 times a second, which shows up as a throb at 6 Hz.
+- **Amplitude stops at a half** because a tree that wanders needs somewhere to go. 0.35 measures about the same but scans flatter, with less of the slow curve.
+- **Jitter stays at what the specs authored.** Most of the sharp change that's left is the leaf cards' own snap on their 8 Hz clock, and turning the shading boil off barely moves it. Jitter 0.5 takes the change down to 16.9, but this is the layer that makes it feel drawn.
+- **Stagger stays as each species has it,** `per_level` for oak and cypress and `per_branch` for birch and thorn. With none at all, the change goes up to 21.3. Putting the whole grove on one or the other moves it by less than 1%.
+
+**What a preset holds.** A built-in preset holds the clock's four knobs. The rest of the look is what the grove's tables and specs already say: Kuwahara and contour on, `boil_on = 1`, and each species' own `echoes`, `stagger`, `variance` and leaf `jitter` in `demo/specs/grove_*.procgen.toml`. `flint render demo/woozy_grove.scene.toml --time 3.5` reproduces any moment byte for byte. The strip and the scan come from the scene alone:
+
+```bash
+python tools/living-strip/living_strip.py --player target/release/flint-player
+```
+
+Two runs write the same bytes on the same machine and driver.
+
+**What it costs.** 1920 x 1080 on an RTX 5070 laptop. Nothing is culled, so each row costs the same wherever the camera looks: the grove draws its 1.84 M triangles from any spot, 30 trees in the frame or fewer. The 60 is the grove plus 22 more copies, which isn't committed.
+
+| Living props | Run | Display rate | Uncapped | Blending and upload | Frames missing a pose |
+|--------------|-----|--------------|----------|---------------------|-----------------------|
+| 38 | Standing, 30 s | 59.9 to 60.0 fps | 138 to 155 fps | 1.2 to 1.7 ms | 0 |
+| 38 | The scripted walk, 48 s | 60.0 fps | | 1.3 ms | 0 |
+| 38 | Standing, 5 min | 60.0 fps | | 1.3 ms | 0 |
+| 60 | Standing, 30 s | 60.0 fps | 133 to 138 fps | 2.0 to 2.5 ms | 0 |
+| 60 | Standing, 5 min | 60.0 fps | | 2.3 ms | 0 |
+
+Read the last column as well as the frame rate. A prop short of a pose keeps its last bones for that frame and the frame still arrives on time, so a grove can report 60 fps while its trees stutter. That's what happens on a machine with far more work than cores: 48 busy processes on 24 threads leave nearly every frame short of a pose while they run, at 59 fps. With 24 busy processes, none are short.
 
 ## `flint gen`
 

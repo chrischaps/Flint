@@ -6,7 +6,8 @@
 # wide it is, where the pen lifts, and which way the brush went.
 #
 # A beat of the field's `step` is six film frames, so this scene's quarter second
-# is 24 frames a second, and `boil_on = 2` holds each drawing for two of them.
+# is 24 frames a second, and `boil_on = 2` holds each drawing for two of them: 12 a
+# second, as the `linklater` preset gets from a half second on ones.
 #
 #   cargo run --release -p flint-player -- demo/shading_boil.scene.toml --schemas schemas
 #
@@ -29,6 +30,7 @@ description = "A still life whose paint and ink re-decide themselves on the wooz
 
 [wooze]
 preset = "linklater"
+step = 0.25
 
 [camera]
 position = [2.9, 2.0, 5.0]

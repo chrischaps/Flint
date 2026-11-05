@@ -1304,6 +1304,12 @@ impl LivingProps {
             let estimate = self.pose_estimate_ms;
             let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
             if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
+                // Only making a pose teaches the estimate anything, so one that came
+                // down to just under the budget would be turned away by every frame
+                // after it, and the rings would run dry with the budget unspent.
+                if !made {
+                    self.pose_estimate_ms *= POSE_ESTIMATE_DECAY;
+                }
                 return made;
             }
             let began = Instant::now();
@@ -2309,6 +2315,38 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
     /// want 50 poses a second out of 60, under a stagger that reaches far, a new
     /// variance every frame, and echoes that want poses behind the props. There's
     /// only room if what's being read wins every time.
+    /// A stall on a busy machine leaves the estimate over the budget, and it comes
+    /// down a little with each pose until it's just under. Exactly at the budget,
+    /// no frame can ever fit a pose, since finding that out takes some of the frame.
+    /// The rings ran dry like this at 0.25 ms of a 4 ms budget, for as long as the
+    /// game went on, at a steady 60 fps (#219). It takes a grove's worth of props:
+    /// with a few, stepping their clocks fits inside the timer's resolution, the
+    /// frame reads as having used nothing, and an estimate at the budget still fits.
+    #[test]
+    fn an_estimate_just_under_the_budget_does_not_stop_the_poses() {
+        let mut resolver = resolver_with(&sapling("step = 0.1"));
+        for n in 0..256u64 {
+            let name = format!("oak_{n}");
+            resolver.add_living_prop(request(n + 1, &name)).unwrap();
+        }
+        resolver.make_living_now();
+        resolver.frame_budget_for_test(4.0);
+        let made_before = resolver.living_props().stats().poses_made;
+        resolver.living_props_mut().pose_estimate_ms = 4.0;
+
+        run(&mut resolver, 4.0, 1.0 / 60.0);
+
+        let props = resolver.living_props();
+        assert!(
+            props.stats().poses_made > made_before,
+            "no poses in 4 s: {:?}",
+            props.stats()
+        );
+        for prop in props.props() {
+            assert_eq!(prop.ready(), prop.ring_len(), "{:?}", props.stats());
+        }
+    }
+
     #[test]
     fn a_pose_being_read_beats_every_other_use_of_a_tight_budget() {
         let mut resolver = resolver_with(&sapling(

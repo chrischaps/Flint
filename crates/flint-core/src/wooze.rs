@@ -68,15 +68,20 @@ impl WoozeSample {
     }
 }
 
-/// The built-in presets. `linklater` is a named placeholder, the design's first
-/// guess, until the grove finds the real sweet spot (#219).
+/// The built-in presets.
 pub const PRESETS: &[(&str, WoozeSample)] = &[
+    // The sweet spot (#219), found in Woozy Grove. Half the drift a spec asks for, on
+    // a half second, is what takes a crown from swinging to wandering: the fastest 1%
+    // of the picture goes from 15 pixels a frame to 6 at 1080p. A beat here is 12 film
+    // frames a second, so with `boil_on = 1` the paint and ink redraw 12 times a second,
+    // the rate of animation on twos. Glide matters far less once it's off the floor.
+    // The book's Living Props chapter has the measurements and the strip.
     (
         "linklater",
         WoozeSample {
-            amplitude: 1.0,
-            step: 0.25,
-            glide: 0.3,
+            amplitude: 0.5,
+            step: 0.5,
+            glide: 0.6,
             jitter: 1.0,
         },
     ),
@@ -247,7 +252,7 @@ impl Cycle {
 
 /// Film frames to one beat of the field. Six is what ones, twos and threes all
 /// divide, so a drawing lands on every beat whichever a scene picks, and the
-/// `linklater` preset's quarter-second step is exactly 24 frames a second.
+/// `linklater` preset's half-second step is exactly 12 frames a second.
 pub const FILM_FRAMES_PER_BEAT: u32 = 6;
 
 /// Which drawing the shading boil (#214) is on, and how hard it boils.
@@ -1097,6 +1102,19 @@ mod tests {
         let mut field = field_with(POCKET);
         let reason = field.add_zone(&table(POCKET)).unwrap_err();
         assert!(reason.contains("taken"), "{reason}");
+    }
+
+    /// What the grove's judgement came to (#219). A change here changes the look the
+    /// book's strip shows, so make it on purpose and make the strip again.
+    #[test]
+    fn linklater_is_the_look_the_grove_settled_on() {
+        let look = preset("linklater").unwrap();
+        assert_eq!(
+            (look.amplitude, look.step, look.glide, look.jitter),
+            (0.5, 0.5, 0.6, 1.0)
+        );
+        // On ones, that's a new drawing 12 times a second.
+        assert_eq!(f64::from(FILM_FRAMES_PER_BEAT) / f64::from(look.step), 12.0);
     }
 
     #[test]

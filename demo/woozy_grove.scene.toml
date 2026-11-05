@@ -18,7 +18,9 @@
 #                     gliding at all: this is what boil alone looks like.
 #
 # Nothing in a spec says any of that. The trees ask the field where they're standing.
-# The middle takes `preset = "linklater"`, so #219's tuning lands here by itself.
+# The middle takes `preset = "linklater"`, the sweet spot this grove was built to
+# find (#219): half the drift on a half-second step, and `boil_on = 1` below, so the
+# paint and ink redraw 12 times a second. The book's Living Props chapter has why.
 #
 #   flint render demo/woozy_grove.scene.toml --time 3.5 --output grove.png
 #   flint render demo/woozy_grove.scene.toml --time 3.5 --sweep wooze.glide=0,0.3,1
@@ -55,6 +57,7 @@ shape = "sphere"
 center = [-14.5, 0, 12]
 radius = 8
 falloff = 6.5
+amplitude = 1.0                         # the morph end: all of its drift, not the clearing's half
 step = 1.1
 glide = 0.9
 jitter = 0.4
@@ -105,7 +108,7 @@ contour_enabled = true
 contour_width = 1.25
 contour_boil = 1.0
 contour_fade = 26.0
-boil_on = 2
+boil_on = 1                             # at linklater's half second, 12 drawings a second
 grade_lift = [0.012, 0.018, 0.03]
 grade_gain = [1.05, 1.0, 0.95]
 
