@@ -578,6 +578,26 @@ It covers the entity and everything below it, so a bench built from boards, or a
 
 `--exit-after` prints `[wooze] shallow: 15 entities on 5 clocks`. Bench: `demo/shallow_wooze.scene.toml`, a woozy set and a still set under the same oaks.
 
+### Woozy grass
+
+Grass sways on the wall clock, so beside trees that hold and glide it moves like something from another film. `grass.wooze` on a [terrain](terrain.md#grass) or [`grass_ground`](grass-ground.md) puts it on the field instead:
+
+```toml
+[entities.meadow.grass_ground]
+mask = "woozy_grove_grass/mask.png"
+"grass.wooze" = true
+"grass.wooze_amplitude" = 0.14  # metres at the tip, times the field's amplitude
+"grass.wooze_wavelength" = 2.5  # metres from one combed patch to the next
+```
+
+Two things change. **The sway's clock** holds for the first part of each beat and glides over the rest, as a prop's pose does, so the blades rest and then sweep on together. A beat is worth the field's step where the clock started, so the authored `wind_speed` holds on average and the sway slows where the field slows: in a zone with a long step the meadow nearly stops, and on a fast snap it jumps. **The comb** leans each blade's tip by the noise [shallow wooze](#shallow-wooze) moves meshes by, read at the blade's root, so a patch leans together and each beat lays the meadow down a new way. It's the same function on the same beat as a bench standing in it.
+
+There's one clock for the whole field, read where the camera is, as the shading boil's is, because the grass compute knows nothing of zones and the grass you see is the grass round you. Walking from one zone into another bends its tempo from where it stands, with no jump. The shadow pass sways and combs by the same numbers.
+
+It needs a `[wooze]` table: without one the player warns once and the grass keeps the wall clock. Grass without `grass.wooze` draws exactly as before. `flint render --time` and `--sweep` draw it as the player does at that moment. In an [A/B](../guides/debug-panels.md#comparing-two-presets-ab) the grass has one clock, which reads whichever side's field is showing, and both halves of a `--split` view get the same sway and comb, since the grass's uniforms hold one value a frame.
+
+Bench: `demo/woozy_grove_grass.scene.toml`, the Woozy Grove grown over with a meadow worn along its paths. `python demo/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; `demo/woozy_grove_grass/README.md` has what was found.
+
 ### Woozy Grove
 
 The benches each test one thing from a fixed camera. `demo/woozy_grove.scene.toml` puts them together in a place to walk through, since the look can only be judged by eye, from inside it:

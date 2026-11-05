@@ -171,14 +171,17 @@ depth = 384.0
 | `grass.density_source` | string | "splat" | `splat` reads the splat map; `map` is reserved for a dedicated density texture |
 | `grass.density_layer` | i32 | 0 | Which splat channel drives density (0 = R, 1 = G, 2 = B, 3 = A) |
 | `grass.density_threshold` | f32 | 0.1 | Minimum splat weight before a blade may spawn |
+| `grass.wooze` | bool | false | Sway on the scene's `[wooze]` field instead of the wall clock, and comb the tips each beat. See [Woozy grass](procgen.md#woozy-grass) |
+| `grass.wooze_amplitude` | f32 | 0.12 | Metres a woozy blade's tip leans at full swing, times the field's amplitude. 0 keeps only the clock |
+| `grass.wooze_wavelength` | f32 | 2.5 | Metres from one combed patch to the next |
 
 How it works, per frame:
 
 1. A **compute pass** walks the cells within `max_distance` of the camera on a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer. A blade's root takes the heightmap's bilinear blend at its spot, the same blend `sample_height` makes, so the blades stand on the terrain's surface (ADR 0098).
-2. A **render pass** draws one shared blade mesh per instance. The vertex shader sways blades by a time-driven wind term and pushes them away from up to eight entity positions within `bend_radius`; the fragment shader blends `color_base` to `color_tip` along the blade, mixes in `color_dry`, and shades with the same lighting levers and PCSS shadows as other geometry. The player feeds the camera position as the bend entity.
+2. A **render pass** draws one shared blade mesh per instance. The vertex shader sways blades by a time-driven wind term (on the wall clock, or the wooze field's with `grass.wooze`) and pushes them away from up to eight entity positions within `bend_radius`; the fragment shader blends `color_base` to `color_tip` along the blade, mixes in `color_dry`, and shades with the same lighting levers and PCSS shadows as other geometry. The player feeds the camera position as the bend entity.
 3. The **shadow pass** renders the instances into the nearest two cascades, so grass darkens the ground under it.
 
-The pipeline participates in MSAA when the player runs with `--msaa 4`, and grass appears in `flint render` snapshots at time zero, so the wind is frozen but the field is fully populated.
+The pipeline participates in MSAA when the player runs with `--msaa 4`, and grass appears in `flint render` snapshots at time zero, so the wind is frozen but the field is fully populated. `--time` sways it as the player would at that moment.
 
 The grass isn't tied to a terrain. A game with mesh ground gives it a density mask and a height instead: see [Grass on Any Ground](grass-ground.md).
 

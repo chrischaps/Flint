@@ -36,3 +36,6 @@ roughness = { type = "float", description = "PBR roughness factor 0.0-1.0", defa
 "grass.density_source" = { type = "string", description = "Density source: splat or map", default = "splat" }
 "grass.density_layer" = { type = "integer", description = "Which splat layer drives grass density (0=R)", default = 0 }
 "grass.density_threshold" = { type = "float", description = "Min splat weight to spawn grass 0..1", default = 0.1 }
+"grass.wooze" = { type = "boolean", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252)", default = false }
+"grass.wooze_amplitude" = { type = "float", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock", default = 0.12 }
+"grass.wooze_wavelength" = { type = "float", description = "Metres from one combed patch of grass to the next", default = 2.5 }

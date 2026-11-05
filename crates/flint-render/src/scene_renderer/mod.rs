@@ -649,6 +649,9 @@ pub struct SceneRenderer {
     pub scene_dir: Option<std::path::PathBuf>,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
+    /// The comb of woozy grass this frame (#252), from the clock the player set
+    /// `grass_time` on. `None`, the default, combs nothing.
+    pub grass_wooze: Option<ShallowWoozeDraw>,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
     device_lost: bool,
     /// Per-entity bone matrix buffers. The `GpuSkinnedMesh` bone buffer is
@@ -902,6 +905,7 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             grass_time: 0.0,
+            grass_wooze: None,
             device_lost: false,
         }
     }
@@ -2387,6 +2391,7 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             grass_time: 0.0,
+            grass_wooze: None,
             device_lost: false,
         }
     }

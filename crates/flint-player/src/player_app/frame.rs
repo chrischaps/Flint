@@ -1546,6 +1546,14 @@ impl PlayerApp {
                     self.shallow_wooze
                         .advance(&self.world, field, self.wooze_time, living_dt);
                 renderer.set_shallow_wooze(draws.iter().copied());
+                // And so does grass that asks to (#252), where the viewer stands.
+                self.grass_wooze.advance(
+                    renderer.grass_config(),
+                    field,
+                    self.camera.position_array(),
+                    self.wooze_time,
+                    living_dt,
+                );
             }
             if !lineages.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
@@ -1610,7 +1618,8 @@ impl PlayerApp {
 
         // Update grass time and entity positions for bend-on-contact
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            renderer.grass_time = self.clock.total_time as f32;
+            // The wall clock, unless the grass is on the wooze field's (#252).
+            self.grass_wooze.apply(renderer, self.clock.total_time);
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;

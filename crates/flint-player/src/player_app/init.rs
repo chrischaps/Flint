@@ -109,6 +109,7 @@ impl PlayerApp {
             wooze_missing_warned: false,
             shallow_wooze: Default::default(),
             boil_clock: Default::default(),
+            grass_wooze: Default::default(),
             living_tune: Default::default(),
             pp_vignette_override: None,
             pp_bloom_override: None,
@@ -451,6 +452,7 @@ impl PlayerApp {
         self.wooze_time = 0.0;
         super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
         self.boil_clock = Default::default();
+        self.grass_wooze = Default::default();
         self.living_tune.for_new_scene();
         super::procgen_assets::resolve_scene(
             &self.scene_path,
@@ -693,6 +695,10 @@ impl PlayerApp {
         }
         #[cfg(not(feature = "debug-hud"))]
         let _ = grass_info;
+        super::shallow_wooze::warn_grass_without_a_field(
+            scene_renderer.grass_config(),
+            self.wooze.as_ref(),
+        );
 
         #[cfg(feature = "debug-hud")]
         {

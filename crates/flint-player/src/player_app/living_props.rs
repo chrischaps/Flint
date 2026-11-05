@@ -345,6 +345,7 @@ pub struct WoozeClocks {
     time: f64,
     boil: flint_core::wooze::BoilClock,
     shallow: Option<super::shallow_wooze::ShallowWooze>,
+    grass: super::shallow_wooze::GrassWooze,
 }
 
 impl WoozeClocks {
@@ -366,6 +367,7 @@ impl WoozeClocks {
             time: 0.0,
             boil: Default::default(),
             shallow: shallow.then(Default::default),
+            grass: Default::default(),
         }))
     }
 
@@ -384,6 +386,23 @@ impl WoozeClocks {
             Some(shallow) => shallow.advance(world, &self.field, self.time, dt),
             None => &[],
         }
+    }
+
+    /// Move woozy grass (#252) on by the `dt` the last [`Self::step`] took, with the
+    /// viewer at `viewer`. Grass `config` doesn't ask for it stays on the wall clock.
+    pub fn step_grass(
+        &mut self,
+        config: Option<&flint_terrain::GrassConfig>,
+        viewer: [f32; 3],
+        dt: f64,
+    ) {
+        self.grass
+            .advance(config, &self.field, viewer, self.time, dt);
+    }
+
+    /// The grass's clock and comb as of the last [`Self::step_grass`].
+    pub fn grass(&self) -> &super::shallow_wooze::GrassWooze {
+        &self.grass
     }
 
     /// The boil's drawing where its clock now stands.

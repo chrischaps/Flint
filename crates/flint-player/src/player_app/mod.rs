@@ -309,6 +309,8 @@ pub struct PlayerApp {
     shallow_wooze: shallow_wooze::ShallowWooze,
     // The shading boil's beats (#214), on the same clock as the field.
     boil_clock: flint_core::wooze::BoilClock,
+    // Woozy grass (#252): the grass's sway and comb on the same clock.
+    grass_wooze: shallow_wooze::GrassWooze,
     // What's been done to a running grove by hand (#218).
     pub(crate) living_tune: living_tuning::LivingTune,
 
