@@ -17,6 +17,7 @@ use flint_core::Vec3;
 
 use crate::algorithms::mesh_builder::MeshBuilder;
 use crate::generator::LivingGenerator;
+use crate::living::BOIL_BONES;
 use crate::living::{LeafBinding, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
 use crate::skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 use crate::spec::ProcGenSpec;
@@ -86,8 +87,9 @@ impl LivingGenerator for TreeGenerator {
         let trunk = TrunkParams::from_toml(&spec.params)?;
         let tree = generate_tree(&trunk, &branch, &mut SeededRng::new(lineage_seed))?;
 
+        // The buffer's last bones are the jitter layer's, at run time.
         let (segment_bones, bone_segments) =
-            assign_bones(&skeleton.segments, MAX_SKINNED_BONES - 1);
+            assign_bones(&skeleton.segments, MAX_SKINNED_BONES - 1 - BOIL_BONES);
         let joints = joint_table(
             &skeleton,
             tree.trunk_vertices,
@@ -124,10 +126,22 @@ impl LivingGenerator for TreeGenerator {
             skeleton: skeleton_def(&skeleton.segments, &bone_segments, &segment_bones),
         };
         mesh.validate()?;
+        let first_leaf_vertex = mesh.vertices.len() - skeleton.leaf_mesh.vertices.len();
+        let leaf_parts = mesh
+            .submeshes
+            .iter()
+            .filter(|sub| sub.index_count > 0)
+            .enumerate()
+            .filter(|(_, sub)| mesh.indices[sub.index_start as usize] as usize >= first_leaf_vertex)
+            .map(|(part, _)| part)
+            .collect();
         Ok(LivingRig {
+            card_boil: skeleton.card_boil(bone_segments.len() as u16),
             mesh,
             segment_bones,
             bone_segments,
+            first_leaf_vertex,
+            leaf_parts,
         })
     }
 
@@ -1507,7 +1521,7 @@ mod tests {
             skeleton.segments.len()
         );
         let rig = rig_of(&spec);
-        assert_eq!(rig.mesh.bone_count(), MAX_SKINNED_BONES);
+        assert_eq!(rig.mesh.bone_count() + BOIL_BONES, MAX_SKINNED_BONES);
         weights_sum_to_one(&rig.mesh, "huge");
         crate::skinned_mesh_to_glb(&rig.mesh).unwrap();
 
@@ -1624,5 +1638,191 @@ mod tests {
             rotation_between(Vec3::ZERO, Vec3::UP),
             SegmentPose::IDENTITY.rotation
         );
+    }
+
+    /// Where a leaf vertex goes under `palette`, skinned as the shader does it.
+    fn runtime_position(rig: &LivingRig, vertex: usize, palette: &[[[f32; 4]; 4]]) -> Vec3 {
+        let (joints, weights) = rig.runtime_joints(vertex);
+        let p = rig.mesh.vertices[vertex].position;
+        let mut sum = [0.0f32; 4];
+        for (joint, weight) in joints.iter().zip(&weights) {
+            let m = &palette[*joint as usize];
+            for (r, out) in sum.iter_mut().enumerate() {
+                *out += weight * (m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r]);
+            }
+        }
+        assert!((sum[3] - 1.0).abs() < 1e-5, "w = {}", sum[3]);
+        Vec3::new(sum[0], sum[1], sum[2])
+    }
+
+    /// A rest palette, with `turns` on the jitter bones.
+    fn jittered_rest(
+        rig: &LivingRig,
+        skeleton: &LivingSkeleton,
+        turns: &[f32; crate::living::JITTER_CHANNELS],
+    ) -> Vec<[[f32; 4]; 4]> {
+        let rest = LivingPose {
+            shape_seed: 0,
+            segments: vec![SegmentPose::IDENTITY; skeleton.segments.len()],
+        };
+        let mut palette = palette_of(rig, skeleton, &rest);
+        crate::living::boil_bones(turns, &mut palette);
+        palette
+    }
+
+    #[test]
+    fn the_oak_has_room_for_its_jitter_bones() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let rig = rig_of(&spec);
+        assert_eq!(
+            rig.bone_segments.len(),
+            244,
+            "it keeps every segment's bone"
+        );
+        assert!(rig.bone_segments.len() + BOIL_BONES <= MAX_SKINNED_BONES);
+    }
+
+    #[test]
+    fn only_the_leaf_shades_are_leaf_parts() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let rig = rig_of(&spec);
+        assert_eq!(
+            rig.leaf_parts,
+            vec![1, 2, 3, 4, 5],
+            "bark first, five shades"
+        );
+    }
+
+    #[test]
+    fn still_jitter_leaves_every_vertex_exactly_where_it_was() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let palette = jittered_rest(&rig, &skeleton, &[0.0; 4]);
+        for (i, v) in rig.mesh.vertices.iter().enumerate().step_by(53) {
+            let at = runtime_position(&rig, i, &palette);
+            assert!(close(at, Vec3::from_array(v.position), 1e-4), "vertex {i}");
+        }
+    }
+
+    #[test]
+    fn jitter_turns_each_card_about_its_centre_and_leaves_the_bark_alone() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let turn = 0.2;
+        let palette = jittered_rest(&rig, &skeleton, &[turn; 4]);
+
+        for i in (0..rig.first_leaf_vertex).step_by(101) {
+            let at = runtime_position(&rig, i, &palette);
+            let rest = Vec3::from_array(rig.mesh.vertices[i].position);
+            assert!(close(at, rest, 1e-4), "bark vertex {i} moved");
+        }
+
+        let mut moved_cards = 0;
+        for k in (0..skeleton.leaf_bindings.len()).step_by(29) {
+            let verts = skeleton.card_vertices(k);
+            let rest: Vec<Vec3> = verts
+                .iter()
+                .map(|&v| Vec3::from_array(skeleton.leaf_mesh.vertices[v as usize].position))
+                .collect();
+            let now: Vec<Vec3> = verts
+                .iter()
+                .map(|&v| runtime_position(&rig, rig.first_leaf_vertex + v as usize, &palette))
+                .collect();
+            let mean = |ps: &[Vec3]| {
+                ps.iter().fold(Vec3::ZERO, |sum, p| sum + *p) * (1.0 / ps.len() as f32)
+            };
+            let (c0, c1) = (mean(&rest), mean(&now));
+            assert!(close(c0, c1, 1e-4), "card {k}'s centre moved");
+
+            for (a, b) in rest.iter().zip(&now) {
+                let (r0, r1) = ((*a - c0).length(), (*b - c1).length());
+                // A turn of `a` by a shear stretches by at most sqrt(1 + a^2).
+                let most = r0 * (1.0 + turn * turn).sqrt();
+                assert!(r1 <= most * 1.001, "card {k}: {r0} to {r1}");
+                assert!(r1 >= r0 * 0.999, "card {k}: {r0} to {r1}");
+                if (*a - *b).length() > r0 * 0.05 {
+                    moved_cards += 1;
+                }
+            }
+
+            // Two-sided: where two vertices share a place, jitter keeps them
+            // together, or the faces would part.
+            for (i, a) in rest.iter().enumerate() {
+                for (j, b) in rest.iter().enumerate() {
+                    if (*a - *b).length() < 1e-6 {
+                        assert!(close(now[i], now[j], 1e-5), "card {k} tore");
+                    }
+                }
+            }
+        }
+        assert!(moved_cards > 0, "nothing moved");
+    }
+
+    #[test]
+    fn the_baked_mesh_keeps_its_weights_clean_of_the_jitter() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let rig = rig_of(&spec);
+        weights_sum_to_one(&rig.mesh, "oak");
+        assert!(rig.mesh.bone_count() == rig.bone_segments.len());
+        for v in &rig.mesh.vertices {
+            assert!(v
+                .joint_indices
+                .iter()
+                .all(|&j| (j as usize) < rig.bone_segments.len()));
+        }
+        // And the runtime's joints stay inside the buffer.
+        for i in (0..rig.mesh.vertices.len()).step_by(17) {
+            let (joints, _) = rig.runtime_joints(i);
+            assert!(joints.iter().all(|&j| (j as usize) < MAX_SKINNED_BONES));
+        }
+    }
+
+    /// The issue's named risk: bones blended between poses against the strip's
+    /// rebuild, away from either pose, where a long way round or a flattened
+    /// curve would show. Centres of leaf cards and tube rings both.
+    #[test]
+    fn a_blended_pose_on_the_bones_matches_the_rebuild_between_poses() {
+        let spec = load("specs/examples/oak_living.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let (a, b) = (
+            TreeGenerator.pose(&spec, &skeleton, 3).unwrap(),
+            TreeGenerator.pose(&spec, &skeleton, 4).unwrap(),
+        );
+        for weight in [0.25, 0.5, 0.75] {
+            let segments = a
+                .segments
+                .iter()
+                .zip(&b.segments)
+                .map(|(a, b)| SegmentPose::blend(a, b, weight))
+                .collect();
+            let blended = LivingPose {
+                shape_seed: 0,
+                segments,
+            };
+            let posed = skeleton.posed_segments(&blended).unwrap();
+            let palette = palette_of(&rig, &skeleton, &blended);
+            for s in &skeleton.segments {
+                let bone = &palette[rig.segment_bones[s.id as usize] as usize];
+                let tip = transform(bone, s.end);
+                assert!(
+                    close(tip, posed[s.id as usize].end, 2e-3),
+                    "segment {} at {weight}: {tip:?} vs {:?}",
+                    s.id,
+                    posed[s.id as usize].end
+                );
+            }
+            // No joint pinches on the way there.
+            for s in skeleton.segments.iter().filter(|s| s.parent.is_some()) {
+                let (own, parent) = (
+                    blended.segments[s.id as usize].rotation,
+                    blended.segments[s.parent.unwrap() as usize].rotation,
+                );
+                let dot: f32 = own.iter().zip(&parent).map(|(a, b)| a * b).sum();
+                assert!(dot.abs() > 0.6, "segment {} joint at {dot}", s.id);
+            }
+        }
     }
 }

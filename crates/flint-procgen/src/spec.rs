@@ -204,6 +204,18 @@ impl LivingConfig {
                 format!("unknown target \"{t}\"; expected one of {JITTER_TARGETS:?}"),
             );
         }
+        if !(self.jitter.step.is_finite() && self.jitter.step > 0.0) {
+            return bad(
+                "jitter.step",
+                format!("{}: must be more than 0", self.jitter.step),
+            );
+        }
+        if !unit(self.jitter.glide) {
+            return bad(
+                "jitter.glide",
+                format!("{}: must be in [0.0, 1.0]", self.jitter.glide),
+            );
+        }
         if !unit(self.variance.amount) {
             return bad(
                 "variance.amount",
@@ -247,6 +259,11 @@ pub struct JitterConfig {
     pub amplitude: f32,
     /// What it moves, from [`JITTER_TARGETS`].
     pub targets: Vec<String>,
+    /// Seconds between its targets. Fast, on threes at 24 fps by default.
+    pub step: f32,
+    /// How much of a step is spent easing, 0 to 1: 0 snaps, which is what
+    /// makes it read as drawn.
+    pub glide: f32,
 }
 
 impl Default for JitterConfig {
@@ -254,6 +271,8 @@ impl Default for JitterConfig {
         Self {
             amplitude: 0.05,
             targets: JITTER_TARGETS.iter().map(|t| t.to_string()).collect(),
+            step: 0.125,
+            glide: 0.0,
         }
     }
 }

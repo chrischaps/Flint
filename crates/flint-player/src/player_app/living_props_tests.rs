@@ -361,7 +361,12 @@ fn an_import_holds_the_rig_part_by_part() {
         for (i, ix) in part.indices.iter().enumerate() {
             let source = &mesh.vertices[mesh.indices[start + i] as usize];
             assert_eq!(part.positions[*ix as usize], source.position);
-            assert_eq!(joints[*ix as usize], source.joint_indices);
+            // A leaf card's first bone is the same; the rest are its jitter.
+            assert_eq!(joints[*ix as usize][0], source.joint_indices[0]);
+            assert_eq!(
+                joints[*ix as usize],
+                rig.runtime_joints(mesh.indices[start + i] as usize).0
+            );
             assert_eq!(mesh.indices[start + i], ix + lo);
         }
         let material = &import.materials[part.material_index.unwrap()];
@@ -396,6 +401,59 @@ fn an_import_carries_the_bark_normal_map_as_data() {
 }
 
 #[test]
+fn the_renderer_gets_the_jitter_influences_and_the_glb_does_not() {
+    let spec = SAPLING.replace("leaf_density = 0.0", "leaf_density = 1.0\nleaf_shades = 2");
+    let rig = built_rig(&spec);
+    let import = import_of("sapling@7", &rig);
+    let leaf = rig.leaf_parts[0];
+    let mesh = &import.meshes[leaf];
+
+    let sum = |w: &[f32; 4]| w.iter().sum::<f32>();
+    let joints = mesh.joint_indices.as_ref().unwrap();
+    let weights = mesh.joint_weights.as_ref().unwrap();
+    assert!(
+        joints.iter().any(|j| j[1..]
+            .iter()
+            .all(|&b| b as usize >= rig.bone_segments.len())),
+        "no leaf vertex reaches the jitter bones"
+    );
+    assert!(
+        weights.iter().any(|w| (sum(w) - 1.0).abs() > 1e-3),
+        "a card's weights say how far it turns, so they don't sum to 1"
+    );
+
+    // The bark has no use for them, and the rig's own mesh, which bakes to a
+    // GLB, is still valid glTF.
+    let bark = import.meshes[0].joint_weights.as_ref().unwrap();
+    assert!(bark.iter().all(|w| (sum(w) - 1.0).abs() < 1e-3));
+    rig.mesh.validate().unwrap();
+}
+
+#[test]
+fn a_scene_living_table_reads_as_defaults() {
+    use flint_procgen::{LivingDefaults, LivingShadows};
+    use flint_scene::LivingDef;
+
+    assert_eq!(defaults_of(None), LivingDefaults::default());
+    let read = defaults_of(Some(&LivingDef {
+        step: Some(0.25),
+        glide: Some(0.0),
+        shadows: Some("drift".into()),
+    }));
+    assert_eq!(read.step, Some(0.25));
+    assert_eq!(read.glide, Some(0.0));
+    assert_eq!(read.shadows, LivingShadows::Drift);
+
+    // A bad knob means its default, with a warning, and doesn't stop the scene.
+    let bad = defaults_of(Some(&LivingDef {
+        step: Some(0.0),
+        glide: Some(1.5),
+        shadows: Some("yes".into()),
+    }));
+    assert_eq!(bad, LivingDefaults::default());
+}
+
+#[test]
 fn the_report_says_how_it_went() {
     let stats = LivingStats {
         frames: 3600,
@@ -408,8 +466,16 @@ fn the_report_says_how_it_went() {
         total_ms: 7200.0,
         worst_ms: 3.5,
         frames_over_budget: 0,
+        blend_frames: 3600,
+        blend_total_ms: 1800.0,
+        blend_worst_ms: 0.9,
+        bone_writes: 72000,
+        ..Default::default()
     };
-    let [rings, poses] = report(&stats, 40, 5, 8, 4.0);
+    let [rings, poses, blending] = report(&stats, 40, 5, 8, 4.0);
+    assert!(blending.contains("avg 0.500 ms/frame"), "{blending}");
+    assert!(blending.contains("over 1 ms on 0 frames"), "{blending}");
+    assert!(blending.contains("20.0 bone writes a frame"), "{blending}");
     assert!(rings.contains("40 props on 5 lineages"), "{rings}");
     assert!(rings.contains("3590 of 3600 frames"), "{rings}");
     assert!(poses.contains("avg 2.00 ms/frame"), "{poses}");

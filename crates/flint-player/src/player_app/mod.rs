@@ -293,6 +293,10 @@ pub struct PlayerApp {
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
 
+    // The scene's `[living]` table, and room to blend its props each frame
+    pub scene_living: Option<flint_scene::LivingDef>,
+    living_blend: flint_procgen::BlendFrame,
+
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,
     pp_bloom_override: Option<f32>,

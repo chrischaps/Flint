@@ -380,6 +380,7 @@ impl PlayerApp {
                 });
                 self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
+                self.scene_living = scene_file.living.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;
             }
@@ -413,6 +414,8 @@ impl PlayerApp {
             );
 
             // Procgen before the model loader: catalog > procgen > file (#32).
+            self.procgen_resolver
+                .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
                 &mut self.world,

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::generator::LivingGenerator;
 use crate::skinning::SkinnedMeshData;
-use crate::spec::{LivingConfig, ProcGenSpec, Stagger, VarianceConfig};
+use crate::spec::{LivingConfig, ProcGenSpec, Stagger, VarianceConfig, JITTER_TARGETS};
 use crate::types::{BoundingBox, BranchSegment, MeshData};
 use crate::{ProcGenError, Result};
 
@@ -22,6 +22,27 @@ use crate::{ProcGenError, Result};
 /// trunk, so the box isn't quite proportional to the scale and one round isn't
 /// enough, but each round leaves only a fraction of the error.
 const KEEP_SIZE_ROUNDS: usize = 4;
+
+/// How many leaf cards' worth of independent jitter a prop has: each card turns
+/// with one of these, so they don't all jump at once, but a palette stays small.
+pub const JITTER_CHANNELS: usize = 4;
+
+/// The bones at the end of a runtime palette that carry the jitter layer: an
+/// x, a y and a z for each channel. See [`CardBoil`].
+pub const BOIL_BONES: usize = JITTER_CHANNELS * 3;
+
+/// Radians a leaf card turns at most, per unit of `jitter.amplitude`. The
+/// default amplitude of 0.05 gives about 11 degrees either way.
+const CARD_TURN_PER_AMPLITUDE: f32 = 4.0;
+
+/// How far a leaf shade's colour moves toward warm or cool at most, per unit
+/// of `jitter.amplitude`: the default gives 10% either way.
+const TINT_PER_AMPLITUDE: f32 = 2.0;
+
+/// How many tints each side of neutral a shade can take. They're quantized so
+/// that a draw's material stays one of a few, shared by every prop and created
+/// once, and boil never makes a bind group per frame.
+const TINT_STEPS: i32 = 4;
 
 /// One segment's transform in a pose, relative to the skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -158,6 +179,22 @@ impl LivingClock {
         WarpedTime::at_beat(t / f64::from(self.step) + phase, self.glide)
     }
 
+    /// [`for_segment`](Self::for_segment) for every segment, written over `out`.
+    pub fn times_into(&self, t: f64, segments: &[BranchSegment], out: &mut Vec<WarpedTime>) {
+        out.clear();
+        out.extend(segments.iter().map(|s| self.for_segment(t, s)));
+    }
+
+    /// The drift-only pose shadows can follow (`[living] shadows = "drift"`): at
+    /// half speed and all at once, it takes every other pose, and is a beat
+    /// ahead so that what it leaves is never behind a ring's window. Returns
+    /// the two poses and how far between them it is.
+    pub fn slow_pair(&self, t: f64) -> (u64, u64, f32) {
+        let slow = WarpedTime::at_beat(t / (2.0 * f64::from(self.step)), self.glide);
+        let from = slow.index * 2 + 1;
+        (from, from + 2, slow.weight)
+    }
+
     /// How many steps past [`at`](Self::at)'s index a part of a tree this deep
     /// can be drawing on: ahead by its stagger, and blending toward the pose
     /// after that. A window of poses has to span this many steps and one more.
@@ -201,21 +238,20 @@ impl<'a> PoseStream<'a> {
     /// The prop at `t` seconds. It's a blend, so `shape_seed` names the pose
     /// the trunk side is leaving.
     pub fn at(&mut self, t: f64) -> Result<LivingPose> {
-        let mut segments = Vec::with_capacity(self.skeleton.segments.len());
-        for (i, rest) in self.skeleton.segments.iter().enumerate() {
-            let now = self.clock.for_segment(t, rest);
+        let mut times = Vec::with_capacity(self.skeleton.segments.len());
+        self.clock
+            .times_into(t, &self.skeleton.segments, &mut times);
+        for now in &times {
             self.ensure(now.index)?;
             self.ensure(now.index + 1)?;
-            segments.push(SegmentPose::blend(
-                &self.poses[&now.index].segments[i],
-                &self.poses[&(now.index + 1)].segments[i],
-                now.weight,
-            ));
         }
-        Ok(LivingPose {
+        let mut pose = LivingPose {
             shape_seed: self.clock.at(t).index,
-            segments,
-        })
+            segments: Vec::new(),
+        };
+        let blended = pose.blend_from(&times, |index| self.poses.get(&index));
+        debug_assert!(blended, "every pose was just made");
+        Ok(pose)
     }
 
     fn ensure(&mut self, shape_seed: u64) -> Result<()> {
@@ -234,6 +270,158 @@ pub struct LivingPose {
     pub shape_seed: u64,
     /// `segments[id]` is the transform of the skeleton's segment `id`.
     pub segments: Vec<SegmentPose>,
+}
+
+impl LivingPose {
+    /// Become the blend `times` says, segment by segment: `times[id]` is how
+    /// far segment `id` is between `poses(index)` and `poses(index + 1)`. This
+    /// is the same in the runtime and in the strip, which rebuilds every frame
+    /// on the CPU, so the strip is a check on what the bones draw.
+    ///
+    /// Returns false, with `self` of no use, if a pose it needs isn't there.
+    pub fn blend_from<'p>(
+        &mut self,
+        times: &[WarpedTime],
+        poses: impl Fn(u64) -> Option<&'p LivingPose>,
+    ) -> bool {
+        self.segments.clear();
+        // Under any stagger a tree's parts are on a handful of steps, and a
+        // ring's lookup isn't free when it's done twice a segment.
+        let mut held: Option<(u64, &LivingPose, Option<&LivingPose>)> = None;
+        for (i, now) in times.iter().enumerate() {
+            let (from, to) = match held {
+                Some((index, from, to)) if index == now.index => (from, to),
+                _ => {
+                    let Some(from) = poses(now.index) else {
+                        return false;
+                    };
+                    let to = poses(now.index + 1);
+                    held = Some((now.index, from, to));
+                    (from, to)
+                }
+            };
+            let segment = if now.weight <= 0.0 {
+                from.segments[i]
+            } else {
+                let Some(to) = to else {
+                    return false;
+                };
+                SegmentPose::blend(&from.segments[i], &to.segments[i], now.weight)
+            };
+            self.segments.push(segment);
+        }
+        true
+    }
+}
+
+/// The fast layer: a leaf card's turn and a leaf shade's tint, which change on
+/// a clock of their own and don't depend on the poses at all.
+///
+/// A value is a pure function of the prop's stream, what it's for and the step,
+/// so nothing has to be generated ahead or kept, and it's the same on every run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LivingJitter {
+    /// Its clock; never staggered, since each value has its own phase.
+    clock: LivingClock,
+    /// `jitter.amplitude`, or 0 if `jitter.targets` left leaf cards out.
+    amplitude: f32,
+}
+
+impl From<&LivingConfig> for LivingJitter {
+    fn from(config: &LivingConfig) -> Self {
+        let on = config
+            .jitter
+            .targets
+            .iter()
+            .any(|target| target == JITTER_TARGETS[0]);
+        Self {
+            clock: LivingClock {
+                step: config.jitter.step,
+                glide: config.jitter.glide,
+                stagger: Stagger::None,
+            },
+            amplitude: if on { config.jitter.amplitude } else { 0.0 },
+        }
+    }
+}
+
+impl LivingJitter {
+    /// A value from -1 to 1. Each `channel` runs on its own phase: the golden
+    /// ratio spreads them around the step, so a prop never jumps all at once.
+    fn value(&self, stream: u64, channel: u64, t: f64) -> f32 {
+        if self.amplitude <= 0.0 {
+            return 0.0;
+        }
+        let phase = (channel as f64 * 0.618_033_988_749_894_9).fract();
+        let now = self.clock.at(t + phase * f64::from(self.clock.step));
+        let noise = |index: u64| {
+            let hash = mix64(
+                stream
+                    ^ channel.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    ^ index.wrapping_mul(0xc2b2_ae3d_27d4_eb4f),
+            );
+            ((hash >> 32) as f64 / (1u64 << 31) as f64 - 1.0) as f32
+        };
+        let from = noise(now.index);
+        if now.weight <= 0.0 {
+            from
+        } else {
+            from + (noise(now.index + 1) - from) * now.weight
+        }
+    }
+
+    /// The radians a jitter channel's cards are turned through at `t`.
+    pub fn card_turn(&self, stream: u64, channel: usize, t: f64) -> f32 {
+        self.value(stream, channel as u64, t) * self.amplitude * CARD_TURN_PER_AMPLITUDE
+    }
+
+    /// A leaf shade's tint step at `t`, from `-TINT_STEPS` to `TINT_STEPS`.
+    /// Its channels come after the cards', so a shade and a card never agree.
+    pub fn tint_step(&self, stream: u64, part: usize, t: f64) -> i32 {
+        let value = self.value(stream, (JITTER_CHANNELS + part) as u64, t);
+        (value * TINT_STEPS as f32).round() as i32
+    }
+
+    /// The multiplier a tint step stands for: warmer one way and cooler the
+    /// other, so it reads as the colour shifting and not the light changing.
+    pub fn tint(&self, step: i32) -> [f32; 3] {
+        let shift = step as f32 / TINT_STEPS as f32 * self.amplitude * TINT_PER_AMPLITUDE;
+        [1.0 + shift, 1.0 + shift * 0.25, 1.0 - shift]
+    }
+}
+
+/// `turns` as the palette's jitter bones. A bone like this has no linear part
+/// and a `w` of 0, so `M * p` is just its offset, whatever `p` is: added to a
+/// segment bone under a vertex's weight, it moves the vertex without touching
+/// its normal or the segment's pose.
+pub fn boil_bones(turns: &[f32; JITTER_CHANNELS], out: &mut Vec<[[f32; 4]; 4]>) {
+    for turn in turns {
+        for axis in 0..3 {
+            let mut offset = [0.0; 4];
+            offset[axis] = *turn;
+            out.push([[0.0; 4], [0.0; 4], [0.0; 4], offset]);
+        }
+    }
+}
+
+/// How one leaf-card vertex answers the jitter layer, at run time.
+///
+/// Turning a point `r` from its card's centre through a small angle `a` about
+/// the card's normal `n` moves it by `a (n x r)`. That is a fixed vector times
+/// one number that changes, and skinning is a weighted sum of matrices, so it
+/// fits in the bone palette: the vector's three components are the vertex's
+/// weights on a channel's three [`boil_bones`], whose offsets hold the angle.
+/// So the cards turn with no new shader, no new vertex data and no per-card
+/// state, and a card's corners keep their shape to within `a^2 / 2`.
+///
+/// These weights don't sum to 1, which glTF forbids, so they stay out of the
+/// baked mesh and go up only to the renderer's own vertex buffer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CardBoil {
+    /// The channel's three bones.
+    pub joints: [u16; 3],
+    /// `n x r`, times how hard this card follows its channel.
+    pub weights: [f32; 3],
 }
 
 /// A leaf card's place on the skeleton. It rides its segment rigidly.
@@ -281,8 +469,19 @@ impl LivingSkeleton {
     /// This also works on a blend of two poses, which is what keeps a blended
     /// tree whole.
     pub fn posed_segments(&self, pose: &LivingPose) -> Result<Vec<BranchSegment>> {
+        let mut posed = Vec::with_capacity(self.segments.len());
+        self.posed_segments_into(pose, &mut posed)?;
+        Ok(posed)
+    }
+
+    /// [`posed_segments`](Self::posed_segments), written over `posed`.
+    pub fn posed_segments_into(
+        &self,
+        pose: &LivingPose,
+        posed: &mut Vec<BranchSegment>,
+    ) -> Result<()> {
         self.check_pose(pose)?;
-        let mut posed: Vec<BranchSegment> = Vec::with_capacity(self.segments.len());
+        posed.clear();
         for (rest, p) in self.segments.iter().zip(&pose.segments) {
             let start = match rest.parent {
                 Some(parent) => posed[parent as usize].end,
@@ -297,7 +496,44 @@ impl LivingSkeleton {
                 ..*rest
             });
         }
-        Ok(posed)
+        Ok(())
+    }
+
+    /// How every leaf-card vertex answers the jitter layer, in vertex order,
+    /// on the channels' bones from `first_bone`. A card takes one channel and
+    /// one direction from its index, so neighbours don't turn together, and
+    /// keeps one normal for all its vertices: a two-sided card's faces point
+    /// opposite ways, and would otherwise turn apart.
+    pub fn card_boil(&self, first_bone: u16) -> Vec<CardBoil> {
+        let none = CardBoil {
+            joints: [0; 3],
+            weights: [0.0; 3],
+        };
+        let mut boil = vec![none; self.leaf_mesh.vertices.len()];
+        for k in 0..self.leaf_bindings.len() {
+            let verts = self.card_vertices(k);
+            let Some(first) = verts.first() else {
+                continue;
+            };
+            let at = |v: u32| Vec3::from_array(self.leaf_mesh.vertices[v as usize].position);
+            let centre =
+                verts.iter().fold(Vec3::ZERO, |sum, &v| sum + at(v)) * (1.0 / verts.len() as f32);
+            let normal = Vec3::from_array(self.leaf_mesh.vertices[*first as usize].normal);
+
+            let hash = mix64(k as u64);
+            let channel = (hash % JITTER_CHANNELS as u64) as u16;
+            let joints = std::array::from_fn(|axis| first_bone + channel * 3 + axis as u16);
+            // From half to all of the channel's turn, either way round.
+            let share = 0.5 + 0.5 * ((hash >> 8) & 0xff) as f32 / 255.0;
+            let share = if hash & 0x10000 == 0 { share } else { -share };
+            for &v in &verts {
+                boil[v as usize] = CardBoil {
+                    joints,
+                    weights: (normal.cross(&(at(v) - centre)) * share).to_array(),
+                };
+            }
+        }
+        boil
     }
 
     /// The leaf mesh as `pose` holds it, each card carried rigidly by its
@@ -488,6 +724,12 @@ pub struct LivingRig {
     pub segment_bones: Vec<u16>,
     /// `bone_segments[bone]` is the segment a bone follows; `None` for the trunk.
     pub bone_segments: Vec<Option<u32>>,
+    /// The mesh's first leaf-card vertex; the bark comes before it.
+    pub first_leaf_vertex: usize,
+    /// `card_boil[v]` is how vertex `first_leaf_vertex + v` answers the jitter.
+    pub card_boil: Vec<CardBoil>,
+    /// Which parts are leaves, counting the sub-meshes that have any indices.
+    pub leaf_parts: Vec<usize>,
 }
 
 impl LivingRig {
@@ -507,7 +749,19 @@ impl LivingRig {
         pose: &LivingPose,
         out: &mut Vec<[[f32; 4]; 4]>,
     ) -> Result<()> {
-        let posed = skeleton.posed_segments(pose)?;
+        self.palette_into(skeleton, pose, &mut Vec::new(), out)
+    }
+
+    /// [`palette`](Self::palette) with somewhere to keep the posed segments, so
+    /// that a frame's worth of props allocates nothing.
+    pub fn palette_into(
+        &self,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+        posed: &mut Vec<BranchSegment>,
+        out: &mut Vec<[[f32; 4]; 4]>,
+    ) -> Result<()> {
+        skeleton.posed_segments_into(pose, posed)?;
         out.clear();
         out.extend(self.bone_segments.iter().map(|segment| match segment {
             None => IDENTITY_BONE,
@@ -518,6 +772,33 @@ impl LivingRig {
             }
         }));
         Ok(())
+    }
+
+    /// A vertex's influences as the renderer should have them: its own, and on
+    /// a leaf card, the jitter's as well. The card has one segment bone, so
+    /// it has three slots free.
+    pub fn runtime_joints(&self, vertex: usize) -> ([u16; 4], [f32; 4]) {
+        let v = &self.mesh.vertices[vertex];
+        match vertex
+            .checked_sub(self.first_leaf_vertex)
+            .and_then(|leaf| self.card_boil.get(leaf))
+        {
+            Some(boil) => (
+                [
+                    v.joint_indices[0],
+                    boil.joints[0],
+                    boil.joints[1],
+                    boil.joints[2],
+                ],
+                [
+                    v.joint_weights[0],
+                    boil.weights[0],
+                    boil.weights[1],
+                    boil.weights[2],
+                ],
+            ),
+            None => (v.joint_indices, v.joint_weights),
+        }
     }
 
     /// The rest mesh moved by `palette` on the CPU, the way the GPU does it:
@@ -551,6 +832,16 @@ impl LivingRig {
         mesh.recompute_bounds();
         mesh
     }
+}
+
+/// Every bit of `h` spread across all of them (MurmurHash3's finalizer),
+/// stable across runs and platforms.
+pub(crate) fn mix64(h: u64) -> u64 {
+    let mut h = h ^ (h >> 33);
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    h ^ (h >> 33)
 }
 
 const IDENTITY_BONE: [[f32; 4]; 4] = [
@@ -771,5 +1062,168 @@ stagger = "none"
         assert!((mid.radius_scale - 0.8).abs() < 1e-6);
         let norm: f32 = mid.rotation.iter().map(|x| x * x).sum();
         assert!((norm - 1.0).abs() < 1e-5);
+    }
+
+    fn pose_of(seed: u64, turn: f32, count: usize) -> LivingPose {
+        LivingPose {
+            shape_seed: seed,
+            segments: vec![
+                SegmentPose {
+                    rotation: flint_core::quat::quat_from_axis_angle([0.0, 0.0, 1.0], turn),
+                    length_scale: 1.0 + turn,
+                    radius_scale: 1.0,
+                };
+                count
+            ],
+        }
+    }
+
+    #[test]
+    fn blend_from_reads_each_part_from_its_own_two_poses() {
+        let poses = [pose_of(0, 0.1, 3), pose_of(1, 0.2, 3), pose_of(2, 0.3, 3)];
+        let times = [
+            WarpedTime {
+                index: 0,
+                weight: 0.0,
+            },
+            WarpedTime {
+                index: 0,
+                weight: 0.5,
+            },
+            WarpedTime {
+                index: 1,
+                weight: 1.0,
+            },
+        ];
+        let mut out = pose_of(9, 0.0, 0);
+        assert!(out.blend_from(&times, |i| poses.get(i as usize)));
+        assert_eq!(out.segments[0], poses[0].segments[0], "a hold is its pose");
+        assert_eq!(
+            out.segments[1],
+            SegmentPose::blend(&poses[0].segments[1], &poses[1].segments[1], 0.5)
+        );
+        assert_eq!(
+            out.segments[2], poses[2].segments[2],
+            "an arrival is its pose"
+        );
+    }
+
+    #[test]
+    fn blend_from_says_when_a_pose_it_needs_is_missing() {
+        let poses = [pose_of(0, 0.1, 1)];
+        let at = |weight| [WarpedTime { index: 0, weight }];
+        let mut out = pose_of(9, 0.0, 0);
+        assert!(
+            out.blend_from(&at(0.0), |i| poses.get(i as usize)),
+            "a hold doesn't need the next pose"
+        );
+        assert!(!out.blend_from(&at(0.5), |i| poses.get(i as usize)));
+        assert!(!out.blend_from(&at(0.0), |_| None));
+    }
+
+    fn jitter(amplitude: f32, step: f32, glide: f32) -> LivingJitter {
+        LivingJitter {
+            clock: LivingClock {
+                step,
+                glide,
+                stagger: Stagger::None,
+            },
+            amplitude,
+        }
+    }
+
+    #[test]
+    fn jitter_snaps_on_its_own_beat_and_each_channel_on_its_own_phase() {
+        let j = jitter(0.05, 0.125, 0.0);
+        let mut changes = [0usize; JITTER_CHANNELS];
+        let mut when: Vec<Vec<usize>> = vec![Vec::new(); JITTER_CHANNELS];
+        for frame in 1..240 {
+            let (now, then) = (f64::from(frame) / 60.0, f64::from(frame - 1) / 60.0);
+            for channel in 0..JITTER_CHANNELS {
+                if j.card_turn(77, channel, now) != j.card_turn(77, channel, then) {
+                    changes[channel] += 1;
+                    when[channel].push(frame as usize);
+                }
+            }
+        }
+        // 4 s at 8 beats a second: it holds between them, and it does change.
+        for count in changes {
+            assert!((28..=32).contains(&count), "{changes:?}");
+        }
+        assert_ne!(when[0], when[1], "channels jumping together");
+        assert_ne!(when[1], when[2], "channels jumping together");
+    }
+
+    #[test]
+    fn jitter_is_bounded_repeatable_and_silent_at_no_amplitude() {
+        let j = jitter(0.05, 0.125, 0.0);
+        for i in 0..500 {
+            let t = f64::from(i) * 0.01;
+            let turn = j.card_turn(5, 2, t);
+            assert!(turn.abs() <= 0.05 * CARD_TURN_PER_AMPLITUDE, "{turn}");
+            assert_eq!(turn, j.card_turn(5, 2, t), "the same value every time");
+            let step = j.tint_step(5, 1, t);
+            assert!(step.abs() <= TINT_STEPS, "{step}");
+        }
+        assert_ne!(j.card_turn(5, 0, 1.0), j.card_turn(6, 0, 1.0), "by stream");
+
+        let still = jitter(0.0, 0.125, 0.0);
+        assert_eq!(still.card_turn(5, 2, 3.0), 0.0);
+        assert_eq!(still.tint_step(5, 2, 3.0), 0);
+    }
+
+    #[test]
+    fn jitter_can_glide_when_a_spec_asks() {
+        let j = jitter(0.05, 0.125, 1.0);
+        for frame in 1..400 {
+            let (now, then) = (f64::from(frame) / 240.0, f64::from(frame - 1) / 240.0);
+            let moved = (j.card_turn(5, 0, now) - j.card_turn(5, 0, then)).abs();
+            // A full swing is twice the bound, over 30 samples, at a smoothstep's
+            // peak of 1.5 times the mean.
+            let bound = 2.0 * 0.05 * CARD_TURN_PER_AMPLITUDE * 1.5 / 30.0;
+            assert!(moved <= bound * 1.01, "{moved} at {frame}");
+        }
+    }
+
+    #[test]
+    fn a_tint_shifts_warm_or_cool_and_neutral_is_exact() {
+        let j = jitter(0.05, 0.125, 0.0);
+        assert_eq!(j.tint(0), [1.0, 1.0, 1.0]);
+        let warm = j.tint(TINT_STEPS);
+        assert!((warm[0] - 1.1).abs() < 1e-6 && (warm[2] - 0.9).abs() < 1e-6);
+        let cool = j.tint(-TINT_STEPS);
+        assert!(cool[0] < 1.0 && cool[2] > 1.0);
+    }
+
+    #[test]
+    fn a_boil_bone_is_an_offset_that_ignores_where_it_is_applied() {
+        let mut bones = Vec::new();
+        boil_bones(&[0.1, 0.2, 0.3, 0.4], &mut bones);
+        assert_eq!(bones.len(), BOIL_BONES);
+        // Channel 1's y bone: a turn of 0.2 along y, and nothing else.
+        let m = &bones[4];
+        for column in &m[..3] {
+            assert_eq!(*column, [0.0; 4], "a linear part would bend the normals");
+        }
+        assert_eq!(m[3], [0.0, 0.2, 0.0, 0.0], "a w would change the point's w");
+    }
+
+    #[test]
+    fn the_slow_pair_stays_ahead_of_the_window_and_arrives_where_it_next_leaves() {
+        let c = clock(0.3, Stagger::PerLevel);
+        let mut last = c.slow_pair(0.0);
+        for frame in 1..3000 {
+            let t = f64::from(frame) / 60.0;
+            let (from, to, weight) = c.slow_pair(t);
+            let first = c.at(t).index;
+            assert!(from >= first, "{from} left the window at {first}");
+            assert!(to - first <= 3, "{to} is past a ring of 4 at {first}");
+            if from != last.0 {
+                assert_eq!(from, last.1, "takes up where it arrived");
+                assert!(last.2 > 0.99, "and only once it has arrived: {}", last.2);
+                assert_eq!(weight, 0.0);
+            }
+            last = (from, to, weight);
+        }
     }
 }

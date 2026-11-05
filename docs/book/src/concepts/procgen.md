@@ -187,11 +187,11 @@ step = 0.5                # seconds between pose targets
 glide = 0.3               # how much of a step is spent easing, 0 (snap) to 1 (never holds)
 stagger = "per_level"     # none | per_level | per_branch
 drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
-jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
 ```
 
-These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below. `drift` and `jitter` are checked and carried, and nothing plays a ring of poses in a game yet. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending. `jitter` drives the leaf cards' boil, and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
 
 `variance` is what keeps the silhouette. A freshly grown pose is a different-looking tree, so each segment is pulled back toward the lineage's own shape, keeping only this share of its difference:
 
@@ -215,7 +215,7 @@ A runtime can keep a ring of `full_pose`s and call `LivingSkeleton::with_varianc
 
 Otherwise `flint gen` writes the lineage's rest mesh as a skinned GLB. It's the same geometry as the still tree `flint gen --seed <lineage>` bakes without a `[living]` table, plus joints and weights, so it holds still until something poses it. It grows from `lineage_seed`, so `[seed]` plays no part, and `--seed` or `--batch` pick the lineage instead.
 
-- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), so a tree with more segments folds its shortest twigs into their parents' bones, from the tips in. `LivingRig::segment_bones` says which bone moves a segment.
+- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), and the player keeps the last 12 for leaf jitter, so a tree with more than 243 segments folds its shortest twigs into their parents' bones, from the tips in. `LivingRig::segment_bones` says which bone moves a segment.
 - **Weights.** A ring where a limb carries on from one segment to the next is shared half and half by the two bones, and a limb's first and last rings belong to their own segment. Rings are single vertices, so a joint can't tear. A leaf card rides the bone of its segment, whole.
 - **Poses.** `LivingRig::palette` turns a pose into bone matrices, ready to upload, and `skinned_mesh` applies them on the CPU. All of a pose's scale lives in those matrices: glTF's parent-child transforms can't carry a stretch without shearing the children, so the GLB's skeleton holds none.
 
@@ -279,7 +279,7 @@ An entity's lineage says which tree it is, and its name says which way it moves:
 What a prop costs:
 
 - **One mesh a lineage.** The rest mesh goes up once, as `<spec>@<lineage>` (`oak_living@9`), through the same path as a skinned GLB. The player rewrites the entity's `model.asset` to that name when it loads. It takes the oak about 25 ms to build, in a release build, and there's no disk tier for it yet.
-- **One bone buffer a prop.** That's the prop's own skeleton instance. Nothing writes it per frame until something moves it.
+- **One bone buffer a prop.** That's the prop's own skeleton instance, and it's written only on a frame something in it has moved.
 - **One ring a prop.** Poses are kept a few steps ahead of the prop's clock, which stops when the game pauses, plus one spare, so that a beat leaves the ring full. A ring is raised to whatever the prop's stagger can reach.
 
 At load the player builds every lineage and fills every ring, so the first frame finds them full: 40 oaks on 5 lineages take about 500 ms. `--procgen-defer` shows a placeholder under each lineage's name instead and does the same work on the queue, one lineage a frame and then the poses.
@@ -293,10 +293,51 @@ A prop whose spec can't live, or whose component has a bad field, stays a still 
 ```
 [living] 40 props on 5 lineages, 8 poses a ring: 3900 of 3900 frames ended full, never more than 0 short, 0 frames missing a pose in use
 [living] 5200 poses made, 0 from cache, 0 failed: avg 1.30 ms/frame, worst 4.57 ms, budget 4 ms, over it on 1 frames
+[living] blending and upload: avg 0.351 ms/frame, worst 1.03 ms, over 1 ms on 1 frames, 37.7 bone writes a frame, 0 kept their last bones for want of a pose
 [living] 240 skinned draws this frame
 ```
 
-Props stand in their rest pose for now: the poses in the rings aren't drawn yet. Headless `flint render` doesn't run the resolver, so it doesn't draw living props; use `flint-player --screenshot`.
+Headless `flint render` doesn't run the resolver, so it doesn't draw living props; use `flint-player --screenshot`, with `--frame-step` and `--screenshot-every` for a sequence that comes out the same every time.
+
+### The warped clock
+
+Each frame, every part of every prop reads its own place on the hold-and-glide clock, picks the two poses either side, and blends them per segment: rotation by nlerp the short way round, scales by lerp. `LivingRig::palette` turns the result into bone matrices, and they go up to the prop's own bone buffer. It all happens on the CPU, so no new shader is involved, and the strip uses the same blend, so what it shows is what the bones draw.
+
+```text
+t' = floor(t / step) + ease(clamp((frac(t / step) - (1 - glide)) / glide, 0, 1))
+```
+
+- **Glide 0** holds for the whole step and snaps on the beat. Between beats nothing moves and nothing is written.
+- **Glide 0.3** holds for 70% of the step and eases into the next pose over the rest.
+- **Glide 1** never holds.
+
+`stagger` offsets each part's phase. `per_level` puts each branch level 15% of a step ahead of the one before it, and `per_branch` spreads the segments around the cycle by id. `none` moves the whole prop at once. Each prop also starts at its own phase, from its name, so a grove never moves in step.
+
+A prop whose pose isn't ready keeps its last bones for that frame, and the report counts it. That takes a budget running behind, or poses still coming in under `--procgen-defer`, where a prop can jump once from its rest pose when its ring first fills. The bench below never does it.
+
+The clock reads `step` and `glide` from the spec, and a scene can override them for every prop until the wooze field takes them over (#213):
+
+```toml
+[living]
+step = 0.5            # seconds between pose targets, for every prop
+glide = 0.0           # how much of a step is spent easing, for every prop
+shadows = "blended"   # blended | drift
+```
+
+A bad value here gets a warning and means its default. A misspelt key fails the scene's load.
+
+### Leaf jitter
+
+The fast layer boils the leaf cards on a clock of its own, `jitter.step` and `jitter.glide`, snapping by default. Its values are pure functions of the prop's name, the channel and the step, so they cost no generating and come out the same on every run.
+
+- **Card rotation.** Each card turns about its own centre and normal, up to 4 radians per unit of `amplitude` (about 11° either way at the default). A card takes one of 4 channels and a share of its turn from its index, so neighbours don't turn together. Each channel has three axis bones at the end of the palette, which hold only an offset, and a card's vertices weight them by `n x r`, so the turn fits in the skinning sum with no new shader or vertex data. These weights don't sum to 1, so they go up only to the renderer: the GLB `flint gen` bakes stays valid glTF.
+- **Tint.** Each leaf shade moves toward warm or cool, by up to 2 times `amplitude` (10% at the default). A shade is a sub-mesh with its own draw, so this is per shade and not per card. It takes one of 9 levels, so the whole grove shares a few materials, made once.
+
+`amplitude = 0`, or leaving `leaf_cards` out of `targets`, turns the layer off. It only reaches the player: `flint gen --strip` draws the slow layer.
+
+### Shadows
+
+A tree's shadow follows what's drawn by default, stagger and leaf jitter included, at no extra cost. Whether a whole shadow boiling reads as life or as noise is a question for each scene, so `[living] shadows = "drift"` gives the shadow bones of its own: a slower pose at half the speed, with no stagger and no jitter. It adds about 0.05 ms a frame for 40 oaks.
 
 ## `flint gen`
 

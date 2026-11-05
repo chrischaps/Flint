@@ -40,12 +40,13 @@ pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use living::{
-    LeafBinding, LivingClock, LivingPose, LivingRig, LivingSkeleton, PoseStream, SegmentPose,
-    WarpedTime, STAGGER_PER_LEVEL,
+    boil_bones, CardBoil, LeafBinding, LivingClock, LivingJitter, LivingPose, LivingRig,
+    LivingSkeleton, PoseStream, SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
+    STAGGER_PER_LEVEL,
 };
 pub use living_props::{
-    LineageDone, LivingProp, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
-    POSE_CACHE_BYTES,
+    BlendFrame, LineageDone, LivingDefaults, LivingProp, LivingPropId, LivingPropRequest,
+    LivingProps, LivingShadows, LivingStats, PropBlend, POSE_CACHE_BYTES,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{

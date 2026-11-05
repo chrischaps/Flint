@@ -1,11 +1,17 @@
-# Living Props bench (#211): forty oaks, five lineages, each tree with its own
-# bone buffer and its own ring of poses kept full ahead of its clock. They stand
-# in their rest pose until #212 blends the poses.
+# Living Props bench (#211, #212): forty oaks, five lineages, each tree with its
+# own bone buffer and its own ring of poses kept full ahead of its clock, drifting
+# between them on the warped clock with its leaves boiling.
 #
 #   cargo run --release -p flint-player -- demo/living_props.scene.toml --schemas schemas --exit-after 60
 #
 # prints `[living]` lines saying whether the rings stayed full and within the
-# procgen frame budget. The spec is specs/examples/oak_living.procgen.toml; an
+# procgen frame budget, and what blending cost. To turn the dial, add a table:
+#
+#   [living]
+#   glide = 0.0            # snap on the beat; the spec's 0.3 holds, then glides
+#   shadows = "drift"      # a slower shadow, with no stagger or jitter
+#
+# The spec is specs/examples/oak_living.procgen.toml; an
 # entity's `lineage_seed` says which tree it is, and its name which way it moves.
 
 [scene]

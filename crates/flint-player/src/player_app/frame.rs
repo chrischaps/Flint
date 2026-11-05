@@ -1448,6 +1448,16 @@ impl PlayerApp {
                     super::living_props::apply_lineages(&lineages, &mut sink);
                 }
             }
+            // Blend after the rings have slid and any new lineage is up.
+            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
+                super::living_props::upload_blends(
+                    &mut self.procgen_resolver,
+                    &mut self.living_blend,
+                    renderer,
+                    &ctx.device,
+                    &ctx.queue,
+                );
+            }
         }
     }
 

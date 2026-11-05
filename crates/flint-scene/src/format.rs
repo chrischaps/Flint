@@ -14,9 +14,29 @@ pub struct SceneFile {
     #[serde(default)]
     pub post_process: Option<PostProcessDef>,
     #[serde(default)]
+    pub living: Option<LivingDef>,
+    #[serde(default)]
     pub prefabs: HashMap<String, PrefabInstance>,
     #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+}
+
+/// A scene's `[living]` table: what it says about all its living props, ahead
+/// of any one spec. `step` and `glide` belong to the wooze field once it lands
+/// (#213); until then this is their global default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingDef {
+    /// Seconds between pose targets. Unset: each spec's `[living] step`.
+    #[serde(default)]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1. Unset: each spec's.
+    #[serde(default)]
+    pub glide: Option<f32>,
+    /// What the shadows follow: `blended` (what's drawn; the default) or
+    /// `drift` (a slower pose with no stagger or jitter).
+    #[serde(default)]
+    pub shadows: Option<String>,
 }
 
 /// A prefab template file (.prefab.toml)
@@ -411,6 +431,7 @@ impl SceneFile {
             camera: None,
             environment: None,
             post_process: None,
+            living: None,
             prefabs: HashMap::new(),
             entities: HashMap::new(),
         }
