@@ -1083,8 +1083,8 @@ impl LivingPropsDebugPanel {
             }
             match unsaved.len() {
                 0 => ui.weak("the scene has it all"),
-                1 => ui.colored_label(INK, "* 1 value not in the scene"),
-                n => ui.colored_label(INK, format!("* {n} values not in the scene")),
+                1 => ui.colored_label(INK, "* 1 value unsaved"),
+                n => ui.colored_label(INK, format!("* {n} values unsaved")),
             };
         });
     }
@@ -2310,14 +2310,14 @@ mod tests {
         let said = shown(&ctx, &mut panel);
         assert_eq!(says(&said, "thorn 2 \u{2022} *"), 1, "{said:?}");
         assert_eq!(says(&said, "Global *"), 0, "the grove's own are saved");
-        assert_eq!(says(&said, "* 1 value not in the scene"), 1, "{said:?}");
+        assert_eq!(says(&said, "* 1 value unsaved"), 1, "{said:?}");
 
         state.unsaved_global = true;
         state.unsaved.push("[wooze] glide = 0.8".to_string());
         panel.refresh(state);
         let said = shown(&ctx, &mut panel);
         assert_eq!(says(&said, "Global *"), 1, "{said:?}");
-        assert_eq!(says(&said, "* 2 values not in the scene"), 1, "{said:?}");
+        assert_eq!(says(&said, "* 2 values unsaved"), 1, "{said:?}");
         let asked = click_text(&ctx, &mut panel, "Commit to File");
         assert_eq!(asked, [LivingPanelAction::Commit]);
     }
