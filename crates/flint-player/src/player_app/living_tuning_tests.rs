@@ -632,3 +632,369 @@ mod panel_edits {
         assert_eq!(species_of(&app), start);
     }
 }
+
+// ─── A/B (#238) ───────────────────────────────────────────
+
+/// Every bone buffer the props would fill now, written whole: each prop's, then
+/// each of its echoes'.
+fn everything_drawn(app: &mut PlayerApp) -> Vec<Vec<[[f32; 4]; 4]>> {
+    let props = app.procgen_resolver.living_props_mut();
+    props.redraw_all();
+    let mut frame = flint_procgen::BlendFrame::default();
+    let mut drawn = Vec::new();
+    for i in 0..props.props().len() {
+        let id = flint_procgen::LivingPropId(i);
+        props.blend_prop(id, &mut frame);
+        drawn.push(frame.bones.clone());
+        for echo in 0..props.prop(id).echo_count() {
+            props.blend_echo(id, echo, &mut frame);
+            drawn.push(frame.bones.clone());
+        }
+    }
+    assert!(
+        drawn.iter().all(|bones| !bones.is_empty()),
+        "every buffer posed"
+    );
+    drawn
+}
+
+#[test]
+fn with_the_clock_frozen_a_flip_changes_only_what_the_presets_differ_in() {
+    let folder = Folder::new("ab_frozen");
+    let mut app = app_with(3, &folder.0);
+    app.tick_procgen(0.37);
+    // Frozen from here: the frame loop hands living props a dt of 0.
+    app.tick_procgen(0.0);
+    let before = everything_drawn(&mut app);
+    let beats = beats_of(&app);
+
+    // Two of the same: a flip is nothing at all.
+    app.compare_living("", "").unwrap();
+    app.tick_procgen(0.0);
+    assert_eq!(everything_drawn(&mut app), before, "A is what was drawn");
+    assert!(app.flip_living());
+    app.tick_procgen(0.0);
+    assert_eq!(everything_drawn(&mut app), before, "B is the same look");
+    assert_eq!(beats_of(&app), beats, "on the same clock");
+
+    // A preset that differs: B is something else, and A comes back exactly.
+    app.compare_living("", "linklater").unwrap();
+    assert_eq!(everything_drawn(&mut app), before);
+    app.flip_living();
+    app.tick_procgen(0.0);
+    let b = everything_drawn(&mut app);
+    assert_ne!(b, before, "linklater's drift is half as far");
+    assert_eq!(beats_of(&app), beats, "a flip moves no clock");
+    let knobs = app.living_knobs();
+    assert_eq!(
+        (knobs.wooze.amplitude, knobs.wooze.glide),
+        (Some(0.5), Some(0.6))
+    );
+    for _ in 0..3 {
+        app.flip_living();
+        app.tick_procgen(0.0);
+    }
+    assert_eq!(everything_drawn(&mut app), before, "back on A, to the bit");
+    app.flip_living();
+    assert_eq!(everything_drawn(&mut app), b, "and B to the bit");
+}
+
+/// A grove with a zone of its own, on a field like Woozy Grove's.
+fn zoned_app(folder: &Path) -> PlayerApp {
+    let mut app = app_with(4, folder);
+    let def: flint_scene::WoozeDef = toml::from_str(
+        r#"
+preset = "linklater"
+[[zone]]
+name = "pocket"
+shape = "sphere"
+center = [2.0, 0.0, 0.0]
+radius = 1.0
+falloff = 1.0
+amplitude = 1.0
+step = 1.1
+glide = 0.9
+jitter = 0.4
+"#,
+    )
+    .unwrap();
+    app.wooze = Some(def.field().0);
+    app
+}
+
+#[test]
+fn a_side_shown_by_a_flip_is_the_side_that_was_shown_all_along() {
+    let run = |compare: (&str, &str), flip_at: Option<usize>| {
+        let folder = Folder::new(&format!("ab_same_{}_{flip_at:?}", compare.0));
+        let mut app = zoned_app(&folder.0);
+        app.tick_procgen(0.0);
+        app.compare_living(compare.0, compare.1).unwrap();
+        for frame in 0..150 {
+            if Some(frame) == flip_at {
+                app.flip_living();
+            }
+            app.tick_procgen(1.0 / 60.0);
+            // As the player's frame does: the shown side blends every frame.
+            let props = app.procgen_resolver.living_props_mut();
+            let mut blend = flint_procgen::BlendFrame::default();
+            for i in 0..props.props().len() {
+                let id = flint_procgen::LivingPropId(i);
+                props.blend_prop(id, &mut blend);
+                for echo in 0..props.prop(id).echo_count() {
+                    props.blend_echo(id, echo, &mut blend);
+                }
+            }
+        }
+        everything_drawn(&mut app)
+    };
+    let all_along = run(("morph", "morph"), None);
+    assert_eq!(
+        run(("", "morph"), Some(30)),
+        all_along,
+        "flipped in at half a second"
+    );
+    assert_eq!(run(("", "morph"), Some(0)), all_along, "flipped in at once");
+}
+
+/// A player with `n` of the real living oak, leaves and all, and no field.
+fn oak_app(n: u64, folder: &Path) -> PlayerApp {
+    let scene_path = folder.join("grove.scene.toml");
+    let mut app = PlayerApp::new(
+        FlintWorld::new(),
+        scene_path.to_string_lossy().into_owned(),
+        false,
+        None,
+        None,
+    );
+    let spec = std::fs::read_to_string("../../specs/examples/oak_living.procgen.toml").unwrap();
+    app.procgen_resolver
+        .index_spec(ProcGenSpec::parse(&spec).unwrap());
+    for i in 0..n {
+        app.procgen_resolver
+            .add_living_prop(LivingPropRequest {
+                entity: EntityId::from_raw(i + 1),
+                entity_name: format!("oak_{i}"),
+                position: [i as f32 * 6.0, 0.0, 0.0],
+                spec_name: "oak_living".to_string(),
+                lineage_seed: None,
+                pose_ring: None,
+                phase_offset: None,
+                stagger: None,
+            })
+            .unwrap();
+    }
+    app.procgen_resolver.make_living_now();
+    app
+}
+
+/// What the renderer would hold for each prop if every frame's blend went up:
+/// its bones, its echoes' bones and its parts' tints, as they stand.
+#[derive(Debug, PartialEq)]
+struct Held {
+    bones: Vec<Vec<[[f32; 4]; 4]>>,
+    tints: Vec<std::collections::BTreeMap<usize, [u32; 3]>>,
+    echoes: Vec<usize>,
+}
+
+fn hold_frame(app: &mut PlayerApp, held: &mut Held) {
+    let props = app.procgen_resolver.living_props_mut();
+    let mut frame = flint_procgen::BlendFrame::default();
+    let n = props.props().len();
+    held.bones.resize(n * 17, Vec::new());
+    held.tints.resize(n, Default::default());
+    held.echoes.resize(n, 0);
+    for i in 0..n {
+        let id = flint_procgen::LivingPropId(i);
+        let blend = props.blend_prop(id, &mut frame);
+        if let Some(first) = blend.first_bone {
+            let buffer = &mut held.bones[i * 17];
+            buffer.resize(buffer.len().max(first + frame.bones.len()), [[0.0; 4]; 4]);
+            buffer[first..first + frame.bones.len()].copy_from_slice(&frame.bones);
+        }
+        if let Some(count) = blend.echo_count {
+            held.echoes[i] = count;
+        }
+        for (part, tint) in &frame.tints {
+            held.tints[i].insert(*part, tint.map(f32::to_bits));
+        }
+        for echo in 0..props.prop(id).echo_count() {
+            if let Some(first) = props.blend_echo(id, echo, &mut frame) {
+                let buffer = &mut held.bones[i * 17 + 1 + echo];
+                buffer.resize(buffer.len().max(first + frame.bones.len()), [[0.0; 4]; 4]);
+                buffer[first..first + frame.bones.len()].copy_from_slice(&frame.bones);
+            }
+        }
+    }
+}
+
+#[test]
+fn an_oak_shown_by_a_flip_holds_what_it_would_have_all_along() {
+    let run = |compare: (&str, &str), flip_at: Option<usize>| {
+        let folder = Folder::new(&format!("ab_oak_{}_{flip_at:?}", compare.0));
+        let mut app = oak_app(3, &folder.0);
+        let mut held = Held {
+            bones: Vec::new(),
+            tints: Vec::new(),
+            echoes: Vec::new(),
+        };
+        app.tick_procgen(0.0);
+        app.compare_living(compare.0, compare.1).unwrap();
+        for frame in 0..90 {
+            if Some(frame) == flip_at {
+                app.flip_living();
+            }
+            app.tick_procgen(1.0 / 60.0);
+            hold_frame(&mut app, &mut held);
+        }
+        // Tints a run never sent are the renderer's default, which is no tint.
+        for tints in &mut held.tints {
+            tints.retain(|_, tint| *tint != [1.0f32.to_bits(); 3]);
+        }
+        held
+    };
+    let all_along = run(("morph", "morph"), None);
+    let flipped = run(("", "morph"), Some(30));
+    assert_eq!(flipped.echoes, all_along.echoes);
+    assert_eq!(flipped.tints, all_along.tints);
+    for (i, (a, b)) in flipped.bones.iter().zip(&all_along.bones).enumerate() {
+        assert_eq!(a, b, "buffer {i}");
+    }
+}
+
+#[test]
+fn both_sides_run_on_the_same_clock() {
+    let folder = Folder::new("ab_clock");
+    let mut app = app_with(2, &folder.0);
+    app.tick_procgen(0.2);
+    app.compare_living("", "linklater").unwrap();
+    for _ in 0..90 {
+        app.tick_procgen(1.0 / 60.0);
+    }
+    let (time, field) = (app.procgen_resolver.living_props().time(), app.wooze_time);
+    app.flip_living();
+    assert_eq!(app.procgen_resolver.living_props().time(), time);
+    assert_eq!(app.wooze_time, field);
+
+    // A step is the same seconds for both: a beat of the side being shown.
+    app.step_living();
+    app.tick_procgen(0.0);
+    let moved = app.procgen_resolver.living_props().time() - time;
+    assert!((moved - 0.5).abs() < 1e-9, "{moved}");
+    app.flip_living();
+    let other = app.procgen_resolver.living_props().time() - time;
+    assert!((other - moved).abs() < 1e-12, "{other} against {moved}");
+    let stats = app.hidden_side_stats().unwrap();
+    assert_eq!(stats.frames_starved, 0, "{stats:?}");
+}
+
+#[test]
+fn a_preset_that_isnt_there_is_named_and_stopping_keeps_what_is_shown() {
+    let folder = Folder::new("ab_stop");
+    let mut app = app_with(1, &folder.0);
+    app.tick_procgen(0.1);
+    let problem = app.compare_living("", "no_such").unwrap_err();
+    assert!(problem.contains("B (no_such)"), "{problem}");
+    assert!(
+        app.living_ab_state().is_some(),
+        "B is the knobs as they were"
+    );
+
+    app.compare_living("", "linklater").unwrap();
+    app.flip_living();
+    let b = app.living_knobs();
+    app.stop_comparing_living();
+    assert!(app.living_ab_state().is_none());
+    assert_eq!(app.living_knobs(), b);
+    assert!(!app.flip_living(), "nothing left to flip");
+}
+
+#[test]
+fn a_preset_is_laid_over_the_scene_as_it_loaded() {
+    let folder = Folder::new("ab_over_load");
+    let mut app = app_with(1, &folder.0);
+    app.tick_procgen(0.0);
+    let at_load = app.living_knobs();
+    // Turned by hand after load: as it was keeps that, a preset doesn't.
+    let tuned: WoozePreset = toml::from_str("[living]\nechoes = { count = 5 }\n").unwrap();
+    app.tune_living(&tuned).unwrap();
+    app.compare_living("", "linklater").unwrap();
+    assert_eq!(app.living_knobs().living.echoes.unwrap().count, Some(5));
+    app.flip_living();
+    let b = app.living_knobs();
+    assert_eq!(b.living.echoes, at_load.living.echoes);
+    assert_eq!(b.wooze.step, Some(0.5));
+}
+
+#[cfg(feature = "debug-hud")]
+#[test]
+fn the_panel_compares_flips_and_splits() {
+    use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel};
+
+    let folder = Folder::new("ab_panel");
+    let mut app = app_with(2, &folder.0);
+    let id = app.world.spawn("oak_0").unwrap();
+    app.world
+        .set_component(
+            id,
+            flint_core::components::LIVING_PROP,
+            toml::Value::Table(Default::default()),
+        )
+        .unwrap();
+    app.create_living_debug_panel();
+    app.debug_panels[0].toggle();
+    fn panel(app: &mut PlayerApp) -> &mut LivingPropsDebugPanel {
+        app.debug_panels[0]
+            .as_any_mut()
+            .downcast_mut::<LivingPropsDebugPanel>()
+            .unwrap()
+    }
+    app.tick_procgen(0.0);
+    panel(&mut app).send_for_test(LivingPanelAction::Compare(
+        String::new(),
+        "linklater".to_string(),
+    ));
+    app.drain_living_panel();
+    let ab = panel(&mut app).state().ab.clone().unwrap();
+    assert_eq!((ab.a.as_str(), ab.b.as_str()), ("", "linklater"));
+    assert!(!ab.showing_b && !ab.split);
+
+    panel(&mut app).send_for_test(LivingPanelAction::Flip);
+    panel(&mut app).send_for_test(LivingPanelAction::Split(true));
+    app.drain_living_panel();
+    let ab = panel(&mut app).state().ab.clone().unwrap();
+    assert!(ab.showing_b && ab.split);
+    assert!(app.living_split());
+
+    panel(&mut app).send_for_test(LivingPanelAction::StopComparing);
+    app.drain_living_panel();
+    assert!(panel(&mut app).state().ab.is_none());
+}
+
+#[test]
+fn the_keys_start_a_comparison_of_the_picks_and_then_flip_and_split() {
+    let folder = Folder::new("ab_keys");
+    let mut app = app_with(1, &folder.0);
+    app.tick_procgen(0.0);
+    app.living_ab_key(false);
+    let ab = app.living_ab_state().unwrap();
+    assert_eq!((ab.a.as_str(), ab.b.as_str()), ("", "linklater"));
+    assert!(!ab.showing_b);
+    app.living_ab_key(false);
+    assert!(app.living_ab_state().unwrap().showing_b);
+    app.living_ab_key(true);
+    assert!(app.living_split());
+    app.living_ab_key(true);
+    assert!(!app.living_split());
+}
+
+#[test]
+fn compare_at_start_waits_for_the_props_and_outlives_the_scene_reset() {
+    let folder = Folder::new("ab_start");
+    let mut app = app_with(1, &folder.0);
+    app.compare_living_at_start("", "linklater", true);
+    app.living_tune.for_new_scene();
+    assert!(app.living_ab_state().is_none());
+    app.tick_procgen(0.0);
+    let ab = app.living_ab_state().unwrap();
+    assert!(ab.split && ab.b == "linklater");
+}

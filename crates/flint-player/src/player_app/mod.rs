@@ -29,6 +29,7 @@ mod music_guide_panel;
 mod music_session;
 mod pacing;
 mod perf;
+mod living_ab;
 pub mod living_props;
 pub(crate) mod living_tuning;
 mod shallow_wooze;

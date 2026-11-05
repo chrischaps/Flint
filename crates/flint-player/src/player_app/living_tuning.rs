@@ -32,13 +32,21 @@ pub struct LivingTune {
     /// Whether the pose overlay is showing.
     pub overlay: bool,
     /// While the boil is switched off: the amounts it'll come back to.
-    boil_off: Option<(f32, f32)>,
+    pub(super) boil_off: Option<(f32, f32)>,
     /// A boil asked for before there was a renderer to give it to.
     boil_waiting: Option<BoilDef>,
     /// The knobs as the scene loaded, to go back to.
-    at_load: Option<AtLoad>,
+    pub(super) at_load: Option<AtLoad>,
     /// What came of the last save or load, for the panel.
     pub status: Option<String>,
+    /// Two presets on the same grove, if they're being compared (#238).
+    pub(super) ab: Option<Box<super::living_ab::LivingAb>>,
+    /// What A and B would be: the panel's picks, for F6 and F7 to start with.
+    /// `None` until picked, when they're the knobs as they stand and the first
+    /// preset on offer.
+    pub(super) ab_picks: Option<(String, String)>,
+    /// `--compare`: start comparing the picks once there are props, split if true.
+    pub(super) compare_at_start: Option<bool>,
     /// The presets on offer, as of when the panel opened or last saved one. Not
     /// read every frame, since that means reading a folder.
     #[cfg(feature = "debug-hud")]
@@ -48,7 +56,7 @@ pub struct LivingTune {
 /// Every knob as the scene loaded, prop by prop where props can differ: a grove
 /// of several species goes back to several.
 #[derive(Debug, Clone)]
-struct AtLoad {
+pub(super) struct AtLoad {
     /// The field's knobs and the boil, one of each per scene. In a scene with no
     /// field the clock's are unset, and `clocks` has them instead.
     knobs: WoozePreset,
@@ -67,6 +75,18 @@ fn disagree<T, V: PartialEq>(items: &[T], read: impl Fn(&T) -> V) -> bool {
     match values.next() {
         Some(first) => values.any(|value| value != first),
         None => false,
+    }
+}
+
+impl LivingTune {
+    /// Nothing done by hand, for a new scene, keeping only what was asked for
+    /// before any scene was: which presets to compare, and whether to at start.
+    pub(super) fn for_new_scene(&mut self) {
+        *self = Self {
+            ab_picks: self.ab_picks.take(),
+            compare_at_start: self.compare_at_start.take(),
+            ..Self::default()
+        };
     }
 }
 
@@ -380,7 +400,7 @@ impl PlayerApp {
     }
 
     /// Every knob as it stands, prop by prop, to go back to.
-    fn living_at_load(&self) -> AtLoad {
+    pub(super) fn living_at_load(&self) -> AtLoad {
         let living = self.procgen_resolver.living_props();
         let props = living.props();
         let mut knobs = self.living_knobs();
@@ -439,7 +459,12 @@ impl PlayerApp {
     /// knobs started, and apply any single steps. Each is a whole beat for every
     /// prop, however long a beat is where it stands, and for the boil at the
     /// camera. The field's clock moves on by a beat of its global step.
-    pub(super) fn before_living_tick(&mut self) {
+    ///
+    /// While two presets are compared (#238) a step is that many seconds of the
+    /// ordinary clock instead, returned to be added to the frame's `dt`, so both
+    /// sides move on by the same time: a whole beat of the side being shown,
+    /// wherever its step is the global one.
+    pub(super) fn before_living_tick(&mut self) -> f64 {
         if let Some(boil) = self.living_tune.boil_waiting {
             if self.scene_renderer.is_some() {
                 self.living_tune.boil_waiting = None;
@@ -449,9 +474,10 @@ impl PlayerApp {
         if self.living_tune.at_load.is_none() && !self.procgen_resolver.living_props().is_empty() {
             self.living_tune.at_load = Some(self.living_at_load());
         }
+        self.start_asked_comparison();
         let steps = std::mem::take(&mut self.living_tune.steps_queued);
         if steps == 0 {
-            return;
+            return 0.0;
         }
         let beats = f64::from(steps);
         let seconds = match &self.wooze {
@@ -463,6 +489,9 @@ impl PlayerApp {
                 .first()
                 .map_or(0.0, |prop| f64::from(prop.clock().step)),
         } * beats;
+        if self.living_tune.ab.is_some() {
+            return seconds;
+        }
         self.procgen_resolver
             .living_props_mut()
             .advance_beats(beats, seconds);
@@ -476,6 +505,7 @@ impl PlayerApp {
             self.shallow_wooze
                 .advance(&self.world, field, self.wooze_time, seconds);
         }
+        0.0
     }
 
     /// The names a preset can go by here: this scene's files, then the built-ins
@@ -593,8 +623,17 @@ pub(super) mod panel {
                         let config = renderer.post_process_config();
                         (config.kuwahara_enabled, config.contour_enabled)
                     });
+            let ab = self
+                .living_ab_state()
+                .map(|ab| flint_debug_ui::LivingAbState {
+                    a: ab.a,
+                    b: ab.b,
+                    showing_b: ab.showing_b,
+                    split: ab.split,
+                });
             if let Some(panel) = self.living_panel() {
                 panel.refresh(flint_debug_ui::LivingPanelState {
+                    ab,
                     knobs: flint_debug_ui::LivingKnobs::from_preset(&knobs),
                     mixed,
                     no_field,
@@ -640,6 +679,26 @@ pub(super) mod panel {
                         Err(problem) => format!("{name}: {problem}"),
                     });
                 }
+                LivingPanelAction::PickAb(a, b) => tune.ab_picks = Some((a, b)),
+                LivingPanelAction::Compare(a, b) => {
+                    self.living_tune.ab_picks = Some((a.clone(), b.clone()));
+                    let label = super::super::living_ab::side_label;
+                    self.living_tune.status = Some(match self.compare_living(&a, &b) {
+                        Ok(()) => format!(
+                            "Comparing A ({}) with B ({}). F6 flips, F7 splits.",
+                            label(&a),
+                            label(&b)
+                        ),
+                        Err(problem) => problem,
+                    });
+                }
+                LivingPanelAction::Flip => {
+                    self.flip_living();
+                }
+                LivingPanelAction::Split(split) => {
+                    self.split_living(split);
+                }
+                LivingPanelAction::StopComparing => self.stop_comparing_living(),
             }
         }
     }

@@ -5282,6 +5282,25 @@ impl SceneRenderer {
         self.gpu_timer = gpu_timer;
     }
 
+    /// [`encode_to`](Self::encode_to) a second time in a frame, for the other
+    /// half of a split view (#238), with the GPU timer left out: its scopes are
+    /// the first drawing's. Submit the first drawing before calling this, since
+    /// what changed between the two (bones, the boil) reaches the GPU through
+    /// the queue's writes, and those land with the next submission.
+    pub fn encode_again_to(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+        target_view: &wgpu::TextureView,
+    ) {
+        let timer = self.gpu_timer.take();
+        self.encode_to(device, queue, encoder, depth_view, camera, target_view);
+        self.gpu_timer = timer;
+    }
+
     /// Start what waits on the frame [`encode_to`](Self::encode_to)
     /// recorded: the grass count's read-back and, once
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the

@@ -12,11 +12,14 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
 | `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
+| `F5` | Freeze or unfreeze a scene's [living props](#living-props-f3), as the panel's **Freeze** | player |
+| `F6` | Living Props [A/B](#comparing-two-presets-ab): show the other preset, starting a comparison if none is running | player |
+| `F7` | Living Props A/B: split the view, A left and B right, or put it back | player |
 | `Escape` | Releases the mouse so panels can be clicked; clicking the world recaptures it | player |
 
 Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player logs a note instead of failing.
 
-The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose (ADR 0053, consolidated render debug menu).
+The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose (ADR 0053, consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
 
 ## Layout
 
@@ -112,6 +115,35 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 **Presets** saves every knob the props agree on as `wooze/<name>.wooze.toml`, beside the scene or at its game's root, and says what to write in a scene to load it. **Load** takes one of those or a [built-in](../concepts/procgen.md#the-wooze-field), which holds the clock's knobs only. **As loaded** puts everything back as the scene set it. The file's format is in [Saved presets](../concepts/procgen.md#saved-presets). Scripts can do all of this too: [Living Props API](../concepts/scripting.md#living-props-api).
 
 The status line says how the rings are taking it, and turns red if a frame has ever gone short of a pose. A step far below a frame's worth of poses can outrun any budget, and that's what it would show. The same counts close a run: `--exit-after` prints `frames missing a pose in use` and `kept their last bones`.
+
+#### Comparing two presets (A/B)
+
+Whether one look reads better than another is easier to judge with both in front of you than with one remembered. **A/B** puts two presets on the same grove, from the same camera, at the same moment.
+
+![Woozy Grove split: the scene's own look on the left, the built-in morph on the right, frozen at the same moment](../images/living-ab-split.png)
+
+Pick **A** and **B** from the presets on offer, or **as it was** for A: the knobs as they stand when the comparison starts, so a look you've been tuning can be put beside a saved one. Then **Compare**. A preset is laid over the scene as it loaded, each species with its own values, so two presets differ only in what they say, never in what you'd turned before. `F6` and `F7` start a comparison of the picks too, and with nothing picked they compare the knobs as they stand with `linklater`.
+
+- **`F6` (Show B / Show A)** flips the whole view to the other preset. Nothing else moves: same camera, same clock. With the clock frozen (`F5`), what changes on screen is exactly what the two presets differ in. Two copies of one preset flip with 0 pixels changed, and a flip and back is the frame you started from, to the bit.
+- **`F7` (Split)** shows both at once, A on the left and B on the right of a hairline seam. Each half is the same pixels as a whole frame of its preset at that moment.
+- The knobs above tune the side that's shown, or in a split the side with the dot by its name. **Stop** ends the comparison and keeps that side.
+
+Each side has its own living props (the same trees, forked), its own wooze field and boil clock, its own shallow wooze and its own shading boil. Both run on the same clock, and while compared a **Step** moves both on by one beat of the side that's shown. They share one pose cache, since a pose doesn't depend on any knob. Zones stay with the scene, so both sides have them.
+
+What it costs, on the 40-oak bench with six echoes each, in release, uncapped at 1600 x 900:
+
+| Run (30 s each, two rounds) | Median frame | p90 | Frames over 1.5x the median | Blending and upload |
+|---|---|---|---|---|
+| No comparison | 5.0, 5.5 ms | 6.5, 7.3 ms | 156, 161 | 2.1, 2.4 ms |
+| Comparing, A shown (B kept up to date) | 4.7, 5.2 ms | 7.7, 8.6 ms | 688, 724 | 2.1, 2.3 ms |
+| Flipping four times a second | 6.9, 6.2 ms | 13.0, 10.0 ms | 777, 601 | 2.6, 2.5 ms |
+| Split | 15.0, 15.8 ms | 21.1, 22.0 ms | 80, 98 | 2.9 + 3.2, 3.1 + 3.3 ms |
+
+The hidden side made almost none of its poses: 2,363 of 2,363 came from the scene's cache in the first round. Keeping it costs little on average and makes the frame less even. A flip writes about what an ordinary frame of this bench already does, since all 40 oaks move every frame (257 bone writes). A later run of three rounds, on a machine that had slowed to an 8 to 12 ms median, found flipping four times a second no slower than holding either side (7.5 to 9.0 ms against 8.0 to 12.3). So the flip row's higher median above is the machine drifting, not the flips. A split takes the frame from about 190 fps to about 62 in those rounds, and from 4.4 to 10.9 ms (about 92 fps) in a later pair on a cooler machine: 2.5 to 3 times the frame. Everything is drawn twice, both sides blend every bone every frame, and the second side is extracted again.
+
+A flip writes every bone of the side it shows once, since the buffers held the other's. A split draws the frame twice, in two submissions: the bones and the boil reach the GPU through the queue's writes, and one submission would show the second side's to both. While split, both sides write every bone every frame, since the buffers change hands twice a frame.
+
+From a script: [`compare_living`](../concepts/scripting.md#living-props-api) and the rest. From the command line, `flint-player <scene> --compare A,B` starts with a comparison and `--split` with it split. `--compare ,linklater` is the knobs as the scene loaded them against `linklater`. With `--exit-after`, the report adds the hidden side's rings and blending.
 
 ## Live Mirror and Write-Through
 

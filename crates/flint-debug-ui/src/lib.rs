@@ -15,7 +15,8 @@ pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use living_props_panel::{
-    KnobFlags, LivingHealth, LivingKnobs, LivingPanelAction, LivingPanelState, LivingPropRow,
+    KnobFlags, LivingAbState, LivingHealth, LivingKnobs, LivingPanelAction, LivingPanelState,
+    LivingPropRow,
     LivingPropsDebugPanel, LIVING_PROPS_DEBUG_PANEL,
 };
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
