@@ -21,8 +21,8 @@
 # the lineage instead. [[lod]] doesn't apply: a skinned rest is one level.
 #
 # In a scene, give an entity `model.asset = "oak_living"` and a `living_prop`
-# component, as demo/living_props.scene.toml does. It stands in its rest pose
-# with a ring of poses kept ready; blending them is coming through epic #206.
+# component, as demo/living_props.scene.toml does. It blends a ring of poses on
+# the clock below, a part at a time, with its leaf cards boiling on top.
 
 generator = "tree_v1"
 
@@ -105,8 +105,9 @@ stagger = "per_level"                    # none | per_level | per_branch
 # The slow layer, which changes the silhouette and always glides.
 drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
 
-# The fast layer, which makes it feel drawn and may snap.
-jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
+# The fast layer, which makes it feel drawn: leaf cards turn and leaf shades
+# shift in tint, here eight times a second (step), with no easing (glide).
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
 
 # How much of each pose's difference is left (amount), how much of that is
 # held back from the trunk side (steady: 0 even, 1 all at the tips), and

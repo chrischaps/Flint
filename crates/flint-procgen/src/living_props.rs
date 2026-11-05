@@ -23,9 +23,13 @@ use flint_core::{ContentHash, EntityId};
 use web_time::Instant;
 
 use crate::generator::LivingGenerator;
-use crate::living::{LivingClock, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
+use crate::living::{
+    boil_bones, mix64, LivingClock, LivingJitter, LivingPose, LivingRig, LivingSkeleton,
+    SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
+};
 use crate::registry::GeneratorRegistry;
 use crate::spec::{ProcGenSpec, Stagger};
+use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
 /// the oak is under 6 KB, so this is about 1,400 of them: a grove's rings four
@@ -57,6 +61,65 @@ pub struct LivingPropRequest {
     pub phase_offset: Option<f32>,
     /// How its parts fall out of phase. `None` for the spec's `stagger`.
     pub stagger: Option<Stagger>,
+}
+
+/// What the shadows of a scene's living props follow, which is its own choice:
+/// a whole tree's shadow boiling can read as life or as noise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LivingShadows {
+    /// Exactly what's drawn, stagger and leaf jitter included. No extra cost.
+    #[default]
+    Blended,
+    /// A slower pose with no stagger and no jitter, in bones of its own.
+    Drift,
+}
+
+/// What a scene says about its living props, ahead of any one spec. The wooze
+/// field (#213) is where `step` and `glide` go from here.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LivingDefaults {
+    /// Seconds between pose targets, for every prop. `None`: each spec's.
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, for every prop. `None`: each spec's.
+    pub glide: Option<f32>,
+    /// What the shadows follow.
+    pub shadows: LivingShadows,
+}
+
+/// Room for one prop's blend at a time, kept across props and frames so that
+/// blending a grove allocates nothing.
+#[derive(Debug, Default)]
+pub struct BlendFrame {
+    times: Vec<WarpedTime>,
+    pose: Option<LivingPose>,
+    posed: Vec<BranchSegment>,
+    /// The bone matrices to write, from [`PropBlend::first_bone`].
+    pub bones: Vec<[[f32; 4]; 4]>,
+    /// The shadow's bone matrices, whole, if [`PropBlend::shadow_changed`].
+    pub shadow_bones: Vec<[[f32; 4]; 4]>,
+    /// Each leaf part whose tint has changed, with the tint.
+    pub tints: Vec<(usize, [f32; 3])>,
+}
+
+/// What one prop needs uploaded this frame; see [`LivingProps::blend_prop`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropBlend {
+    /// The entity whose buffers these are.
+    pub entity: EntityId,
+    /// Where [`BlendFrame::bones`] goes; `None` if the bones haven't changed.
+    pub first_bone: Option<usize>,
+    /// Whether to write [`BlendFrame::shadow_bones`].
+    pub shadow_changed: bool,
+}
+
+/// What a prop's bones and materials last held, so that nothing moved means
+/// nothing computed and nothing uploaded: a prop holding still is free.
+#[derive(Debug, Clone, Default)]
+struct DrawnState {
+    times: Vec<WarpedTime>,
+    turns: [f32; JITTER_CHANNELS],
+    tints: Vec<i32>,
+    shadow: Option<(u64, f32)>,
 }
 
 /// A prop's place in [`LivingProps`]; stays valid until the props are cleared.
@@ -93,6 +156,18 @@ pub struct LivingStats {
     pub poses_from_cache: u64,
     /// Poses that couldn't be made, which hold the rest pose instead.
     pub pose_failures: u64,
+    /// Frames a prop kept its last bones, for want of a pose. Counted per prop.
+    pub blends_starved: u64,
+    /// Frames blending has run.
+    pub blend_frames: u64,
+    /// Milliseconds spent blending and uploading, over every frame.
+    pub blend_total_ms: f64,
+    /// The most milliseconds spent blending and uploading in one frame.
+    pub blend_worst_ms: f64,
+    /// Frames that spent over 1 ms blending and uploading.
+    pub blend_frames_over_1ms: u64,
+    /// Bone buffer writes, over every frame.
+    pub bone_writes: u64,
     /// Milliseconds spent over every frame.
     pub total_ms: f64,
     /// The most milliseconds spent in one frame.
@@ -196,6 +271,8 @@ pub struct LivingProp {
     pose_ring: u32,
     /// `None` until its lineage is built, since its size depends on the depth.
     ring: Option<PoseRing>,
+    jitter: LivingJitter,
+    drawn: DrawnState,
 }
 
 impl LivingProp {
@@ -217,6 +294,11 @@ impl LivingProp {
     /// The clock its parts drift on, read at [`Self::local_time`].
     pub fn clock(&self) -> LivingClock {
         self.clock
+    }
+
+    /// The clock its leaf cards and shades boil on.
+    pub fn jitter(&self) -> LivingJitter {
+        self.jitter
     }
 
     /// How far into its step cycle it runs, as a fraction of a step.
@@ -335,6 +417,7 @@ pub struct LivingProps {
     /// How long the next pose is likely to take: the slowest one lately.
     pose_estimate_ms: f64,
     stats: LivingStats,
+    defaults: LivingDefaults,
 }
 
 impl LivingProps {
@@ -347,7 +430,13 @@ impl LivingProps {
             time: 0.0,
             pose_estimate_ms: 0.0,
             stats: LivingStats::default(),
+            defaults: LivingDefaults::default(),
         }
+    }
+
+    /// What the scene says about its props, for the props added after this.
+    pub fn set_defaults(&mut self, defaults: LivingDefaults) {
+        self.defaults = defaults;
     }
 
     /// Whether there's nothing here to do, as in any scene that doesn't opt in.
@@ -434,6 +523,8 @@ impl LivingProps {
         if let Some(stagger) = request.stagger {
             clock.stagger = stagger;
         }
+        clock.step = self.defaults.step.unwrap_or(clock.step);
+        clock.glide = self.defaults.glide.unwrap_or(clock.glide);
         self.props.push(LivingProp {
             entity: request.entity,
             entity_name: request.entity_name,
@@ -444,8 +535,122 @@ impl LivingProps {
             clock,
             pose_ring: request.pose_ring.unwrap_or(living.pose_ring),
             ring: None,
+            jitter: LivingJitter::from(living),
+            drawn: DrawnState::default(),
         });
         (LivingPropId(self.props.len() - 1), asset_name)
+    }
+
+    /// One prop's blend this frame: fills `frame` with what has changed and
+    /// says where it goes. Call after [`tick`](Self::tick) has moved the clock.
+    ///
+    /// A part reads its own place on the warped clock, and the prop's jitter
+    /// bones and leaf tints read theirs. If none of that has moved, as when
+    /// the game is paused or every part is holding, this computes no bones and
+    /// asks for no upload.
+    ///
+    /// A pose the clock needs that isn't ready leaves the prop as it was, and
+    /// [`LivingStats::blends_starved`] counts it. It can only happen if the
+    /// budget has run behind or poses are still coming in under `--procgen-defer`.
+    pub fn blend_prop(&mut self, id: LivingPropId, frame: &mut BlendFrame) -> PropBlend {
+        let prop = &mut self.props[id.0];
+        let mut blend = PropBlend {
+            entity: prop.entity,
+            first_bone: None,
+            shadow_changed: false,
+        };
+        frame.tints.clear();
+        let (Some(ring), Some(built)) = (&prop.ring, &self.lineages[prop.lineage].built) else {
+            return blend;
+        };
+        let (skeleton, rig) = (&built.skeleton, &built.rig);
+        let t = prop.local_time(self.time);
+
+        let mut turns = [0.0; JITTER_CHANNELS];
+        for (channel, turn) in turns.iter_mut().enumerate() {
+            *turn = prop.jitter.card_turn(prop.stream, channel, t);
+        }
+        prop.clock
+            .times_into(t, &skeleton.segments, &mut frame.times);
+        let turned = turns != prop.drawn.turns;
+        let drifted = frame.times != prop.drawn.times;
+
+        frame.bones.clear();
+        if drifted {
+            let pose = frame.pose.get_or_insert_with(|| LivingPose {
+                shape_seed: 0,
+                segments: Vec::new(),
+            });
+            let found = pose.blend_from(&frame.times, |index| ring.get(index).map(|p| &**p));
+            let posed = found
+                && rig
+                    .palette_into(skeleton, pose, &mut frame.posed, &mut frame.bones)
+                    .is_ok();
+            if posed {
+                std::mem::swap(&mut prop.drawn.times, &mut frame.times);
+                boil_bones(&turns, &mut frame.bones);
+                prop.drawn.turns = turns;
+                blend.first_bone = Some(0);
+            } else {
+                frame.bones.clear();
+                self.stats.blends_starved += 1;
+            }
+        }
+        if blend.first_bone.is_none() && turned {
+            boil_bones(&turns, &mut frame.bones);
+            prop.drawn.turns = turns;
+            blend.first_bone = Some(rig.bone_segments.len());
+        }
+
+        // Each part's own beat, and what's new goes up as a material change.
+        prop.drawn.tints.resize(rig.leaf_parts.len(), 0);
+        for (i, part) in rig.leaf_parts.iter().enumerate() {
+            let step = prop.jitter.tint_step(prop.stream, i, t);
+            if step != prop.drawn.tints[i] {
+                prop.drawn.tints[i] = step;
+                frame.tints.push((*part, prop.jitter.tint(step)));
+            }
+        }
+
+        if self.defaults.shadows == LivingShadows::Drift {
+            let (from, to, weight) = prop.clock.slow_pair(t);
+            if prop.drawn.shadow != Some((from, weight)) {
+                let pose = frame.pose.get_or_insert_with(|| LivingPose {
+                    shape_seed: 0,
+                    segments: Vec::new(),
+                });
+                frame.times.clear();
+                frame
+                    .times
+                    .resize(skeleton.segments.len(), WarpedTime { index: 0, weight });
+                let found = pose.blend_from(&frame.times, |index| {
+                    let wanted = if index == 0 { from } else { to };
+                    ring.get(wanted).map(|p| &**p)
+                });
+                if found
+                    && rig
+                        .palette_into(skeleton, pose, &mut frame.posed, &mut frame.shadow_bones)
+                        .is_ok()
+                {
+                    frame
+                        .shadow_bones
+                        .extend_from_slice(&[[[0.0; 4]; 4]; BOIL_BONES]);
+                    prop.drawn.shadow = Some((from, weight));
+                    blend.shadow_changed = true;
+                }
+            }
+        }
+        blend
+    }
+
+    /// Note one frame's blending: how long it took and how many buffer writes.
+    pub fn record_blend(&mut self, spent_ms: f64, writes: u64) {
+        let stats = &mut self.stats;
+        stats.blend_frames += 1;
+        stats.blend_total_ms += spent_ms;
+        stats.blend_worst_ms = stats.blend_worst_ms.max(spent_ms);
+        stats.blend_frames_over_1ms += u64::from(spent_ms > 1.0);
+        stats.bone_writes += writes;
     }
 
     /// Build every lineage and fill every ring, with no budget: scene load,
@@ -602,13 +807,20 @@ impl LivingProps {
                 };
                 // A rest pose has one transform per segment by construction.
                 let _ = built.rig.palette(&built.skeleton, &rest, &mut rest_palette);
+                // Still jitter bones, or the mesh's shared buffer would have
+                // them at its identity, which is a long way from nothing.
+                boil_bones(&[0.0; JITTER_CHANNELS], &mut rest_palette);
                 let rig = built.rig.clone();
                 let max_depth = built.skeleton.max_depth();
                 lineage.built = Some(built);
                 for prop in self.props.iter_mut().filter(|p| p.lineage == index) {
                     let first = prop.clock.at(prop.local_time(self.time)).index;
                     // Every pose a staggered part can be using has to fit.
-                    let len = u64::from(prop.pose_ring).max(prop.clock.reach(max_depth) + 1);
+                    let mut len = u64::from(prop.pose_ring).max(prop.clock.reach(max_depth) + 1);
+                    // The slow pair is up to three steps ahead of the window's start.
+                    if self.defaults.shadows == LivingShadows::Drift {
+                        len = len.max(4);
+                    }
                     prop.ring = Some(PoseRing::new(first, len as usize));
                 }
                 Ok(rig)
@@ -681,14 +893,9 @@ fn build_lineage(
 /// bits, which put a whole grove on one phase. The finalizer (MurmurHash3's)
 /// spreads every input bit across all of them.
 fn name_hash(name: &str) -> u64 {
-    let fnv = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+    mix64(name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
-    let mut h = fnv ^ (fnv >> 33);
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    h ^ (h >> 33)
+    }))
 }
 
 /// A phase offset in [0, 1) from a name's hash. The same name always gets the
@@ -858,11 +1065,12 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         resolver.add_living_prop(request(1, "a")).unwrap();
         let done = resolver.make_living_now();
         let palette = &done[0].rest_palette;
-        assert_eq!(
-            palette.len(),
-            done[0].rig.as_ref().unwrap().bone_segments.len()
-        );
-        for bone in palette {
+        let bones = done[0].rig.as_ref().unwrap().bone_segments.len();
+        assert_eq!(palette.len(), bones + BOIL_BONES);
+        for bone in &palette[bones..] {
+            assert_eq!(*bone, [[0.0; 4]; 4], "still jitter bones");
+        }
+        for bone in &palette[..bones] {
             for (c, column) in bone.iter().enumerate() {
                 for (r, value) in column.iter().enumerate() {
                     let want = if c == r { 1.0 } else { 0.0 };
@@ -1150,5 +1358,377 @@ value = 1
         // A pose can't be cut short, so the odd slow one runs over.
         assert!(stats.frames_over_budget <= 36, "{stats:?}");
         assert!(stats.worst_ms < 8.0, "{stats:?}");
+    }
+
+    /// A full ring, one sapling prop on `extra`'s settings, and a place to blend.
+    fn one_prop(extra: &str, defaults: LivingDefaults) -> (ProcGenResolver, LivingPropId) {
+        let mut resolver = resolver_with(&sapling(extra));
+        resolver.set_living_defaults(defaults);
+        let id = resolver.add_living_prop(request(1, "oak")).unwrap().0;
+        resolver.make_living_now();
+        (resolver, id)
+    }
+
+    const NO_JITTER: &str = "jitter = { amplitude = 0.0 }";
+
+    /// Everything the bones say about a tree: each segment's far end.
+    fn tips(
+        resolver: &ProcGenResolver,
+        id: LivingPropId,
+        bones: &[[[f32; 4]; 4]],
+    ) -> Vec<[f32; 3]> {
+        let (skeleton, rig) = resolver.living_props().rig_of(id).unwrap();
+        skeleton
+            .segments
+            .iter()
+            .map(|s| {
+                let m = &bones[rig.segment_bones[s.id as usize] as usize];
+                let e = s.end.to_array();
+                std::array::from_fn(|r| m[0][r] * e[0] + m[1][r] * e[1] + m[2][r] * e[2] + m[3][r])
+            })
+            .collect()
+    }
+
+    fn farthest(a: &[[f32; 3]], b: &[[f32; 3]]) -> f32 {
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| {
+                let d: f32 = (0..3).map(|i| (a[i] - b[i]).powi(2)).sum();
+                d.sqrt()
+            })
+            .fold(0.0, f32::max)
+    }
+
+    /// `seconds` of play at 60 fps: each frame's tips and whether its bones changed.
+    fn play(
+        resolver: &mut ProcGenResolver,
+        id: LivingPropId,
+        seconds: f64,
+    ) -> Vec<(Vec<[f32; 3]>, bool)> {
+        let mut frame = BlendFrame::default();
+        let first = resolver.living_props_mut().blend_prop(id, &mut frame);
+        assert_eq!(first.first_bone, Some(0), "the first blend writes it all");
+        let mut bones = frame.bones.clone();
+        let mut out = vec![(tips(resolver, id, &bones), true)];
+        for _ in 0..(seconds * 60.0) as usize {
+            resolver.process_living(1.0 / 60.0);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            let moved = blend.first_bone == Some(0);
+            if moved {
+                bones.clone_from(&frame.bones);
+            }
+            out.push((tips(resolver, id, &bones), moved));
+        }
+        out
+    }
+
+    /// The most the tree moves between two poses, measured with the bones.
+    fn pose_gap(resolver: &ProcGenResolver, id: LivingPropId) -> f32 {
+        let props = resolver.living_props();
+        let prop = props.prop(id);
+        let (skeleton, rig) = props.rig_of(id).unwrap();
+        let first = prop.first_step().unwrap();
+        (first..first + 3)
+            .map(|step| {
+                let mut a = Vec::new();
+                let mut b = Vec::new();
+                rig.palette(skeleton, prop.pose(step).unwrap(), &mut a)
+                    .unwrap();
+                rig.palette(skeleton, prop.pose(step + 1).unwrap(), &mut b)
+                    .unwrap();
+                farthest(&tips(resolver, id, &a), &tips(resolver, id, &b))
+            })
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn at_glide_point_three_nothing_pops_even_across_a_beat() {
+        let extra = format!("glide = 0.3\nstep = 0.5\nstagger = \"per_level\"\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let gap = pose_gap(&resolver, id);
+        assert!(
+            gap > 0.01,
+            "a sapling that doesn't move tests nothing: {gap}"
+        );
+
+        let frames = play(&mut resolver, id, 6.0);
+        let worst = frames
+            .windows(2)
+            .map(|w| farthest(&w[0].0, &w[1].0))
+            .fold(0.0, f32::max);
+        // A glide takes 0.15 s, 9 frames, and a smoothstep peaks at 1.5 times
+        // its mean speed: about a sixth of a pose's distance in a frame. Parents
+        // and children glide at different times, so a tip can add a few levels' moves.
+        assert!(worst < gap * 0.45, "moved {worst} in a frame of {gap}");
+    }
+
+    #[test]
+    fn at_glide_zero_it_holds_still_and_then_snaps_on_the_beat() {
+        let extra = format!("glide = 0.0\nstep = 0.5\nstagger = \"none\"\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let phase = resolver.living_props().prop(id).phase_offset();
+        let frames = play(&mut resolver, id, 6.0);
+
+        let mut snaps = 0;
+        for (i, w) in frames.windows(2).enumerate() {
+            let moved = farthest(&w[0].0, &w[1].0);
+            if w[1].1 {
+                snaps += 1;
+                assert!(moved > 0.0, "an upload that changed nothing, frame {i}");
+            } else {
+                assert_eq!(moved, 0.0, "frame {i} moved without a beat");
+            }
+        }
+        // 6 s at two beats a second, starting at a phase of {phase}.
+        assert!((11..=13).contains(&snaps), "{snaps} snaps at phase {phase}");
+    }
+
+    #[test]
+    fn per_level_stagger_puts_each_level_at_its_own_place_in_the_cycle() {
+        let extra = format!("glide = 1.0\nstagger = \"per_level\"\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        resolver.process_living(0.1);
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+
+        let props = resolver.living_props();
+        let (skeleton, _) = props.rig_of(id).unwrap();
+        let drawn = &props.prop(id).drawn.times;
+        let by_depth = |depth: u32| {
+            let at = skeleton.segments.iter().position(|s| s.depth == depth);
+            drawn[at.expect("the sapling has this level")]
+        };
+        let shallowest = skeleton.segments.iter().map(|s| s.depth).min().unwrap();
+        assert!(skeleton.max_depth() > shallowest, "needs two levels");
+        assert_ne!(by_depth(shallowest), by_depth(skeleton.max_depth()));
+        // Same depth, same place: only the level matters.
+        for (s, time) in skeleton.segments.iter().zip(drawn) {
+            assert_eq!(*time, by_depth(s.depth));
+        }
+    }
+
+    #[test]
+    fn the_runtime_and_the_strip_agree_on_every_bone() {
+        // The strip blends a stream with `PoseStream`, the player a ring, and
+        // both through `LivingPose::blend_from`, so the same poses and clock must
+        // give the same bones.
+        let extra = format!("stagger = \"per_level\"\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        let mut checked = 0;
+        for _ in 0..25 {
+            resolver.process_living(0.03);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            if blend.first_bone != Some(0) {
+                continue;
+            }
+            checked += 1;
+            let props = resolver.living_props();
+            let prop = props.prop(id);
+            let (skeleton, rig) = props.rig_of(id).unwrap();
+            let t = prop.local_time(props.time());
+
+            let segments = skeleton
+                .segments
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let now = prop.clock.for_segment(t, s);
+                    SegmentPose::blend(
+                        &prop.pose(now.index).unwrap().segments[i],
+                        &prop.pose(now.index + 1).unwrap().segments[i],
+                        now.weight,
+                    )
+                })
+                .collect();
+            let by_hand = LivingPose {
+                shape_seed: 0,
+                segments,
+            };
+            let mut expected = Vec::new();
+            rig.palette(skeleton, &by_hand, &mut expected).unwrap();
+            assert_eq!(&frame.bones[..expected.len()], &expected[..]);
+        }
+        assert!(checked > 5, "only {checked} frames moved");
+    }
+
+    #[test]
+    fn a_blend_uploads_the_whole_palette_with_still_jitter_bones_at_the_end() {
+        let (mut resolver, id) = one_prop(NO_JITTER, LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+        let (_, rig) = resolver.living_props().rig_of(id).unwrap();
+        assert_eq!(frame.bones.len(), rig.bone_segments.len() + BOIL_BONES);
+        for bone in &frame.bones[rig.bone_segments.len()..] {
+            assert_eq!(*bone, [[0.0; 4]; 4], "a still jitter bone adds nothing");
+        }
+    }
+
+    #[test]
+    fn a_paused_clock_costs_no_uploads() {
+        let (mut resolver, id) = one_prop("", LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        resolver.process_living(0.3);
+        assert_eq!(
+            resolver
+                .living_props_mut()
+                .blend_prop(id, &mut frame)
+                .first_bone,
+            Some(0)
+        );
+        for _ in 0..10 {
+            resolver.process_living(0.0);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            assert_eq!(blend.first_bone, None);
+            assert!(frame.tints.is_empty());
+            assert!(!blend.shadow_changed);
+        }
+    }
+
+    #[test]
+    fn jitter_alone_writes_only_its_own_bones() {
+        let extra = "glide = 0.0\nstep = 100.0\nstagger = \"none\"\njitter = { amplitude = 0.05 }";
+        let (mut resolver, id) = one_prop(extra, LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+        let tail = resolver
+            .living_props()
+            .rig_of(id)
+            .unwrap()
+            .1
+            .bone_segments
+            .len();
+
+        let mut writes = 0;
+        for _ in 0..120 {
+            resolver.process_living(1.0 / 60.0);
+            if let Some(first) = resolver
+                .living_props_mut()
+                .blend_prop(id, &mut frame)
+                .first_bone
+            {
+                assert_eq!(first, tail, "a holding pose isn't written again");
+                assert_eq!(frame.bones.len(), BOIL_BONES);
+                writes += 1;
+            }
+        }
+        // 2 s of 4 channels at 8 beats a second, some of them on one frame.
+        assert!((16..=64).contains(&writes), "{writes}");
+    }
+
+    #[test]
+    fn a_missing_pose_leaves_the_prop_as_it_was_and_is_counted() {
+        let (mut resolver, id) = one_prop(NO_JITTER, LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        resolver.living_props_mut().blend_prop(id, &mut frame);
+
+        // Past the ring, with no frame budget to have filled it.
+        let props = resolver.living_props_mut();
+        props.time += 100.0;
+        for prop in &mut props.props {
+            prop.ring.as_mut().unwrap().slide_to(100_000);
+        }
+        let blend = props.blend_prop(id, &mut frame);
+        assert_eq!(blend.first_bone, None);
+        assert_eq!(props.stats().blends_starved, 1);
+    }
+
+    #[test]
+    fn a_scene_default_beats_the_spec() {
+        let defaults = LivingDefaults {
+            step: Some(2.0),
+            glide: Some(0.0),
+            ..Default::default()
+        };
+        let (resolver, id) = one_prop("step = 0.25\nglide = 0.9", defaults);
+        let clock = resolver.living_props().prop(id).clock();
+        assert_eq!((clock.step, clock.glide), (2.0, 0.0));
+
+        let (resolver, id) = one_prop("step = 0.25\nglide = 0.9", LivingDefaults::default());
+        let clock = resolver.living_props().prop(id).clock();
+        assert_eq!((clock.step, clock.glide), (0.25, 0.9));
+    }
+
+    #[test]
+    fn drift_shadows_move_slower_than_the_prop_and_never_run_out_of_poses() {
+        let defaults = LivingDefaults {
+            shadows: LivingShadows::Drift,
+            ..Default::default()
+        };
+        let extra = "glide = 0.3\nstep = 0.5\nstagger = \"none\"";
+        let mut resolver = resolver_with(&sapling(extra));
+        resolver.set_living_defaults(defaults);
+        // The smallest ring it can be asked for, to prove the slow pair fits.
+        let mut small = request(1, "oak");
+        small.pose_ring = Some(2);
+        let id = resolver.add_living_prop(small).unwrap().0;
+        resolver.make_living_now();
+        let (bone_count, tail) = {
+            let rig = resolver.living_props().rig_of(id).unwrap().1;
+            (
+                rig.bone_segments.len() + BOIL_BONES,
+                rig.bone_segments.len(),
+            )
+        };
+        let mut frame = BlendFrame::default();
+        let (mut shadow_writes, mut pose_writes) = (0, 0);
+        for _ in 0..600 {
+            resolver.process_living(1.0 / 60.0);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            pose_writes += usize::from(blend.first_bone == Some(0));
+            if blend.shadow_changed {
+                shadow_writes += 1;
+                assert_eq!(frame.shadow_bones.len(), bone_count);
+                for bone in &frame.shadow_bones[tail..] {
+                    assert_eq!(*bone, [[0.0; 4]; 4], "shadows don't jitter");
+                }
+            }
+        }
+        // Half the beats, each with a glide twice as long: about as many writes,
+        // but a tree's shadow moves half as often.
+        assert!(shadow_writes > 0);
+        assert!(
+            shadow_writes <= pose_writes + 20,
+            "{shadow_writes} {pose_writes}"
+        );
+        assert_eq!(resolver.living_props().stats().blends_starved, 0);
+    }
+
+    #[test]
+    fn blended_shadows_cost_nothing_extra() {
+        let (mut resolver, id) = one_prop("", LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        for _ in 0..60 {
+            resolver.process_living(1.0 / 60.0);
+            let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
+            assert!(!blend.shadow_changed);
+        }
+    }
+
+    #[test]
+    fn leaf_tints_are_few_and_only_change_on_their_beat() {
+        let spec = std::fs::read_to_string(OAK).unwrap();
+        let mut resolver = resolver_with(&spec);
+        let mut req = request(1, "oak");
+        req.spec_name = "oak_living".into();
+        let id = resolver.add_living_prop(req).unwrap().0;
+        resolver.make_living_now();
+
+        let mut frame = BlendFrame::default();
+        let mut seen = std::collections::HashSet::new();
+        let mut changes = 0;
+        for _ in 0..240 {
+            resolver.process_living(1.0 / 60.0);
+            resolver.living_props_mut().blend_prop(id, &mut frame);
+            for (part, tint) in &frame.tints {
+                assert_ne!(*part, 0, "the bark isn't a leaf");
+                seen.insert(tint.map(f32::to_bits));
+                changes += 1;
+            }
+        }
+        // 4 s at 8 beats a second on five shades, if none repeats a level.
+        assert!(changes > 30 && changes <= 160, "{changes}");
+        // Each distinct tint costs a material per shade, for the whole grove.
+        assert!(seen.len() <= 9, "{} tints", seen.len());
     }
 }

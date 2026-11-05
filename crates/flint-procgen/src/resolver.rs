@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::cache::{ProcGenCache, ProcGenCacheConfig};
 use crate::disk_cache::DiskStats;
 use crate::living_props::{
-    LineageDone, LivingPropId, LivingPropRequest, LivingProps, POSE_CACHE_BYTES,
+    LineageDone, LivingDefaults, LivingPropId, LivingPropRequest, LivingProps, POSE_CACHE_BYTES,
 };
 use crate::output::GeneratorOutput;
 use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
@@ -290,6 +290,16 @@ impl ProcGenResolver {
     /// The scene's living props and how their rings have fared.
     pub fn living_props(&self) -> &LivingProps {
         &self.living
+    }
+
+    /// The scene's living props, to blend them.
+    pub fn living_props_mut(&mut self) -> &mut LivingProps {
+        &mut self.living
+    }
+
+    /// What the scene says about living props, for the props added after this.
+    pub fn set_living_defaults(&mut self, defaults: LivingDefaults) {
+        self.living.set_defaults(defaults);
     }
 
     /// Forget the scene's living props, keeping the poses already made.

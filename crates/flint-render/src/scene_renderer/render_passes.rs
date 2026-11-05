@@ -260,7 +260,7 @@ impl SceneRenderer {
 
                 for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
                     bind_next(&mut pass, &mut next_slot);
-                    pass.set_bind_group(1, &*draw.bone_bind_group, &[]);
+                    pass.set_bind_group(1, &*draw.shadow_bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);

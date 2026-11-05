@@ -5,7 +5,8 @@
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
 use super::{
-    hash_parts, transform_aabb, CachedBoneBind, SceneRenderer, SkinnedDrawCall, SKINNED_DRAW_KEY,
+    hash_parts, transform_aabb, CachedBoneBind, SceneRenderer, SkinnedDrawCall, SHADOW_BONE_KEY,
+    SKINNED_DRAW_KEY,
 };
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
@@ -232,6 +233,15 @@ impl SceneRenderer {
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
+            if let Some(tint) = self
+                .entity_part_tints
+                .get(&entity_id)
+                .and_then(|tints| tints.get(mesh_index))
+            {
+                for (out, by) in material_uniforms.vertex_tint.iter_mut().zip(tint) {
+                    *out *= by;
+                }
+            }
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Cached like a static model's binds (`cached_binds`), keyed
@@ -313,6 +323,31 @@ impl SceneRenderer {
             bone.touched = self.extract_frame;
             let bone_bind_group = bone.bind_group.clone();
 
+            // Most draws' shadows follow the bones they're drawn with.
+            let shadow_bone_bind_group = match self.entity_shadow_bone_buffers.get(&entity_id) {
+                None => bone_bind_group.clone(),
+                Some(bones) => {
+                    let shadow_key = (entity_id, key.1 | SHADOW_BONE_KEY);
+                    let shadow = self
+                        .skinned_bone_binds
+                        .entry(shadow_key)
+                        .or_insert_with(|| {
+                            let layout = &self
+                                .skinned_pipeline
+                                .as_ref()
+                                .unwrap()
+                                .bone_bind_group_layout;
+                            CachedBoneBind {
+                                from_entity: true,
+                                bind_group: Arc::new(Self::create_bone_bind(device, layout, bones)),
+                                touched: 0,
+                            }
+                        });
+                    shadow.touched = self.extract_frame;
+                    shadow.bind_group.clone()
+                }
+            };
+
             // Check transparency from glTF material and ECS material component
             let gltf_alpha = gpu_mesh.material.base_color[3];
             let ecs_opacity = world
@@ -370,6 +405,7 @@ impl SceneRenderer {
                 material_buffer,
                 material_bind_group,
                 bone_bind_group,
+                shadow_bone_bind_group,
                 wire_index_buffer,
                 wire_index_count,
                 model: model_matrix,

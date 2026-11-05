@@ -825,9 +825,10 @@ impl Generator for TreeGenerator {
     /// 1: the first tree. 2: a sway that reaches the tip, bark that tiles
     /// (#22). 3: limbs along the trunk, one tube each (#23). 4: two-sided
     /// leaf cards in season shades, LODs that keep the trunk (#24). 5: a
-    /// supported `[living]` spec bakes its skinned rest (#209).
+    /// supported `[living]` spec bakes its skinned rest (#209). 6: its largest
+    /// trees fold a few more twigs, to leave bones for the jitter layer (#212).
     fn revision(&self) -> u32 {
-        5
+        6
     }
 
     fn output_kind(&self) -> OutputKind {

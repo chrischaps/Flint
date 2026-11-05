@@ -4,7 +4,7 @@
 # load the player builds the skinned rest mesh of the entity's lineage (one per
 # spec and lineage seed, shared) and gives the entity its own bone buffer and its
 # own ring of poses, kept full a few steps ahead of its clock within the procgen
-# frame budget. It draws in its rest pose for now: blending the poses is #212.
+# frame budget, and blends them each frame on a warped clock of hold and glide.
 #
 # Every field is optional, and one left out comes from the spec's `[living]`
 # table, except `phase_offset`, which comes from the entity's name so that a

@@ -14,17 +14,94 @@
 //! it as a whole palette from [`LivingRig::palette`], which holds scale the
 //! animation system's joint hierarchy can't, so props don't register a
 //! `Skeleton` there, and cost nothing per frame while they hold still.
+//!
+//! Every frame [`upload_blends`] blends each prop's two poses per part on the
+//! warped clock (#212) and writes what changed. All of that is on the CPU, so
+//! no new shader or vertex data: the leaf cards' jitter fits in the palette
+//! (see [`flint_procgen::CardBoil`]) and their tint is a material change.
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
-    AssetKind, LineageDone, LivingPropRequest, LivingRig, LivingStats, ProcGenResolver, Stagger,
+    AssetKind, BlendFrame, LineageDone, LivingDefaults, LivingPropId, LivingPropRequest, LivingRig,
+    LivingShadows, LivingStats, ProcGenResolver, Stagger,
 };
 use flint_render::model_loader::ModelLoadConfig;
+use flint_render::SceneRenderer;
 
 use super::procgen_assets::{AssetSink, ProcGenMode};
+
+/// A scene's `[living]` table as the resolver wants it. A bad value is named
+/// and then means its default, since a look lab shouldn't refuse to start over
+/// one knob.
+pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
+    let Some(table) = table else {
+        return LivingDefaults::default();
+    };
+    let step = table.step.filter(|step| {
+        let ok = step.is_finite() && *step > 0.0;
+        if !ok {
+            tracing::warn!("[living] step = {step} must be more than 0; using each spec's");
+        }
+        ok
+    });
+    let glide = table.glide.filter(|glide| {
+        let ok = (0.0..=1.0).contains(glide);
+        if !ok {
+            tracing::warn!("[living] glide = {glide} must be from 0 to 1; using each spec's");
+        }
+        ok
+    });
+    let shadows = match table.shadows.as_deref() {
+        None | Some("blended") => LivingShadows::Blended,
+        Some("drift") => LivingShadows::Drift,
+        Some(other) => {
+            tracing::warn!(
+                "[living] shadows = \"{other}\" isn't \"blended\" or \"drift\"; using blended"
+            );
+            LivingShadows::Blended
+        }
+    };
+    LivingDefaults {
+        step,
+        glide,
+        shadows,
+    }
+}
+
+/// One frame's blending and upload for every prop, timed for `--exit-after`.
+/// The clock moved in `process_living`, so this draws where it now stands.
+pub fn upload_blends(
+    resolver: &mut ProcGenResolver,
+    frame: &mut BlendFrame,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let props = resolver.living_props_mut();
+    if props.is_empty() {
+        return;
+    }
+    let started = web_time::Instant::now();
+    let mut writes = 0;
+    for i in 0..props.props().len() {
+        let blend = props.blend_prop(LivingPropId(i), frame);
+        if let Some(first) = blend.first_bone {
+            renderer.write_entity_bones(device, queue, blend.entity, first, &frame.bones);
+            writes += 1;
+        }
+        if blend.shadow_changed {
+            renderer.write_entity_shadow_bones(device, queue, blend.entity, &frame.shadow_bones);
+            writes += 1;
+        }
+        for (part, tint) in &frame.tints {
+            renderer.set_entity_part_tint(blend.entity, *part, *tint);
+        }
+    }
+    props.record_blend(started.elapsed().as_secs_f64() * 1e3, writes);
+}
 
 /// Read an entity's `living_prop` component into a request for `spec_name`.
 /// A bad field is named in the error, rather than quietly meaning its default.
@@ -223,7 +300,8 @@ pub fn import_of(name: &str, rig: &LivingRig) -> ImportResult {
         let (Some(lo), Some(hi)) = (indices.iter().min(), indices.iter().max()) else {
             continue;
         };
-        let vertices = &mesh.vertices[*lo as usize..=*hi as usize];
+        let span = *lo as usize..=*hi as usize;
+        let vertices = &mesh.vertices[span.clone()];
         let source = mesh.materials.get(sub.material_index).unwrap_or(&fallback);
 
         let mut material = ImportedMaterial {
@@ -256,8 +334,8 @@ pub fn import_of(name: &str, rig: &LivingRig) -> ImportResult {
             uvs: vertices.iter().map(|v| v.uv).collect(),
             indices: indices.iter().map(|ix| ix - lo).collect(),
             material_index: Some(result.materials.len() - 1),
-            joint_indices: Some(vertices.iter().map(|v| v.joint_indices).collect()),
-            joint_weights: Some(vertices.iter().map(|v| v.joint_weights).collect()),
+            joint_indices: Some(span.clone().map(|v| rig.runtime_joints(v).0).collect()),
+            joint_weights: Some(span.map(|v| rig.runtime_joints(v).1).collect()),
             skin_index: Some(0),
         });
     }
@@ -272,7 +350,7 @@ pub fn report(
     lineages: usize,
     ring: usize,
     budget_ms: f64,
-) -> [String; 2] {
+) -> [String; 3] {
     let avg = stats.total_ms / stats.frames.max(1) as f64;
     [
         format!(
@@ -285,6 +363,15 @@ pub fn report(
              budget {budget_ms:.0} ms, over it on {} frames",
             stats.poses_made, stats.poses_from_cache, stats.pose_failures, stats.worst_ms,
             stats.frames_over_budget,
+        ),
+        format!(
+            "[living] blending and upload: avg {:.3} ms/frame, worst {:.2} ms, over 1 ms on {} \
+             frames, {:.1} bone writes a frame, {} kept their last bones for want of a pose",
+            stats.blend_total_ms / stats.blend_frames.max(1) as f64,
+            stats.blend_worst_ms,
+            stats.blend_frames_over_1ms,
+            stats.bone_writes as f64 / stats.blend_frames.max(1) as f64,
+            stats.blends_starved,
         ),
     ]
 }
