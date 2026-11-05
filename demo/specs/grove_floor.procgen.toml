@@ -1,0 +1,60 @@
+# Woozy Grove's floor: moss, loam and last year's leaves, in soft patches a few
+# metres across. It's the one thing in the grove that holds still, so it's kept to
+# broad strokes that the Kuwahara pass can paint over. Nothing at grass-blade scale
+# for the eye to catch standing still next to a tree that isn't.
+#
+#   flint gen demo/specs/grove_floor.procgen.toml -o floor.png
+#
+# It covers the ground once, without tiling: pipeline noise doesn't tile yet (#172).
+
+generator = "texture_v1"
+
+[meta]
+name = "grove_floor"
+description = "Mottled forest floor in moss, loam and fallen leaves"
+version = "1.0.0"
+tags = ["texture", "ground", "forest", "moss", "woozy-grove"]
+
+[seed]
+mode = "fixed"
+value = 217
+
+[params]
+pattern = "pipeline"
+width = 2048
+height = 2048
+output_maps = ["albedo"]
+
+[[params.ops]]
+type = "noise_layer"
+output = "patches"
+noise_type = "perlin"
+frequency = 34.0
+octaves = 7
+scale_x = 1.0
+scale_y = 1.0
+
+[[params.ops]]
+type = "color_ramp"
+input = "patches"
+interpolation = "ease"
+
+[[params.ops.stops]]
+position = 0.28
+color = "#2F2A16"                        # loam, in the hollows
+
+[[params.ops.stops]]
+position = 0.44
+color = "#46481C"                        # moss, in shade
+
+[[params.ops.stops]]
+position = 0.56
+color = "#5F5C22"                        # moss, in light
+
+[[params.ops.stops]]
+position = 0.68
+color = "#7A5F27"                        # dry grass
+
+[[params.ops.stops]]
+position = 0.8
+color = "#8A5329"                        # fallen leaves

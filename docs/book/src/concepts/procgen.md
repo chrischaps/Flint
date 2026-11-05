@@ -483,6 +483,35 @@ It covers the entity and everything below it, so a bench built from boards, or a
 
 `--exit-after` prints `[wooze] shallow: 15 entities on 5 clocks`. Bench: `demo/shallow_wooze.scene.toml`, a woozy set and a still set under the same oaks.
 
+### Woozy Grove
+
+The benches each test one thing from a fixed camera. `demo/woozy_grove.scene.toml` puts them together in a place to walk through, since the look can only be judged by eye, from inside it:
+
+```bash
+flint play demo/woozy_grove.scene.toml
+```
+
+![Woozy Grove, from the north path into the clearing](../images/woozy-grove.png)
+
+It's 38 living trees in four species, from `demo/specs/`: an oak, a cypress, a birch and a gnarled thorn. A bench and a lantern share one `shallow_wooze`, and three zones change the dial as you walk:
+
+| Zone | Where | Field | What it's for |
+|------|-------|-------|---------------|
+| None | The clearing | `preset = "linklater"` | The look the epic is after, which follows the preset as it's tuned |
+| `hush` | Left, among the cypress | step 1.6, glide 0.6, amplitude 0.2, jitter 0.15 | How little movement still reads as alive |
+| `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, jitter 0.4 | The morph end of the dial, which never rests |
+| `shiver` | Near right, thorn and birch | step 0.125, glide 0, amplitude 0.7, jitter 2.2 | The boil end of the dial, which never eases |
+
+`demo/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Don't step coarser than 1/60: the character reads mouse look once per physics step, so a frame of two steps turns it twice as far.
+
+A few things the grove had to work around, which any scene like it will meet:
+
+- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls, and space colonization can't live at all.
+- **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
+- **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
+- **A character always starts facing +Z,** so a scene's way in has to be laid out along it.
+- **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. No system reads a `directional_light` table, and `flint validate` lets one through, so a scene with only that has the renderer's default light and no warning.
+
 ## `flint gen`
 
 ```bash
