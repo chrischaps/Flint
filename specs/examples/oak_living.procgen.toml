@@ -11,6 +11,7 @@
 # grammars report themselves unsupported.
 #
 #   flint gen specs/examples/oak_living.procgen.toml --dry-run    # checks [living], counts the skeleton
+#   flint gen specs/examples/oak_living.procgen.toml --strip -o strip.png   # 48 frames of it on one sheet
 #   cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses
 #
 # A plain `flint gen` still bakes one still tree from [seed] and doesn't read
@@ -89,6 +90,9 @@ target_triangles = 500
 [living]
 lineage_seed = 7                         # the tree's identity; every pose shares it
 pose_ring = 8                            # how many poses to keep ready
+step = 0.5                               # seconds between pose targets
+glide = 0.3                              # how much of a step is spent easing to the
+                                         # next pose: 0 snaps, 1 never holds
 stagger = "per_level"                    # none | per_level | per_branch
 
 # The slow layer, which changes the silhouette and always glides.

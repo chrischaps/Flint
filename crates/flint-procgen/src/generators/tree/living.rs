@@ -11,16 +11,20 @@
 
 use flint_core::Vec3;
 
+use crate::algorithms::mesh_builder::MeshBuilder;
 use crate::generator::LivingGenerator;
 use crate::living::{LeafBinding, LivingPose, LivingSkeleton, SegmentPose};
 use crate::spec::ProcGenSpec;
 use crate::types::{BranchSegment, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
 
-use super::branches::{extract_tips, grow_branch_segments};
+use super::branches::{extract_tips, grow_branch_segments, segments_to_mesh};
 use super::leaves::{card_index_count, generate_leaves};
 use super::trunk::trunk_spine;
-use super::{BranchMethod, BranchParams, LeafParams, TreeGenerator, TrunkParams, TrunkSpine};
+use super::{
+    generate_trunk, join_bark_and_leaves, BranchMethod, BranchParams, LeafParams, TreeGenerator,
+    TrunkParams, TrunkSpine,
+};
 
 impl LivingGenerator for TreeGenerator {
     fn check_living(&self, spec: &ProcGenSpec) -> Result<()> {
@@ -101,6 +105,32 @@ impl LivingGenerator for TreeGenerator {
                 .map(|(rest, now)| segment_pose(rest, now))
                 .collect(),
         })
+    }
+
+    fn posed_mesh(
+        &self,
+        spec: &ProcGenSpec,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+    ) -> Result<MeshData> {
+        // The trunk is the lineage's, the same fork `generate` takes for it.
+        let trunk = generate_trunk(
+            &TrunkParams::from_toml(&spec.params)?,
+            &mut SeededRng::new(skeleton.lineage_seed).fork("trunk"),
+        )?;
+        let radial = BranchParams::from_toml(&spec.params)?.radial_segments;
+
+        let mut bark = MeshBuilder::new();
+        bark.merge(&trunk.mesh);
+        bark.merge(&segments_to_mesh(&skeleton.posed_segments(pose)?, radial)?);
+        bark.compute_normals();
+        bark.compute_tangents();
+        let mut bark = bark.build();
+        bark.materials = trunk.mesh.materials.clone();
+        Ok(join_bark_and_leaves(
+            &bark,
+            &skeleton.posed_leaf_mesh(pose)?,
+        ))
     }
 }
 
@@ -558,6 +588,134 @@ mod tests {
         let other = TreeGenerator.structure(&oak, LINEAGE).unwrap();
         let pose = TreeGenerator.pose(&oak, &other, 1).unwrap();
         assert!(skeleton.posed_segments(&pose).is_err());
+    }
+
+    fn clock(glide: f32, stagger: crate::Stagger) -> crate::LivingClock {
+        crate::LivingClock {
+            step: 0.5,
+            glide,
+            stagger,
+        }
+    }
+
+    #[test]
+    fn a_snapping_stream_is_exactly_one_pose_until_the_beat() {
+        let spec = load("specs/examples/oak_tree.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, 7).unwrap();
+        let mut stream = crate::PoseStream::new(
+            &TreeGenerator,
+            &spec,
+            &skeleton,
+            clock(0.0, crate::Stagger::None),
+        );
+        let first = TreeGenerator.pose(&spec, &skeleton, 0).unwrap();
+        let second = TreeGenerator.pose(&spec, &skeleton, 1).unwrap();
+        for t in [0.0, 0.2, 0.49] {
+            assert_eq!(stream.at(t).unwrap().segments, first.segments, "t = {t}");
+        }
+        assert_eq!(stream.at(0.5).unwrap().segments, second.segments);
+    }
+
+    #[test]
+    fn a_gliding_stream_moves_every_frame_and_lands_on_the_next_pose() {
+        let spec = load("specs/examples/oak_tree.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, 7).unwrap();
+        let mut stream = crate::PoseStream::new(
+            &TreeGenerator,
+            &spec,
+            &skeleton,
+            clock(1.0, crate::Stagger::None),
+        );
+        let frames: Vec<_> = (0..=12)
+            .map(|f| stream.at(f64::from(f) / 24.0).unwrap().segments)
+            .collect();
+        for pair in frames.windows(2) {
+            assert_ne!(pair[0], pair[1]);
+        }
+        let next = TreeGenerator.pose(&spec, &skeleton, 1).unwrap();
+        assert_eq!(frames[12], next.segments);
+    }
+
+    #[test]
+    fn per_level_stagger_moves_the_levels_at_different_moments() {
+        let spec = load("specs/examples/oak_tree.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, 7).unwrap();
+        let mut stream = crate::PoseStream::new(
+            &TreeGenerator,
+            &spec,
+            &skeleton,
+            clock(0.0, crate::Stagger::PerLevel),
+        );
+        // At glide 0 each level snaps on its own frame: a frame that changes
+        // some levels and leaves others alone is what stagger looks like.
+        let (mut some_moved, mut some_held) = (false, false);
+        let mut last = stream.at(0.0).unwrap();
+        for f in 1..24 {
+            let now = stream.at(f64::from(f) / 24.0).unwrap();
+            let moved = now
+                .segments
+                .iter()
+                .zip(&last.segments)
+                .filter(|(a, b)| a != b);
+            let moved = moved.count();
+            if moved > 0 && moved < now.segments.len() {
+                some_moved = true;
+            }
+            if moved == 0 {
+                some_held = true;
+            }
+            last = now;
+        }
+        assert!(some_moved, "no frame moved only part of the tree");
+        assert!(
+            some_held,
+            "every frame moved something: no hold left at glide 0"
+        );
+    }
+
+    #[test]
+    fn a_stream_gives_the_same_bits_however_it_is_walked() {
+        let spec = load("specs/examples/oak_tree.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, 7).unwrap();
+        let c = clock(0.3, crate::Stagger::PerLevel);
+        let mut forward = crate::PoseStream::new(&TreeGenerator, &spec, &skeleton, c);
+        let mut backward = crate::PoseStream::new(&TreeGenerator, &spec, &skeleton, c);
+        let ahead: Vec<_> = (0..10)
+            .map(|f| forward.at(f64::from(f) * 0.2).unwrap())
+            .collect();
+        for f in (0..10).rev() {
+            assert_eq!(backward.at(f64::from(f) * 0.2).unwrap(), ahead[f as usize]);
+        }
+    }
+
+    #[test]
+    fn a_blended_pose_makes_a_whole_tree_with_every_leaf() {
+        let spec = load("specs/examples/oak_tree.procgen.toml");
+        let skeleton = TreeGenerator.structure(&spec, 7).unwrap();
+        let mut stream = crate::PoseStream::new(
+            &TreeGenerator,
+            &spec,
+            &skeleton,
+            clock(1.0, crate::Stagger::PerLevel),
+        );
+        let halfway = stream.at(0.25).unwrap();
+        let mesh = TreeGenerator
+            .posed_mesh(&spec, &skeleton, &halfway)
+            .unwrap();
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|v| v.position.iter().all(|x| x.is_finite())));
+        assert!(mesh.submeshes.len() > 1, "bark and leaf shades");
+        let leaf_triangles: usize = skeleton.leaf_mesh.indices.len() / 3;
+        assert!(mesh.triangle_count() > leaf_triangles);
+        assert_eq!(
+            TreeGenerator
+                .posed_mesh(&spec, &skeleton, &halfway)
+                .unwrap(),
+            mesh,
+            "the same pose must rebuild the same mesh"
+        );
     }
 
     #[test]

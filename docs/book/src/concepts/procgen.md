@@ -182,17 +182,45 @@ A spec declares it with a `[living]` table. Only `lineage_seed` is required:
 [living]
 lineage_seed = 7          # the prop's identity
 pose_ring = 8             # poses to keep ready, at least 2
+step = 0.5                # seconds between pose targets
+glide = 0.3               # how much of a step is spent easing, 0 (snap) to 1 (never holds)
 stagger = "per_level"     # none | per_level | per_branch
 drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
 jitter = { amplitude = 0.05, targets = ["leaf_cards"] }
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
 ```
 
-These are the defaults. So far the table is checked and carried: `pose` doesn't apply `drift`, `jitter` or `variance` yet, and nothing plays a ring of poses, so every pose is at full variance. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+These are the defaults. So far most of the table is checked and carried: `pose` doesn't apply `drift`, `jitter` or `variance` yet, and nothing plays a ring of poses in a game, so every pose is at full variance. `step`, `glide` and `stagger` drive the contact strip below. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
 
 `flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
 
-To look at a lineage's poses, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB.
+### Seeing it move: the contact strip
+
+Motion can't be judged from a still, so `flint gen --strip` renders one prop over time as a labelled sheet, a frame per cell:
+
+```bash
+flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o strip.png
+# --columns N (default: whatever makes a 4:3 sheet), --cell-size PX (default 240)
+# --dry-run prints the clock and the sheet's size without a GPU
+```
+
+![24 frames of the living oak on one contact sheet, with a bar for each branch level under each frame](../images/living-strip.png)
+
+Each frame evaluates the hold-and-glide clock on the CPU, blends the two poses either side per segment, rebuilds the whole mesh and renders it. The camera is fixed and frames every frame's bounds, so what changes between cells is the prop. The same spec gives a byte-identical PNG on the same machine and driver.
+
+The clock is the design's warped time, with `s` for `step` and `g` for `glide`:
+
+```text
+t' = floor(t/s) + ease(clamp((frac(t/s) - (1 - g)) / g, 0, 1))
+```
+
+`ease` is smoothstep. The whole part of `t'` is a pose, and since a pose's index is its shape seed, the stream of poses has no end. The fraction is how far the prop has blended toward the next. `stagger` puts each segment's clock ahead by a phase: 0.15 of a step per branch level for `per_level`, and an even spread by segment id for `per_branch`.
+
+Under each cell are a bar for how far the blend has gone (one per branch level under `per_level`, trunk side on top), the frame number, `t'`, and the two poses. So `glide = 0` shows empty bars and a hard cut on each beat, while `glide = 1` shows bars that rise steadily and a tree that never stops moving.
+
+A strip reads `[living]` and ignores `[seed]`, so `--seed` doesn't apply, and it takes no run mode that writes something else (`--batch`, `--validate`, `--register`, `--format`). `--strict` still refuses unknown params. A spec with no `[living]` table, or one that can't live, is an error.
+
+To look at a lineage's poses as files, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes each one as a GLB.
 
 ## `flint gen`
 

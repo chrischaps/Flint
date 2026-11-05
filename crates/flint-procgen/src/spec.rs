@@ -116,6 +116,13 @@ pub struct LivingConfig {
     /// The fast, small layer: makes it feel drawn and may snap.
     #[serde(default)]
     pub jitter: JitterConfig,
+    /// Seconds between pose targets: one beat of the hold-and-glide clock.
+    #[serde(default = "default_step")]
+    pub step: f32,
+    /// How much of each step is spent easing to the next pose, 0 to 1: 0
+    /// holds and then snaps, 1 never holds.
+    #[serde(default = "default_glide")]
+    pub glide: f32,
     /// How the branches fall out of phase with each other.
     #[serde(default)]
     pub stagger: Stagger,
@@ -126,6 +133,14 @@ pub struct LivingConfig {
 
 fn default_pose_ring() -> u32 {
     8
+}
+
+fn default_step() -> f32 {
+    0.5
+}
+
+fn default_glide() -> f32 {
+    0.3
 }
 
 impl LivingConfig {
@@ -145,6 +160,15 @@ impl LivingConfig {
                 "pose_ring",
                 format!("{}: a ring needs at least 2 poses to blend", self.pose_ring),
             );
+        }
+        if !self.step.is_finite() || self.step <= 0.0 {
+            return bad(
+                "step",
+                format!("{}: must be more than 0 seconds", self.step),
+            );
+        }
+        if !unit(self.glide) {
+            return bad("glide", format!("{}: must be in [0.0, 1.0]", self.glide));
         }
         if !at_least_zero(self.drift.amplitude) {
             return bad(
@@ -558,10 +582,32 @@ variance = { amount = 1, steady = 0, keep_size = false }
     }
 
     #[test]
+    fn living_reads_and_checks_step_and_glide() {
+        let table = "lineage_seed = 3\nstep = 0.25\nglide = 0.8";
+        let spec = ProcGenSpec::parse(&with_living(table)).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert_eq!((living.step, living.glide), (0.25, 0.8));
+
+        for (table, says) in [
+            ("lineage_seed = 3\nstep = 0", "living.step"),
+            ("lineage_seed = 3\nstep = -1", "living.step"),
+            ("lineage_seed = 3\nglide = 1.5", "living.glide"),
+            ("lineage_seed = 3\nglide = -0.1", "living.glide"),
+        ] {
+            let error = ProcGenSpec::parse(&with_living(table))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(says), "{table}: {error}");
+        }
+    }
+
+    #[test]
     fn living_fills_in_defaults_from_the_lineage_alone() {
         let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
         let living = spec.living.unwrap();
         assert_eq!(living.pose_ring, 8);
+        assert_eq!(living.step, 0.5);
+        assert_eq!(living.glide, 0.3);
         assert_eq!(living.stagger, Stagger::PerLevel);
         assert_eq!(living.drift, DriftConfig::default());
         assert_eq!(living.jitter, JitterConfig::default());
