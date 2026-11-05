@@ -192,6 +192,23 @@ pub struct KnobFlags {
 }
 
 impl KnobFlags {
+    /// One knob's flag.
+    pub fn get(&self, knob: Knob) -> bool {
+        match knob {
+            Knob::Amplitude => self.amplitude,
+            Knob::Step => self.step,
+            Knob::Glide => self.glide,
+            Knob::Jitter => self.jitter,
+            Knob::Stagger => self.stagger,
+            Knob::EchoCount => self.echo_count,
+            Knob::EchoSpread => self.echo_spread,
+            Knob::EchoAlpha => self.echo_alpha,
+            Knob::VarianceAmount => self.variance_amount,
+            Knob::VarianceSteady => self.variance_steady,
+            Knob::KeepSize => self.keep_size,
+        }
+    }
+
     /// Whether any of the clock's four is set.
     pub fn any_clock(&self) -> bool {
         self.step || self.glide || self.amplitude || self.jitter
@@ -234,14 +251,158 @@ impl KnobFlags {
     }
 }
 
-/// What a `mixed` knob says when hovered.
+/// One of the knobs a species can set (#247). The boil's aren't among them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Knob {
+    Amplitude,
+    Step,
+    Glide,
+    Jitter,
+    Stagger,
+    EchoCount,
+    EchoSpread,
+    EchoAlpha,
+    VarianceAmount,
+    VarianceSteady,
+    KeepSize,
+}
+
+impl Knob {
+    pub const ALL: [Knob; 11] = [
+        Knob::Amplitude,
+        Knob::Step,
+        Knob::Glide,
+        Knob::Jitter,
+        Knob::Stagger,
+        Knob::EchoCount,
+        Knob::EchoSpread,
+        Knob::EchoAlpha,
+        Knob::VarianceAmount,
+        Knob::VarianceSteady,
+        Knob::KeepSize,
+    ];
+
+    /// Its key in `[living.species.<spec>]`, in `clear_living` and in `flint
+    /// render --report json`'s `values`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Knob::Amplitude => "amplitude",
+            Knob::Step => "step",
+            Knob::Glide => "glide",
+            Knob::Jitter => "jitter",
+            Knob::Stagger => "stagger",
+            Knob::EchoCount => "echoes.count",
+            Knob::EchoSpread => "echoes.spread",
+            Knob::EchoAlpha => "echoes.alpha",
+            Knob::VarianceAmount => "variance.amount",
+            Knob::VarianceSteady => "variance.steady",
+            Knob::KeepSize => "variance.keep_size",
+        }
+    }
+
+    fn index(self) -> usize {
+        Knob::ALL.iter().position(|k| *k == self).unwrap_or(0)
+    }
+}
+
+/// Where each knob's value comes from (#247), over the props a scope covers:
+/// each layer once, by the label `flint render --report json` gives it, `spec`,
+/// `entity`, `global`, `zone:<name>` or `species`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct KnobSources([Vec<String>; 11]);
+
+impl KnobSources {
+    pub fn of(&self, knob: Knob) -> &[String] {
+        &self.0[knob.index()]
+    }
+
+    pub fn set(&mut self, knob: Knob, layers: Vec<String>) {
+        self.0[knob.index()] = layers;
+    }
+
+    /// Whether the species' own layer sets this knob.
+    pub fn is_own(&self, knob: Knob) -> bool {
+        self.of(knob).iter().any(|layer| layer == "species")
+    }
+}
+
+/// Which values the knobs read and turn (#247): the whole grove's, or one
+/// species', by spec name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PanelScope {
+    /// The global layer, under any species' own value.
+    #[default]
+    Global,
+    /// One species' own layer, which beats the global one, the field and its
+    /// zones.
+    Species(String),
+}
+
+/// One species the props grow from, as the host resolved it (#247).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LivingSpeciesState {
+    /// Its spec's name.
+    pub name: String,
+    /// How many props grow from it.
+    pub props: usize,
+    /// What its props run on, the first one's where they disagree. The boil's
+    /// knobs are the grove's: a species can't set them.
+    pub knobs: LivingKnobs,
+    /// The knobs its own props disagree on: a zone some stand in, or lineages
+    /// held differently.
+    pub mixed: KnobFlags,
+    /// The layer behind each value.
+    pub sources: KnobSources,
+}
+
+impl LivingSpeciesState {
+    /// Whether it sets any value of its own.
+    pub fn has_own(&self) -> bool {
+        Knob::ALL.iter().any(|knob| self.sources.is_own(*knob))
+    }
+}
+
+/// What a `mixed` knob says when hovered, for the whole grove.
 const MIXED: &str = "The species disagree here, so this shows the first prop's value. \
-Moving it sets it on every prop; the knobs beside it stay each species' own.";
+Moving it sets it for the whole grove, apart from a species that sets its own; the \
+knobs beside it stay each species' own.";
+
+/// What a `mixed` knob says when hovered, for one species.
+const MIXED_SPECIES: &str = "This species' trees disagree here: a zone some stand in, a \
+tree's own value, or lineages held differently. It shows the first one's. Moving it \
+makes it the species' own, on every one of its trees.";
+
+/// What each layer means, for a mark's hover.
+fn layer_says(layer: &str) -> String {
+    match layer {
+        "spec" => "spec: the species' .procgen.toml".to_string(),
+        "entity" => "entity: a tree's own living_prop component".to_string(),
+        "global" => "global: the scene's [living] or [wooze], or this panel at Global".to_string(),
+        "species" => "species: this species' own value".to_string(),
+        zone => match zone.strip_prefix("zone:") {
+            Some(name) => format!("zone:{name}: the wooze zone some of its trees stand in"),
+            None => zone.to_string(),
+        },
+    }
+}
+
+/// What one knob's mark says, beside it.
+#[derive(Debug, Clone, PartialEq)]
+enum Mark {
+    /// Nothing: Global, with no species setting its own.
+    Quiet,
+    /// At Global: these species set their own, so the knob doesn't reach them.
+    Owned(Vec<String>),
+    /// At a species: the layers its value comes from.
+    From(Vec<String>),
+}
 
 /// One prop's place on its clock.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LivingPropRow {
     pub name: String,
+    /// Its spec's name: the species it's one of.
+    pub species: String,
     /// Which tree it is.
     pub lineage_seed: u64,
     pub position: [f32; 3],
@@ -283,10 +444,16 @@ pub struct LivingHealth {
 /// What's true now, from the host.
 #[derive(Debug, Clone, Default)]
 pub struct LivingPanelState {
-    /// Every knob. Where the props disagree, the first prop's value.
+    /// Every knob for the whole grove. Where the props disagree, the first
+    /// prop's value, leaving out a species that sets its own.
     pub knobs: LivingKnobs,
     /// The knobs the props disagree on, which the panel shows as `mixed`.
     pub mixed: KnobFlags,
+    /// Each species the props grow from, by name (#247).
+    pub species: Vec<LivingSpeciesState>,
+    /// What the scene's living shadows follow, `blended` or `drift`: one for
+    /// every prop, so a species can't set it.
+    pub shadows: String,
     /// Whether the scene has no `[wooze]` table, so each prop runs its spec's
     /// clock until a clock knob gives it a field.
     pub no_field: bool,
@@ -327,9 +494,12 @@ fn side_name(name: &str) -> &str {
 /// What the user asked for; applied by the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LivingPanelAction {
-    /// The knobs a hand moved, and only those: unset fields leave a knob as
-    /// each prop has it.
-    Set(WoozePreset),
+    /// The knobs a hand moved, and only those, for the grove or one species:
+    /// unset fields leave a knob as each prop has it. A species' gets no boil.
+    Set(PanelScope, WoozePreset),
+    /// Take a species' own value away, or all of them with `None`, so its trees
+    /// take the layers below again (#247).
+    Clear(String, Option<Knob>),
     Freeze(bool),
     /// Move the clock on by exactly one beat.
     Step,
@@ -363,6 +533,10 @@ pub struct LivingPropsDebugPanel {
     /// What A and B are picked to be, before a comparison starts. `None` until
     /// the presets on offer are known.
     ab_picks: Option<(String, String)>,
+    /// Whose values the knobs turn (#247).
+    scope: PanelScope,
+    /// What the Props rows are narrowed to: part of a name or a species.
+    filter: String,
     actions: Vec<LivingPanelAction>,
 }
 
@@ -382,13 +556,55 @@ impl LivingPropsDebugPanel {
             picked: String::new(),
             save_as: "grove".to_string(),
             ab_picks: None,
+            scope: PanelScope::Global,
+            filter: String::new(),
             actions: Vec::new(),
         }
     }
 
     /// Live mirror: the host calls this each frame the panel or overlay is showing.
+    /// A species that's gone, as after a scene change, gives the grove back.
     pub fn refresh(&mut self, state: LivingPanelState) {
         self.state = state;
+        if matches!(self.scope, PanelScope::Species(_)) && self.picked_species().is_none() {
+            self.scope = PanelScope::Global;
+        }
+    }
+
+    /// Whose values the knobs turn.
+    pub fn scope(&self) -> &PanelScope {
+        &self.scope
+    }
+
+    /// Turn the grove's knobs or one species', as a click on the selector would.
+    pub fn set_scope(&mut self, scope: PanelScope) {
+        self.scope = scope;
+    }
+
+    /// The species picked, if one is and the host knows it.
+    fn picked_species(&self) -> Option<&LivingSpeciesState> {
+        match &self.scope {
+            PanelScope::Global => None,
+            PanelScope::Species(name) => self.state.species.iter().find(|s| &s.name == name),
+        }
+    }
+
+    /// What a knob's mark says, for the scope picked.
+    fn mark(&self, knob: Knob) -> Mark {
+        match self.picked_species() {
+            Some(species) => Mark::From(species.sources.of(knob).to_vec()),
+            None => {
+                let owned: Vec<String> = (self.state.species.iter())
+                    .filter(|s| s.sources.is_own(knob))
+                    .map(|s| s.name.clone())
+                    .collect();
+                if owned.is_empty() {
+                    Mark::Quiet
+                } else {
+                    Mark::Owned(owned)
+                }
+            }
+        }
     }
 
     /// What's been asked for since the last drain.
@@ -411,12 +627,75 @@ impl LivingPropsDebugPanel {
         self.dirty = true;
     }
 
-    /// The row the readout follows, if the scene has any.
+    /// The row the readout follows, if the scene has any: one of the picked
+    /// species', if one is.
     fn focused(&self) -> Option<&LivingPropRow> {
-        self.state
-            .rows
-            .get(self.focus)
-            .or_else(|| self.state.rows.first())
+        let rows = &self.state.rows;
+        let row = rows.get(self.focus).or_else(|| rows.first());
+        match &self.scope {
+            PanelScope::Species(name) if row.is_some_and(|row| &row.species != name) => {
+                rows.iter().find(|row| &row.species == name).or(row)
+            }
+            _ => row,
+        }
+    }
+
+    /// Whether the overlay labels this row: every row, or the picked species'.
+    fn labelled(&self, row: &LivingPropRow) -> bool {
+        match &self.scope {
+            PanelScope::Global => true,
+            PanelScope::Species(name) => &row.species == name,
+        }
+    }
+
+    /// Global, or a species, picked with one click. A species with values of
+    /// its own wears a dot.
+    fn scope_ui(&mut self, ui: &mut egui::Ui) {
+        if self.state.species.is_empty() {
+            return;
+        }
+        let mut picked = self.scope.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("Tuning");
+            ui.selectable_value(&mut picked, PanelScope::Global, "Global")
+                .on_hover_text("The whole grove, under any species' own value");
+            for species in &self.state.species {
+                let own = if species.has_own() { " \u{2022}" } else { "" };
+                let text = format!("{} {}{own}", species.name, species.props);
+                ui.selectable_value(&mut picked, PanelScope::Species(species.name.clone()), text)
+                    .on_hover_text(format!(
+                        "{}: {} trees. A knob moved here is the species' own: it beats the \
+                         grove's, the field and its zones{}",
+                        species.name,
+                        species.props,
+                        if own.is_empty() {
+                            "."
+                        } else {
+                            ". The dot: it already has some."
+                        }
+                    ));
+            }
+        });
+        self.scope = picked;
+        let Some(species) = self.picked_species().cloned() else {
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(
+                INK,
+                format!("{}: its own values beat the grove's", species.name),
+            );
+            if ui
+                .add_enabled(species.has_own(), egui::Button::new("Clear all").small())
+                .on_hover_text("Every value of its own gone: its trees take the grove's again")
+                .clicked()
+            {
+                self.push(LivingPanelAction::Clear(species.name.clone(), None));
+            }
+        });
+        if self.state.overlay {
+            ui.weak("The pose overlay labels only its trees.");
+        }
     }
 
     fn clock_section(&mut self, ui: &mut egui::Ui) {
@@ -479,55 +758,93 @@ impl LivingPropsDebugPanel {
     }
 
     fn knobs_ui(&mut self, ui: &mut egui::Ui) {
-        let mut k = self.state.knobs.clone();
-        let mixed = self.state.mixed;
+        let species = self.picked_species().cloned();
+        let (mut k, mixed) = match &species {
+            Some(species) => (species.knobs.clone(), species.mixed),
+            None => (self.state.knobs.clone(), self.state.mixed),
+        };
+        let before = k.clone();
+        let says = if species.is_some() {
+            MIXED_SPECIES
+        } else {
+            MIXED
+        };
+        let marks: Vec<Mark> = Knob::ALL.iter().map(|knob| self.mark(*knob)).collect();
         let mut touched = KnobFlags::default();
+        let mut clear: Option<Knob> = None;
+        // A knob, then its mark: where its value comes from, at a species, or
+        // which species it doesn't reach, at Global.
+        let mut row =
+            |ui: &mut egui::Ui, knob: Knob, add: &mut dyn FnMut(&mut egui::Ui) -> bool| {
+                ui.horizontal(|ui| {
+                    let moved = add(ui);
+                    if paint_mark(ui, &marks[knob.index()]) {
+                        clear = Some(knob);
+                    }
+                    moved
+                })
+                .inner
+            };
 
         section(ui, "Clock", true, |ui| {
-            touched.step = knob(
-                ui,
-                egui::Slider::new(&mut k.step, 0.05..=4.0)
-                    .logarithmic(true)
-                    .text("step (s)"),
-                mixed.step,
-            );
-            touched.glide = knob(
-                ui,
-                egui::Slider::new(&mut k.glide, 0.0..=1.0).text("glide"),
-                mixed.glide,
-            );
-            touched.amplitude = knob(
-                ui,
-                egui::Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"),
-                mixed.amplitude,
-            );
-            touched.jitter = knob(
-                ui,
-                egui::Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"),
-                mixed.jitter,
-            );
-            let shown = if mixed.stagger {
-                "mixed".to_string()
-            } else {
-                k.stagger.clone()
-            };
-            let combo = egui::ComboBox::from_label("stagger")
-                .selected_text(shown)
-                .show_ui(ui, |ui| {
-                    let mut picked = false;
-                    for (name, says) in STAGGERS {
-                        picked |= ui
-                            .selectable_value(&mut k.stagger, name.to_string(), name)
-                            .on_hover_text(says)
-                            .clicked();
-                    }
-                    picked
-                });
-            touched.stagger = combo.inner.unwrap_or(false);
-            if mixed.stagger {
-                combo.response.on_hover_text(MIXED);
-            }
-            if self.state.no_field && mixed.any_clock() {
+            touched.step = row(ui, Knob::Step, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.step, 0.05..=4.0)
+                        .logarithmic(true)
+                        .text("step (s)"),
+                    mixed.step,
+                    says,
+                )
+            });
+            touched.glide = row(ui, Knob::Glide, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.glide, 0.0..=1.0).text("glide"),
+                    mixed.glide,
+                    says,
+                )
+            });
+            touched.amplitude = row(ui, Knob::Amplitude, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.amplitude, 0.0..=1.0).text("drift"),
+                    mixed.amplitude,
+                    says,
+                )
+            });
+            touched.jitter = row(ui, Knob::Jitter, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.jitter, 0.0..=4.0).text("jitter"),
+                    mixed.jitter,
+                    says,
+                )
+            });
+            touched.stagger = row(ui, Knob::Stagger, &mut |ui| {
+                let shown = if mixed.stagger {
+                    "mixed".to_string()
+                } else {
+                    k.stagger.clone()
+                };
+                let combo = egui::ComboBox::from_label("stagger")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        let mut picked = false;
+                        for (name, says) in STAGGERS {
+                            picked |= ui
+                                .selectable_value(&mut k.stagger, name.to_string(), name)
+                                .on_hover_text(says)
+                                .clicked();
+                        }
+                        picked
+                    });
+                if mixed.stagger {
+                    combo.response.on_hover_text(says);
+                }
+                combo.inner.unwrap_or(false)
+            });
+            if species.is_none() && self.state.no_field && mixed.any_clock() {
                 ui.weak(
                     "No [wooze] table: each species runs its spec's clock. Turning any of \
                      these gives the scene one field, from the first prop's clock, so all \
@@ -536,65 +853,93 @@ impl LivingPropsDebugPanel {
             }
         });
 
-        section(ui, "Shading boil", true, |ui| {
-            ui.checkbox(&mut k.boil_on, "Boil");
-            ui.add_enabled_ui(k.boil_on, |ui| {
-                ui.add(egui::Slider::new(&mut k.boil_paint, 0.0..=1.0).text("paint"));
-                ui.add(egui::Slider::new(&mut k.boil_ink, 0.0..=2.0).text("ink"));
-                ui.horizontal(|ui| {
-                    ui.label("on");
-                    for (cadence, name) in [(1, "ones"), (2, "twos"), (3, "threes")] {
-                        ui.selectable_value(&mut k.boil_cadence, cadence, name);
-                    }
-                });
+        if species.is_some() {
+            // What a species can't set, still in view, and why.
+            section(ui, "Whole scene only", true, |ui| {
+                ui.add_enabled_ui(false, |ui| boil_ui(ui, &mut k.clone()));
+                ui.weak(
+                    "The boil is one screen pass over the whole frame, so every species \
+                     boils together. Tune it at Global.",
+                );
+                ui.add_enabled(
+                    false,
+                    egui::Label::new(format!("shadows: {}", self.state.shadows)),
+                );
+                ui.weak(
+                    "Shadows are the scene's [living] shadows, one choice for every living \
+                     prop, so a species can't set them.",
+                );
             });
-            let (paint, ink) = (self.state.paint_pass, self.state.ink_pass);
-            if !paint && !ink {
-                ui.weak("Needs Kuwahara for paint and contour for ink: F4.");
-            } else if !paint {
-                ui.weak("Ink only. Paint needs Kuwahara: F4.");
-            } else if !ink {
-                ui.weak("Paint only. Ink needs contour: F4.");
-            }
-        });
+        } else {
+            section(ui, "Shading boil", true, |ui| {
+                boil_ui(ui, &mut k);
+                let (paint, ink) = (self.state.paint_pass, self.state.ink_pass);
+                if !paint && !ink {
+                    ui.weak("Needs Kuwahara for paint and contour for ink: F4.");
+                } else if !paint {
+                    ui.weak("Ink only. Paint needs Kuwahara: F4.");
+                } else if !ink {
+                    ui.weak("Paint only. Ink needs contour: F4.");
+                }
+            });
+        }
 
         section(ui, "Echoes", true, |ui| {
-            touched.echo_count = knob(
-                ui,
-                egui::Slider::new(&mut k.echo_count, 0..=16).text("count"),
-                mixed.echo_count,
-            );
+            touched.echo_count = row(ui, Knob::EchoCount, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.echo_count, 0..=16).text("count"),
+                    mixed.echo_count,
+                    says,
+                )
+            });
             // To where an echo has faded out: flint_procgen::MAX_ECHO_SPREAD.
-            touched.echo_spread = knob(
-                ui,
-                egui::Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"),
-                mixed.echo_spread,
-            );
-            touched.echo_alpha = knob(
-                ui,
-                egui::Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"),
-                mixed.echo_alpha,
-            );
+            touched.echo_spread = row(ui, Knob::EchoSpread, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.echo_spread, 0.0..=1.818).text("spread (steps)"),
+                    mixed.echo_spread,
+                    says,
+                )
+            });
+            touched.echo_alpha = row(ui, Knob::EchoAlpha, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.echo_alpha, 0.0..=1.0).text("alpha"),
+                    mixed.echo_alpha,
+                    says,
+                )
+            });
         });
 
         section(ui, "Variance", true, |ui| {
-            touched.variance_amount = knob(
-                ui,
-                egui::Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"),
-                mixed.variance_amount,
-            );
-            touched.variance_steady = knob(
-                ui,
-                egui::Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
-                mixed.variance_steady,
-            );
-            let keep = ui.add(
-                egui::Checkbox::new(&mut k.keep_size, "keep size").indeterminate(mixed.keep_size),
-            );
-            touched.keep_size = keep.changed();
-            if mixed.keep_size {
-                keep.on_hover_text(MIXED);
-            }
+            touched.variance_amount = row(ui, Knob::VarianceAmount, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.variance_amount, 0.0..=1.0).text("amount"),
+                    mixed.variance_amount,
+                    says,
+                )
+            });
+            touched.variance_steady = row(ui, Knob::VarianceSteady, &mut |ui| {
+                knob(
+                    ui,
+                    egui::Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
+                    mixed.variance_steady,
+                    says,
+                )
+            });
+            touched.keep_size = row(ui, Knob::KeepSize, &mut |ui| {
+                let keep = ui.add(
+                    egui::Checkbox::new(&mut k.keep_size, "keep size")
+                        .indeterminate(mixed.keep_size),
+                );
+                let changed = keep.changed();
+                if mixed.keep_size {
+                    keep.on_hover_text(says);
+                }
+                changed
+            });
             if ui
                 .small_button("Unheld")
                 .on_hover_text("amount 1, steady 0, keep size off: each pose as it grew")
@@ -611,12 +956,34 @@ impl LivingPropsDebugPanel {
 
         // A touch says a knob moved where its number alone can't: a `mixed` one
         // set to the value it showed, or Unheld on a knob already there.
-        let moved = k.moved(&self.state.knobs, &touched);
+        let moved = k.moved(&before, &touched);
         if moved != WoozePreset::default() {
-            self.state.knobs = k;
-            // What moved is now the same on every prop.
-            self.state.mixed = mixed.without(&KnobFlags::set_by(&moved));
-            self.push(LivingPanelAction::Set(moved));
+            // What moved is now the same on every prop it reached, and at a
+            // species, its own, until the host says so itself next frame.
+            let set = KnobFlags::set_by(&moved);
+            match &species {
+                Some(picked) => {
+                    if let Some(own) =
+                        (self.state.species.iter_mut()).find(|s| s.name == picked.name)
+                    {
+                        own.knobs = k;
+                        own.mixed = mixed.without(&set);
+                        for knob in Knob::ALL.into_iter().filter(|knob| set.get(*knob)) {
+                            own.sources.set(knob, vec!["species".to_string()]);
+                        }
+                    }
+                    let scope = PanelScope::Species(picked.name.clone());
+                    self.push(LivingPanelAction::Set(scope, moved));
+                }
+                None => {
+                    self.state.knobs = k;
+                    self.state.mixed = mixed.without(&set);
+                    self.push(LivingPanelAction::Set(PanelScope::Global, moved));
+                }
+            }
+        }
+        if let (Some(knob), Some(picked)) = (clear, &species) {
+            self.push(LivingPanelAction::Clear(picked.name.clone(), Some(knob)));
         }
     }
 
@@ -736,37 +1103,112 @@ impl LivingPropsDebugPanel {
         });
     }
 
+    /// Every prop, grouped by species (#247), narrowed by a filter on its name or
+    /// its species'. A group's `tune` picks that species above.
     fn rows_ui(&mut self, ui: &mut egui::Ui) {
         section(ui, "Props", false, |ui| {
+            ui.horizontal(|ui| {
+                ui.weak("filter");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.filter)
+                        .hint_text("name or species")
+                        .desired_width(140.0),
+                );
+                if !self.filter.is_empty() && ui.small_button("\u{d7}").clicked() {
+                    self.filter.clear();
+                }
+            });
+            let filter = self.filter.to_lowercase();
+            let rows = self.state.rows.clone();
+            let mut groups: Vec<(&str, Vec<(usize, &LivingPropRow)>)> = Vec::new();
+            for (i, row) in rows.iter().enumerate() {
+                let shown = filter.is_empty()
+                    || row.name.to_lowercase().contains(&filter)
+                    || row.species.to_lowercase().contains(&filter);
+                if !shown {
+                    continue;
+                }
+                match groups
+                    .iter_mut()
+                    .find(|(species, _)| *species == row.species)
+                {
+                    Some((_, members)) => members.push((i, row)),
+                    None => groups.push((&row.species, vec![(i, row)])),
+                }
+            }
+            groups.sort_by(|a, b| a.0.cmp(b.0));
+            if groups.is_empty() {
+                ui.weak("No prop matches.");
+            }
             egui::ScrollArea::vertical()
                 .id_salt("living_rows")
-                .max_height(220.0)
+                .max_height(260.0)
                 .show(ui, |ui| {
-                    egui::Grid::new("living_rows_grid")
-                        .num_columns(4)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.weak("prop");
-                            ui.weak("lineage");
-                            ui.weak("pose");
-                            ui.weak("ring");
-                            ui.end_row();
-                            let rows = self.state.rows.clone();
-                            for (i, row) in rows.iter().enumerate() {
-                                if ui.selectable_label(self.focus == i, &row.name).clicked() {
-                                    self.focus = i;
-                                }
-                                ui.monospace(row.lineage_seed.to_string());
-                                ui.monospace(format!("{} {:.0}%", row.pose, row.weight * 100.0));
-                                ui.monospace(format!(
-                                    "{}+{}{}",
-                                    row.ring_first,
-                                    row.ring_ready,
-                                    if row.waiting { " wait" } else { "" }
-                                ));
-                                ui.end_row();
-                            }
-                        });
+                    for (species, members) in groups {
+                        self.species_rows(ui, species, &members, !filter.is_empty());
+                    }
+                });
+        });
+    }
+
+    /// One species' rows, under a header that folds them and can pick it.
+    fn species_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        species: &str,
+        members: &[(usize, &LivingPropRow)],
+        filtering: bool,
+    ) {
+        let picked = self.scope == PanelScope::Species(species.to_string());
+        let id = ui.make_persistent_id(("living_species_rows", species));
+        let mut fold =
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, picked);
+        if filtering {
+            fold.set_open(true);
+        }
+        fold.show_header(ui, |ui| {
+            let title = egui::RichText::new(format!("{species}  {}", members.len()));
+            ui.label(if picked {
+                title.strong().color(INK)
+            } else {
+                title
+            });
+            if ui
+                .selectable_label(picked, egui::RichText::new("tune").small())
+                .on_hover_text("Turn this species' own values above")
+                .clicked()
+            {
+                self.scope = if picked {
+                    PanelScope::Global
+                } else {
+                    PanelScope::Species(species.to_string())
+                };
+            }
+        })
+        .body(|ui| {
+            egui::Grid::new(("living_rows_grid", species))
+                .num_columns(4)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.weak("prop");
+                    ui.weak("lineage");
+                    ui.weak("pose");
+                    ui.weak("ring");
+                    ui.end_row();
+                    for (i, row) in members {
+                        if ui.selectable_label(self.focus == *i, &row.name).clicked() {
+                            self.focus = *i;
+                        }
+                        ui.monospace(row.lineage_seed.to_string());
+                        ui.monospace(format!("{} {:.0}%", row.pose, row.weight * 100.0));
+                        ui.monospace(format!(
+                            "{}+{}{}",
+                            row.ring_first,
+                            row.ring_ready,
+                            if row.waiting { " wait" } else { "" }
+                        ));
+                        ui.end_row();
+                    }
                 });
         });
     }
@@ -788,6 +1230,7 @@ impl LivingPropsDebugPanel {
             .state
             .rows
             .iter()
+            .filter(|row| self.labelled(row))
             .filter_map(|row| {
                 let (at, depth) = project(row, view_proj, screen)?;
                 Some((depth, at, row))
@@ -815,6 +1258,7 @@ impl DebugPanel for LivingPropsDebugPanel {
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.clock_section(ui);
         ui.separator();
+        self.scope_ui(ui);
         self.knobs_ui(ui);
         self.presets_ui(ui);
         self.ab_ui(ui);
@@ -852,15 +1296,84 @@ fn section(ui: &mut egui::Ui, title: &str, default_open: bool, add: impl FnOnce(
         .show(ui, add);
 }
 
-/// A slider that reads `mixed` when the props disagree on it. Returns whether a
-/// hand moved it.
-fn knob(ui: &mut egui::Ui, slider: egui::Slider<'_>, mixed: bool) -> bool {
+/// A slider that reads `mixed` when the props disagree on it, and says `says`
+/// about that when hovered. Returns whether a hand moved it.
+fn knob(ui: &mut egui::Ui, slider: egui::Slider<'_>, mixed: bool, says: &str) -> bool {
     if !mixed {
         return ui.add(slider).changed();
     }
     ui.add(slider.custom_formatter(|_, _| "mixed".to_string()))
-        .on_hover_text(MIXED)
+        .on_hover_text(says)
         .changed()
+}
+
+/// The boil's knobs: on or off, paint, ink, and its cadence.
+fn boil_ui(ui: &mut egui::Ui, k: &mut LivingKnobs) {
+    ui.checkbox(&mut k.boil_on, "Boil");
+    ui.add_enabled_ui(k.boil_on, |ui| {
+        ui.add(egui::Slider::new(&mut k.boil_paint, 0.0..=1.0).text("paint"));
+        ui.add(egui::Slider::new(&mut k.boil_ink, 0.0..=2.0).text("ink"));
+        ui.horizontal(|ui| {
+            ui.label("on");
+            for (cadence, name) in [(1, "ones"), (2, "twos"), (3, "threes")] {
+                ui.selectable_value(&mut k.boil_cadence, cadence, name);
+            }
+        });
+    });
+}
+
+/// Layers as a mark says them, short enough to sit beside a knob: the report's
+/// labels, with two or more zones counted, `global · 3 zones`. The hover has
+/// each one.
+fn short_mark(layers: &[String]) -> String {
+    let (zones, mut said): (Vec<&String>, Vec<&String>) =
+        layers.iter().partition(|l| l.starts_with("zone:"));
+    let counted = format!("{} zones", zones.len());
+    match zones.len() {
+        0 => {}
+        1 => said.push(zones[0]),
+        _ => said.push(&counted),
+    }
+    let said: Vec<&str> = said.iter().map(|s| s.as_str()).collect();
+    said.join(" \u{b7} ")
+}
+
+/// A knob's mark, after it. Returns whether its clear was pressed.
+///
+/// At Global it's quiet unless a species sets its own value, and then says how
+/// many, since the knob doesn't reach them. At a species it names the layers its
+/// value comes from, as `flint render --report json` does, and the species' own
+/// gets a clear beside it.
+fn paint_mark(ui: &mut egui::Ui, mark: &Mark) -> bool {
+    let small = |text: String, colour: Color32| egui::RichText::new(text).small().color(colour);
+    match mark {
+        Mark::Quiet => false,
+        Mark::Owned(species) => {
+            ui.label(small(format!("{} own", species.len()), PARTS))
+                .on_hover_text(format!(
+                    "{} {} their own, so this doesn't reach {}. Pick one under Tuning to \
+                     see or clear it.",
+                    species.join(", "),
+                    if species.len() == 1 { "sets" } else { "set" },
+                    if species.len() == 1 { "it" } else { "them" },
+                ));
+            false
+        }
+        Mark::From(layers) if layers.iter().any(|layer| layer == "species") => {
+            ui.label(small("species".to_string(), INK))
+                .on_hover_text(layer_says("species"));
+            ui.add(egui::Button::new(small("\u{d7}".to_string(), INK)).small())
+                .on_hover_text("Clear: its trees take the grove's value again")
+                .clicked()
+        }
+        Mark::From(layers) => {
+            let hover: Vec<String> = layers.iter().map(|layer| layer_says(layer)).collect();
+            let faint = ui.visuals().weak_text_color();
+            ui.label(small(short_mark(layers), faint))
+                .on_hover_text(hover.join("\n"));
+            false
+        }
+    }
 }
 
 /// How far toward the next pose a part is, `frac` of the way through a step: the
@@ -1034,6 +1547,7 @@ mod tests {
     fn row(name: &str, position: [f32; 3]) -> LivingPropRow {
         LivingPropRow {
             name: name.to_string(),
+            species: "oak".to_string(),
             lineage_seed: 7,
             position,
             height: 10.0,
@@ -1110,6 +1624,8 @@ mod tests {
         let ctx = egui::Context::default();
         frame(&ctx, panel, Vec::new());
         frame(&ctx, panel, Vec::new());
+        // A hand that keeps to one scope: a press on the selector is put back.
+        let scope = panel.scope().clone();
         let mut asked = Vec::new();
         for y in (0..1400).step_by(9) {
             let at = Pos2::new(x, y as f32);
@@ -1125,6 +1641,7 @@ mod tests {
             frame(&ctx, panel, vec![egui::Event::PointerGone]);
             asked.extend(panel.take_actions());
             panel.clear_dirty();
+            panel.set_scope(scope.clone());
         }
         asked
     }
@@ -1165,7 +1682,7 @@ mod tests {
         let sets: Vec<WoozePreset> = asked
             .iter()
             .filter_map(|action| match action {
-                LivingPanelAction::Set(moved) => Some(moved.clone()),
+                LivingPanelAction::Set(_, moved) => Some(moved.clone()),
                 _ => None,
             })
             .collect();
@@ -1377,5 +1894,314 @@ mod tests {
         with_prop.overlay = true;
         panel.refresh(with_prop);
         assert!(shapes(&ctx, &panel) >= 4);
+    }
+
+    // ---- Scopes (#247) ----
+
+    /// Every knob from `layer`.
+    fn all_from(layer: &str) -> KnobSources {
+        let mut sources = KnobSources::default();
+        for knob in Knob::ALL {
+            sources.set(knob, vec![layer.to_string()]);
+        }
+        sources
+    }
+
+    /// One oak and two thorns. The thorns set their own echo count, and one
+    /// stands in a zone with its own step.
+    fn grove() -> LivingPanelState {
+        let mut thorn_1 = row("thorn_1", [10.0, 0.0, -20.0]);
+        thorn_1.species = "thorn".to_string();
+        let mut thorn_2 = row("thorn_2", [-10.0, 0.0, -20.0]);
+        thorn_2.species = "thorn".to_string();
+        let mut thorn = LivingSpeciesState {
+            name: "thorn".to_string(),
+            props: 2,
+            knobs: LivingKnobs {
+                echo_count: 2,
+                ..Default::default()
+            },
+            mixed: KnobFlags {
+                step: true,
+                ..Default::default()
+            },
+            sources: all_from("global"),
+        };
+        thorn
+            .sources
+            .set(Knob::EchoCount, vec!["species".to_string()]);
+        thorn.sources.set(
+            Knob::Step,
+            vec!["zone:hush".to_string(), "global".to_string()],
+        );
+        LivingPanelState {
+            rows: vec![row("oak_1", [0.0, 0.0, -20.0]), thorn_1, thorn_2],
+            shadows: "blended".to_string(),
+            species: vec![
+                LivingSpeciesState {
+                    name: "oak".to_string(),
+                    props: 1,
+                    knobs: LivingKnobs::default(),
+                    mixed: KnobFlags::default(),
+                    sources: all_from("spec"),
+                },
+                thorn,
+            ],
+            ..state()
+        }
+    }
+
+    /// Every piece of text the panel draws, and where, once its headers are open.
+    fn shown(ctx: &egui::Context, panel: &mut LivingPropsDebugPanel) -> Vec<(String, Rect)> {
+        frame(ctx, panel, Vec::new());
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Text(text) => Some((
+                    text.galley.text().to_string(),
+                    Rect::from_min_size(text.pos, text.galley.size()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Click the first text that reads `text`, and return what that asked for.
+    fn click_text(
+        ctx: &egui::Context,
+        panel: &mut LivingPropsDebugPanel,
+        text: &str,
+    ) -> Vec<LivingPanelAction> {
+        let said = shown(ctx, panel);
+        let (_, rect) = said
+            .iter()
+            .find(|(t, _)| t == text)
+            .unwrap_or_else(|| panic!("no {text:?} in {said:?}"));
+        let at = rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(ctx, panel, vec![egui::Event::PointerMoved(at)]);
+        frame(ctx, panel, vec![press(true)]);
+        frame(ctx, panel, vec![press(false)]);
+        frame(ctx, panel, vec![egui::Event::PointerGone]);
+        panel.take_actions()
+    }
+
+    fn says(said: &[(String, Rect)], text: &str) -> usize {
+        said.iter().filter(|(t, _)| t.contains(text)).count()
+    }
+
+    #[test]
+    fn global_looks_as_it_did_with_a_mark_only_where_a_species_sets_its_own() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        let mut plain = grove();
+        for species in &mut plain.species {
+            species.sources = all_from("global");
+        }
+        panel.refresh(plain);
+        let said = shown(&ctx, &mut panel);
+        for mark in ["own", "species", "zone:", "Whole scene only", "shadows"] {
+            assert_eq!(says(&said, mark), 0, "{mark:?} in {said:?}");
+        }
+        assert_eq!(says(&said, "Shading boil"), 1);
+
+        // The thorns' own count is the one thing Global has to say about them.
+        panel.refresh(grove());
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "1 own"), 1, "{said:?}");
+        assert_eq!(says(&said, " own"), 1);
+        assert!(!panel.is_dirty(), "showing marks asks for nothing");
+    }
+
+    #[test]
+    fn a_species_knob_is_sent_for_that_species_and_its_clear_for_that_knob() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        assert_eq!(
+            click_text(&ctx, &mut panel, "thorn 2 \u{2022}"),
+            Vec::new(),
+            "picking a species asks the host for nothing"
+        );
+        assert_eq!(panel.scope(), &PanelScope::Species("thorn".to_string()));
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "global \u{b7} zone:hush"), 1, "{said:?}");
+        assert_eq!(said.iter().filter(|(t, _)| t == "species").count(), 1);
+
+        let asked = press_down(&mut panel, 60.0);
+        let sets: Vec<&LivingPanelAction> = asked
+            .iter()
+            .filter(|a| matches!(a, LivingPanelAction::Set(..)))
+            .collect();
+        assert!(!sets.is_empty());
+        for set in sets {
+            let LivingPanelAction::Set(scope, moved) = set else {
+                unreachable!()
+            };
+            assert_eq!(scope, &PanelScope::Species("thorn".to_string()));
+            assert_eq!(moved.boil, None, "a species gets no boil: {moved:?}");
+        }
+
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        panel.set_scope(PanelScope::Species("thorn".to_string()));
+        assert_eq!(
+            click_text(&ctx, &mut panel, "\u{d7}"),
+            vec![LivingPanelAction::Clear(
+                "thorn".to_string(),
+                Some(Knob::EchoCount)
+            )]
+        );
+        assert_eq!(
+            click_text(&ctx, &mut panel, "Clear all"),
+            vec![LivingPanelAction::Clear("thorn".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn at_a_species_the_boil_and_shadows_are_shown_off_with_the_reason() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        panel.set_scope(PanelScope::Species("oak".to_string()));
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "Whole scene only"), 1);
+        assert_eq!(says(&said, "shadows: blended"), 1);
+        assert_eq!(says(&said, "every species boils together"), 1, "{said:?}");
+        assert_eq!(says(&said, "a species can't set them"), 1);
+        assert_eq!(says(&said, "Clear all"), 1, "shown, if off: oak has none");
+
+        // However hard it's pressed, the boil doesn't move.
+        let mut asked = Vec::new();
+        for x in [24.0, 60.0, 110.0, 160.0] {
+            asked.extend(press_down(&mut panel, x));
+        }
+        for action in &asked {
+            match action {
+                LivingPanelAction::Set(scope, moved) => {
+                    assert_eq!(scope, &PanelScope::Species("oak".to_string()));
+                    assert_eq!(moved.boil, None);
+                }
+                // Once a knob is the species' own, its clear is there to press.
+                LivingPanelAction::Clear(name, _) => assert_eq!(name, "oak"),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn a_picked_species_is_the_only_one_the_overlay_labels() {
+        let ctx = egui::Context::default();
+        let view_proj = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, -1.0],
+            [0.0, 0.0, -0.2, 0.0],
+        ];
+        let mut panel = LivingPropsDebugPanel::new();
+        let mut on = grove();
+        on.overlay = true;
+        panel.refresh(on);
+        let labels = |panel: &LivingPropsDebugPanel| {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                panel.paint_overlay(ctx, &view_proj);
+            });
+            texts(&output)
+        };
+        let all = labels(&panel);
+        assert_eq!(all.len(), 3, "{all:?}");
+        panel.set_scope(PanelScope::Species("thorn".to_string()));
+        assert_eq!(labels(&panel).len(), 2);
+        panel.set_scope(PanelScope::Species("oak".to_string()));
+        assert_eq!(labels(&panel).len(), 1);
+    }
+
+    #[test]
+    fn the_props_are_grouped_by_species_and_a_filter_narrows_them() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        click_text(&ctx, &mut panel, "Props");
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "oak  1"), 1, "{said:?}");
+        assert_eq!(says(&said, "thorn  2"), 1);
+        assert_eq!(says(&said, "thorn_1"), 0, "folded until opened");
+
+        panel.filter = "thorn".to_string();
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "oak  1"), 0);
+        assert_eq!(says(&said, "thorn_1"), 1, "a filter opens what it finds");
+        assert_eq!(says(&said, "thorn_2"), 1);
+
+        // A group's tune picks it.
+        panel.filter.clear();
+        click_text(&ctx, &mut panel, "tune");
+        assert_eq!(panel.scope(), &PanelScope::Species("oak".to_string()));
+    }
+
+    #[test]
+    fn a_species_that_goes_away_gives_the_grove_back() {
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        panel.set_scope(PanelScope::Species("thorn".to_string()));
+        panel.refresh(state());
+        assert_eq!(panel.scope(), &PanelScope::Global);
+    }
+
+    #[test]
+    fn a_mark_counts_zones_once_there_are_two() {
+        let labels = |l: &[&str]| -> Vec<String> { l.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(short_mark(&labels(&["species"])), "species");
+        assert_eq!(
+            short_mark(&labels(&["zone:hush", "global"])),
+            "global \u{b7} zone:hush"
+        );
+        assert_eq!(
+            short_mark(&labels(&[
+                "zone:shiver",
+                "global",
+                "zone:drowse",
+                "zone:hush"
+            ])),
+            "global \u{b7} 3 zones"
+        );
+    }
+
+    #[test]
+    fn every_knob_has_the_key_its_layer_report_gives_it() {
+        let keys: Vec<&str> = Knob::ALL.iter().map(|k| k.key()).collect();
+        assert_eq!(
+            keys,
+            [
+                "amplitude",
+                "step",
+                "glide",
+                "jitter",
+                "stagger",
+                "echoes.count",
+                "echoes.spread",
+                "echoes.alpha",
+                "variance.amount",
+                "variance.steady",
+                "variance.keep_size",
+            ]
+        );
+        for knob in Knob::ALL {
+            assert_eq!(Knob::ALL[knob.index()], knob);
+        }
     }
 }

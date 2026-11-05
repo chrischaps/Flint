@@ -102,12 +102,24 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 **In a grove of several species.** Each species' spec sets its own echoes, stagger and variance, so props can disagree on those knobs. Woozy Grove's four species do on all of them. Where they disagree, the knob reads `mixed` (the slider sits at the first prop's value, the checkbox shows a dash) until you move it.
 
 - Moving a knob sets that one knob on every prop and nothing else. Moving echo `count` gives every prop that count and leaves `spread`, `alpha`, stagger and variance as each species had them. Moving `glide` doesn't touch any of them.
-- The panel's knobs are the global layer. A species with its own value for a knob, from [`[living.species.<spec>]`](../concepts/procgen.md#species-values) or a script, keeps it whatever the panel does, so that knob may read `mixed` and stay so.
+- At **Global** the knobs are the global layer. A species with its own value for a knob, from [`[living.species.<spec>]`](../concepts/procgen.md#species-values), a script or the panel at that species, keeps it whatever the panel does. The knob leaves that species out of what it shows, so it doesn't read `mixed` on its account, and says `1 own` (or `2 own`, and so on) beside it; hover to see which.
 - A `mixed` knob counts as moved as soon as you touch it, even if you pick the number it was showing: every prop then has that value, and the knob stops reading `mixed`.
 - Variance is held per lineage, so `amount` changes every lineage's amount and each keeps its own `steady` and `keep size`.
 - **As loaded** gives back each species' own values, prop by prop and lineage by lineage, and every `[living.species]` value as the scene set it. One a script set or cleared since goes back too.
 - **Save** writes only the knobs every prop agrees on and names the ones it left out, so loading the file leaves each species its own of the rest. A preset file or a script that sets a knob still sets it on every prop.
 - The clock's four knobs come from the scene's `[wooze]` field, which is one for the whole grove. A scene with no `[wooze]` table runs each species on its spec's clock, and the panel shows those as `mixed` too. Turning any of them gives the scene a field starting from the first prop's clock, which evens out `step` and `glide` across the grove, and the panel says so under the clock. **As loaded** takes the field away again and gives each species its spec's clock back.
+
+![The panel at grove_thorn: the thorns' echo count is their own, marked species with a clear beside it, the clock knobs read global and three zones, the boil and shadows are greyed out, and the pose overlay labels only thorns](../images/living-panel-species.png)
+
+**Tuning one species.** Under the clock, **Tuning** picks whose values the knobs turn: **Global**, or one species, each with its count of trees (`grove_thorn 11`). A dot after a name means that species has values of its own. With a species picked:
+
+- The knobs show what its trees run on, and moving one makes it the species' own, the same as `[living.species.<spec>]` would: it beats the grove's value, the field and its zones, and the other species hold. In Woozy Grove, moving echo `count` at `grove_thorn` changes the 11 thorns and nothing else.
+- Each knob says where its value comes from, with the label `flint render --report json` gives the layer: `spec`, `entity`, `global`, `zone:<name>` or `species`. A species whose trees stand in different places can read more than one, such as `global · zone:hush`, or `global · 3 zones` once there are several zones, and the knob then reads `mixed` at the first tree's value. Hover a mark for what each layer is.
+- A `species` mark has a **×** beside it, which clears that value so its trees take the layers below again. **Clear all** clears every one. Nothing pops when a value clears, apart from stagger, for the same reasons as above: a clock knob reaches each part on its next beat, and the beat count itself carries on.
+- The shading boil and the shadows are greyed out under **Whole scene only**, with the reason: the boil is one screen pass over the whole frame, and shadows are the scene's `[living] shadows`, one choice for every living prop.
+- The pose overlay labels only that species' trees, so you can see which ones you're changing, and the clock readout follows one of them.
+
+**Props** groups the trees by species, each group folded under its name and count, and a filter narrows them to a name or a species and opens what it finds. A group's **tune** picks that species above. **As loaded** puts every species' own values back as the scene set them, panel edits included. Saving them is a separate ticket (#249): **Save** still writes the global layer only.
 
 **Freeze** stops the clock everything woozy runs on, and nothing else: the game goes on, so you can walk around a held pose. Knobs still work, and echoes and variance show at once. **Step** then moves every prop on by exactly one beat, however long a beat is where it stands, which you can read off the clock: `beat 4.753` becomes `beat 5.753`.
 

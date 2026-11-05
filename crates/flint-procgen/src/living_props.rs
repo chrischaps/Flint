@@ -1112,6 +1112,12 @@ impl LivingProps {
         self.species.len() - 1
     }
 
+    /// What the scene's living shadows follow. One for the whole scene: a
+    /// species can't set it (#247).
+    pub fn shadows(&self) -> LivingShadows {
+        self.defaults.shadows
+    }
+
     /// Every species by spec name, in the order they were first met: each one a
     /// prop grows from, and any a value was set for.
     pub fn species_names(&self) -> Vec<&str> {
