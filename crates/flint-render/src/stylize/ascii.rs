@@ -7,7 +7,10 @@
 //! cell = 8              # cell width in points; the height follows the font
 //! font = "builtin"      # or a fonts/<name>.glyphs.toml set
 //! ramp = "classic"      # a ramp of that set
-//! color = "source"      # source | tint | raw
+//! color = "source"      # source | tint | raw | mono | palette
+//! palette = "phosphor"  # for color = "palette": built-in or palettes/<name>.palette.toml
+//! ground = "dim"        # dim | black | inverse
+//! glow = 0.0            # halo around bright glyphs
 //! ```
 //!
 //! It runs at the display stage: on the finished picture at output
@@ -16,14 +19,18 @@
 //! the host's [`StyleFrame::pixels_per_point`], so it is the same size to
 //! the eye on a high-DPI screen. The grid is centred on the frame.
 //!
-//! Edge glyphs (#267), per-entity selection (#266) and more colour modes
-//! (#276) build on it.
+//! Colour modes (#276): `source` (the cell's hue), `tint` (one colour),
+//! `raw` (the cell's colour as it is), `mono` (white on grey) and `palette`
+//! (a [`Palette`]: nearest ink, as a CGA screen, or a tone ladder, as a
+//! phosphor tube). Edge glyphs (#267) and per-entity selection (#266)
+//! build on it.
 
 use super::kit;
 use super::{
     StyleDescriptor, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
+use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -32,7 +39,13 @@ use std::sync::{Arc, Mutex};
 pub const MAX_RAMP: usize = 128;
 
 /// The colour modes, by their option spelling.
-pub const COLOR_MODES: &[&str] = &["source", "tint", "raw"];
+pub const COLOR_MODES: &[&str] = &["source", "tint", "raw", "mono", "palette"];
+
+/// The ground (background fill) modes, by their option spelling.
+pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
+
+/// The palette `color = "palette"` uses when the scene names none.
+pub const DEFAULT_PALETTE: &str = "phosphor";
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     name: "ascii",
@@ -99,6 +112,12 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 0.0,
             max: 1.0,
         },
+        StyleParam {
+            name: "glow",
+            default: 0.0,
+            min: 0.0,
+            max: 2.0,
+        },
     ],
     options: &[
         StyleOption {
@@ -115,6 +134,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "color",
             default: "source",
             choices: COLOR_MODES,
+        },
+        StyleOption {
+            name: "palette",
+            default: DEFAULT_PALETTE,
+            choices: BUILTIN_PALETTES,
+        },
+        StyleOption {
+            name: "ground",
+            default: "dim",
+            choices: GROUND_MODES,
         },
     ],
     enabled: None,
@@ -170,7 +199,14 @@ struct AsciiUniforms {
     footprint: f32,
     ramp_len: u32,
     srgb: u32,
+    glow: f32,
+    ground: u32,
+    palette_len: u32,
+    palette_match: u32,
+    palette_bg: [f32; 3],
+    _pad: u32,
     ramp: [[u32; 4]; MAX_RAMP / 2],
+    palette: [[f32; 4]; MAX_COLORS],
 }
 
 /// The cell, in output pixels, for a cell `points` wide at
@@ -202,6 +238,11 @@ pub fn color_mode(name: &str) -> u32 {
     COLOR_MODES.iter().position(|m| *m == name).unwrap_or(0) as u32
 }
 
+/// The ground mode's shader number; an unknown name is `dim`.
+pub fn ground_mode(name: &str) -> u32 {
+    GROUND_MODES.iter().position(|m| *m == name).unwrap_or(0) as u32
+}
+
 /// Up to [`MAX_RAMP`] steps of `indices`, evenly resampled when longer.
 fn fit_ramp(indices: &[u32]) -> Vec<u32> {
     if indices.len() <= MAX_RAMP {
@@ -224,6 +265,7 @@ struct LoadedFont {
 struct Fonts {
     search: Vec<PathBuf>,
     cache: GlyphSetCache,
+    palettes: PaletteCache,
     loaded: Option<LoadedFont>,
     /// The last (font, ramp) a warning was given for, so it's said once.
     warned: Option<(String, String)>,
@@ -261,6 +303,7 @@ impl Ascii {
         let search = Fonts::search_for(frame.scene_dir);
         if fonts.search != search {
             fonts.cache = GlyphSetCache::new(search.clone());
+            fonts.palettes = PaletteCache::new(search.clone());
             fonts.search = search;
             fonts.loaded = None;
         }
@@ -331,6 +374,16 @@ impl StylePass for Ascii {
             slot[(i % 2) * 2] = x;
             slot[(i % 2) * 2 + 1] = y;
         }
+        let palette = if frame.option("color") == "palette" {
+            let name = match frame.option("palette") {
+                "" => DEFAULT_PALETTE,
+                n => n,
+            };
+            fonts.palettes.get(name).ok()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| Palette::builtin(DEFAULT_PALETTE).expect("built-in"));
         let cell = cell_pixels(frame.param("cell"), frame.pixels_per_point, glyph);
         let uniforms = AsciiUniforms {
             cell,
@@ -351,7 +404,14 @@ impl StylePass for Ascii {
             footprint: frame.param("footprint").clamp(1.0, 8.0),
             ramp_len: steps.len() as u32,
             srgb: frame.srgb() as u32,
+            glow: frame.param("glow").max(0.0),
+            ground: ground_mode(frame.option("ground")),
+            palette_len: palette.colors().len() as u32,
+            palette_match: palette.matching().index(),
+            palette_bg: palette.background(),
+            _pad: 0,
             ramp: ramp_origins,
+            palette: palette.uniform_colors(),
         };
         frame
             .queue
@@ -377,8 +437,11 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        // 80 bytes of scalars, then 64 vec4<u32>
-        assert_eq!(std::mem::size_of::<AsciiUniforms>(), 80 + 64 * 16);
+        // 112 bytes of scalars, 64 vec4<u32> of ramp, 32 vec4<f32> of palette
+        assert_eq!(
+            std::mem::size_of::<AsciiUniforms>(),
+            112 + 64 * 16 + MAX_COLORS * 16
+        );
     }
 
     #[test]
@@ -406,7 +469,22 @@ mod tests {
         assert_eq!(color_mode("source"), 0);
         assert_eq!(color_mode("tint"), 1);
         assert_eq!(color_mode("raw"), 2);
+        assert_eq!(color_mode("mono"), 3);
+        assert_eq!(color_mode("palette"), 4);
         assert_eq!(color_mode("plaid"), 0);
+        assert_eq!(ground_mode("dim"), 0);
+        assert_eq!(ground_mode("black"), 1);
+        assert_eq!(ground_mode("inverse"), 2);
+        assert_eq!(ground_mode(""), 0);
+    }
+
+    #[test]
+    fn every_offered_palette_is_built_in() {
+        let palette = STYLE.options.iter().find(|o| o.name == "palette").unwrap();
+        assert!(Palette::builtin(palette.default).is_some());
+        for choice in palette.choices {
+            assert!(Palette::builtin(choice).is_some(), "{choice}");
+        }
     }
 
     #[test]

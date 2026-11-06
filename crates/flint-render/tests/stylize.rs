@@ -310,3 +310,93 @@ fn ascii_draws_one_glyph_per_cell_on_one_grid() {
     renderer.set_post_process_config(config);
     assert_ne!(block(&gpu.frame(&mut renderer, &world), 8, 0, 0), first);
 }
+
+/// The distinct RGB colours of an RGBA8 frame.
+fn colours(pixels: &[u8]) -> std::collections::BTreeSet<[u8; 3]> {
+    pixels.chunks(4).map(|p| [p[0], p[1], p[2]]).collect()
+}
+
+fn hex_bytes(palette: &flint_render::palette::Palette) -> Vec<[u8; 3]> {
+    palette
+        .colors()
+        .iter()
+        .chain(std::iter::once(&palette.background()))
+        .map(|c| c.map(|v| (v * 255.0).round() as u8))
+        .collect()
+}
+
+#[test]
+fn ascii_palette_modes_draw_only_the_palettes_colours() {
+    use flint_render::palette::Palette;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = FlintWorld::new();
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("ascii", true);
+    config.styles.set_option("ascii", "color", "palette");
+
+    // At a whole-number scale coverage is 0 or 1, so every pixel is a
+    // palette ink or its ground, whichever way round the ground puts them
+    for (palette, ground) in [
+        ("cga", "dim"),
+        ("cga", "inverse"),
+        ("cga16", "dim"),
+        ("amber", "dim"),
+        ("phosphor", "inverse"),
+    ] {
+        config.styles.set_option("ascii", "palette", palette);
+        config.styles.set_option("ascii", "ground", ground);
+        renderer.set_post_process_config(config.clone());
+        renderer.ensure_style_resources(&gpu.device);
+        let frame = gpu.frame(&mut renderer, &world);
+        let allowed = hex_bytes(&Palette::builtin(palette).unwrap());
+        let seen = colours(&frame);
+        assert!(seen.len() >= 2, "{palette}/{ground}: one flat colour");
+        for c in &seen {
+            assert!(
+                allowed
+                    .iter()
+                    .any(|a| (0..3).all(|i| a[i].abs_diff(c[i]) <= 1)),
+                "{palette}/{ground}: {c:?} is not in the palette {allowed:?}"
+            );
+        }
+    }
+
+    // Mono draws greys only; black ground draws pure black behind glyphs
+    config.styles.set_option("ascii", "color", "mono");
+    config.styles.set_option("ascii", "ground", "black");
+    renderer.set_post_process_config(config.clone());
+    let mono = colours(&gpu.frame(&mut renderer, &world));
+    assert!(mono.contains(&[0, 0, 0]), "{mono:?}");
+    assert!(
+        mono.iter().all(|c| c[0] == c[1] && c[1] == c[2]),
+        "mono drew colour: {mono:?}"
+    );
+
+    // Glow adds light around the glyph, never takes any away
+    config.styles.set_option("ascii", "color", "source");
+    config.styles.set_option("ascii", "ground", "dim");
+    renderer.set_post_process_config(config.clone());
+    let plain = gpu.frame(&mut renderer, &world);
+    config.styles.set_param("ascii", "glow", 1.0);
+    renderer.set_post_process_config(config);
+    let glowing = gpu.frame(&mut renderer, &world);
+    assert_ne!(plain, glowing, "glow changed nothing");
+    assert!(
+        plain
+            .iter()
+            .zip(&glowing)
+            .all(|(a, b)| b.saturating_add(1) >= *a),
+        "glow darkened a pixel"
+    );
+}

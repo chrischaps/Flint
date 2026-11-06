@@ -294,7 +294,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii=<mode>` | (none) | The ASCII spike's prototypes (#261), with the `=`: `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
 | `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
-| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour) or `raw` (the cell's colour as it is) |
+| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
+| `--ascii-palette <name>` | `phosphor` | *Style:* palette for `palette` mode: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` or `palettes/<name>.palette.toml` beside the scene; sets `--ascii-color palette` unless that's given |
+| `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |
+| `--ascii-glow <f32>` | `0` | *Style:* halo around bright glyphs (0.6 reads as a phosphor tube) |
 | `--ascii-tint <r,g,b>` | `0.35,1,0.45` | *Style:* the tint colour; sets `--ascii-color tint` unless that's given |
 | `--ascii-background <f32>` | `0.15` | *Style:* how much of the cell's colour fills behind its glyph (0 black) |
 | `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
