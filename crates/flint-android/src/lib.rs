@@ -109,8 +109,17 @@ fn android_main(app: AndroidApp) {
             flint_schema::SchemaRegistry::new()
         });
 
-    // Find the scene file — check android.toml config first, then discover
-    let scene_path = find_configured_scene(&data_dir)
+    // A device profiling run's overrides (FlintKart#54), if one was pushed.
+    // Read before the scene and the renderer, so its env vars are set when
+    // the engine looks for them.
+    let profile = DevProfile::load(&data_dir);
+
+    // Find the scene file: the dev profile's, then android.toml's, then
+    // discover
+    let scene_path = profile
+        .as_ref()
+        .and_then(|p| p.scene_path(&data_dir))
+        .or_else(|| find_configured_scene(&data_dir))
         .or_else(|| find_scene(&data_dir))
         .unwrap_or_else(|| {
             log::error!("No .scene.toml file found in {}", data_dir.display());
@@ -141,17 +150,12 @@ fn android_main(app: AndroidApp) {
     // Register the JNI gamepad axis reader so PlayerApp can poll trigger/right-stick values
     player.set_android_axis_reader(read_gamepad_axes);
 
-    // Apply scene-level camera/post-process if present
-    if let Some(camera_def) = scene_file.camera {
-        player.scene_camera = Some(camera_def);
-    }
-    if let Some(pp_def) = scene_file.post_process {
-        player.scene_post_process = Some(pp_def);
-    }
-    if let Some(env) = &scene_file.environment {
-        if let Some(skybox) = &env.skybox {
-            player.skybox_path = Some(skybox.clone());
-        }
+    // Skybox, ambient, shading levers, camera and post from the scene file,
+    // as the desktop player applies them
+    player.apply_scene_settings(&scene_file);
+
+    if let Some(profile) = &profile {
+        profile.apply(&mut player);
     }
 
     // Enable gamepad trigger and right-stick axes for GameActivity's native event processing.
@@ -243,5 +247,93 @@ fn find_scene_recursive(dir: &std::path::Path, scenes: &mut Vec<std::path::PathB
     // Then recurse into subdirectories
     for subdir in subdirs {
         find_scene_recursive(&subdir, scenes);
+    }
+}
+
+/// A device profiling run's overrides: `dev_profile.toml` in the app's
+/// internal files, written over adb (`adb shell run-as <package>` on a debug
+/// build) and never shipped in the APK. Every key is optional:
+///
+/// ```toml
+/// scene = "scenes/_prof_oval_plus.scene.toml"  # start here, not android.toml's
+/// render_scale = "0.75"                        # as --render-scale: 0.25-1 or auto
+/// msaa = 4                                     # as --msaa: 1 or 4
+/// perf = true                                  # as --perf: a line to logcat every 10 s
+/// [env]                                        # the engine's FLINT_* switches
+/// FLINT_SHADOWS = "0"
+/// ```
+///
+/// The desktop player takes these on its command line; Android has none, so
+/// a file stands in for it.
+struct DevProfile {
+    table: toml::Table,
+}
+
+impl DevProfile {
+    const FILE: &'static str = "dev_profile.toml";
+
+    fn load(data_dir: &std::path::Path) -> Option<Self> {
+        let path = data_dir.join(Self::FILE);
+        #[allow(clippy::disallowed_methods)] // the app's own files, not game assets
+        let text = std::fs::read_to_string(&path).ok()?;
+        let table: toml::Table = match text.parse() {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("{}: {e}", path.display());
+                return None;
+            }
+        };
+        log::info!("Dev profile: {}", text.trim().replace('\n', " | "));
+        if let Some(env) = table.get("env").and_then(|v| v.as_table()) {
+            for (key, value) in env {
+                let value = match value {
+                    toml::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                std::env::set_var(key, value);
+            }
+        }
+        // The perf lines also go to `perf.log` beside the profile, started
+        // fresh each run: a busy device's logcat can drop or evict them.
+        if table.get("perf").and_then(|v| v.as_bool()).unwrap_or(false)
+            && std::env::var("FLINT_PERF_LOG").is_err()
+        {
+            let log = data_dir.join("perf.log");
+            let _ = std::fs::remove_file(&log);
+            std::env::set_var("FLINT_PERF_LOG", &log);
+        }
+        Some(Self { table })
+    }
+
+    fn scene_path(&self, data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+        let scene = data_dir.join(self.table.get("scene")?.as_str()?);
+        if scene.is_file() {
+            Some(scene)
+        } else {
+            log::warn!("Dev profile scene not found: {}", scene.display());
+            None
+        }
+    }
+
+    fn apply(&self, player: &mut flint_player::PlayerApp) {
+        let t = &self.table;
+        if let Some(msaa) = t.get("msaa").and_then(|v| v.as_integer()) {
+            player.msaa_sample_count = if msaa >= 4 { 4 } else { 1 };
+        }
+        let scale = match t.get("render_scale") {
+            Some(toml::Value::String(s)) => Some(s.clone()),
+            Some(toml::Value::Float(f)) => Some(f.to_string()),
+            Some(toml::Value::Integer(i)) => Some(i.to_string()),
+            _ => None,
+        };
+        if let Some(scale) = scale {
+            match flint_player::RenderScaleSetting::default().parse(&scale) {
+                Some(setting) => player.render_scale = setting,
+                None => log::warn!("Dev profile render_scale {scale}: a number or auto"),
+            }
+        }
+        if t.get("perf").and_then(|v| v.as_bool()).unwrap_or(false) {
+            player.enable_perf(true);
+        }
     }
 }

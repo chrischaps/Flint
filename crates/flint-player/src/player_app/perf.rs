@@ -572,7 +572,22 @@ impl super::PlayerApp {
         if let Some((summary, context)) = self.perf_snapshot("native".into(), adapter) {
             // A window that began before the first readout is short; skip it.
             if summary.secs >= WINDOW_SECS * 0.9 {
-                eprintln!("{}", summary_line(&summary, &context));
+                let line = summary_line(&summary, &context);
+                // Android has no stderr: the line goes to logcat, and to
+                // FLINT_PERF_LOG if set, since a device's log can drop it.
+                #[cfg(target_os = "android")]
+                log::info!("{line}");
+                if let Ok(path) = std::env::var("FLINT_PERF_LOG") {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
+                eprintln!("{line}");
             }
         }
     }

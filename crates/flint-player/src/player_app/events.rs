@@ -30,6 +30,10 @@ use winit::window::CursorGrabMode;
 use winit::window::WindowId;
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
+#[cfg(target_os = "android")]
+use std::sync::Arc;
+#[cfg(target_os = "android")]
+use winit::window::Window;
 
 /// Tracks Android device IDs that produce gamepad button keycodes,
 /// assigning each a stable u32 slot for InputState's gamepad API.

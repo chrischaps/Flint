@@ -16,5 +16,6 @@ flint-ecs = { workspace = true }
 winit = { workspace = true, features = ["android-game-activity"] }
 android-activity = { version = "0.6", features = ["game-activity"] }
 log = { workspace = true }
+toml = { workspace = true }
 android_logger = { workspace = true }
 ndk = { workspace = true }

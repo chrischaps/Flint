@@ -14,6 +14,8 @@ use super::scene_loading::{
 };
 use super::TransitionPhase;
 use super::{CaptureConfig, PlayerApp};
+#[cfg(target_os = "android")]
+use super::AndroidGamepadTracker;
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
@@ -392,6 +394,14 @@ impl PlayerApp {
             .unwrap_or(false)
         {
             scene_renderer.set_shadows(false);
+        }
+        // FLINT_SHADOW_RES=1024 (256-4096) sizes each cascade's map, so a
+        // device profile can price smaller shadows (FlintKart#54).
+        if let Some(res) = std::env::var("FLINT_SHADOW_RES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+        {
+            scene_renderer.set_shadow_resolution(&render_context.device, res.clamp(256, 4096));
         }
 
         // Rebuild component index as a safety net after scene loading

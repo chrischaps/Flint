@@ -1552,6 +1552,7 @@ dependencies = [
  "flint-schema",
  "log",
  "ndk",
+ "toml",
  "winit",
 ]
 
@@ -1838,6 +1839,7 @@ dependencies = [
  "image",
  "js-sys",
  "kira",
+ "log",
  "pollster",
  "profiling",
  "rhai",
