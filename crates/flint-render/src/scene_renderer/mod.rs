@@ -3158,9 +3158,17 @@ impl SceneRenderer {
 
         self.resolve_ascii_targets(world);
         self.sync_debug_styles();
-        if self.style_mask_wanted() {
-            crate::style_mask::resolve(world, &mut self.style_ids, &mut self.style_by_entity);
+        // Ids for every styled entity: they say which styles are on for
+        // entities alone (#266) as well as what the mask holds (#263)
+        if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
+            crate::style_mask::resolve(
+                world,
+                &self.postprocess_config,
+                &mut self.style_ids,
+                &mut self.style_by_entity,
+            );
         } else {
+            self.style_ids.set(Vec::new());
             self.style_by_entity.clear();
         }
 
@@ -4390,7 +4398,7 @@ impl SceneRenderer {
     /// up and a style that reads it is on (#263).
     fn style_mask_wanted(&self) -> bool {
         self.postprocess_resources.is_some()
-            && crate::stylize::any_uses_mask(&self.postprocess_config)
+            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_ids)
     }
 
     /// Keep the `style` debug view's style (`mask_view`) on while that
@@ -4563,7 +4571,7 @@ impl SceneRenderer {
         let surface_format = pp.surface_format;
         for failed in pp
             .styles
-            .ensure(device, surface_format, &self.postprocess_config)
+            .ensure(device, surface_format, &self.postprocess_config, &self.style_ids)
         {
             tracing::warn!(
                 "{} style unavailable: GPU driver crashed during shader compilation. \

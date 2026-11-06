@@ -7,6 +7,34 @@
 // encoded on the way out, so the passes decode to display values, work
 // there (a ramp is a ladder of what the eye sees), and decode back.
 
+// One per-entity variant's settings (#266), drawn per pixel in the glyph
+// pass from its own samples.
+struct Variant {
+    cell: vec2<f32>,
+    origin: vec2<f32>,
+    tint: vec3<f32>,
+    color_mode: u32,
+    brightness: f32,
+    contrast: f32,
+    background: f32,
+    ink: f32,
+    levels: f32,
+    footprint: f32,
+    ramp_start: u32,
+    ramp_len: u32,
+    // 1: leave these pixels as they are
+    flags: u32,
+    glow: f32,
+    ground: u32,
+    palette_start: u32,
+    palette_bg: vec3<f32>,
+    palette_len: u32,
+    palette_match: u32,
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+};
+
 struct AsciiUniforms {
     // Cell size in output pixels, and where the grid starts (centred, so
     // the part cells at the borders are the same on both sides).
@@ -45,8 +73,17 @@ struct AsciiUniforms {
     history: u32,
     // Each ramp step's atlas cell origin, two steps per vec4: (x0, y0, x1, y1).
     ramp: array<vec4<u32>, 64>,
-    // The palette's inks, display values (rgb, unused w)
+    // Every variant's palette inks, display values (rgb, unused w); the
+    // whole frame's first
     palette: array<vec4<f32>, 32>,
+    // Per-entity variants (#266). x: rows in use (1 = the whole frame
+    // alone); y: 1 when the whole frame passes through (only entities
+    // asked). Row 0 is unused: the whole frame draws from the fields above
+    // and the cell state.
+    variant_meta: vec4<u32>,
+    variants: array<Variant, 64>,
+    // The variant slot of each mask id below 256, four ids a vec4.
+    slots: array<vec4<u32>, 64>,
 };
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;

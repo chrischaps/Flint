@@ -44,6 +44,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],
     enabled: None,
     uses_mask: true,
+    component: None,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Mask View Uniform BGL");
