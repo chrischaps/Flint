@@ -121,9 +121,27 @@ pub struct RenderArgs {
     pub ascii_ramp: Option<String>,
 
     /// ASCII style colour: `source` (the cell's hue), `tint` (one colour,
-    /// --ascii-tint) or `raw` (the cell's colour as it is)
+    /// --ascii-tint), `raw` (the cell's colour as it is), `mono` (white on
+    /// grey) or `palette` (--ascii-palette)
     #[arg(long)]
     pub ascii_color: Option<String>,
+
+    /// ASCII style palette for `--ascii-color palette`: built-in (cga,
+    /// cga-warm, cga16, phosphor, amber, mono) or a
+    /// `palettes/<name>.palette.toml` beside the scene. Sets `--ascii-color
+    /// palette` unless that's given
+    #[arg(long)]
+    pub ascii_palette: Option<String>,
+
+    /// ASCII style ground behind glyphs: `dim` (the mode's own), `black`
+    /// or `inverse` (the ink fills the cell, the glyph is cut out)
+    #[arg(long)]
+    pub ascii_ground: Option<String>,
+
+    /// ASCII style halo around bright glyphs (0 off, default 0; 0.6 reads
+    /// as a phosphor glow)
+    #[arg(long)]
+    pub ascii_glow: Option<f32>,
 
     /// ASCII style tint for `--ascii-color tint` (r,g,b 0-1; default
     /// 0.35,1,0.45, phosphor green)
@@ -844,7 +862,10 @@ fn apply_ascii_style_flags(
         || args.ascii_background.is_some()
         || args.ascii_brightness.is_some()
         || args.ascii_contrast.is_some()
-        || args.ascii_ink.is_some();
+        || args.ascii_ink.is_some()
+        || args.ascii_palette.is_some()
+        || args.ascii_ground.is_some()
+        || args.ascii_glow.is_some();
     if args.ascii.is_some() || style_only {
         pp.styles.set_enabled(NAME, true);
     }
@@ -858,10 +879,13 @@ fn apply_ascii_style_flags(
     if let Some(ramp) = &args.ascii_ramp {
         styles.set_option(NAME, "ramp", ramp);
     }
+    let choices = |option: &str| {
+        flint_render::stylize::find(NAME)
+            .and_then(|d| d.options.iter().find(|o| o.name == option))
+            .map_or(&[][..], |o| o.choices)
+    };
     if let Some(color) = &args.ascii_color {
-        let modes = flint_render::stylize::find(NAME)
-            .and_then(|d| d.options.iter().find(|o| o.name == "color"))
-            .map_or(&[][..], |o| o.choices);
+        let modes = choices("color");
         if !modes.contains(&color.as_str()) {
             anyhow::bail!(
                 "--ascii-color: unknown mode '{color}' ({})",
@@ -869,6 +893,24 @@ fn apply_ascii_style_flags(
             );
         }
         styles.set_option(NAME, "color", color);
+    }
+    if let Some(ground) = &args.ascii_ground {
+        let modes = choices("ground");
+        if !modes.contains(&ground.as_str()) {
+            anyhow::bail!(
+                "--ascii-ground: unknown mode '{ground}' ({})",
+                modes.join(", ")
+            );
+        }
+        styles.set_option(NAME, "ground", ground);
+    }
+    if let Some(palette) = &args.ascii_palette {
+        // Any name goes (a file beside the scene); the style warns once
+        // and falls back when it can't be found
+        styles.set_option(NAME, "palette", palette);
+        if args.ascii_color.is_none() {
+            styles.set_option(NAME, "color", "palette");
+        }
     }
     if let Some([r, g, b]) = args.ascii_tint {
         styles.set_param(NAME, "tint_r", r);
@@ -886,6 +928,7 @@ fn apply_ascii_style_flags(
         ("brightness", args.ascii_brightness),
         ("contrast", args.ascii_contrast),
         ("ink", args.ascii_ink),
+        ("glow", args.ascii_glow),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);

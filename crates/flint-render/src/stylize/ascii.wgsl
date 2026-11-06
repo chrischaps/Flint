@@ -18,7 +18,7 @@ struct AsciiUniforms {
     glyph: vec2<f32>,
     size: vec2<f32>,
     tint: vec3<f32>,
-    // 0 source colour, 1 tint, 2 raw cell colour
+    // 0 source colour, 1 tint, 2 raw cell colour, 3 mono, 4 palette
     color_mode: u32,
     brightness: f32,
     contrast: f32,
@@ -28,8 +28,19 @@ struct AsciiUniforms {
     footprint: f32,
     ramp_len: u32,
     srgb: u32,
+    // Halo strength around glyphs (0 off)
+    glow: f32,
+    // 0 dim (the mode's own), 1 black, 2 inverse (ink fills, glyph cut out)
+    ground: u32,
+    palette_len: u32,
+    // 0 nearest ink to the cell's hue, 1 a ladder picked by tone
+    palette_match: u32,
+    palette_bg: vec3<f32>,
+    _pad: u32,
     // Each ramp step's atlas cell origin, two steps per vec4: (x0, y0, x1, y1).
     ramp: array<vec4<u32>, 64>,
+    // The palette's inks, display values (rgb, unused w)
+    palette: array<vec4<f32>, 32>,
 };
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
@@ -96,6 +107,39 @@ fn glyph_coverage(origin: vec2<u32>, local: vec2<f32>) -> f32 {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
+// The palette ink for a cell of full-value `hue` and tone `t`
+fn palette_ink(hue: vec3<f32>, t: f32) -> vec3<f32> {
+    let n = max(u.palette_len, 1u);
+    if u.palette_match == 1u {
+        return u.palette[min(u32(t * f32(n)), n - 1u)].rgb;
+    }
+    var best = u.palette[0].rgb;
+    var best_d = 1e9;
+    for (var i = 0u; i < n; i++) {
+        let c = u.palette[i].rgb;
+        let d = dot(c - hue, c - hue);
+        if d < best_d {
+            best_d = d;
+            best = c;
+        }
+    }
+    return best;
+}
+
+// How much of the glyph lies within a couple of pixels of `local`, less
+// what's under it: the halo a bright glyph throws on its own cell.
+fn glyph_halo(origin: vec2<u32>, local: vec2<f32>, coverage: f32) -> f32 {
+    let r = max(u.cell.x / u.glyph.x, 1.0) * 1.25;
+    var sum = 0.0;
+    for (var k = 0; k < 8; k++) {
+        let a = f32(k) * 0.7853982;
+        let d = vec2<f32>(cos(a), sin(a));
+        sum += glyph_coverage(origin, local + d * r);
+        sum += 0.5 * glyph_coverage(origin, local + d * r * 2.0);
+    }
+    return max(sum / 12.0 - coverage, 0.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.position.xy;
@@ -124,9 +168,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         t = round(t * u.levels) / u.levels;
     }
     let n = max(u.ramp_len, 1u);
-    let step = min(u32(t * f32(n)), n - 1u);
+    var step = min(u32(t * f32(n)), n - 1u);
+    // Inverse: the ink fills the cell and the glyph is cut from it, so the
+    // ramp runs backwards to keep bright cells bright
+    let inverse = u.ground == 2u;
+    if inverse {
+        step = n - 1u - step;
+    }
 
-    let coverage = glyph_coverage(ramp_origin(step), local);
+    let origin = ramp_origin(step);
+    let coverage = glyph_coverage(origin, local);
 
     // Ink and ground
     let hue = col / max(max(col.r, max(col.g, col.b)), 1e-4);
@@ -142,11 +193,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         case 2u: {
             ink = col;
         }
+        case 3u: {
+            ink = vec3<f32>(1.0);
+            ground = vec3<f32>(lum * u.background);
+        }
+        case 4u: {
+            ink = palette_ink(hue, t);
+            ground = u.palette_bg;
+        }
         default: {
             ink = hue;
         }
     }
     ink = clamp(ink * u.ink, vec3<f32>(0.0), vec3<f32>(1.0));
-    let out = mix(ground, ink, coverage);
+    if u.ground == 1u {
+        ground = vec3<f32>(0.0);
+    }
+    if inverse {
+        let fill = ink;
+        ink = ground;
+        ground = fill;
+    }
+    var out = mix(ground, ink, coverage);
+    if u.glow > 0.0 && !inverse {
+        out += ink * (u.glow * (0.35 + 0.65 * t)) * glyph_halo(origin, local, coverage);
+    }
+    out = clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);
 }

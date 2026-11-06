@@ -54,7 +54,9 @@ Flint uses an **edit -> validate -> play** loop:
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
-   #   --ascii-color source|tint|raw --ascii-tint 0.35,1,0.45 --ascii-background 0.15
+   #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
+   #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
+   #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
    #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
