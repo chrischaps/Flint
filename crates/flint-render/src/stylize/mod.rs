@@ -234,6 +234,10 @@ pub struct StyleFrame<'a> {
     /// scene's). Sample it by UV: at the display stage it is smaller than
     /// the output.
     pub depth: &'a wgpu::TextureView,
+    /// [`depth`](Self::depth)'s size in pixels, which a view doesn't say:
+    /// the scene's, so smaller than `width` x `height` at the display stage
+    /// under a render scale. The style mask is this size too.
+    pub depth_size: [u32; 2],
     /// Whether `depth` is the chain's own, so bind groups over it may be
     /// kept ([`StyleFrame::depth_bind`]).
     pub depth_owned: bool,

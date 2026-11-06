@@ -186,9 +186,25 @@ pub struct RenderArgs {
     pub ascii_footprint: Option<f32>,
 
     /// Turn off the ASCII edge glyphs (| / - \ on depth, normal and
-    /// silhouette edges)
+    /// silhouette edges); the style's `edges = 0`
     #[arg(long)]
     pub ascii_no_edges: bool,
+
+    /// ASCII style: edge glyph strength over the tone glyph (0 off .. 1,
+    /// default 1; #267)
+    #[arg(long)]
+    pub ascii_edges: Option<f32>,
+
+    /// ASCII style: how much edge, in cell widths, a cell needs to draw a
+    /// line glyph (default 0.5; lower finds more)
+    #[arg(long)]
+    pub ascii_edge_threshold: Option<f32>,
+
+    /// ASCII style: more edge than this, in cell widths, is texture-like
+    /// geometry (grass) and keeps its tone glyph (default 3); a styled
+    /// entity's outline ignores it
+    #[arg(long)]
+    pub ascii_edge_max: Option<f32>,
 
     /// ASCII edge sensitivity to depth: the relative view-distance step that
     /// counts as an edge (default 0.6; lower finds more)
@@ -846,7 +862,8 @@ const ASCII_STYLE: &str = "style";
 /// The ASCII style's flags (#265) onto `[post_process.styles.ascii]`.
 /// Bare `--ascii`, or any flag only the style reads, turns the style on;
 /// the flags the spike shares (`--ascii-cell`, `--ascii-levels`,
-/// `--ascii-footprint`) go to whichever of the two is on.
+/// `--ascii-footprint`, `--ascii-no-edges`, `--ascii-edge-depth`,
+/// `--ascii-edge-normal`) go to whichever of the two is on.
 fn apply_ascii_style_flags(
     args: &RenderArgs,
     pp: &mut flint_render::PostProcessConfig,
@@ -865,7 +882,10 @@ fn apply_ascii_style_flags(
         || args.ascii_ink.is_some()
         || args.ascii_palette.is_some()
         || args.ascii_ground.is_some()
-        || args.ascii_glow.is_some();
+        || args.ascii_glow.is_some()
+        || args.ascii_edges.is_some()
+        || args.ascii_edge_threshold.is_some()
+        || args.ascii_edge_max.is_some();
     if args.ascii.is_some() || style_only {
         pp.styles.set_enabled(NAME, true);
     }
@@ -929,10 +949,18 @@ fn apply_ascii_style_flags(
         ("contrast", args.ascii_contrast),
         ("ink", args.ascii_ink),
         ("glow", args.ascii_glow),
+        ("edges", args.ascii_edges),
+        ("edge_threshold", args.ascii_edge_threshold),
+        ("edge_max", args.ascii_edge_max),
+        ("edge_depth", args.ascii_edge_depth),
+        ("edge_normal", args.ascii_edge_normal),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);
         }
+    }
+    if args.ascii_no_edges {
+        styles.set_param(NAME, "edges", 0.0);
     }
     Ok(())
 }

@@ -32,29 +32,64 @@ mean = 3.0
 
 # --- full-screen ASCII (#265) ---------------------------------------------
 
-# The #265 golden, now reached through --style: the same pixels as --ascii
+# The #265 golden, now reached through --style. Edges (#267) came later and
+# are on by default; with them off it is still the same pixels, which is
+# what pins "edges = 0 draws what #265 drew"
 [[case]]
 name = "ascii-full"
 scene = "demo/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"
-args = ["--style", "ascii"]
+args = ["--style", "ascii:edges=0"]
 
 [[case]]
 name = "ascii-full-detailed-tint"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii:ramp=detailed,color=tint,cell=10"]
 
-# Cells are in points: at 2x each one is twice the pixels
+# Cells are in points: at 2x each one is twice the pixels. Edges off here
+# and in the next: these pin the glyph grid, and pbr_test's editor grid
+# writes depth, so the edges would trace it
 [[case]]
 name = "ascii-full-hidpi"
 scene = "demo/pbr_test.scene.toml"
-args = ["--style", "ascii", "--pixels-per-point", "2"]
+args = ["--style", "ascii:edges=0", "--pixels-per-point", "2"]
 
 # The scene passes at 4x MSAA; the glyph grid must not care
 [[case]]
 name = "ascii-full-msaa4"
 scene = "demo/pbr_test.scene.toml"
-args = ["--style", "ascii", "--msaa", "4"]
+args = ["--style", "ascii:edges=0", "--msaa", "4"]
+
+# --- ASCII edges (#267) ---------------------------------------------------
+#
+# Line glyphs on silhouettes, creases and styled entities' outlines. The
+# grid is off in each: it writes depth and would be traced.
+
+# The two boxes and the character outlined
+[[case]]
+name = "ascii-edges-pbr"
+scene = "demo/pbr_test.scene.toml"
+args = ["--no-grid", "--style", "ascii"]
+
+# A styled sphere and box: their outlines must be unbroken glyph lines
+# (the scene turns the style on itself)
+[[case]]
+name = "ascii-edges"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid"]
+
+# Edge pixels come from the single-sample depth and mask under MSAA
+[[case]]
+name = "ascii-edges-msaa4"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--msaa", "4"]
+
+# Under a render scale the edges run at the scene's resolution, so a line
+# stays one cell wide
+[[case]]
+name = "ascii-edges-scale05"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--render-scale", "0.5"]
 
 # --- per-entity ASCII -----------------------------------------------------
 

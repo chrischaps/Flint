@@ -1333,6 +1333,7 @@ impl SceneRenderer {
                 height: resources.height,
                 format: crate::postprocess::HDR_FORMAT,
                 depth: depth_view,
+                depth_size: [resources.width, resources.height],
                 depth_owned,
                 camera: crate::stylize::StyleCamera {
                     inv_view_proj: camera.inverse_view_projection_matrix(),

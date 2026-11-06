@@ -103,6 +103,8 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--ascii-cell <n>` | `8` | ASCII cell width (style: points; spike: scene pixels) |
 | `--ascii-levels <n>` / `--ascii-footprint <cells>` | style `0` / `1`, spike `4` / `2` | ASCII tone bands and tone footprint |
 | `--ascii-no-edges` | `false` | No line glyphs on edges |
+| `--ascii-edges <f32>` | `1` | ASCII style edge glyph strength (0 off) |
+| `--ascii-edge-threshold <f32>` / `--ascii-edge-max <f32>` | `0.5` / `3` | ASCII style: cell widths of edge that make a line glyph, and past which it's texture |
 | `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
 | `--ascii-scene-background` | `false` | Masked modes: plain scene outside the mask, not black |
 
