@@ -42,7 +42,7 @@ Scene-component panels are created **only when their driving component is presen
 | Day / Time | `time_of_day` | Clock readout, 0 to 24 h scrub, preset hours, natural-advance toggle, day counter, day length, sun path tilt |
 | Weather | `weather` | Weather state, with one-shot triggers |
 | Camera | `camera_tuning` | Vertical FOV (the same component is applied even without the panel) |
-| Grass Debug | `terrain` with `grass.enabled` | Every field of the [grass](../concepts/terrain.md#grass) block |
+| Grass Debug | `terrain` with `grass.enabled`, or a `grass_ground` | Every field of the [grass](../concepts/terrain.md#grass) block, the [woozy grass](../concepts/procgen.md#woozy-grass) clock and comb included |
 | Reality | `reality` | Read-only status of a script-scheduled "reality tear" (active render mode, mix, time to next) plus trigger and end-now buttons |
 | Visitor | `raft_visitor` | Visitor state |
 | Dead Calm | `dead_calm` | Dead-calm state |

@@ -476,7 +476,34 @@ mod tests {
 
     #[test]
     fn grass_render_shader_wgsl_parses() {
-        let source = include_str!("grass_render.wgsl");
-        naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
+        // As grass_pipeline.rs builds it: shallow wooze's noise first, for the
+        // comb of woozy grass (#252).
+        let source = concat!(
+            include_str!("wooze_noise.wgsl"),
+            include_str!("grass_render.wgsl")
+        );
+        let module =
+            naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("grass_render.wgsl failed validation");
+
+        // The uniforms the Rust side writes must match the shader's struct
+        let span = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("GrassRenderUniforms"))
+            .map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { span, .. } => *span,
+                _ => panic!("GrassRenderUniforms is not a struct"),
+            })
+            .expect("GrassRenderUniforms in grass_render.wgsl");
+        assert_eq!(
+            span as usize,
+            std::mem::size_of::<crate::GrassRenderUniforms>()
+        );
     }
 }

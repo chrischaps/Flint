@@ -596,6 +596,8 @@ There's one clock for the whole field, read where the camera is, as the shading 
 
 It needs a `[wooze]` table: without one the player warns once and the grass keeps the wall clock. Grass without `grass.wooze` draws exactly as before. `flint render --time` and `--sweep` draw it as the player does at that moment. In an [A/B](../guides/debug-panels.md#comparing-two-presets-ab) the grass has one clock, which reads whichever side's field is showing, and both halves of a `--split` view get the same sway and comb, since the grass's uniforms hold one value a frame.
 
+![The Woozy Grove with a meadow, at 3.5 s](../images/woozy-grove-grass.png)
+
 Bench: `demo/woozy_grove_grass.scene.toml`, the Woozy Grove grown over with a meadow worn along its paths. `python demo/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; `demo/woozy_grove_grass/README.md` has what was found.
 
 ### Woozy Grove

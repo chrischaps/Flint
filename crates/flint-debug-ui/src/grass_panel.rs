@@ -84,7 +84,10 @@ impl GrassDebugPanel {
              \"grass.wind_speed\" = {wind_speed}\n\
              \"grass.wind_strength\" = {wind_strength}\n\
              \"grass.bend_radius\" = {bend_radius}\n\
-             \"grass.bend_strength\" = {bend_strength}\n",
+             \"grass.bend_strength\" = {bend_strength}\n\
+             \"grass.wooze\" = {wooze}\n\
+             \"grass.wooze_amplitude\" = {wooze_amplitude}\n\
+             \"grass.wooze_wavelength\" = {wooze_wavelength}\n",
             enabled = c.enabled,
             density = c.density,
             max_distance = c.max_distance,
@@ -110,6 +113,9 @@ impl GrassDebugPanel {
             wind_strength = c.wind_strength,
             bend_radius = c.bend_radius,
             bend_strength = c.bend_strength,
+            wooze = c.wooze,
+            wooze_amplitude = c.wooze_amplitude,
+            wooze_wavelength = c.wooze_wavelength,
         )
     }
 
@@ -198,6 +204,23 @@ impl GrassDebugPanel {
             "grass.bend_strength",
             &f(c.bend_strength),
         )?;
+        // Woozy grass (#252) only once it's been turned on, so a scene that never
+        // asked for it doesn't grow three lines on every commit.
+        if c.wooze || c.wooze != self.original.wooze {
+            doc.patch_field(entity, self.component, "grass.wooze", &b(c.wooze))?;
+            doc.patch_field(
+                entity,
+                self.component,
+                "grass.wooze_amplitude",
+                &f(c.wooze_amplitude),
+            )?;
+            doc.patch_field(
+                entity,
+                self.component,
+                "grass.wooze_wavelength",
+                &f(c.wooze_wavelength),
+            )?;
+        }
 
         doc.save(&self.scene_path)
     }
@@ -394,6 +417,36 @@ impl DebugPanel for GrassDebugPanel {
                 ) {
                     changed = true;
                 }
+            });
+
+        // --- Wooze (#252): sway on the scene's [wooze] field, combed each beat ---
+        egui::CollapsingHeader::new("Wooze")
+            .default_open(true)
+            .show(ui, |ui| {
+                changed |= ui
+                    .checkbox(&mut self.config.wooze, "On the wooze field's clock")
+                    .on_hover_text("Needs the scene's [wooze] table")
+                    .changed();
+                ui.add_enabled_ui(self.config.wooze, |ui| {
+                    if drag_f32(
+                        ui,
+                        "Comb Amplitude",
+                        &mut self.config.wooze_amplitude,
+                        0.005,
+                        0.0..=1.0,
+                    ) {
+                        changed = true;
+                    }
+                    if drag_f32(
+                        ui,
+                        "Comb Wavelength",
+                        &mut self.config.wooze_wavelength,
+                        0.05,
+                        0.05..=20.0,
+                    ) {
+                        changed = true;
+                    }
+                });
             });
 
         if changed {
