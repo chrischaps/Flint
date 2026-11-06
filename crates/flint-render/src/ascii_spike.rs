@@ -6,7 +6,11 @@
 //! - **Per entity**: a mask pass redraws the chosen entities into a side
 //!   target (style id + anchor), then the glyph pass glyphizes only masked
 //!   pixels, on one screen grid or on a grid anchored at each entity's
-//!   projected origin.
+//!   projected origin. Unmasked pixels draw black with their edges.
+//!
+//! Both share an edge pass (depth, rebuilt normals and the mask's ids,
+//! never colour), whose edges become `| / - \` glyphs, and a banded tone
+//! for everything between them (round 2, after Chris's review on PR #296).
 //!
 //! Off by default and absent from every frame unless a host sets a mode
 //! with [`SceneRenderer::set_ascii_spike`](crate::SceneRenderer::set_ascii_spike).
@@ -72,6 +76,28 @@ pub struct AsciiSpikeConfig {
     pub ink: f32,
     /// The mask's depth tolerance, in multiples of a fragment's depth slope.
     pub slope_tolerance: f32,
+    /// Tone bands: the ramp is quantized to this many steps above blank
+    /// (0 keeps all ten glyphs), so a texture's grain settles into flat tones.
+    pub levels: f32,
+    /// How many cells wide each cell's tone footprint is (1 = the cell).
+    pub footprint: f32,
+    /// Draw line glyphs on depth, normal and silhouette edges.
+    pub edges: bool,
+    /// Edge pixels (of the 16 a cell samples) that make a cell an edge.
+    pub edge_min: f32,
+    /// More edge pixels than this and the cell is texture-like geometry
+    /// (grass, foliage), drawn as tone instead.
+    pub edge_max: f32,
+    /// A relative view-distance step that counts as an edge.
+    pub depth_threshold: f32,
+    /// A normal change (Sobel magnitude) that counts as a crease.
+    pub normal_threshold: f32,
+    /// The edge ink, mixed toward an object's own hue by `edge_tint`.
+    pub edge_color: [f32; 3],
+    pub edge_tint: f32,
+    /// In the masked modes, pixels outside the mask: black with their edges
+    /// (`false`, the default) or the plain scene (`true`).
+    pub scene_background: bool,
 }
 
 impl Default for AsciiSpikeConfig {
@@ -84,6 +110,16 @@ impl Default for AsciiSpikeConfig {
             ground: 0.2,
             ink: 1.0,
             slope_tolerance: 2.0,
+            levels: 4.0,
+            footprint: 2.0,
+            edges: true,
+            edge_min: 3.0,
+            edge_max: 9.0,
+            depth_threshold: 0.6,
+            normal_threshold: 2.5,
+            edge_color: [0.85, 0.82, 0.74],
+            edge_tint: 0.5,
+            scene_background: false,
         }
     }
 }
@@ -112,7 +148,32 @@ struct AsciiUniforms {
     exposure: f32,
     ground: f32,
     ink: f32,
-    _pad: f32,
+    levels: f32,
+    footprint: f32,
+    edge_min: f32,
+    background: u32,
+    edges: u32,
+    edge_color: [f32; 3],
+    edge_tint: f32,
+    edge_max: f32,
+    _pad: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct EdgeUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 3],
+    mode: u32,
+    size: [f32; 2],
+    depth_threshold: f32,
+    normal_threshold: f32,
+}
+
+/// What the edge pass needs of the camera.
+pub struct AsciiCamera {
+    pub inv_view_proj: [[f32; 4]; 4],
+    pub position: [f32; 3],
 }
 
 #[repr(C)]
@@ -130,6 +191,7 @@ pub const MAX_MASK_DRAWS: usize = 2048;
 
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// One masked draw: its buffers, its transform bind group, its id and anchor.
 pub(crate) struct MaskDrawRef<'a> {
@@ -144,8 +206,10 @@ pub(crate) struct MaskDrawRef<'a> {
 struct Targets {
     size: (u32, u32),
     mask_view: wgpu::TextureView,
+    edge_view: wgpu::TextureView,
     out_view: wgpu::TextureView,
     _mask: wgpu::Texture,
+    _edge: wgpu::Texture,
     _out: wgpu::Texture,
 }
 
@@ -154,6 +218,10 @@ pub struct AsciiSpike {
     mask_pipeline: wgpu::RenderPipeline,
     mask_draw_bgl: wgpu::BindGroupLayout,
     draw_buffer: wgpu::Buffer,
+    edge_pipeline: wgpu::RenderPipeline,
+    edge_uniform_bgl: wgpu::BindGroupLayout,
+    edge_tex_bgl: wgpu::BindGroupLayout,
+    edge_uniform_buffer: wgpu::Buffer,
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_uniform_bgl: wgpu::BindGroupLayout,
     glyph_tex_bgl: wgpu::BindGroupLayout,
@@ -266,8 +334,79 @@ impl AsciiSpike {
             label: Some("ASCII Spike Texture BGL"),
             // Rgba32Float isn't filterable without a feature; both are read
             // with textureLoad.
-            entries: &[tex(0, false), tex(1, false)],
+            entries: &[tex(0, false), tex(1, false), tex(2, false)],
         });
+
+        let edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ASCII Spike Edge Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("ascii_spike_edges.wgsl").into()),
+        });
+        let edge_uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Spike Edge Uniform BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let edge_tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Spike Edge Texture BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                tex(1, false),
+            ],
+        });
+        let edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ASCII Spike Edge Layout"),
+            bind_group_layouts: &[&edge_uniform_bgl, &edge_tex_bgl],
+            push_constant_ranges: &[],
+        });
+        let edge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ASCII Spike Edge Pipeline"),
+            layout: Some(&edge_layout),
+            vertex: wgpu::VertexState {
+                module: &edge_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &edge_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: EDGE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let edge_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ASCII Spike Edge Uniforms"),
+            size: std::mem::size_of::<EdgeUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let glyph_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ASCII Spike Glyph Layout"),
             bind_group_layouts: &[&glyph_uniform_bgl, &glyph_tex_bgl],
@@ -309,6 +448,10 @@ impl AsciiSpike {
             mask_pipeline,
             mask_draw_bgl,
             draw_buffer,
+            edge_pipeline,
+            edge_uniform_bgl,
+            edge_tex_bgl,
+            edge_uniform_buffer,
             glyph_pipeline,
             glyph_uniform_bgl,
             glyph_tex_bgl,
@@ -340,12 +483,15 @@ impl AsciiSpike {
             })
         };
         let mask = make("ASCII Spike Mask", MASK_FORMAT);
+        let edge = make("ASCII Spike Edges", EDGE_FORMAT);
         let out = make("ASCII Spike Output", HDR_FORMAT);
         self.targets = Some(Targets {
             size,
             mask_view: mask.create_view(&Default::default()),
+            edge_view: edge.create_view(&Default::default()),
             out_view: out.create_view(&Default::default()),
             _mask: mask,
+            _edge: edge,
             _out: out,
         });
     }
@@ -425,24 +571,96 @@ impl AsciiSpike {
         }
     }
 
-    /// Glyphize `scene` into the output target.
+    /// Find `scene_depth`'s edges (unless `config.edges` is off), then
+    /// glyphize `scene` into the output target: line glyphs on edge cells,
+    /// banded tone elsewhere, black outside the mask in the masked modes.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_glyphs(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         scene: &wgpu::TextureView,
+        scene_depth: &wgpu::TextureView,
+        camera: &AsciiCamera,
         config: &AsciiSpikeConfig,
     ) {
         let Some(targets) = &self.targets else { return };
+        let size = [targets.size.0 as f32, targets.size.1 as f32];
+
+        // Edges first: depth, normals and silhouettes, per pixel
+        if config.edges {
+            let edge_uniforms = EdgeUniforms {
+                inv_view_proj: camera.inv_view_proj,
+                camera_pos: camera.position,
+                mode: config.mode.shader_mode(),
+                size,
+                depth_threshold: config.depth_threshold.max(1e-3),
+                normal_threshold: config.normal_threshold.max(1e-3),
+            };
+            queue.write_buffer(
+                &self.edge_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&edge_uniforms),
+            );
+            let edge_uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Spike Edge Uniform BG"),
+                layout: &self.edge_uniform_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.edge_uniform_buffer.as_entire_binding(),
+                }],
+            });
+            let edge_tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Spike Edge Texture BG"),
+                layout: &self.edge_tex_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(scene_depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&targets.mask_view),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ASCII Spike Edge Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.edge_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.edge_pipeline);
+            pass.set_bind_group(0, &edge_uniform_bg, &[]);
+            pass.set_bind_group(1, &edge_tex_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
         let uniforms = AsciiUniforms {
-            size: [targets.size.0 as f32, targets.size.1 as f32],
+            size,
             cell: config.cell_px.max(2.0),
             mode: config.mode.shader_mode(),
             exposure: config.exposure,
             ground: config.ground,
             ink: config.ink,
-            _pad: 0.0,
+            levels: config.levels.max(0.0),
+            footprint: config.footprint.max(1.0),
+            edge_min: config.edge_min.max(1.0),
+            background: u32::from(config.scene_background),
+            edges: u32::from(config.edges),
+            edge_color: config.edge_color,
+            edge_tint: config.edge_tint,
+            edge_max: config.edge_max.max(config.edge_min),
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -464,6 +682,10 @@ impl AsciiSpike {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&targets.mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&targets.edge_view),
                 },
             ],
         });
@@ -528,7 +750,8 @@ mod tests {
 
     #[test]
     fn uniforms_are_wgsl_sized() {
-        assert_eq!(std::mem::size_of::<AsciiUniforms>(), 32);
+        assert_eq!(std::mem::size_of::<AsciiUniforms>(), 80);
+        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 96);
         assert_eq!(std::mem::size_of::<MaskDraw>(), 16);
     }
 }

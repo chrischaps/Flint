@@ -293,6 +293,12 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii <mode>` | (none) | ASCII spike (#261): `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin. A prototype, not the shipped style |
 | `--ascii-entities <list>` | (none) | Entities the masked ASCII modes stylize: comma-separated names, `prefix*`, or `*`; children go with their parent. Static meshes only (skinned, terrain, grass and particles aren't masked) |
 | `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
+| `--ascii-levels <n>` | `4` | ASCII tone bands; `0` keeps the full ten-glyph ramp |
+| `--ascii-footprint <cells>` | `2` | How many cells wide each cell's tone is averaged over |
+| `--ascii-no-edges` | `false` | Turn off the line glyphs (`\| / - \`) drawn on depth, normal and silhouette edges |
+| `--ascii-edge-depth <f32>` | `0.6` | Relative view-distance step that counts as an edge (lower finds more) |
+| `--ascii-edge-normal <f32>` | `2.5` | Normal change that counts as a crease (lower finds more) |
+| `--ascii-scene-background` | `false` | In the masked modes, draw unmasked pixels as the plain scene instead of black with their edges |
 | `--no-postprocess` | `false` | Disable post-processing |
 | `--bloom-intensity <f32>` | `0.04` | Bloom strength |
 | `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |

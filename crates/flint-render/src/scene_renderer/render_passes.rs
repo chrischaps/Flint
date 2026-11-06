@@ -1324,8 +1324,20 @@ impl SceneRenderer {
                 if config.enabled && self.ascii_config.mode != crate::AsciiSpikeMode::Off =>
             {
                 let input = kuwahara_out.unwrap_or(&resources.hdr_view);
+                let ascii_camera = crate::ascii_spike::AsciiCamera {
+                    inv_view_proj: camera.inverse_view_projection_matrix(),
+                    position: camera.position_array(),
+                };
                 scoped("ASCII", encoder, &mut |encoder| {
-                    spike.encode_glyphs(device, queue, encoder, input, &self.ascii_config)
+                    spike.encode_glyphs(
+                        device,
+                        queue,
+                        encoder,
+                        input,
+                        depth_view,
+                        &ascii_camera,
+                        &self.ascii_config,
+                    )
                 });
                 spike.output_view()
             }

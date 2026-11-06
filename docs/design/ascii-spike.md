@@ -100,6 +100,63 @@ Woozy Grove (#217) isn't on main yet, so the meadow stands in for it.
    cost: all of them fit any budget on this GPU. Phones and the web are
    untested (#270).
 
+## Round 2: edges, simpler interiors and a black ground
+
+Chris's review of the first renders (PR #296) asked for three changes:
+
+1. **Textures turn to noise.** The tavern's wood came out as per-cell
+   noise, not as a wooden surface, so a scene would have to be authored
+   for the look.
+2. **There are no edges.** Defined edges matter for ASCII and for pencil
+   alike, with a simpler interior inside them.
+3. **Unmasked things vanish.** Ground and sky were left out of the
+   masked modes; they should at least default to black with edges, so
+   the look stays consistent.
+
+What changed:
+
+- **An edge pass** (`ascii_spike_edges.wgsl`) runs before the glyphs. It
+  finds edges per pixel from geometry only, never from colour, so wood
+  grain makes none. It uses three Sobels over 3x3: relative view distance
+  (outlines), normals rebuilt from the depth's world positions (creases
+  where faces meet), and the mask's style id (silhouettes). An edge keeps
+  only its near side, and a silhouette only its object side, so outlines
+  aren't drawn twice.
+- **Edge cells.** A cell becomes a line glyph (`| / - \`) when at least 3
+  of its 16 lattice points sit on edge pixels, in the direction most of
+  them agree on. A cell with more than 9 is treated as texture-like
+  geometry and gets tone: grass would otherwise be a field of `|`.
+- **Simpler interiors.** Tone comes from a footprint two cells wide and
+  is quantized to 4 bands (`" -=#@"` steps), so a texture's grain settles
+  into a few flat tones. `--ascii-levels 0 --ascii-footprint 1` restores
+  the first round's continuous ramp.
+- **A black ground with edges.** In the masked modes, unmasked pixels are
+  black, and their edges are still drawn, so the floor, the walls, the
+  sky line and even the skinned characters read as line drawing around
+  the stylized props. `--ascii-scene-background` brings back the plain
+  scene.
+
+Flags: `--ascii-levels`, `--ascii-footprint`, `--ascii-no-edges`,
+`--ascii-edge-depth`, `--ascii-edge-normal`, `--ascii-scene-background`.
+
+What it showed:
+
+- **Edges carry the definition.** The tavern became a line drawing, with
+  tables as boxes whose tops and fronts meet at a drawn crease, and whose
+  interiors are calm rows of one tone. That holds in full screen and in
+  both per-entity modes. It confirms finding 3: edges, not the mask, give
+  objects their shape.
+- **Authoring still matters, but less.** Banding removes texture noise, so
+  any lit surface reads as tone. A surface's *material* (wood vs stone)
+  still doesn't come through. It would take a per-style texture input,
+  e.g. a hatching direction from the material.
+- **Particles vanish on the black ground.** In the masked modes, the
+  campfire's flames sit on unmasked pixels and draw black. Emissive or
+  particle pixels may need to pass through (relates to #290).
+- **Cost.** The edge pass reads 25 depths a pixel, so the `ASCII` scope
+  (edges + glyphs) is now 0.38 ms full screen and 0.21 ms per entity, at
+  1080p on the RTX 4070 (tavern, MSAA 1), up from 0.05-0.19 ms.
+
 ## Recommendation
 
 **Build per-entity selection on one screen grid, with full screen as its
@@ -119,7 +176,12 @@ the default.
 - Run stylize passes at output resolution, after the render-scale
   upscale, with a choice of before or after tonemapping.
 - Edge-aware glyphs (#267) carry the "definition" Chris wants more than
-  the mask does.
+  the mask does. Round 2's geometry-only edges (depth, normals, ids) are
+  the starting point. The same edge texture is what a pencil style (#273)
+  would draw its contours from, so it belongs in the shared framework
+  (#262), not inside ASCII.
+- Banded tone over a wider footprint should be the default interior for
+  ASCII and pencil alike.
 
 ### What this changes in the epic
 

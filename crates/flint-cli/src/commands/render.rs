@@ -106,6 +106,34 @@ pub struct RenderArgs {
     #[arg(long, value_delimiter = ',')]
     pub ascii_entities: Vec<String>,
 
+    /// ASCII tone bands (default 4; 0 keeps the full ten-glyph ramp)
+    #[arg(long)]
+    pub ascii_levels: Option<f32>,
+
+    /// ASCII tone footprint in cells (default 2; 1 = each cell alone)
+    #[arg(long)]
+    pub ascii_footprint: Option<f32>,
+
+    /// Turn off the ASCII edge glyphs (| / - \ on depth, normal and
+    /// silhouette edges)
+    #[arg(long)]
+    pub ascii_no_edges: bool,
+
+    /// ASCII edge sensitivity to depth: the relative view-distance step that
+    /// counts as an edge (default 0.6; lower finds more)
+    #[arg(long)]
+    pub ascii_edge_depth: Option<f32>,
+
+    /// ASCII edge sensitivity to creases: the normal change that counts as
+    /// an edge (default 2.5; lower finds more)
+    #[arg(long)]
+    pub ascii_edge_normal: Option<f32>,
+
+    /// In the masked ASCII modes, draw unmasked pixels as the plain scene
+    /// rather than black with their edges
+    #[arg(long)]
+    pub ascii_scene_background: bool,
+
     /// Draw the scene at this fraction of the image on each side
     /// (0.25-1), upscaled in the composite, as flint-player's
     /// --render-scale (#122)
@@ -593,6 +621,20 @@ pub fn run(args: RenderArgs) -> Result<()> {
         if let Some(cell) = args.ascii_cell {
             config.cell_px = cell;
         }
+        if let Some(levels) = args.ascii_levels {
+            config.levels = levels;
+        }
+        if let Some(footprint) = args.ascii_footprint {
+            config.footprint = footprint;
+        }
+        if let Some(t) = args.ascii_edge_depth {
+            config.depth_threshold = t;
+        }
+        if let Some(t) = args.ascii_edge_normal {
+            config.normal_threshold = t;
+        }
+        config.edges = !args.ascii_no_edges;
+        config.scene_background = args.ascii_scene_background;
         if mode.is_masked() && config.entities.is_empty() {
             anyhow::bail!(
                 "--ascii {} needs --ascii-entities",

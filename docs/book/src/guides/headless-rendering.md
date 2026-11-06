@@ -93,6 +93,10 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--ascii <mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` |
 | `--ascii-entities <list>` | (none) | Names, `prefix*` or `*` the masked ASCII modes stylize |
 | `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
+| `--ascii-levels <n>` / `--ascii-footprint <cells>` | `4` / `2` | ASCII tone bands and tone footprint |
+| `--ascii-no-edges` | `false` | No line glyphs on edges |
+| `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
+| `--ascii-scene-background` | `false` | Masked modes: plain scene outside the mask, not black |
 
 ## Lighting Flags
 
