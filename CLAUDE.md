@@ -54,11 +54,17 @@ Flint uses an **edit -> validate -> play** loop:
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
-   #   --ascii-color source|tint|raw --ascii-tint 0.35,1,0.45 --ascii-background 0.15
+   #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
+   #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
+   #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
    #   --ascii-scope screen|entities --ascii-grid screen|object
    #                          (#266; a scene's ascii_style entities need no flag)
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
+   #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
+   #                          against its descriptor; repeatable; `--style help`;
+   #                          also on `flint edit <model|effect> --render`)
+   #   --style-time 1.5       (post time animated styles read; default 0)
    #   --ascii=full|entity|entity-object --ascii-entities "barrel,table_*"
    #                          (#261 spike prototypes, `=` required; masked modes are static meshes only)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
@@ -112,6 +118,11 @@ Flint uses an **edit -> validate -> play** loop:
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
    # refused before sending if its worst case could pass --max-cost.
    ```
+
+   **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
+   renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
+   `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
+   --test render_goldens` runs it. A new style adds a case. A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 

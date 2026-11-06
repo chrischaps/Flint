@@ -121,9 +121,27 @@ pub struct RenderArgs {
     pub ascii_ramp: Option<String>,
 
     /// ASCII style colour: `source` (the cell's hue), `tint` (one colour,
-    /// --ascii-tint) or `raw` (the cell's colour as it is)
+    /// --ascii-tint), `raw` (the cell's colour as it is), `mono` (white on
+    /// grey) or `palette` (--ascii-palette)
     #[arg(long)]
     pub ascii_color: Option<String>,
+
+    /// ASCII style palette for `--ascii-color palette`: built-in (cga,
+    /// cga-warm, cga16, phosphor, amber, mono) or a
+    /// `palettes/<name>.palette.toml` beside the scene. Sets `--ascii-color
+    /// palette` unless that's given
+    #[arg(long)]
+    pub ascii_palette: Option<String>,
+
+    /// ASCII style ground behind glyphs: `dim` (the mode's own), `black`
+    /// or `inverse` (the ink fills the cell, the glyph is cut out)
+    #[arg(long)]
+    pub ascii_ground: Option<String>,
+
+    /// ASCII style halo around bright glyphs (0 off, default 0; 0.6 reads
+    /// as a phosphor glow)
+    #[arg(long)]
+    pub ascii_glow: Option<f32>,
 
     /// ASCII style tint for `--ascii-color tint` (r,g,b 0-1; default
     /// 0.35,1,0.45, phosphor green)
@@ -350,6 +368,10 @@ pub struct RenderArgs {
     /// Enable the FXAA anti-aliasing pass
     #[arg(long)]
     pub fxaa: bool,
+
+    #[command(flatten)]
+    pub style: crate::commands::common_args::StyleArgs,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -674,6 +696,8 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.fxaa_enabled = true;
         }
         apply_ascii_style_flags(&args, &mut pp_config)?;
+        // `--style name[:k=v,...]` (#271) last: an explicit word wins
+        args.style.apply(&mut pp_config);
 
         renderer.set_post_process_config(pp_config);
         renderer.ensure_style_resources(&ctx.device);
@@ -721,9 +745,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_ascii_spike(&ctx.device, config);
     }
 
-    // Post time for grain/mode animation. Headless renders leave this 0.0 so
-    // PNG snapshots stay deterministic; --grain-time pins an explicit frame.
-    if let Some(t) = args.grain_time {
+    // Post time for grain/mode animation and animated styles. Headless
+    // renders leave this 0.0 so PNG snapshots stay deterministic;
+    // --style-time (or the older --grain-time) pins an explicit frame.
+    if let Some(t) = args.style.style_time.or(args.grain_time) {
         renderer.ocean_time = t as f64;
     }
 
@@ -851,6 +876,9 @@ fn apply_ascii_style_flags(
         || args.ascii_brightness.is_some()
         || args.ascii_contrast.is_some()
         || args.ascii_ink.is_some()
+        || args.ascii_palette.is_some()
+        || args.ascii_ground.is_some()
+        || args.ascii_glow.is_some()
         || args.ascii_scope.is_some()
         || args.ascii_grid.is_some();
     if args.ascii.is_some() || style_only {
@@ -872,10 +900,13 @@ fn apply_ascii_style_flags(
     if let Some(grid) = &args.ascii_grid {
         styles.set_option(NAME, "grid", grid);
     }
+    let choices = |option: &str| {
+        flint_render::stylize::find(NAME)
+            .and_then(|d| d.options.iter().find(|o| o.name == option))
+            .map_or(&[][..], |o| o.choices)
+    };
     if let Some(color) = &args.ascii_color {
-        let modes = flint_render::stylize::find(NAME)
-            .and_then(|d| d.options.iter().find(|o| o.name == "color"))
-            .map_or(&[][..], |o| o.choices);
+        let modes = choices("color");
         if !modes.contains(&color.as_str()) {
             anyhow::bail!(
                 "--ascii-color: unknown mode '{color}' ({})",
@@ -883,6 +914,24 @@ fn apply_ascii_style_flags(
             );
         }
         styles.set_option(NAME, "color", color);
+    }
+    if let Some(ground) = &args.ascii_ground {
+        let modes = choices("ground");
+        if !modes.contains(&ground.as_str()) {
+            anyhow::bail!(
+                "--ascii-ground: unknown mode '{ground}' ({})",
+                modes.join(", ")
+            );
+        }
+        styles.set_option(NAME, "ground", ground);
+    }
+    if let Some(palette) = &args.ascii_palette {
+        // Any name goes (a file beside the scene); the style warns once
+        // and falls back when it can't be found
+        styles.set_option(NAME, "palette", palette);
+        if args.ascii_color.is_none() {
+            styles.set_option(NAME, "color", "palette");
+        }
     }
     if let Some([r, g, b]) = args.ascii_tint {
         styles.set_param(NAME, "tint_r", r);
@@ -900,6 +949,7 @@ fn apply_ascii_style_flags(
         ("brightness", args.ascii_brightness),
         ("contrast", args.ascii_contrast),
         ("ink", args.ascii_ink),
+        ("glow", args.ascii_glow),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);

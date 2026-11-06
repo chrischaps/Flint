@@ -1,0 +1,116 @@
+# Stylize goldens (#271): every registered style, pinned.
+#
+#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
+#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless
+#
+# `cargo test -p flint-cli --test render_goldens` runs the same suite. Each
+# case is one `flint render`, single-sample unless it says `--msaa 4`, with
+# the post clock at 0 (`--style-time` for an animated style). Bless only
+# after a deliberate change, and look at what you bless: the renders land
+# in the suite's out dir with a diff beside any that moved.
+#
+# Per-entity ASCII (#266) has cases of its own below. The props scene's
+# barrel and YBot carry `style_mask { style = "ascii" }`, so since #266
+# they are glyphs in every props case, the Kuwahara one included. The
+# spike's masked modes (#261) stay until #293 removes them.
+#
+# The props cases use demo/stylize_props.scene.toml, which loads in a few
+# seconds in a debug build (style_mask.scene.toml's grass and 32 MB bench
+# took 20-90 s), and turn the grid off: its far-off moire is the part of
+# a frame most likely to shade differently on another GPU.
+
+[suite]
+name = "stylize"
+root = "../../../.."
+width = 640
+height = 360
+args = ["--schemas", "schemas"]
+
+[tolerance]
+level = 48
+share = 0.02
+mean = 3.0
+
+# --- full-screen ASCII (#265) ---------------------------------------------
+
+# The #265 golden, now reached through --style: the same pixels as --ascii
+[[case]]
+name = "ascii-full"
+scene = "demo/pbr_test.scene.toml"
+golden = "ascii_pbr_test.png"
+args = ["--style", "ascii"]
+
+[[case]]
+name = "ascii-full-detailed-tint"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:ramp=detailed,color=tint,cell=10"]
+
+# Cells are in points: at 2x each one is twice the pixels
+[[case]]
+name = "ascii-full-hidpi"
+scene = "demo/pbr_test.scene.toml"
+args = ["--style", "ascii", "--pixels-per-point", "2"]
+
+# The scene passes at 4x MSAA; the glyph grid must not care
+[[case]]
+name = "ascii-full-msaa4"
+scene = "demo/pbr_test.scene.toml"
+args = ["--style", "ascii", "--msaa", "4"]
+
+# --- per-entity ASCII -----------------------------------------------------
+
+# The spike's screen-grid mode: only the named props are glyphs
+[[case]]
+name = "ascii-entity"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii=entity", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
+
+# The spike's object-anchored grid: each prop's cells start at its origin
+[[case]]
+name = "ascii-entity-object"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii=entity-object", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
+
+# The entity style mask (#263) the per-entity styles read: one hue a style
+[[case]]
+name = "style-mask"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--debug-mode", "style"]
+
+# Per-entity ASCII (#266): the props scene as authored (its two
+# style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
+# whole frame with those props as variants, and the props on object grids
+[[case]]
+name = "ascii-style-entities"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "ascii-style-screen"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "screen"]
+
+[[case]]
+name = "ascii-style-object"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
+
+# --- the other registered styles ------------------------------------------
+#
+# Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph
+# is a big local change that the ASCII limits must forgive, but a painterly
+# filter's drift is small and everywhere. Kuwahara at radius 4 against
+# this radius-5 golden is 1.05% past 8 levels with a mean of 0.39, which
+# the ASCII limits pass and these fail.
+
+[[case]]
+name = "invert"
+scene = "demo/pbr_test.scene.toml"
+args = ["--style", "invert:strength=1"]
+tolerance = { level = 8, share = 0.003, mean = 0.25 }
+
+[[case]]
+name = "kuwahara"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "kuwahara:radius=5"]
+tolerance = { level = 8, share = 0.003, mean = 0.25 }

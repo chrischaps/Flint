@@ -24,6 +24,7 @@ mod headless;
 pub mod model_loader;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
+pub mod palette;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;

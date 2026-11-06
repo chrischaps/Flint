@@ -7,7 +7,10 @@ description = "Draws this entity (and its descendants) as ASCII glyphs while the
 enabled = { type = "bool", description = "false keeps this entity and its subtree out of ASCII, even when the scene's style covers the whole frame" }
 cell = { type = "f32", min = 4.0, max = 32.0, description = "Cell width in points; the height follows the font's glyph aspect" }
 ramp = { type = "string", description = "A ramp of the scene's glyph set: classic, blocks, minimal or detailed for the built-in set" }
-color = { type = "enum", values = ["source", "tint", "raw"], description = "Ink colour: source (the surface's hue at full value), tint (one colour), raw (the cell's own colour)" }
+color = { type = "enum", values = ["source", "tint", "raw", "mono", "palette"], description = "Ink colour: source (the surface's hue at full value), tint (one colour), raw (the cell's own colour), mono (white on grey), palette (the inks of `palette`)" }
+palette = { type = "string", description = "For color = \"palette\": cga, cga-warm, cga16, phosphor, amber, mono, or a palettes/<name>.palette.toml beside the scene (#276)" }
+ground = { type = "enum", values = ["dim", "black", "inverse"], description = "Behind the glyph: dim (the mode's own), black, or inverse (the ink fills the cell and the glyph is cut out)" }
+glow = { type = "f32", min = 0.0, max = 2.0, description = "A halo around each glyph, stronger on bright cells (0.6 reads as a phosphor tube)" }
 tint = { type = "vec3", description = "Ink colour for color = \"tint\", RGB 0-1; sets the style's tint_r, tint_g and tint_b" }
 brightness = { type = "f32", min = -1.0, max = 1.0, description = "Added to the cell's luminance before it picks a glyph" }
 contrast = { type = "f32", min = 0.0, max = 4.0, description = "Luminance contrast about mid-grey before it picks a glyph" }

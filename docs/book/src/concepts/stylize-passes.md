@@ -23,6 +23,19 @@ WARN style 'invert' has no parameter 'wobble'; it takes: strength
 
 Kuwahara predates the table and keeps its own `kuwahara_*` fields (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
 
+From the command line, `--style name[:key=value,...]` turns any registered style on over a scene without editing it (#271), on `flint render` and on `flint edit <model or effect> --render`:
+
+```bash
+flint render demo/pbr_test.scene.toml --style ascii
+flint render demo/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
+flint render demo/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
+flint render levels/tavern.scene.toml --style ascii:off       # a style the scene has on, off
+flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
+flint render demo/pbr_test.scene.toml --style help            # every style and its keys
+```
+
+The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
+
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, drawn from the style's own declaration: a toggle, a slider per parameter, and a combo (or a text field) per option.
 
 | Style | Stage | Parameters |
@@ -47,7 +60,10 @@ The full-screen ASCII style (#265) turns every cell of one screen grid into a gl
 cell = 8                # cell width in points; the height follows the font's aspect
 font = "builtin"        # or a fonts/<name>.glyphs.toml set beside the scene
 ramp = "classic"        # a ramp of that set; empty = the set's default_ramp
-color = "source"        # source | tint | raw
+color = "source"        # source | tint | raw | mono | palette
+palette = "phosphor"    # with color = "palette": a built-in or palettes/<name>.palette.toml
+ground = "dim"          # dim | black | inverse
+glow = 0.0              # halo around bright glyphs
 ```
 
 ```bash
@@ -60,7 +76,10 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `cell` | `8` | Cell width in points (4--32). Times the window's scale factor, so cells look the same size on a high-DPI display; rounded to whole pixels |
 | `font` | `builtin` | The glyph set: `builtin`, a set name (`fonts/<name>.glyphs.toml` in the scene's folder or its parent) or a `.glyphs.toml` path. One that fails to load falls back to the built-in set, with a warning |
 | `ramp` | the set's default | A ramp of the set. The built-in set has `classic`, `blocks`, `minimal` and `detailed`. An unknown name warns once and uses the default |
-| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint_r`, `tint_g`, `tint_b`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark |
+| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint_r`, `tint_g`, `tint_b`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark. `mono`: white glyphs on grey. `palette`: the inks of `palette` (see [Colour modes](#colour-modes)) |
+| `palette` | `phosphor` | With `color = "palette"`: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, or a palette file. One that can't be found warns once and uses `phosphor` |
+| `ground` | `dim` | Behind the glyph: `dim` (the mode's own: the cell's colour times `background`, or the palette's background), `black`, or `inverse` (the ink fills the cell and the glyph is cut out of it; the ramp runs backwards so bright cells stay bright) |
+| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
 | `background` | `0.15` | How much of the cell's colour fills behind its glyph: 0 is black, 1 the cell's colour |
 | `brightness`, `contrast` | `0`, `1` | Luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `ink` | `1` | Glyph brightness |
@@ -69,12 +88,53 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.15 ms at 1080p on an RTX 4070.
 
-Edge glyphs (#267) and more colour modes (#276) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
-
 | Key | Default | |
 |-----|---------|---|
 | `scope` | `screen` | `screen`: the table glyphizes the whole frame. `entities`: only the entities that ask (below), the table being their preset |
 | `grid` | `screen` | `screen`: one grid centred on the frame. `object`: each styled entity's cells pinned to its projected origin (below) |
+
+Edge glyphs (#267) build on it, and [per-entity ASCII](#per-entity-ascii) (#266) applies it to chosen entities. Its goldens are in the [stylize goldens](#goldens).
+
+### Colour modes
+
+The glyph's shape carries brightness; its colour sets the mood (#276). Every capture below is `demo/pbr_test.scene.toml` at 1280x720, cropped at 1:1 around the two boxes and the character.
+
+| | |
+|---|---|
+| ![source](../images/ascii-color-source-pbr-test.png) `--ascii` (source) | ![tint](../images/ascii-color-tint-pbr-test.png) `--ascii-color tint` |
+| ![raw](../images/ascii-color-raw-pbr-test.png) `--ascii-color raw` | ![mono](../images/ascii-color-mono-pbr-test.png) `--ascii-color mono` |
+| ![phosphor](../images/ascii-color-phosphor-pbr-test.png) `--ascii-palette phosphor --ascii-glow 0.6` | ![amber](../images/ascii-color-amber-pbr-test.png) `--ascii-palette amber --ascii-ramp blocks` |
+| ![cga](../images/ascii-color-cga-pbr-test.png) `--ascii-palette cga` | ![cga16](../images/ascii-color-cga16-pbr-test.png) `--ascii-palette cga16` |
+| ![inverse](../images/ascii-color-inverse-pbr-test.png) `--ascii-palette cga-warm --ascii-ground inverse` | ![black](../images/ascii-color-black-pbr-test.png) `--ascii-ground black` |
+| ![tidepool](../images/ascii-color-tidepool-pbr-test.png) `--ascii-palette tidepool` (`demo/palettes/tidepool.palette.toml`) | |
+
+And on `demo/mesh_meadow.scene.toml` (640x360 crops):
+
+![The meadow in phosphor green](../images/ascii-color-phosphor-mesh-meadow.png)
+![The meadow in amber blocks](../images/ascii-color-amber-mesh-meadow.png)
+![The meadow in CGA warm, inverse](../images/ascii-color-inverse-mesh-meadow.png)
+
+**Palettes** live in `flint_render::palette`, so any style can use them. A palette is a list of inks and a background, in display (sRGB) hex:
+
+```toml
+# palettes/tidepool.palette.toml, beside the scene or in its parent folder
+match = "nearest"          # nearest (default) | luminance
+background = "#0d1b2a"     # default black
+colors = ["#1b998b", "#3a86ff", "#ed217c", "#ff9b71", "#fffd82", "#e8f1f2"]
+```
+
+`nearest` gives each cell the ink nearest its hue at full value (plain RGB distance), so a dark red still reads red and glyph density alone says it's dark; desaturated cells land on the palette's lightest neutral. `luminance` lists the inks darkest first and picks one by the cell's tone, as a one-colour phosphor tube does. Up to 32 inks. A file wins over a built-in of the same name; `PaletteCache` resolves names the way `GlyphSetCache` resolves fonts, through the vfs.
+
+| Built-in | Match | Inks |
+|---|---|---|
+| `cga` | nearest | cyan, magenta, white on black (mode 4, palette 1, high intensity) |
+| `cga-warm` | nearest | green, red, yellow on black (palette 0, high intensity) |
+| `cga16` | nearest | the 15 text-mode colours on black |
+| `phosphor` | luminance | four greens on near-black |
+| `amber` | luminance | four ambers on near-black |
+| `mono` | luminance | four greys on black |
+
+On an RTX 4070 at 1080p the pass costs 0.143 ms in `source`, 0.152 ms matching `cga16`'s 15 inks, 0.144 ms with `ground = "inverse"` and 0.220 ms with `glow` on (24 more glyph reads a pixel).
 
 ## Per-entity ASCII
 
@@ -107,6 +167,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel.
 - **The whole frame.** With the scene's table on and `scope = "screen"` (or `--ascii`), everything is glyphs and entities still change their own settings; `enabled = false` keeps one smooth.
 - **Grids.** By default every styled entity shares the screen's grid, which keeps glyphs aligned where props meet (the spike's finding, #261). `grid = "object"` pins an entity's cells to its projected origin: its glyphs hold still while it slides across the screen, but still swim when it turns or comes closer (#277). Each such entity gets a variant of its own.
+- **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
 - **Not yet:** a per-entity `font` (one glyph set a frame; a different one warns and draws in the scene's), and ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
 ```bash
@@ -191,6 +252,29 @@ What the framework does so a style doesn't have to:
 - **Samplers.** Styles bind the chain's one linear sampler, so their bind groups add nothing to DX12's 2048-slot sampler heap.
 - **The mask.** A `uses_mask` style gets the entity style mask drawn for it each frame, and no style pays for it otherwise.
 - **Timing.** Each style is a GPU-timer scope under its `label`, so `flint render --gpu-time` and the player's `--perf` name it.
+- **The command line.** `flint render --style <name>` reaches a new style from its descriptor alone.
+
+## Goldens
+
+Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case with `flint render` and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite.
+
+```bash
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --case ascii-entity
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless    # after a deliberate change
+```
+
+| Case | What it pins |
+|------|--------------|
+| `ascii-full` | `--style ascii` on `pbr_test`: the #265 golden, the same pixels as `--ascii` |
+| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props` |
+| `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points |
+| `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid |
+| `ascii-entity`, `ascii-entity-object` | the spike's per-entity modes (#261), screen and object grids |
+| `style-mask` | the entity style mask the per-entity styles read (`--debug-mode style`) |
+| `invert`, `kuwahara` | the other styles, with a tighter tolerance |
+
+Cases render single-sample with the post clock at 0 unless they say otherwise. The props cases use `demo/stylize_props.scene.toml`, which loads in a few seconds in a debug build, with the grid off. Glyph styles share #265's tolerance (fail when more than 2% of pixels differ by more than 48 levels, or the mean passes 3), since a cell on a ramp step's border can flip glyph on another GPU; smooth styles take `level = 8, share = 0.003, mean = 0.25`, because Kuwahara at radius 4 against a radius-5 golden is a 0.39 mean the glyph limits would pass. On one machine, every case is byte-identical run to run. **A new style adds a case here.** The manifest format is in [Headless Rendering](../guides/headless-rendering.md#golden-suites).
 
 ## The entity style mask
 

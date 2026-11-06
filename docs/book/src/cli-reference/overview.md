@@ -35,7 +35,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
 | `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
 | `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
-| `flint render-suite <manifest>` | Render a scripted suite session to WAV, offline and deterministic |
+| `flint render-suite <manifest>` | Render a suite offline and deterministically: a music `.suite.toml` to WAV, or a `.goldens.toml` of scenes gated against golden PNGs ([Headless Rendering](../guides/headless-rendering.md#golden-suites)) |
 | `flint spike-rumble` | Time the gamepad rumble command paths |
 
 The seven music commands are documented on their own page: [Music Commands](music.md).
@@ -294,7 +294,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii=<mode>` | (none) | The ASCII spike's prototypes (#261), with the `=`: `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
 | `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
-| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour) or `raw` (the cell's colour as it is) |
+| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
+| `--ascii-palette <name>` | `phosphor` | *Style:* palette for `palette` mode: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` or `palettes/<name>.palette.toml` beside the scene; sets `--ascii-color palette` unless that's given |
+| `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |
+| `--ascii-glow <f32>` | `0` | *Style:* halo around bright glyphs (0.6 reads as a phosphor tube) |
 | `--ascii-tint <r,g,b>` | `0.35,1,0.45` | *Style:* the tint colour; sets `--ascii-color tint` unless that's given |
 | `--ascii-background <f32>` | `0.15` | *Style:* how much of the cell's colour fills behind its glyph (0 black) |
 | `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
@@ -331,6 +334,8 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
+| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
+| `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
 | `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
@@ -436,6 +441,7 @@ integrated GPU.
 | `--sequence-loop` | `false` | Loop the sequence regardless of its `loop` setting |
 | `--anim-time <s>` | (none) | With `--render`: sample the animation (or replay the sequence) at this time |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
+| `--style <name[:k=v,...]>` / `--style-time <s>` | (none) | With `--render`: a registered style over the snapshot, as on `flint render` (also for `.particles.toml`) |
 
 ### Particle Editor Flags
 

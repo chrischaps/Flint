@@ -22,6 +22,7 @@ pub mod prefab;
 pub mod preview;
 pub mod query;
 pub mod render;
+pub mod render_goldens;
 pub mod render_suite;
 pub mod replay_chart;
 pub mod scene;
