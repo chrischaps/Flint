@@ -664,17 +664,12 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(
-            &context.device,
-            &context.queue,
-            surface_format,
-            postprocess_config.kuwahara_enabled,
-        );
+        let postprocess_pipeline =
+            PostProcessPipeline::new(&context.device, &context.queue, surface_format);
         let postprocess_resources = PostProcessResources::new(
             &context.device,
             context.config.width,
             context.config.height,
-            postprocess_config.kuwahara_enabled,
         );
 
         Self {
@@ -2146,14 +2141,8 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(
-            device,
-            queue,
-            surface_format,
-            postprocess_config.kuwahara_enabled,
-        );
-        let postprocess_resources =
-            PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
+        let postprocess_resources = PostProcessResources::new(device, width, height);
 
         Self {
             pipeline,
@@ -4215,12 +4204,9 @@ impl SceneRenderer {
         }
         self.surface_size = (width, height);
         let (w, h) = crate::render_scale::scaled_size(width, height, self.render_scale);
-        self.postprocess_resources = Some(PostProcessResources::new(
-            device,
-            w,
-            h,
-            self.postprocess_config.kuwahara_enabled,
-        ));
+        // Stylize targets live in the resources, so they (and every bind
+        // group over one) go with the old size (#262).
+        self.postprocess_resources = Some(PostProcessResources::new(device, w, h));
         // Below the surface's size the scene keeps a depth buffer of its own
         // (#122); at scale 1 it draws into the caller's, as it always has.
         if (w, h) == (width, height) {
@@ -4405,47 +4391,42 @@ impl SceneRenderer {
         self.postprocess_config = config;
     }
 
-    /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
-    /// Creates pipelines and textures on demand if they haven't been allocated yet.
-    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
-        if !self.postprocess_config.kuwahara_enabled {
+    /// Build the pipelines of every stylize pass the config switches on
+    /// that isn't built yet (#262). Every frame does this itself; calling
+    /// it after setting a config moves the shader compile off the first
+    /// frame that draws the style. A style's textures are made on that
+    /// frame.
+    ///
+    /// Building runs under `catch_unwind` because some GPU drivers (Intel
+    /// Skylake) crash with unrecoverable device loss compiling these
+    /// shaders; a style that fails stays off and marks the device lost.
+    pub fn ensure_style_resources(&mut self, device: &wgpu::Device) {
+        let Some(pp) = &mut self.postprocess_pipeline else {
             return;
-        }
-
-        // Create only the Kuwahara pipelines (not the entire PostProcessPipeline).
-        // Uses catch_unwind because some GPU drivers (Intel Skylake) crash with
-        // unrecoverable device loss when compiling these shaders.
-        if let Some(pp) = &mut self.postprocess_pipeline {
-            if pp.kuwahara.is_none() {
-                use std::panic::{catch_unwind, AssertUnwindSafe};
-                let device_ptr = device as *const wgpu::Device;
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    // SAFETY: device_ptr is valid for the duration of this closure
-                    let dev = unsafe { &*device_ptr };
-                    crate::postprocess::KuwaharaPipelines::new(dev)
-                }));
-                match result {
-                    Ok(pipelines) => pp.kuwahara = Some(pipelines),
-                    Err(_) => {
-                        tracing::warn!(
-                            "Kuwahara filter unavailable: GPU driver crashed during \
-                             shader compilation. Try updating your graphics drivers."
-                        );
-                        self.postprocess_config.kuwahara_enabled = false;
-                        self.device_lost = true;
-                        return;
-                    }
-                }
+        };
+        let surface_format = pp.surface_format;
+        for failed in pp
+            .styles
+            .ensure(device, surface_format, &self.postprocess_config)
+        {
+            tracing::warn!(
+                "{} style unavailable: GPU driver crashed during shader compilation. \
+                 Try updating your graphics drivers.",
+                failed.label
+            );
+            if failed.uses_style_table() {
+                self.postprocess_config.styles.set_enabled(failed.name, false);
+            } else if failed.name == "kuwahara" {
+                self.postprocess_config.kuwahara_enabled = false;
             }
+            self.device_lost = true;
         }
+    }
 
-        // Create only the Kuwahara textures (not the entire PostProcessResources)
-        if let Some(resources) = &mut self.postprocess_resources {
-            if resources.kuwahara.is_none() {
-                let (w, h) = (resources.width, resources.height);
-                resources.kuwahara = Some(crate::postprocess::KuwaharaTextures::new(device, w, h));
-            }
-        }
+    /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),
+    /// from when Kuwahara was the only style.
+    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
+        self.ensure_style_resources(device);
     }
 
     /// Validate the configured MSAA sample count (ADR 0058): 1 or 4;
@@ -4646,6 +4627,13 @@ impl SceneRenderer {
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
+        if self.device_lost {
+            return;
+        }
+        // A style switched on by any route (scene load, F4, a script's
+        // config) is built before the frame that first needs it (#262).
+        // When nothing new is on this is a walk over the registry.
+        self.ensure_style_resources(device);
         if self.device_lost {
             return;
         }

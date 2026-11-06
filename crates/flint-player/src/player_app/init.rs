@@ -578,7 +578,7 @@ impl PlayerApp {
         if let Some(pp_def) = &self.scene_post_process {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
-            scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+            scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
     }

@@ -34,8 +34,9 @@ pub struct RenderPanelFlags {
     pub lighting_changed: bool,
     pub lighting_reset: bool,
     pub fov_changed: bool,
-    /// Kuwahara was just enabled — host must call ensure_kuwahara_resources.
-    pub kuwahara_needs_resources: bool,
+    /// A stylize pass (Kuwahara or a registered style) was just enabled —
+    /// host must call `ensure_style_resources`.
+    pub style_needs_resources: bool,
     /// FXAA was just enabled — host must call ensure_fxaa_resources.
     pub fxaa_needs_resources: bool,
 }
@@ -282,7 +283,7 @@ impl RenderDebugPanel {
             {
                 f.pp_changed = true;
                 if was_off && self.pp.kuwahara_enabled {
-                    f.kuwahara_needs_resources = true;
+                    f.style_needs_resources = true;
                 }
             }
             let r = ui.horizontal(|ui| {
@@ -299,6 +300,33 @@ impl RenderDebugPanel {
                 &mut self.pp.kuwahara_anisotropy,
                 0.0..=2.0,
             );
+        });
+
+        // Registered styles with settings in the style table (#262): a
+        // toggle and the sliders their descriptors declare
+        section(ui, "Styles", false, |ui| {
+            for style in flint_render::stylize::registry()
+                .iter()
+                .filter(|s| s.uses_style_table())
+            {
+                let mut on = self.pp.styles.is_enabled(style.name);
+                if ui.checkbox(&mut on, style.label).changed() {
+                    self.pp.styles.set_enabled(style.name, on);
+                    f.pp_changed = true;
+                    f.style_needs_resources |= on;
+                }
+                ui.add_enabled_ui(on, |ui| {
+                    ui.indent(style.name, |ui| {
+                        for p in style.params {
+                            let mut value = style.param(&self.pp, p.name);
+                            if slider(ui, p.name, &mut value, p.min..=p.max) {
+                                self.pp.styles.set_param(style.name, p.name, value);
+                                f.pp_changed = true;
+                            }
+                        }
+                    });
+                });
+            }
         });
 
         section(ui, "Render mode", false, |ui| {
