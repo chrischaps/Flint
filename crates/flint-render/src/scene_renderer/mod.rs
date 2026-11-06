@@ -583,6 +583,11 @@ pub struct SceneRenderer {
     /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
     /// it. Hosts with a window set it; 1 headless.
     pub pixels_per_point: f32,
+    /// Frames drawn through the post chain, handed to styles as
+    /// [`StyleFrame::frame`](crate::stylize::StyleFrame::frame) (#277).
+    style_frame_serial: std::sync::atomic::AtomicU64,
+    /// Bumped by [`reset_style_history`](Self::reset_style_history).
+    style_history_epoch: u64,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
@@ -827,6 +832,8 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -2306,6 +2313,8 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -3961,6 +3970,14 @@ impl SceneRenderer {
     pub fn set_ambient(&mut self, sky: [f32; 3], ground: [f32; 3]) {
         self.ambient_override = Some((sky, ground));
         self.apply_ambient_override();
+    }
+
+    /// Forget what styles remember of earlier frames (ASCII's temporal
+    /// stability, #277): call it when the picture stops following on from
+    /// the last one, on a scene change or a camera cut. The next frame is
+    /// drawn as if it were the first.
+    pub fn reset_style_history(&mut self) {
+        self.style_history_epoch = self.style_history_epoch.wrapping_add(1);
     }
 
     /// Clear any scene-authored ambient override, restoring the built-in

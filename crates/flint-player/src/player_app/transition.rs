@@ -445,6 +445,9 @@ impl PlayerApp {
                 &context.queue,
             );
             renderer.update_from_world(&self.world, &context.device);
+            // The new scene's first frame has no past: styles that keep
+            // history (ASCII's temporal stability, #277) start over
+            renderer.reset_style_history();
 
             // Scene-authored hemisphere ambient + wrap; reset first so the
             // previous scene's values never leak into one that doesn't

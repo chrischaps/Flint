@@ -281,6 +281,16 @@ pub struct StyleFrame<'a> {
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
     pub time: f32,
+    /// This frame's number: one more than the last frame the renderer drew
+    /// through the post chain. A style that keeps history from frame to
+    /// frame (ASCII's temporal stability, #277) trusts it only when the
+    /// last frame it drew is `frame - 1`, so a frame drawn without it (the
+    /// style switched off a while) starts it over.
+    pub frame: u64,
+    /// Bumped by [`SceneRenderer::reset_style_history`](crate::SceneRenderer::reset_style_history)
+    /// (a new scene, a camera cut): history from another epoch is not
+    /// this picture's past.
+    pub history_epoch: u64,
     /// Physical pixels per logical point of the window (the OS scale
     /// factor). A style sized in points multiplies by it, so its cells keep
     /// their size on a high-DPI display. 1 headless unless asked.
@@ -319,6 +329,20 @@ impl StyleFrame<'_> {
     pub fn target(&self, name: &'static str, format: wgpu::TextureFormat) -> Arc<StyleTexture> {
         self.targets
             .get(self.device, name, format, self.width, self.height)
+    }
+
+    /// [`target`](Self::target) at a size of the style's own, such as one
+    /// texel per glyph cell. A name asked for at a new size is made again,
+    /// so bind groups over it must be keyed by something that changes with
+    /// it (see the ASCII style's history generation).
+    pub fn target_sized(
+        &self,
+        name: &'static str,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Arc<StyleTexture> {
+        self.targets.get(self.device, name, format, width, height)
     }
 
     /// A bind group kept with the chain, made with `make` the first time.

@@ -57,6 +57,13 @@ name = "ascii-full-msaa4"
 scene = "demo/pbr_test.scene.toml"
 args = ["--style", "ascii", "--msaa", "4"]
 
+# The grid-fixed ordered dither (#277): the one temporal-stability knob a
+# single frame shows (smoothing and hysteresis need a frame before)
+[[case]]
+name = "ascii-full-dither"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:dither=1"]
+
 # --- per-entity ASCII -----------------------------------------------------
 
 # The spike's screen-grid mode: only the named props are glyphs
@@ -114,3 +121,37 @@ name = "kuwahara"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
+
+# --- looks (#279) -----------------------------------------------------------
+# Each shipped styles/<name>.look.toml over the props bench. A new look adds
+# a case here (look.rs checks).
+
+[[case]]
+name = "look-ascii-noir"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "ascii_noir"]
+
+[[case]]
+name = "look-matrix"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "matrix"]
+
+# Kuwahara under it: the smooth styles' tolerance
+[[case]]
+name = "look-ink-wash"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "ink_wash"]
+tolerance = { level = 8, share = 0.003, mean = 0.25 }
+
+[[case]]
+name = "look-graphite"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "graphite"]
+
+# A sweep's contact sheet: the cells, their frames and the glyph labels
+[[case]]
+name = "look-sweep-cell"
+scene = "demo/stylize_props.scene.toml"
+width = 320
+height = 180
+args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]

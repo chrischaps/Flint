@@ -512,4 +512,21 @@ mod tests {
             );
         }
     }
+
+    /// A new look adds a golden case too (#279).
+    #[test]
+    fn every_shipped_look_has_a_golden_case() {
+        let (_, manifest) = stylize_manifest();
+        for look in crate::commands::look::builtin_names() {
+            let reached = manifest.cases.iter().any(|c| {
+                c.args
+                    .windows(2)
+                    .any(|w| w[0] == "--look" && w[1] == look)
+            });
+            assert!(
+                reached,
+                "look '{look}' has no case in stylize.goldens.toml: add one and --bless it"
+            );
+        }
+    }
 }
