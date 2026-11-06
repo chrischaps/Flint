@@ -47,7 +47,10 @@ The full-screen ASCII style (#265) turns every cell of one screen grid into a gl
 cell = 8                # cell width in points; the height follows the font's aspect
 font = "builtin"        # or a fonts/<name>.glyphs.toml set beside the scene
 ramp = "classic"        # a ramp of that set; empty = the set's default_ramp
-color = "source"        # source | tint | raw
+color = "source"        # source | tint | raw | mono | palette
+palette = "phosphor"    # with color = "palette": a built-in or palettes/<name>.palette.toml
+ground = "dim"          # dim | black | inverse
+glow = 0.0              # halo around bright glyphs
 ```
 
 ```bash
@@ -60,7 +63,10 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `cell` | `8` | Cell width in points (4--32). Times the window's scale factor, so cells look the same size on a high-DPI display; rounded to whole pixels |
 | `font` | `builtin` | The glyph set: `builtin`, a set name (`fonts/<name>.glyphs.toml` in the scene's folder or its parent) or a `.glyphs.toml` path. One that fails to load falls back to the built-in set, with a warning |
 | `ramp` | the set's default | A ramp of the set. The built-in set has `classic`, `blocks`, `minimal` and `detailed`. An unknown name warns once and uses the default |
-| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint_r`, `tint_g`, `tint_b`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark |
+| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint_r`, `tint_g`, `tint_b`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark. `mono`: white glyphs on grey. `palette`: the inks of `palette` (see [Colour modes](#colour-modes)) |
+| `palette` | `phosphor` | With `color = "palette"`: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, or a palette file. One that can't be found warns once and uses `phosphor` |
+| `ground` | `dim` | Behind the glyph: `dim` (the mode's own: the cell's colour times `background`, or the palette's background), `black`, or `inverse` (the ink fills the cell and the glyph is cut out of it; the ramp runs backwards so bright cells stay bright) |
+| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
 | `background` | `0.15` | How much of the cell's colour fills behind its glyph: 0 is black, 1 the cell's colour |
 | `brightness`, `contrast` | `0`, `1` | Luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `ink` | `1` | Glyph brightness |
@@ -69,7 +75,48 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.15 ms at 1080p on an RTX 4070.
 
-Edge glyphs (#267), per-entity ASCII (#266) and more colour modes (#276) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
+Edge glyphs (#267) and per-entity ASCII (#266) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
+
+### Colour modes
+
+The glyph's shape carries brightness; its colour sets the mood (#276). Every capture below is `demo/pbr_test.scene.toml` at 1280x720, cropped at 1:1 around the two boxes and the character.
+
+| | |
+|---|---|
+| ![source](../images/ascii-color-source-pbr-test.png) `--ascii` (source) | ![tint](../images/ascii-color-tint-pbr-test.png) `--ascii-color tint` |
+| ![raw](../images/ascii-color-raw-pbr-test.png) `--ascii-color raw` | ![mono](../images/ascii-color-mono-pbr-test.png) `--ascii-color mono` |
+| ![phosphor](../images/ascii-color-phosphor-pbr-test.png) `--ascii-palette phosphor --ascii-glow 0.6` | ![amber](../images/ascii-color-amber-pbr-test.png) `--ascii-palette amber --ascii-ramp blocks` |
+| ![cga](../images/ascii-color-cga-pbr-test.png) `--ascii-palette cga` | ![cga16](../images/ascii-color-cga16-pbr-test.png) `--ascii-palette cga16` |
+| ![inverse](../images/ascii-color-inverse-pbr-test.png) `--ascii-palette cga-warm --ascii-ground inverse` | ![black](../images/ascii-color-black-pbr-test.png) `--ascii-ground black` |
+| ![tidepool](../images/ascii-color-tidepool-pbr-test.png) `--ascii-palette tidepool` (`demo/palettes/tidepool.palette.toml`) | |
+
+And on `demo/mesh_meadow.scene.toml` (640x360 crops):
+
+![The meadow in phosphor green](../images/ascii-color-phosphor-mesh-meadow.png)
+![The meadow in amber blocks](../images/ascii-color-amber-mesh-meadow.png)
+![The meadow in CGA warm, inverse](../images/ascii-color-inverse-mesh-meadow.png)
+
+**Palettes** live in `flint_render::palette`, so any style can use them. A palette is a list of inks and a background, in display (sRGB) hex:
+
+```toml
+# palettes/tidepool.palette.toml, beside the scene or in its parent folder
+match = "nearest"          # nearest (default) | luminance
+background = "#0d1b2a"     # default black
+colors = ["#1b998b", "#3a86ff", "#ed217c", "#ff9b71", "#fffd82", "#e8f1f2"]
+```
+
+`nearest` gives each cell the ink nearest its hue at full value (plain RGB distance), so a dark red still reads red and glyph density alone says it's dark; desaturated cells land on the palette's lightest neutral. `luminance` lists the inks darkest first and picks one by the cell's tone, as a one-colour phosphor tube does. Up to 32 inks. A file wins over a built-in of the same name; `PaletteCache` resolves names the way `GlyphSetCache` resolves fonts, through the vfs.
+
+| Built-in | Match | Inks |
+|---|---|---|
+| `cga` | nearest | cyan, magenta, white on black (mode 4, palette 1, high intensity) |
+| `cga-warm` | nearest | green, red, yellow on black (palette 0, high intensity) |
+| `cga16` | nearest | the 15 text-mode colours on black |
+| `phosphor` | luminance | four greens on near-black |
+| `amber` | luminance | four ambers on near-black |
+| `mono` | luminance | four greys on black |
+
+On an RTX 4070 at 1080p the pass costs 0.143 ms in `source`, 0.152 ms matching `cga16`'s 15 inks, 0.144 ms with `ground = "inverse"` and 0.220 ms with `glow` on (24 more glyph reads a pixel).
 
 ## Where styles run
 

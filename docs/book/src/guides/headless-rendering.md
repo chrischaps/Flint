@@ -91,7 +91,8 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
 | `--fxaa` | `false` | Run the FXAA pass |
 | `--ascii` | (off) | The full-screen ASCII style (#265): one glyph per cell on one grid |
-| `--ascii-font` / `--ascii-ramp` / `--ascii-color` | `builtin` / the set's / `source` | ASCII style glyph set, ramp and colour mode (`source`, `tint`, `raw`) |
+| `--ascii-font` / `--ascii-ramp` / `--ascii-color` | `builtin` / the set's / `source` | ASCII style glyph set, ramp and colour mode (`source`, `tint`, `raw`, `mono`, `palette`) |
+| `--ascii-palette` / `--ascii-ground` / `--ascii-glow` | `phosphor` / `dim` / `0` | ASCII style palette (`cga`, `cga16`, `amber`... or a `.palette.toml`), ground (`dim`, `black`, `inverse`) and glyph halo |
 | `--ascii-tint <r,g,b>` / `--ascii-background <f32>` | phosphor green / `0.15` | ASCII style tint and how much cell colour fills behind glyphs |
 | `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
 | `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
