@@ -36,6 +36,8 @@ flint render levels/tavern.scene.toml \
 | `--no-grid` | `false` | Disable ground grid |
 | `--schemas <path>` | `schemas` | Path to schemas directory (repeatable) |
 | `--msaa <1\|4>` | `1` | Scene-pass MSAA sample count |
+| `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
+| `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |
 
 ## Post-Processing Flags
 
@@ -88,6 +90,13 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
 | `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
 | `--fxaa` | `false` | Run the FXAA pass |
+| `--ascii <mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` |
+| `--ascii-entities <list>` | (none) | Names, `prefix*` or `*` the masked ASCII modes stylize |
+| `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
+| `--ascii-levels <n>` / `--ascii-footprint <cells>` | `4` / `2` | ASCII tone bands and tone footprint |
+| `--ascii-no-edges` | `false` | No line glyphs on edges |
+| `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
+| `--ascii-scene-background` | `false` | Masked modes: plain scene outside the mask, not black |
 
 ## Lighting Flags
 
