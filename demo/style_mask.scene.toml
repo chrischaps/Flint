@@ -1,8 +1,8 @@
 # Style Mask: the mesh meadow's clearing, with some of its props put under
-# per-entity styles (#263). Nothing here draws differently yet: the styles
-# that will read the mask (per-entity ASCII #266, watercolor #272, pencil
-# #273) come later. What it shows is the mask itself, the per-pixel style
-# id the scene writes for them:
+# per-entity styles (#263). The two "ascii" props are drawn in glyphs since
+# per-entity ASCII landed (#266; demo/ascii_entities.scene.toml shows it
+# off); "pencil" draws nothing yet (#273). What this scene is for is the
+# mask itself, the per-pixel style id the scene writes for them:
 #
 #   cargo run --bin flint -- render demo/style_mask.scene.toml --debug-mode style --output mask.png
 #

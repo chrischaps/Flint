@@ -1308,13 +1308,16 @@ impl SceneRenderer {
 
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
-        let hdr_styles = pp.styles.active(crate::stylize::StyleStage::Hdr, config);
+        let ids = &self.style_ids;
+        let hdr_styles = pp
+            .styles
+            .active(crate::stylize::StyleStage::Hdr, config, ids);
         let display_styles = pp
             .styles
-            .active(crate::stylize::StyleStage::Display, config);
+            .active(crate::stylize::StyleStage::Display, config, ids);
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
-        let style_mask = crate::stylize::any_uses_mask(config).then(|| {
+        let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {
             resources.styles.get(
                 device,
                 crate::style_mask::MASK_TARGET,
@@ -1335,6 +1338,7 @@ impl SceneRenderer {
                 depth: depth_view,
                 depth_owned,
                 camera: crate::stylize::StyleCamera {
+                    view_proj: camera.view_projection_matrix(),
                     inv_view_proj: camera.inverse_view_projection_matrix(),
                     position: camera.position_array(),
                     near: camera.near,

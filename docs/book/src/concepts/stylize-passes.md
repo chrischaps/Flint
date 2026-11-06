@@ -69,7 +69,53 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.15 ms at 1080p on an RTX 4070.
 
-Edge glyphs (#267), per-entity ASCII (#266) and more colour modes (#276) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
+Edge glyphs (#267) and more colour modes (#276) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
+
+| Key | Default | |
+|-----|---------|---|
+| `scope` | `screen` | `screen`: the table glyphizes the whole frame. `entities`: only the entities that ask (below), the table being their preset |
+| `grid` | `screen` | `screen`: one grid centred on the frame. `object`: each styled entity's cells pinned to its projected origin (below) |
+
+## Per-entity ASCII
+
+An entity with an `ascii_style` component is drawn in glyphs while the rest of the scene stays smooth (#266). No `[post_process.styles.ascii]` table is needed:
+
+![demo/ascii_entities.scene.toml: the meadow and the ground stay smooth while the bench (amber blocks), the skinned YBot (its own colour), the barrel (on its own grid) and the crate with its lantern (phosphor green) are glyphs; the lantern's glass box stays smooth](../images/ascii-entities.png)
+
+*`flint render demo/ascii_entities.scene.toml --no-grid --target 0.7,0.7,4.2 --distance 5.2 --yaw 29 --pitch 10`, 1280x720.*
+
+```toml
+[post_process.styles.ascii]   # optional: the preset every styled entity starts from
+scope = "entities"            # without it, the table would glyphize the whole frame
+background = 0.3
+
+[entities.bench.ascii_style]  # only what differs from the preset
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.70, 0.30]      # a 3-array sets tint_r, tint_g, tint_b
+levels = 4
+
+[entities.ybot.ascii_style]   # empty: the preset as it is (skinned meshes work too)
+
+[entities.lantern_glass.ascii_style]
+enabled = false               # stays smooth, even under a whole-frame ASCII
+```
+
+- **Fields.** Every key of the table above except `font` and `scope`, all optional. A field the entity leaves out comes from the scene's table, then the style's default. The schema gives no field a default on purpose, since the loader would fill it in and hide the scene's setting. An archetype's `[archetype.<name>.defaults.ascii_style]` is a preset too, and an entity's own fields merge over it field by field.
+- **Descendants** inherit their ancestor's style until one carries an `ascii_style` or `style_mask` of its own; the nearest wins. A plain `style_mask { style = "ascii" }` is the same as an empty `ascii_style`.
+- **Ids.** Entities with the same settings share one style mask id. Each distinct set of settings is a variant, and the pass looks up each pixel's settings by its id. One frame holds 63 variants among mask ids below 256; more are drawn like the whole frame, with a warning.
+- **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel.
+- **The whole frame.** With the scene's table on and `scope = "screen"` (or `--ascii`), everything is glyphs and entities still change their own settings; `enabled = false` keeps one smooth.
+- **Grids.** By default every styled entity shares the screen's grid, which keeps glyphs aligned where props meet (the spike's finding, #261). `grid = "object"` pins an entity's cells to its projected origin: its glyphs hold still while it slides across the screen, but still swim when it turns or comes closer (#277). Each such entity gets a variant of its own.
+- **Not yet:** a per-entity `font` (one glyph set a frame; a different one warns and draws in the scene's), and ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
+
+```bash
+flint render demo/ascii_entities.scene.toml --output ascii.png              # as authored
+flint render demo/ascii_entities.scene.toml --ascii-scope screen            # the whole frame
+flint render demo/pbr_test.scene.toml --ascii --ascii-grid object           # flags set the preset
+```
+
+At 1080p on an RTX 4070 the demo's ASCII pass costs about 0.06 ms (pixels outside the props pass straight through) and its mask 0.03 ms. With `--ascii-scope screen` the pass costs 0.3--0.45 ms, since every lattice sample then checks its id. A frame with no styled entities runs the full-screen loop as before (0.154 ms on pbr_test, against 0.142 ms before per-entity support). It works under `--msaa 4` and `--render-scale`, where the silhouette follows the scaled mask. F4 → Styles → ASCII offers `scope` and `grid` beside the other settings, and `flint edit --watch` hot-reloads `ascii_style` edits.
 
 ## Where styles run
 
@@ -180,3 +226,13 @@ How it's drawn:
 - **What's masked.** Static glTF meshes, procedural boxes and skinned meshes. Particles, sprites, grass, terrain and water never are.
 
 To read it in a style, set `uses_mask: true`, make a layout with `kit::mask_layout` and bind it with `frame.mask_bind(...)`; in WGSL it is a `texture_2d<u32>` read with `textureLoad` (`stylize/mask_view.rs` and `mask_view.wgsl` show the whole thing).
+
+### Per-entity settings
+
+A style that takes settings per entity names its component in its descriptor: `component: Some("ascii_style")`, with a schema in `schemas/components/`. The framework then does the rest:
+
+- an entity carrying the component (or a `style_mask` naming the style) switches the style on for the frame, and the mask is drawn, with no `[post_process.styles]` table;
+- the component's fields are read as the descriptor's params and options (a 3-array `x` fills `x_r`, `x_g`, `x_b`), and each distinct set is a `StyleVariant` with its own mask id, named for its settings (`ascii{cell=12,ramp=blocks}`, `ascii@barrel`, `ascii{off}` for `enabled = false`);
+- a style whose `grid` option is `object` gets one variant per styled root, with `anchor` set to the root's world origin each frame (`frame.project(anchor)` puts it on screen).
+
+In `encode`, `frame.variants()` lists this style's `(id, variant)` pairs, `frame.variant_param(v, "cell")` and `frame.variant_option(v, "ramp")` read a variant's settings with the scene's as fallback, and `frame.whole_frame()` says whether the scene's table covers everything. `stylize/ascii.rs` packs them into a table indexed by mask id; watercolor (#272) and pencil (#273) can do the same.

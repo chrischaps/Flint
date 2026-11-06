@@ -147,6 +147,19 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ascii_ink: Option<f32>,
 
+    /// ASCII style coverage (#266): `screen` glyphizes the whole frame;
+    /// `entities` only the entities with an `ascii_style` (or a
+    /// `style_mask` naming ascii), the other flags being their preset.
+    /// A scene with such entities needs no flag at all
+    #[arg(long, value_parser = ["screen", "entities"])]
+    pub ascii_scope: Option<String>,
+
+    /// ASCII style grid (#266): `screen` (one grid centred on the frame)
+    /// or `object` (each styled entity's cells pinned to its projected
+    /// origin)
+    #[arg(long, value_parser = ["screen", "object"])]
+    pub ascii_grid: Option<String>,
+
     /// Physical pixels per point, as a high-DPI window's scale factor:
     /// styles sized in points (ASCII cells) scale by it (default 1)
     #[arg(long)]
@@ -837,7 +850,9 @@ fn apply_ascii_style_flags(
         || args.ascii_background.is_some()
         || args.ascii_brightness.is_some()
         || args.ascii_contrast.is_some()
-        || args.ascii_ink.is_some();
+        || args.ascii_ink.is_some()
+        || args.ascii_scope.is_some()
+        || args.ascii_grid.is_some();
     if args.ascii.is_some() || style_only {
         pp.styles.set_enabled(NAME, true);
     }
@@ -850,6 +865,12 @@ fn apply_ascii_style_flags(
     }
     if let Some(ramp) = &args.ascii_ramp {
         styles.set_option(NAME, "ramp", ramp);
+    }
+    if let Some(scope) = &args.ascii_scope {
+        styles.set_option(NAME, "scope", scope);
+    }
+    if let Some(grid) = &args.ascii_grid {
+        styles.set_option(NAME, "grid", grid);
     }
     if let Some(color) = &args.ascii_color {
         let modes = flint_render::stylize::find(NAME)
