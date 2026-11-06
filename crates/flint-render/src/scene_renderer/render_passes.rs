@@ -1344,6 +1344,10 @@ impl SceneRenderer {
                 style_ids: &self.style_ids,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
+                frame: self
+                    .style_frame_serial
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
                 binds: &resources.binds,

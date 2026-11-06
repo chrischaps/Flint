@@ -56,6 +56,13 @@ name = "ascii-full-msaa4"
 scene = "demo/pbr_test.scene.toml"
 args = ["--style", "ascii", "--msaa", "4"]
 
+# The grid-fixed ordered dither (#277): the one temporal-stability knob a
+# single frame shows (smoothing and hysteresis need a frame before)
+[[case]]
+name = "ascii-full-dither"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:dither=1"]
+
 # --- per-entity ASCII -----------------------------------------------------
 
 # The spike's screen-grid mode: only the named props are glyphs

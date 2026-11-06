@@ -180,6 +180,12 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ascii_ink: Option<f32>,
 
+    /// ASCII style: ordered dither before the ramp, fixed to the cell grid
+    /// (0-1, default 0). The style's other temporal knobs (smoothing,
+    /// hysteresis, #277) need a frame before, which one render hasn't
+    #[arg(long)]
+    pub ascii_dither: Option<f32>,
+
     /// Physical pixels per point, as a high-DPI window's scale factor:
     /// styles sized in points (ASCII cells) scale by it (default 1)
     #[arg(long)]
@@ -960,7 +966,8 @@ fn apply_ascii_style_flags(
         || args.ascii_ink.is_some()
         || args.ascii_palette.is_some()
         || args.ascii_ground.is_some()
-        || args.ascii_glow.is_some();
+        || args.ascii_glow.is_some()
+        || args.ascii_dither.is_some();
     if args.ascii.is_some() || style_only {
         pp.styles.set_enabled(NAME, true);
     }
@@ -1024,6 +1031,7 @@ fn apply_ascii_style_flags(
         ("contrast", args.ascii_contrast),
         ("ink", args.ascii_ink),
         ("glow", args.ascii_glow),
+        ("dither", args.ascii_dither),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);
