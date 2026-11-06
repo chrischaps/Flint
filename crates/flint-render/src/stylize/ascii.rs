@@ -41,8 +41,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage,
-    StyleTexture,
+    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
+    StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
@@ -186,6 +186,22 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     ],
     enabled: None,
     uses_mask: false,
+    hints: &[
+        StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
+        StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
+        StyleHint::new("color", "Colour mode", "source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
+        StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml"),
+        StyleHint::new("ground", "Ground", "Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
+        StyleHint::new("cell", "Cell size (pt)", "Cell width in points; the height follows the font").integer(),
+        StyleHint::new("brightness", "Brightness", "Shifts the tone before a glyph is picked"),
+        StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
+        StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)"),
+        StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
+        StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
+        StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
+        StyleHint::new("tint", "Tint", "The ink for colour mode tint"),
+        StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
+    ],
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");

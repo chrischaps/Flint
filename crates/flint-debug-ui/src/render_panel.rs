@@ -15,7 +15,9 @@
 //! player-only "freeze script post overrides" switch is on — the panel shows
 //! the truth about who owns a value rather than pretending to.
 
+use crate::styles_ui::StylesEditor;
 use crate::DebugPanel;
+use flint_render::stylize::StyleSettings;
 use flint_render::{DebugMode, LightingLevers, PostProcessConfig};
 
 pub const RENDER_DEBUG_PANEL: &str = "Rendering & Effects";
@@ -65,6 +67,10 @@ pub struct RenderDebugPanel {
     /// panel edits to contended fields stick. Shown only when `show_freeze`.
     pub freeze_scripts: bool,
     show_freeze: bool,
+    /// The scene's own `[post_process.styles]`, for the style editor's
+    /// Authored button and markers; set by the host on scene load.
+    authored_styles: Option<StyleSettings>,
+    styles_editor: StylesEditor,
     flags: RenderPanelFlags,
     open: bool,
     dirty: bool,
@@ -90,6 +96,8 @@ impl RenderDebugPanel {
             fov_deg: 65.0,
             freeze_scripts: false,
             show_freeze,
+            authored_styles: None,
+            styles_editor: StylesEditor::default(),
             flags: RenderPanelFlags::default(),
             open: false,
             dirty: false,
@@ -118,6 +126,17 @@ impl RenderDebugPanel {
         self.shadow_resolution = shadow_resolution;
         self.lighting = lighting;
         self.fov_deg = fov_deg;
+    }
+
+    /// The scene's authored style settings (its `[post_process.styles]`),
+    /// or `None` when the host has no scene to compare against.
+    pub fn set_authored_styles(&mut self, authored: Option<StyleSettings>) {
+        self.authored_styles = authored;
+    }
+
+    /// The block the Styles section's last Copy TOML put on the clipboard.
+    pub fn last_copied_toml(&self) -> Option<&str> {
+        self.styles_editor.last_copied.as_deref()
     }
 
     /// Consume the per-group change flags (host apply pass).
@@ -218,7 +237,12 @@ impl RenderDebugPanel {
                 0.0..=0.5,
             );
             f.pp_changed |= color_row(ui, "Tint color", &mut self.pp.fog_tint_color);
-            f.pp_changed |= slider(ui, "Tint strength", &mut self.pp.fog_tint_strength, 0.0..=1.0);
+            f.pp_changed |= slider(
+                ui,
+                "Tint strength",
+                &mut self.pp.fog_tint_strength,
+                0.0..=1.0,
+            );
             f.pp_changed |= drag(ui, "Tint start", &mut self.pp.fog_tint_start, 1.0);
             f.pp_changed |= drag(ui, "Tint end", &mut self.pp.fog_tint_end, 1.0);
             // Ground fog (ADR 0106): shows where the game has set a map
@@ -302,71 +326,14 @@ impl RenderDebugPanel {
             );
         });
 
-        // Registered styles with settings in the style table (#262): a
-        // toggle and the sliders their descriptors declare
+        // Registered styles with settings in the style table (#262), one
+        // section each, drawn from their descriptors (#268)
         section(ui, "Styles", false, |ui| {
-            for style in flint_render::stylize::registry()
-                .iter()
-                .filter(|s| s.uses_style_table())
-            {
-                let mut on = self.pp.styles.is_enabled(style.name);
-                if ui.checkbox(&mut on, style.label).changed() {
-                    self.pp.styles.set_enabled(style.name, on);
-                    f.pp_changed = true;
-                    f.style_needs_resources |= on;
-                }
-                ui.add_enabled_ui(on, |ui| {
-                    ui.indent(style.name, |ui| {
-                        // Options: a combo of the declared choices, or a
-                        // text field (applied on Enter or focus loss) when
-                        // the style takes any name
-                        for o in style.options {
-                            let current = style.option(&self.pp, o.name).to_string();
-                            let mut picked = None;
-                            if o.choices.is_empty() {
-                                let mut text = current.clone();
-                                ui.horizontal(|ui| {
-                                    ui.label(o.name);
-                                    let r = ui.text_edit_singleline(&mut text);
-                                    if r.lost_focus() && text != current {
-                                        picked = Some(text);
-                                    }
-                                });
-                            } else {
-                                let shown = if current.is_empty() {
-                                    "(default)"
-                                } else {
-                                    current.as_str()
-                                };
-                                egui::ComboBox::from_id_salt((style.name, o.name))
-                                    .selected_text(shown)
-                                    .show_ui(ui, |ui| {
-                                        for choice in o.choices {
-                                            if ui
-                                                .selectable_label(current == *choice, *choice)
-                                                .clicked()
-                                            {
-                                                picked = Some(choice.to_string());
-                                            }
-                                        }
-                                    });
-                                ui.label(o.name);
-                            }
-                            if let Some(value) = picked.filter(|v| *v != current) {
-                                self.pp.styles.set_option(style.name, o.name, &value);
-                                f.pp_changed = true;
-                            }
-                        }
-                        for p in style.params {
-                            let mut value = style.param(&self.pp, p.name);
-                            if slider(ui, p.name, &mut value, p.min..=p.max) {
-                                self.pp.styles.set_param(style.name, p.name, value);
-                                f.pp_changed = true;
-                            }
-                        }
-                    });
-                });
-            }
+            let edit = self
+                .styles_editor
+                .ui(ui, &mut self.pp, self.authored_styles.as_ref());
+            f.pp_changed |= edit.changed;
+            f.style_needs_resources |= edit.needs_resources;
         });
 
         section(ui, "Render mode", false, |ui| {

@@ -292,6 +292,45 @@ impl PlayerApp {
             }
         }
 
+        // F3 Styles panel (#268): the same write-through as F4, for the
+        // style table alone. Entity rows only while it is open.
+        #[cfg(feature = "debug-hud")]
+        {
+            let rows = self
+                .debug_panels
+                .iter()
+                .any(|p| p.name() == flint_debug_ui::STYLES_DEBUG_PANEL && p.is_open())
+                .then(|| {
+                    super::debug_panels::styled_entity_rows(&self.world, renderer.style_ids())
+                });
+            for panel in &mut self.debug_panels {
+                if panel.name() != flint_debug_ui::STYLES_DEBUG_PANEL {
+                    continue;
+                }
+                let Some(sp) = panel
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::StylesDebugPanel>()
+                else {
+                    continue;
+                };
+                if flint_debug_ui::DebugPanel::is_dirty(sp) {
+                    let edit = sp.take_edit();
+                    if edit.changed {
+                        let mut config = renderer.post_process_config().clone();
+                        config.styles = sp.pp.styles.clone();
+                        renderer.set_post_process_config(config);
+                        if edit.needs_resources {
+                            renderer.ensure_style_resources(&context.device);
+                        }
+                    }
+                    flint_debug_ui::DebugPanel::clear_dirty(sp);
+                } else {
+                    let entities = rows.clone().unwrap_or_else(|| sp.entities().to_vec());
+                    sp.refresh(renderer.post_process_config(), entities);
+                }
+            }
+        }
+
         // Push ocean panel edits into the world's `ocean` component — the
         // renderer extraction and the script API both read from there.
         #[cfg(feature = "debug-hud")]

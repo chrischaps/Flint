@@ -10,7 +10,9 @@
 //! `register_styles!`.
 
 use super::kit;
-use super::{StyleDescriptor, StyleFrame, StyleInput, StyleParam, StylePass, StyleStage};
+use super::{
+    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass, StyleStage,
+};
 use bytemuck::{Pod, Zeroable};
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
@@ -26,6 +28,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],
     enabled: None,
     uses_mask: false,
+    hints: &[StyleHint::new(
+        "strength",
+        "Strength",
+        "How far toward the negative: 0 = none, 1 = full",
+    )],
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");

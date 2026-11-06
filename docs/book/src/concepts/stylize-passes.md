@@ -36,7 +36,26 @@ flint render demo/pbr_test.scene.toml --style help            # every style and 
 
 The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
-In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, drawn from the style's own declaration: a toggle, a slider per parameter, and a combo (or a text field) per option.
+In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
+
+- **A row per setting.** A combo per option with a closed list of choices, a text field per option that takes any name (a font; it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)).
+- **↺** beside a value that isn't the default puts it back.
+- **Defaults** clears the style's values. **Authored** puts back what the scene says, on and off included. **Copy TOML** puts the `[post_process.styles.<name>]` block that reproduces what's on screen on the clipboard, with only the values that differ from the defaults, so a look tuned by eye goes back into the scene in one paste:
+
+  ```toml
+  [post_process.styles.ascii]
+  color = "palette"
+  palette = "amber"
+  cell = 16
+  levels = 5
+  glow = 0.77
+  ```
+
+- **Against the scene.** The header says *edited* while the style differs from the scene's own table, and a dot marks each value that does (hover it for the scene's value).
+
+![F4's Styles section in the player: the meadow under an authored amber ASCII look, with cell size, tone bands and glow tuned by eye. Each tuned value has a dot because it now differs from the scene, and Copy TOML has just copied the block above](../images/f4-styles-editor.png)
+
+The same editor is the player's **F3 Styles** panel, which appears with the other scene panels when the scene uses a style (a `[post_process.styles]` table or a `style_mask` entity). It also lists the scene's styled entities, the style each asks for, and the hue the [mask view](#the-entity-style-mask) paints that style in.
 
 | Style | Stage | Parameters |
 |-------|-------|------------|
@@ -237,9 +256,12 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],                  // named strings: StyleOption { name, default, choices }
     enabled: None,                 // None: read `enabled` from the style table
     uses_mask: false,              // true: the renderer draws the entity style mask for it
+    hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
 };
 ```
+
+`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`tint_r` becomes "Tint r") on a plain slider. A hint gives a setting (or a colour triple, by its base name) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size). Name a colour's channels `<base>_r`, `<base>_g` and `<base>_b`, each 0--1 in display values, and F4 folds them into one colour picker.
 
 and the `StylePass` that `create` returns records the style's draws for one frame:
 

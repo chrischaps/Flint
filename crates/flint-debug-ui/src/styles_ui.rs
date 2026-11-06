@@ -1,0 +1,552 @@
+//! The style editor (#268): one collapsible section for every registered
+//! style whose settings live in `[post_process.styles.<name>]`, drawn from
+//! its descriptor alone, so a new style (watercolor, pencil) shows up here
+//! with no UI code of its own.
+//!
+//! A section has the style's toggle, a row per setting (a combo or text
+//! field for an option, a slider for a parameter, one colour picker for an
+//! `_r/_g/_b` triple; labels, hover text and whole-number steps come from
+//! the descriptor's hints), and three buttons: **Defaults** clears the
+//! style's values, **Authored** puts back what the scene says, and **Copy
+//! TOML** puts the `[post_process.styles.<name>]` block that reproduces
+//! what is on screen on the clipboard, so a look tuned by eye goes back
+//! into the scene in one paste.
+//!
+//! While the host gives it the scene's authored settings, a dot marks each
+//! value that differs from them (hover for the scene's value), and the
+//! header says "edited".
+//!
+//! Both the F4 Rendering & Effects panel and the F3 Styles panel draw this
+//! editor; it edits a [`PostProcessConfig`]'s `styles` and nothing else.
+
+use flint_render::stylize::{self, StyleControl, StyleDescriptor, StyleSettings, StyleStage};
+use flint_render::PostProcessConfig;
+use std::collections::HashMap;
+
+/// What one frame of the editor changed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StylesEdit {
+    /// A style setting changed: upload the config.
+    pub changed: bool,
+    /// A style was switched on: the host builds its pipelines
+    /// (`ensure_style_resources`).
+    pub needs_resources: bool,
+}
+
+impl StylesEdit {
+    fn merge(&mut self, other: StylesEdit) {
+        self.changed |= other.changed;
+        self.needs_resources |= other.needs_resources;
+    }
+}
+
+/// The sliders' width in a style's grid, in points.
+const SLIDER_WIDTH: f32 = 130.0;
+
+/// How long the "copied" note stays after Copy TOML, in seconds.
+const COPIED_NOTE_SECS: f64 = 1.5;
+
+/// The editor's own state across frames: the text being typed into
+/// free-text options, and the last Copy TOML.
+#[derive(Default)]
+pub struct StylesEditor {
+    /// What is being typed in each free-text option (style, option). A
+    /// text field over a fresh copy of the config's value every frame
+    /// would lose each keystroke; the buffer keeps it until Enter or focus
+    /// loss commits it.
+    text: HashMap<(&'static str, &'static str), String>,
+    copied_at: Option<(&'static str, f64)>,
+    /// The last block Copy TOML put on the clipboard.
+    pub last_copied: Option<String>,
+    /// How many values the last frame marked as differing from the scene.
+    pub marked: usize,
+}
+
+impl StylesEditor {
+    /// Draw every table style's section, editing `pp.styles`. `authored`
+    /// is the scene's own `[post_process.styles]`, when the host knows it.
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> StylesEdit {
+        let mut edit = StylesEdit::default();
+        self.marked = 0;
+        let mut any = false;
+        for style in stylize::registry()
+            .iter()
+            .copied()
+            .filter(|s| s.uses_style_table())
+        {
+            any = true;
+            edit.merge(self.section(ui, style, pp, authored));
+        }
+        if !any {
+            ui.weak("No styles registered");
+        }
+        if !pp.enabled && stylize::registry().iter().any(|s| s.is_enabled(pp)) {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Post-processing is off: styles don't draw",
+            );
+        }
+        edit
+    }
+
+    fn section(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> StylesEdit {
+        let mut edit = StylesEdit::default();
+        let mut on = pp.styles.is_enabled(style.name);
+        let id = ui.make_persistent_id(("style section", style.name));
+        let state =
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, on);
+        state
+            .show_header(ui, |ui| {
+                if ui.checkbox(&mut on, style.label).changed() {
+                    pp.styles.set_enabled(style.name, on);
+                    edit.changed = true;
+                    edit.needs_resources |= on;
+                }
+                ui.weak(match style.stage {
+                    StyleStage::Hdr => "hdr",
+                    StyleStage::Display => "display",
+                })
+                .on_hover_text(match style.stage {
+                    StyleStage::Hdr => "Runs on the scene's HDR, before fog, bloom and tonemapping",
+                    StyleStage::Display => {
+                        "Runs on the finished picture at output resolution, before FXAA"
+                    }
+                });
+                if let Some(authored) = authored {
+                    if !pp.styles.same_style(style.name, authored) {
+                        ui.colored_label(ui.visuals().warn_fg_color, "edited")
+                            .on_hover_text(format!(
+                                "Differs from the scene's [post_process.styles.{}]",
+                                style.name
+                            ));
+                    }
+                }
+            })
+            .body(|ui| {
+                ui.add_enabled_ui(on, |ui| {
+                    ui.spacing_mut().slider_width = SLIDER_WIDTH;
+                    egui::Grid::new(("style grid", style.name))
+                        .num_columns(4)
+                        .spacing([8.0, 4.0])
+                        .show(ui, |ui| {
+                            for control in style.controls() {
+                                edit.changed |= self.row(ui, style, control, pp, authored);
+                                ui.end_row();
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .small_button("Defaults")
+                        .on_hover_text("Every value back to the style's default")
+                        .clicked()
+                    {
+                        pp.styles.reset(style.name);
+                        edit.changed = true;
+                    }
+                    if let Some(authored) = authored {
+                        let same = pp.styles.same_style(style.name, authored);
+                        if ui
+                            .add_enabled(!same, egui::Button::new("Authored").small())
+                            .on_hover_text("Back to what the scene says, on/off included")
+                            .clicked()
+                        {
+                            let was_on = pp.styles.is_enabled(style.name);
+                            pp.styles.restore(style.name, authored);
+                            edit.changed = true;
+                            edit.needs_resources |= !was_on && pp.styles.is_enabled(style.name);
+                        }
+                    }
+                    if ui
+                        .small_button("Copy TOML")
+                        .on_hover_text(
+                            "Copy the [post_process.styles] block that reproduces this look \
+                             (only the values that differ from the defaults)",
+                        )
+                        .clicked()
+                    {
+                        let text = stylize::style_toml(style, pp);
+                        ui.ctx().copy_text(text.clone());
+                        self.last_copied = Some(text);
+                        self.copied_at = Some((style.name, ui.input(|i| i.time)));
+                    }
+                    if let Some((name, at)) = self.copied_at {
+                        let now = ui.input(|i| i.time);
+                        if name == style.name && now - at < COPIED_NOTE_SECS {
+                            ui.weak("copied");
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                });
+            });
+        edit
+    }
+
+    /// One setting's row of four grid cells (label, widget, reset,
+    /// authored dot); true when it changed.
+    fn row(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &'static StyleDescriptor,
+        control: StyleControl,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> bool {
+        let label = style.label_for(control.name());
+        let help = style.hint(control.name()).map_or("", |h| h.help);
+        let with_help = |r: egui::Response| {
+            if help.is_empty() {
+                r
+            } else {
+                r.on_hover_text(help)
+            }
+        };
+        let mut changed = false;
+        match control {
+            StyleControl::Option(o) => {
+                let current = style.option(pp, o.name).to_string();
+                let scene = authored.map(|a| {
+                    a.option(style.name, o.name)
+                        .unwrap_or(o.default)
+                        .to_string()
+                });
+                let mut picked = None;
+                {
+                    with_help(ui.label(&label));
+                    if o.choices.is_empty() {
+                        let key = (style.name, o.name);
+                        let buffer = self.text.entry(key).or_insert_with(|| current.clone());
+                        let r = ui.add(
+                            egui::TextEdit::singleline(buffer)
+                                .id(text_id(style.name, o.name))
+                                .desired_width(120.0)
+                                .hint_text(o.default),
+                        );
+                        if r.lost_focus() {
+                            if *buffer != current {
+                                picked = Some(buffer.clone());
+                            }
+                        } else if !r.has_focus() && *buffer != current {
+                            // Not being typed in: mirror the config
+                            *buffer = current.clone();
+                        }
+                        with_help(r);
+                    } else {
+                        let shown = if current.is_empty() {
+                            "(default)"
+                        } else {
+                            current.as_str()
+                        };
+                        egui::ComboBox::from_id_salt((style.name, o.name))
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                if o.default.is_empty()
+                                    && ui
+                                        .selectable_label(current.is_empty(), "(default)")
+                                        .clicked()
+                                {
+                                    picked = Some(String::new());
+                                }
+                                for choice in o.choices {
+                                    if ui.selectable_label(current == *choice, *choice).clicked() {
+                                        picked = Some(choice.to_string());
+                                    }
+                                }
+                                // A value the scene names that the list
+                                // doesn't (a palette file) stays pickable
+                                if !current.is_empty() && !o.choices.contains(&current.as_str()) {
+                                    let _ = ui.selectable_label(true, &current);
+                                }
+                            });
+                    }
+                    if reset_cell(ui, current != o.default, &format!("{:?}", o.default)) {
+                        picked = Some(o.default.to_string());
+                    }
+                    self.marked += dot_cell(
+                        ui,
+                        scene.filter(|s| *s != current).map(|s| format!("{s:?}")),
+                    );
+                }
+                if let Some(value) = picked.filter(|v| *v != current) {
+                    pp.styles.set_option(style.name, o.name, &value);
+                    self.text.remove(&(style.name, o.name));
+                    changed = true;
+                }
+            }
+            StyleControl::Param(p) => {
+                let integer = style.hint(p.name).is_some_and(|h| h.integer);
+                let mut value = style.param(pp, p.name);
+                let scene = authored.map(|a| a.param(style.name, p.name).unwrap_or(p.default));
+                {
+                    with_help(ui.label(&label));
+                    let mut slider = egui::Slider::new(&mut value, p.min..=p.max);
+                    if integer {
+                        slider = slider.step_by(1.0).fixed_decimals(0);
+                    }
+                    changed |= with_help(ui.add(slider)).changed();
+                    if reset_cell(ui, value != p.default, &number(p.default, integer)) {
+                        value = p.default;
+                        changed = true;
+                    }
+                    self.marked += dot_cell(
+                        ui,
+                        scene.filter(|s| *s != value).map(|s| number(s, integer)),
+                    );
+                }
+                if changed {
+                    pp.styles.set_param(style.name, p.name, value);
+                }
+            }
+            StyleControl::Color { channels, .. } => {
+                let mut rgb = channels.map(|c| style.param(pp, c.name));
+                let defaults = channels.map(|c| c.default);
+                let scene = authored
+                    .map(|a| channels.map(|c| a.param(style.name, c.name).unwrap_or(c.default)));
+                {
+                    with_help(ui.label(&label));
+                    // Style colours are display values (what the eye sees,
+                    // as the display-stage shaders work), so the picker is
+                    // the sRGB one; its bytes replace the value only when
+                    // the user picks, so an untouched colour stays exact
+                    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let mut srgb = rgb.map(byte);
+                    ui.horizontal(|ui| {
+                        if with_help(ui.color_edit_button_srgb(&mut srgb)).changed() {
+                            rgb = srgb.map(|b| b as f32 / 255.0);
+                            changed = true;
+                        }
+                        ui.weak(format!("{:.2} {:.2} {:.2}", rgb[0], rgb[1], rgb[2]));
+                    });
+                    if reset_cell(ui, rgb != defaults, &rgb_text(defaults)) {
+                        rgb = defaults;
+                        changed = true;
+                    }
+                    self.marked += dot_cell(ui, scene.filter(|s| *s != rgb).map(rgb_text));
+                }
+                if changed {
+                    for (c, v) in channels.iter().zip(rgb) {
+                        pp.styles
+                            .set_param(style.name, c.name, v.clamp(c.min, c.max));
+                    }
+                }
+            }
+        }
+        changed
+    }
+}
+
+/// The id of a free-text option's field.
+fn text_id(style: &str, option: &str) -> egui::Id {
+    egui::Id::new(("style option text", style, option))
+}
+
+/// The reset cell: a small button that puts a value back to its default
+/// while it differs (true on click), else an empty cell.
+fn reset_cell(ui: &mut egui::Ui, differs: bool, default: &str) -> bool {
+    if !differs {
+        ui.label("");
+        return false;
+    }
+    ui.small_button("↺")
+        .on_hover_text(format!("Back to the default, {default}"))
+        .clicked()
+}
+
+/// The authored cell: a dot when the scene says something else (hover for
+/// what), else an empty cell.
+fn dot_cell(ui: &mut egui::Ui, scene: Option<String>) -> usize {
+    match scene {
+        Some(scene) => {
+            // Painted: egui's default fonts have no filled-circle glyph
+            let size = ui.spacing().interact_size.y;
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(size * 0.6, size), egui::Sense::hover());
+            ui.painter()
+                .circle_filled(rect.center(), size * 0.16, ui.visuals().warn_fg_color);
+            response.on_hover_text(format!("The scene says {scene}"));
+            1
+        }
+        None => {
+            ui.label("");
+            0
+        }
+    }
+}
+
+fn number(value: f32, integer: bool) -> String {
+    if integer {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.3}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
+fn rgb_text(rgb: [f32; 3]) -> String {
+    format!("{:.2}, {:.2}, {:.2}", rgb[0], rgb[1], rgb[2])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every piece of text the editor drew in one frame.
+    fn drawn_text(
+        editor: &mut StylesEditor,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut out = Vec::new();
+        // Two passes: collapsing state settles on the first
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    editor.ui(ui, pp, authored);
+                });
+            });
+            out.clear();
+            for clipped in output.shapes {
+                collect_text(&clipped.shape, &mut out);
+            }
+        }
+        out
+    }
+
+    fn collect_text(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    fn all_on() -> PostProcessConfig {
+        let mut pp = PostProcessConfig::default();
+        for s in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+            pp.styles.set_enabled(s.name, true);
+        }
+        pp
+    }
+
+    #[test]
+    fn every_registered_setting_gets_a_labelled_row() {
+        let mut editor = StylesEditor::default();
+        let mut pp = all_on();
+        let text = drawn_text(&mut editor, &mut pp, None);
+        for style in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+            assert!(text.contains(&style.label.to_string()), "{}", style.label);
+            for control in style.controls() {
+                let label = style.label_for(control.name());
+                assert!(text.contains(&label), "{}: {label} not drawn", style.name);
+            }
+        }
+        // Drawing changes nothing by itself
+        assert_eq!(pp.styles, all_on().styles);
+    }
+
+    #[test]
+    fn edits_against_the_scene_are_marked() {
+        let mut editor = StylesEditor::default();
+        let mut authored = StyleSettings::default();
+        authored.set_enabled("ascii", true);
+        let mut pp = PostProcessConfig {
+            styles: authored.clone(),
+            ..Default::default()
+        };
+        let clean = drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert!(!clean.contains(&"edited".to_string()));
+        assert_eq!(editor.marked, 0, "{clean:?}");
+
+        pp.styles.set_param("ascii", "cell", 16.0);
+        let edited = drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert!(edited.contains(&"edited".to_string()));
+        assert_eq!(editor.marked, 1);
+    }
+
+    /// One frame of the editor with `events` as input.
+    fn frame(
+        ctx: &egui::Context,
+        editor: &mut StylesEditor,
+        pp: &mut PostProcessConfig,
+        events: Vec<egui::Event>,
+    ) -> StylesEdit {
+        let mut edit = StylesEdit::default();
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                edit.merge(editor.ui(ui, pp, None));
+            });
+        });
+        edit
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn typing_a_font_name_survives_frames_and_commits_on_enter() {
+        // The field used to be over a fresh copy of the config each
+        // frame, so every keystroke was gone by the next one
+        let ctx = egui::Context::default();
+        let mut editor = StylesEditor::default();
+        let mut pp = all_on();
+        frame(&ctx, &mut editor, &mut pp, vec![]);
+        ctx.memory_mut(|m| m.request_focus(text_id("ascii", "font")));
+        frame(&ctx, &mut editor, &mut pp, vec![]);
+        frame(
+            &ctx,
+            &mut editor,
+            &mut pp,
+            vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
+        );
+        for c in ["t", "e", "r", "m"] {
+            let edit = frame(
+                &ctx,
+                &mut editor,
+                &mut pp,
+                vec![egui::Event::Text(c.into())],
+            );
+            assert!(!edit.changed, "typing doesn't apply until Enter");
+        }
+        assert_eq!(pp.styles.option("ascii", "font"), None);
+        let edit = frame(
+            &ctx,
+            &mut editor,
+            &mut pp,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(edit.changed);
+        assert_eq!(pp.styles.option("ascii", "font"), Some("term"));
+    }
+
+    #[test]
+    fn numbers_print_short() {
+        assert_eq!(number(8.0, true), "8");
+        assert_eq!(number(0.35, false), "0.35");
+        assert_eq!(number(1.0, false), "1");
+    }
+}
