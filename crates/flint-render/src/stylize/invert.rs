@@ -33,6 +33,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         "Strength",
         "How far toward the negative: 0 = none, 1 = full",
     )],
+    component: None,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");

@@ -54,6 +54,11 @@
 //! the style's own), drawn after the scene pass (`crate::style_mask`).
 //! `mask_view` is the example, and the `style` debug view.
 //!
+//! A per-entity style ([`StyleDescriptor::component`], #266) goes further:
+//! an entity's own component switches it on and carries its settings, each
+//! distinct set an id of its own, read with [`StyleFrame::variants`]. ASCII
+//! is the example.
+//!
 //! An `Hdr` style is shaded by what follows it: fog fades it, bloom haloes
 //! its bright parts, the grade tints it (Kuwahara's painterly look wants
 //! that). A `Display` style sees the finished picture at output
@@ -73,6 +78,7 @@ pub use targets::{StyleTargets, StyleTexture};
 
 use crate::bind_cache::BindCache;
 use crate::postprocess::PostProcessConfig;
+use crate::style_mask::StyleIds;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -212,6 +218,13 @@ pub struct StyleDescriptor {
     pub uses_mask: bool,
     /// How the F4 menu labels its settings ([`StyleHint`]); `&[]` is fine.
     pub hints: &'static [StyleHint],
+    /// The component an entity takes this style with, its fields being the
+    /// style's parameters and options (`ascii_style`, #266). A style with
+    /// one is per-entity: an entity carrying it (or a `style_mask` naming
+    /// the style) switches the style on for that entity's pixels alone,
+    /// with no `[post_process.styles]` table, and the style reads each
+    /// pixel's settings from [`StyleFrame::variants`] by its mask id.
+    pub component: Option<&'static str>,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -225,6 +238,20 @@ impl StyleDescriptor {
             Some(enabled) => enabled(config),
             None => config.styles.is_enabled(self.name),
         }
+    }
+
+    /// Whether this style runs this frame: `config` switches it on, or it
+    /// is per-entity and an entity asks for it (#266).
+    pub fn is_on(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
+    }
+
+    /// Whether this style reads the style mask this frame: it always does
+    /// (`uses_mask`), or it is per-entity and an entity names it, opt-outs
+    /// included.
+    pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        self.is_on(config, ids)
+            && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
     }
 
     /// Whether the style's parameters live in the generic table (and so
@@ -374,6 +401,8 @@ pub struct StyleInput<'a> {
 /// The camera, for styles that read depth (edges, fog-aware washes).
 #[derive(Clone, Copy, Debug)]
 pub struct StyleCamera {
+    /// World to clip, column-major (for projecting an anchor, #266).
+    pub view_proj: [[f32; 4]; 4],
     pub inv_view_proj: [[f32; 4]; 4],
     pub position: [f32; 3],
     pub near: f32,
@@ -553,6 +582,52 @@ impl StyleFrame<'_> {
     /// for it.
     pub fn style_id(&self, name: &str) -> Option<u16> {
         self.style_ids.id(name)
+    }
+
+    /// `(mask id, variant)` for each of this style's per-entity variants
+    /// this frame (#266), in id order. Read a variant's settings with
+    /// [`variant_param`](Self::variant_param) and
+    /// [`variant_option`](Self::variant_option).
+    pub fn variants(&self) -> impl Iterator<Item = (u16, &crate::style_mask::StyleVariant)> {
+        self.style_ids.variants_of(self.descriptor.name)
+    }
+
+    /// Parameter `name` of `variant`: the entity's, else the scene's, else
+    /// the style's default.
+    pub fn variant_param(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> f32 {
+        variant.param(self.descriptor, self.config, name)
+    }
+
+    /// Option `name` of `variant`: the entity's, else the scene's, else the
+    /// style's default.
+    pub fn variant_option<'v>(
+        &'v self,
+        variant: &'v crate::style_mask::StyleVariant,
+        name: &str,
+    ) -> &'v str {
+        variant.option(self.descriptor, self.config, name)
+    }
+
+    /// Whether `config` switches this style on for the whole frame, rather
+    /// than only for the entities that ask for it.
+    pub fn whole_frame(&self) -> bool {
+        self.descriptor.is_enabled(self.config)
+    }
+
+    /// Where world point `p` lands in this frame, in pixels from the top
+    /// left; `None` behind the camera.
+    pub fn project(&self, p: [f32; 3]) -> Option<[f32; 2]> {
+        let m = &self.camera.view_proj;
+        let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
+        let w = row(3);
+        if !w.is_finite() || w <= 1e-6 {
+            return None;
+        }
+        let (x, y) = (row(0) / w, row(1) / w);
+        Some([
+            (x * 0.5 + 0.5) * self.width as f32,
+            (0.5 - y * 0.5) * self.height as f32,
+        ])
     }
 
     /// A kept bind group of one uniform buffer at binding 0.
@@ -785,13 +860,14 @@ impl StyleSet {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         config: &PostProcessConfig,
+        ids: &StyleIds,
     ) -> Vec<&'static StyleDescriptor> {
         let registry = registry();
         self.built.resize_with(registry.len(), || None);
         self.failed.resize(registry.len(), false);
         let mut failed = Vec::new();
         for (i, descriptor) in registry.iter().enumerate() {
-            if self.built[i].is_some() || self.failed[i] || !descriptor.is_enabled(config) {
+            if self.built[i].is_some() || self.failed[i] || !descriptor.is_on(config, ids) {
                 continue;
             }
             let format = match descriptor.stage {
@@ -821,11 +897,13 @@ impl StyleSet {
             .is_some_and(Option::is_some)
     }
 
-    /// The built styles of `stage` that `config` has on, in chain order.
+    /// The built styles of `stage` that are on this frame (by `config` or
+    /// an entity's request in `ids`), in chain order.
     pub fn active(
         &self,
         stage: StyleStage,
         config: &PostProcessConfig,
+        ids: &StyleIds,
     ) -> Vec<(&'static StyleDescriptor, &dyn StylePass)> {
         if !config.enabled {
             return Vec::new();
@@ -833,7 +911,7 @@ impl StyleSet {
         registry()
             .iter()
             .zip(&self.built)
-            .filter(|(d, _)| d.stage == stage && d.is_enabled(config))
+            .filter(|(d, _)| d.stage == stage && d.is_on(config, ids))
             .filter_map(|(d, built)| built.as_deref().map(|p| (*d, p)))
             .collect()
     }
@@ -960,9 +1038,9 @@ pub fn registry() -> &'static [&'static StyleDescriptor] {
     REGISTRY
 }
 
-/// Whether any style `config` has on reads the entity style mask.
-pub fn any_uses_mask(config: &PostProcessConfig) -> bool {
-    config.enabled && REGISTRY.iter().any(|d| d.uses_mask && d.is_enabled(config))
+/// Whether any style on this frame reads the entity style mask.
+pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
+    config.enabled && REGISTRY.iter().any(|d| d.reads_mask(config, ids))
 }
 
 /// The style called `name`.

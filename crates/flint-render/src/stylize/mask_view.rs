@@ -63,6 +63,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "Width of the white line where two style ids meet",
         ),
     ],
+    component: None,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Mask View Uniform BGL");

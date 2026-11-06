@@ -278,6 +278,68 @@ locked = true
         );
     }
 
+    /// The engine's `ascii_style` (#266) keeps only the fields a scene or
+    /// archetype gives it, so the rest fall back on the scene's
+    /// `[post_process.styles.ascii]`: an archetype is a preset, and an
+    /// entity overrides it field by field.
+    #[test]
+    fn ascii_style_takes_an_archetype_preset_and_gains_no_defaults() {
+        let mut registry = SchemaRegistry::new();
+        registry
+            .load_component_string(include_str!(
+                "../../../schemas/components/ascii_style.toml"
+            ))
+            .unwrap();
+        registry
+            .load_archetype_string(
+                r#"
+[archetype.terminal_prop]
+description = "A prop drawn in green phosphor"
+components = ["ascii_style"]
+
+[archetype.terminal_prop.defaults.ascii_style]
+color = "tint"
+tint = [0.35, 1.0, 0.45]
+ramp = "blocks"
+"#,
+            )
+            .unwrap();
+        let scene = r#"
+[scene]
+name = "ASCII presets"
+
+[entities.monitor]
+archetype = "terminal_prop"
+
+[entities.keyboard]
+archetype = "terminal_prop"
+[entities.keyboard.ascii_style]
+ramp = "minimal"
+
+[entities.chair.ascii_style]
+cell = 12
+"#;
+        let (world, _) = load_scene_string(scene, &registry).unwrap();
+        let get = |e: &str| {
+            world
+                .get_component(world.get_id(e).unwrap(), "ascii_style")
+                .unwrap()
+                .as_table()
+                .unwrap()
+                .clone()
+        };
+        let keyboard = get("keyboard");
+        assert_eq!(keyboard["ramp"].as_str(), Some("minimal"), "the entity wins");
+        assert_eq!(keyboard["color"].as_str(), Some("tint"), "the preset stays");
+        assert_eq!(get("monitor")["ramp"].as_str(), Some("blocks"));
+        let chair = get("chair");
+        assert_eq!(
+            chair.keys().collect::<Vec<_>>(),
+            vec!["cell"],
+            "no schema default fills in a field the scene would set"
+        );
+    }
+
     #[test]
     fn test_load_deep_hierarchy() {
         let registry = SchemaRegistry::new();
