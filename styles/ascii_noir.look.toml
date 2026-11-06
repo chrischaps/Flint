@@ -1,0 +1,45 @@
+# ASCII noir: a scene told in white letters on black, hard light and deep
+# shadow, as a terminal would film a detective story.
+#
+#   flint render <scene> --look ascii_noir -o noir.png
+#   flint render <scene> --look ascii_noir --sweep ascii.contrast=1.2,1.6,2.2 -o noir-contrast.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+
+[look]
+name = "ascii_noir"
+description = "Monochrome ASCII, hard contrast, black ground, a heavy vignette"
+tune = [
+    "ascii.contrast=1.2,1.6,2.2",
+    "ascii.cell=7,9,12,16",
+    "ascii.brightness=0,0.15,0.3,0.45",
+]
+notes = """
+Brightness is the first knob: with contrast 1.6, a brightness of 0 left
+stylize_props' ground black and only the sky in glyphs; 0.15 brought the
+ground back with the props still dark against it; 0.45 drowns the props in
+letters. Lowering contrast to 1 also lifts the ground, but flattens the
+props into it. A cell of 9 points suits
+1080p; drop to 7 for detail, go past 14 for a poster.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = true
+ssao_intensity = 1.2
+exposure = 1.1
+vignette_enabled = true
+vignette_intensity = 0.55
+vignette_smoothness = 0.45
+desaturate = 1.0
+
+[post_process.styles.ascii]
+cell = 9.0
+color = "mono"
+ground = "black"
+ramp = "classic"
+contrast = 1.6
+brightness = 0.15
+background = 0.0
+ink = 1.1

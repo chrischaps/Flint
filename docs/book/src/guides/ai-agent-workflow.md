@@ -136,6 +136,19 @@ flint render levels/dungeon.scene.toml --output preview.png \
     --width 1920 --height 1080 --distance 25 --yaw 45
 ```
 
+### Step 7: Tune a Look
+
+To give a scene a stylized look, start from a preset and change one setting at a time, judging each change from a contact sheet:
+
+```bash
+flint render --look help                        # the presets, what each tunes first, and notes
+flint render levels/dungeon.scene.toml --look ascii_noir --no-grid -o noir.png
+flint render levels/dungeon.scene.toml --look ascii_noir --no-grid \
+    --sweep ascii.brightness=0,0.15,0.3,0.45 -o noir-brightness.png
+```
+
+Read the sheet, pick a value, and write it into the scene's `[post_process.styles.<name>]` table, or into a `styles/<name>.look.toml` of the game's own. Then sweep the next key. To compare whole looks, use `--sweep look=a,b,c`. Each look's `tune` list names the sweeps worth running first. [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) covers the format and how to choose a cell size and ramp.
+
 ## AI Asset Generation
 
 Agents can generate assets alongside scene construction:
