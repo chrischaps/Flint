@@ -466,8 +466,15 @@ pub fn run(args: RenderArgs) -> Result<()> {
             "uv" => DebugMode::UvChecker,
             "unlit" => DebugMode::Unlit,
             "metalrough" => DebugMode::MetallicRoughness,
+            "style" => DebugMode::StyleMask,
             _ => DebugMode::Pbr,
         };
+        if mode == DebugMode::StyleMask && args.no_postprocess {
+            eprintln!(
+                "warning: --debug-mode style draws through post-processing, \
+                 which --no-postprocess turns off; the image shows no mask"
+            );
+        }
         renderer.set_debug_mode(mode);
     }
     if args.wireframe_overlay {
