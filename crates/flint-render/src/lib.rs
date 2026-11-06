@@ -15,6 +15,7 @@ pub mod frustum;
 pub mod gpu_select;
 pub mod bind_cache;
 pub mod gpu_timer;
+pub mod glyph_atlas;
 mod gpu_mesh;
 pub mod grass_pipeline;
 pub mod ground_fog;
@@ -40,6 +41,9 @@ mod texture_cache;
 pub mod world_line_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
+pub use glyph_atlas::{
+    EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas,
+};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
