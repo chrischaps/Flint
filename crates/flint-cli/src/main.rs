@@ -115,7 +115,8 @@ enum Commands {
     /// Replay a recorded or synthetic session through judgment, fully headless
     ReplayChart(replay_chart::ReplayChartArgs),
 
-    /// Render a scripted suite session to WAV, offline and deterministic
+    /// Render a suite offline and deterministically: a music `.suite.toml`
+    /// to WAV, or a `.goldens.toml` of scenes gated against golden PNGs
     RenderSuite(render_suite::RenderSuiteArgs),
 
     /// Prefab operations

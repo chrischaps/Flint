@@ -337,6 +337,10 @@ pub struct RenderArgs {
     /// Enable the FXAA anti-aliasing pass
     #[arg(long)]
     pub fxaa: bool,
+
+    #[command(flatten)]
+    pub style: crate::commands::common_args::StyleArgs,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -661,6 +665,8 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.fxaa_enabled = true;
         }
         apply_ascii_style_flags(&args, &mut pp_config)?;
+        // `--style name[:k=v,...]` (#271) last: an explicit word wins
+        args.style.apply(&mut pp_config);
 
         renderer.set_post_process_config(pp_config);
         renderer.ensure_style_resources(&ctx.device);
@@ -708,9 +714,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_ascii_spike(&ctx.device, config);
     }
 
-    // Post time for grain/mode animation. Headless renders leave this 0.0 so
-    // PNG snapshots stay deterministic; --grain-time pins an explicit frame.
-    if let Some(t) = args.grain_time {
+    // Post time for grain/mode animation and animated styles. Headless
+    // renders leave this 0.0 so PNG snapshots stay deterministic;
+    // --style-time (or the older --grain-time) pins an explicit frame.
+    if let Some(t) = args.style.style_time.or(args.grain_time) {
         renderer.ocean_time = t as f64;
     }
 
