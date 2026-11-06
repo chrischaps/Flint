@@ -1,0 +1,96 @@
+# Glyph Atlas
+
+Every ASCII look needs glyphs on the GPU. `flint_render::glyph_atlas` rasterizes a monospaced font into one coverage texture and pairs it with the data a style reads: **ramps**, glyphs ordered from no ink to the most, and **edge glyphs** for silhouettes. The full-screen and per-entity ASCII styles of epic #260 build on it, and so can any later text-based look.
+
+![The built-in 8x8 atlas](../images/glyph-atlas-builtin.png)
+
+*The built-in set, 4x: printable ASCII, the box-drawing edge glyphs `─ │ ╱ ╲` and the shade blocks `░ ▒ ▓ █`, each in an 8x8 cell with a one-pixel gutter.*
+
+## The pieces
+
+| Type | What it is |
+|---|---|
+| `GlyphAtlas` | Equal cells in an 8-bit coverage image (0 paper, 255 ink), 16 cells a row, one-pixel gutters. Lookups: `index_of`, `uv_rect`, `cell_origin`, `sample`, and `coverage` (each glyph's measured mean ink, 0..1). |
+| `GlyphRamp` | Named glyphs from least ink to most. `pick(luminance)` maps 0..1 onto equal bands; `atlas_indices()` is what a shader's ramp buffer holds. |
+| `EdgeGlyphs` | `horizontal`, `vertical`, `diagonal`, `antidiagonal`; `for_angle(radians)` picks one from an edge's direction on screen. |
+| `GlyphSet` | An atlas with its ramps, a default ramp and edge glyphs, loaded from a `*.glyphs.toml`. |
+| `GlyphSetCache` | Sets by name, each loaded once. |
+| `GpuGlyphAtlas` | The atlas uploaded once as an `R8Unorm` texture: sample `.r` for ink. |
+
+An atlas comes from one of three sources:
+
+- **The built-in set** (`GlyphSet::builtin()`), a hand-drawn 8x8 font made for the engine (`crates/flint-render/src/glyph_atlas/builtin_8x8.txt`, editable as text) with no font licence attached. Built once per process.
+- **A TTF or OTF**, rasterized with `ab_glyph` at a line height in pixels. The cell is the line height by the widest advance, and each glyph sits on the baseline, centred in its cell.
+- **A bitmap grid image** (PNG or JPEG), cut into cells left to right, top to bottom.
+
+## Built-in ramps
+
+| Ramp | Glyphs | Order |
+|---|---|---|
+| `classic` (default) | ` .:-=+*#%@` | as written |
+| `blocks` | ` ░▒▓█` | as written (0, 25, 50, 75, 100% ink) |
+| `minimal` | ` .oO@` | as written |
+| `detailed` | Paul Bourke's 70-glyph ramp | sorted by measured coverage |
+
+![A lit sphere drawn through the classic ramp](../images/glyph-atlas-specimen-classic.png)
+
+*The `glyph_atlas` example lights a sphere on the CPU, picks a glyph per cell from the `classic` ramp and outlines the silhouette with the edge glyphs. Because the built-in edge glyphs fill their cells, the outline joins into one line.*
+
+## A glyph set file
+
+A project's sets live in `fonts/` as `<name>.glyphs.toml`, beside the TTFs the HUD already uses:
+
+```toml
+default_ramp = "rain"       # top level, so it goes before the first [table]
+
+[font]
+file = "Hack-Regular.ttf"   # beside this file; omit [font] for the built-in 8x8 set
+size = 16                   # TTF line height in pixels (default 16)
+# A bitmap grid instead:
+# file = "crt.png"
+# cell = [8, 12]            # the grid's cell in pixels
+# first_char = 32           # cell 0 holds this character...
+# chars = " !\"#$%..."      # ...or name each cell's character in order
+# invert = false            # true for dark ink on light paper
+
+[ramps.rain]
+glyphs = " .|!lI"
+
+[ramps.dense]
+glyphs = "@#. *+=%"
+sort = "coverage"           # re-order by each glyph's measured ink in this font
+
+[edges]                     # each defaults to - | / \
+horizontal = "~"
+```
+
+- A TTF atlas holds printable ASCII plus every glyph the set's ramps and edges name. A glyph the font lacks is an error that names it (`the font has no glyph for '漢'`).
+- A set with no `[ramps]` gets the built-in ramps that its font can draw, re-sorted by coverage in that font.
+- Unknown keys are errors, so a misspelled `glyph =` fails loudly rather than being ignored.
+
+![The same sphere in Hack, detailed ramp](../images/glyph-atlas-specimen-hack.png)
+
+*A set loading Hack at 16 px (9x16 cells), drawn through the coverage-sorted `detailed` ramp. The ASCII edge glyphs don't fill their cells, so the outline reads as strokes, not a line.*
+
+## Naming a set
+
+`GlyphSetCache::get(name)` resolves:
+
+- `builtin` (or an empty name) to the built-in set;
+- a path ending `.glyphs.toml` against each search directory, then as given;
+- a bare name such as `terminal` to `<dir>/fonts/terminal.glyphs.toml`, searching the scene's folder and then its parent, the same rule the player uses to find `fonts/`.
+
+Failures are cached too, so a bad name warns once rather than every frame.
+
+## Web and bundles
+
+Every read goes through `flint_core::vfs`: the TOML through `vfs::read_to_string`, fonts through `vfs::read`, grid images through `flint_render::open_image`. A game bundle served on the web loads a set exactly as the disk does. `flint bundle` packs `fonts/` and fails if a `*.glyphs.toml` names a font file that isn't packed.
+
+## Looking at a set
+
+```bash
+cargo run -p flint-render --example glyph_atlas -- out/                                # the built-in set
+cargo run -p flint-render --example glyph_atlas -- out/ fonts/terminal.glyphs.toml
+```
+
+This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each glyph's ink and each ramp's coverage curve) and `<set>_<ramp>.png` (the sphere specimen above).

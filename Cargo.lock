@@ -1915,7 +1915,9 @@ dependencies = [
 name = "flint-render"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bytemuck",
+ "epaint_default_fonts",
  "flint-asset",
  "flint-core",
  "flint-ecs",
@@ -1927,6 +1929,7 @@ dependencies = [
  "naga",
  "pollster",
  "profiling",
+ "serde",
  "thiserror 2.0.18",
  "toml",
  "tracing",
