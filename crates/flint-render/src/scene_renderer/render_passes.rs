@@ -1332,6 +1332,8 @@ impl SceneRenderer {
                 mask: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
+                pixels_per_point: self.pixels_per_point,
+                scene_dir: self.scene_dir.as_deref(),
                 binds: &resources.binds,
                 targets: &resources.styles,
             }

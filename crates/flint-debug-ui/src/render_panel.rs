@@ -317,6 +317,46 @@ impl RenderDebugPanel {
                 }
                 ui.add_enabled_ui(on, |ui| {
                     ui.indent(style.name, |ui| {
+                        // Options: a combo of the declared choices, or a
+                        // text field (applied on Enter or focus loss) when
+                        // the style takes any name
+                        for o in style.options {
+                            let current = style.option(&self.pp, o.name).to_string();
+                            let mut picked = None;
+                            if o.choices.is_empty() {
+                                let mut text = current.clone();
+                                ui.horizontal(|ui| {
+                                    ui.label(o.name);
+                                    let r = ui.text_edit_singleline(&mut text);
+                                    if r.lost_focus() && text != current {
+                                        picked = Some(text);
+                                    }
+                                });
+                            } else {
+                                let shown = if current.is_empty() {
+                                    "(default)"
+                                } else {
+                                    current.as_str()
+                                };
+                                egui::ComboBox::from_id_salt((style.name, o.name))
+                                    .selected_text(shown)
+                                    .show_ui(ui, |ui| {
+                                        for choice in o.choices {
+                                            if ui
+                                                .selectable_label(current == *choice, *choice)
+                                                .clicked()
+                                            {
+                                                picked = Some(choice.to_string());
+                                            }
+                                        }
+                                    });
+                                ui.label(o.name);
+                            }
+                            if let Some(value) = picked.filter(|v| *v != current) {
+                                self.pp.styles.set_option(style.name, o.name, &value);
+                                f.pp_changed = true;
+                            }
+                        }
                         for p in style.params {
                             let mut value = style.param(&self.pp, p.name);
                             if slider(ui, p.name, &mut value, p.min..=p.max) {

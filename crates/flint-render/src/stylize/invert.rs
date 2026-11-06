@@ -23,6 +23,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         min: 0.0,
         max: 1.0,
     }],
+    options: &[],
     enabled: None,
     create: |d| {
         let device = d.device;

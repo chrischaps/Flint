@@ -572,6 +572,11 @@ impl PlayerApp {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Frame Encoder"),
             });
+        // Styles sized in points (ASCII cells, #265) follow the window's
+        // scale factor, which changes when it moves to another monitor
+        if let Some(window) = &self.window {
+            renderer.pixels_per_point = window.scale_factor() as f32;
+        }
         renderer.encode_to(
             &context.device,
             &context.queue,

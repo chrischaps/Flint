@@ -91,26 +91,79 @@ pub struct RenderArgs {
     #[arg(long, default_value = "1")]
     pub msaa: u32,
 
-    /// ASCII spike (#261): `full` (whole screen), `entity` (only
-    /// --ascii-entities, screen grid) or `entity-object` (only those, a
-    /// grid anchored at each entity's projected origin)
-    #[arg(long)]
+    /// ASCII: bare `--ascii` turns on the full-screen ASCII style (#265,
+    /// `[post_process.styles.ascii]`). The spike's prototypes (#261) are
+    /// `--ascii=full` (whole screen), `--ascii=entity` (only
+    /// --ascii-entities, screen grid) and `--ascii=entity-object` (only
+    /// those, a grid anchored at each entity's projected origin). The `=`
+    /// is required so that `--ascii <scene>` reads the scene as the scene
+    #[arg(
+        long,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "style"
+    )]
     pub ascii: Option<String>,
 
-    /// ASCII cell size in scene pixels (default 8)
+    /// ASCII cell width in points (default 8; the style's height follows
+    /// the font, the spike's cells are square scene pixels)
     #[arg(long)]
     pub ascii_cell: Option<f32>,
+
+    /// ASCII style: glyph set, `builtin` or a `fonts/<name>.glyphs.toml`
+    /// beside the scene (default builtin)
+    #[arg(long)]
+    pub ascii_font: Option<String>,
+
+    /// ASCII style: the glyph set's ramp (built-in: classic, blocks,
+    /// minimal, detailed; default the set's own)
+    #[arg(long)]
+    pub ascii_ramp: Option<String>,
+
+    /// ASCII style colour: `source` (the cell's hue), `tint` (one colour,
+    /// --ascii-tint) or `raw` (the cell's colour as it is)
+    #[arg(long)]
+    pub ascii_color: Option<String>,
+
+    /// ASCII style tint for `--ascii-color tint` (r,g,b 0-1; default
+    /// 0.35,1,0.45, phosphor green)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub ascii_tint: Option<[f32; 3]>,
+
+    /// ASCII style: how much of the cell's colour fills behind its glyph
+    /// (0 black, 1 the cell's colour; default 0.15)
+    #[arg(long)]
+    pub ascii_background: Option<f32>,
+
+    /// ASCII style: luminance offset before the ramp (-1..1, default 0)
+    #[arg(long, allow_hyphen_values = true)]
+    pub ascii_brightness: Option<f32>,
+
+    /// ASCII style: luminance contrast about mid-grey (default 1)
+    #[arg(long)]
+    pub ascii_contrast: Option<f32>,
+
+    /// ASCII style: glyph ink brightness (default 1)
+    #[arg(long)]
+    pub ascii_ink: Option<f32>,
+
+    /// Physical pixels per point, as a high-DPI window's scale factor:
+    /// styles sized in points (ASCII cells) scale by it (default 1)
+    #[arg(long)]
+    pub pixels_per_point: Option<f32>,
 
     /// Entities the masked ASCII modes stylize: comma-separated names,
     /// `prefix*`, or `*` for all (children go with their parent)
     #[arg(long, value_delimiter = ',')]
     pub ascii_entities: Vec<String>,
 
-    /// ASCII tone bands (default 4; 0 keeps the full ten-glyph ramp)
+    /// ASCII tone bands (style default 0, spike default 4; 0 keeps the
+    /// whole ramp)
     #[arg(long)]
     pub ascii_levels: Option<f32>,
 
-    /// ASCII tone footprint in cells (default 2; 1 = each cell alone)
+    /// ASCII tone footprint in cells (style default 1, spike default 2;
+    /// 1 = each cell alone)
     #[arg(long)]
     pub ascii_footprint: Option<f32>,
 
@@ -600,6 +653,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         if args.fxaa {
             pp_config.fxaa_enabled = true;
         }
+        apply_ascii_style_flags(&args, &mut pp_config)?;
 
         renderer.set_post_process_config(pp_config);
         renderer.ensure_style_resources(&ctx.device);
@@ -609,9 +663,12 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if let Some(scale) = args.render_scale {
         renderer.set_render_scale(&ctx.device, scale);
     }
-    if let Some(mode) = &args.ascii {
+    if let Some(px) = args.pixels_per_point {
+        renderer.pixels_per_point = px;
+    }
+    if let Some(mode) = args.ascii.as_ref().filter(|m| *m != ASCII_STYLE) {
         let mode = flint_render::AsciiSpikeMode::parse(mode).with_context(|| {
-            format!("--ascii: unknown mode '{mode}' (full, entity, entity-object)")
+            format!("--ascii: unknown mode '{mode}' (bare --ascii, or the spike's full, entity, entity-object)")
         })?;
         let mut config = flint_render::AsciiSpikeConfig {
             mode,
@@ -748,6 +805,78 @@ pub fn run(args: RenderArgs) -> Result<()> {
         args.width, args.height, args.output
     );
 
+    Ok(())
+}
+
+/// What bare `--ascii` parses as: the ASCII style, not a spike mode.
+const ASCII_STYLE: &str = "style";
+
+/// The ASCII style's flags (#265) onto `[post_process.styles.ascii]`.
+/// Bare `--ascii`, or any flag only the style reads, turns the style on;
+/// the flags the spike shares (`--ascii-cell`, `--ascii-levels`,
+/// `--ascii-footprint`) go to whichever of the two is on.
+fn apply_ascii_style_flags(
+    args: &RenderArgs,
+    pp: &mut flint_render::PostProcessConfig,
+) -> Result<()> {
+    const NAME: &str = "ascii";
+    if args.ascii.as_deref().is_some_and(|m| m != ASCII_STYLE) {
+        return Ok(()); // a spike mode
+    }
+    let style_only = args.ascii_font.is_some()
+        || args.ascii_ramp.is_some()
+        || args.ascii_color.is_some()
+        || args.ascii_tint.is_some()
+        || args.ascii_background.is_some()
+        || args.ascii_brightness.is_some()
+        || args.ascii_contrast.is_some()
+        || args.ascii_ink.is_some();
+    if args.ascii.is_some() || style_only {
+        pp.styles.set_enabled(NAME, true);
+    }
+    if !pp.styles.is_enabled(NAME) {
+        return Ok(());
+    }
+    let styles = &mut pp.styles;
+    if let Some(font) = &args.ascii_font {
+        styles.set_option(NAME, "font", font);
+    }
+    if let Some(ramp) = &args.ascii_ramp {
+        styles.set_option(NAME, "ramp", ramp);
+    }
+    if let Some(color) = &args.ascii_color {
+        let modes = flint_render::stylize::find(NAME)
+            .and_then(|d| d.options.iter().find(|o| o.name == "color"))
+            .map_or(&[][..], |o| o.choices);
+        if !modes.contains(&color.as_str()) {
+            anyhow::bail!(
+                "--ascii-color: unknown mode '{color}' ({})",
+                modes.join(", ")
+            );
+        }
+        styles.set_option(NAME, "color", color);
+    }
+    if let Some([r, g, b]) = args.ascii_tint {
+        styles.set_param(NAME, "tint_r", r);
+        styles.set_param(NAME, "tint_g", g);
+        styles.set_param(NAME, "tint_b", b);
+        if args.ascii_color.is_none() {
+            styles.set_option(NAME, "color", "tint");
+        }
+    }
+    for (param, value) in [
+        ("cell", args.ascii_cell),
+        ("levels", args.ascii_levels),
+        ("footprint", args.ascii_footprint),
+        ("background", args.ascii_background),
+        ("brightness", args.ascii_brightness),
+        ("contrast", args.ascii_contrast),
+        ("ink", args.ascii_ink),
+    ] {
+        if let Some(value) = value {
+            styles.set_param(NAME, param, value);
+        }
+    }
     Ok(())
 }
 

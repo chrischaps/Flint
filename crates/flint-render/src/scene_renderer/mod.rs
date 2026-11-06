@@ -570,6 +570,10 @@ pub struct SceneRenderer {
     bitmap_font_cache: HashMap<String, BitmapFont>,
     /// Scene directory for resolving relative font/texture paths
     pub scene_dir: Option<std::path::PathBuf>,
+    /// Physical pixels per logical point of the window it draws into: the
+    /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
+    /// it. Hosts with a window set it; 1 headless.
+    pub pixels_per_point: f32,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
@@ -809,6 +813,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            pixels_per_point: 1.0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -2283,6 +2288,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            pixels_per_point: 1.0,
             grass_time: 0.0,
             device_lost: false,
         }

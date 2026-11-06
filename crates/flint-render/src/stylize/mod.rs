@@ -40,7 +40,7 @@
 //!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
-//!   -> Display styles (invert)               surface format, output resolution
+//!   -> Display styles (ASCII, invert)        surface format, output resolution
 //!   -> FXAA
 //!   -> surface
 //! ```
@@ -93,6 +93,18 @@ pub struct StyleParam {
     pub max: f32,
 }
 
+/// One named choice a style takes (a font, a ramp, a colour mode): a
+/// string in `[post_process.styles.<name>]`, where a parameter is a number.
+#[derive(Clone, Copy, Debug)]
+pub struct StyleOption {
+    pub name: &'static str,
+    pub default: &'static str,
+    /// The values the F4 menu offers. Empty means any text (a file or set
+    /// name). A style still gets whatever the scene says and decides what
+    /// a value outside the list means.
+    pub choices: &'static [&'static str],
+}
+
 /// What the framework needs to build a style.
 #[derive(Clone, Copy)]
 pub struct StyleDevice<'a> {
@@ -112,6 +124,8 @@ pub struct StyleDescriptor {
     pub stage: StyleStage,
     /// Parameters and their defaults, read with [`StyleFrame::param`].
     pub params: &'static [StyleParam],
+    /// Named choices and their defaults, read with [`StyleFrame::option`].
+    pub options: &'static [StyleOption],
     /// When the style is on. `None` reads `enabled` from
     /// [`PostProcessConfig::styles`]; a style with fields of its own on
     /// [`PostProcessConfig`] (Kuwahara) reads those instead.
@@ -145,6 +159,16 @@ impl StyleDescriptor {
             .find(|p| p.name == name)
             .map_or(0.0, |p| p.default);
         config.styles.param(self.name, name).unwrap_or(default)
+    }
+
+    /// Option `name`'s value in `config`, or its default.
+    pub fn option<'c>(&self, config: &'c PostProcessConfig, name: &str) -> &'c str {
+        let default = self
+            .options
+            .iter()
+            .find(|o| o.name == name)
+            .map_or("", |o| o.default);
+        config.styles.option(self.name, name).unwrap_or(default)
     }
 }
 
@@ -205,6 +229,13 @@ pub struct StyleFrame<'a> {
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
     pub time: f32,
+    /// Physical pixels per logical point of the window (the OS scale
+    /// factor). A style sized in points multiplies by it, so its cells keep
+    /// their size on a high-DPI display. 1 headless unless asked.
+    pub pixels_per_point: f32,
+    /// The scene's folder, for styles that load files (a glyph set from
+    /// `fonts/`), when the host knows it.
+    pub scene_dir: Option<&'a std::path::Path>,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
 }
@@ -223,6 +254,11 @@ impl StyleFrame<'_> {
     /// This style's parameter `name`, from the config or its default.
     pub fn param(&self, name: &str) -> f32 {
         self.descriptor.param(self.config, name)
+    }
+
+    /// This style's option `name`, from the config or its default.
+    pub fn option(&self, name: &str) -> &str {
+        self.descriptor.option(self.config, name)
     }
 
     /// A texture of the style's own, `width` x `height` in `format`, made
@@ -336,6 +372,7 @@ impl StyleFrame<'_> {
 pub struct StyleSetting {
     pub enabled: bool,
     pub params: BTreeMap<String, f32>,
+    pub options: BTreeMap<String, String>,
 }
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
@@ -365,6 +402,22 @@ impl StyleSettings {
             .insert(param.to_string(), value);
     }
 
+    pub fn option(&self, name: &str, option: &str) -> Option<&str> {
+        self.styles
+            .get(name)?
+            .options
+            .get(option)
+            .map(String::as_str)
+    }
+
+    pub fn set_option(&mut self, name: &str, option: &str, value: &str) {
+        self.styles
+            .entry(name.to_string())
+            .or_default()
+            .options
+            .insert(option.to_string(), value.to_string());
+    }
+
     /// The styles that have settings, by name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &StyleSetting)> {
         self.styles.iter().map(|(k, v)| (k.as_str(), v))
@@ -387,7 +440,7 @@ impl StyleSettings {
             };
             let mut setting = StyleSetting {
                 enabled: true,
-                params: BTreeMap::new(),
+                ..Default::default()
             };
             for (key, value) in table {
                 if key == "enabled" {
@@ -399,8 +452,22 @@ impl StyleSettings {
                     }
                     continue;
                 }
+                if descriptor.options.iter().any(|o| o.name == key) {
+                    match value.as_str() {
+                        Some(text) => {
+                            setting.options.insert(key.clone(), text.to_string());
+                        }
+                        None => warnings.push(format!("styles.{name}.{key} must be a string")),
+                    }
+                    continue;
+                }
                 if !descriptor.params.iter().any(|p| p.name == key) {
-                    let known: Vec<&str> = descriptor.params.iter().map(|p| p.name).collect();
+                    let known: Vec<&str> = descriptor
+                        .params
+                        .iter()
+                        .map(|p| p.name)
+                        .chain(descriptor.options.iter().map(|o| o.name))
+                        .collect();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
                         if known.is_empty() {
@@ -617,7 +684,7 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, invert);
+register_styles!(kuwahara, ascii, invert);
 
 /// Every registered style, in chain order.
 pub fn registry() -> &'static [&'static StyleDescriptor] {
@@ -712,6 +779,33 @@ mod tests {
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn tables_read_options_as_strings() {
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[ascii]\ncell = 12\nramp = \"blocks\"\ncolor = \"tint\"\nfont = 3\n")
+                .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert!(settings.is_enabled("ascii"));
+        assert_eq!(settings.param("ascii", "cell"), Some(12.0));
+        assert_eq!(settings.option("ascii", "ramp"), Some("blocks"));
+        assert_eq!(settings.option("ascii", "color"), Some("tint"));
+        assert_eq!(warnings, vec!["styles.ascii.font must be a string"]);
+
+        let ascii = find("ascii").unwrap();
+        let mut config = PostProcessConfig::default();
+        assert_eq!(ascii.option(&config, "font"), "builtin");
+        assert_eq!(ascii.option(&config, "color"), "source");
+        config.styles = settings;
+        assert_eq!(ascii.option(&config, "ramp"), "blocks");
+        assert_eq!(ascii.option(&config, "nope"), "");
+
+        // An unknown key names the options too
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[ascii]\nglyphs = 1\n").unwrap();
+        let (_, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings[0].contains("ramp"), "{warnings:?}");
     }
 
     #[test]

@@ -290,11 +290,20 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
-| `--ascii <mode>` | (none) | ASCII spike (#261): `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin. A prototype, not the shipped style |
-| `--ascii-entities <list>` | (none) | Entities the masked ASCII modes stylize: comma-separated names, `prefix*`, or `*`; children go with their parent. Static meshes only (skinned, terrain, grass and particles aren't masked) |
-| `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
-| `--ascii-levels <n>` | `4` | ASCII tone bands; `0` keeps the full ten-glyph ramp |
-| `--ascii-footprint <cells>` | `2` | How many cells wide each cell's tone is averaged over |
+| `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
+| `--ascii=<mode>` | (none) | The ASCII spike's prototypes (#261), with the `=`: `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin |
+| `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
+| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
+| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour) or `raw` (the cell's colour as it is) |
+| `--ascii-tint <r,g,b>` | `0.35,1,0.45` | *Style:* the tint colour; sets `--ascii-color tint` unless that's given |
+| `--ascii-background <f32>` | `0.15` | *Style:* how much of the cell's colour fills behind its glyph (0 black) |
+| `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
+| `--ascii-ink <f32>` | `1` | *Style:* glyph ink brightness |
+| `--pixels-per-point <f32>` | `1` | A high-DPI window's scale factor: styles sized in points (ASCII cells) scale by it |
+| `--ascii-entities <list>` | (none) | Entities the spike's masked modes stylize: comma-separated names, `prefix*`, or `*`; children go with their parent. Static meshes only (skinned, terrain, grass and particles aren't masked) |
+| `--ascii-cell <n>` | `8` | ASCII cell width: in points for the style (height follows the font), in square scene pixels for the spike |
+| `--ascii-levels <n>` | `0` style, `4` spike | ASCII tone bands; `0` keeps the whole ramp |
+| `--ascii-footprint <cells>` | `1` style, `2` spike | How many cells wide each cell's tone is averaged over |
 | `--ascii-no-edges` | `false` | Turn off the line glyphs (`\| / - \`) drawn on depth, normal and silhouette edges |
 | `--ascii-edge-depth <f32>` | `0.6` | Relative view-distance step that counts as an edge (lower finds more) |
 | `--ascii-edge-normal <f32>` | `2.5` | Normal change that counts as a crease (lower finds more) |
