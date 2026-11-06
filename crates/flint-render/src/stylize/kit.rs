@@ -49,6 +49,12 @@ pub fn sampled_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayo
 /// The entity style mask at binding 0: a `texture_2d<u32>` read with
 /// `textureLoad` (bind it with [`StyleFrame::mask_bind`](super::StyleFrame::mask_bind)).
 pub fn mask_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    uint_layout(device, label)
+}
+
+/// A `texture_2d<u32>` at binding 0, read with `textureLoad`: the style
+/// mask, or a style's own integer state (ASCII's cells, #277).
+pub fn uint_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(label),
         entries: &[wgpu::BindGroupLayoutEntry {

@@ -85,6 +85,25 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `ink` | `1` | Glyph brightness |
 | `levels` | `0` | Quantize the tone to this many bands (0 keeps every step of the ramp) |
 | `footprint` | `1` | Average each cell's colour over this many cells (wider settles texture noise) |
+| `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first |
+| `smoothing` | `0.6` | How much of last frame's colour a cell keeps (0--0.95). A cell whose colour jumps takes the new one at once, so nothing trails |
+| `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1) |
+| `dither` | `0` | Ordered (4x4 Bayer) dither before the ramp, fixed to the grid: gradients break into a still pattern instead of one hard edge (0--1, `--ascii-dither`) |
+
+### Temporal stability
+
+In motion, a cell whose tone sits on a ramp boundary tips to the neighbouring glyph and back at the slightest change, and the whole picture crawls. So the style draws in two passes: a cell pass writes each cell's colour and glyph into a small state texture (one texel a cell), and the glyph pass draws from it. The state is kept for the next frame. A cell blends in part of last frame's colour (`smoothing`) and keeps last frame's glyph until its tone has clearly moved on (`hysteresis`).
+
+On `demo/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captured at 1280x720 with `--frame-step 0.0166667` for 3 s (181 frames, 14,400 cells), `python tools/ascii_flips.py` counted:
+
+| | glyph flips per frame | reversals per frame (A, B, A) |
+|---|---|---|
+| `temporal = "off"` | 408.3 (2.84% of cells) | 100.6 (0.70%) |
+| `temporal = "on"` | 118.3 (0.82%) | 0.1 (0.00%) |
+
+Reversals, where a glyph changes and changes back two frames later, are the shimmer itself, and they are gone. The flips that remain are the scene really moving.
+
+The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture repeats run to run. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up. Call it on a camera cut too, so the new shot doesn't start from the old one's glyphs.
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.15 ms at 1080p on an RTX 4070.
 
