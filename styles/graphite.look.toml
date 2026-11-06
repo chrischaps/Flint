@@ -1,0 +1,46 @@
+# Graphite: small dark marks on pale paper, denser where the scene is
+# darker, like a pencil study hatched cell by cell.
+#
+#   flint render <scene> --look graphite -o graphite.png
+#   flint render <scene> --look graphite --sweep ascii.cell=4,5,7,9 -o graphite-cell.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# Until the pencil sketch style (#273) lands this is the ASCII style
+# inverted: the ink fills each cell as paper and the glyph is cut out of
+# it, so the letters are the pencil strokes.
+
+[look]
+name = "graphite"
+description = "Inverted mono ASCII at a fine cell: pencil marks on paper"
+tune = [
+    "ascii.cell=4,5,7,9",
+    "ascii.contrast=1,1.6,2.2,3",
+    "ascii.ramp=detailed,classic,minimal",
+    "ascii.brightness=-0.1,0.05,0.2",
+]
+notes = """
+Contrast gives the drawing its form: at 1 stylize_props was an even grey
+texture with the props barely there; 2.2 separates paper (sky), mid-tone
+(ground) and the dark props; at 3 the sky goes blank white. Cell is the
+pencil's sharpness: 4-5 points reads as hatching, 9 and up as type.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = true
+ssao_intensity = 1.4
+exposure = 1.2
+desaturate = 1.0
+vignette_enabled = true
+vignette_intensity = 0.2
+grade_gain = [0.96, 0.95, 0.92]
+
+[post_process.styles.ascii]
+cell = 5.0
+color = "mono"
+ground = "inverse"
+ramp = "detailed"
+contrast = 2.2
+brightness = 0.05
+ink = 0.95

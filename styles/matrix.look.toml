@@ -1,0 +1,43 @@
+# Matrix: the world as green phosphor glyphs with a soft halo, a CRT seen
+# in a dark room.
+#
+#   flint render <scene> --look matrix -o matrix.png
+#   flint render <scene> --look matrix --sweep ascii.glow=0,0.4,0.8,1.2 -o matrix-glow.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+
+[look]
+name = "matrix"
+description = "Green phosphor ASCII with glow on a near-black ground"
+tune = [
+    "ascii.glow=0,0.4,0.8,1.2",
+    "ascii.ramp=classic,detailed,blocks",
+    "ascii.cell=6,8,11",
+]
+notes = """
+The phosphor palette maps each cell's tone to a green, so the glyph and its
+colour both carry brightness. Glow is a halo around bright glyphs: in a
+640-wide sweep cell it shows mostly in the sky (0.8-1.2 turns it to a pale
+band) and barely on dark props, so judge it at the final resolution. The
+`detailed` ramp gives the most letter-like texture.
+"""
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.0
+exposure = 1.3
+vignette_enabled = true
+vignette_intensity = 0.35
+fog_enabled = false
+
+[post_process.styles.ascii]
+cell = 8.0
+color = "palette"
+palette = "phosphor"
+ground = "dim"
+ramp = "detailed"
+contrast = 1.25
+glow = 0.6
+background = 0.08
