@@ -65,8 +65,10 @@
 //! [`BindCache`]: crate::bind_cache::BindCache
 
 pub mod kit;
+mod spec;
 mod targets;
 
+pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
 pub use targets::{StyleTargets, StyleTexture};
 
 use crate::bind_cache::BindCache;

@@ -23,6 +23,19 @@ WARN style 'invert' has no parameter 'wobble'; it takes: strength
 
 Kuwahara predates the table and keeps its own `kuwahara_*` fields (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
 
+From the command line, `--style name[:key=value,...]` turns any registered style on over a scene without editing it (#271), on `flint render` and on `flint edit <model or effect> --render`:
+
+```bash
+flint render demo/pbr_test.scene.toml --style ascii
+flint render demo/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
+flint render demo/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
+flint render levels/tavern.scene.toml --style ascii:off       # a style the scene has on, off
+flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
+flint render demo/pbr_test.scene.toml --style help            # every style and its keys
+```
+
+The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
+
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, drawn from the style's own declaration: a toggle, a slider per parameter, and a combo (or a text field) per option.
 
 | Style | Stage | Parameters |
@@ -75,7 +88,7 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.15 ms at 1080p on an RTX 4070.
 
-Edge glyphs (#267) and per-entity ASCII (#266) build on it. `crates/flint-cli/tests/ascii_golden.rs` holds its golden image.
+Edge glyphs (#267) and per-entity ASCII (#266) build on it. Its goldens are in the [stylize goldens](#goldens).
 
 ### Colour modes
 
@@ -192,6 +205,29 @@ What the framework does so a style doesn't have to:
 - **Samplers.** Styles bind the chain's one linear sampler, so their bind groups add nothing to DX12's 2048-slot sampler heap.
 - **The mask.** A `uses_mask` style gets the entity style mask drawn for it each frame, and no style pays for it otherwise.
 - **Timing.** Each style is a GPU-timer scope under its `label`, so `flint render --gpu-time` and the player's `--perf` name it.
+- **The command line.** `flint render --style <name>` reaches a new style from its descriptor alone.
+
+## Goldens
+
+Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case with `flint render` and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite.
+
+```bash
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --case ascii-entity
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless    # after a deliberate change
+```
+
+| Case | What it pins |
+|------|--------------|
+| `ascii-full` | `--style ascii` on `pbr_test`: the #265 golden, the same pixels as `--ascii` |
+| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props` |
+| `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points |
+| `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid |
+| `ascii-entity`, `ascii-entity-object` | the spike's per-entity modes (#261), screen and object grids |
+| `style-mask` | the entity style mask the per-entity styles read (`--debug-mode style`) |
+| `invert`, `kuwahara` | the other styles, with a tighter tolerance |
+
+Cases render single-sample with the post clock at 0 unless they say otherwise. The props cases use `demo/stylize_props.scene.toml`, which loads in a few seconds in a debug build, with the grid off. Glyph styles share #265's tolerance (fail when more than 2% of pixels differ by more than 48 levels, or the mean passes 3), since a cell on a ramp step's border can flip glyph on another GPU; smooth styles take `level = 8, share = 0.003, mean = 0.25`, because Kuwahara at radius 4 against a radius-5 golden is a 0.39 mean the glyph limits would pass. On one machine, every case is byte-identical run to run. **A new style adds a case here.** The manifest format is in [Headless Rendering](../guides/headless-rendering.md#golden-suites).
 
 ## The entity style mask
 

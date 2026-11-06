@@ -59,6 +59,10 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
+   #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
+   #                          against its descriptor; repeatable; `--style help`;
+   #                          also on `flint edit <model|effect> --render`)
+   #   --style-time 1.5       (post time animated styles read; default 0)
    #   --ascii=full|entity|entity-object --ascii-entities "barrel,table_*"
    #                          (#261 spike prototypes, `=` required; masked modes are static meshes only)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
@@ -112,6 +116,11 @@ Flint uses an **edit -> validate -> play** loop:
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
    # refused before sending if its worst case could pass --max-cost.
    ```
+
+   **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
+   renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
+   `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
+   --test render_goldens` runs it. A new style adds a case. A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 

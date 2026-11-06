@@ -111,6 +111,8 @@ flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml
 
 ## `flint render-suite`
 
+Given a `*.goldens.toml` instead of a suite manifest, `render-suite` gates scenes against golden PNGs; see [Golden Suites](../guides/headless-rendering.md#golden-suites).
+
 Render a scripted suite session to a 32-bit float stereo WAV, offline and deterministic. The event script schedules bus gain, low-pass and detune changes on bars or beats, so a whole arrangement can be auditioned or diffed without playing it.
 
 ```bash
@@ -121,7 +123,7 @@ flint render-suite music/prototype.suite.toml -o out/full.wav --duration-bars 32
 | Flag | Default | Description |
 |------|---------|-------------|
 | `<manifest>` | (required) | Path to the suite manifest |
-| `-o`, `--output <path>` | (required) | Output WAV path |
+| `-o`, `--output <path>` | (required for music) | Output WAV path |
 | `--script <path>` | (none) | Event script (`*.events.toml`) of scheduled bus changes and markers |
 | `--base-dir <path>` | cwd | Manifest path root |
 | `--duration-bars <n>` | length of the longest stem | Render this many bars. Conflicts with `--duration-seconds` |

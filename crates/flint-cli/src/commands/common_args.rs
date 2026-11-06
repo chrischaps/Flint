@@ -23,6 +23,57 @@ pub struct ChartCommonArgs {
     pub base_dir: Option<String>,
 }
 
+/// `--style` and `--style-time`, shared by `flint render` and the
+/// headless `flint edit --render` paths (#271).
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct StyleArgs {
+    /// Turn on a registered style over the scene's post-processing:
+    /// `name[:key=value,...]`, e.g. `ascii`, `ascii:cell=12,ramp=blocks`,
+    /// `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable;
+    /// a later word wins. `--style help` lists every style and its keys
+    #[arg(long = "style", value_parser = parse_style_spec)]
+    pub styles: Vec<String>,
+
+    /// Post time in seconds that animated styles (and grain / render
+    /// modes) see; headless captures default to 0, so the same value
+    /// gives the same pixels
+    #[arg(long)]
+    pub style_time: Option<f32>,
+}
+
+impl StyleArgs {
+    /// Write every `--style` word into `config`, in order.
+    pub fn apply(&self, config: &mut flint_render::PostProcessConfig) {
+        for spec in &self.styles {
+            // Checked by the value parser
+            let _ = flint_render::stylize::apply_style_spec(config, spec);
+        }
+    }
+
+    /// Apply the words to `renderer`'s config and build the styles they
+    /// turned on; set the post time. A no-op without either flag, so a
+    /// capture without them is unchanged.
+    pub fn apply_to_renderer(
+        &self,
+        renderer: &mut flint_render::SceneRenderer,
+        device: &wgpu::Device,
+    ) {
+        if !self.styles.is_empty() {
+            let mut config = renderer.post_process_config().clone();
+            self.apply(&mut config);
+            renderer.set_post_process_config(config);
+            renderer.ensure_style_resources(device);
+        }
+        if let Some(t) = self.style_time {
+            renderer.ocean_time = t as f64;
+        }
+    }
+}
+
+fn parse_style_spec(s: &str) -> Result<String, String> {
+    flint_render::stylize::StyleSpec::parse(s).map(|_| s.to_string())
+}
+
 pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {
     match s {
         "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" => Ok(s.to_string()),

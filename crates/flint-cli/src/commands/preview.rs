@@ -111,6 +111,10 @@ pub struct PreviewArgs {
     /// Start with auto-orbit enabled
     #[arg(long)]
     pub auto_orbit: bool,
+
+    /// `--style` / `--style-time` for --render (#271)
+    #[command(flatten)]
+    pub style: crate::commands::common_args::StyleArgs,
 }
 
 pub fn run(args: PreviewArgs) -> Result<()> {
@@ -728,6 +732,7 @@ pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::Rgba
         sequence: None,
         sequence_loop: false,
         auto_orbit: false,
+        style: Default::default(),
     })
 }
 
@@ -853,6 +858,7 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
     }
 
     renderer.update_from_world(&world, &ctx.device);
+    args.style.apply_to_renderer(&mut renderer, &ctx.device);
 
     // Render
     renderer.render_to(

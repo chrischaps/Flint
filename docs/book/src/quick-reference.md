@@ -28,6 +28,8 @@ A scannable cheat sheet for daily Flint development.
 | `flint play-chart <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
 | `flint replay-chart <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
 | `flint render-suite <manifest> -o out.wav` | Render a scripted suite session to WAV |
+| `flint render-suite <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
+| `flint render <scene> --style ascii:cell=12` | Preview any registered style over a scene |
 | `flint spike-rumble` | Time the gamepad rumble paths |
 
 Music commands are detailed in [Music Commands](cli-reference/music.md).
