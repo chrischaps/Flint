@@ -602,7 +602,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
 
         renderer.set_post_process_config(pp_config);
-        renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
+        renderer.ensure_style_resources(&ctx.device);
         renderer.ensure_fxaa_resources(&ctx.device);
     }
 

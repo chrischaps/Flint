@@ -32,6 +32,7 @@ pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
+pub mod stylize;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;

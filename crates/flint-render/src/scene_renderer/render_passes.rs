@@ -1306,24 +1306,62 @@ impl SceneRenderer {
         };
         let config = &self.postprocess_config;
 
-        // Run Kuwahara filter if enabled
-        if config.enabled && config.kuwahara_enabled {
-            scoped("Kuwahara", encoder, &mut |encoder| {
-                pp.run_kuwahara(queue, encoder, device, resources, config)
-            });
-        }
+        // Stylize passes (#262). The frame every style reads; each stage
+        // sets its own size and format.
+        let hdr_styles = pp.styles.active(crate::stylize::StyleStage::Hdr, config);
+        let display_styles = pp
+            .styles
+            .active(crate::stylize::StyleStage::Display, config);
+        let mut style_frame = (!hdr_styles.is_empty() || !display_styles.is_empty()).then(|| {
+            crate::stylize::StyleFrame {
+                device,
+                queue,
+                config,
+                descriptor: hdr_styles.first().or(display_styles.first()).unwrap().0,
+                width: resources.width,
+                height: resources.height,
+                format: crate::postprocess::HDR_FORMAT,
+                depth: depth_view,
+                depth_owned,
+                camera: crate::stylize::StyleCamera {
+                    inv_view_proj: camera.inverse_view_projection_matrix(),
+                    position: camera.position_array(),
+                    near: camera.near,
+                    far: camera.far,
+                },
+                mask: None,
+                linear_sampler: &pp.linear_sampler,
+                time: (self.ocean_time % 100_000.0) as f32,
+                binds: &resources.binds,
+                targets: &resources.styles,
+            }
+        });
 
-        // ASCII spike (#261): glyphize the scene (Kuwahara's output when
-        // that ran) into the spike's target, which the composite then reads.
-        let kuwahara_out = (config.enabled && config.kuwahara_enabled)
-            .then_some(resources.kuwahara.as_ref())
-            .flatten()
-            .map(|kt| &kt.output_view);
+        // HDR stage: Kuwahara and friends, in linear HDR at scene resolution
+        let hdr_result = match &mut style_frame {
+            Some(frame) if !hdr_styles.is_empty() => crate::stylize::run_stage(
+                &hdr_styles,
+                frame,
+                crate::stylize::StyleStage::Hdr,
+                encoder,
+                crate::stylize::StyleInput {
+                    view: &resources.hdr_view,
+                    id: crate::stylize::input_id::HDR,
+                },
+                None,
+                &mut |label, encoder, run| scoped(label, encoder, run),
+            ),
+            _ => None,
+        };
+        let hdr_scene = hdr_result.as_ref().map(|(t, id)| (&t.view, *id));
+
+        // ASCII spike (#261): glyphize the scene (the HDR styles' output
+        // when any ran) into the spike's target, which the composite reads.
         let ascii_view = match &self.ascii_spike {
             Some(spike)
                 if config.enabled && self.ascii_config.mode != crate::AsciiSpikeMode::Off =>
             {
-                let input = kuwahara_out.unwrap_or(&resources.hdr_view);
+                let input = hdr_scene.map_or(&resources.hdr_view, |(v, _)| v);
                 let ascii_camera = crate::ascii_spike::AsciiCamera {
                     inv_view_proj: camera.inverse_view_projection_matrix(),
                     position: camera.position_array(),
@@ -1402,10 +1440,37 @@ impl SceneRenderer {
             && self.postprocess_config.fxaa_enabled
             && pp.fxaa.is_some()
             && resources.fxaa.is_some();
-        let composite_target = if fxaa_active {
+        let final_target = if fxaa_active {
             &resources.fxaa.as_ref().unwrap().view
         } else {
             target_view
+        };
+        // Display stage (#262): with display styles on, the composite draws
+        // into the stage's input at output resolution, and the last style
+        // writes what the composite would have.
+        let display_size = self.surface_size;
+        let display_in = (!display_styles.is_empty()).then(|| {
+            resources.styles.get(
+                device,
+                "style display in",
+                pp.surface_format,
+                display_size.0,
+                display_size.1,
+            )
+        });
+        let composite_target = display_in.as_ref().map_or(final_target, |t| &t.view);
+        // The scene the composite reads: the spike's glyphs, the HDR
+        // styles' result, or the HDR buffer
+        let (scene, scene_kept) = match (ascii_view, hdr_scene) {
+            (Some(view), _) => (crate::stylize::StyleInput { view, id: u64::MAX }, false),
+            (None, Some((view, id))) => (crate::stylize::StyleInput { view, id }, true),
+            (None, None) => (
+                crate::stylize::StyleInput {
+                    view: &resources.hdr_view,
+                    id: crate::stylize::input_id::HDR,
+                },
+                true,
+            ),
         };
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
@@ -1423,13 +1488,38 @@ impl SceneRenderer {
             // precise over long sessions. Headless render leaves this 0.0.
             (self.ocean_time % 100_000.0) as f32,
             self.ground_fog.as_ref(),
-            ascii_view,
+            &scene,
+            scene_kept,
             if fxaa_active {
                 None
             } else {
                 timer.as_deref_mut()
             },
         );
+
+        if let (Some(frame), Some(input)) = (&mut style_frame, &display_in) {
+            frame.width = input.width;
+            frame.height = input.height;
+            frame.format = pp.surface_format;
+            crate::stylize::run_stage(
+                &display_styles,
+                frame,
+                crate::stylize::StyleStage::Display,
+                encoder,
+                crate::stylize::StyleInput {
+                    view: &input.view,
+                    id: crate::stylize::input_id::DISPLAY_IN,
+                },
+                Some(final_target),
+                &mut |label, encoder, run| {
+                    let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
+                    run(encoder);
+                    if let (Some(t), Some(scope)) = (timer.as_deref_mut(), scope) {
+                        t.end(encoder, scope);
+                    }
+                },
+            );
+        }
 
         if fxaa_active {
             pp.run_fxaa(queue, encoder, device, resources, target_view, timer);

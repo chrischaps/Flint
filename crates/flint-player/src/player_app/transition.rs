@@ -488,7 +488,7 @@ impl PlayerApp {
                 renderer.set_post_process_config(
                     super::scene_loading::post_process_config_from_def(pp_def),
                 );
-                renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
             }
         }

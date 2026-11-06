@@ -946,8 +946,8 @@ impl ViewerApp {
             let flags = rp.take_flags();
             if flags.pp_changed {
                 renderer.set_post_process_config(rp.pp.clone());
-                if flags.kuwahara_needs_resources {
-                    renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                if flags.style_needs_resources {
+                    renderer.ensure_style_resources(&context.device);
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
