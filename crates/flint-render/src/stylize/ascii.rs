@@ -199,7 +199,27 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
         StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
         StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
-        StyleHint::new("tint", "Tint", "The ink for colour mode tint"),
+        StyleHint::new(
+            "temporal",
+            "Temporal",
+            "on: cells keep part of last frame so glyphs don't shimmer in motion; off: every frame stands alone",
+        ),
+        StyleHint::new(
+            "smoothing",
+            "Smoothing",
+            "How much of last frame's colour a cell keeps; a cell whose colour jumps takes the new one at once",
+        ),
+        StyleHint::new(
+            "hysteresis",
+            "Hysteresis",
+            "How far, in ramp steps, a cell's tone may stray before its glyph changes",
+        ),
+        StyleHint::new(
+            "dither",
+            "Dither",
+            "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
+        ),
+        StyleHint::new("tint","Tint", "The ink for colour mode tint"),
         StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
     ],
     create: |d| {
