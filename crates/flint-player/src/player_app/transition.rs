@@ -497,8 +497,12 @@ impl PlayerApp {
         }
 
         // Reload terrain
+        // The scene panels go with the scene. Rendering & Effects (F4) and
+        // the game's own panels belong to the player and are kept (open or
+        // closed as they were); before #268 they were dropped here and
+        // never made again, so F4 went dead after the first transition.
         #[cfg(feature = "debug-hud")]
-        self.debug_panels.clear();
+        self.drop_scene_debug_panels();
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             let mut grass_info = None;
             load_terrain_from_world_inner(
@@ -535,6 +539,10 @@ impl PlayerApp {
             self.create_visitor_debug_panel();
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
+            self.create_particles_debug_panel();
+            self.create_styles_debug_panel();
+            self.create_render_debug_panel();
+            self.create_extension_debug_panels();
         }
         self.apply_camera_tuning();
 

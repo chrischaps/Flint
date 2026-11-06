@@ -362,6 +362,13 @@ pub struct ViewerApp {
     last_particle_tick: Instant,
 }
 
+/// The style settings a scene authors: its `[post_process.styles]`, or
+/// none (every style off) when it has no `[post_process]` block.
+fn authored_styles(def: Option<&PostProcessDef>) -> flint_render::stylize::StyleSettings {
+    def.map(|d| post_process_config_from_def(d).styles)
+        .unwrap_or_default()
+}
+
 /// Rendering & Effects menu interactions that need `&mut self` side effects
 /// (authored-post swap, DoF follow enable/disable), collected inside the egui
 /// closure and handled after the frame.
@@ -639,6 +646,9 @@ impl ViewerApp {
                 scene_renderer.set_post_process_config(post_process_config_from_def(def));
                 println!("Scene [post_process] applied (F11 toggles scene/default)");
             }
+            // The F4 style editor marks edits against these (#268)
+            self.render_panel
+                .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
         }
 
         // Run initial constraint evaluation
@@ -1941,6 +1951,8 @@ impl ViewerApp {
                                 renderer.set_post_process_config(post_process_config_from_def(def));
                             }
                         }
+                        self.render_panel
+                            .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
                     }
 
                     {
