@@ -446,6 +446,15 @@ pub struct SceneRenderer {
     ascii_spike: Option<crate::ascii_spike::AsciiSpike>,
     /// Masked entities -> (style id, world origin of the matched root).
     ascii_targets: HashMap<flint_core::EntityId, (f32, [f32; 3])>,
+    /// The entity style mask's pass (#263); `None` until a frame needs it.
+    style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
+    /// Style names entities ask for, numbered for the mask.
+    style_ids: crate::style_mask::StyleIds,
+    /// Styled entities -> their mask id, rebuilt each `update_from_world`
+    /// while the mask is wanted (empty otherwise).
+    style_by_entity: HashMap<flint_core::EntityId, u16>,
+    /// The `style` debug view switched `mask_view` on, so it switches it off.
+    mask_view_forced: bool,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
@@ -736,6 +745,10 @@ impl SceneRenderer {
             ascii_config: Default::default(),
             ascii_spike: None,
             ascii_targets: HashMap::new(),
+            style_mask_pass: None,
+            style_ids: Default::default(),
+            style_by_entity: HashMap::new(),
+            mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2209,6 +2222,10 @@ impl SceneRenderer {
             ascii_config: Default::default(),
             ascii_spike: None,
             ascii_targets: HashMap::new(),
+            style_mask_pass: None,
+            style_ids: Default::default(),
+            style_by_entity: HashMap::new(),
+            mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -3131,6 +3148,12 @@ impl SceneRenderer {
         self.extract_frame = self.extract_frame.wrapping_add(1);
 
         self.resolve_ascii_targets(world);
+        self.sync_debug_styles();
+        if self.style_mask_wanted() {
+            crate::style_mask::resolve(world, &mut self.style_ids, &mut self.style_by_entity);
+        } else {
+            self.style_by_entity.clear();
+        }
 
         // Extract lights from scene entities
         self.extract_lights_from_world(world);
@@ -4346,6 +4369,116 @@ impl SceneRenderer {
         );
     }
 
+    /// Whether this frame draws the entity style mask: post-processing is
+    /// up and a style that reads it is on (#263).
+    fn style_mask_wanted(&self) -> bool {
+        self.postprocess_resources.is_some()
+            && crate::stylize::any_uses_mask(&self.postprocess_config)
+    }
+
+    /// Keep the `style` debug view's style (`mask_view`) on while that
+    /// mode is set, whatever config was set since, and off once it isn't
+    /// unless the config asked for it itself.
+    fn sync_debug_styles(&mut self) {
+        let styles = &mut self.postprocess_config.styles;
+        if self.debug_state.mode == DebugMode::StyleMask {
+            if !styles.is_enabled("mask_view") {
+                styles.set_enabled("mask_view", true);
+                self.mask_view_forced = true;
+            }
+        } else if std::mem::take(&mut self.mask_view_forced) {
+            styles.set_enabled("mask_view", false);
+        }
+    }
+
+    /// The style ids the mask uses: which number each `style_mask` style
+    /// name has this frame.
+    pub fn style_ids(&self) -> &crate::style_mask::StyleIds {
+        &self.style_ids
+    }
+
+    /// The style mask id of each styled entity, as of the last
+    /// [`update_from_world`](Self::update_from_world) (empty while no
+    /// style reads the mask).
+    pub fn styled_entities(&self) -> &HashMap<flint_core::EntityId, u16> {
+        &self.style_by_entity
+    }
+
+    /// Record the style mask pass over this frame's visible opaque draws
+    /// (static, procedural and skinned) of styled entities. The mask is
+    /// cleared even with none, so a style never reads a stale frame.
+    fn encode_style_mask(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        depth_owned: bool,
+    ) {
+        let Some(resources) = &self.postprocess_resources else {
+            return;
+        };
+        if self.style_mask_pass.is_none() {
+            let Some(skinned) = &self.skinned_pipeline else {
+                return;
+            };
+            self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
+                device,
+                &self.pipeline.transform_bind_group_layout,
+                &skinned.bone_bind_group_layout,
+            ));
+        }
+        let mask = resources.styles.get(
+            device,
+            crate::style_mask::MASK_TARGET,
+            crate::style_mask::STYLE_MASK_FORMAT,
+            resources.width,
+            resources.height,
+        );
+        let ids = &self.style_by_entity;
+        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
+        let mut draws = Vec::new();
+        if !ids.is_empty() {
+            draws.extend(
+                self.entity_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe)
+                    .filter_map(|d| {
+                        Some(crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id: id_of(&d.entity_id)?,
+                        })
+                    }),
+            );
+            draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
+                Some(crate::style_mask::MaskDraw {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                    id: id_of(&d.entity_id)?,
+                })
+            }));
+        }
+        if let Some(pass) = &mut self.style_mask_pass {
+            pass.encode(
+                device,
+                queue,
+                encoder,
+                &resources.binds,
+                &mask.view,
+                depth_view,
+                depth_owned,
+                &draws,
+            );
+        }
+    }
+
     /// The render scale [`set_render_scale`](Self::set_render_scale) set.
     pub fn render_scale(&self) -> f32 {
         self.render_scale
@@ -4639,6 +4772,7 @@ impl SceneRenderer {
         // A style switched on by any route (scene load, F4, a script's
         // config) is built before the frame that first needs it (#262).
         // When nothing new is on this is a walk over the registry.
+        self.sync_debug_styles();
         self.ensure_style_resources(device);
         if self.device_lost {
             return;
@@ -4993,6 +5127,16 @@ impl SceneRenderer {
                 if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                     timer.end(encoder, scope);
                 }
+            }
+        }
+
+        // The entity style mask (#263): the styled entities' ids, drawn
+        // against the frame's single-sample depth, while a style reads it.
+        if has_postprocess && self.style_mask_wanted() {
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
+            self.encode_style_mask(device, queue, encoder, depth_view, scaled_depth.is_some());
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(encoder, scope);
             }
         }
 

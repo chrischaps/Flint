@@ -1,0 +1,6 @@
+[component.style_mask]
+description = "Puts an entity (and its descendants) under a per-entity style: the scene's style mask records this style's id on every pixel the entity draws, for style passes that stylize only chosen entities (#263). Static, procedural and skinned meshes are masked; particles, sprites, grass, terrain and water are not. A descendant's own style_mask wins over its ancestor's. See it with `flint render --debug-mode style`"
+
+[component.style_mask.fields]
+style = { type = "string", description = "Name of the style this entity is drawn in (e.g. \"ascii\"). Entities sharing a name share a mask id; ids are numbered by name order", default = "default" }
+enabled = { type = "bool", description = "false takes this entity and its descendants out of any style, including one inherited from an ancestor", default = true }

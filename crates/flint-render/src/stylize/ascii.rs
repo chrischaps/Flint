@@ -118,6 +118,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     enabled: None,
+    uses_mask: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");

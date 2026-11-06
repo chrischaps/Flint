@@ -1312,6 +1312,17 @@ impl SceneRenderer {
         let display_styles = pp
             .styles
             .active(crate::stylize::StyleStage::Display, config);
+        // The entity style mask (#263), drawn this frame by encode_to while
+        // a style that reads it is on
+        let style_mask = crate::stylize::any_uses_mask(config).then(|| {
+            resources.styles.get(
+                device,
+                crate::style_mask::MASK_TARGET,
+                crate::style_mask::STYLE_MASK_FORMAT,
+                resources.width,
+                resources.height,
+            )
+        });
         let mut style_frame = (!hdr_styles.is_empty() || !display_styles.is_empty()).then(|| {
             crate::stylize::StyleFrame {
                 device,
@@ -1329,7 +1340,8 @@ impl SceneRenderer {
                     near: camera.near,
                     far: camera.far,
                 },
-                mask: None,
+                mask: style_mask.as_ref().map(|m| &m.view),
+                style_ids: &self.style_ids,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
                 pixels_per_point: self.pixels_per_point,
