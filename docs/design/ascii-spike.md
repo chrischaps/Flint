@@ -12,9 +12,11 @@ code, so the choice could be made by eye:
 
 | Variant | `flint render` flags | What it does |
 |---|---|---|
-| Full screen | `--ascii full` | Glyph pass over the whole HDR frame, after Kuwahara and before the composite |
-| Per entity, screen grid | `--ascii entity --ascii-entities <list>` | A mask pass redraws the chosen entities into a side target; the glyph pass glyphizes only masked pixels, on one screen grid |
-| Per entity, object grid | `--ascii entity-object --ascii-entities <list>` | As above, but each entity's grid is anchored at its projected origin |
+| Full screen | `--ascii=full` | Glyph pass over the whole HDR frame, after Kuwahara and before the composite |
+| Per entity, screen grid | `--ascii=entity --ascii-entities <list>` | A mask pass redraws the chosen entities into a side target; the glyph pass glyphizes only masked pixels, on one screen grid |
+| Per entity, object grid | `--ascii=entity-object --ascii-entities <list>` | As above, but each entity's grid is anchored at its projected origin |
+
+Since #265 the `=` is required: bare `--ascii` is the shipped full-screen style.
 
 The code is `crates/flint-render/src/ascii_spike.rs` and its two shaders.
 It is off by default and adds nothing to a frame unless `--ascii` is set.

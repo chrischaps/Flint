@@ -599,6 +599,10 @@ impl ViewerApp {
         // Load models and update meshes from world
         {
             let mut state = self.state.lock().unwrap();
+            // Fonts and glyph sets (ASCII's `font`, #265) resolve beside the scene
+            scene_renderer.scene_dir = Path::new(&state.scene_path)
+                .parent()
+                .map(|p| p.to_path_buf());
             let config = ModelLoadConfig::from_scene_path(&state.scene_path);
             model_loader::load_models_from_world(
                 &mut state.world,
@@ -717,6 +721,10 @@ impl ViewerApp {
             let context = self.render_context.as_ref().unwrap();
             let renderer = self.scene_renderer.as_mut().unwrap();
             renderer.set_selected_entity(self.scene_tree.selected_entity());
+            // Styles sized in points (ASCII cells, #265) follow the window
+            if let Some(window) = &self.window {
+                renderer.pixels_per_point = window.scale_factor() as f32;
+            }
             renderer.render(context, &self.camera, &view).ok();
         }
 

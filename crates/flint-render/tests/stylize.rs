@@ -1,7 +1,8 @@
 //! Stylize passes (#262) on a real device: a display style inverts the
 //! finished frame, switching it off gives back the exact bytes, the chain
 //! survives a resize, and an HDR style and a display style run in one
-//! frame without a validation error.
+//! frame without a validation error. The ASCII style (#265) draws one
+//! glyph per cell on one grid, and its cells scale with pixels per point.
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -224,4 +225,88 @@ fn hdr_and_display_styles_chain_in_one_frame() {
             assert!((255 - *a).abs_diff(*b) <= 2, "byte {i}: {a} then {b}");
         }
     }
+}
+
+/// The `period` x `period` block at cell (cx, cy) of an RGBA8 frame.
+fn block(pixels: &[u8], period: usize, cx: usize, cy: usize) -> Vec<u8> {
+    let size = SIZE as usize;
+    (0..period)
+        .flat_map(|y| {
+            let start = ((cy * period + y) * size + cx * period) * 4;
+            pixels[start..start + period * 4].to_vec()
+        })
+        .collect()
+}
+
+#[test]
+fn ascii_draws_one_glyph_per_cell_on_one_grid() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = FlintWorld::new();
+    let plain = gpu.frame(&mut renderer, &world);
+    // An empty world is one flat sky colour, so every cell is the same glyph
+    assert!(
+        plain.chunks(4).all(|p| p == &plain[..4]),
+        "flat sky expected"
+    );
+
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("ascii", true);
+    renderer.set_post_process_config(config.clone());
+    renderer.ensure_style_resources(&gpu.device);
+    let glyphs = gpu.frame(&mut renderer, &world);
+    assert_ne!(glyphs, plain, "the style drew nothing");
+
+    // 8-point cells at 1 px per point: 64 / 8 = 8 cells a side, all alike,
+    // and each holds a glyph (ink and ground both appear)
+    let first = block(&glyphs, 8, 0, 0);
+    let shades: std::collections::BTreeSet<&[u8]> = first.chunks(4).collect();
+    assert!(shades.len() >= 2, "the cell is one flat colour: {shades:?}");
+    for cy in 0..8 {
+        for cx in 0..8 {
+            assert_eq!(block(&glyphs, 8, cx, cy), first, "cell ({cx}, {cy})");
+        }
+    }
+
+    // At 2 px per point (a high-DPI window) the cells are 16 px: 4 a side,
+    // each the 8 px cell drawn at twice the size
+    renderer.pixels_per_point = 2.0;
+    let doubled = gpu.frame(&mut renderer, &world);
+    let big = block(&doubled, 16, 0, 0);
+    for cy in 0..4 {
+        for cx in 0..4 {
+            assert_eq!(block(&doubled, 16, cx, cy), big, "cell ({cx}, {cy}) at 2x");
+        }
+    }
+    for y in 0..16 {
+        for x in 0..16 {
+            let at = |b: &[u8], w: usize, x: usize, y: usize| b[(y * w + x) * 4..][..4].to_vec();
+            assert_eq!(
+                at(&big, 16, x, y),
+                at(&first, 8, x / 2, y / 2),
+                "pixel ({x}, {y})"
+            );
+        }
+    }
+
+    // The ramp and colour options reach the shader: a different ramp
+    // draws a different glyph for the same sky, the tint another colour
+    config.styles.set_option("ascii", "ramp", "blocks");
+    renderer.pixels_per_point = 1.0;
+    renderer.set_post_process_config(config.clone());
+    assert_ne!(block(&gpu.frame(&mut renderer, &world), 8, 0, 0), first);
+    config.styles.set_option("ascii", "ramp", "classic");
+    config.styles.set_option("ascii", "color", "tint");
+    renderer.set_post_process_config(config);
+    assert_ne!(block(&gpu.frame(&mut renderer, &world), 8, 0, 0), first);
 }

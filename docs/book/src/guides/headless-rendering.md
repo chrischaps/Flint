@@ -90,10 +90,15 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
 | `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
 | `--fxaa` | `false` | Run the FXAA pass |
-| `--ascii <mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` |
+| `--ascii` | (off) | The full-screen ASCII style (#265): one glyph per cell on one grid |
+| `--ascii-font` / `--ascii-ramp` / `--ascii-color` | `builtin` / the set's / `source` | ASCII style glyph set, ramp and colour mode (`source`, `tint`, `raw`) |
+| `--ascii-tint <r,g,b>` / `--ascii-background <f32>` | phosphor green / `0.15` | ASCII style tint and how much cell colour fills behind glyphs |
+| `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
+| `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
+| `--ascii=<mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` (the `=` is required) |
 | `--ascii-entities <list>` | (none) | Names, `prefix*` or `*` the masked ASCII modes stylize |
-| `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
-| `--ascii-levels <n>` / `--ascii-footprint <cells>` | `4` / `2` | ASCII tone bands and tone footprint |
+| `--ascii-cell <n>` | `8` | ASCII cell width (style: points; spike: scene pixels) |
+| `--ascii-levels <n>` / `--ascii-footprint <cells>` | style `0` / `1`, spike `4` / `2` | ASCII tone bands and tone footprint |
 | `--ascii-no-edges` | `false` | No line glyphs on edges |
 | `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
 | `--ascii-scene-background` | `false` | Masked modes: plain scene outside the mask, not black |
