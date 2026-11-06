@@ -33,7 +33,13 @@
 //! `raw` (the cell's colour as it is), `mono` (white on grey) and `palette`
 //! (a [`Palette`]: nearest ink, as a CGA screen, or a tone ladder, as a
 //! phosphor tube). They are per variant too: the frame's palettes are
-//! packed into one table, as its ramps are. Edge glyphs (#267) build on it.
+//! packed into one table, as its ramps are.
+//!
+//! Edge glyphs (#267) build on it, and they are what separates one styled
+//! entity from another: a mask outline should fire wherever the id changes
+//! and either side is one of this style's variants (an id whose slot in
+//! the variant table isn't 0), not only where it meets the plain `ascii`
+//! id that [`StyleFrame::style_id`] returns.
 
 use super::kit;
 use super::{
