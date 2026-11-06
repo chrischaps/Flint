@@ -36,6 +36,7 @@
 //!
 //! ```text
 //! scene (HDR, render scale)
+//!   -> style mask (R16Uint ids, while a style reads it; #263)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
 //!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
@@ -44,6 +45,14 @@
 //!   -> FXAA
 //!   -> surface
 //! ```
+//!
+//! ## The entity style mask
+//!
+//! A style that stylizes only chosen entities sets
+//! [`StyleDescriptor::uses_mask`] and reads [`StyleFrame::mask`]: one id a
+//! pixel, the entity's `style_mask` style ([`StyleFrame::style_id`] finds
+//! the style's own), drawn after the scene pass (`crate::style_mask`).
+//! `mask_view` is the example, and the `style` debug view.
 //!
 //! An `Hdr` style is shaded by what follows it: fog fades it, bloom haloes
 //! its bright parts, the grade tints it (Kuwahara's painterly look wants
@@ -116,6 +125,10 @@ pub struct StyleDescriptor {
     /// [`PostProcessConfig::styles`]; a style with fields of its own on
     /// [`PostProcessConfig`] (Kuwahara) reads those instead.
     pub enabled: Option<fn(&PostProcessConfig) -> bool>,
+    /// Whether the style reads the entity style mask (#263). While any
+    /// such style is on, the renderer draws the mask each frame and hands
+    /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
+    pub uses_mask: bool,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -199,8 +212,16 @@ pub struct StyleFrame<'a> {
     /// kept ([`StyleFrame::depth_bind`]).
     pub depth_owned: bool,
     pub camera: StyleCamera,
-    /// A per-pixel style id, once the entity style mask exists (#263).
+    /// The entity style mask (#263): one style id a pixel
+    /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
+    /// `texture_2d<u32>`, 0 = unstyled), at the scene's resolution like
+    /// [`depth`](Self::depth), so a display-stage style reads it by UV
+    /// with `textureLoad`. `Some` whenever a style with
+    /// [`uses_mask`](StyleDescriptor::uses_mask) is on. It lives with the
+    /// chain; bind it with [`mask_bind`](Self::mask_bind).
     pub mask: Option<&'a wgpu::TextureView>,
+    /// Which id each style name has in [`mask`](Self::mask).
+    pub style_ids: &'a crate::style_mask::StyleIds,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
@@ -283,6 +304,32 @@ impl StyleFrame<'_> {
         self.bind(name, input.id, || {
             self.make_sampled(name, layout, input.view)
         })
+    }
+
+    /// A kept bind group of the style mask at binding 0, for a layout made
+    /// with [`kit::mask_layout`]; `None` while there's no mask.
+    pub fn mask_bind(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Option<Arc<wgpu::BindGroup>> {
+        let mask = self.mask?;
+        Some(self.bind(name, 0, || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(mask),
+                }],
+            })
+        }))
+    }
+
+    /// The style mask id of style `name` this frame, if an entity asks
+    /// for it.
+    pub fn style_id(&self, name: &str) -> Option<u16> {
+        self.style_ids.id(name)
     }
 
     /// A kept bind group of one uniform buffer at binding 0.
@@ -617,11 +664,16 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, invert);
+register_styles!(kuwahara, invert, mask_view);
 
 /// Every registered style, in chain order.
 pub fn registry() -> &'static [&'static StyleDescriptor] {
     REGISTRY
+}
+
+/// Whether any style `config` has on reads the entity style mask.
+pub fn any_uses_mask(config: &PostProcessConfig) -> bool {
+    config.enabled && REGISTRY.iter().any(|d| d.uses_mask && d.is_enabled(config))
 }
 
 /// The style called `name`.

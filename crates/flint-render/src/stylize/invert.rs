@@ -24,6 +24,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         max: 1.0,
     }],
     enabled: None,
+    uses_mask: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");

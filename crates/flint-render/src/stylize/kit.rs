@@ -46,6 +46,24 @@ pub fn sampled_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayo
     })
 }
 
+/// The entity style mask at binding 0: a `texture_2d<u32>` read with
+/// `textureLoad` (bind it with [`StyleFrame::mask_bind`](super::StyleFrame::mask_bind)).
+pub fn mask_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Uint,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    })
+}
+
 /// A pipeline drawing one full-screen triangle with `module`'s `vs_main`
 /// and `fs_main` into `format`, unblended.
 pub fn fullscreen_pipeline(

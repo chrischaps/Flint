@@ -25,9 +25,9 @@ pub struct ChartCommonArgs {
 
 pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {
     match s {
-        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" => Ok(s.to_string()),
+        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" => Ok(s.to_string()),
         _ => Err(format!(
-            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough",
+            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style",
             s
         )),
     }
