@@ -91,6 +91,32 @@ pub struct RenderArgs {
     #[arg(long, default_value = "1")]
     pub msaa: u32,
 
+    /// ASCII spike (#261): `full` (whole screen), `entity` (only
+    /// --ascii-entities, screen grid) or `entity-object` (only those, a
+    /// grid anchored at each entity's projected origin)
+    #[arg(long)]
+    pub ascii: Option<String>,
+
+    /// ASCII cell size in scene pixels (default 8)
+    #[arg(long)]
+    pub ascii_cell: Option<f32>,
+
+    /// Entities the masked ASCII modes stylize: comma-separated names,
+    /// `prefix*`, or `*` for all (children go with their parent)
+    #[arg(long, value_delimiter = ',')]
+    pub ascii_entities: Vec<String>,
+
+    /// Draw the scene at this fraction of the image on each side
+    /// (0.25-1), upscaled in the composite, as flint-player's
+    /// --render-scale (#122)
+    #[arg(long)]
+    pub render_scale: Option<f32>,
+
+    /// Render this many frames with GPU timing on and print each pass's
+    /// smoothed GPU time before writing the image
+    #[arg(long)]
+    pub gpu_time: Option<u32>,
+
     /// Bloom intensity (enables bloom; default: 0.04)
     #[arg(long)]
     pub bloom_intensity: Option<f32>,
@@ -552,6 +578,30 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.ensure_fxaa_resources(&ctx.device);
     }
 
+    if let Some(scale) = args.render_scale {
+        renderer.set_render_scale(&ctx.device, scale);
+    }
+    if let Some(mode) = &args.ascii {
+        let mode = flint_render::AsciiSpikeMode::parse(mode).with_context(|| {
+            format!("--ascii: unknown mode '{mode}' (full, entity, entity-object)")
+        })?;
+        let mut config = flint_render::AsciiSpikeConfig {
+            mode,
+            entities: args.ascii_entities.clone(),
+            ..Default::default()
+        };
+        if let Some(cell) = args.ascii_cell {
+            config.cell_px = cell;
+        }
+        if mode.is_masked() && config.entities.is_empty() {
+            anyhow::bail!(
+                "--ascii {} needs --ascii-entities",
+                args.ascii.as_ref().unwrap()
+            );
+        }
+        renderer.set_ascii_spike(&ctx.device, config);
+    }
+
     // Post time for grain/mode animation. Headless renders leave this 0.0 so
     // PNG snapshots stay deterministic; --grain-time pins an explicit frame.
     if let Some(t) = args.grain_time {
@@ -597,6 +647,40 @@ pub fn run(args: RenderArgs) -> Result<()> {
             particles.sync.emitter_count(),
             seconds
         );
+    }
+
+    // GPU timing: the same frame many times, each pass's time smoothed
+    if let Some(frames) = args.gpu_time {
+        if !renderer.set_gpu_timing(&ctx.device, &ctx.queue, true) {
+            anyhow::bail!("--gpu-time: this adapter has no TIMESTAMP_QUERY");
+        }
+        for _ in 0..frames.max(1) {
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            renderer.encode_to(
+                &ctx.device,
+                &ctx.queue,
+                &mut encoder,
+                &ctx.depth_view,
+                &camera,
+                &ctx.color_view,
+            );
+            renderer.encode_gpu_timings(&ctx.device, &mut encoder);
+            ctx.queue.submit(std::iter::once(encoder.finish()));
+            renderer.frame_submitted();
+            ctx.device.poll(wgpu::Maintain::Wait);
+        }
+        let stats = renderer.collect_stats();
+        let (sw, sh) = renderer.scene_size();
+        println!(
+            "GPU time over {} frames at {}x{} (scene {}x{}):",
+            frames, args.width, args.height, sw, sh
+        );
+        for pass in &stats.gpu_passes {
+            println!("  {:<12} {:>7.3} ms", pass.label, pass.ms);
+        }
+        println!("  {:<12} {:>7.3} ms", "frame", stats.gpu_frame_ms);
     }
 
     // Render

@@ -1313,6 +1313,25 @@ impl SceneRenderer {
             });
         }
 
+        // ASCII spike (#261): glyphize the scene (Kuwahara's output when
+        // that ran) into the spike's target, which the composite then reads.
+        let kuwahara_out = (config.enabled && config.kuwahara_enabled)
+            .then_some(resources.kuwahara.as_ref())
+            .flatten()
+            .map(|kt| &kt.output_view);
+        let ascii_view = match &self.ascii_spike {
+            Some(spike)
+                if config.enabled && self.ascii_config.mode != crate::AsciiSpikeMode::Off =>
+            {
+                let input = kuwahara_out.unwrap_or(&resources.hdr_view);
+                scoped("ASCII", encoder, &mut |encoder| {
+                    spike.encode_glyphs(device, queue, encoder, input, &self.ascii_config)
+                });
+                spike.output_view()
+            }
+            _ => None,
+        };
+
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {
             scoped("SSAO", encoder, &mut |encoder| {
@@ -1392,6 +1411,7 @@ impl SceneRenderer {
             // precise over long sessions. Headless render leaves this 0.0.
             (self.ocean_time % 100_000.0) as f32,
             self.ground_fog.as_ref(),
+            ascii_view,
             if fxaa_active {
                 None
             } else {

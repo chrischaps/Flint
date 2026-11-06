@@ -288,6 +288,11 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--no-shadows` | `false` | Disable shadow mapping |
 | `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload (ADR 0049); earlier builds silently filtered as if 2048 |
 | `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
+| `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
+| `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
+| `--ascii <mode>` | (none) | ASCII spike (#261): `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin. A prototype, not the shipped style |
+| `--ascii-entities <list>` | (none) | Entities the masked ASCII modes stylize: comma-separated names, `prefix*`, or `*`; children go with their parent. Static meshes only (skinned, terrain, grass and particles aren't masked) |
+| `--ascii-cell <px>` | `8` | ASCII cell size in scene pixels |
 | `--no-postprocess` | `false` | Disable post-processing |
 | `--bloom-intensity <f32>` | `0.04` | Bloom strength |
 | `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |

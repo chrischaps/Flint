@@ -49,6 +49,10 @@ Flint uses an **edit -> validate -> play** loop:
    #                           capture; default none = no particles. ADR 0068)
    #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
    #                           Also on flint-player. ADR 0058)
+   #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
+   #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --ascii full|entity|entity-object --ascii-entities "barrel,table_*" --ascii-cell 8
+   #                          (#261 spike prototypes; masked modes are static meshes only)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction
    # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0

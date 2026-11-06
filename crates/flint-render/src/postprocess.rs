@@ -2727,6 +2727,7 @@ impl PostProcessPipeline {
         camera: &Camera,
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
+        scene_override: Option<&wgpu::TextureView>,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
@@ -2899,8 +2900,11 @@ impl PostProcessPipeline {
             .then_some(resources.kuwahara.as_ref())
             .flatten()
             .map(|kt| &kt.output_view);
-        let scene_view = kuwahara_view.unwrap_or(&resources.hdr_view);
-        let scene_bg = resources.binds.get(
+        // An override (the ASCII spike's output, #261) isn't the chain's,
+        // so its bind group isn't kept with the chain's.
+        let scene_view = scene_override.unwrap_or(kuwahara_view.unwrap_or(&resources.hdr_view));
+        let scene_bg = resources.binds.get_if(
+            scene_override.is_none(),
             "composite scene",
             u64::from(kuwahara_view.is_some()),
             || {

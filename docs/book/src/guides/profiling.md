@@ -23,6 +23,9 @@ Each line is a **scope**, a stretch of the frame between two timestamps the GPU 
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
 - `Kuwahara`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
+- `ASCII mask` and `ASCII`: the ASCII spike's passes (#261), only while `--ascii` is set.
+
+`flint render --gpu-time <frames>` prints the same scopes for one headless frame drawn that many times, so a pass can be timed without a window.
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
 

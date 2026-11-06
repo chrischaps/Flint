@@ -5,6 +5,7 @@
 //! physically-based Cook-Torrance shading. Supports GPU vertex skinning
 //! for skeletal animation.
 
+pub mod ascii_spike;
 pub mod atlas;
 pub mod billboard_pipeline;
 pub mod bitmap_font;
@@ -39,6 +40,7 @@ pub mod water_body;
 mod texture_cache;
 pub mod world_line_pipeline;
 
+pub use ascii_spike::{AsciiSpikeConfig, AsciiSpikeMode};
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
