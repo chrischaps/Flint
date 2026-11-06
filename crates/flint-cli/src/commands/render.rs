@@ -1158,7 +1158,11 @@ impl Stage {
         }
         if args.time.is_some() {
             // The rest of what the player keeps on this clock. Grain has its own flag.
-            self.renderer.grass_time = t as f32;
+            // Woozy grass (#252) is on the field's clock instead.
+            match &self.wooze {
+                Some(clocks) => clocks.grass().apply(&mut self.renderer, t),
+                None => self.renderer.grass_time = t as f32,
+            }
             if args.grain_time.is_none() {
                 self.renderer.ocean_time = t;
             }
@@ -1197,6 +1201,11 @@ impl Stage {
         if let Some(clocks) = &mut self.wooze {
             let draws = clocks.step(&self.world, self.camera.position_array(), dt);
             self.renderer.set_shallow_wooze(draws.iter().copied());
+            clocks.step_grass(
+                self.renderer.grass_config(),
+                self.camera.position_array(),
+                dt,
+            );
         }
         if let Some(run) = &mut self.living {
             run.step(dt);

@@ -25,3 +25,6 @@ scale_by_mask = { type = "boolean", description = "Grey thins the field in propo
 "grass.bend_radius" = { type = "float", description = "Entity bend influence radius in meters", default = 2.0 }
 "grass.bend_strength" = { type = "float", description = "Entity bend amount 0..1", default = 0.8 }
 "grass.density_threshold" = { type = "float", description = "Min splat weight to spawn grass 0..1", default = 0.1 }
+"grass.wooze" = { type = "boolean", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252)", default = false }
+"grass.wooze_amplitude" = { type = "float", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock", default = 0.12 }
+"grass.wooze_wavelength" = { type = "float", description = "Metres from one combed patch of grass to the next", default = 2.5 }

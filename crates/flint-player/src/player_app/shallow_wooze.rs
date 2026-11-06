@@ -190,10 +190,178 @@ fn members_of(world: &FlintWorld) -> Vec<Member> {
     members
 }
 
+/// Woozy grass (#252): a grass field with `grass.wooze` sways on the wooze field's
+/// clock instead of the wall clock, and is combed each beat by the noise shallow
+/// wooze moves meshes by.
+///
+/// One clock for the whole field, read where the viewer stands, like the shading
+/// boil's: the grass compute knows nothing of zones, and the grass a viewer sees is
+/// the grass round them. It counts beats as a [`ShallowClock`] does, so the meadow
+/// changes drawing on the same beat as a bench standing in it.
+#[derive(Debug, Clone, Default)]
+pub struct GrassWooze {
+    clock: Option<ShallowClock>,
+    /// Seconds of sway a beat is worth: the field's step where it started, so the
+    /// sway keeps its authored speed on average and slows where the field does.
+    seconds_per_beat: f64,
+    now: Option<ShallowNow>,
+    /// The comb's `(amplitude, wavelength)` as of the last advance.
+    comb: (f32, f32),
+}
+
+impl GrassWooze {
+    /// Move on by `dt` at `time` with the viewer at `viewer`, if `config` asks for
+    /// it. Grass that doesn't ask goes back to the wall clock.
+    pub fn advance(
+        &mut self,
+        config: Option<&flint_terrain::GrassConfig>,
+        field: &WoozeField,
+        viewer: [f32; 3],
+        time: f64,
+        dt: f64,
+    ) {
+        let Some(config) = config.filter(|c| c.enabled && c.wooze) else {
+            self.clock = None;
+            self.now = None;
+            return;
+        };
+        let sample = field.sample(viewer, time);
+        if self.clock.is_none() {
+            self.seconds_per_beat = f64::from(sample.step.max(flint_core::wooze::STEP_MIN));
+        }
+        let clock = self
+            .clock
+            .get_or_insert_with(|| ShallowClock::starting(time - dt, &sample));
+        self.now = Some(clock.advance(dt, &sample));
+        self.comb = (
+            config.wooze_amplitude.max(0.0),
+            config.wooze_wavelength.max(WAVELENGTH_MIN),
+        );
+    }
+
+    /// What `SceneRenderer::grass_time` should be, or `None` for the wall clock.
+    /// It holds for the first part of each beat and glides over the rest, as a
+    /// tree's pose does, so the blades rest and then sweep on together.
+    pub fn sway_time(&self) -> Option<f32> {
+        self.now
+            .map(|now| ((now.index as f64 + f64::from(now.weight)) * self.seconds_per_beat) as f32)
+    }
+
+    /// What `SceneRenderer::grass_wooze` should be.
+    pub fn comb(&self) -> Option<ShallowWoozeDraw> {
+        self.now.map(|now| ShallowWoozeDraw {
+            amplitude: self.comb.0 * now.amplitude,
+            wavelength: self.comb.1,
+            index: now.index,
+            weight: now.weight,
+        })
+    }
+
+    /// Set the renderer's grass clock and comb from this, or `wall` seconds of the
+    /// wall clock when the grass isn't woozy.
+    pub fn apply(&self, renderer: &mut flint_render::SceneRenderer, wall: f64) {
+        renderer.grass_time = self.sway_time().unwrap_or(wall as f32);
+        renderer.grass_wooze = self.comb();
+    }
+}
+
+/// `grass.wooze` does nothing without a field, which would otherwise be a silent
+/// way for a meadow to keep the wall clock.
+pub fn warn_grass_without_a_field(
+    config: Option<&flint_terrain::GrassConfig>,
+    field: Option<&WoozeField>,
+) {
+    if field.is_none() && config.is_some_and(|c| c.enabled && c.wooze) {
+        tracing::warn!(
+            "grass.wooze is on and this scene has no [wooze] table, so the grass keeps the wall clock: give it one to opt in"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use flint_core::wooze::{WoozeSample, STEP_MIN};
+
+    fn woozy_grass() -> flint_terrain::GrassConfig {
+        flint_terrain::GrassConfig {
+            enabled: true,
+            wooze: true,
+            wooze_amplitude: 0.2,
+            wooze_wavelength: 3.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn grass_that_doesnt_ask_keeps_the_wall_clock() {
+        let mut grass = GrassWooze::default();
+        let plain = flint_terrain::GrassConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        grass.advance(Some(&plain), &field(0.5), [0.0; 3], 0.1, 0.1);
+        assert_eq!(grass.sway_time(), None);
+        assert_eq!(grass.comb(), None);
+        grass.advance(None, &field(0.5), [0.0; 3], 0.2, 0.1);
+        assert_eq!(grass.sway_time(), None);
+    }
+
+    #[test]
+    fn woozy_grass_holds_then_glides_and_keeps_its_speed_on_average() {
+        // Half-second steps, gliding over the last half of each.
+        let field = WoozeField::new(WoozeSample {
+            step: 0.5,
+            glide: 0.5,
+            ..WoozeSample::NEUTRAL
+        });
+        let config = woozy_grass();
+        let mut grass = GrassWooze::default();
+        let dt = 1.0 / 60.0;
+        let mut time = 0.0;
+        let mut sway = Vec::new();
+        for _ in 0..600 {
+            time += dt;
+            grass.advance(Some(&config), &field, [0.0; 3], time, dt);
+            sway.push(grass.sway_time().unwrap());
+        }
+        // Held through the first part of a beat: from 0.05 s to 0.2 s in, nothing moves.
+        let beat = 60 * 3; // frames into the 7th beat (3 s = 6 beats)
+        assert_eq!(sway[beat + 3], sway[beat + 12]);
+        // and moving in the glide.
+        assert!(sway[beat + 27] > sway[beat + 18]);
+        // Ten seconds on the field's clock is ten seconds of sway.
+        assert!((f64::from(sway[599]) - 10.0).abs() < 1e-3, "{}", sway[599]);
+    }
+
+    #[test]
+    fn the_comb_takes_the_fields_amplitude_and_a_benchs_beat() {
+        let field = WoozeField::new(WoozeSample {
+            amplitude: 0.5,
+            step: 0.5,
+            ..WoozeSample::NEUTRAL
+        });
+        let mut world = FlintWorld::new();
+        let bench = at(&mut world, "bench", [0.0; 3]);
+        wooze(&mut world, bench, "");
+        let mut shallow = ShallowWooze::default();
+        let mut grass = GrassWooze::default();
+        let config = woozy_grass();
+        let dt = 1.0 / 60.0;
+        let mut time = 0.0;
+        for _ in 0..200 {
+            time += dt;
+            let bench_now = drawn(shallow.advance(&world, &field, time, dt), bench).unwrap();
+            grass.advance(Some(&config), &field, [0.0; 3], time, dt);
+            let comb = grass.comb().unwrap();
+            assert_eq!(
+                (comb.index, comb.weight),
+                (bench_now.index, bench_now.weight)
+            );
+            assert_eq!(comb.amplitude, 0.1);
+            assert_eq!(comb.wavelength, 3.0);
+        }
+    }
 
     fn field(step: f32) -> WoozeField {
         WoozeField::new(WoozeSample {

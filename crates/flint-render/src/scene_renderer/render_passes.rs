@@ -1659,6 +1659,12 @@ impl SceneRenderer {
             [d[0] / len, d[1], d[2] / len]
         };
 
+        // A comb with no swing is none at all, and the shader skips it.
+        let wooze = self
+            .grass_wooze
+            .filter(|draw| draw.amplitude > 0.0)
+            .map(|draw| draw.uniforms())
+            .unwrap_or_else(bytemuck::Zeroable::zeroed);
         let render_uniforms = GrassRenderUniforms {
             wind_direction: wind_dir,
             wind_speed: config.wind_speed,
@@ -1676,6 +1682,9 @@ impl SceneRenderer {
             _pad0: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,
+            wooze_leaving: wooze.leaving,
+            wooze_arriving: wooze.arriving,
+            wooze_params: wooze.params,
         };
 
         if let Some(buf) = &self.grass_render_uniform_buffer {

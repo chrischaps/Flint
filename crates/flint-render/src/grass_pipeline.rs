@@ -372,6 +372,12 @@ pub struct GrassRenderUniforms {
     pub _pad0: f32,
     pub _pad1: f32,
     pub _pad2: f32,
+    /// Woozy grass (#252), as `ShallowWooze` in `wooze_noise.wgsl`: where the
+    /// target being left and the next live in the noise, and how far along. All
+    /// zeros, as for grass on the wall clock, combs nothing.
+    pub wooze_leaving: [f32; 4],
+    pub wooze_arriving: [f32; 4],
+    pub wooze_params: [f32; 4],
     // Entity positions follow as a separate binding
 }
 
@@ -529,7 +535,15 @@ impl GrassPipeline {
         // Render shader
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Grass Render Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("grass_render.wgsl").into()),
+            // The comb (#252) is shallow wooze's noise, so grass and a bench
+            // standing in it are moved by one field.
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("wooze_noise.wgsl"),
+                    include_str!("grass_render.wgsl")
+                )
+                .into(),
+            ),
         });
 
         // --- Compute bind group layouts ---
