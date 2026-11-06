@@ -14,20 +14,35 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
-    #[arg(required_unless_present = "list_gpus", default_value = "")]
+    #[arg(required_unless_present_any = ["list_gpus", "look"], default_value = "")]
     pub scene: String,
 
     /// Output image path
     #[arg(short, long, default_value = "render.png")]
     pub output: String,
 
-    /// Image width in pixels
-    #[arg(long, default_value = "1920")]
-    pub width: u32,
+    /// Image width in pixels [default: 1920; each cell of a --sweep, 640]
+    #[arg(long)]
+    pub width: Option<u32>,
 
-    /// Image height in pixels
-    #[arg(long, default_value = "1080")]
-    pub height: u32,
+    /// Image height in pixels [default: 1080; each cell of a --sweep, 360]
+    #[arg(long)]
+    pub height: Option<u32>,
+
+    /// A look over the scene's post-processing (#279): a built-in
+    /// (ascii_noir, matrix, ink_wash, graphite), a
+    /// `styles/<name>.look.toml` beside the scene, or a path. Merged over
+    /// the scene's [post_process] key by key; the other flags apply over
+    /// it. `--look help` lists every look and what to tune
+    #[arg(long)]
+    pub look: Option<String>,
+
+    /// Render one setting at several values as one labelled contact sheet
+    /// (#279): `ascii.cell=6,8,12` (any `--style` key), `post.exposure=0.8,1.2`
+    /// (a [post_process] field; split on `|` to sweep a vector), or
+    /// `look=ascii_noir,matrix`. --width/--height size each cell
+    #[arg(long, value_parser = parse_sweep)]
+    pub sweep: Option<super::look::Sweep>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -370,6 +385,10 @@ pub struct RenderArgs {
     pub list_gpus: bool,
 }
 
+fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
+    super::look::Sweep::parse(s)
+}
+
 pub fn run(args: RenderArgs) -> Result<()> {
     if args.list_gpus {
         for a in flint_render::list_adapters() {
@@ -377,6 +396,22 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         return Ok(());
     }
+    if args.look.as_deref() == Some("help") {
+        print!("{}", super::look::help(&args.scene));
+        return Ok(());
+    }
+    if args.scene.is_empty() {
+        anyhow::bail!("a scene is required (flint render <scene.toml>)");
+    }
+    let look = args
+        .look
+        .as_deref()
+        .map(|name| super::look::find(name, &args.scene))
+        .transpose()?;
+    let (width, height) = match args.sweep {
+        Some(_) => (args.width.unwrap_or(640), args.height.unwrap_or(360)),
+        None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
+    };
     flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
@@ -407,7 +442,28 @@ pub fn run(args: RenderArgs) -> Result<()> {
     println!("Entities: {}", world.entity_count());
 
     // Create headless context
-    let ctx = pollster::block_on(HeadlessContext::new(args.width, args.height))
+    // Every column's post-processing, worked out (and checked) before any
+    // GPU work: the scene's block, under the look, under the column.
+    let scene_pp = scene_file.post_process.as_ref();
+    let base_pp = super::look::base_def(scene_pp, look.as_ref())?;
+    let mut configs = Vec::new();
+    for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
+        let def = match &args.sweep {
+            Some(sweep) => sweep.column_def(i, scene_pp, look.as_ref(), &args.scene)?,
+            None => base_pp.clone(),
+        };
+        let mut config = post_process_config(&args, def.as_ref())?;
+        if let Some(spec) = args.sweep.as_ref().and_then(|s| s.column_style(i)) {
+            flint_render::stylize::apply_style_spec(&mut config, &spec)
+                .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
+        }
+        configs.push(config);
+    }
+    if let Some(look) = &look {
+        println!("Look: {} ({})", look.name, look.source);
+    }
+
+    let ctx = pollster::block_on(HeadlessContext::new(width, height))
         .context("Failed to create headless render context")?;
 
     // Configure camera — scene-level first, then CLI overrides take precedence
@@ -572,124 +628,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_shadow_resolution(&ctx.device, args.shadow_resolution);
     }
 
-    // Post-processing configuration
-    {
-        let mut pp_config = if let Some(pp_def) = &scene_file.post_process {
-            flint_player::post_process_config_from_def(pp_def)
-        } else {
-            flint_render::PostProcessConfig::default()
-        };
-
-        // CLI overrides
-        if args.no_postprocess {
-            pp_config.enabled = false;
-        }
-        if let Some(intensity) = args.bloom_intensity {
-            pp_config.bloom_intensity = intensity;
-            pp_config.bloom_enabled = true;
-        }
-        if let Some(threshold) = args.bloom_threshold {
-            pp_config.bloom_threshold = threshold;
-        }
-        if let Some(exposure) = args.exposure {
-            pp_config.exposure = exposure;
-        }
-        if let Some(radius) = args.ssao_radius {
-            pp_config.ssao_radius = radius;
-        }
-        if let Some(intensity) = args.ssao_intensity {
-            pp_config.ssao_intensity = intensity;
-            if intensity <= 0.0 {
-                pp_config.ssao_enabled = false;
-            }
-        }
-        if let Some(samples) = args.ssao_samples {
-            pp_config.ssao_samples = samples.clamp(1, 64);
-        }
-        if let Some(density) = args.fog_density {
-            pp_config.fog_density = density;
-            pp_config.fog_enabled = density > 0.0;
-        }
-        if let Some(color) = args.fog_color {
-            pp_config.fog_color = color;
-        }
-        if let Some(falloff) = args.fog_height_falloff {
-            pp_config.fog_height_falloff = falloff;
-            pp_config.fog_height_enabled = true;
-        }
-        if let Some(intensity) = args.dither_intensity {
-            pp_config.dither_intensity = intensity;
-            pp_config.dither_enabled = intensity > 0.0;
-        }
-        if let Some(desaturate) = args.desaturate {
-            pp_config.desaturate = desaturate;
-        }
-        if let Some(strength) = args.dof {
-            pp_config.dof_strength = strength;
-        }
-        if let Some(distance) = args.dof_focus {
-            pp_config.dof_focus_distance = distance;
-        }
-        if let Some(range) = args.dof_range {
-            pp_config.dof_focus_range = range;
-        }
-        if let Some(mode) = args.render_mode {
-            pp_config.render_mode = mode;
-            // A mode with no explicit mix defaults to fully torn through.
-            pp_config.mode_mix = args.mode_mix.unwrap_or(1.0);
-        }
-        if let Some(mix) = args.mode_mix {
-            pp_config.mode_mix = mix;
-        }
-        if let Some(params) = args.mode_params {
-            pp_config.mode_params = params;
-        }
-        if let Some(density) = args.volumetric_density {
-            pp_config.volumetric_density = density;
-            pp_config.volumetric_enabled = density > 0.0;
-        }
-        if let Some(samples) = args.volumetric_samples {
-            pp_config.volumetric_samples = samples;
-        }
-        if let Some(radius) = args.kuwahara_radius {
-            pp_config.kuwahara_radius = radius;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(sharpness) = args.kuwahara_sharpness {
-            pp_config.kuwahara_sharpness = sharpness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(hardness) = args.kuwahara_hardness {
-            pp_config.kuwahara_hardness = hardness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(anisotropy) = args.kuwahara_anisotropy {
-            pp_config.kuwahara_anisotropy = anisotropy;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(grain) = args.film_grain {
-            pp_config.film_grain = grain;
-        }
-        if let Some(lift) = args.grade_lift {
-            pp_config.grade_lift = lift;
-        }
-        if let Some(gamma) = args.grade_gamma {
-            pp_config.grade_gamma = gamma;
-        }
-        if let Some(gain) = args.grade_gain {
-            pp_config.grade_gain = gain;
-        }
-        if args.fxaa {
-            pp_config.fxaa_enabled = true;
-        }
-        apply_ascii_style_flags(&args, &mut pp_config)?;
-        // `--style name[:k=v,...]` (#271) last: an explicit word wins
-        args.style.apply(&mut pp_config);
-
-        renderer.set_post_process_config(pp_config);
-        renderer.ensure_style_resources(&ctx.device);
-        renderer.ensure_fxaa_resources(&ctx.device);
-    }
+    // Post-processing: the first column's (the only one without --sweep)
+    renderer.set_post_process_config(configs[0].clone());
+    renderer.ensure_style_resources(&ctx.device);
+    renderer.ensure_fxaa_resources(&ctx.device);
 
     if let Some(scale) = args.render_scale {
         renderer.set_render_scale(&ctx.device, scale);
@@ -806,7 +748,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         let (sw, sh) = renderer.scene_size();
         println!(
             "GPU time over {} frames at {}x{} (scene {}x{}):",
-            frames, args.width, args.height, sw, sh
+            frames, width, height, sw, sh
         );
         for pass in &stats.gpu_passes {
             println!("  {:<12} {:>7.3} ms", pass.label, pass.ms);
@@ -814,30 +756,183 @@ pub fn run(args: RenderArgs) -> Result<()> {
         println!("  {:<12} {:>7.3} ms", "frame", stats.gpu_frame_ms);
     }
 
-    // Render
-    renderer.render_to(
-        &ctx.device,
-        &ctx.queue,
-        &ctx.depth_view,
-        &camera,
-        &ctx.color_view,
-    );
+    // Render each column (one without --sweep), reading each back
+    let mut frames = Vec::with_capacity(configs.len());
+    for (i, config) in configs.iter().enumerate() {
+        if i > 0 {
+            renderer.set_post_process_config(config.clone());
+            renderer.ensure_style_resources(&ctx.device);
+            renderer.ensure_fxaa_resources(&ctx.device);
+        }
+        renderer.render_to(
+            &ctx.device,
+            &ctx.queue,
+            &ctx.depth_view,
+            &camera,
+            &ctx.color_view,
+        );
+        let pixels =
+            pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
+        let img = image::RgbaImage::from_raw(width, height, pixels)
+            .context("Failed to create image from pixel data")?;
+        if let Some(sweep) = &args.sweep {
+            println!("  {} = {}", sweep.name(), sweep.values[i]);
+        }
+        frames.push(img);
+    }
 
-    // Read back pixels
-    let pixels = pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-
-    // Encode as PNG
-    let img = image::RgbaImage::from_raw(args.width, args.height, pixels)
-        .context("Failed to create image from pixel data")?;
+    let img = match &args.sweep {
+        None => frames.swap_remove(0),
+        Some(sweep) => {
+            let over = match &look {
+                Some(look) => format!("  over {}", look.name),
+                None => String::new(),
+            };
+            super::style_sheet::compose(
+                &frames,
+                &super::style_sheet::SheetText {
+                    title: scene_file.scene.name.clone(),
+                    subtitle: format!("sweep {}{over}", sweep.name()),
+                    labels: sweep.values.clone(),
+                },
+            )
+        }
+    };
     img.save(&args.output)
         .context(format!("Failed to save image to {}", args.output))?;
 
     println!(
         "Rendered {}x{} image to {}",
-        args.width, args.height, args.output
+        img.width(),
+        img.height(),
+        args.output
     );
 
     Ok(())
+}
+
+/// `def` (the scene's block under any look and sweep column, or none) as
+/// the renderer's config, with the CLI's post flags and `--style` words
+/// over it.
+fn post_process_config(
+    args: &RenderArgs,
+    def: Option<&flint_scene::PostProcessDef>,
+) -> Result<flint_render::PostProcessConfig> {
+    {
+        let mut pp_config = if let Some(pp_def) = def {
+            flint_player::post_process_config_from_def(pp_def)
+        } else {
+            flint_render::PostProcessConfig::default()
+        };
+
+        // CLI overrides
+        if args.no_postprocess {
+            pp_config.enabled = false;
+        }
+        if let Some(intensity) = args.bloom_intensity {
+            pp_config.bloom_intensity = intensity;
+            pp_config.bloom_enabled = true;
+        }
+        if let Some(threshold) = args.bloom_threshold {
+            pp_config.bloom_threshold = threshold;
+        }
+        if let Some(exposure) = args.exposure {
+            pp_config.exposure = exposure;
+        }
+        if let Some(radius) = args.ssao_radius {
+            pp_config.ssao_radius = radius;
+        }
+        if let Some(intensity) = args.ssao_intensity {
+            pp_config.ssao_intensity = intensity;
+            if intensity <= 0.0 {
+                pp_config.ssao_enabled = false;
+            }
+        }
+        if let Some(samples) = args.ssao_samples {
+            pp_config.ssao_samples = samples.clamp(1, 64);
+        }
+        if let Some(density) = args.fog_density {
+            pp_config.fog_density = density;
+            pp_config.fog_enabled = density > 0.0;
+        }
+        if let Some(color) = args.fog_color {
+            pp_config.fog_color = color;
+        }
+        if let Some(falloff) = args.fog_height_falloff {
+            pp_config.fog_height_falloff = falloff;
+            pp_config.fog_height_enabled = true;
+        }
+        if let Some(intensity) = args.dither_intensity {
+            pp_config.dither_intensity = intensity;
+            pp_config.dither_enabled = intensity > 0.0;
+        }
+        if let Some(desaturate) = args.desaturate {
+            pp_config.desaturate = desaturate;
+        }
+        if let Some(strength) = args.dof {
+            pp_config.dof_strength = strength;
+        }
+        if let Some(distance) = args.dof_focus {
+            pp_config.dof_focus_distance = distance;
+        }
+        if let Some(range) = args.dof_range {
+            pp_config.dof_focus_range = range;
+        }
+        if let Some(mode) = args.render_mode {
+            pp_config.render_mode = mode;
+            // A mode with no explicit mix defaults to fully torn through.
+            pp_config.mode_mix = args.mode_mix.unwrap_or(1.0);
+        }
+        if let Some(mix) = args.mode_mix {
+            pp_config.mode_mix = mix;
+        }
+        if let Some(params) = args.mode_params {
+            pp_config.mode_params = params;
+        }
+        if let Some(density) = args.volumetric_density {
+            pp_config.volumetric_density = density;
+            pp_config.volumetric_enabled = density > 0.0;
+        }
+        if let Some(samples) = args.volumetric_samples {
+            pp_config.volumetric_samples = samples;
+        }
+        if let Some(radius) = args.kuwahara_radius {
+            pp_config.kuwahara_radius = radius;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(sharpness) = args.kuwahara_sharpness {
+            pp_config.kuwahara_sharpness = sharpness;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(hardness) = args.kuwahara_hardness {
+            pp_config.kuwahara_hardness = hardness;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(anisotropy) = args.kuwahara_anisotropy {
+            pp_config.kuwahara_anisotropy = anisotropy;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(grain) = args.film_grain {
+            pp_config.film_grain = grain;
+        }
+        if let Some(lift) = args.grade_lift {
+            pp_config.grade_lift = lift;
+        }
+        if let Some(gamma) = args.grade_gamma {
+            pp_config.grade_gamma = gamma;
+        }
+        if let Some(gain) = args.grade_gain {
+            pp_config.grade_gain = gain;
+        }
+        if args.fxaa {
+            pp_config.fxaa_enabled = true;
+        }
+        apply_ascii_style_flags(args, &mut pp_config)?;
+        // `--style name[:k=v,...]` (#271) last: an explicit word wins
+        args.style.apply(&mut pp_config);
+
+        Ok(pp_config)
+    }
 }
 
 /// What bare `--ascii` parses as: the ASCII style, not a spike mode.

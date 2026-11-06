@@ -1,0 +1,50 @@
+# Ink wash: shapes flattened into soft pools of grey-brown ink on warm
+# paper, as a sumi-e brush would leave them.
+#
+#   flint render <scene> --look ink_wash -o wash.png
+#   flint render <scene> --look ink_wash --sweep kuwahara.radius=3,6,9,12 -o wash-radius.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# Until the watercolor style (#272) lands this is built from the
+# anisotropic Kuwahara filter, desaturation and a paper-toned grade.
+
+[look]
+name = "ink_wash"
+description = "Kuwahara brush pools, drained colour, a warm paper grade"
+tune = [
+    "kuwahara.radius=3,6,9,12",
+    "post.fog_density=0,0.01,0.025",
+    "post.desaturate=0.6,0.8,0.95",
+    "post.grade_lift=0.02,0.02,0.01|0.08,0.07,0.05|0.14,0.12,0.09",
+]
+notes = """
+Radius is the brush: on stylize_props 3 keeps the barrel's staves, 6-9
+soften them into pools, and 12 smears the barrels into one shape. Fog is
+the paper swallowing distance: 0.01 fades the horizon, 0.025 already
+greys the nearest props. Lift is the paper's tone; raise it for older paper.
+"""
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.03
+exposure = 1.25
+ssao_enabled = true
+ssao_intensity = 1.3
+desaturate = 0.85
+kuwahara_enabled = true
+kuwahara_radius = 6
+kuwahara_sharpness = 8.0
+kuwahara_hardness = 8.0
+kuwahara_anisotropy = 1.0
+fog_enabled = true
+fog_color = [0.86, 0.82, 0.74]
+fog_density = 0.01
+fog_start = 4.0
+fog_end = 60.0
+grade_lift = [0.08, 0.07, 0.05]
+grade_gamma = [1.05, 1.05, 1.1]
+grade_gain = [1.0, 0.97, 0.9]
+vignette_enabled = true
+vignette_intensity = 0.3
+film_grain = 0.025

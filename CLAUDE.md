@@ -63,6 +63,13 @@ Flint uses an **edit -> validate -> play** loop:
    #                          against its descriptor; repeatable; `--style help`;
    #                          also on `flint edit <model|effect> --render`)
    #   --style-time 1.5       (post time animated styles read; default 0)
+   #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
+   #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite;
+   #                          `--look help` lists them with their tune sweeps)
+   #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
+   #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;
+   #                          cells 640x360 unless --width/--height. Cells are in points:
+   #                          confirm a winner at the final size)
    #   --ascii=full|entity|entity-object --ascii-entities "barrel,table_*"
    #                          (#261 spike prototypes, `=` required; masked modes are static meshes only)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
