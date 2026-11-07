@@ -2833,6 +2833,11 @@ impl SceneRenderer {
             t * cascade_count
         };
 
+        let style_memory = self.style_target_summary();
+        let fxaa_target = self
+            .postprocess_resources
+            .as_ref()
+            .is_some_and(|r| r.fxaa.is_some()) as u32;
         crate::render_stats::RenderStats {
             draw_calls,
             triangles,
@@ -2862,8 +2867,26 @@ impl SceneRenderer {
                 .as_ref()
                 .map_or(0.0, |t| t.timings().frame_ms),
             scene_resolution: self.scene_size().into(),
+            style_targets: style_memory.count,
+            style_target_bytes: style_memory.bytes,
+            full_size_targets: style_memory.full_size + fxaa_target,
             ..Default::default()
         }
+    }
+
+    /// The style chain's textures (#302): see
+    /// [`StyleTargets::summary`](crate::stylize::StyleTargets::summary).
+    pub fn style_target_summary(&self) -> crate::stylize::TargetSummary {
+        self.postprocess_resources
+            .as_ref()
+            .map(|r| {
+                r.styles.summary(
+                    self.surface_format,
+                    self.surface_size.0,
+                    self.surface_size.1,
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Time the frame's phases on the GPU, or stop (ADR 0108): the grass

@@ -230,6 +230,53 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     }
 }
 
+/// #302: invert + FXAA holds two full-size surface-format textures (the
+/// stage's input and FXAA's intermediate), and so does every longer chain
+/// with FXAA, which draws through the intermediate instead of pings. The
+/// frame is the one the chain drew before it reused them (sky inverted).
+#[test]
+fn display_styles_with_fxaa_hold_two_full_size_textures() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let world = FlintWorld::new();
+    for styles in [
+        &["invert"][..],
+        &["ascii", "invert"],
+        &["ascii", "pencil", "invert"],
+    ] {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let plain = gpu.frame(&mut renderer, &world);
+        let mut config = renderer.post_process_config().clone();
+        for style in styles {
+            config.styles.set_enabled(style, true);
+        }
+        config.fxaa_enabled = true;
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        renderer.ensure_fxaa_resources(&gpu.device);
+        gpu.frame(&mut renderer, &world);
+        let drawn = gpu.frame(&mut renderer, &world);
+        let stats = renderer.collect_stats();
+        assert_eq!(stats.full_size_targets, 2, "{styles:?}: {stats:?}");
+        if styles.len() == 1 {
+            for (i, (a, b)) in plain.iter().zip(&drawn).enumerate() {
+                if i % 4 != 3 {
+                    assert!((255 - *a).abs_diff(*b) <= 2, "byte {i}: {a} then {b}");
+                }
+            }
+        }
+    }
+}
+
 /// #299: two styles of one stage in the two orders draw two pictures, and
 /// a scene that orders nothing draws what registration order always drew.
 #[test]
