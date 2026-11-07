@@ -22,7 +22,7 @@ use crate::postprocess::PostProcessConfig;
 
 /// Kuwahara keeps its settings in `kuwahara_*` fields, not the style
 /// table (it predates it); these are the keys `--style kuwahara:` takes.
-const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
+pub(super) const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
 
 /// One parsed `--style` word.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +44,8 @@ impl StyleSpec {
         };
         if name == "help" {
             return Err(format!(
-                "the registered styles and their keys:\n{}",
+                "the registered styles and their keys (`flint render --list-styles` gives \
+                 ranges, stages and --json):\n{}",
                 style_spec_help()
             ));
         }

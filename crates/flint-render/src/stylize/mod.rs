@@ -72,6 +72,7 @@
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
+pub mod catalog;
 pub mod custom;
 pub mod kit;
 mod spec;

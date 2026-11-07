@@ -14,7 +14,10 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
-    #[arg(required_unless_present_any = ["list_gpus", "look"], default_value = "")]
+    #[arg(
+        required_unless_present_any = ["list_gpus", "look", "list_styles"],
+        default_value = ""
+    )]
     pub scene: String,
 
     /// Output image path
@@ -402,6 +405,34 @@ pub struct RenderArgs {
     /// List available GPU adapters and exit
     #[arg(long)]
     pub list_gpus: bool,
+
+    /// List every registered style (#303): its stage, where a scene sets
+    /// it, and each parameter's default and range, then exit. With a
+    /// scene, the user styles in its `styles/` folder are listed too
+    #[arg(long)]
+    pub list_styles: bool,
+
+    /// With --list-styles: print the list as JSON
+    #[arg(long, requires = "list_styles")]
+    pub json: bool,
+}
+
+/// `--list-styles [--json]`: the registry as text or JSON, with the user
+/// styles beside the scene when one is given.
+fn list_styles(args: &RenderArgs) -> Result<()> {
+    use flint_render::stylize::{catalog, custom};
+    if !args.scene.is_empty() {
+        let scene_dir = Path::new(&args.scene).parent().unwrap_or(Path::new("."));
+        for message in custom::load_dir(scene_dir) {
+            eprintln!("warning: {message}");
+        }
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&catalog::catalog())?);
+    } else {
+        print!("{}", catalog::catalog_text());
+    }
+    Ok(())
 }
 
 fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
@@ -414,6 +445,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
             println!("{a}");
         }
         return Ok(());
+    }
+    if args.list_styles {
+        return list_styles(&args);
     }
     if args.look.as_deref() == Some("help") {
         print!("{}", super::look::help(&args.scene));
