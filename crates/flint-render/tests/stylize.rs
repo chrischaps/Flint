@@ -1008,9 +1008,10 @@ fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
     let weak = weight(&plain, &through);
     assert!(weak > 0, "half-clear glass hid the style entirely");
 
-    // Styled glass is no veil: the cube is wholly glyphs behind it
+    // Styled glass is no veil: behind it the cube is wholly glyphs. Since
+    // #310 a styled transparent is a lens, so they are the glass's glyphs,
+    // measured against the frame with nothing styled (the `plain` above)
     set_entity_style(&mut world, glass, "ascii").unwrap();
-    let plain = styled(&mut renderer, &mut world, false);
     let full = styled(&mut renderer, &mut world, true);
     let strong = weight(&plain, &full);
     eprintln!("half-clear glass: style weight {weak}; styled glass: {strong}");
@@ -1018,4 +1019,238 @@ fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
         strong > weak * 2,
         "the veil didn't weaken the style ({weak} vs {strong})"
     );
+}
+
+/// A flat terrain chunk `half` metres each way around the origin.
+fn flat_chunk(half: f32) -> flint_terrain::TerrainChunk {
+    let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+    flint_terrain::TerrainChunk {
+        grid_pos: (0, 0),
+        positions: corners.iter().map(|[x, z]| [*x, 0.0, *z]).collect(),
+        normals: vec![[0.0, 1.0, 0.0]; 4],
+        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        indices: vec![0, 2, 1, 0, 3, 2],
+        aabb_min: [-half, 0.0, -half],
+        aabb_max: [half, 0.0, half],
+    }
+}
+
+/// A procedural box `half` metres each way, centred `y` up, made
+/// transparent by `opacity`.
+fn boxed(world: &mut FlintWorld, name: &str, half: f64, y: f64, opacity: Option<f64>) {
+    let id = world.spawn(name).unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, y, 0.0]));
+    world
+        .set_component(id, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-half, -half, -half]));
+    bounds.insert("max".into(), vec3([half, half, half]));
+    world.set_component(id, "bounds", bounds.into()).unwrap();
+    if let Some(opacity) = opacity {
+        let mut material = toml::Table::new();
+        material.insert(
+            "color".into(),
+            toml::Value::Array(vec![0.6.into(), 0.9.into(), 1.0.into(), 1.0.into()]),
+        );
+        material.insert("opacity".into(), opacity.into());
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
+    }
+}
+
+fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
+    &frame[(y * SIZE as usize + x) * 4..][..4]
+}
+
+#[test]
+fn a_styled_terrain_is_masked_around_the_props_on_it() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    let mut world = FlintWorld::new();
+    let ground = world.spawn("ground").unwrap();
+    boxed(&mut world, "cube", 2.5, 2.5, None);
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let no_textures: [String; 4] = Default::default();
+    renderer.load_terrain(
+        &gpu.device,
+        &gpu.queue,
+        &[flat_chunk(40.0)],
+        &flint_core::Transform::default(),
+        1.0,
+        0.0,
+        0.9,
+        "",
+        &no_textures,
+        std::path::Path::new("."),
+    );
+    renderer.set_terrain_entity(Some(ground));
+    let plain = gpu.frame(&mut renderer, &world);
+
+    set_entity_style(&mut world, ground, "ascii").unwrap();
+    let styled = gpu.frame(&mut renderer, &world);
+    // The bottom rows are all ground: glyphs there
+    let bottom = (SIZE as usize - 8) * SIZE as usize * 4;
+    assert_ne!(
+        styled[bottom..],
+        plain[bottom..],
+        "the terrain took no style"
+    );
+    // The unstyled cube in the middle cuts its own hole in the mask
+    for (x, y) in [(31, 30), (32, 30), (31, 31), (32, 31)] {
+        assert_eq!(
+            pixel(&styled, x, y),
+            pixel(&plain, x, y),
+            "the unstyled cube at ({x},{y}) was styled"
+        );
+    }
+    // A terrain the host didn't name stays out of the mask, as before
+    renderer.set_terrain_entity(None);
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
+
+#[test]
+fn a_styled_transparent_styles_what_is_seen_through_it() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::{clear_entity_style, set_entity_style};
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    boxed(&mut world, "glass", 2.5, 2.5, Some(0.4));
+    let glass = world.get_id("glass").unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    set_entity_style(&mut world, glass, "ascii").unwrap();
+    let styled = gpu.frame(&mut renderer, &world);
+    let changed = plain
+        .chunks(4)
+        .zip(styled.chunks(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    eprintln!("the styled glass changed {changed} pixels");
+    assert!(changed > 50, "a styled transparent took no style");
+    // The glass is the lens, not the floor: the corners stay as they were
+    for (x, y) in [(1, 62), (62, 62)] {
+        assert_eq!(
+            pixel(&styled, x, y),
+            pixel(&plain, x, y),
+            "the floor at ({x},{y}) was styled"
+        );
+    }
+    clear_entity_style(&mut world, glass);
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
+
+#[test]
+fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let probe = |on: bool| {
+        let mut t = toml::Table::new();
+        t.insert("style".into(), "probe".into());
+        t.insert("enabled".into(), on.into());
+        toml::Value::Table(t)
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_debug_mode(flint_render::DebugMode::StyleMask);
+
+    // One styled box: the buffer stays at its 4 KB start (#311; it was 1 MB)
+    let mut one = FlintWorld::new();
+    let e = one.spawn("box").unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0; 3]));
+    bounds.insert("max".into(), vec3([1.0; 3]));
+    one.set_component(e, "bounds", bounds.into()).unwrap();
+    one.set_component(e, "style_mask", probe(true)).unwrap();
+    gpu.frame(&mut renderer, &one);
+    let (bytes, draws) = renderer.style_mask_draws().expect("no mask pass");
+    eprintln!("one styled box: {bytes} bytes for {draws} draws");
+    assert_eq!(draws, 1);
+    assert!(bytes <= 4096, "{bytes} bytes for one draw");
+
+    // A wall of small boxes facing the default camera at (10, 10, 10),
+    // more than the old fixed 4096 slots held, few hiding another
+    let side = 70;
+    let (s, t) = (std::f64::consts::FRAC_1_SQRT_2, 6f64.sqrt().recip());
+    let (u, v) = ([s, -s, 0.0], [t, t, -2.0 * t]);
+    let mut world = FlintWorld::new();
+    let mut boxes = Vec::new();
+    for i in 0..side * side {
+        let e = world.spawn(format!("box{i}")).unwrap();
+        let (a, b) = (
+            (i % side) as f64 - side as f64 / 2.0,
+            (i / side) as f64 - side as f64 / 2.0,
+        );
+        let at: [f64; 3] = std::array::from_fn(|k| (a * u[k] + b * v[k]) * 0.19);
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.07; 3]));
+        bounds.insert("max".into(), vec3([0.07; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        boxes.push(e);
+    }
+    let set_style = |world: &mut FlintWorld, on: bool| {
+        for &e in &boxes {
+            world.set_component(e, "style_mask", probe(on)).unwrap();
+        }
+    };
+    set_style(&mut world, false);
+    let unstyled = gpu.frame(&mut renderer, &world);
+    set_style(&mut world, true);
+    let styled = gpu.frame(&mut renderer, &world);
+    let (bytes, draws) = renderer.style_mask_draws().unwrap();
+    eprintln!("{} boxes: {bytes} bytes for {draws} draws", side * side);
+    assert!(draws > 4096, "only {draws} styled draws reached the mask");
+    assert!(bytes >= draws as u64 * 256);
+
+    // Every box drawn is masked: no pixel the boxes cover stays unstyled
+    let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+    let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+    let n = (SIZE * SIZE) as usize;
+    let covered: Vec<usize> = (0..n)
+        .filter(|&i| px(&unstyled, i) != px(&empty, i))
+        .collect();
+    let missed = covered
+        .iter()
+        .filter(|&&i| px(&styled, i) == px(&unstyled, i))
+        .count();
+    eprintln!("{} covered pixels, {missed} left unmasked", covered.len());
+    assert!(covered.len() > n / 8, "the boxes cover too little to tell");
+    assert_eq!(missed, 0, "{missed} box pixels were not masked");
 }

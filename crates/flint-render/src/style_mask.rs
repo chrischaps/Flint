@@ -86,11 +86,24 @@
 //! style that honours the blend (ASCII, user styles through
 //! `flint_style_blend`) shows the fire as fire and the stone through any
 //! uncovered share; a fully covered pixel keeps its id at blend 0. A
-//! transparent that is itself styled is left out of the veil (whether it
-//! should be stylized is #310).
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
 //!
-//! Sprites, grass, terrain and water stay unmasked and out of the veil:
-//! they write no mask (and, but for terrain, no depth either).
+//! ## Terrain and transparents (#310)
+//!
+//! Terrain chunks are masked when the terrain's entity (named by
+//! `SceneRenderer::set_terrain_entity`) is styled: they use the standard
+//! `Vertex` and transform layout, so the static pipeline draws them as is.
+//!
+//! A styled transparent is a lens. Its draws come after every opaque one,
+//! back to front as the scene drew them; they write no depth, but each
+//! fragment still tests against the opaques' depth, so where one shows it
+//! is the nearest styled surface and its id replaces what's behind it. The
+//! style then draws the whole pixel, glass and what's seen through it.
+//!
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -148,8 +161,20 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// face through.
 pub const SLOPE_TOLERANCE: f32 = 2.0;
 
-/// Masked draws one frame can hold; any more aren't masked (logged once).
-pub const MAX_MASK_DRAWS: usize = 4096;
+/// The per-draw slots the mask's uniform buffer starts with (4 KB, #311).
+/// A frame with more styled draws grows it to the next power of two, so a
+/// scene pays for the draws it has and every one of them is masked.
+pub const INITIAL_MASK_SLOTS: usize = 16;
+
+/// The slots a buffer holding `capacity` needs to grow to for `draws`:
+/// `capacity` while it fits, else the next power of two.
+pub fn mask_slots_for(capacity: usize, draws: usize) -> usize {
+    if draws <= capacity {
+        capacity
+    } else {
+        draws.next_power_of_two().max(INITIAL_MASK_SLOTS)
+    }
+}
 
 /// The dynamic-offset stride of the per-draw uniforms: the alignment
 /// wgpu's default limits ask for.
@@ -754,10 +779,33 @@ pub struct StyleMaskPass {
     msaa: Option<MsaaMask>,
     /// The mask's shader, kept for the 4x path's pipelines.
     shader: wgpu::ShaderModule,
+    /// One [`DRAW_STRIDE`] slot a draw, [`draw_slots`](Self::draw_slots)
+    /// of them; replaced by a bigger one when a frame needs more.
     draw_buffer: wgpu::Buffer,
+    draw_slots: usize,
+    /// The [`gpu_id`](crate::bind_cache::gpu_id) of `draw_buffer`, in the
+    /// cached bind group's key so a grown buffer gets a bind group of its
+    /// own (the old one goes with the chain's cache on the next resize).
+    draw_buffer_id: u64,
     /// The uniform bytes, kept so a frame reuses the allocation.
     scratch: Vec<u8>,
-    warned_overflow: bool,
+    /// Styled draws the last frame masked.
+    last_draws: usize,
+}
+
+/// One cache variant for a pair of [`gpu_id`](crate::bind_cache::gpu_id)s:
+/// exact while both stay under 2^32, which a process never reaches.
+fn mix_ids(a: u64, b: u64) -> u64 {
+    (a << 32) ^ b
+}
+
+fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Style Mask Draws"),
+        size: DRAW_STRIDE * slots as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 /// The mask's 4x path (#306): pipelines drawing into a multisampled mask
@@ -1052,12 +1100,7 @@ impl StyleMaskPass {
             &[transform_bgl, layouts.material, layouts.light, bone_bgl],
             &[crate::primitives::SkinnedVertex::desc()],
         );
-        let draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Style Mask Draws"),
-            size: DRAW_STRIDE * MAX_MASK_DRAWS as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let draw_buffer = mask_draw_buffer(device, INITIAL_MASK_SLOTS);
         Self {
             static_pipeline,
             skinned_pipeline,
@@ -1068,9 +1111,21 @@ impl StyleMaskPass {
             msaa: None,
             shader,
             draw_buffer,
+            draw_slots: INITIAL_MASK_SLOTS,
+            draw_buffer_id: crate::bind_cache::gpu_id(),
             scratch: Vec::new(),
-            warned_overflow: false,
+            last_draws: 0,
         }
+    }
+
+    /// The bytes of the per-draw uniform buffer.
+    pub fn draw_buffer_bytes(&self) -> u64 {
+        self.draw_buffer.size()
+    }
+
+    /// How many styled draws the last frame masked.
+    pub fn last_draws(&self) -> usize {
+        self.last_draws
     }
 
     /// Build the 4x path (#306) if it isn't yet: the first frame the scene
@@ -1109,23 +1164,28 @@ impl StyleMaskPass {
         veil: &wgpu::TextureView,
         depth_owned: bool,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_if(depth_owned, "Style Mask Draw BG", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Style Mask Draw BG"),
-                layout: &self.draw_bgl,
-                entries: &[
-                    self.uniform_entry(),
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(scene_depth),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(veil),
-                    },
-                ],
-            })
-        })
+        binds.get_if(
+            depth_owned,
+            "Style Mask Draw BG",
+            self.draw_buffer_id,
+            || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Style Mask Draw BG"),
+                    layout: &self.draw_bgl,
+                    entries: &[
+                        self.uniform_entry(),
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(scene_depth),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(veil),
+                        },
+                    ],
+                })
+            },
+        )
     }
 
     /// Clear `veil_view` and draw what's in front into it (#290): each
@@ -1232,7 +1292,8 @@ impl StyleMaskPass {
     /// The 4x path's bind group over the veil and the scene's
     /// multisampled depth, kept under the depth's id (the renderer owns
     /// that texture, so a new one comes with a new id; the veil lives in
-    /// the same resources as `binds`, so it goes with them).
+    /// the same resources as `binds`, so it goes with them) and the
+    /// uniform buffer's (a grown buffer needs a bind group of its own, #311).
     fn msaa_draw_bind(
         &self,
         device: &wgpu::Device,
@@ -1241,7 +1302,8 @@ impl StyleMaskPass {
         veil: &wgpu::TextureView,
         depth: &MsaaDepth<'_>,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get("Style Mask MSAA Draw BG", depth.id, || {
+        let key = mix_ids(depth.id, self.draw_buffer_id);
+        binds.get("Style Mask MSAA Draw BG", key, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask MSAA Draw BG"),
                 layout: &msaa.draw_bgl,
@@ -1286,14 +1348,13 @@ impl StyleMaskPass {
         if !draws.is_empty() {
             self.encode_veil(device, encoder, veil_view, scene_depth, veil);
         }
-        if draws.len() > MAX_MASK_DRAWS && !self.warned_overflow {
-            self.warned_overflow = true;
-            tracing::warn!(
-                "style mask: {} styled draws, only the first {MAX_MASK_DRAWS} are masked",
-                draws.len()
-            );
+        let slots = mask_slots_for(self.draw_slots, draws.len());
+        if slots != self.draw_slots {
+            self.draw_buffer = mask_draw_buffer(device, slots);
+            self.draw_slots = slots;
+            self.draw_buffer_id = crate::bind_cache::gpu_id();
         }
-        let draws = &draws[..draws.len().min(MAX_MASK_DRAWS)];
+        self.last_draws = draws.len();
         self.scratch.clear();
         self.scratch.resize(draws.len() * DRAW_STRIDE as usize, 0);
         for (i, d) in draws.iter().enumerate() {
@@ -1431,6 +1492,19 @@ mod tests {
     fn uniform_fits_its_stride() {
         assert_eq!(std::mem::size_of::<MaskDrawUniform>(), 16);
         assert!(std::mem::size_of::<MaskDrawUniform>() as u64 <= DRAW_STRIDE);
+    }
+
+    #[test]
+    fn the_draw_buffer_grows_by_doubling_and_never_shrinks() {
+        let start = INITIAL_MASK_SLOTS;
+        assert!(start as u64 * DRAW_STRIDE <= 4096, "the start is a few KB");
+        assert_eq!(mask_slots_for(start, 0), start);
+        assert_eq!(mask_slots_for(start, 8), start);
+        assert_eq!(mask_slots_for(start, start), start);
+        assert_eq!(mask_slots_for(start, start + 1), 2 * start);
+        assert_eq!(mask_slots_for(start, 5000), 8192);
+        // A quieter frame keeps the bigger buffer (no churn back and forth)
+        assert_eq!(mask_slots_for(8192, 3), 8192);
     }
 
     #[test]
