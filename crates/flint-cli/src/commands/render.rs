@@ -834,10 +834,18 @@ pub fn run(args: RenderArgs) -> Result<()> {
             "GPU time over {} frames at {}x{} (scene {}x{}):",
             frames, width, height, sw, sh
         );
+        // As wide as the longest label (a style's, such as "Display bloom")
+        let w = stats
+            .gpu_passes
+            .iter()
+            .map(|p| p.label.len())
+            .max()
+            .unwrap_or(0)
+            .max(12);
         for pass in &stats.gpu_passes {
-            println!("  {:<12} {:>7.3} ms", pass.label, pass.ms);
+            println!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
         }
-        println!("  {:<12} {:>7.3} ms", "frame", stats.gpu_frame_ms);
+        println!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
     }
 
     // Render each column (one without --sweep), reading each back
