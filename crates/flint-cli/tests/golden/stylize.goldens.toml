@@ -134,6 +134,13 @@ name = "edges-inkline-scale05"
 scene = "demo/pbr_test.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5", "--style", "edges_view", "--style", "inkline"]
 
+# Under MSAA 4 the mask is drawn 4x against the scene's samples and
+# resolved, any styled sample winning (#306), so thin edges keep their ids
+[[case]]
+name = "style-mask-msaa4"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
+
 # Per-entity ASCII (#266): the props scene as authored (its two
 # style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
 # whole frame with those props as variants, and the props on object grids
