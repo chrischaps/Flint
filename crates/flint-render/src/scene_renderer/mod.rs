@@ -2848,6 +2848,11 @@ impl SceneRenderer {
             t * cascade_count
         };
 
+        let style_memory = self.style_target_summary();
+        let fxaa_target = self
+            .postprocess_resources
+            .as_ref()
+            .is_some_and(|r| r.fxaa.is_some()) as u32;
         crate::render_stats::RenderStats {
             draw_calls,
             triangles,
@@ -2877,8 +2882,26 @@ impl SceneRenderer {
                 .as_ref()
                 .map_or(0.0, |t| t.timings().frame_ms),
             scene_resolution: self.scene_size().into(),
+            style_targets: style_memory.count,
+            style_target_bytes: style_memory.bytes,
+            full_size_targets: style_memory.full_size + fxaa_target,
             ..Default::default()
         }
+    }
+
+    /// The style chain's textures (#302): see
+    /// [`StyleTargets::summary`](crate::stylize::StyleTargets::summary).
+    pub fn style_target_summary(&self) -> crate::stylize::TargetSummary {
+        self.postprocess_resources
+            .as_ref()
+            .map(|r| {
+                r.styles.summary(
+                    self.surface_format,
+                    self.surface_size.0,
+                    self.surface_size.1,
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Time the frame's phases on the GPU, or stop (ADR 0108): the grass
@@ -4563,10 +4586,21 @@ impl SceneRenderer {
             };
             self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
                 device,
-                &self.pipeline.transform_bind_group_layout,
-                &skinned.bone_bind_group_layout,
+                &crate::style_mask::MaskLayouts {
+                    transform: &self.pipeline.transform_bind_group_layout,
+                    material: &self.pipeline.material_bind_group_layout,
+                    light: &self.pipeline.light_bind_group_layout,
+                    bones: &skinned.bone_bind_group_layout,
+                },
             ));
         }
+        let veil_target = resources.styles.get(
+            device,
+            crate::style_mask::VEIL_TARGET,
+            crate::style_mask::VEIL_FORMAT,
+            resources.width,
+            resources.height,
+        );
         let mask = resources.styles.get(
             device,
             crate::style_mask::MASK_TARGET,
@@ -4668,6 +4702,49 @@ impl SceneRenderer {
                 })
             }));
         }
+        // What's in front of them (#290): transparents that aren't styled
+        // themselves, and every particle
+        let mut veil = crate::style_mask::Veil {
+            light_bind_group: &self.light_bind_group,
+            meshes: Vec::new(),
+            particles: None,
+        };
+        if !draws.is_empty() {
+            let unstyled = |e: &Option<flint_core::EntityId>| id_of(e).is_none();
+            veil.meshes.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe && unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: None,
+                    }),
+            );
+            veil.meshes.extend(
+                self.transparent_skinned_draws
+                    .iter()
+                    .filter(|d| unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: Some(&d.bone_bind_group),
+                    }),
+            );
+            veil.particles =
+                self.particle_pipeline
+                    .as_ref()
+                    .map(|pipeline| crate::style_mask::VeilParticles {
+                        pipeline,
+                        draws: &self.particle_draws,
+                    });
+        }
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
                 device,
@@ -4675,9 +4752,11 @@ impl SceneRenderer {
                 encoder,
                 &resources.binds,
                 &mask.view,
+                &veil_target.view,
                 depth_view,
                 depth_owned,
                 &draws,
+                &veil,
             );
         }
     }
@@ -4935,6 +5014,15 @@ impl SceneRenderer {
             }
             self.device_lost = true;
         }
+    }
+
+    /// How many times the shared style edge pass (#301) has been drawn
+    /// since this renderer was made: one a frame while any style that
+    /// needs the edges is on, however many do.
+    pub fn style_edge_runs(&self) -> u64 {
+        self.postprocess_pipeline
+            .as_ref()
+            .map_or(0, |pp| pp.styles.edge_runs())
     }
 
     /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),

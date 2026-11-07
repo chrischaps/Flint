@@ -8,7 +8,7 @@
 //! label = "Duotone"
 //! stage = "display"          # or "hdr"
 //! shader = "duotone.wgsl"
-//! inputs = ["depth"]         # colour is always there; also "mask"
+//! inputs = ["depth"]         # colour is always there; also "mask", "edges"
 //!
 //! [params.mix]
 //! default = 1.0
@@ -49,8 +49,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed, StyleParam,
+    StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeMap;
@@ -104,11 +104,13 @@ fn default_stage() -> String {
 pub struct Inputs {
     pub depth: bool,
     pub mask: bool,
+    /// The shared geometry edges (#301): `flint_edges`, `flint_edge`.
+    pub edges: bool,
 }
 
 impl Inputs {
     fn any(self) -> bool {
-        self.depth || self.mask
+        self.depth || self.mask || self.edges
     }
 }
 
@@ -175,9 +177,10 @@ impl ShaderStyleDef {
                 "color" => {}
                 "depth" => inputs.depth = true,
                 "mask" => inputs.mask = true,
+                "edges" => inputs.edges = true,
                 other => {
                     return Err(format!(
-                        "{at}: unknown input \"{other}\"; inputs are color, depth, mask"
+                        "{at}: unknown input \"{other}\"; inputs are color, depth, mask, edges"
                     ))
                 }
             }
@@ -382,6 +385,25 @@ fn flint_style_blend(uv: vec2<f32>) -> f32 {
 }
 "#;
 
+const PRELUDE_EDGES: &str = r#"
+@group(2) @binding(2) var flint_edges_texture: texture_2d<f32>;
+
+// The shared geometry edges at uv (#301): r = silhouette strength, g =
+// crease strength (1 = an edge at the scene's edge_depth / edge_normal),
+// ba = the unit direction across the edge, screen space with y down
+fn flint_edges(uv: vec2<f32>) -> vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(flint_edges_texture));
+    let p = clamp(vec2<i32>(uv * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
+    return textureLoad(flint_edges_texture, p, 0);
+}
+
+// How much of an edge is at uv: the stronger of silhouette and crease
+fn flint_edge(uv: vec2<f32>) -> f32 {
+    let e = flint_edges(uv);
+    return max(e.r, e.g);
+}
+"#;
+
 fn epilogue(stage: StyleStage) -> String {
     let out = if stage == StyleStage::Display {
         "let c = style(p);\n    \
@@ -434,6 +456,9 @@ pub fn prelude(source: &StyleSource) -> String {
     }
     if source.inputs.mask {
         text.push_str(PRELUDE_MASK);
+    }
+    if source.inputs.edges {
+        text.push_str(PRELUDE_EDGES);
     }
     text.push_str("\n// ---- user style ----\n");
     text
@@ -562,6 +587,9 @@ fn locate(
     if !source.inputs.mask && missing(&["flint_mask_id", "flint_style_blend"]) {
         out.push_str("\n    hint: add \"mask\" to inputs in the .shader.toml");
     }
+    if !source.inputs.edges && missing(&["flint_edges", "flint_edge"]) {
+        out.push_str("\n    hint: add \"edges\" to inputs in the .shader.toml");
+    }
     out
 }
 
@@ -605,7 +633,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
         if var.binding.is_some() && in_user(module.global_variables.get_span(h)) {
             return Err(format!(
                 "{file}{}: `{}` declares a binding; a style reads only the prelude's \
-                 (flint_input, params, depth, mask)",
+                 (flint_input, params, depth, mask, edges)",
                 line_of(module.global_variables.get_span(h)),
                 var.name.as_deref().unwrap_or("?")
             ));
@@ -693,6 +721,8 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
                     | "flint_world_pos"
                     | "flint_mask_id"
                     | "flint_style_blend"
+                    | "flint_edges"
+                    | "flint_edge"
             ))
         }
         S::Loop {
@@ -875,6 +905,11 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         options: &[],
         enabled: None,
         uses_mask: source.inputs.mask,
+        needs: if source.inputs.edges {
+            &[StyleNeed::Edges]
+        } else {
+            &[]
+        },
         hints: Box::leak(hints.into_boxed_slice()),
         component: None,
         create,
@@ -1153,6 +1188,12 @@ fn build(d: &StyleDevice) -> CustomPass {
         if source.inputs.mask {
             entries.push(texture_entry(1, wgpu::TextureSampleType::Uint));
         }
+        if source.inputs.edges {
+            entries.push(texture_entry(
+                2,
+                wgpu::TextureSampleType::Float { filterable: true },
+            ));
+        }
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("User Style Depth/Mask BGL"),
             entries: &entries,
@@ -1424,12 +1465,16 @@ impl StylePass for CustomPass {
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
         let build = self.build.lock().unwrap_or_else(|e| e.into_inner());
-        // The mask is there whenever this style is on and reads it; if a
-        // host ever draws without it, the passthrough keeps the frame whole
+        // The mask and the edges are there whenever this style is on and
+        // reads them; if a host ever draws without one (or the edge pass
+        // failed to build), the passthrough keeps the frame whole
         let extra_bg = match &self.extra_bgl {
             None => None,
-            Some(bgl) if !source.inputs.mask || frame.mask.is_some() => {
-                Some(frame.depth_bind(names.extra, 0, || {
+            Some(bgl)
+                if (!source.inputs.mask || frame.mask.is_some())
+                    && (!source.inputs.edges || frame.edges.is_some()) =>
+            {
+                Some(frame.depth_bind(names.extra, frame.edges_key(), || {
                     let mut entries = Vec::new();
                     if source.inputs.depth {
                         entries.push(wgpu::BindGroupEntry {
@@ -1441,6 +1486,12 @@ impl StylePass for CustomPass {
                         entries.push(wgpu::BindGroupEntry {
                             binding: 1,
                             resource: wgpu::BindingResource::TextureView(mask),
+                        });
+                    }
+                    if let Some(edges) = frame.edges.as_ref().filter(|_| source.inputs.edges) {
+                        entries.push(wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(&edges.view),
                         });
                     }
                     frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1563,6 +1614,8 @@ mod tests {
                 "[\"depth\"]",
                 "[\"mask\"]",
                 "[\"color\", \"depth\", \"mask\"]",
+                "[\"edges\"]",
+                "[\"depth\", \"mask\", \"edges\"]",
             ] {
                 let s = source(
                     &format!(

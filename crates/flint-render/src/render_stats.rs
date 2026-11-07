@@ -40,6 +40,15 @@ pub struct RenderStats {
     pub gpu_passes: Vec<crate::gpu_timer::GpuPassTime>,
     /// From the frame's first timestamp to its last; 0 when untimed.
     pub gpu_frame_ms: f32,
+    // Stylize memory (#302): the textures the style chain holds (pings,
+    // the display stage's input, styles' own intermediates), made since
+    // the last resize.
+    pub style_targets: u32,
+    pub style_target_bytes: u64,
+    /// Output-size textures in the surface format: the style chain's, any
+    /// a style keeps of its own (watercolor's two washes), and FXAA's
+    /// intermediate. The chain and FXAA together hold two at most.
+    pub full_size_targets: u32,
     // Screen info (set by caller)
     pub resolution: [u32; 2],
     /// The size the 3D scene is drawn at: `resolution` at render scale 1

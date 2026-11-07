@@ -109,6 +109,7 @@ full-screen triangle, and `fs_main`, which builds a `StylePixel` and calls
 | `@group(1) flint_input`, `flint_sampler` | the stage's input and the chain's linear sampler | always |
 | `@group(2) @binding(0) flint_depth_texture` | the scene's single-sample depth | `inputs` has `depth` |
 | `@group(2) @binding(1) flint_mask_texture` | the entity style mask (id + blend) | `inputs` has `mask` |
+| `@group(2) @binding(2) flint_edges_texture` | the shared geometry edges (#301, added after this ADR): silhouette, crease, direction; read with `flint_edges(uv)` / `flint_edge(uv)` | `inputs` has `edges` |
 
 Helpers: `flint_sample(uv)`, `flint_luma`, `flint_hash`,
 `flint_to_display` / `flint_to_linear`; with depth `flint_depth(uv)`,

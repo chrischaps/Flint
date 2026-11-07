@@ -63,6 +63,24 @@
 //! mixes its own pixel with what it was given by that amount; ASCII can
 //! also dissolve, turning that share of its cells.
 //!
+//! ## What's in front: the veil (#290)
+//!
+//! Transparents and particles write no depth, so a depth-tested redraw
+//! alone would leave a styled stone masked where fire or glass sits in
+//! front of it, and the style would glyphize the fire as stone. Just before
+//! the mask, a veil pass draws every visible transparent mesh (static and
+//! skinned) and every particle into an `R8Unorm` target, depth-tested
+//! against the scene with no depth write, each with the alpha it is drawn
+//! with (an additive particle by its alpha times its brightest channel),
+//! "over" blended so layers add up to their combined coverage. The mask
+//! then writes each styled pixel's blend times what the veil leaves
+//! uncovered. The rule: **what's in front unmasks by its coverage.** A
+//! style that honours the blend (ASCII, user styles through
+//! `flint_style_blend`) shows the fire as fire and the stone through any
+//! uncovered share; a fully covered pixel keeps its id at blend 0. A
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
+//!
 //! ## Terrain and transparents (#310)
 //!
 //! Terrain chunks are masked when the terrain's entity (named by
@@ -75,8 +93,9 @@
 //! is the nearest styled surface and its id replaces what's behind it. The
 //! style then draws the whole pixel, glass and what's seen through it.
 //!
-//! Particles, sprites, grass and water stay unmasked: grass is instanced,
-//! and the others write no depth.
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -116,6 +135,16 @@ pub const STYLE_MASK_COMPONENT: &str = "style_mask";
 
 /// The name of the mask in the post chain's style targets.
 pub(crate) const MASK_TARGET: &str = "style mask";
+
+/// The name of the veil (#290) in the post chain's style targets: how much
+/// of each pixel transparents and particles in front of the scene cover.
+pub(crate) const VEIL_TARGET: &str = "style veil";
+
+/// The veil's format: one blendable coverage a pixel.
+pub const VEIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+
+/// The scene depth's format, which the veil tests against.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// How far behind the scene's depth a mask fragment may be, in multiples
 /// of its own depth slope (`fwidth(z)`). The spike's value: it absorbs the
@@ -525,6 +554,73 @@ pub fn debug_color(id: u16) -> [f32; 3] {
     [0.25 + 0.75 * r, 0.25 + 0.75 * g, 0.25 + 0.75 * b]
 }
 
+/// A word for [`debug_color`]'s hue of `id`, so a legend can say "blue"
+/// rather than a triple (#309). `NO_STYLE` is "black".
+pub fn debug_color_name(id: u16) -> &'static str {
+    if id == NO_STYLE {
+        return "black";
+    }
+    let degrees = (id as f32 * 0.618_034).fract() * 360.0;
+    const NAMES: [(f32, &str); 12] = [
+        (15.0, "red"),
+        (40.0, "orange"),
+        (68.0, "yellow"),
+        (100.0, "lime"),
+        (145.0, "green"),
+        (170.0, "mint"),
+        (195.0, "cyan"),
+        (220.0, "azure"),
+        (255.0, "blue"),
+        (285.0, "violet"),
+        (325.0, "magenta"),
+        (345.0, "pink"),
+    ];
+    NAMES
+        .iter()
+        .find(|(below, _)| degrees < *below)
+        .map_or("red", |(_, name)| name)
+}
+
+/// One row of the style mask view's legend: an id, the style variant it
+/// stands for and the colour the view paints it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    pub id: u16,
+    /// The variant's name, as [`StyleIds`] holds it (`ascii`, `ascii{off}`).
+    pub name: String,
+    /// The view's display colour, 0..1.
+    pub color: [f32; 3],
+    /// A word for the colour ([`debug_color_name`]).
+    pub color_name: &'static str,
+}
+
+/// The legend for the style mask view (#309): each id in `ids`, in id
+/// order, with its hue.
+pub fn legend(ids: &StyleIds) -> Vec<LegendEntry> {
+    ids.iter()
+        .map(|(id, name)| LegendEntry {
+            id,
+            name: name.to_string(),
+            color: debug_color(id),
+            color_name: debug_color_name(id),
+        })
+        .collect()
+}
+
+/// The legend on one line, as `flint render` prints it:
+/// `style mask: 1 ascii (blue), 2 pencil (green)`, or a note that nothing
+/// is styled.
+pub fn legend_line(ids: &StyleIds) -> String {
+    if ids.is_empty() {
+        return "style mask: no styled entities".to_string();
+    }
+    let rows: Vec<String> = legend(ids)
+        .iter()
+        .map(|e| format!("{} {} ({})", e.id, e.name, e.color_name))
+        .collect();
+    format!("style mask: {}", rows.join(", "))
+}
+
 // ---------------------------------------------------------------------------
 // The pass
 // ---------------------------------------------------------------------------
@@ -552,11 +648,115 @@ pub(crate) struct MaskDraw<'a> {
     pub blend: f32,
 }
 
+/// One transparent mesh in front of whatever it covers, for the veil
+/// (#290): its own cached transform and material bind groups.
+pub(crate) struct VeilMesh<'a> {
+    pub vertex_buffer: &'a wgpu::Buffer,
+    pub index_buffer: &'a wgpu::Buffer,
+    pub index_count: u32,
+    pub transform_bind_group: &'a wgpu::BindGroup,
+    pub material_bind_group: &'a wgpu::BindGroup,
+    /// The bone matrices, for a skinned draw.
+    pub bones: Option<&'a wgpu::BindGroup>,
+}
+
+/// The frame's particles, for the veil: the particle pipeline's shared
+/// bind groups and its sorted draws.
+pub(crate) struct VeilParticles<'a> {
+    pub pipeline: &'a crate::particle_pipeline::ParticlePipeline,
+    pub draws: &'a [crate::particle_pipeline::ParticleDrawCall],
+}
+
+/// What the veil pass draws this frame.
+pub(crate) struct Veil<'a> {
+    /// The light group, whose `material_sampler` the PBR veil samples with.
+    pub light_bind_group: &'a wgpu::BindGroup,
+    pub meshes: Vec<VeilMesh<'a>>,
+    pub particles: Option<VeilParticles<'a>>,
+}
+
+impl Veil<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.meshes.is_empty() && self.particles.as_ref().is_none_or(|p| p.draws.is_empty())
+    }
+}
+
+/// The veil's particle pipelines: alpha-like modes and additive.
+struct ParticleVeil {
+    alpha: wgpu::RenderPipeline,
+    additive: wgpu::RenderPipeline,
+}
+
+/// A veil pipeline: `module`'s `vs`/`fs`, both faces, single-sample,
+/// depth-tested against the scene and never writing it, its coverage
+/// "over" what's there (red only).
+fn veil_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    (vs, fs): (&str, &str),
+    layouts: &[&wgpu::BindGroupLayout],
+    buffers: &[wgpu::VertexBufferLayout<'static>],
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: layouts,
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(vs),
+            buffers,
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some(fs),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: VEIL_FORMAT,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::RED,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// The bind group layouts the mask and the veil share with the scene's
+/// pipelines.
+pub(crate) struct MaskLayouts<'a> {
+    pub transform: &'a wgpu::BindGroupLayout,
+    pub material: &'a wgpu::BindGroupLayout,
+    pub light: &'a wgpu::BindGroupLayout,
+    pub bones: &'a wgpu::BindGroupLayout,
+}
+
 /// The mask's pipelines and its per-draw uniform buffer, made the first
 /// time a frame needs the mask.
 pub struct StyleMaskPass {
     static_pipeline: wgpu::RenderPipeline,
     skinned_pipeline: wgpu::RenderPipeline,
+    veil_static: wgpu::RenderPipeline,
+    veil_skinned: wgpu::RenderPipeline,
+    /// Made the first frame with particles (the particle pipeline is too).
+    veil_particles: Option<ParticleVeil>,
     draw_bgl: wgpu::BindGroupLayout,
     draw_buffer: wgpu::Buffer,
     /// The uniform bytes, kept so a frame reuses the allocation.
@@ -565,11 +765,8 @@ pub struct StyleMaskPass {
 }
 
 impl StyleMaskPass {
-    pub fn new(
-        device: &wgpu::Device,
-        transform_bgl: &wgpu::BindGroupLayout,
-        bone_bgl: &wgpu::BindGroupLayout,
-    ) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, layouts: &MaskLayouts<'_>) -> Self {
+        let (transform_bgl, bone_bgl) = (layouts.transform, layouts.bones);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("style_mask.wgsl").into()),
@@ -594,6 +791,16 @@ impl StyleMaskPass {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -652,6 +859,30 @@ impl StyleMaskPass {
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
+        let pbr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil PBR Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+        let skinned = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil Skinned Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+        });
+        let veil_static = veil_pipeline(
+            device,
+            "Style Veil Pipeline",
+            &pbr,
+            ("vs_main", "fs_veil"),
+            &[transform_bgl, layouts.material, layouts.light],
+            &[crate::primitives::Vertex::desc()],
+        );
+        let veil_skinned = veil_pipeline(
+            device,
+            "Style Veil Skinned Pipeline",
+            &skinned,
+            ("vs_skinned", "fs_veil"),
+            &[transform_bgl, layouts.material, layouts.light, bone_bgl],
+            &[crate::primitives::SkinnedVertex::desc()],
+        );
         let draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Style Mask Draws"),
             size: DRAW_STRIDE * MAX_MASK_DRAWS as u64,
@@ -661,6 +892,9 @@ impl StyleMaskPass {
         Self {
             static_pipeline,
             skinned_pipeline,
+            veil_static,
+            veil_skinned,
+            veil_particles: None,
             draw_bgl,
             draw_buffer,
             scratch: Vec::new(),
@@ -676,6 +910,7 @@ impl StyleMaskPass {
         device: &wgpu::Device,
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
+        veil: &wgpu::TextureView,
         depth_owned: bool,
     ) -> std::sync::Arc<wgpu::BindGroup> {
         binds.get_if(depth_owned, "Style Mask Draw BG", 0, || {
@@ -697,13 +932,119 @@ impl StyleMaskPass {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(scene_depth),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(veil),
+                    },
                 ],
             })
         })
     }
 
-    /// Clear `mask` and draw `draws` into it, each tested against
-    /// `scene_depth` (single-sample, the mask's size).
+    /// Clear `veil_view` and draw what's in front into it (#290): each
+    /// transparent mesh and particle, depth-tested against `scene_depth`.
+    fn encode_veil(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        veil_view: &wgpu::TextureView,
+        scene_depth: &wgpu::TextureView,
+        veil: &Veil<'_>,
+    ) {
+        if let Some(pp) = veil
+            .particles
+            .as_ref()
+            .filter(|p| !p.draws.is_empty() && self.veil_particles.is_none())
+            .map(|p| p.pipeline)
+        {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Style Veil Particle Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("particle_shader.wgsl").into()),
+            });
+            let layouts = [
+                &pp.uniform_bind_group_layout,
+                &pp.instance_bind_group_layout,
+                &pp.texture_bind_group_layout,
+            ];
+            let make = |label, fs| {
+                veil_pipeline(device, label, &shader, ("vs_particle", fs), &layouts, &[])
+            };
+            self.veil_particles = Some(ParticleVeil {
+                alpha: make("Style Veil Particle Pipeline", "fs_veil"),
+                additive: make("Style Veil Additive Particle Pipeline", "fs_veil_additive"),
+            });
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Style Veil Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: veil_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            // Read-only: the scene's depth, which nothing here writes
+            depth_stencil_attachment: (!veil.is_empty()).then_some(
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: scene_depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                },
+            ),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        if veil.is_empty() {
+            return;
+        }
+        let mut skinned = None;
+        for m in &veil.meshes {
+            let is_skinned = m.bones.is_some();
+            if skinned != Some(is_skinned) {
+                pass.set_pipeline(if is_skinned {
+                    &self.veil_skinned
+                } else {
+                    &self.veil_static
+                });
+                pass.set_bind_group(2, veil.light_bind_group, &[]);
+                skinned = Some(is_skinned);
+            }
+            pass.set_bind_group(0, m.transform_bind_group, &[]);
+            pass.set_bind_group(1, m.material_bind_group, &[]);
+            if let Some(bones) = m.bones {
+                pass.set_bind_group(3, bones, &[]);
+            }
+            pass.set_vertex_buffer(0, m.vertex_buffer.slice(..));
+            pass.set_index_buffer(m.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..m.index_count, 0, 0..1);
+        }
+        if let (Some(particles), Some(pipelines)) = (&veil.particles, &self.veil_particles) {
+            let pp = particles.pipeline;
+            pass.set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
+            pass.set_bind_group(1, pp.instance_bind_group(), &[]);
+            let mut additive = None;
+            for d in particles.draws {
+                let is_additive = d.blend == flint_particles::ParticleBlendMode::Additive;
+                if additive != Some(is_additive) {
+                    pass.set_pipeline(if is_additive {
+                        &pipelines.additive
+                    } else {
+                        &pipelines.alpha
+                    });
+                    additive = Some(is_additive);
+                }
+                pass.set_bind_group(2, d.texture_bind_group.as_ref(), &[]);
+                let first = d.first_instance;
+                pass.draw_indexed(0..6, 0, first..first + d.instance_count);
+            }
+        }
+    }
+
+    /// Draw the veil into `veil_view`, then clear `mask` and draw `draws`
+    /// into it, each tested against `scene_depth` (single-sample, the
+    /// mask's size) and its blend scaled by what the veil leaves uncovered.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
@@ -712,10 +1053,16 @@ impl StyleMaskPass {
         encoder: &mut wgpu::CommandEncoder,
         binds: &crate::bind_cache::BindCache,
         mask: &wgpu::TextureView,
+        veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
         depth_owned: bool,
         draws: &[MaskDraw<'_>],
+        veil: &Veil<'_>,
     ) {
+        // Only a styled pixel reads the veil: with none, it isn't drawn
+        if !draws.is_empty() {
+            self.encode_veil(device, encoder, veil_view, scene_depth, veil);
+        }
         if draws.len() > MAX_MASK_DRAWS && !self.warned_overflow {
             self.warned_overflow = true;
             tracing::warn!(
@@ -740,8 +1087,8 @@ impl StyleMaskPass {
         if !self.scratch.is_empty() {
             queue.write_buffer(&self.draw_buffer, 0, &self.scratch);
         }
-        let draw_bg =
-            (!draws.is_empty()).then(|| self.draw_bind(device, binds, scene_depth, depth_owned));
+        let draw_bg = (!draws.is_empty())
+            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_owned));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Style Mask Pass"),
@@ -816,6 +1163,27 @@ mod tests {
             let d: f32 = ca.iter().zip(cb).map(|(x, y)| (x - y).abs()).sum();
             assert!(d > 0.3, "{a} and {} look alike", a + 1);
         }
+    }
+
+    #[test]
+    fn the_legend_names_each_id_and_its_hue() {
+        assert_eq!(debug_color_name(NO_STYLE), "black");
+        assert_eq!(debug_color_name(1), "blue");
+        assert_eq!(debug_color_name(2), "lime");
+        let mut ids = StyleIds::default();
+        assert_eq!(legend_line(&ids), "style mask: no styled entities");
+        ids.set(vec![
+            ("pencil".into(), StyleVariant::plain("pencil")),
+            ("ascii".into(), StyleVariant::plain("ascii")),
+        ]);
+        let rows = legend(&ids);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].id, rows[0].name.as_str()), (1, "ascii"));
+        assert_eq!(rows[1].color, debug_color(2));
+        assert_eq!(
+            legend_line(&ids),
+            "style mask: 1 ascii (blue), 2 pencil (lime)"
+        );
     }
 
     fn world_with(entities: &[(&str, Option<&str>, Option<&str>)]) -> FlintWorld {
