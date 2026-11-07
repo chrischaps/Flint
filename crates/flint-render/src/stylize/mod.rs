@@ -89,10 +89,12 @@ pub mod edges;
 pub mod kit;
 mod spec;
 mod targets;
+pub mod text;
 
 pub use edges::EDGE_FORMAT;
 pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
 pub use targets::{StyleTargets, StyleTexture, TargetSummary};
+pub use text::{GlyphCell, GlyphText};
 
 use crate::bind_cache::BindCache;
 use crate::postprocess::PostProcessConfig;
@@ -543,6 +545,17 @@ pub trait StylePass: Send + Sync {
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
     );
+
+    /// Keep each frame's glyph grid for [`read_text`](Self::read_text)
+    /// (#317). Only a style that draws glyphs does anything with it.
+    fn set_text_capture(&self, _on: bool) {}
+
+    /// The glyph grid the last frame encoded with capture on drew, once
+    /// that frame's submission is done (this waits on the device). `None`
+    /// from a style that draws no glyphs, or before such a frame.
+    fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
+        None
+    }
 }
 
 /// The view a style reads, with an id that's stable for as long as the
@@ -1125,6 +1138,9 @@ pub struct StyleSet {
     /// How many times the edge pass has been drawn, for the test that a
     /// frame draws it once however many styles read it.
     edge_runs: std::sync::atomic::AtomicU64,
+    /// Whether glyph styles keep their frame as text (#317), handed to
+    /// each pass when it's built.
+    text_capture: bool,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -1171,7 +1187,10 @@ impl StyleSet {
                 })
             }));
             match made {
-                Ok(pass) => self.built[i] = Some(pass),
+                Ok(pass) => {
+                    pass.set_text_capture(self.text_capture);
+                    self.built[i] = Some(pass);
+                }
                 Err(_) => {
                     self.failed[i] = true;
                     failed.push(*descriptor);
@@ -1226,6 +1245,22 @@ impl StyleSet {
     /// renderer was made.
     pub fn edge_runs(&self) -> u64 {
         self.edge_runs.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Have glyph styles keep each frame's grid as text (#317), now and
+    /// for every style built later.
+    pub fn set_text_capture(&mut self, on: bool) {
+        self.text_capture = on;
+        for pass in self.built.iter().flatten() {
+            pass.set_text_capture(on);
+        }
+    }
+
+    /// The glyph grid style `name` drew in the last frame encoded with text
+    /// capture on, after its submission ([`StylePass::read_text`]).
+    pub fn read_text(&self, name: &str, device: &wgpu::Device) -> Option<GlyphText> {
+        let i = registry().iter().position(|d| d.name == name)?;
+        self.built.get(i)?.as_deref()?.read_text(device)
     }
 
     /// Whether style `name` is built.

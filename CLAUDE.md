@@ -58,6 +58,9 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
    #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
    #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
+   #   --ascii-text frame.txt  --ascii-text-ansi frame.ans
+   #                          (#317: the glyph grid as text, a line per cell row, cell for
+   #                           cell with the PNG; read a render instead of looking at it)
    #   --ascii-scope screen|entities --ascii-grid screen|object
    #                          (#266; a scene's ascii_style entities need no flag)
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1 --ascii-dither 0 (#277)
@@ -137,7 +140,8 @@ Flint uses an **edit -> validate -> play** loop:
    **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
-   --test render_goldens` runs it. A new style adds a case. A `.suite.toml` there is still music to WAV.
+   --test render_goldens` runs it. A new style adds a case. A case's `text = "<x>.txt"`
+   (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`). A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 
