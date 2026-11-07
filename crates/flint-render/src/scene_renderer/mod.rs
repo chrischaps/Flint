@@ -499,6 +499,9 @@ pub struct SceneRenderer {
     terrain_material_buffer: Option<wgpu::Buffer>,
     terrain_total_chunks: u32,
     terrain_visible_chunks: u32,
+    /// The entity the loaded terrain belongs to, so a `style_mask` on it
+    /// masks the chunks (#310). Set by [`SceneRenderer::set_terrain_entity`].
+    terrain_entity: Option<flint_core::EntityId>,
     camera_frustum: Option<crate::frustum::Frustum>,
     /// Level-of-detail and draw-distance scales (#56)
     lod_settings: LodSettings,
@@ -821,6 +824,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -1570,9 +1574,19 @@ impl SceneRenderer {
         self.reload_terrain_geometry(device, chunks, transform);
     }
 
+    /// Name the entity the loaded terrain belongs to (#310): a
+    /// `style_mask` (or a style's own component) on it, or on an ancestor,
+    /// then masks the terrain's chunks like any styled mesh. Hosts call it
+    /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
+    /// terrain unmasked, as it was before.
+    pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
+        self.terrain_entity = entity;
+    }
+
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain_draws.clear();
+        self.terrain_entity = None;
         self.terrain_material_bind_group = None;
         self.terrain_material_buffer = None;
     }
@@ -2305,6 +2319,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -4527,8 +4542,9 @@ impl SceneRenderer {
         &self.style_blend_by_entity
     }
 
-    /// Record the style mask pass over this frame's visible opaque draws
-    /// (static, procedural and skinned) of styled entities. The mask is
+    /// Record the style mask pass over this frame's visible draws of
+    /// styled entities: terrain chunks, opaque static, procedural and
+    /// skinned draws, then transparents over them (#310). The mask is
     /// cleared even with none, so a style never reads a stale frame.
     fn encode_style_mask(
         &mut self,
@@ -4568,6 +4584,29 @@ impl SceneRenderer {
         };
         let mut draws = Vec::new();
         if !ids.is_empty() {
+            // Terrain first (#310): the props on it are drawn after, and
+            // each fragment's depth test decides who owns a pixel anyway
+            if let Some(id) = id_of(&self.terrain_entity) {
+                let blend = blend_of(&self.terrain_entity);
+                let frustum = self.camera_frustum.as_ref();
+                let visible = |d: &&TerrainDrawCall| {
+                    frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
+                };
+                draws.extend(
+                    self.terrain_draws
+                        .iter()
+                        .filter(visible)
+                        .map(|d| crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id,
+                            blend,
+                        }),
+                );
+            }
             draws.extend(
                 self.entity_draws
                     .iter()
@@ -4585,6 +4624,39 @@ impl SceneRenderer {
                     }),
             );
             draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
+                Some(crate::style_mask::MaskDraw {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                    id: id_of(&d.entity_id)?,
+                    blend: blend_of(&d.entity_id),
+                })
+            }));
+            // Styled transparents last, back to front as the scene drew
+            // them (#310). They write no depth, so the depth test keeps them
+            // behind the opaques in front of them and nothing else: where
+            // one shows, it is the nearest styled surface and its id
+            // replaces what's behind. A styled glass is a lens, drawing
+            // what's seen through it in its style.
+            draws.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe)
+                    .filter_map(|d| {
+                        Some(crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id: id_of(&d.entity_id)?,
+                            blend: blend_of(&d.entity_id),
+                        })
+                    }),
+            );
+            draws.extend(self.transparent_skinned_draws.iter().filter_map(|d| {
                 Some(crate::style_mask::MaskDraw {
                     vertex_buffer: &d.vertex_buffer,
                     index_buffer: &d.index_buffer,

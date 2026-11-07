@@ -268,3 +268,16 @@ scene = "demo/stylize_props.scene.toml"
 width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
+
+# Terrain and styled transparents in the mask (#310): ASCII hills cut
+# around smooth props, and a styled glass pane drawing what's behind it in
+# glyphs; then the mask itself
+[[case]]
+name = "style-terrain"
+scene = "demo/style_terrain.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "style-terrain-mask"
+scene = "demo/style_terrain.scene.toml"
+args = ["--no-grid", "--debug-mode", "style"]

@@ -177,6 +177,8 @@ pub(super) fn load_terrain_from_world_inner(
             &config.layer_textures,
             scene_dir,
         );
+        // A style_mask on the terrain entity masks its chunks (#310)
+        scene_renderer.set_terrain_entity(Some(entity.id));
 
         // Register physics collider
         let (verts, tris) = terrain.trimesh_data();

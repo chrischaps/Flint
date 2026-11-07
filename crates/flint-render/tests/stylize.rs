@@ -736,3 +736,145 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
+
+/// A flat terrain chunk `half` metres each way around the origin.
+fn flat_chunk(half: f32) -> flint_terrain::TerrainChunk {
+    let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+    flint_terrain::TerrainChunk {
+        grid_pos: (0, 0),
+        positions: corners.iter().map(|[x, z]| [*x, 0.0, *z]).collect(),
+        normals: vec![[0.0, 1.0, 0.0]; 4],
+        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        indices: vec![0, 2, 1, 0, 3, 2],
+        aabb_min: [-half, 0.0, -half],
+        aabb_max: [half, 0.0, half],
+    }
+}
+
+/// A procedural box `half` metres each way, centred `y` up, made
+/// transparent by `opacity`.
+fn boxed(world: &mut FlintWorld, name: &str, half: f64, y: f64, opacity: Option<f64>) {
+    let id = world.spawn(name).unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, y, 0.0]));
+    world
+        .set_component(id, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-half, -half, -half]));
+    bounds.insert("max".into(), vec3([half, half, half]));
+    world.set_component(id, "bounds", bounds.into()).unwrap();
+    if let Some(opacity) = opacity {
+        let mut material = toml::Table::new();
+        material.insert(
+            "color".into(),
+            toml::Value::Array(vec![0.6.into(), 0.9.into(), 1.0.into(), 1.0.into()]),
+        );
+        material.insert("opacity".into(), opacity.into());
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
+    }
+}
+
+fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
+    &frame[(y * SIZE as usize + x) * 4..][..4]
+}
+
+#[test]
+fn a_styled_terrain_is_masked_around_the_props_on_it() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    let mut world = FlintWorld::new();
+    let ground = world.spawn("ground").unwrap();
+    boxed(&mut world, "cube", 2.5, 2.5, None);
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let no_textures: [String; 4] = Default::default();
+    renderer.load_terrain(
+        &gpu.device,
+        &gpu.queue,
+        &[flat_chunk(40.0)],
+        &flint_core::Transform::default(),
+        1.0,
+        0.0,
+        0.9,
+        "",
+        &no_textures,
+        std::path::Path::new("."),
+    );
+    renderer.set_terrain_entity(Some(ground));
+    let plain = gpu.frame(&mut renderer, &world);
+
+    set_entity_style(&mut world, ground, "ascii").unwrap();
+    let styled = gpu.frame(&mut renderer, &world);
+    // The bottom rows are all ground: glyphs there
+    let bottom = (SIZE as usize - 8) * SIZE as usize * 4;
+    assert_ne!(
+        styled[bottom..],
+        plain[bottom..],
+        "the terrain took no style"
+    );
+    // The unstyled cube in the middle cuts its own hole in the mask
+    for (x, y) in [(31, 30), (32, 30), (31, 31), (32, 31)] {
+        assert_eq!(
+            pixel(&styled, x, y),
+            pixel(&plain, x, y),
+            "the unstyled cube at ({x},{y}) was styled"
+        );
+    }
+    // A terrain the host didn't name stays out of the mask, as before
+    renderer.set_terrain_entity(None);
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
+
+#[test]
+fn a_styled_transparent_styles_what_is_seen_through_it() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::{clear_entity_style, set_entity_style};
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    boxed(&mut world, "glass", 2.5, 2.5, Some(0.4));
+    let glass = world.get_id("glass").unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    set_entity_style(&mut world, glass, "ascii").unwrap();
+    let styled = gpu.frame(&mut renderer, &world);
+    let changed = plain
+        .chunks(4)
+        .zip(styled.chunks(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    eprintln!("the styled glass changed {changed} pixels");
+    assert!(changed > 50, "a styled transparent took no style");
+    // The glass is the lens, not the floor: the corners stay as they were
+    for (x, y) in [(1, 62), (62, 62)] {
+        assert_eq!(
+            pixel(&styled, x, y),
+            pixel(&plain, x, y),
+            "the floor at ({x},{y}) was styled"
+        );
+    }
+    clear_entity_style(&mut world, glass);
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
