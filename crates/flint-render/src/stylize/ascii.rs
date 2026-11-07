@@ -8,6 +8,7 @@
 //! font = "builtin"      # or a fonts/<name>.glyphs.toml set
 //! ramp = "classic"      # a ramp of that set
 //! color = "source"      # source | tint | raw | mono | palette
+//! tint = [0.35, 1.0, 0.45]  # for color = "tint"; or "#59ff73" (#315)
 //! palette = "phosphor"  # for color = "palette": built-in or palettes/<name>.palette.toml
 //! ground = "dim"        # dim | black | inverse
 //! glow = 0.0            # halo around bright glyphs
@@ -1090,7 +1091,8 @@ fn variant_uniform(
     VariantUniform {
         cell,
         origin,
-        tint: [param("tint_r"), param("tint_g"), param("tint_b")],
+        // The caller's, read as one colour (`variant_color`, #315)
+        tint: [0.0; 3],
         color_mode: color_mode(&option("color")),
         brightness: param("brightness"),
         contrast: param("contrast").max(0.0),
@@ -1382,6 +1384,7 @@ impl Ascii {
             };
             slots[id as usize] = rows.len() as u32;
             let mut row = variant_uniform(&param, &option, cell, origin, ramp, &palette, flags);
+            row.tint = frame.variant_color(v, "tint");
             // The row holds the outline in points; the shader wants pixels
             row.outline = outline_pixels(row.outline, frame.pixels_per_point);
             rows.push(row);
@@ -1693,11 +1696,7 @@ impl StylePass for Ascii {
             origin,
             glyph: [glyph[0] as f32, glyph[1] as f32],
             size: [frame.width as f32, frame.height as f32],
-            tint: [
-                frame.param("tint_r"),
-                frame.param("tint_g"),
-                frame.param("tint_b"),
-            ],
+            tint: frame.color("tint"),
             color_mode: color_mode(frame.option("color")),
             brightness: frame.param("brightness"),
             contrast: frame.param("contrast").max(0.0),

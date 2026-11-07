@@ -86,11 +86,24 @@
 //! style that honours the blend (ASCII, user styles through
 //! `flint_style_blend`) shows the fire as fire and the stone through any
 //! uncovered share; a fully covered pixel keeps its id at blend 0. A
-//! transparent that is itself styled is left out of the veil (whether it
-//! should be stylized is #310).
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
 //!
-//! Sprites, grass, terrain and water stay unmasked and out of the veil:
-//! they write no mask (and, but for terrain, no depth either).
+//! ## Terrain and transparents (#310)
+//!
+//! Terrain chunks are masked when the terrain's entity (named by
+//! `SceneRenderer::set_terrain_entity`) is styled: they use the standard
+//! `Vertex` and transform layout, so the static pipeline draws them as is.
+//!
+//! A styled transparent is a lens. Its draws come after every opaque one,
+//! back to front as the scene drew them; they write no depth, but each
+//! fragment still tests against the opaques' depth, so where one shows it
+//! is the nearest styled surface and its id replaces what's behind it. The
+//! style then draws the whole pixel, glass and what's seen through it.
+//!
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -344,8 +357,9 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 }
 
 /// Read a style component's fields into `variant`: the descriptor's
-/// options as strings, its parameters as numbers, and a 3-array `x` as the
-/// parameters `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
+/// options as strings, its parameters as numbers, and a colour `x` (a
+/// 3-array, [`StyleColor`](crate::stylize::StyleColor)) as the parameters
+/// `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
 /// style doesn't take, a value of the wrong type) is skipped: the scene
 /// loader has already warned about it against the component's schema.
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
@@ -363,16 +377,10 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
             if let Some(n) = number(value) {
                 variant.params.insert(key.clone(), n);
             }
-        } else if let Some([r, g, b]) = value.as_array().map(Vec::as_slice) {
-            let channels = ["r", "g", "b"].map(|c| format!("{key}_{c}"));
-            if channels
-                .iter()
-                .all(|c| d.params.iter().any(|p| p.name == c))
-            {
-                for (c, v) in channels.into_iter().zip([r, g, b]) {
-                    if let Some(n) = number(v) {
-                        variant.params.insert(c, n);
-                    }
+        } else if let Some(color) = d.color_setting(key) {
+            if let Some(rgb) = crate::stylize::color_from_toml(value) {
+                for (p, n) in color.channels.iter().zip(rgb) {
+                    variant.params.insert(p.name.to_string(), n);
                 }
             }
         }

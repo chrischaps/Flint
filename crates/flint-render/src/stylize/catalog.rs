@@ -63,6 +63,22 @@ pub struct StyleListing {
     pub uses_mask: bool,
     pub params: Vec<ParamListing>,
     pub options: Vec<OptionListing>,
+    /// The colours (#315): a key a scene writes as `[r, g, b]` or
+    /// `"#rrggbb"`, over three of `params` (`tint` over `tint_r/g/b`).
+    pub colors: Vec<ColorListing>,
+}
+
+/// One colour setting.
+#[derive(Debug, Clone, Serialize)]
+pub struct ColorListing {
+    /// The key a scene writes (`tint`).
+    pub key: String,
+    /// Display values, 0..1 per channel.
+    pub default: [f32; 3],
+    /// The parameters underneath, red, green, blue.
+    pub channels: [String; 3],
+    pub label: String,
+    pub help: String,
 }
 
 /// One numeric parameter.
@@ -77,6 +93,8 @@ pub struct ParamListing {
     pub max: f32,
     /// Whole numbers only (a cell size, a count).
     pub integer: bool,
+    /// The colour this is a channel of (`tint` for `tint_r`), if any.
+    pub color: Option<String>,
     pub label: String,
     pub help: String,
 }
@@ -136,6 +154,7 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
                 max: p.max,
                 integer: (kuwahara && p.name == "radius")
                     || d.hint(p.name).is_some_and(|h| h.integer),
+                color: d.color_of(p.name).map(|c| c.base.to_string()),
                 label: d.label_for(p.name),
                 help: help(p.name),
             })
@@ -149,6 +168,17 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
                 choices: o.choices.iter().map(|c| c.to_string()).collect(),
                 label: d.label_for(o.name),
                 help: help(o.name),
+            })
+            .collect(),
+        colors: d
+            .colors()
+            .into_iter()
+            .map(|c| ColorListing {
+                key: c.base.to_string(),
+                default: c.default_rgb(),
+                channels: c.channels.map(|p| p.name.to_string()),
+                label: d.label_for(c.base),
+                help: help(c.base),
             })
             .collect(),
     }
@@ -192,6 +222,19 @@ pub fn catalog_text() -> String {
             ));
         }
         for p in &s.params {
+            // A colour's channels are listed as the colour, where red stands
+            if let Some(key) = &p.color {
+                let c = s.colors.iter().find(|c| &c.key == key);
+                if let Some(c) = c.filter(|c| c.channels[0] == p.name) {
+                    let [r, g, b] = c.default.map(num);
+                    out.push_str(&format!(
+                        "  {:width$}  [{r}, {g}, {b}]  colour, or \"#rrggbb\"{}\n",
+                        c.key,
+                        tail(&c.help)
+                    ));
+                }
+                continue;
+            }
             let int = if p.integer { ", integer" } else { "" };
             out.push_str(&format!(
                 "  {:width$}  {}  [{} .. {}{}]{}\n",
@@ -267,6 +310,24 @@ mod tests {
             let spec = format!("kuwahara:{}={}", p.name, p.default);
             assert!(super::super::StyleSpec::parse(&spec).is_ok(), "{spec}");
         }
+    }
+
+    #[test]
+    fn a_colour_is_listed_once_by_its_key() {
+        let ascii = listing(super::super::find("ascii").unwrap());
+        assert_eq!(ascii.colors.len(), 1);
+        let tint = &ascii.colors[0];
+        assert_eq!(tint.key, "tint");
+        assert_eq!(tint.default, [0.35, 1.0, 0.45]);
+        assert_eq!(
+            tint.channels,
+            ["tint_r", "tint_g", "tint_b"].map(String::from)
+        );
+        let g = ascii.params.iter().find(|p| p.name == "tint_g").unwrap();
+        assert_eq!(g.color.as_deref(), Some("tint"));
+        let text = catalog_text();
+        assert!(text.contains("[0.35, 1, 0.45]  colour"), "{text}");
+        assert!(!text.contains("  tint_r "), "{text}");
     }
 
     #[test]
