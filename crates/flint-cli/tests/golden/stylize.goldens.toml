@@ -6,8 +6,9 @@
 # `cargo test -p flint-cli --test render_goldens` runs the same suite. Each
 # case is one `flint render`, single-sample unless it says `--msaa 4`, with
 # the post clock at 0 (`--style-time` for an animated style). Bless only
-# after a deliberate change, and look at what you bless: the renders land
-# in the suite's out dir with a diff beside any that moved.
+# after a deliberate change, and look at what you bless: the out dir's
+# index.html (#329) shows every case's old golden, render and diff side by
+# side, the ones that moved first.
 #
 # Per-entity ASCII (#266) has cases of its own below. The props scene's
 # barrel and YBot carry `style_mask { style = "ascii" }`, so since #266

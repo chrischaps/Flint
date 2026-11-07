@@ -145,8 +145,12 @@ Flint uses an **edit -> validate -> play** loop:
 
    **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
-   `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
-   --test render_goldens` runs it. A new style adds a case. A case's `text = "<x>.txt"`
+   `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact
+   sheet of golden | render | diff, failures first, #329); `cargo test -p flint-cli
+   --test render_goldens` runs it. Cases run in one process on one GPU device with glTF
+   decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
+   `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own
+   process, `--isolate` spawns every case. A new style adds a case. A case's `text = "<x>.txt"`
    (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`).
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
