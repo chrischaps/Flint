@@ -55,7 +55,10 @@ flint-player demo/film/02_type.scene.toml --schemas schemas \
   takes are one scene with `--look ascii_noir`, `--look matrix`, and so on.
 - A beat's `input` is an input script (`--input-script`) for the beats that
   drive the F4 menu. Its pointer positions are written in points; the rig
-  writes a copy scaled to the take's pixels beside the frames.
+  writes a copy scaled to the take's pixels beside the frames. They are the
+  menu's rows as captured, so a change to the menu's layout (a new style
+  parameter, a new section) moves them: capture the beat after one and look
+  at its menu frames before trusting a take.
 
 ## A beat
 
