@@ -1,0 +1,177 @@
+# Pencil sketch (#273): a still life where each prop is drawn by its own
+# hand, and the world around them stays painted. The scene's
+# [post_process.styles.pencil] table is only a preset here
+# (scope = "entities"); each prop's pencil_style changes what it needs:
+#
+#   barrel   the preset: graphite on paper, strokes round the surface
+#   cask     coloured pencil: sepia lead over the cask's own colour
+#   crate    screen hatching at one angle, four layers deep (the lid inherits it)
+#   tag      opts back out with enabled = false
+#   block    hatching pinned to the block (grid = "object"): strokes travel with it
+#   ybot     blue pencil, heavy doubled outline (a skinned mesh)
+#
+#   cargo run --bin flint -- render demo/pencil_sketch.scene.toml --schemas schemas --no-grid -o sketch.png
+#   cargo run --bin flint -- render demo/pencil_sketch.scene.toml --schemas schemas --no-grid --style pencil:scope=screen -o page.png
+#
+# The second command draws the whole frame in pencil, the props keeping
+# their own settings as variants. Book: concepts/stylize-passes.md
+
+[scene]
+name = "Pencil Sketch"
+version = "1.0"
+description = "Per-entity pencil sketch: hatching, contours and paper on chosen props (#273)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+# The preset every pencil_style starts from
+[post_process.styles.pencil]
+scope = "entities"
+spacing = 5.0
+wobble = 1.8
+contrast = 1.35
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.75, -0.38, 0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.4, -0.8, -0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [1.3, 0.48, 5.6]
+rotation = [0, 40, 0]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+[entities.barrel.pencil_style]
+
+[entities.cask]
+archetype = "furniture"
+[entities.cask.transform]
+position = [0.2, 0.48, 4.6]
+scale = [0.5, 0.5, 0.5]
+[entities.cask.model]
+asset = "barrel"
+[entities.cask.pencil_style]
+color = 0.6
+lead = [0.34, 0.17, 0.07]
+layers = 3.0
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [1.9, 0.0, 3.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+[entities.crate.pencil_style]
+direction = "screen"
+angle = 35.0
+layers = 4.0
+
+# Inherits the crate's pencil
+[entities.lid]
+archetype = "furniture"
+parent = "crate"
+[entities.lid.transform]
+position = [0.05, 0.8, -0.05]
+rotation = [0, 20, 0]
+[entities.lid.bounds]
+min = [-0.22, 0.0, -0.22]
+max = [0.22, 0.3, 0.22]
+[entities.lid.material]
+color = [0.42, 0.50, 0.30, 1.0]
+roughness = 0.7
+
+# Stays painted, against its parent's style
+[entities.tag]
+archetype = "furniture"
+parent = "crate"
+[entities.tag.transform]
+position = [-0.27, 0.8, 0.27]
+[entities.tag.bounds]
+min = [-0.08, 0.0, -0.08]
+max = [0.08, 0.16, 0.08]
+[entities.tag.material]
+color = [0.9, 0.85, 0.6, 1.0]
+[entities.tag.pencil_style]
+enabled = false
+
+[entities.block]
+archetype = "furniture"
+[entities.block.transform]
+position = [3.0, 0.0, 5.4]
+rotation = [0, -15, 0]
+[entities.block.bounds]
+min = [-0.3, 0.0, -0.3]
+max = [0.3, 0.45, 0.3]
+[entities.block.material]
+color = [0.30, 0.32, 0.36, 1.0]
+roughness = 0.6
+[entities.block.pencil_style]
+grid = "object"
+
+# No animator: at rest it agrees in `flint render` and the player
+[entities.ybot]
+archetype = "character"
+[entities.ybot.transform]
+position = [-0.9, 0, 4.0]
+rotation = [0, 25, 0]
+[entities.ybot.model]
+asset = "YBotWithIdle"
+[entities.ybot.skeleton]
+skin = "Armature"
+[entities.ybot.pencil_style]
+lead = [0.10, 0.18, 0.45]
+contour_width = 2.0
+sketchy = 1.0

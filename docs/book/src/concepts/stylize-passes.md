@@ -1,6 +1,8 @@
 # Stylize Passes
 
-A stylize pass is a full-screen effect that changes how the picture looks rather than how the light behaves: the painterly Kuwahara filter, and the ASCII, watercolor and pencil styles planned after it (epic #260). They share one framework in `flint-render` (`crates/flint-render/src/stylize/`), so a new style is mostly a shader and a parameter list.
+A stylize pass is a full-screen effect that changes how the picture looks rather than how the light behaves: the painterly Kuwahara filter, ASCII, the pencil sketch, and the watercolor style planned after them (epic #260). They share one framework in `flint-render` (`crates/flint-render/src/stylize/`), so a new style is mostly a shader and a parameter list.
+
+This page is the reference. For choosing between a whole-frame and a per-entity style, which grid glyphs sit on and which stage a style runs at, with the captures the choice was made from, see the guide [Stylized Rendering](../guides/stylized-rendering.md) and [ADR 0111](https://github.com/chrischaps/flint/blob/main/docs/adr/0111-stylized-rendering.md).
 
 ## Using a style
 
@@ -17,7 +19,7 @@ strength = 1.0          # a parameter: a number
 A table switches its style on unless it says `enabled = false`. Every other key is one of the style's parameters (a number) or one of its options (a string, such as a font or a ramp). Unknown style names and keys are reported as warnings when the scene loads, with the names that do exist:
 
 ```text
-WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara, ascii, invert, mask_view
+WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara, ascii, pencil, invert, mask_view
 WARN style 'invert' has no parameter 'wobble'; it takes: strength
 ```
 
@@ -29,7 +31,7 @@ From the command line, `--style name[:key=value,...]` turns any registered style
 flint render demo/pbr_test.scene.toml --style ascii
 flint render demo/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
 flint render demo/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
-flint render levels/tavern.scene.toml --style ascii:off       # a style the scene has on, off
+flint render levels/tavern.scene.toml --style ascii:off       # the scene's table off (entities' ascii_style stay on, #376)
 flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render demo/pbr_test.scene.toml --style help            # every style and its keys
 ```
@@ -61,6 +63,7 @@ The same editor is the player's **F3 Styles** panel, which appears with the othe
 |-------|-------|------------|
 | `kuwahara` | HDR | the `kuwahara_*` fields |
 | `ascii` | Display | see [ASCII](#ascii) |
+| `pencil` | Display | see [Pencil](#pencil) |
 | `invert` | Display | `strength` 0--1 (default 1): how far toward the negative |
 | `mask_view` | Display | `shading` 0--1 (0.8), `dim` 0--1 (0.35), `outline` 0--4 px (1): shows the [entity style mask](#the-entity-style-mask) |
 
@@ -242,7 +245,75 @@ flint render demo/ascii_entities.scene.toml --ascii-scope screen            # th
 flint render demo/pbr_test.scene.toml --ascii --ascii-grid object           # flags set the preset
 ```
 
-At 1080p on an RTX 4070 the demo's ASCII pass costs about 0.06 ms (pixels outside the props pass straight through) and its mask 0.03 ms. With `--ascii-scope screen` the pass costs 0.3--0.45 ms, since every lattice sample then checks its id. A frame with no styled entities runs the full-screen loop as before (0.154 ms on pbr_test, against 0.142 ms before per-entity support). It works under `--msaa 4` and `--render-scale`, where the silhouette follows the scaled mask. F4 → Styles → ASCII offers `scope` and `grid` beside the other settings, and `flint edit --watch` hot-reloads `ascii_style` edits.
+At 1080p on an RTX 4070 the demo's ASCII pass costs about 0.045 ms and its mask 0.013--0.023 ms (DX12, Vulkan); with `--ascii-scope screen` the pass costs about 0.06 ms, and with no styled entities 0.04 ms. In Chrome it is about twice that, and a render scale leaves it unchanged, since the cells are output pixels. The numbers by backend, scale and browser are in `docs/design/web.md` ("Stylize passes", #270). It works under `--msaa 4` and `--render-scale`, where the silhouette follows the scaled mask. F4 → Styles → ASCII offers `scope` and `grid` beside the other settings, and `flint edit --watch` hot-reloads `ascii_style` edits.
+
+## Pencil
+
+The `pencil` style (#273) draws the scene in graphite on paper. The picture's tone becomes layers of cross-hatching. The scene's silhouettes and creases become contour lines that wobble and double the way quick sketch lines do. Both sit on a paper with grain, whose tooth breaks the strokes up.
+
+```toml
+[post_process.styles.pencil]
+spacing = 6.0          # hatch line spacing, points
+thickness = 1.0        # stroke width, points
+layers = 3             # hatch layers, 0-4: each joins, crossing the last, as the tone darkens
+direction = "surface"  # surface | screen | tensor
+angle = 50.0           # the base angle, degrees
+contrast = 1.2         # tone contrast before it picks layers (brightness too)
+contour = 1.0          # outline strength; contour_width in points
+depth = 1.0            # outline sensitivity to depth steps; crease to creases
+detail = 0.35          # outlines from the picture's own luminance edges
+wobble = 1.5           # how far lines wander, points
+sketchy = 0.6          # a second, offset outline beside the first
+grain = 0.5            # paper grain, and how much it breaks strokes
+shade = 0.25           # soft rubbed graphite in the darks
+paper = [0.95, 0.93, 0.88]   # display RGB; fills paper_r/g/b (lead_r/g/b likewise)
+lead = [0.16, 0.16, 0.19]
+color = 0.0            # 1 draws over the scene's own colour: coloured pencil
+seed = 0               # another whole number is another hand
+boil = 0.0             # redraws a second, for boiling lines (0 = still)
+```
+
+```bash
+flint render demo/stylize_props.scene.toml --no-grid --style pencil -o page.png
+flint render demo/pencil_sketch.scene.toml --no-grid -o props.png        # per-entity variants
+flint render scene.toml --style pencil --sweep pencil.direction=surface,screen,tensor -o dirs.png
+```
+
+![The pencil sketch demo drawn as a whole page: the ground and sky in graphite, the props keeping their own pencil settings (coloured cask, blue YBot)](../images/pencil-sketch-page.png)
+
+How it draws:
+
+- **Hatching builds tone the way a hand does.** Each layer switches on as the tone darkens past its threshold, and its strokes thicken from nothing rather than popping in. A layer crosses the one before it off the square (at 0°, +65°, −40° and +25°), so layers never make a grid. Each stroke is a dash of its own length that tapers at both ends, is jittered off its row and is bent by a slow wobble. A few dashes are left out.
+- **Stroke direction.** `surface` runs strokes along the surface's iso-depth lines, taken from the gradient of 1/z. That gradient is constant over a plane, so a box face hatches straight, and it turns smoothly round a barrel and across a floor. `screen` hatches everything at `angle`. `tensor` follows the picture's luminance edges (a blurred structure tensor), which gets busy around shadows. Where a surface or tensor direction is unsure (a face turned square to the camera, a flat colour), `angle` shows through. Directions are quantized to 15° bins with neighbouring bins blended, so strokes stay straight within a patch, as hand hatching does.
+- **Contours** come from depth steps (drawn on the near side), creases (the normal rebuilt from depth turns), the edge of a styled entity's mask, and luminance edges by `detail`. They are read back through a noise offset (`wobble`), twice when `sketchy` is set.
+- **Deterministic.** Every random choice is an integer hash of the stroke's row, dash, layer and `seed`, so the same seed draws byte-identical frames. `boil` moves the seed in whole steps of post time, which `--style-time` fixes.
+
+![The three stroke directions on stylize_props](../images/pencil-directions.png)
+
+![Close up: the crate's faces hatched straight, its outline doubled, the ground cross-hatched in three layers](../images/pencil-closeup.png)
+
+It runs at the display stage, at output resolution, with sizes in points (times the pixels-per-point scale), in two passes. The first pass writes each pixel's tone, contour strength and stroke direction into a scratch target. The second blurs the direction into a flow and draws the strokes. At 1080p on an RTX 4070 the whole frame costs about 0.49 ms. With only two props asking for it the cost is 0.19 ms, because both full-screen passes still run and only return early on unstyled pixels.
+
+**Per entity.** Pencil works per entity in the same way as ASCII. A `pencil_style` component, or a plain `style_mask { style = "pencil" }`, draws that entity in pencil while the rest of the frame stays as it is, and each distinct set of settings becomes a variant with its own mask id. Every field of the table above except `scope` can be set on the component, and a field it leaves out comes from the scene's table, then the default. `grid = "object"` pins an entity's hatching to its projected origin, so its strokes travel with it. With `scope = "entities"` the scene's table is only a preset. A pixel that another style owns (an ASCII prop in a pencil frame) is left to that style.
+
+```toml
+[post_process.styles.pencil]
+scope = "entities"     # a preset for the entities below
+spacing = 5.0
+
+[entities.cask.pencil_style]
+color = 0.6            # coloured pencil over the cask's own colour
+lead = [0.34, 0.17, 0.07]
+
+[entities.ybot.pencil_style]
+lead = [0.10, 0.18, 0.45]
+sketchy = 1.0
+
+[entities.tag.pencil_style]
+enabled = false        # stays painted
+```
+
+![demo/pencil_sketch.scene.toml: six props, each its own hand; the world around them stays painted](../images/pencil-sketch-entities.png)
 
 ### Blending in and out
 
@@ -304,18 +375,17 @@ A **look** (#279) is a named preset you can put over any scene. It lives in `sty
 ```toml
 [look]
 name = "graphite"
-description = "Inverted mono ASCII at a fine cell: pencil marks on paper"
-tune = ["ascii.cell=4,5,7,9", "ascii.contrast=1,1.6,2.2,3"]
-notes = "Contrast gives the drawing its form..."
+description = "Pencil sketch: cross-hatched tone, wobbling contours, paper grain"
+tune = ["pencil.spacing=4,6,9", "pencil.contrast=1,1.4,1.8"]
+notes = "Spacing is the pencil's sharpness..."
 
 [post_process]
-desaturate = 1.0
+bloom_enabled = false
 
-[post_process.styles.ascii]
-cell = 5.0
-color = "mono"
-ground = "inverse"
-contrast = 2.2
+[post_process.styles.pencil]
+spacing = 5.0
+contrast = 1.4
+wobble = 1.8
 ```
 
 Four looks ship, compiled into the CLI so they work from a game repo as well. A `styles/<name>.look.toml` beside the scene, or in its parent folder, takes the place of a built-in with the same name.
@@ -325,7 +395,7 @@ Four looks ship, compiled into the CLI so they work from a game repo as well. A 
 | `ascii_noir` | mono ASCII, black ground, hard contrast, heavy vignette |
 | `matrix` | phosphor-palette ASCII with glow, `detailed` ramp |
 | `ink_wash` | Kuwahara radius 6, desaturation, warm paper fog and grade, grain (stands in until watercolor, #272) |
-| `graphite` | inverted mono ASCII at a 5-point cell (stands in until pencil, #273) |
+| `graphite` | the pencil style at a 5-point spacing, contrast 1.4, doubled outlines (inverted mono ASCII before #273) |
 
 ```bash
 flint render --look help                                   # every look, its tune sweeps and notes
@@ -360,7 +430,7 @@ Each style belongs to one of two stages:
 
 ```text
 scene (HDR, render scale)
-  -> style mask (R16Uint ids, only while a style reads it)
+  -> style mask (Rg16Uint: id + blend, only while a style reads it)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
   -> SSAO, volumetric, bloom
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
@@ -501,4 +571,4 @@ A style that takes settings per entity names its component in its descriptor: `c
 - the component's fields are read as the descriptor's params and options (a 3-array `x` fills `x_r`, `x_g`, `x_b`), and each distinct set is a `StyleVariant` with its own mask id, named for its settings (`ascii{cell=12,ramp=blocks}`, `ascii@barrel`, `ascii{off}` for `enabled = false`);
 - a style whose `grid` option is `object` gets one variant per styled root, with `anchor` set to the root's world origin each frame (`frame.project(anchor)` puts it on screen).
 
-In `encode`, `frame.variants()` lists this style's `(id, variant)` pairs, `frame.variant_param(v, "cell")` and `frame.variant_option(v, "ramp")` read a variant's settings with the scene's as fallback, and `frame.whole_frame()` says whether the scene's table covers everything. `stylize/ascii.rs` packs them into a table indexed by mask id; watercolor (#272) and pencil (#273) can do the same.
+In `encode`, `frame.variants()` lists this style's `(id, variant)` pairs, `frame.variant_param(v, "cell")` and `frame.variant_option(v, "ramp")` read a variant's settings with the scene's as fallback, and `frame.whole_frame()` says whether the scene's table covers everything. `stylize/ascii.rs` and `stylize/pencil.rs` pack them into a table indexed by mask id; watercolor (#272) can do the same.

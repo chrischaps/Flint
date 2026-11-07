@@ -1,46 +1,43 @@
-# Graphite: small dark marks on pale paper, denser where the scene is
-# darker, like a pencil study hatched cell by cell.
+# Graphite: a pencil study. Tone becomes cross-hatching on pale paper,
+# the scene's silhouettes and creases become wobbling, doubled outlines.
 #
 #   flint render <scene> --look graphite -o graphite.png
-#   flint render <scene> --look graphite --sweep ascii.cell=4,5,7,9 -o graphite-cell.png
+#   flint render <scene> --look graphite --sweep pencil.spacing=4,6,9 -o graphite-spacing.png
 #
 # A look is a [post_process] block in the scene format, merged over the
 # scene's own key by key (#279). `flint render --look help` lists them all.
-# Until the pencil sketch style (#273) lands this is the ASCII style
-# inverted: the ink fills each cell as paper and the glyph is cut out of
-# it, so the letters are the pencil strokes.
+# Until #273 this look was the ASCII style inverted (the glyphs cut out of
+# a paper fill); since then it is the pencil sketch style itself.
 
 [look]
 name = "graphite"
-description = "Inverted mono ASCII at a fine cell: pencil marks on paper"
+description = "Pencil sketch: cross-hatched tone, wobbling contours, paper grain"
 tune = [
-    "ascii.cell=4,5,7,9",
-    "ascii.contrast=1,1.6,2.2,3",
-    "ascii.ramp=detailed,classic,minimal",
-    "ascii.brightness=-0.1,0.05,0.2",
+    "pencil.spacing=4,6,9",
+    "pencil.contrast=1,1.4,1.8",
+    "pencil.direction=surface,screen,tensor",
+    "pencil.wobble=0,1.5,4",
 ]
 notes = """
-Contrast gives the drawing its form: at 1 stylize_props was an even grey
-texture with the props barely there; 2.2 separates paper (sky), mid-tone
-(ground) and the dark props; at 3 the sky goes blank white. Cell is the
-pencil's sharpness: 4-5 points reads as hatching, 9 and up as type.
+Spacing is the pencil's sharpness: 4 points reads as a fine study, 9 as a
+quick sketch. Contrast decides how much of the frame is hatched: stylize_props'
+dark ground takes all three layers at 1.4, and the sky stays bare paper.
+direction = screen is the most graphic (one hand, one angle); surface wraps
+strokes round forms; tensor follows the picture's own edges and gets busy
+round shadows. Wobble 0 is a technical drawing, 4 a nervous one.
 """
 
 [post_process]
 bloom_enabled = false
 ssao_enabled = true
-ssao_intensity = 1.4
-exposure = 1.2
-desaturate = 1.0
+ssao_intensity = 1.2
+exposure = 1.15
 vignette_enabled = true
 vignette_intensity = 0.2
-grade_gain = [0.96, 0.95, 0.92]
 
-[post_process.styles.ascii]
-cell = 5.0
-color = "mono"
-ground = "inverse"
-ramp = "detailed"
-contrast = 2.2
-brightness = 0.05
-ink = 0.95
+[post_process.styles.pencil]
+spacing = 5.0
+contrast = 1.4
+wobble = 1.8
+sketchy = 0.7
+grain = 0.55
