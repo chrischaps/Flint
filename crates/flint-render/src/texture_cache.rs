@@ -516,6 +516,58 @@ pub fn mip_level_count(width: u32, height: u32) -> u32 {
 /// the ground at a distance instead of darkening it; alpha is always linear.
 /// Returns the bytes and the level count.
 pub fn mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> (Vec<u8>, u32) {
+    let key = {
+        let memo = MIP_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+        if memo.is_none() {
+            drop(memo);
+            return build_mip_chain(rgba, width, height, srgb);
+        }
+        let key = (width, height, srgb, rgba.len(), fingerprint(rgba));
+        if let Some(hit) = memo.as_ref().and_then(|m| m.get(&key)) {
+            return hit.clone();
+        }
+        key
+    };
+    let built = build_mip_chain(rgba, width, height, srgb);
+    if let Some(memo) = MIP_MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        memo.insert(key, built.clone());
+    }
+    built
+}
+
+/// Width, height, sRGB, byte count and [`fingerprint`].
+type MipKey = (u32, u32, bool, usize, u64);
+type MipMemo = std::collections::HashMap<MipKey, (Vec<u8>, u32)>;
+
+/// Mip chains kept while [`memoize_mip_chains`] is on.
+static MIP_MEMO: std::sync::Mutex<Option<MipMemo>> = std::sync::Mutex::new(None);
+
+/// Keep every [`mip_chain`] built, by its pixels, and hand out copies
+/// (#329), or (`false`) drop them. For a process that uploads the same
+/// textures renderer after renderer: `flint render-suite` builds a fresh
+/// renderer a case, and a debug build's box filter was most of what a
+/// model's load cost once its file decode was memoized. Off by default.
+pub fn memoize_mip_chains(on: bool) {
+    *MIP_MEMO.lock().unwrap_or_else(|e| e.into_inner()) = on.then(Default::default);
+}
+
+/// A 64-bit FNV-1a over the pixels, eight bytes a step: the memo's key
+/// with the size and colour space, cheap next to the chain it saves.
+fn fingerprint(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let (words, rest) = bytes.as_chunks::<8>();
+    for w in words {
+        h ^= u64::from_le_bytes(*w);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    for &b in rest {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+fn build_mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> (Vec<u8>, u32) {
     let levels = mip_level_count(width, height);
     let to_linear: Vec<f32> = (0..256)
         .map(|i| {
@@ -590,6 +642,33 @@ pub fn mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> (Vec<u8>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The memo (#329) hands back what building would, and two textures
+    /// differing in one byte don't share a chain.
+    #[test]
+    fn memoized_chains_match_built_ones() {
+        let mut a = vec![0u8; 8 * 4 * 4];
+        for (i, b) in a.iter_mut().enumerate() {
+            *b = (i * 37 % 251) as u8;
+        }
+        let mut b = a.clone();
+        b[77] ^= 0x40;
+        let built = (
+            build_mip_chain(&a, 8, 4, true),
+            build_mip_chain(&b, 8, 4, true),
+        );
+        memoize_mip_chains(true);
+        let first = mip_chain(&a, 8, 4, true);
+        let again = mip_chain(&a, 8, 4, true);
+        let other = mip_chain(&b, 8, 4, true);
+        let linear = mip_chain(&a, 8, 4, false);
+        memoize_mip_chains(false);
+        assert_eq!(first, built.0);
+        assert_eq!(again, built.0);
+        assert_eq!(other, built.1);
+        assert_eq!(linear, build_mip_chain(&a, 8, 4, false));
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+    }
 
     #[test]
     fn level_counts() {

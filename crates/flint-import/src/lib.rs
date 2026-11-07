@@ -6,7 +6,7 @@
 mod gltf_import;
 mod types;
 
-pub use gltf_import::import_gltf;
+pub use gltf_import::{import_gltf, memoize_imports};
 pub use types::{
     AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
     ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeletalClip,

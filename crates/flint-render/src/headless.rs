@@ -40,40 +40,8 @@ impl HeadlessContext {
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
 
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-
-        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Headless Color Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-
-        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Headless Depth Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (color_texture, color_view, depth_texture, depth_view) =
+            Self::targets(&device, format, width, height);
 
         Ok(Self {
             device,
@@ -86,6 +54,64 @@ impl HeadlessContext {
             depth_texture,
             depth_view,
         })
+    }
+
+    /// Give the context targets of a new size, on the same device (#329:
+    /// `render-suite` keeps one device for every case, and cases can ask
+    /// for different sizes).
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if (width, height) == (self.width, self.height) {
+            return;
+        }
+        let (color_texture, color_view, depth_texture, depth_view) =
+            Self::targets(&self.device, self.format, width, height);
+        self.width = width;
+        self.height = height;
+        self.color_texture = color_texture;
+        self.color_view = color_view;
+        self.depth_texture = depth_texture;
+        self.depth_view = depth_view;
+    }
+
+    fn targets(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> (
+        wgpu::Texture,
+        wgpu::TextureView,
+        wgpu::Texture,
+        wgpu::TextureView,
+    ) {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Headless Color Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Headless Depth Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (color_texture, color_view, depth_texture, depth_view)
     }
 
     /// Read rendered pixels back from the color texture as tightly-packed RGBA bytes

@@ -10,9 +10,44 @@ use flint_core::{vfs, ContentHash, FlintError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Imports kept by path while [`memoize_imports`] is on.
+static MEMO: std::sync::Mutex<Option<HashMap<PathBuf, ImportResult>>> = std::sync::Mutex::new(None);
+
+/// Keep every import in memory, by path, and hand out copies (#329), or
+/// (`false`) drop them and decode each time again. For a process that
+/// loads the same files over and over and knows they won't change under
+/// it: `flint render-suite` renders dozens of cases that share a few
+/// models, and decoding a model's textures is most of a debug build's
+/// time a case. Off by default; a watcher reloading a file must not get
+/// its old copy.
+pub fn memoize_imports(on: bool) {
+    *MEMO.lock().unwrap_or_else(|e| e.into_inner()) = on.then(HashMap::new);
+}
+
 /// Import a glTF or GLB file
 pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
     let path = path.as_ref();
+    {
+        let memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+        match memo.as_ref() {
+            None => drop(memo),
+            Some(kept) => {
+                if let Some(hit) = kept.get(path) {
+                    return Ok(hit.clone());
+                }
+                drop(memo);
+                let result = decode_gltf(path)?;
+                if let Some(kept) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                    kept.insert(path.to_path_buf(), result.clone());
+                }
+                return Ok(result);
+            }
+        }
+    }
+    decode_gltf(path)
+}
+
+fn decode_gltf(path: &Path) -> Result<ImportResult> {
     let (document, buffers, images) = import_via_vfs(path)
         .map_err(|e| FlintError::ImportError(format!("Failed to import glTF: {}", e)))?;
 
@@ -874,6 +909,29 @@ fn texture_name(texture: gltf::Texture<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// While the memo is on (#329) a path decodes once, even if the file
+    /// changes under it; off, every import reads the file again.
+    #[test]
+    fn memoized_imports_decode_a_path_once() {
+        let gltf = |name: &str| {
+            format!(
+                r#"{{ "asset": {{ "version": "2.0" }}, "materials": [{{ "name": "{name}" }}] }}"#
+            )
+        };
+        let path = std::env::temp_dir().join(format!("flint-memo-{}.gltf", std::process::id()));
+        let material = |path: &Path| import_gltf(path).unwrap().materials[0].name.clone();
+        std::fs::write(&path, gltf("first")).unwrap();
+        memoize_imports(true);
+        let first = material(&path);
+        std::fs::write(&path, gltf("second")).unwrap();
+        let kept = material(&path);
+        memoize_imports(false);
+        let fresh = material(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!((first.as_str(), kept.as_str()), ("first", "first"));
+        assert_eq!(fresh, "second");
+    }
 
     /// A material with painted-on lights keeps its emissive map's name, the
     /// same name the texture is imported under, so the renderer can find it.

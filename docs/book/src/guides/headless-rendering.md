@@ -199,7 +199,7 @@ Headless rendering works on machines without a display. Use it in CI to catch vi
 
 ## Golden Suites
 
-`flint render-suite` given a `*.goldens.toml` renders a list of cases with `flint render` and compares each with a golden PNG (#271). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
+`flint render-suite` given a `*.goldens.toml` renders a list of cases as `flint render` would and compares each with a golden PNG (#271). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
 
 ```bash
 flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
@@ -243,13 +243,26 @@ row 4: 2 cell(s)
 
 That's `ascii-full` with `brightness=-0.004` added. The PNG check passes it, with 0.19% of pixels moved against a 2% limit. The text check fails it, because 28 cells in 8 rows changed glyph. A structural golden is much stricter than a pixel tolerance, so give a case `text_cells` if its glyphs sit on a tone boundary that another GPU may round the other way.
 
+### The contact sheet
+
+Every run writes `index.html` to the out dir (#329): one card a case with the golden, the render and the diff side by side, then a meter for each number against its limit (the tick is the limit), the case's scene and flags, and the text diff when its grid moved. Cases that failed come first, then the ones where any pixel moved, then the identical ones, each group in manifest order; the buttons at the top filter by group. **blink** flips a render with its golden in place, which shows a one-pixel shift that a side-by-side hides. The page reads its images beside itself (`<case>.png`, `<case>.diff.png`, and `golden/<case>.png`, a copy of the golden as it was before the run), so the out dir can be zipped or uploaded whole.
+
+A `--bless` still compares before it writes. Its sheet shows each case's old golden as **was** and the diff as what the bless changes: review that page, not the folder.
+
+### One process
+
+Cases run in the `render-suite` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
+
+The cost is crash isolation. A case that panics is run again in its own `flint render` process (the device is dropped and made again for the next case), and its log is the case's message. `--isolate` spawns every case, as before #329.
+
 | Flag | Description |
 |------|-------------|
-| `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. Look at them before committing |
+| `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. The contact sheet shows what each replaced. Look at it before committing |
 | `--case <name>` | Only this case, or every case whose name contains it; repeatable |
-| `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level) and `report.json` go; default a folder in the system temp dir |
+| `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level; written when any pixel moved), `report.json` and the `index.html` contact sheet go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
 | `--bless-variant` | Write each render as this adapter's variant of its golden, `<stem>.<key>.png` |
+| `--isolate` | Run each case as its own `flint render` process: slower, but a crash takes only its case down |
 
 Without a GPU adapter every case is skipped and the suite passes, unless `--require-gpu` or `FLINT_REQUIRE_GPU=1` is given. Under `FLINT_REQUIRE_GPU`, an adapter named by `WGPU_ADAPTER_NAME` that doesn't exist is also a failure; without it, the suite falls back to the default adapter.
 
@@ -257,7 +270,7 @@ Without a GPU adapter every case is skipped and the suite passes, unless `--requ
 
 Two adapters never render exactly alike. The difference is usually small, but a backend can be as far off as a real regression, so a golden can carry a **variant** per adapter beside it: `kuwahara.warp.png` next to `kuwahara.png`. The suite prints the adapter it found and its key: `warp` (WARP, the software DX12 adapter), `lavapipe` (Mesa's software Vulkan), or else the backend's name (`vulkan`, `dx12`, `metal`, `gl`). A case compares with its adapter's variant when there is one, and with the plain golden otherwise. `--bless` rewrites whichever of the two the case compared with, and `--bless-variant` creates the variant. Each case in `report.json` records `adapter`, the `golden` it compared with, and `variant`, the path where this adapter's variant would go.
 
-On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. wgpu hides WARP on a machine that has a GPU, so WARP variants can't be rendered locally. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
+On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs, with the contact sheet: open its `index.html`. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. wgpu hides WARP on a machine that has a GPU, so WARP variants can't be rendered locally. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
 
 ## Visual Regression Testing
 
