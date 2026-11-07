@@ -40,6 +40,26 @@ pub fn load_user_styles(scene_path: &str) {
     }
 }
 
+/// A scene's `[post_process]` under the `--look` named (#435), or as it
+/// is when there's none. A look that won't apply leaves the scene's own,
+/// with a warning (the player checked the name at startup).
+pub fn under_look(
+    look: Option<&str>,
+    scene_path: &str,
+    pp: Option<flint_scene::PostProcessDef>,
+) -> Option<flint_scene::PostProcessDef> {
+    let Some(name) = look else {
+        return pp;
+    };
+    match flint_render::look::find(name, scene_path).and_then(|l| l.apply(pp.as_ref())) {
+        Ok(def) => Some(def),
+        Err(e) => {
+            tracing::warn!("--look {name}: {e}");
+            pp
+        }
+    }
+}
+
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
 /// Info about loaded grass, returned from terrain loading for debug panel creation.
 /// The fields are only read by the `debug-hud` grass panel construction.

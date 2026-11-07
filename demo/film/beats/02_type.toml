@@ -1,0 +1,28 @@
+# The whole frame in type (#265), turning through its colour modes and
+# palettes (#276) under a slow orbit, temporal stability on (#277) so the
+# glyphs hold still while the camera moves. The script changes the scene's
+# [post_process.styles.ascii] table on cue with set_scene_style_param.
+
+[scene]
+name = "Film 02: The world in type"
+version = "1.0"
+description = "Full-screen ASCII through its colour modes and palettes, orbiting (#265, #276, #277)"
+
+[camera]
+position = [4.0, 1.5, 3.0]
+target = [0.0, 0.7, 0.0]
+fov = 45.0
+
+[post_process.styles.ascii]
+cell = 8
+ramp = "classic"
+color = "source"
+temporal = "on"
+smoothing = 0.6
+hysteresis = 0.35
+
+[entities.director]
+[entities.director.film]
+step = -1
+[entities.director.script]
+source = "02_type.rhai"

@@ -735,6 +735,76 @@ impl StyleSettings {
             .insert(option.to_string(), value.to_string());
     }
 
+    /// Set one key of style `name`'s scene-wide settings at run time, as its
+    /// `[post_process.styles.<name>]` table would (#435, scripts'
+    /// `set_scene_style` / `set_scene_style_param`): `enabled` takes a bool,
+    /// a parameter a number (clamped to its range), an option a string, and
+    /// a colour whose `<key>_r/_g/_b` are parameters a three-number array.
+    /// Refuses names and keys the registry doesn't know, saying what it
+    /// takes.
+    pub fn set_value(&mut self, name: &str, key: &str, value: &toml::Value) -> Result<(), String> {
+        let Some(d) = find(name) else {
+            return Err(format!(
+                "no style '{name}'; registered: {}",
+                names().join(", ")
+            ));
+        };
+        let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        let wrong = |want: &str| {
+            Err(format!(
+                "style '{name}' setting '{key}' takes {want}, not {}",
+                value.type_str()
+            ))
+        };
+        let clamp = |param: &str, n: f64| {
+            d.params
+                .iter()
+                .find(|p| p.name == param)
+                .map(|p| (n as f32).clamp(p.min, p.max))
+                .unwrap_or(n as f32)
+        };
+        if key == "enabled" {
+            let Some(on) = value.as_bool() else {
+                return wrong("true or false");
+            };
+            self.set_enabled(name, on);
+        } else if d.params.iter().any(|p| p.name == key) {
+            let Some(n) = number(value) else {
+                return wrong("a number");
+            };
+            self.set_param(name, key, clamp(key, n));
+        } else if d.options.iter().any(|o| o.name == key) {
+            let Some(text) = value.as_str() else {
+                return wrong("a string");
+            };
+            self.set_option(name, key, text);
+        } else if ["r", "g", "b"]
+            .iter()
+            .all(|c| d.params.iter().any(|p| p.name == format!("{key}_{c}")))
+        {
+            let rgb = value
+                .as_array()
+                .and_then(|a| a.iter().map(number).collect::<Option<Vec<_>>>())
+                .filter(|v| v.len() == 3);
+            let Some(rgb) = rgb else {
+                return wrong("an array of three numbers");
+            };
+            for (c, n) in ["r", "g", "b"].iter().zip(rgb) {
+                let param = format!("{key}_{c}");
+                self.set_param(name, &param, clamp(&param, n));
+            }
+        } else {
+            let mut known: Vec<&str> = vec!["enabled"];
+            known.extend(d.params.iter().map(|p| p.name));
+            known.extend(d.options.iter().map(|o| o.name));
+            return Err(format!(
+                "style '{name}' has no setting '{key}'; it takes {}",
+                known.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -1138,6 +1208,49 @@ mod tests {
             assert!(!names[i + 1..].contains(a), "{a} registered twice");
         }
         assert!(names.contains(&"kuwahara") && names.contains(&"invert"));
+    }
+
+    #[test]
+    fn set_value_writes_what_a_table_would() {
+        let mut s = StyleSettings::default();
+        s.set_value("ascii", "enabled", &true.into()).unwrap();
+        s.set_value("ascii", "cell", &toml::Value::Integer(12))
+            .unwrap();
+        s.set_value("ascii", "palette", &"cga".into()).unwrap();
+        let tint = toml::Value::Array(vec![0.5.into(), 1.0.into(), 0.25.into()]);
+        s.set_value("ascii", "tint", &tint).unwrap();
+        assert!(s.is_enabled("ascii"));
+        assert_eq!(s.param("ascii", "cell"), Some(12.0));
+        assert_eq!(s.option("ascii", "palette"), Some("cga"));
+        assert_eq!(s.param("ascii", "tint_g"), Some(1.0));
+        // Clamped to the descriptor's range, as the F4 sliders are
+        s.set_value("ascii", "cell", &toml::Value::Float(1.0e6))
+            .unwrap();
+        let max = find("ascii")
+            .unwrap()
+            .params
+            .iter()
+            .find(|p| p.name == "cell")
+            .unwrap()
+            .max;
+        assert_eq!(s.param("ascii", "cell"), Some(max));
+        // Refusals say what was wrong
+        assert!(s
+            .set_value("nope", "cell", &1.into())
+            .unwrap_err()
+            .contains("registered"));
+        assert!(s
+            .set_value("ascii", "celll", &1.into())
+            .unwrap_err()
+            .contains("takes"));
+        assert!(s
+            .set_value("ascii", "palette", &1.into())
+            .unwrap_err()
+            .contains("a string"));
+        assert!(s
+            .set_value("ascii", "tint", &1.into())
+            .unwrap_err()
+            .contains("three"));
     }
 
     #[test]

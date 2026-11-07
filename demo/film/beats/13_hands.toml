@@ -1,0 +1,67 @@
+# Many hands: the last beat. Every prop in the still life drawn by a
+# different hand at once (glyphs, pencil, watercolor, a projection) on one
+# screen, the clearing itself left as Flint renders it, while the camera
+# rises and pulls back into the evening. The styles share one style mask,
+# one id each, and pass each other's pixels by.
+
+[scene]
+name = "Film 13: Many hands"
+version = "1.0"
+description = "Every prop in a different style at once, pulling back into the evening"
+
+[camera]
+position = [2.6, 1.3, 2.6]
+target = [0.0, 0.75, 0.0]
+fov = 42.0
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+brightness = 0.3
+
+[post_process.styles.pencil]
+scope = "entities"
+boil = 6.0
+
+[post_process.styles.watercolor]
+scope = "entities"
+
+[post_process.styles.hologram]
+glow = 0.9
+
+[entities.barrel.ascii_style]
+grid = "object"
+color = "tint"
+tint = [0.35, 1.0, 0.45]
+glow = 0.6
+
+[entities.crate.ascii_style]
+ramp = "blocks"
+color = "palette"
+palette = "amber"
+
+[entities.lid.ascii_style]
+enabled = false
+
+[entities.figure.pencil_style]
+lead = [0.10, 0.16, 0.42]
+contour_width = 2.2
+boil = 6.0
+
+[entities.table.watercolor_style]
+edge = 1.4
+
+[entities.lantern.watercolor_style]
+
+[entities.orb.style_mask]
+style = "hologram"
+
+[entities.stone.pencil_style]
+direction = "screen"
+layers = 4.0
+angle = 35.0
+boil = 6.0
+
+[entities.director]
+[entities.director.script]
+source = "13_hands.rhai"

@@ -377,7 +377,11 @@ impl PlayerApp {
                 });
                 self.scene_camera = scene_file.camera.clone();
                 super::scene_loading::load_user_styles(&new_scene_path);
-                self.scene_post_process = scene_file.post_process.clone();
+                self.scene_post_process = super::scene_loading::under_look(
+                    self.look.as_deref(),
+                    &new_scene_path,
+                    scene_file.post_process.clone(),
+                );
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;
             }

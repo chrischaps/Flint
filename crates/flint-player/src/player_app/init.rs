@@ -97,6 +97,8 @@ impl PlayerApp {
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
             quality_overrides: String::new(),
+            pixels_per_point: None,
+            look: None,
             quality: Default::default(),
             frame_pacer: None,
             hold_at: None,
@@ -226,7 +228,12 @@ impl PlayerApp {
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
         super::scene_loading::load_user_styles(&self.scene_path);
-        self.scene_post_process = scene_file.post_process.clone();
+        self.scene_post_process =
+            super::scene_loading::under_look(
+            self.look.as_deref(),
+            &self.scene_path,
+            scene_file.post_process.clone(),
+        );
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).

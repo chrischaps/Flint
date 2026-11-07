@@ -1,0 +1,40 @@
+# Blends and dissolves (#278): two props given their look at blend 0, so
+# nothing shows, and then only the blend moves. The barrel dissolves into
+# green phosphor, its cells turning in patches that spread; the figure
+# cross-fades into amber blocks, every pixel a mix. Then both go back.
+
+[scene]
+name = "Film 07: Fade and dissolve"
+version = "1.0"
+description = "Props fade and dissolve into ASCII and back, a blend a script ramps (#278)"
+
+[camera]
+position = [2.9, 1.3, 3.2]
+target = [0.2, 0.75, -0.3]
+fov = 42.0
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+
+[entities.barrel.ascii_style]
+blend = 0.0
+transition = "dissolve"
+grid = "object"
+color = "tint"
+tint = [0.35, 1.0, 0.45]
+glow = 0.6
+brightness = 0.25
+
+[entities.figure.ascii_style]
+blend = 0.0
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.70, 0.30]
+levels = 4
+brightness = 0.35
+cell = 6
+
+[entities.director]
+[entities.director.script]
+source = "07_reveal.rhai"

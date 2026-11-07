@@ -2598,6 +2598,48 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 .push(ScriptCommand::ClearEntityStyle { entity_id });
         });
     }
+
+    // set_scene_style(style, on) — switch a style on or off for the whole
+    // frame, as its [post_process.styles.<style>] table does (#435)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_scene_style", move |style: &str, on: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetSceneStyle {
+                style: style.to_string(),
+                param: "enabled".to_string(),
+                value: toml::Value::Boolean(on),
+            });
+        });
+    }
+
+    // set_scene_style_param(style, param, value) — one key of that table:
+    // a number (`cell`), a string (`palette`, `color`, `ramp`) or a
+    // three-number array (`tint`). Every frame is fine: no GPU allocation
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_scene_style_param",
+            move |style: &str, param: &str, value: Dynamic| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let command = match dynamic_to_toml(&value) {
+                    Some(value) => ScriptCommand::SetSceneStyle {
+                        style: style.to_string(),
+                        param: param.to_string(),
+                        value,
+                    },
+                    None => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "set_scene_style_param: `{param}` can't take a {}",
+                            value.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            },
+        );
+    }
 }
 
 fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {

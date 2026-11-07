@@ -613,8 +613,17 @@ impl PlayerApp {
             });
         // Styles sized in points (ASCII cells, #265) follow the window's
         // scale factor, which changes when it moves to another monitor
+        // `--pixels-per-point` (#435) pins it, and egui's with it, so a
+        // capture's glyphs and panels are the same size on any display
         if let Some(window) = &self.window {
-            renderer.pixels_per_point = window.scale_factor() as f32;
+            let native = window.scale_factor() as f32;
+            renderer.pixels_per_point = self.pixels_per_point.unwrap_or(native);
+            if let Some(ppp) = self.pixels_per_point {
+                let zoom = ppp / native.max(0.01);
+                if (self.egui_ctx.zoom_factor() - zoom).abs() > 1e-4 {
+                    self.egui_ctx.set_zoom_factor(zoom);
+                }
+            }
         }
         renderer.encode_to(
             &context.device,
@@ -1613,7 +1622,15 @@ impl PlayerApp {
             return;
         };
 
-        let raw_input = egui_winit.take_egui_input(window);
+        let mut raw_input = egui_winit.take_egui_input(window);
+        // Under --frame-step egui runs on the game clock too (#435): its
+        // animations (a header opening, a tooltip fading) would otherwise
+        // follow the wall clock, and a slow capture frame would land them
+        // somewhere else on every run
+        if let Some(step) = self.clock.frame_step {
+            raw_input.time = Some(self.clock.total_time);
+            raw_input.predicted_dt = step as f32;
+        }
 
         let draw_commands = std::mem::take(&mut self.draw_commands);
         let mut extensions = std::mem::take(&mut self.extensions);

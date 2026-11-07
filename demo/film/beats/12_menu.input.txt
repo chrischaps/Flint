@@ -1,0 +1,23 @@
+# Beat 12's hands on the F4 Styles editor (#268). Points on the film's
+# 1920x1080-point canvas (tools/showcase/capture.py scales them). Rows and
+# combo entries found by capturing the menu at each step; if its layout
+# changes, capture again and move them.
+
+0.5  tap    F4                # Rendering & Effects
+1.0  click  1658 36           # fold Post chain away
+1.5  click  1690 183          # Styles: ASCII is on, so it opens
+2.2  mouse  1662 444 0.4      # the cell size slider's knob
+2.7  down   MouseLeft
+2.8  mouse  1730 444 1.0      # cells grow coarse
+3.9  mouse  1652 444 1.2      # and settle finer than they began
+5.2  up     MouseLeft
+5.6  mouse  1687 290 0.4
+6.0  click  1687 290          # colour mode
+6.5  click  1665 398          #   palette
+7.2  mouse  1687 312 0.3
+7.5  click  1687 312          # palette
+8.0  click  1665 420          #   amber
+8.9  click  1687 312
+9.4  click  1665 336          #   cga
+10.2 mouse  1250 820 0.6      # hands off
+11.2 tap    F4                # menu away

@@ -272,6 +272,14 @@ pub enum ScriptCommand {
     ClearEntityStyle {
         entity_id: i64,
     },
+    /// Change one key of a style's scene-wide `[post_process.styles.<name>]`
+    /// table (#435): `enabled` (bool) switches it on or off for the whole
+    /// frame; anything else is a parameter, option or colour as in the table.
+    SetSceneStyle {
+        style: String,
+        param: String,
+        value: toml::Value,
+    },
     LoadScene {
         path: String,
     },

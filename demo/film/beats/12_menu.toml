@@ -1,0 +1,25 @@
+# The Styles editor (#268): F4's Styles section, drawn from each style's
+# descriptor, tuning the whole-frame ASCII by hand while the camera holds
+# still: the cell size dragged, the colour mode and palette picked from
+# their combos. Driven by beats/12_menu.input.txt, as a person would.
+
+[scene]
+name = "Film 12: Tuning by hand"
+version = "1.0"
+description = "The F4 Styles editor tuning whole-frame ASCII live (#268)"
+
+[camera]
+position = [3.4, 1.5, 3.0]
+target = [-0.4, 0.75, -0.2]
+fov = 44.0
+
+[post_process.styles.ascii]
+cell = 8
+ramp = "classic"
+color = "source"
+brightness = 0.4
+contrast = 1.2
+
+[entities.director]
+[entities.director.script]
+source = "12_menu.rhai"

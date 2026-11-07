@@ -40,6 +40,31 @@ impl PlayerApp {
                 ScriptCommand::SetEntityStyle { .. }
                 | ScriptCommand::SetStyleParam { .. }
                 | ScriptCommand::ClearEntityStyle { .. } => {}
+                ScriptCommand::SetSceneStyle {
+                    style,
+                    param,
+                    value,
+                } => {
+                    let (Some(renderer), Some(context)) =
+                        (&mut self.scene_renderer, &self.render_context)
+                    else {
+                        continue;
+                    };
+                    let mut config = renderer.post_process_config().clone();
+                    match config.styles.set_value(&style, &param, &value) {
+                        Ok(()) => {
+                            // Unchanged (a script holding a value every
+                            // frame) costs nothing; a change is a uniform
+                            if config.styles != renderer.post_process_config().styles {
+                                renderer.set_post_process_config(config);
+                                renderer.ensure_style_resources(&context.device);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(target: "script", "set_scene_style: {e}")
+                        }
+                    }
+                }
                 ScriptCommand::PlaySound {
                     name,
                     volume,
