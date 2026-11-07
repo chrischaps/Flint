@@ -96,9 +96,15 @@ The same editor is the player's **F3 Styles** panel, which appears with the othe
 
 The full-screen ASCII style (#265) turns every cell of one screen grid into a glyph from a [glyph set](glyph-atlas.md). The cell's luminance picks a step of the ramp, so glyph density carries brightness, and the glyph is inked in the cell's colour or a tint.
 
-![The ASCII style on pbr_test: the two boxes and the character in the classic ramp, 8 px cells](../images/ascii-style-pbr-test.png)
+![demo/ascii_lantern.scene.toml: two crates under a lamp post, a barrel and a figure on a black ground, against a thin band of dusk under a starred sky, in the classic ramp at 8 px cells](../images/ascii-lantern.png)
 
-*`flint render demo/pbr_test.scene.toml --ascii --ascii-no-edges` at 1280x720, cropped at 1:1: the tone glyphs alone. With [edges](#edges), the default, the boxes and the character are outlined as well.*
+*`flint render demo/ascii_lantern.scene.toml --width 1280 --height 720`, with no other flags: the scene's `[camera]` frames it and its `[post_process.styles.ascii]` block sets the look.*
+
+The style rewards value contrast. Glyph density follows luminance, so a scene lit for PBR, mid-greys everywhere, turns into an even field of `=` and `-`. `demo/ascii_lantern.scene.toml` (#316) is authored for glyphs instead: a near-black ground that stays empty, crates lit warm from one side by a lamp so each has a bright face and a dark one, and a figure and a barrel standing against the last band of a low sun under a dark, starred sky. Its block raises `contrast` to 1.5, which pushes the dim sky to black and keeps the glyphs for what is lit. The ground's top sits 2 cm above y = 0, so the editor grid `flint render` draws by default is hidden under it instead of being traced into dashes. The same scene in each built-in ramp:
+
+![The lantern scene in the classic, blocks, minimal and detailed ramps](../images/ascii-lantern-ramps.png)
+
+*`flint render demo/ascii_lantern.scene.toml --sweep ascii.ramp=classic,blocks,minimal,detailed`*
 
 ```toml
 [post_process.styles.ascii]
@@ -112,6 +118,7 @@ glow = 0.0              # halo around bright glyphs
 ```
 
 ```bash
+flint render demo/ascii_lantern.scene.toml --width 1280 --height 720   # authored for the style
 flint render demo/pbr_test.scene.toml --ascii --schemas schemas --width 1280 --height 720
 flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tint 1,0.7,0.25
 ```
