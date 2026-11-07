@@ -227,6 +227,13 @@ args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1
 # this radius-5 golden is 1.05% past 8 levels with a mean of 0.39, which
 # the ASCII limits pass and these fail.
 
+# Display bloom (#321) over phosphor ASCII: the bright box's glyphs glow
+# across their cells. Edges off, so pbr_test's grid isn't traced
+[[case]]
+name = "display-bloom"
+scene = "demo/pbr_test.scene.toml"
+args = ["--ascii", "--ascii-palette", "phosphor", "--ascii-edges", "0", "--style", "display_bloom"]
+
 [[case]]
 name = "invert"
 scene = "demo/pbr_test.scene.toml"

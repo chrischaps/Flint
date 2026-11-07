@@ -98,7 +98,7 @@ pub fn fullscreen_pipeline(
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    fullscreen_pipeline_entry(device, label, module, "fs_main", layouts, format)
+    fullscreen_pipeline_with(device, label, module, "fs_main", layouts, format, None)
 }
 
 /// [`fullscreen_pipeline`] with the fragment entry point `fragment`, for a
@@ -110,6 +110,21 @@ pub fn fullscreen_pipeline_entry(
     fragment: &str,
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    fullscreen_pipeline_with(device, label, module, fragment, layouts, format, None)
+}
+
+/// [`fullscreen_pipeline_entry`] with a blend: a style with several passes
+/// in one module (a bloom chain's threshold, downsample, additive upsample
+/// and composite, #321).
+pub fn fullscreen_pipeline_with(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
@@ -130,7 +145,7 @@ pub fn fullscreen_pipeline_entry(
             entry_point: Some(fragment),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: None,
+                blend,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),

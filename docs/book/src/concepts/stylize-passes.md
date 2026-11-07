@@ -133,7 +133,7 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `tint` | `[0.35, 1.0, 0.45]` | With `color = "tint"`: the ink, a [colour](#colours) (`[r, g, b]` 0--1 in display values, or `"#59ff73"`). `--ascii-tint r,g,b` sets it |
 | `palette` | `phosphor` | With `color = "palette"`: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, or a palette file. One that can't be found warns once and uses `phosphor` |
 | `ground` | `dim` | Behind the glyph: `dim` (the mode's own: the cell's colour times `background`, or the palette's background), `black`, or `inverse` (the ink fills the cell and the glyph is cut out of it; the ramp runs backwards so bright cells stay bright) |
-| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
+| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom, so it stops at the cell's edge: for glow that crosses cells, add [display bloom](#display-bloom) |
 | `background` | `0.15` | How much of the cell's colour fills behind its glyph: 0 is black, 1 the cell's colour |
 | `brightness`, `contrast` | `0`, `1` | Luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `exposure` | `0` | Stops of gain on each cell's colour, in linear light, before its glyph and ink are picked (-4--4, `--ascii-exposure`). See [dark props](#dark-props-exposure-and-normalize) |
@@ -500,6 +500,36 @@ flint render demo/stylize_props.scene.toml --look watercolor --sweep watercolor.
 
 At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns off the scene's table, not entities that carry a `watercolor_style` of their own; set `enabled = false` on them, as with ASCII.
 
+## Display bloom
+
+Display styles draw after the scene's bloom has run, so their bright marks can't feed it. ASCII's `glow` makes up for that inside each glyph's cell, but it stops at the cell's edge: a glyph never lights its neighbours, and a bright run of cells doesn't bloom as one. The `display_bloom` style (#321) is a bloom over the displayed picture, for any display style that wants one (ASCII's glyphs, pencil's highlights, a CRT look):
+
+```toml
+[post_process.styles.display_bloom]
+intensity = 1.5    # how much halo is added
+threshold = 0.55   # display value (0-1) a pixel's brightest channel must pass
+knee = 0.25        # softness of that threshold, as a share of it
+levels = 5         # how far it reaches: each level doubles it (in points)
+saturation = 1.0   # 1 keeps the glyph's hue, 0 glows white
+```
+
+![pbr_test in phosphor ASCII at 3x, glow 0.6 alone on the left and with display bloom on the right: the bright box's glyphs share one halo that spills across their cells and over the grid lines beside it](../images/display-bloom-phosphor-crop.png)
+
+*A crop of `flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --ascii-glow 0.6` at 1280x720, shown at 3x, without and with `--style display_bloom`.*
+
+- **Where it runs.** It's registered after ASCII and pencil, so by default it blooms what they drew. Give it an `order` to place it elsewhere in the display chain ([Order within a stage](#order-within-a-stage)).
+- **The threshold is on what you see.** A pixel passes by its brightest channel in display values (0--1), with a soft knee. The halo itself adds in linear light. At the defaults the dim grass glyphs stay clean and only the lit box and the ridge glow; a lower `threshold` or a wider `knee` lifts the whole field.
+- **The chain** has the HDR bloom's shape: a threshold into a half-size mip (four taps over each 4x4 block, so a one-pixel stroke lands whole), a 13-tap downsample per level, a tent upsample added back up level by level, and a composite that adds the result over the input. The mips are `Rgba16Float` textures of the style's own (`StyleFrame::target_sized`), the first mip chain a display style keeps. Each step has its own uniform slot, because every write lands before the frame's one submission.
+- **`levels` is in points.** On a 2x display the chain takes one more level, so the halo keeps its size next to cells that also grew. The intensity is divided by the levels drawn, so changing the reach doesn't change the brightness.
+- It's a whole-frame style with no per-entity component.
+
+At 1080p on an RTX 4070 it costs **0.066 ms** (5 levels; `flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom --width 1920 --height 1080 --gpu-time 240`). Its mips add about 5.5 MB at 1080p (a half-size `Rgba16Float` texture and the quarter, eighth... ones under it). The `display-bloom` golden pins it over phosphor ASCII.
+
+```bash
+flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom -o glow.png
+flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom --sweep display_bloom.knee=0,0.25,0.5 -o knee.png
+```
+
 ## Looks and sweeps
 
 A **look** (#279) is a named preset you can put over any scene. It lives in `styles/<name>.look.toml`, next to the `*.style.toml` generation guides, and has two tables. `[look]` says what the look is and which sweeps to try first. `[post_process]` is a block in exactly the scene format. The look's block is merged into the scene's own `[post_process]` key by key: tables merge and everything else replaces, so a look changes only the keys it names. A field or style the engine doesn't know is an error that names the closest real one, because otherwise a typo would quietly fall back to a default.
@@ -567,7 +597,7 @@ scene (HDR, render scale)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
   -> SSAO, volumetric, bloom
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
-  -> Display styles (watercolor, ASCII, pencil, invert) surface format, output resolution
+  -> Display styles (watercolor, ASCII, pencil, display bloom, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```
 
@@ -580,7 +610,7 @@ The display stage keeps its memory to two full-size textures (#302). At 1440p ea
 
 ### Order within a stage
 
-By default a stage runs its styles in registration order: kuwahara, watercolor, ascii, pencil, invert, mask_view, then user styles in the order they loaded. A style's table can give it a place of its own with `order` (#299). Lower runs first; a style without one stands at its registration index (watercolor 1, ascii 2, pencil 3, invert 4), and equal orders keep registration order:
+By default a stage runs its styles in registration order: kuwahara, watercolor, ascii, pencil, display_bloom, invert, mask_view, edges_view, then user styles in the order they loaded. A style's table can give it a place of its own with `order` (#299). Lower runs first; a style without one stands at its registration index (watercolor 1, ascii 2, pencil 3, display_bloom 4, invert 5), and equal orders keep registration order:
 
 ```toml
 # ASCII first, then watercolor paints over the glyphs

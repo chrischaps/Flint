@@ -1503,7 +1503,16 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view, edges_view);
+register_styles!(
+    kuwahara,
+    watercolor,
+    ascii,
+    pencil,
+    display_bloom,
+    invert,
+    mask_view,
+    edges_view
+);
 
 /// The built-ins followed by user styles registered at run time
 /// ([`custom`], #274). Append-only, so a style's index in it (which
