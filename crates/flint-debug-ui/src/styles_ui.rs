@@ -103,11 +103,7 @@ impl StylesEditor {
         self.marked = 0;
         edit.changed |= chain_ui(ui, pp);
         let mut any = false;
-        for style in stylize::registry()
-            .iter()
-            .copied()
-            .filter(|s| s.uses_style_table())
-        {
+        for style in stylize::registry().iter().copied() {
             any = true;
             edit.merge(self.section(ui, style, pp, authored));
         }
@@ -555,7 +551,7 @@ mod tests {
 
     fn all_on() -> PostProcessConfig {
         let mut pp = PostProcessConfig::default();
-        for s in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for s in stylize::registry().iter() {
             pp.styles.set_enabled(s.name, true);
         }
         pp
@@ -566,7 +562,7 @@ mod tests {
         let mut editor = StylesEditor::default();
         let mut pp = all_on();
         let text = drawn_text(&mut editor, &mut pp, None);
-        for style in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for style in stylize::registry().iter() {
             assert!(text.contains(&style.label.to_string()), "{}", style.label);
             for control in style.controls() {
                 let label = style.label_for(control.name());

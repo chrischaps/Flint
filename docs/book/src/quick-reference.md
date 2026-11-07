@@ -178,7 +178,6 @@ desaturate = 0.0                # 0 = full colour, 1 = ash-grey
 dof_strength = 0.0              # 0 = sharp
 dof_focus_distance = 10.0       # view metres
 dof_focus_range = 5.0
-kuwahara_enabled = false        # painterly pre-pass
 film_grain = 0.0                # 0.02-0.05 is subtle
 grade_lift = [0.0, 0.0, 0.0]    # after ACES; neutral 0,0,0
 grade_gamma = [1.0, 1.0, 1.0]

@@ -914,7 +914,6 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         stage: source.stage,
         params: Box::leak(params.into_boxed_slice()),
         options: &[],
-        enabled: None,
         uses_mask: source.inputs.mask,
         needs: if source.inputs.edges {
             &[StyleNeed::Edges]

@@ -102,6 +102,19 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
 | `--ascii-dither` | `0` | ASCII style ordered dither, fixed to the cell grid (#277) |
 | `--ascii-exposure` / `--ascii-normalize` | `0` / `0` | ASCII style exposure in stops, and per-style-id tone normalisation so dark props stay legible (#289) |
+| `--ascii-text <file>` / `--ascii-text-ansi <file>` | (none) | Also write the ASCII style's character grid as UTF-8 text, or with 24-bit ANSI colours ([Reading a render as text](#reading-a-render-as-text), #317) |
+
+### Reading a render as text
+
+An ASCII render is a real character grid, so it can also be read rather than looked at. `--ascii-text` writes the grid the frame drew: one line per cell row, one character per cell, the same cells as the PNG (part cells at the borders included). A cell the picture passes through, under `scope = "entities"` or where a later style draws its own entity, is a space.
+
+```bash
+flint render demo/pbr_test.scene.toml --ascii --ascii-text frame.txt
+#   Wrote 240x135 ASCII grid to frame.txt
+flint render demo/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
+```
+
+The text fits in a prompt, diffs line by line between two runs, and lets a test say "the box is `#`" without pixel tolerances. The ANSI file paints each glyph in its ink over its ground, for a 24-bit terminal. The grid comes from the GPU: a pass of one fragment a cell records which glyph the glyph pass draws at the cell's centre, and the frame copies it back. It runs only while capture is on (`SceneRenderer::set_style_text_capture` / `style_text`). A cell on a styled entity's silhouette holds that glyph plus the outline ink the entity draws (#288), so there the text names the centre's glyph.
 | `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
 | `--ascii-cell <n>` | `8` | ASCII cell width in points |
 | `--ascii-levels <n>` / `--ascii-footprint <cells>` | `0` / `1` | ASCII tone bands and tone footprint |
@@ -215,11 +228,24 @@ scene = "demo/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 args = ["--style", "ascii"]     # any flint render flags
 # width, height and tolerance = { ... } override the suite's
+text = "ascii_pbr_test.txt"     # optional: the ASCII grid too, compared exactly (#317)
+text_cells = 0                  # ...or with at most this many cells different
 ```
+
+A case with `text` is also a structural golden. It renders with `--ascii-text`, and its character grid must match the checked-in one cell for cell, with the PNG kept as the visual check. When cells move, `<case>.text.diff` lands beside the render. It shows each row that moved, the golden's line over the render's, with a caret under each cell, so a drift can be read without opening an image:
+
+```text
+row 4: 2 cell(s)
+  golden |-----------------------------=====++++++++++++=====-----------------------------|
+  render |-----------------------------=====+=+=++++++++=====-----------------------------|
+                                             ^ ^
+```
+
+That's `ascii-full` with `brightness=-0.004` added. The PNG check passes it, with 0.19% of pixels moved against a 2% limit. The text check fails it, because 28 cells in 8 rows changed glyph. A structural golden is much stricter than a pixel tolerance, so give a case `text_cells` if its glyphs sit on a tone boundary that another GPU may round the other way.
 
 | Flag | Description |
 |------|-------------|
-| `--bless` | Write each render over its golden instead of comparing. Look at them before committing |
+| `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. Look at them before committing |
 | `--case <name>` | Only this case, or every case whose name contains it; repeatable |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level) and `report.json` go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter |

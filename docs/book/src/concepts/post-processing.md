@@ -202,13 +202,23 @@ The anisotropic Kuwahara filter turns the HDR image into flat, brush-like patche
 
 *The same frame with the anisotropic Kuwahara filter, radius 4.*
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `kuwahara_enabled` | bool | `false` | Enable the filter |
-| `kuwahara_radius` | u32 | `4` | Kernel radius in pixels (1--8 in the menu; larger = broader strokes) |
-| `kuwahara_sharpness` | f32 | `8.0` | How strongly the lowest-variance sector wins |
-| `kuwahara_hardness` | f32 | `8.0` | Edge hardness between sectors |
-| `kuwahara_anisotropy` | f32 | `1.0` | 0 = isotropic disc, 1 = sectors stretch fully along the local edge direction |
+Its settings are a [style table](stylize-passes.md), like every other style's. A table switches it on unless it says `enabled = false`:
+
+```toml
+[post_process.styles.kuwahara]
+radius = 4          # whole pixels
+sharpness = 6.0
+hardness = 4.0
+```
+
+| Key | Default | Menu range | Description |
+|-----|---------|------------|-------------|
+| `radius` | `4` | 1--8 | Kernel radius in scene pixels, rounded to a whole pixel; larger = broader strokes |
+| `sharpness` | `8.0` | 1--16 | How strongly the lowest-variance sector wins |
+| `hardness` | `8.0` | 1--16 | Edge hardness between sectors |
+| `anisotropy` | `1.0` | 0--2 | 0 = isotropic disc, 1 = sectors stretch fully along the local edge direction |
+
+Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness` and `kuwahara_anisotropy` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
 
 The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing. Kuwahara is the first [stylize pass](stylize-passes.md): it runs through the same framework as every later style, in its HDR stage.
 
@@ -283,7 +293,6 @@ volumetric_enabled = false
 dof_strength = 0.4
 dof_focus_distance = 8.0
 dof_focus_range = 4.0
-kuwahara_enabled = false
 grade_lift = [0.03, 0.02, 0.015]
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.04, 1.0, 0.94]
@@ -383,7 +392,7 @@ There are no longer per-effect function keys. ADR 0053 consolidated every render
 | Fog | Enabled, color, density, start, end, height fog + falloff + origin + density, tint color + strength + start + end |
 | Bloom | Enabled, intensity, threshold, soft threshold |
 | Grade / Grain / FXAA | Lift, gamma, gain, Neutral grade button, film grain, FXAA |
-| Kuwahara | Enabled, radius, sharpness, hardness, anisotropy |
+| Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored and Copy TOML |
 | Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater), mix, params |
 | Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
