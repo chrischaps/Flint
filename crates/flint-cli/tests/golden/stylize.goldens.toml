@@ -119,6 +119,21 @@ name = "style-mask"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
 
+# The shared geometry edges (#301) every edge-reading style sees: hue is
+# the direction across the edge, silhouettes solid, creases softer
+[[case]]
+name = "edges-view"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "edges_view"]
+
+# A user style reading them (demo/styles/inkline.*, inputs = ["edges"])
+# beside edges_view in one frame: the pass runs once for both, and at
+# --render-scale 0.5 both read it by UV at the scene's smaller size
+[[case]]
+name = "edges-inkline-scale05"
+scene = "demo/pbr_test.scene.toml"
+args = ["--no-grid", "--render-scale", "0.5", "--style", "edges_view", "--style", "inkline"]
+
 # Per-entity ASCII (#266): the props scene as authored (its two
 # style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
 # whole frame with those props as variants, and the props on object grids

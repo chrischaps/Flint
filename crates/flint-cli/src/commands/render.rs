@@ -354,6 +354,16 @@ pub struct RenderArgs {
     #[arg(long)]
     pub kuwahara_anisotropy: Option<f32>,
 
+    /// Shared geometry edges (#301): the relative view-distance step that
+    /// is a silhouette, for every style that reads them (default: 0.6)
+    #[arg(long)]
+    pub edge_depth: Option<f32>,
+
+    /// Shared geometry edges (#301): the rebuilt-normal change that is a
+    /// crease (default: 2.5)
+    #[arg(long)]
+    pub edge_normal: Option<f32>,
+
     /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
     /// 5=underwater)
     #[arg(long)]
@@ -934,6 +944,12 @@ fn post_process_config(
         if let Some(anisotropy) = args.kuwahara_anisotropy {
             pp_config.kuwahara_anisotropy = anisotropy;
             pp_config.kuwahara_enabled = true;
+        }
+        if let Some(depth) = args.edge_depth {
+            pp_config.edge_depth = depth;
+        }
+        if let Some(normal) = args.edge_normal {
+            pp_config.edge_normal = normal;
         }
         if let Some(grain) = args.film_grain {
             pp_config.film_grain = grain;

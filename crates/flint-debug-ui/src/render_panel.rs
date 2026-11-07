@@ -334,6 +334,12 @@ impl RenderDebugPanel {
                 .ui(ui, &mut self.pp, self.authored_styles.as_ref());
             f.pp_changed |= edit.changed;
             f.style_needs_resources |= edit.needs_resources;
+            // The shared geometry edges' thresholds (#301): one pair for
+            // every style that reads them (edges_view shows what they find)
+            ui.separator();
+            ui.label("Shared edges");
+            f.pp_changed |= slider(ui, "Silhouette step", &mut self.pp.edge_depth, 0.05..=4.0);
+            f.pp_changed |= slider(ui, "Crease", &mut self.pp.edge_normal, 0.2..=8.0);
         });
 
         section(ui, "Render mode", false, |ui| {
