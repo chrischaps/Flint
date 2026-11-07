@@ -561,6 +561,56 @@ What the framework does so a style doesn't have to:
 - **Timing.** Each style is a GPU-timer scope under its `label`, so `flint render --gpu-time` and the player's `--perf` name it.
 - **The command line.** `flint render --style <name>` reaches a new style from its descriptor alone.
 
+## User-authored styles
+
+*Prototype (#274, [ADR 0112](../../../adr/0112-user-authored-styles.md)); `flint render` loads them today, and the player, viewer and on-screen errors come with #275.*
+
+A game can write a style without touching the engine: a `styles/<name>.shader.toml` and one WGSL function beside it. Flint finds them in the scene's `styles/` folder, then in the folder above (as it finds models).
+
+```toml
+# styles/greyscale.shader.toml
+version = 1
+name = "greyscale"         # the file stem; lowercase, digits and _
+stage = "display"          # or "hdr"
+shader = "greyscale.wgsl"
+inputs = []                # "depth" and/or "mask"; colour is always there
+
+[params.amount]
+default = 1.0
+min = 0.0
+max = 1.0
+label = "Amount"           # optional, with help = "..." and integer = true
+```
+
+```wgsl
+// styles/greyscale.wgsl
+fn style(p: StylePixel) -> vec4<f32> {
+    let grey = vec3<f32>(flint_luma(p.color.rgb));
+    return vec4<f32>(mix(p.color.rgb, grey, params.amount), 1.0);
+}
+```
+
+It is then a style like the built-ins: `[post_process.styles.greyscale]` turns it on, `--style greyscale:amount=0.5` and `--sweep greyscale.amount=0,0.5,1` reach it, and the F4 menu draws its sliders (`<base>_r/_g/_b` params become one colour picker).
+
+Flint writes everything around the function: the bindings, a `params` struct with one `f32` per parameter, and the entry points. `p.uv` is 0..1 from the top left, `p.pos` the pixel, `p.color` the input there. At the display stage colours in and out are display values on any target, so a style never decodes sRGB itself. At the hdr stage they are linear HDR.
+
+| | |
+|---|---|
+| `flint.resolution`, `flint.texel`, `flint.time`, `flint.frame`, `flint.pixels_per_point` | the frame |
+| `flint.near`, `flint.far`, `flint.camera_pos`, `flint.inv_view_proj` | the camera |
+| `flint_sample(uv)` | the input anywhere, in the same space as `p.color` |
+| `flint_luma(c)`, `flint_hash(v)`, `flint_to_display(c)`, `flint_to_linear(c)` | small helpers |
+| `flint_depth(uv)`, `flint_view_depth(uv)`, `flint_world_pos(uv)` | with `inputs = ["depth"]`: raw depth, metres from the eye, the world position |
+| `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` names this style (their `blend`) |
+
+**When it goes wrong.** Flint checks the composed shader with naga before the GPU sees it. An error names your file, line and column, quotes the line, and gives a hint if you called a depth or mask helper without declaring the input. A style that doesn't compile still loads and draws its input unchanged, so the scene keeps its other styles. Edit the `.wgsl` while it runs and Flint rebuilds it about four times a second. If the edit is broken, the last good build keeps drawing. Loops are allowed, but each one is warned about: a loop that never ends hangs the GPU until the driver resets it.
+
+| ![hologram](../images/user-style-hologram.png) `hologram`: `inputs = ["mask"]`; the YBot and the barrel carry `style_mask { style = "hologram" }`, the barrel at `blend = 0.6` | ![contour](../images/user-style-contour.png) `--style contour`: `inputs = ["depth"]`; height lines from `flint_world_pos`, range rings round the eye |
+|---|---|
+| ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
+
+**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+
 ## Goldens
 
 Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case with `flint render` and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite.

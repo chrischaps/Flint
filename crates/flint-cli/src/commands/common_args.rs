@@ -42,11 +42,23 @@ pub struct StyleArgs {
 }
 
 impl StyleArgs {
+    /// Check every `--style` word against the registry. The value parser
+    /// lets an unknown name through, since a user-authored style (#274) is
+    /// registered only once the scene's folder is known; call this after
+    /// `stylize::custom::load_dir`.
+    pub fn check(&self) -> Result<(), String> {
+        for spec in &self.styles {
+            flint_render::stylize::StyleSpec::parse(spec)?;
+        }
+        Ok(())
+    }
+
     /// Write every `--style` word into `config`, in order.
     pub fn apply(&self, config: &mut flint_render::PostProcessConfig) {
         for spec in &self.styles {
-            // Checked by the value parser
-            let _ = flint_render::stylize::apply_style_spec(config, spec);
+            if let Err(e) = flint_render::stylize::apply_style_spec(config, spec) {
+                eprintln!("warning: --style {spec}: {e}");
+            }
         }
     }
 
@@ -71,7 +83,13 @@ impl StyleArgs {
 }
 
 fn parse_style_spec(s: &str) -> Result<String, String> {
-    flint_render::stylize::StyleSpec::parse(s).map(|_| s.to_string())
+    match flint_render::stylize::StyleSpec::parse(s) {
+        Ok(_) => Ok(s.to_string()),
+        // Maybe a user style the scene's styles/ folder registers (#274):
+        // StyleArgs::check decides once it is loaded
+        Err(e) if e.starts_with("unknown style") => Ok(s.to_string()),
+        Err(e) => Err(e),
+    }
 }
 
 pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {

@@ -69,6 +69,7 @@
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
+pub mod custom;
 pub mod kit;
 mod spec;
 mod targets;
@@ -191,6 +192,9 @@ impl StyleControl {
 #[derive(Clone, Copy)]
 pub struct StyleDevice<'a> {
     pub device: &'a wgpu::Device,
+    /// The style being built: lets one `create` serve many descriptors
+    /// (user-authored styles, #274, all share [`custom`]'s).
+    pub descriptor: &'static StyleDescriptor,
     /// The format the style's output is drawn in: `Rgba16Float` for an
     /// [`Hdr`](StyleStage::Hdr) style, the surface's for a
     /// [`Display`](StyleStage::Display) one.
@@ -879,7 +883,11 @@ impl StyleSet {
                 StyleStage::Display => surface_format,
             };
             let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (descriptor.create)(&StyleDevice { device, format })
+                (descriptor.create)(&StyleDevice {
+                    device,
+                    descriptor,
+                    format,
+                })
             }));
             match made {
                 Ok(pass) => self.built[i] = Some(pass),
@@ -1037,24 +1045,46 @@ macro_rules! register_styles {
 
 register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view);
 
-/// Every registered style, in chain order.
+/// The built-ins followed by user styles registered at run time
+/// ([`custom`], #274). Append-only, so a style's index in it (which
+/// [`StyleSet`] keys its built passes by) never changes; each append leaks
+/// one small slice, once per style file loaded.
+static SNAPSHOT: std::sync::RwLock<&'static [&'static StyleDescriptor]> =
+    std::sync::RwLock::new(REGISTRY);
+
+/// Append `descriptor` to the registry. Its name must be new (checked by
+/// the caller, [`custom::load_dir`]).
+pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
+    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
+    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
+    all.push(descriptor);
+    *snapshot = Box::leak(all.into_boxed_slice());
+}
+
+/// Every registered style, in chain order: the built-ins, then user
+/// styles in the order they were loaded.
 pub fn registry() -> &'static [&'static StyleDescriptor] {
-    REGISTRY
+    *SNAPSHOT.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether `name` is one of the styles compiled into the engine.
+pub fn is_builtin(name: &str) -> bool {
+    REGISTRY.iter().any(|d| d.name == name)
 }
 
 /// Whether any style on this frame reads the entity style mask.
 pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled && REGISTRY.iter().any(|d| d.reads_mask(config, ids))
+    config.enabled && registry().iter().any(|d| d.reads_mask(config, ids))
 }
 
 /// The style called `name`.
 pub fn find(name: &str) -> Option<&'static StyleDescriptor> {
-    REGISTRY.iter().copied().find(|d| d.name == name)
+    registry().iter().copied().find(|d| d.name == name)
 }
 
 /// The registered names, for messages.
 pub fn names() -> Vec<&'static str> {
-    REGISTRY.iter().map(|d| d.name).collect()
+    registry().iter().map(|d| d.name).collect()
 }
 
 #[cfg(test)]
