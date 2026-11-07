@@ -473,6 +473,24 @@ hot-reloaded script cannot strand the world inside an effect. Call it every
 frame the effect is active. See
 [Post-Processing: Render Modes](post-processing.md#render-modes).
 
+### Quality Settings API
+
+Change the renderer's load levers while the game runs: a graphics menu, or
+stepping down on a slow device. See [Quality Settings](quality-settings.md)
+for every key and what a change rebuilds.
+
+| Function | Description |
+|----------|-------------|
+| `set_quality(map)` | Merge `#{ render_scale: 0.75, msaa: 4, shadow_cascades: 2, ssao: false, ... }` into the settings in force, from the end of this frame. Returns `true` when every key was taken; a bad key is warned about and skipped |
+| `set_quality(key, value)` | One key |
+| `get_quality()` | Map of every setting, clamped (a request reads back at once) |
+| `get_quality(key)` | One setting, or `()` for an unknown key |
+| `gpu_info()` | `#{ name, vendor, device_type, backend, driver, class, platform }`; `class` is `"desktop"`, `"integrated"`, `"mobile"`, `"software"` or `"unknown"` |
+
+The post-process keys (`post_process`, `bloom`, `ssao`, `ssao_samples`,
+`fog`, `volumetric`) are caps: off turns the scene's effect off, on leaves it
+as the scene set it. They hold across scene loads.
+
 ### Conducted Parameters API
 
 When a scene carries a [`music_session`](music-sessions.md) component, the player fills a per-frame snapshot of the session's state and exposes it to every script through these getters (ADR 0020, conducted-parameters script surface). Without a session every getter returns a neutral value: a clean, settled world with `coherence` and `reassembly` at `1.0`, zero lean, and `1e6` beats until anything upcoming. Bindings written as `1 - conducted_coherence()` therefore show nothing when no music is running, and scripts never need to test for a session.

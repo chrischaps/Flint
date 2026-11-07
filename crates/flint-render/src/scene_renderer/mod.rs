@@ -17,8 +17,9 @@ use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::grass_pipeline::{
-    check_grass_mask_patch, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu,
-    GrassCountReadback, GrassDrawArgs, GrassPipeline, GrassRenderUniforms, MAX_GRASS_ENTITIES,
+    check_grass_mask_patch, GrassComputeUniforms, GrassCountReadback, GrassDrawArgs,
+    GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline,
+    GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleDrawCall, ParticlePipeline};
 use crate::pipeline::{
@@ -452,7 +453,13 @@ pub struct SceneRenderer {
     // Post-processing
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
+    /// What's drawn: `authored_postprocess` under the quality caps.
     postprocess_config: PostProcessConfig,
+    /// What callers set (`set_post_process_config`): the scene's look, kept
+    /// whole so lifting a quality cap brings its effect back.
+    authored_postprocess: PostProcessConfig,
+    /// The quality settings in force (FlintKart#55, `set_quality`).
+    quality: crate::quality::QualitySettings,
     /// Render scale (#122): the HDR chain is this fraction of the surface on
     /// each side, 1 = the surface. `surface_size` is what the last resize
     /// gave; the chain's own size is `postprocess_resources`'.
@@ -701,7 +708,12 @@ impl SceneRenderer {
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
+            authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            quality: crate::quality::QualitySettings {
+                msaa: sample_count,
+                ..Default::default()
+            },
             render_scale: 1.0,
             surface_size: (context.config.width, context.config.height),
             scaled_depth: None,
@@ -2176,7 +2188,12 @@ impl SceneRenderer {
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
+            authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            quality: crate::quality::QualitySettings {
+                msaa: sample_count,
+                ..Default::default()
+            },
             render_scale: 1.0,
             surface_size: (width, height),
             scaled_depth: None,
@@ -2284,7 +2301,13 @@ impl SceneRenderer {
                     cache.upload(device, queue, &namespaced, texture, false);
                 }
                 if is_data && colour.contains(&texture.name) {
-                    cache.upload(device, queue, &format!("{namespaced}#linear"), texture, true);
+                    cache.upload(
+                        device,
+                        queue,
+                        &format!("{namespaced}#linear"),
+                        texture,
+                        true,
+                    );
                     both.insert(texture.name.clone());
                 } else if is_data {
                     cache.upload(device, queue, &namespaced, texture, true);
@@ -2488,11 +2511,7 @@ impl SceneRenderer {
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
-        let grass_draw_calls = if self.grass_drawing {
-            1u32
-        } else {
-            0
-        };
+        let grass_draw_calls = if self.grass_drawing { 1u32 } else { 0 };
 
         let draw_calls = entity_draws
             + skinned_draws
@@ -2531,9 +2550,12 @@ impl SceneRenderer {
         // Grass: BLADE_INDEX_COUNT indices per instance
         triangles += self.grass_instance_count * BLADE_INDEX_COUNT / 3;
 
-        // Shadow stats: estimate as main pass × CASCADE_COUNT, counting only
-        // the draws that cast (ADR 0100)
-        let cascade_count = crate::shadow::CASCADE_COUNT as u32;
+        // Shadow stats: estimate as main pass × the cascades drawn, counting
+        // only the draws that cast (ADR 0100)
+        let cascade_count = match &self.shadow_pass {
+            Some(sp) if sp.enabled => sp.cascades() as u32,
+            _ => 0,
+        };
         let casting = self.entity_draws.iter().filter(|d| d.casts_shadow);
         let casting_skinned = self.skinned_entity_draws.iter().filter(|d| d.casts_shadow);
         let shadow_entity_draws =
@@ -2711,6 +2733,10 @@ impl SceneRenderer {
         let was_enabled = self.shadow_pass.as_ref().map_or(false, |sp| sp.enabled);
         let mut shadow_pass = ShadowPass::new(device, resolution);
         shadow_pass.enabled = was_enabled;
+        if let Some(old) = &self.shadow_pass {
+            shadow_pass.set_cascades(old.cascades());
+            shadow_pass.set_distance(old.distance());
+        }
 
         // Recreate light bind group with new shadow pass resources
         let (light_buffer, light_bind_group) =
@@ -3246,7 +3272,10 @@ impl SceneRenderer {
             culled.extend(cull);
         };
         split(&mut self.entity_draws, &mut self.culled_entity_draws);
-        split(&mut self.transparent_draws, &mut self.culled_transparent_draws);
+        split(
+            &mut self.transparent_draws,
+            &mut self.culled_transparent_draws,
+        );
     }
 
     // ── Draw call factory methods ──
@@ -4100,14 +4129,177 @@ impl SceneRenderer {
         }
     }
 
-    /// Get the current post-processing configuration.
+    /// The post-processing configuration as set: the scene's look, before
+    /// the quality caps. Change a copy and hand it back with
+    /// [`set_post_process_config`](Self::set_post_process_config).
     pub fn post_process_config(&self) -> &PostProcessConfig {
+        &self.authored_postprocess
+    }
+
+    /// The configuration drawn: [`post_process_config`](Self::post_process_config)
+    /// with the quality settings' caps applied.
+    pub fn effective_post_process_config(&self) -> &PostProcessConfig {
         &self.postprocess_config
     }
 
-    /// Set the post-processing configuration.
+    /// Set the post-processing configuration. It's drawn under the quality
+    /// settings' caps (`set_quality`), which a scene load doesn't lift.
     pub fn set_post_process_config(&mut self, config: PostProcessConfig) {
-        self.postprocess_config = config;
+        self.postprocess_config = crate::quality::mask_post_process(&config, &self.quality);
+        self.authored_postprocess = config;
+    }
+
+    /// The quality settings in force; see [`set_quality`](Self::set_quality).
+    pub fn quality(&self) -> &crate::quality::QualitySettings {
+        &self.quality
+    }
+
+    /// Apply runtime quality settings (FlintKart#55) and return them as
+    /// applied (clamped). Call between frames, never with a frame's passes
+    /// half encoded: an MSAA change rebuilds every scene pipeline and its
+    /// targets, a shadow-resolution change the shadow maps, and a render
+    /// scale change the HDR chain. Only what changed is rebuilt, so calling
+    /// it every frame with the same settings costs nothing.
+    ///
+    /// - `render_scale` sets the scene's scale as
+    ///   [`set_render_scale`](Self::set_render_scale) does (a player stepping
+    ///   the scale itself keeps calling that; `render_scale_auto` is the
+    ///   player's and ignored here).
+    /// - `msaa`: 1 or 4 samples for the scene passes.
+    /// - `shadows`, `shadow_resolution`, `shadow_cascades`, `shadow_distance`.
+    /// - `post_process`, `bloom`, `ssao`, `ssao_samples`, `fog`,
+    ///   `volumetric` cap the post config: off turns the effect off, on
+    ///   leaves it as set.
+    pub fn set_quality(
+        &mut self,
+        device: &wgpu::Device,
+        quality: &crate::quality::QualitySettings,
+    ) -> crate::quality::QualitySettings {
+        let q = quality.clamped();
+        self.set_render_scale(device, q.render_scale);
+        self.set_msaa(device, q.msaa);
+        if q.shadow_resolution != self.shadow_resolution() {
+            self.set_shadow_resolution(device, q.shadow_resolution);
+        }
+        self.set_shadows(q.shadows);
+        if let Some(sp) = &mut self.shadow_pass {
+            sp.set_cascades(q.shadow_cascades as usize);
+            sp.set_distance(q.shadow_distance);
+        }
+        self.quality = q;
+        self.postprocess_config = crate::quality::mask_post_process(&self.authored_postprocess, &q);
+        q
+    }
+
+    /// The MSAA sample count the scene passes draw with.
+    pub fn msaa(&self) -> u32 {
+        self.sample_count
+    }
+
+    /// Draw the scene passes with `samples` MSAA samples, 1 or 4 (anything
+    /// else is 1, with a warning). Rebuilds every scene pipeline, whose
+    /// sample count is baked in, and drops the MSAA targets so the next
+    /// frame makes them at the new count. Bind groups, meshes and textures
+    /// are kept: the new pipelines are made against layouts equal to the
+    /// old ones, which wgpu (and WebGPU) treat as the same layout.
+    pub fn set_msaa(&mut self, device: &wgpu::Device, samples: u32) -> u32 {
+        let samples = Self::resolve_sample_count(samples);
+        if samples == self.sample_count {
+            return samples;
+        }
+        let format = HDR_FORMAT;
+        self.sample_count = samples;
+        self.quality.msaa = samples;
+
+        let f = RenderPipeline::new(device, format, samples);
+        let p = &mut self.pipeline;
+        p.pipeline = f.pipeline;
+        p.line_pipeline = f.line_pipeline;
+        p.overlay_line_pipeline = f.overlay_line_pipeline;
+        p.skeleton_line_pipeline = f.skeleton_line_pipeline;
+        p.outline_pipeline = f.outline_pipeline;
+        p.depth_prepass_pipeline = f.depth_prepass_pipeline;
+        p.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
+        p.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;
+        p.transparent_additive_pipeline = f.transparent_additive_pipeline;
+        p.transparent_multiply_pipeline = f.transparent_multiply_pipeline;
+
+        let layouts = &self.pipeline;
+        if let Some(s) = &mut self.skinned_pipeline {
+            let f = SkinnedPipeline::new(
+                device,
+                format,
+                &layouts.transform_bind_group_layout,
+                &layouts.material_bind_group_layout,
+                &layouts.light_bind_group_layout,
+                samples,
+            );
+            s.pipeline = f.pipeline;
+            s.outline_pipeline = f.outline_pipeline;
+            s.depth_prepass_pipeline = f.depth_prepass_pipeline;
+            s.wire_line_pipeline = f.wire_line_pipeline;
+            s.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
+            s.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;
+            s.transparent_additive_pipeline = f.transparent_additive_pipeline;
+            s.transparent_multiply_pipeline = f.transparent_multiply_pipeline;
+        }
+        if let Some(b) = &mut self.billboard_pipeline {
+            let f = BillboardPipeline::new(device, format, samples);
+            b.pipeline = f.pipeline;
+            b.outline_pipeline = f.outline_pipeline;
+        }
+        if let Some(t) = &mut self.terrain_pipeline {
+            let f = TerrainPipeline::new(
+                device,
+                format,
+                &layouts.transform_bind_group_layout,
+                &layouts.light_bind_group_layout,
+                samples,
+            );
+            t.pipeline = f.pipeline;
+        }
+        if let Some(o) = &mut self.ocean_pipeline {
+            let f = crate::ocean_pipeline::OceanPipeline::new(
+                device,
+                format,
+                &layouts.transform_bind_group_layout,
+                &layouts.light_bind_group_layout,
+                samples,
+            );
+            o.pipeline = f.pipeline;
+            o.body_pipeline = f.body_pipeline;
+            o.blit_pipeline = f.blit_pipeline;
+        }
+        if let Some(s) = &mut self.sky_pipeline {
+            s.pipeline = crate::sky_pipeline::SkyPipeline::new(device, format, samples).pipeline;
+        }
+        if let Some(g) = &mut self.grass_pipeline {
+            if let Some(f) = GrassPipeline::new(
+                device,
+                format,
+                &layouts.transform_bind_group_layout,
+                &layouts.light_bind_group_layout,
+                samples,
+            ) {
+                g.render_pipeline = f.render_pipeline;
+                g.shadow_pipeline = f.shadow_pipeline;
+            }
+        }
+        if let Some(p) = &mut self.particle_pipeline {
+            p.rebuild_for_samples(device, format, samples);
+        }
+        if let Some(s) = &mut self.sprite2d_pipeline {
+            s.pipeline = Sprite2dPipeline::new(device, format, samples).pipeline;
+        }
+        if let Some(s) = &mut self.skybox_pipeline {
+            s.pipeline = SkyboxPipeline::new(device, format, samples).pipeline;
+        }
+
+        // The targets are remade at the new count by the next frame.
+        self.msaa_color = None;
+        self.msaa_depth = None;
+        tracing::info!("[quality] MSAA {samples}x");
+        samples
     }
 
     /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
@@ -4137,6 +4329,7 @@ impl SceneRenderer {
                              shader compilation. Try updating your graphics drivers."
                         );
                         self.postprocess_config.kuwahara_enabled = false;
+                        self.authored_postprocess.kuwahara_enabled = false;
                         self.device_lost = true;
                         return;
                     }
@@ -4756,7 +4949,11 @@ fn namespace_textures(
     };
     let data = |tex: &mut Option<String>| {
         if let Some(t) = tex {
-            let suffix = if both.contains(t.as_str()) { "#linear" } else { "" };
+            let suffix = if both.contains(t.as_str()) {
+                "#linear"
+            } else {
+                ""
+            };
             *t = format!("{asset}::{t}{suffix}");
         }
     };

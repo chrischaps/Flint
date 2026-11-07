@@ -33,6 +33,7 @@
 - [Sky](concepts/sky.md)
 - [Ocean](concepts/ocean.md)
 - [Post-Processing](concepts/post-processing.md)
+- [Quality Settings](concepts/quality-settings.md)
 - [Audio](concepts/audio.md)
 - [Music Sessions](concepts/music-sessions.md)
 - [Animation](concepts/animation.md)

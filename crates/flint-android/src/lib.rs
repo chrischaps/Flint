@@ -261,7 +261,13 @@ fn find_scene_recursive(dir: &std::path::Path, scenes: &mut Vec<std::path::PathB
 /// perf = true                                  # as --perf: a line to logcat every 10 s
 /// [env]                                        # the engine's FLINT_* switches
 /// FLINT_SHADOWS = "0"
+/// [quality]                                    # as --quality (FlintKart#55)
+/// shadow_cascades = 2
+/// ssao = false
 /// ```
+///
+/// `quality = "shadow_cascades=2,ssao=0"` works too. A game's own graphics
+/// setting doesn't come through here: its scripts call `set_quality`.
 ///
 /// The desktop player takes these on its command line; Android has none, so
 /// a file stands in for it.
@@ -331,6 +337,21 @@ impl DevProfile {
                 Some(setting) => player.render_scale = setting,
                 None => log::warn!("Dev profile render_scale {scale}: a number or auto"),
             }
+        }
+        // Quality settings (FlintKart#55), the same path as the desktop's
+        // --quality and the page's ?quality=: a string or a table.
+        let quality = match t.get("quality") {
+            Some(toml::Value::String(s)) => s.clone(),
+            Some(toml::Value::Table(table)) => {
+                flint_player::QualitySettings::query_from_toml(table)
+            }
+            _ => String::new(),
+        };
+        if !quality.is_empty() {
+            for e in flint_player::QualitySettings::default().apply_str(&quality) {
+                log::warn!("Dev profile quality: {e}");
+            }
+            player.quality_overrides = quality;
         }
         if t.get("perf").and_then(|v| v.as_bool()).unwrap_or(false) {
             player.enable_perf(true);

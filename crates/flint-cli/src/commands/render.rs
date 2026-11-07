@@ -91,6 +91,12 @@ pub struct RenderArgs {
     #[arg(long, default_value = "1")]
     pub msaa: u32,
 
+    /// Quality settings as `key=value,...`, as flint-player's --quality
+    /// (FlintKart#55), applied after every other flag: e.g.
+    /// `render_scale=0.6,shadow_cascades=1,ssao=0,bloom=0` renders a tier
+    #[arg(long, value_name = "KEY=VALUE,...")]
+    pub quality: Option<String>,
+
     /// Bloom intensity (enables bloom; default: 0.04)
     #[arg(long)]
     pub bloom_intensity: Option<f32>,
@@ -550,6 +556,22 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_post_process_config(pp_config);
         renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
         renderer.ensure_fxaa_resources(&ctx.device);
+    }
+
+    // Quality settings over the flags above: the renderer's own state is the
+    // starting point, so `--quality` names only what it changes.
+    if let Some(quality) = &args.quality {
+        let mut q = flint_render::QualitySettings {
+            msaa: renderer.msaa(),
+            shadows: renderer.shadows_enabled(),
+            shadow_resolution: renderer.shadow_resolution(),
+            ..Default::default()
+        };
+        if let Some(e) = q.apply_str(quality).first() {
+            anyhow::bail!("--quality: {e}");
+        }
+        let applied = renderer.set_quality(&ctx.device, &q);
+        println!("Quality: {}", applied.to_query());
     }
 
     // Post time for grain/mode animation. Headless renders leave this 0.0 so

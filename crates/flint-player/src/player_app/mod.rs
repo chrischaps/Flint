@@ -30,6 +30,7 @@ mod music_session;
 mod pacing;
 mod perf;
 mod persist;
+mod quality;
 pub mod render_scale;
 mod touch_overlay;
 pub(crate) mod scene_loading;
@@ -263,6 +264,13 @@ pub struct PlayerApp {
     /// The desktop's default draws at the surface; a page's caps DPR 1.5.
     pub render_scale: render_scale::RenderScaleSetting,
     dynamic_scale: render_scale::DynamicScale,
+    /// `key=value,...` quality settings applied over `msaa_sample_count`,
+    /// `render_scale` and the `FLINT_SHADOW*` switches at startup
+    /// (FlintKart#55): `--quality`, the page's `?quality=`, an Android dev
+    /// profile's `[quality]`. Scripts change them later with `set_quality`.
+    pub quality_overrides: String,
+    /// The quality settings in force (see `quality.rs`).
+    quality: flint_render::QualitySettings,
     /// Which refreshes the web player draws (#140, `?fps=`); `None` draws
     /// every one, as the desktop always does. See `set_frame_rate`.
     frame_pacer: Option<frame_rate::FramePacer>,

@@ -540,6 +540,13 @@ pub struct ScriptCallContext {
     pub cursor_captured_override: Option<bool>,
     /// `set_touch_controls(enabled)` this frame (#134).
     pub touch_controls_override: Option<bool>,
+    /// The quality settings as scripts see them (FlintKart#55): what the
+    /// host applied, with any `set_quality` this frame merged in.
+    pub quality: flint_core::quality::QualitySettings,
+    /// A `set_quality` call wants `quality` applied at the next frame.
+    pub quality_requested: bool,
+    /// What the GPU is, for `gpu_info()`. The host sets it once.
+    pub gpu_info: flint_core::quality::GpuInfo,
     /// Whether the cursor is captured now, for `is_cursor_captured()`
     /// (ADR 0110). The host sets it each frame.
     pub cursor_captured: bool,
@@ -643,6 +650,9 @@ impl ScriptCallContext {
             time_scale_request: None,
             cursor_captured_override: None,
             touch_controls_override: None,
+            quality: Default::default(),
+            quality_requested: false,
+            gpu_info: Default::default(),
             cursor_captured: false,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),

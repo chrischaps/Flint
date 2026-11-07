@@ -448,6 +448,10 @@ impl ApplicationHandler for PlayerApp {
                             self.input
                                 .set_screen_size(size.width as f64, size.height as f64);
                         }
+                        // The renderer kept its quality settings through the
+                        // suspend; apply them over the resized chain
+                        // (FlintKart#55).
+                        self.reapply_quality();
                         self.cursor_captured = true;
                     }
                     Err(e) => {

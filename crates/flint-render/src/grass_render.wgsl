@@ -228,7 +228,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
         let shadow_uv = shadow_ndc.xy * vec2<f32>(0.5, -0.5) + 0.5;
         var shadow = 1.0;
-        if shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 {
+        // A far plane of 0 is "shadows off" (the pass is skipped and its
+        // maps are stale), as in the PBR shader.
+        if shadow_uniforms.cascade_splits.z > 0.0 && shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 {
             shadow = textureSampleCompareLevel(shadow_depth, shadow_sampler, shadow_uv, 0, shadow_ndc.z - 0.002);
         }
 

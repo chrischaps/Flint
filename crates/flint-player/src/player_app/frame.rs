@@ -887,6 +887,10 @@ impl PlayerApp {
         // Script post-override drain + music-session ladder merge (ADR 0021)
         self.drain_post_overrides();
 
+        // A script's set_quality (FlintKart#55), applied here, between the
+        // frame's scripts and its draw
+        self.apply_script_quality();
+
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
         self.perf_mark(Phase::Sync);
@@ -1546,13 +1550,8 @@ impl PlayerApp {
             // World text is laid out here, so the glyphs it needs go up
             // with this pass's font atlas.
             if let Some(view) = &text_view {
-                laid_text = super::world_text::lay_out(
-                    ctx,
-                    &world_texts,
-                    view,
-                    ui_fonts,
-                    ui_fonts_warned,
-                );
+                laid_text =
+                    super::world_text::lay_out(ctx, &world_texts, view, ui_fonts, ui_fonts_warned);
             }
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on

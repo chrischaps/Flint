@@ -17,11 +17,11 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use flint_core::bundle::Bundle;
+use flint_core::vfs;
 use flint_player::PlayerApp;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
-use flint_core::bundle::Bundle;
-use flint_core::vfs;
 use std::sync::Arc;
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -68,6 +68,14 @@ struct Args {
     /// down to hold 60 fps and back up when it can (#122)
     #[arg(long, value_name = "SCALE|auto")]
     render_scale: Option<String>,
+
+    /// Quality settings as `key=value,...`, applied over --msaa and
+    /// --render-scale (FlintKart#55). Keys: render_scale, render_scale_auto,
+    /// msaa, shadows, shadow_resolution, shadow_cascades, shadow_distance,
+    /// post_process, bloom, ssao, ssao_samples, fog, volumetric. Scripts
+    /// change them while running with set_quality()
+    #[arg(long, value_name = "KEY=VALUE,...")]
+    quality: Option<String>,
 
     /// On-screen touch controls from the input config's `[touch_controls]`
     /// block (#133): `auto` shows them once a finger touches, `always`
@@ -220,6 +228,14 @@ fn main() -> Result<()> {
         app.render_scale = flint_player::RenderScaleSetting::default()
             .parse(value)
             .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?;
+    }
+    if let Some(quality) = &args.quality {
+        // Refuse a typo here rather than run with a setting silently dropped.
+        let errors = flint_render::QualitySettings::default().apply_str(quality);
+        if let Some(e) = errors.first() {
+            anyhow::bail!("--quality: {e}");
+        }
+        app.quality_overrides = quality.clone();
     }
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;

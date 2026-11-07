@@ -20,12 +20,12 @@ pub mod ui;
 pub use context::StateScope;
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 pub use context::{DrawCommand, DrawItem};
-pub use projector::{GroundField, Projector, ScreenPoint, View};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
+pub use projector::{GroundField, Projector, ScreenPoint, View};
 use sync::ScriptSync;
 
 /// Post-processing overrides set by scripts this frame; each field is `Some`
@@ -216,6 +216,25 @@ impl ScriptSystem {
     /// Drain commands produced by scripts this frame
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()
+    }
+
+    /// Take the quality settings a script asked for with `set_quality`
+    /// since the last call, if any (FlintKart#55). The host applies them
+    /// between frames and hands back what it applied with
+    /// [`set_quality_state`](Self::set_quality_state).
+    pub fn take_quality_request(&mut self) -> Option<flint_core::quality::QualitySettings> {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        std::mem::take(&mut c.quality_requested).then_some(c.quality)
+    }
+
+    /// The quality settings in force, for `get_quality()`.
+    pub fn set_quality_state(&mut self, quality: flint_core::quality::QualitySettings) {
+        crate::lock_or_recover(&self.engine.ctx).quality = quality;
+    }
+
+    /// What the GPU is, for `gpu_info()`.
+    pub fn set_gpu_info(&mut self, info: flint_core::quality::GpuInfo) {
+        crate::lock_or_recover(&self.engine.ctx).gpu_info = info;
     }
 
     /// Set screen dimensions for UI draw functions
@@ -626,7 +645,8 @@ mod tests {
             rhai.register_fn("delta_time", || 7.0_f64);
         }
 
-        let source = "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
+        let source =
+            "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
         let mut world = FlintWorld::new();
         let id = world.spawn("host").unwrap();
         let ast = system.engine.compile(source).unwrap();

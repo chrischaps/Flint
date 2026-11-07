@@ -87,6 +87,14 @@ pub struct ShadowPass {
     pub draw_capacity: u32,
     pub resolution: u32,
     pub enabled: bool,
+    /// Cascades drawn, `1..=CASCADE_COUNT` (FlintKart#55). Each is a draw
+    /// of every caster; fewer cover the same distance at coarser texels.
+    /// The texture keeps all its layers, so changing this allocates nothing.
+    cascades: usize,
+    /// How far from the camera the cascades reach, metres.
+    distance: f32,
+    /// The uniforms on the GPU say "no shadows" (see `write_off_uniforms`).
+    pub(crate) shadows_written_off: bool,
     shadow_uniforms: ShadowUniforms,
 }
 
@@ -290,6 +298,9 @@ impl ShadowPass {
             draw_capacity: SHADOW_DRAW_INITIAL_CAPACITY,
             resolution,
             enabled: true,
+            cascades: CASCADE_COUNT,
+            distance: flint_core::quality::DEFAULT_SHADOW_DISTANCE,
+            shadows_written_off: false,
             shadow_uniforms,
         }
     }
@@ -353,24 +364,74 @@ impl ShadowPass {
         queue.write_buffer(&self.draw_buffer, 0, &bytes);
     }
 
+    /// Upload uniforms that turn shadows off in every shader that samples
+    /// the maps: a shadow far plane of 0 lights everything (the state a
+    /// renderer starts in). Once, until the pass draws again.
+    pub fn write_off_uniforms(&mut self, queue: &wgpu::Queue) {
+        if self.shadows_written_off {
+            return;
+        }
+        let off = ShadowUniforms::default();
+        queue.write_buffer(
+            &self.shadow_uniforms_buffer,
+            0,
+            bytemuck::cast_slice(&[off]),
+        );
+        self.shadows_written_off = true;
+    }
+
+    /// Cascades drawn; see [`Self::set_cascades`].
+    pub fn cascades(&self) -> usize {
+        self.cascades
+    }
+
+    /// Draw `n` cascades, clamped to `1..=CASCADE_COUNT`. The rest are left
+    /// out of the shader's choice: their splits sit at the far plane.
+    pub fn set_cascades(&mut self, n: usize) {
+        self.cascades = n.clamp(1, CASCADE_COUNT);
+    }
+
+    /// How far shadows reach from the camera, metres.
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
+
+    /// Reach `metres` from the camera (clamped as `QualitySettings` clamps).
+    pub fn set_distance(&mut self, metres: f32) {
+        use flint_core::quality::{MAX_SHADOW_DISTANCE, MIN_SHADOW_DISTANCE};
+        if metres.is_finite() {
+            self.distance = metres.clamp(MIN_SHADOW_DISTANCE, MAX_SHADOW_DISTANCE);
+        }
+    }
+
     /// Compute cascade splits and light view-projection matrices.
     ///
     /// `max_shadow_distance` extends the shadow frustum depth along the light
     /// direction so that off-screen shadow casters (ceilings, walls behind the
     /// camera, etc.) are captured in the shadow map.
+    ///
+    /// `cam_near` / `cam_far` are the camera projection's own planes, which
+    /// turn the split distances into the frustum's slices; the cascades
+    /// cover view depths from `cam_near` to [`Self::distance`] (or the far
+    /// plane, if nearer). Before FlintKart#55 the planes were taken as 0.1
+    /// and 200 whatever the camera's were, so with the usual 1000 m far
+    /// plane the last cascade stretched to 1000 m while drawing to 200.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_cascades(
         &mut self,
         light_dir: [f32; 3],
         camera_pos: [f32; 3],
         camera_view_proj_inv: [[f32; 4]; 4],
-        near: f32,
-        far: f32,
+        cam_near: f32,
+        cam_far: f32,
         max_shadow_distance: f32,
         sun_tan_angular: f32,
     ) {
         // Practical cascade split scheme (logarithmic/uniform blend)
         let lambda = 0.5f32; // blend factor
-        let splits = compute_cascade_splits(near, far, CASCADE_COUNT, lambda);
+        let count = self.cascades.clamp(1, CASCADE_COUNT);
+        let (near, far) = (cam_near, self.distance.min(cam_far).max(cam_near * 2.0));
+        let splits = cascade_split_slots(&compute_cascade_splits(near, far, count, lambda));
 
         self.shadow_uniforms.cascade_splits = [
             splits[1],
@@ -381,13 +442,18 @@ impl ShadowPass {
 
         let light_dir_norm = normalize_3(light_dir);
 
-        for i in 0..CASCADE_COUNT {
+        for i in 0..count {
             let cascade_near = splits[i];
             let cascade_far = splits[i + 1];
 
             // Compute frustum corners for this cascade
-            let corners =
-                frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
+            let corners = frustum_corners(
+                cascade_near,
+                cascade_far,
+                cam_near,
+                cam_far,
+                &camera_view_proj_inv,
+            );
 
             // Compute tight orthographic bounds from light's perspective
             let (light_vp, depth_range) = compute_light_matrix(
@@ -400,6 +466,14 @@ impl ShadowPass {
             self.shadow_uniforms.cascade_view_proj[i] = light_vp;
             self.shadow_uniforms.pcss[i] = depth_range;
         }
+        // Cascades not drawn copy the last one drawn: the shader never picks
+        // them (their splits are the far plane), but stale matrices would be
+        // a trap for anything that does.
+        for i in count..CASCADE_COUNT {
+            self.shadow_uniforms.cascade_view_proj[i] =
+                self.shadow_uniforms.cascade_view_proj[count - 1];
+            self.shadow_uniforms.pcss[i] = self.shadow_uniforms.pcss[count - 1];
+        }
         // 0 = PCSS off → shaders take the legacy 3×3 PCF path (ADR 0057).
         self.shadow_uniforms.pcss[3] = sun_tan_angular;
     }
@@ -407,6 +481,18 @@ impl ShadowPass {
     pub fn shadow_uniforms(&self) -> &ShadowUniforms {
         &self.shadow_uniforms
     }
+}
+
+/// Splits for all `CASCADE_COUNT` slots from `count` cascades' splits: the
+/// slots past `count` start at the far plane, so the shader's
+/// `view_depth > split` test never picks them.
+fn cascade_split_slots(splits: &[f32]) -> [f32; CASCADE_COUNT + 1] {
+    let far = *splits.last().unwrap_or(&0.0);
+    let mut out = [far; CASCADE_COUNT + 1];
+    for (o, s) in out.iter_mut().zip(splits) {
+        *o = *s;
+    }
+    out
 }
 
 /// Compute logarithmic/uniform blend cascade split distances
@@ -608,4 +694,23 @@ fn mat4_mul_point(m: &[[f32; 4]; 4], p: &[f32; 3]) -> [f32; 3] {
         return [out[0], out[1], out[2]];
     }
     [out[0] / w, out[1] / w, out[2] / w]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fewer_cascades_cover_the_same_reach() {
+        for count in 1..=CASCADE_COUNT {
+            let splits = cascade_split_slots(&compute_cascade_splits(0.1, 120.0, count, 0.5));
+            assert_eq!(splits[0], 0.1);
+            // The shadow far plane (slot 3, the shader's `.z`) is the reach.
+            assert_eq!(splits[CASCADE_COUNT], 120.0, "{count} cascades");
+            for (i, s) in splits.iter().enumerate().skip(count + 1) {
+                assert_eq!(*s, 120.0, "slot {i} of {count} must be unreachable");
+            }
+            assert!(splits.windows(2).all(|w| w[0] <= w[1]));
+        }
+    }
 }
