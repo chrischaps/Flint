@@ -15,6 +15,71 @@
 @group(2) @binding(0) var atlas: texture_2d<f32>;
 @group(3) @binding(0) var entity_input: texture_2d<f32>;
 @group(3) @binding(1) var style_mask: texture_2d<u32>;
+// The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
+// line glyph slot + 1 (0 = none), y = its length in cell widths
+@group(3) @binding(2) var edge_cells: texture_2d<f32>;
+
+fn edge_cell_at(c: vec2<i32>) -> vec4<f32> {
+    let cmax = vec2<i32>(textureDimensions(edge_cells)) - vec2<i32>(1);
+    return textureLoad(edge_cells, clamp(c, vec2<i32>(0), cmax), 0);
+}
+
+// Whether neighbour `n` takes the line from a cell with `slot` and `len`:
+// the same glyph, and more of the line (or as much, on the earlier side).
+fn yields_to(n: vec4<f32>, slot: u32, len: f32, earlier: bool) -> bool {
+    if n.x < 0.5 || min(u32(n.x - 0.5), 3u) != slot {
+        return false;
+    }
+    return n.y > len || (n.y == len && earlier);
+}
+
+// The line glyph slot of the screen-grid cell `cell`, or 4 for none. A line
+// running near a cell border splits between the two cells, and each would
+// draw it: a cell holding less than one cell width of line yields to a
+// neighbour across the line (left/right of `│`, above/below of `─`, either
+// side of a diagonal) holding more. A full crossing always draws, so two
+// real edges a cell apart both stay.
+fn edge_slot(cell: vec2<f32>) -> u32 {
+    if u.edge_on == 0u {
+        return 4u;
+    }
+    let c = vec2<i32>(cell) + vec2<i32>(CELL_OFFSET);
+    let e = edge_cell_at(c);
+    if e.x < 0.5 {
+        return 4u;
+    }
+    let slot = min(u32(e.x - 0.5), 3u);
+    let len = e.y;
+    if len >= 1.0 {
+        return slot;
+    }
+    // Offsets to the neighbours on the line normal's positive side (screen
+    // y down); the negative side is the same offsets negated, and wins
+    // ties. `─` and `│` have one; a diagonal three, since a staircase of
+    // `╱` doubles by a straight step as often as by a diagonal one.
+    var off = array<vec2<i32>, 3>(vec2<i32>(0, 1), vec2<i32>(0, 1), vec2<i32>(0, 1));
+    switch slot {
+        case 1u: {
+            off = array<vec2<i32>, 3>(vec2<i32>(1, 0), vec2<i32>(1, 0), vec2<i32>(1, 0));
+        }
+        case 2u: {
+            // `╱` runs (1, -1): its normal is (1, 1)
+            off = array<vec2<i32>, 3>(vec2<i32>(1, 1), vec2<i32>(1, 0), vec2<i32>(0, 1));
+        }
+        case 3u: {
+            // `╲` runs (1, 1): its normal is (1, -1)
+            off = array<vec2<i32>, 3>(vec2<i32>(1, -1), vec2<i32>(1, 0), vec2<i32>(0, -1));
+        }
+        default: {}
+    }
+    for (var k = 0; k < 3; k++) {
+        if yields_to(edge_cell_at(c - off[k]), slot, len, true)
+            || yields_to(edge_cell_at(c + off[k]), slot, len, false) {
+            return 4u;
+        }
+    }
+    return slot;
+}
 
 fn ramp_origin(step: u32) -> vec2<u32> {
     let pair = u.ramp[step / 2u];
@@ -106,8 +171,9 @@ fn frame_look() -> Variant {
 }
 
 // A cell of colour `col`, tone `t` and ramp step `step`, drawn in look `v`
-// at the pixel `local` in its cell
-fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>) -> vec3<f32> {
+// at the pixel `local` in its cell; `edge` is the cell's line glyph slot
+// (#267), or 4 for none
+fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edge: u32) -> vec3<f32> {
     let n = max(v.ramp_len, 1u);
     var step = min(step_in, n - 1u);
     // Inverse: the ink fills the cell and the glyph is cut from it, so the
@@ -117,8 +183,18 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>) -> 
         step = n - 1u - step;
     }
 
-    let origin = ramp_origin(v.ramp_start + step);
-    let coverage = glyph_coverage(origin, local, v.cell);
+    var origin = ramp_origin(v.ramp_start + step);
+    var coverage = glyph_coverage(origin, local, v.cell);
+    // On an edge, the line glyph over the tone glyph; the glow follows
+    // whichever glyph mostly shows
+    if edge < 4u {
+        let pair = u.edge_glyphs[edge / 2u];
+        let edge_origin = select(pair.xy, pair.zw, (edge & 1u) == 1u);
+        coverage = mix(coverage, glyph_coverage(edge_origin, local, v.cell), u.edges);
+        if u.edges >= 0.5 {
+            origin = edge_origin;
+        }
+    }
     let lum = luma(col);
 
     // Ink and ground
@@ -213,7 +289,13 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     }
     let n = max(v.ramp_len, 1u);
     let step = min(u32(t * f32(n)), n - 1u);
-    return shade(v, col, t, step, local);
+    // The edge cells are on the screen grid: a variant on that grid shares
+    // them; one on an object grid keeps its tone glyphs
+    var edge = 4u;
+    if all(v.cell == u.cell) && all(v.origin == u.origin) {
+        edge = edge_slot(cell);
+    }
+    return shade(v, col, t, step, local, edge);
 }
 
 @fragment
@@ -241,7 +323,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
         let col = vec3<f32>(state.rgb) / UNORM16;
         let t = banded(tone(luma(col)));
-        out = shade(frame_look(), col, t, state.a, local);
+        out = shade(frame_look(), col, t, state.a, local, edge_slot(cell));
     }
     return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);
 }

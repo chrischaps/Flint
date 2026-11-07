@@ -72,7 +72,7 @@ The full-screen ASCII style (#265) turns every cell of one screen grid into a gl
 
 ![The ASCII style on pbr_test: the two boxes and the character in the classic ramp, 8 px cells](../images/ascii-style-pbr-test.png)
 
-*`flint render demo/pbr_test.scene.toml --ascii` at 1280x720, cropped at 1:1.*
+*`flint render demo/pbr_test.scene.toml --ascii --ascii-no-edges` at 1280x720, cropped at 1:1: the tone glyphs alone. With [edges](#edges), the default, the boxes and the character are outlined as well.*
 
 ```toml
 [post_process.styles.ascii]
@@ -104,6 +104,11 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `ink` | `1` | Glyph brightness |
 | `levels` | `0` | Quantize the tone to this many bands (0 keeps every step of the ramp) |
 | `footprint` | `1` | Average each cell's colour over this many cells (wider settles texture noise) |
+| `edges` | `1` | Line glyphs along [edges](#edges), mixed over the tone glyph: 0 turns the edge passes off, 1 draws the line alone |
+| `edge_threshold` | `0.5` | How much edge, in cell widths, a cell needs to draw a line glyph (a line straight across is 1) |
+| `edge_max` | `3` | More edge than this is texture-like geometry (grass, foliage) and keeps its tone glyph. A styled entity's outline ignores it |
+| `edge_depth` | `0.6` | The relative view-distance step that counts as a silhouette (lower finds more) |
+| `edge_normal` | `2.5` | The normal change, as a Sobel over normals rebuilt from depth, that counts as a crease (lower finds more) |
 | `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first |
 | `smoothing` | `0.6` | How much of last frame's colour a cell keeps (0--0.95). A cell whose colour jumps takes the new one at once, so nothing trails |
 | `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1) |
@@ -124,18 +129,18 @@ Reversals, where a glyph changes and changes back two frames later, are the shim
 
 The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. The player's captures can still differ from run to run by one level in a few pixels, with the history on or off (#341). The history absorbs those differences rather than carrying them forward. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up. Call it on a camera cut too, so the new shot doesn't start from the old one's glyphs.
 
-It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.04 ms at 1080p on an RTX 4070 (`--gpu-time 240`), down from about 0.15 ms before #277 split it in two: the cell pass averages each cell's colour once, where the old single pass did it for every pixel.
+It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.04 ms at 1080p on an RTX 4070 (`--gpu-time 240`), down from about 0.15 ms before #277 split it in two: the cell pass averages each cell's colour once, where the old single pass did it for every pixel. That is with `edges = 0`. The [edge passes](#edges) add about 0.4 ms (measured on the tavern before #277, as 0.15 against 0.53--0.67 ms).
 
 | Key | Default | |
 |-----|---------|---|
 | `scope` | `screen` | `screen`: the table glyphizes the whole frame. `entities`: only the entities that ask (below), the table being their preset |
 | `grid` | `screen` | `screen`: one grid centred on the frame. `object`: each styled entity's cells pinned to its projected origin (below) |
 
-Edge glyphs (#267) build on it, and [per-entity ASCII](#per-entity-ascii) (#266) applies it to chosen entities. Its goldens are in the [stylize goldens](#goldens).
+[Edges](#edges) (#267) draw line glyphs along silhouettes and creases, and [per-entity ASCII](#per-entity-ascii) (#266) applies the style to chosen entities. Its goldens are in the [stylize goldens](#goldens).
 
 ### Colour modes
 
-The glyph's shape carries brightness; its colour sets the mood (#276). Every capture below is `demo/pbr_test.scene.toml` at 1280x720, cropped at 1:1 around the two boxes and the character.
+The glyph's shape carries brightness; its colour sets the mood (#276). Every capture below is `demo/pbr_test.scene.toml` at 1280x720, cropped at 1:1 around the two boxes and the character. They were made before edges (#267) were on by default: add `--ascii-no-edges` to get them exactly, or leave it off and the boxes are outlined too.
 
 | | |
 |---|---|
@@ -174,6 +179,26 @@ colors = ["#1b998b", "#3a86ff", "#ed217c", "#ff9b71", "#fffd82", "#e8f1f2"]
 
 On an RTX 4070 at 1080p the pass costs 0.143 ms in `source`, 0.152 ms matching `cga16`'s 15 inks, 0.144 ms with `ground = "inverse"` and 0.220 ms with `glow` on (24 more glyph reads a pixel).
 
+### Edges
+
+Luminance alone loses a silhouette wherever an object is about as bright as what's behind it. So cells along the scene's edges draw the glyph set's line glyphs, `─ │ ╱ ╲` in the built-in set, picked by the direction of the edge through the cell (#267). Away from edges cells keep their tone glyphs.
+
+![A sphere, a box and a pillar in ASCII, each outlined in unbroken line glyphs](../images/ascii-edges-on.png)
+
+![The same scene with --ascii-no-edges: the sphere's top half melts into the ground behind it](../images/ascii-edges-off.png)
+
+*`demo/ascii_edges.scene.toml` at 1280x720, cropped at 1:1, with edges (top) and with `--ascii-no-edges`. The sphere and the box carry `style_mask { style = "ascii" }`; the pillar has none, so it is outlined by depth alone.*
+
+Edges come from geometry, never from colour, so a wood texture makes none but a table's outline and its creases do (the ASCII spike's finding, #261). Three passes, before the glyph pass:
+
+1. **Edge pixels**, at the depth's resolution. A 3x3 Sobel over the relative view distance finds silhouettes; one over normals rebuilt from the depth finds creases, counted only where the 5x5 patch is one surface. Where an ASCII-styled entity (an `ascii_style`, or a `style_mask { style = "ascii" }`, [the entity style mask](#the-entity-style-mask)) meets anything else, including another styled entity with different settings, the pixel is an **outline**. Silhouettes and outlines keep their near side only, so each is drawn once.
+2. **Cells**, one fragment a glyph cell. It reads every edge pixel in its cell, not a sparse lattice, so a one-pixel outline can't slip between samples, and sums their structure tensors: the dominant orientation picks the glyph. The cell draws a line when it holds at least `edge_threshold` cell widths of edge and at most `edge_max` (an outline needs only the threshold).
+3. **The glyph pass** draws the cell's line glyph. A cell holding under one cell width of line yields to a neighbour across the line holding more, so a line that runs along a cell border isn't drawn twice.
+
+Under a render scale the edge pixels are the scene's, so a line is still one cell wide. The editor grid of `flint render` (on unless `--no-grid`) writes depth, so its lines are traced too; renders of the look pass `--no-grid`.
+
+Edges come with the colour modes: line glyphs are inked as the cell's tone glyph would be, cut out of the ink under `ground = "inverse"`, and glow around them. The edge cells lie on the screen grid, so per-entity variants on that grid get them, and a variant on `grid = "object"` keeps its tone glyphs. Edge cells keep no history: under #277's temporal stability the tone glyphs hold still and the lines follow the geometry each frame. The [stylize goldens](#goldens) pin pbr_test without edges (the #265 golden, unchanged), with edges, and the sphere and box above.
+
 ## Per-entity ASCII
 
 An entity with an `ascii_style` component is drawn in glyphs while the rest of the scene stays smooth (#266). No `[post_process.styles.ascii]` table is needed:
@@ -206,7 +231,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **The whole frame.** With the scene's table on and `scope = "screen"` (or `--ascii`), everything is glyphs and entities still change their own settings; `enabled = false` keeps one smooth.
 - **Grids.** By default every styled entity shares the screen's grid, which keeps glyphs aligned where props meet (the spike's finding, #261). `grid = "object"` pins an entity's cells to its projected origin: its glyphs hold still while it slides across the screen, but still swim when it turns or comes closer (#277). Each such entity gets a variant of its own.
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
-- **Edges between entities** come from edge-aware glyphs (#267), not from this pass. Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap run together. Edge glyphs draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from an ASCII id to any other. With per-entity settings, "an ASCII id" means any of the style's variants (`frame.variants()`), not only the plain `ascii` id, and a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask.
+- **Edges between entities** come from [edges](#edges) (#267). Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap would run together. The edge passes draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from one of the style's ids to any other: the plain `ascii` id or any variant's, so a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask. Variants on `grid = "object"` don't draw edges yet, because the edge cells are on the screen grid.
 - **Temporal stability** (#277's `smoothing`, `hysteresis` and `dither`) applies to the whole frame's cells. A per-entity variant is drawn per pixel on its own grid and keeps no history yet, so a styled prop can still shimmer in motion.
 - **Not yet:** a per-entity `font` (one glyph set a frame; a different one warns and draws in the scene's), and ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
@@ -261,6 +286,8 @@ flint render scene.toml --look ink_wash --style kuwahara:radius=3 -o sharper.png
 - `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks.
 
 Each cell is 640x360 unless you pass `--width` and `--height`. The scene loads once and every column re-renders the same frame, so four columns of `stylize_props` take about 13 s in a debug build. A sweep goes over `--look` and every other flag.
+
+The ASCII looks set no `edges` key, so they draw the [edge glyphs](#edges) by default; add `edges = 0` to a look's `[post_process.styles.ascii]` for tone alone. The two sweeps below were captured before edges landed, so the props in them aren't outlined.
 
 ![The four looks on stylize_props, one sweep](../images/look-sweep-stylize-props.png)
 
@@ -365,10 +392,12 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 
 | Case | What it pins |
 |------|--------------|
-| `ascii-full` | `--style ascii` on `pbr_test`: the #265 golden, the same pixels as `--ascii` |
-| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props` |
-| `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points |
-| `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid |
+| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off |
+| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props`, with edges |
+| `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points (edges off: the editor grid would be traced) |
+| `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid (edges off) |
+| `ascii-edges-pbr` | [edges](#edges) on `pbr_test`, grid off |
+| `ascii-edges`, `ascii-edges-msaa4`, `ascii-edges-scale05` | the styled sphere and box of `demo/ascii_edges.scene.toml` outlined, at 1x, under MSAA 4 and at `--render-scale 0.5` |
 | `ascii-entity`, `ascii-entity-object` | the spike's per-entity modes (#261), screen and object grids |
 | `style-mask` | the entity style mask the per-entity styles read (`--debug-mode style`) |
 | `invert`, `kuwahara` | the other styles, with a tighter tolerance |
