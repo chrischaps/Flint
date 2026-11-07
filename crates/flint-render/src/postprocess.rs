@@ -88,6 +88,14 @@ pub struct PostProcessConfig {
     pub volumetric_density: f32,
     pub volumetric_max_distance: f32,
     pub volumetric_decay: f32,
+    /// The shared geometry edges' thresholds (#301): the relative
+    /// view-distance step that is a silhouette, and the rebuilt-normal
+    /// Sobel that is a crease. One pair for every style that reads
+    /// [`StyleFrame::edges`](crate::stylize::StyleFrame::edges), since the
+    /// pass runs once a frame; a style wanting more or fewer lines scales
+    /// the strengths it reads.
+    pub edge_depth: f32,
+    pub edge_normal: f32,
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the
@@ -168,6 +176,8 @@ impl Default for PostProcessConfig {
             volumetric_density: 1.0,
             volumetric_max_distance: 100.0,
             volumetric_decay: 0.98,
+            edge_depth: 0.6,
+            edge_normal: 2.5,
             render_mode: 0,
             mode_mix: 0.0,
             mode_params: [0.0; 4],
@@ -236,6 +246,8 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.volumetric_density = pp_def.volumetric_density;
     config.volumetric_max_distance = pp_def.volumetric_max_distance;
     config.volumetric_decay = pp_def.volumetric_decay;
+    config.edge_depth = pp_def.edge_depth;
+    config.edge_normal = pp_def.edge_normal;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;

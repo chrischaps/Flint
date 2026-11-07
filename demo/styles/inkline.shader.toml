@@ -1,0 +1,43 @@
+# A user-authored style that reads the shared geometry edges (#301): the
+# picture laid flat on warm paper in a few soft tones, with ink wherever the
+# geometry turns: heavy on silhouettes, lighter on creases. The edges come
+# from the framework's one pass a frame, so this style and any other that
+# reads them (edges_view, the next user style) share it.
+#
+#   flint render demo/pbr_test.scene.toml --no-grid --style inkline
+#   flint render demo/pbr_test.scene.toml --no-grid --style inkline --edge-normal 1.5
+version = 1
+name = "inkline"
+label = "Ink line"
+stage = "display"
+shader = "inkline.wgsl"
+inputs = ["edges"]
+
+[params.reach]
+default = 1.0
+min = 0.25
+max = 4.0
+label = "Reach"
+help = "Multiplies the edge strengths: above 1 inks fainter edges too"
+
+[params.crease]
+default = 0.6
+min = 0.0
+max = 1.0
+label = "Crease ink"
+help = "How dark a crease is next to a silhouette"
+
+[params.tones]
+default = 4.0
+min = 2.0
+max = 8.0
+integer = true
+label = "Tones"
+help = "How many flat tones the paper wash keeps"
+
+[params.wash]
+default = 0.35
+min = 0.0
+max = 1.0
+label = "Colour"
+help = "How much of the picture's colour tints the paper"

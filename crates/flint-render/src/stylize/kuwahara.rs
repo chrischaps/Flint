@@ -27,6 +27,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     ],
     options: &[],
     uses_mask: false,
+    needs: &[],
     hints: &[
         StyleHint::new("radius", "Radius (px)", "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more").integer(),
         StyleHint::new("sharpness", "Sharpness", "How strongly the least varied sector wins; lower blends sectors more softly"),

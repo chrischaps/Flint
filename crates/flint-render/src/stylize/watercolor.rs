@@ -112,6 +112,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         choices: SCOPES,
     }],
     uses_mask: false,
+    needs: &[],
     hints: &[
         StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
         StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),

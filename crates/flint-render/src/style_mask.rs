@@ -44,8 +44,16 @@
 //! bind group), so the per-entity loop makes no buffer and no bind group.
 //! There's no depth attachment: each fragment tests itself against the
 //! frame's single-sample depth with a tolerance of its own depth slope, so
-//! the mask works the same under MSAA (sample-0 resolve) and at any render
-//! scale, and the scene pipelines don't change.
+//! the mask works at any render scale and the scene pipelines don't
+//! change.
+//!
+//! Under MSAA (#306) the mask is drawn 4x instead, into a multisampled
+//! target of its own, each covered sample testing itself against that
+//! sample of the scene's multisampled depth, and a resolve folds it into
+//! the single-sample mask with any styled sample beating the empty ones.
+//! Drawn at pixel centres against the sample-0 depth, a feature about a
+//! pixel thin (a bench seat's edge at a grazing angle) lost the pixels
+//! the scene's samples gave it, and an outline style drew the gaps.
 //!
 //! Each draw's id goes into one dynamic-offset uniform buffer, uploaded in
 //! a single write a frame. The mask target lives in the post chain's
@@ -63,8 +71,39 @@
 //! mixes its own pixel with what it was given by that amount; ASCII can
 //! also dissolve, turning that share of its cells.
 //!
-//! Particles, sprites, grass, terrain and water stay unmasked: they write
-//! no mask (and, but for terrain, no depth either).
+//! ## What's in front: the veil (#290)
+//!
+//! Transparents and particles write no depth, so a depth-tested redraw
+//! alone would leave a styled stone masked where fire or glass sits in
+//! front of it, and the style would glyphize the fire as stone. Just before
+//! the mask, a veil pass draws every visible transparent mesh (static and
+//! skinned) and every particle into an `R8Unorm` target, depth-tested
+//! against the scene with no depth write, each with the alpha it is drawn
+//! with (an additive particle by its alpha times its brightest channel),
+//! "over" blended so layers add up to their combined coverage. The mask
+//! then writes each styled pixel's blend times what the veil leaves
+//! uncovered. The rule: **what's in front unmasks by its coverage.** A
+//! style that honours the blend (ASCII, user styles through
+//! `flint_style_blend`) shows the fire as fire and the stone through any
+//! uncovered share; a fully covered pixel keeps its id at blend 0. A
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
+//!
+//! ## Terrain and transparents (#310)
+//!
+//! Terrain chunks are masked when the terrain's entity (named by
+//! `SceneRenderer::set_terrain_entity`) is styled: they use the standard
+//! `Vertex` and transform layout, so the static pipeline draws them as is.
+//!
+//! A styled transparent is a lens. Its draws come after every opaque one,
+//! back to front as the scene drew them; they write no depth, but each
+//! fragment still tests against the opaques' depth, so where one shows it
+//! is the nearest styled surface and its id replaces what's behind it. The
+//! style then draws the whole pixel, glass and what's seen through it.
+//!
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -105,9 +144,21 @@ pub const STYLE_MASK_COMPONENT: &str = "style_mask";
 /// The name of the mask in the post chain's style targets.
 pub(crate) const MASK_TARGET: &str = "style mask";
 
+/// The name of the veil (#290) in the post chain's style targets: how much
+/// of each pixel transparents and particles in front of the scene cover.
+pub(crate) const VEIL_TARGET: &str = "style veil";
+
+/// The veil's format: one blendable coverage a pixel.
+pub const VEIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+
+/// The scene depth's format, which the veil tests against.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 /// How far behind the scene's depth a mask fragment may be, in multiples
 /// of its own depth slope (`fwidth(z)`). The spike's value: it absorbs the
-/// sample-0 resolve under MSAA without letting a hidden face through.
+/// rasterisers' small disagreements (and, under MSAA, the half pixel
+/// between the centre's depth and a sample's) without letting a hidden
+/// face through.
 pub const SLOPE_TOLERANCE: f32 = 2.0;
 
 /// Masked draws one frame can hold; any more aren't masked (logged once).
@@ -306,8 +357,9 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 }
 
 /// Read a style component's fields into `variant`: the descriptor's
-/// options as strings, its parameters as numbers, and a 3-array `x` as the
-/// parameters `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
+/// options as strings, its parameters as numbers, and a colour `x` (a
+/// 3-array, [`StyleColor`](crate::stylize::StyleColor)) as the parameters
+/// `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
 /// style doesn't take, a value of the wrong type) is skipped: the scene
 /// loader has already warned about it against the component's schema.
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
@@ -325,16 +377,10 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
             if let Some(n) = number(value) {
                 variant.params.insert(key.clone(), n);
             }
-        } else if let Some([r, g, b]) = value.as_array().map(Vec::as_slice) {
-            let channels = ["r", "g", "b"].map(|c| format!("{key}_{c}"));
-            if channels
-                .iter()
-                .all(|c| d.params.iter().any(|p| p.name == c))
-            {
-                for (c, v) in channels.into_iter().zip([r, g, b]) {
-                    if let Some(n) = number(v) {
-                        variant.params.insert(c, n);
-                    }
+        } else if let Some(color) = d.color_setting(key) {
+            if let Some(rgb) = crate::stylize::color_from_toml(value) {
+                for (p, n) in color.channels.iter().zip(rgb) {
+                    variant.params.insert(p.name.to_string(), n);
                 }
             }
         }
@@ -513,6 +559,73 @@ pub fn debug_color(id: u16) -> [f32; 3] {
     [0.25 + 0.75 * r, 0.25 + 0.75 * g, 0.25 + 0.75 * b]
 }
 
+/// A word for [`debug_color`]'s hue of `id`, so a legend can say "blue"
+/// rather than a triple (#309). `NO_STYLE` is "black".
+pub fn debug_color_name(id: u16) -> &'static str {
+    if id == NO_STYLE {
+        return "black";
+    }
+    let degrees = (id as f32 * 0.618_034).fract() * 360.0;
+    const NAMES: [(f32, &str); 12] = [
+        (15.0, "red"),
+        (40.0, "orange"),
+        (68.0, "yellow"),
+        (100.0, "lime"),
+        (145.0, "green"),
+        (170.0, "mint"),
+        (195.0, "cyan"),
+        (220.0, "azure"),
+        (255.0, "blue"),
+        (285.0, "violet"),
+        (325.0, "magenta"),
+        (345.0, "pink"),
+    ];
+    NAMES
+        .iter()
+        .find(|(below, _)| degrees < *below)
+        .map_or("red", |(_, name)| name)
+}
+
+/// One row of the style mask view's legend: an id, the style variant it
+/// stands for and the colour the view paints it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    pub id: u16,
+    /// The variant's name, as [`StyleIds`] holds it (`ascii`, `ascii{off}`).
+    pub name: String,
+    /// The view's display colour, 0..1.
+    pub color: [f32; 3],
+    /// A word for the colour ([`debug_color_name`]).
+    pub color_name: &'static str,
+}
+
+/// The legend for the style mask view (#309): each id in `ids`, in id
+/// order, with its hue.
+pub fn legend(ids: &StyleIds) -> Vec<LegendEntry> {
+    ids.iter()
+        .map(|(id, name)| LegendEntry {
+            id,
+            name: name.to_string(),
+            color: debug_color(id),
+            color_name: debug_color_name(id),
+        })
+        .collect()
+}
+
+/// The legend on one line, as `flint render` prints it:
+/// `style mask: 1 ascii (blue), 2 pencil (green)`, or a note that nothing
+/// is styled.
+pub fn legend_line(ids: &StyleIds) -> String {
+    if ids.is_empty() {
+        return "style mask: no styled entities".to_string();
+    }
+    let rows: Vec<String> = legend(ids)
+        .iter()
+        .map(|e| format!("{} {} ({})", e.id, e.name, e.color_name))
+        .collect();
+    format!("style mask: {}", rows.join(", "))
+}
+
 // ---------------------------------------------------------------------------
 // The pass
 // ---------------------------------------------------------------------------
@@ -540,105 +653,417 @@ pub(crate) struct MaskDraw<'a> {
     pub blend: f32,
 }
 
+/// One transparent mesh in front of whatever it covers, for the veil
+/// (#290): its own cached transform and material bind groups.
+pub(crate) struct VeilMesh<'a> {
+    pub vertex_buffer: &'a wgpu::Buffer,
+    pub index_buffer: &'a wgpu::Buffer,
+    pub index_count: u32,
+    pub transform_bind_group: &'a wgpu::BindGroup,
+    pub material_bind_group: &'a wgpu::BindGroup,
+    /// The bone matrices, for a skinned draw.
+    pub bones: Option<&'a wgpu::BindGroup>,
+}
+
+/// The frame's particles, for the veil: the particle pipeline's shared
+/// bind groups and its sorted draws.
+pub(crate) struct VeilParticles<'a> {
+    pub pipeline: &'a crate::particle_pipeline::ParticlePipeline,
+    pub draws: &'a [crate::particle_pipeline::ParticleDrawCall],
+}
+
+/// What the veil pass draws this frame.
+pub(crate) struct Veil<'a> {
+    /// The light group, whose `material_sampler` the PBR veil samples with.
+    pub light_bind_group: &'a wgpu::BindGroup,
+    pub meshes: Vec<VeilMesh<'a>>,
+    pub particles: Option<VeilParticles<'a>>,
+}
+
+impl Veil<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.meshes.is_empty() && self.particles.as_ref().is_none_or(|p| p.draws.is_empty())
+    }
+}
+
+/// The veil's particle pipelines: alpha-like modes and additive.
+struct ParticleVeil {
+    alpha: wgpu::RenderPipeline,
+    additive: wgpu::RenderPipeline,
+}
+
+/// A veil pipeline: `module`'s `vs`/`fs`, both faces, single-sample,
+/// depth-tested against the scene and never writing it, its coverage
+/// "over" what's there (red only).
+fn veil_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    (vs, fs): (&str, &str),
+    layouts: &[&wgpu::BindGroupLayout],
+    buffers: &[wgpu::VertexBufferLayout<'static>],
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: layouts,
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(vs),
+            buffers,
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some(fs),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: VEIL_FORMAT,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::RED,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// The bind group layouts the mask and the veil share with the scene's
+/// pipelines.
+pub(crate) struct MaskLayouts<'a> {
+    pub transform: &'a wgpu::BindGroupLayout,
+    pub material: &'a wgpu::BindGroupLayout,
+    pub light: &'a wgpu::BindGroupLayout,
+    pub bones: &'a wgpu::BindGroupLayout,
+}
+
 /// The mask's pipelines and its per-draw uniform buffer, made the first
 /// time a frame needs the mask.
 pub struct StyleMaskPass {
     static_pipeline: wgpu::RenderPipeline,
     skinned_pipeline: wgpu::RenderPipeline,
+    veil_static: wgpu::RenderPipeline,
+    veil_skinned: wgpu::RenderPipeline,
+    /// Made the first frame with particles (the particle pipeline is too).
+    veil_particles: Option<ParticleVeil>,
     draw_bgl: wgpu::BindGroupLayout,
+    /// The 4x path (#306), made the first frame the scene draws with MSAA.
+    msaa: Option<MsaaMask>,
+    /// The mask's shader, kept for the 4x path's pipelines.
+    shader: wgpu::ShaderModule,
     draw_buffer: wgpu::Buffer,
     /// The uniform bytes, kept so a frame reuses the allocation.
     scratch: Vec<u8>,
     warned_overflow: bool,
 }
 
-impl StyleMaskPass {
-    pub fn new(
+/// The mask's 4x path (#306): pipelines drawing into a multisampled mask
+/// against the scene's multisampled depth, and the resolve that folds it
+/// into the single-sample mask.
+struct MsaaMask {
+    static_pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
+    draw_bgl: wgpu::BindGroupLayout,
+    resolve_pipeline: wgpu::RenderPipeline,
+    resolve_bgl: wgpu::BindGroupLayout,
+    /// The 4x mask, its size and the resolve's bind group over it.
+    target: Option<(wgpu::TextureView, u32, u32, wgpu::BindGroup)>,
+}
+
+/// The scene's multisampled depth, for the mask's 4x path (#306): its
+/// view, and an id that changes whenever the texture is made again (a
+/// bind group over it is kept under that id).
+pub(crate) struct MsaaDepth<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub id: u64,
+}
+
+/// The scene's sample count the mask matches under MSAA.
+pub const MSAA_SAMPLES: u32 = 4;
+
+#[allow(clippy::too_many_arguments)]
+fn mask_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    entry: &str,
+    fragment: &str,
+    samples: u32,
+    layouts: &[&wgpu::BindGroupLayout],
+    buffer: wgpu::VertexBufferLayout<'static>,
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: layouts,
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(entry),
+            buffers: &[buffer],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: STYLE_MASK_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        // Both faces, as the scene's opaque pipelines draw them
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// The per-draw uniforms' entry, binding 0 of both draw layouts.
+fn draw_uniform_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<MaskDrawUniform>() as u64),
+        },
+        count: None,
+    }
+}
+
+/// A depth texture entry of a draw layout.
+fn depth_entry(binding: u32, multisampled: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled,
+        },
+        count: None,
+    }
+}
+
+/// The style veil's entry (#290): a single-sample coverage texture, also
+/// under MSAA, where every sample of a pixel reads the same veil.
+fn veil_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+impl MsaaMask {
+    fn new(
         device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
         transform_bgl: &wgpu::BindGroupLayout,
         bone_bgl: &wgpu::BindGroupLayout,
     ) -> Self {
+        let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Style Mask MSAA Draw BGL"),
+            entries: &[draw_uniform_entry(), veil_entry(2), depth_entry(3, true)],
+        });
+        let static_pipeline = mask_pipeline(
+            device,
+            shader,
+            "Style Mask MSAA Pipeline",
+            "vs_static",
+            "fs_msaa",
+            MSAA_SAMPLES,
+            &[transform_bgl, &draw_bgl],
+            crate::primitives::Vertex::desc(),
+        );
+        let skinned_pipeline = mask_pipeline(
+            device,
+            shader,
+            "Style Mask MSAA Skinned Pipeline",
+            "vs_skinned",
+            "fs_msaa",
+            MSAA_SAMPLES,
+            &[transform_bgl, &draw_bgl, bone_bgl],
+            crate::primitives::SkinnedVertex::desc(),
+        );
+        let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Mask Resolve Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("style_mask_resolve.wgsl").into()),
+        });
+        let resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Style Mask Resolve BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+        let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Style Mask Resolve Layout"),
+            bind_group_layouts: &[&resolve_bgl],
+            push_constant_ranges: &[],
+        });
+        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Style Mask Resolve Pipeline"),
+            layout: Some(&resolve_layout),
+            vertex: wgpu::VertexState {
+                module: &resolve_shader,
+                entry_point: Some("vs_fullscreen"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &resolve_shader,
+                entry_point: Some("fs_resolve"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: STYLE_MASK_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        Self {
+            static_pipeline,
+            skinned_pipeline,
+            draw_bgl,
+            resolve_pipeline,
+            resolve_bgl,
+            target: None,
+        }
+    }
+
+    /// Make the 4x mask at `width` x `height`, again on a size change.
+    fn ensure_target(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if matches!(&self.target, Some((_, w, h, _)) if (*w, *h) == (width, height)) {
+            return;
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Style Mask MSAA"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLES,
+            dimension: wgpu::TextureDimension::D2,
+            format: STYLE_MASK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Style Mask Resolve BG"),
+            layout: &self.resolve_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
+        self.target = Some((view, width, height, bind));
+    }
+}
+
+impl StyleMaskPass {
+    pub(crate) fn new(device: &wgpu::Device, layouts: &MaskLayouts<'_>) -> Self {
+        let (transform_bgl, bone_bgl) = (layouts.transform, layouts.bones);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("style_mask.wgsl").into()),
         });
         let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Style Mask Draw BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<MaskDrawUniform>() as u64,
-                        ),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &[draw_uniform_entry(), depth_entry(1, false), veil_entry(2)],
         });
-        let pipeline = |label: &str,
-                        entry: &str,
-                        layouts: &[&wgpu::BindGroupLayout],
-                        buffer: wgpu::VertexBufferLayout<'static>| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: layouts,
-                push_constant_ranges: &[],
-            });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    buffers: &[buffer],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: STYLE_MASK_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                // Both faces, as the scene's opaque pipelines draw them
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-        };
-        let static_pipeline = pipeline(
+        let static_pipeline = mask_pipeline(
+            device,
+            &shader,
             "Style Mask Pipeline",
             "vs_static",
+            "fs_main",
+            1,
             &[transform_bgl, &draw_bgl],
             crate::primitives::Vertex::desc(),
         );
-        let skinned_pipeline = pipeline(
+        let skinned_pipeline = mask_pipeline(
+            device,
+            &shader,
             "Style Mask Skinned Pipeline",
             "vs_skinned",
+            "fs_main",
+            1,
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
+        );
+        let pbr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil PBR Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+        let skinned = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil Skinned Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+        });
+        let veil_static = veil_pipeline(
+            device,
+            "Style Veil Pipeline",
+            &pbr,
+            ("vs_main", "fs_veil"),
+            &[transform_bgl, layouts.material, layouts.light],
+            &[crate::primitives::Vertex::desc()],
+        );
+        let veil_skinned = veil_pipeline(
+            device,
+            "Style Veil Skinned Pipeline",
+            &skinned,
+            ("vs_skinned", "fs_veil"),
+            &[transform_bgl, layouts.material, layouts.light, bone_bgl],
+            &[crate::primitives::SkinnedVertex::desc()],
         );
         let draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Style Mask Draws"),
@@ -649,10 +1074,40 @@ impl StyleMaskPass {
         Self {
             static_pipeline,
             skinned_pipeline,
+            veil_static,
+            veil_skinned,
+            veil_particles: None,
             draw_bgl,
+            msaa: None,
+            shader,
             draw_buffer,
             scratch: Vec::new(),
             warned_overflow: false,
+        }
+    }
+
+    /// Build the 4x path (#306) if it isn't yet: the first frame the scene
+    /// draws with MSAA.
+    pub(crate) fn ensure_msaa(
+        &mut self,
+        device: &wgpu::Device,
+        transform_bgl: &wgpu::BindGroupLayout,
+        bone_bgl: &wgpu::BindGroupLayout,
+    ) {
+        if self.msaa.is_none() {
+            self.msaa = Some(MsaaMask::new(device, &self.shader, transform_bgl, bone_bgl));
+        }
+    }
+
+    /// The per-draw uniforms' binding, the same in both draw layouts.
+    fn uniform_entry(&self) -> wgpu::BindGroupEntry<'_> {
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &self.draw_buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(std::mem::size_of::<MaskDrawUniform>() as u64),
+            }),
         }
     }
 
@@ -664,6 +1119,7 @@ impl StyleMaskPass {
         device: &wgpu::Device,
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
+        veil: &wgpu::TextureView,
         depth_owned: bool,
     ) -> std::sync::Arc<wgpu::BindGroup> {
         binds.get_if(depth_owned, "Style Mask Draw BG", 0, || {
@@ -671,27 +1127,159 @@ impl StyleMaskPass {
                 label: Some("Style Mask Draw BG"),
                 layout: &self.draw_bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(
-                                std::mem::size_of::<MaskDrawUniform>() as u64
-                            ),
-                        }),
-                    },
+                    self.uniform_entry(),
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(scene_depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(veil),
                     },
                 ],
             })
         })
     }
 
-    /// Clear `mask` and draw `draws` into it, each tested against
-    /// `scene_depth` (single-sample, the mask's size).
+    /// Clear `veil_view` and draw what's in front into it (#290): each
+    /// transparent mesh and particle, depth-tested against `scene_depth`.
+    fn encode_veil(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        veil_view: &wgpu::TextureView,
+        scene_depth: &wgpu::TextureView,
+        veil: &Veil<'_>,
+    ) {
+        if let Some(pp) = veil
+            .particles
+            .as_ref()
+            .filter(|p| !p.draws.is_empty() && self.veil_particles.is_none())
+            .map(|p| p.pipeline)
+        {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Style Veil Particle Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("particle_shader.wgsl").into()),
+            });
+            let layouts = [
+                &pp.uniform_bind_group_layout,
+                &pp.instance_bind_group_layout,
+                &pp.texture_bind_group_layout,
+            ];
+            let make = |label, fs| {
+                veil_pipeline(device, label, &shader, ("vs_particle", fs), &layouts, &[])
+            };
+            self.veil_particles = Some(ParticleVeil {
+                alpha: make("Style Veil Particle Pipeline", "fs_veil"),
+                additive: make("Style Veil Additive Particle Pipeline", "fs_veil_additive"),
+            });
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Style Veil Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: veil_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            // Read-only: the scene's depth, which nothing here writes
+            depth_stencil_attachment: (!veil.is_empty()).then_some(
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: scene_depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                },
+            ),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        if veil.is_empty() {
+            return;
+        }
+        let mut skinned = None;
+        for m in &veil.meshes {
+            let is_skinned = m.bones.is_some();
+            if skinned != Some(is_skinned) {
+                pass.set_pipeline(if is_skinned {
+                    &self.veil_skinned
+                } else {
+                    &self.veil_static
+                });
+                pass.set_bind_group(2, veil.light_bind_group, &[]);
+                skinned = Some(is_skinned);
+            }
+            pass.set_bind_group(0, m.transform_bind_group, &[]);
+            pass.set_bind_group(1, m.material_bind_group, &[]);
+            if let Some(bones) = m.bones {
+                pass.set_bind_group(3, bones, &[]);
+            }
+            pass.set_vertex_buffer(0, m.vertex_buffer.slice(..));
+            pass.set_index_buffer(m.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..m.index_count, 0, 0..1);
+        }
+        if let (Some(particles), Some(pipelines)) = (&veil.particles, &self.veil_particles) {
+            let pp = particles.pipeline;
+            pass.set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
+            pass.set_bind_group(1, pp.instance_bind_group(), &[]);
+            let mut additive = None;
+            for d in particles.draws {
+                let is_additive = d.blend == flint_particles::ParticleBlendMode::Additive;
+                if additive != Some(is_additive) {
+                    pass.set_pipeline(if is_additive {
+                        &pipelines.additive
+                    } else {
+                        &pipelines.alpha
+                    });
+                    additive = Some(is_additive);
+                }
+                pass.set_bind_group(2, d.texture_bind_group.as_ref(), &[]);
+                let first = d.first_instance;
+                pass.draw_indexed(0..6, 0, first..first + d.instance_count);
+            }
+        }
+    }
+
+    /// The 4x path's bind group over the veil and the scene's
+    /// multisampled depth, kept under the depth's id (the renderer owns
+    /// that texture, so a new one comes with a new id; the veil lives in
+    /// the same resources as `binds`, so it goes with them).
+    fn msaa_draw_bind(
+        &self,
+        device: &wgpu::Device,
+        binds: &crate::bind_cache::BindCache,
+        msaa: &MsaaMask,
+        veil: &wgpu::TextureView,
+        depth: &MsaaDepth<'_>,
+    ) -> std::sync::Arc<wgpu::BindGroup> {
+        binds.get("Style Mask MSAA Draw BG", depth.id, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Style Mask MSAA Draw BG"),
+                layout: &msaa.draw_bgl,
+                entries: &[
+                    self.uniform_entry(),
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(veil),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(depth.view),
+                    },
+                ],
+            })
+        })
+    }
+
+    /// Draw the veil into `veil_view`, then clear `mask` and draw `draws`
+    /// into it, each tested against `scene_depth` (single-sample, the
+    /// mask's size) and its blend scaled by what the veil leaves uncovered.
+    /// With `msaa_depth` (the scene drew 4x, and
+    /// [`ensure_msaa`](Self::ensure_msaa) ran), they're drawn 4x against
+    /// that depth instead, and resolved into `mask` with any sample a
+    /// style drew winning (#306).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
@@ -699,11 +1287,18 @@ impl StyleMaskPass {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         binds: &crate::bind_cache::BindCache,
-        mask: &wgpu::TextureView,
+        mask: &crate::stylize::StyleTexture,
+        veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
         depth_owned: bool,
+        msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
+        veil: &Veil<'_>,
     ) {
+        // Only a styled pixel reads the veil: with none, it isn't drawn
+        if !draws.is_empty() {
+            self.encode_veil(device, encoder, veil_view, scene_depth, veil);
+        }
         if draws.len() > MAX_MASK_DRAWS && !self.warned_overflow {
             self.warned_overflow = true;
             tracing::warn!(
@@ -728,44 +1323,101 @@ impl StyleMaskPass {
         if !self.scratch.is_empty() {
             queue.write_buffer(&self.draw_buffer, 0, &self.scratch);
         }
-        let draw_bg =
-            (!draws.is_empty()).then(|| self.draw_bind(device, binds, scene_depth, depth_owned));
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Style Mask Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: mask,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        let Some(draw_bg) = draw_bg else { return };
-        let mut skinned = None;
-        for (i, d) in draws.iter().enumerate() {
-            let is_skinned = d.bones.is_some();
-            if skinned != Some(is_skinned) {
-                pass.set_pipeline(if is_skinned {
-                    &self.skinned_pipeline
-                } else {
-                    &self.static_pipeline
-                });
-                skinned = Some(is_skinned);
+        // The 4x path, while the scene drew 4x
+        let msaa_depth = msaa_depth.filter(|_| self.msaa.is_some());
+        if let Some(depth) = msaa_depth {
+            let mut msaa = self.msaa.take().expect("checked above");
+            msaa.ensure_target(device, mask.width, mask.height);
+            let draw_bg = (!draws.is_empty())
+                .then(|| self.msaa_draw_bind(device, binds, &msaa, veil_view, &depth));
+            let (ms_view, _, _, resolve_bg) = msaa.target.as_ref().expect("made above");
+            {
+                let mut pass = clear_pass(encoder, "Style Mask MSAA Pass", ms_view);
+                if let Some(draw_bg) = &draw_bg {
+                    record_draws(
+                        &mut pass,
+                        draws,
+                        draw_bg,
+                        &msaa.static_pipeline,
+                        &msaa.skinned_pipeline,
+                    );
+                }
             }
-            pass.set_bind_group(0, d.transform_bind_group, &[]);
-            pass.set_bind_group(1, &*draw_bg, &[(i as u64 * DRAW_STRIDE) as u32]);
-            if let Some(bones) = d.bones {
-                pass.set_bind_group(2, bones, &[]);
-            }
-            pass.set_vertex_buffer(0, d.vertex_buffer.slice(..));
-            pass.set_index_buffer(d.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..d.index_count, 0, 0..1);
+            let mut pass = clear_pass(encoder, "Style Mask Resolve Pass", &mask.view);
+            pass.set_pipeline(&msaa.resolve_pipeline);
+            pass.set_bind_group(0, resolve_bg, &[]);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            self.msaa = Some(msaa);
+            return;
         }
+
+        let draw_bg = (!draws.is_empty())
+            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_owned));
+        let mut pass = clear_pass(encoder, "Style Mask Pass", &mask.view);
+        if let Some(draw_bg) = &draw_bg {
+            record_draws(
+                &mut pass,
+                draws,
+                draw_bg,
+                &self.static_pipeline,
+                &self.skinned_pipeline,
+            );
+        }
+    }
+}
+
+/// A pass over `view` alone, cleared to no style.
+fn clear_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    view: &wgpu::TextureView,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
+}
+
+/// Record every masked draw, switching between the static and skinned
+/// pipelines as the list does.
+fn record_draws(
+    pass: &mut wgpu::RenderPass<'_>,
+    draws: &[MaskDraw<'_>],
+    draw_bg: &wgpu::BindGroup,
+    static_pipeline: &wgpu::RenderPipeline,
+    skinned_pipeline: &wgpu::RenderPipeline,
+) {
+    let mut skinned = None;
+    for (i, d) in draws.iter().enumerate() {
+        let is_skinned = d.bones.is_some();
+        if skinned != Some(is_skinned) {
+            pass.set_pipeline(if is_skinned {
+                skinned_pipeline
+            } else {
+                static_pipeline
+            });
+            skinned = Some(is_skinned);
+        }
+        pass.set_bind_group(0, d.transform_bind_group, &[]);
+        pass.set_bind_group(1, draw_bg, &[(i as u64 * DRAW_STRIDE) as u32]);
+        if let Some(bones) = d.bones {
+            pass.set_bind_group(2, bones, &[]);
+        }
+        pass.set_vertex_buffer(0, d.vertex_buffer.slice(..));
+        pass.set_index_buffer(d.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..d.index_count, 0, 0..1);
     }
 }
 
@@ -804,6 +1456,27 @@ mod tests {
             let d: f32 = ca.iter().zip(cb).map(|(x, y)| (x - y).abs()).sum();
             assert!(d > 0.3, "{a} and {} look alike", a + 1);
         }
+    }
+
+    #[test]
+    fn the_legend_names_each_id_and_its_hue() {
+        assert_eq!(debug_color_name(NO_STYLE), "black");
+        assert_eq!(debug_color_name(1), "blue");
+        assert_eq!(debug_color_name(2), "lime");
+        let mut ids = StyleIds::default();
+        assert_eq!(legend_line(&ids), "style mask: no styled entities");
+        ids.set(vec![
+            ("pencil".into(), StyleVariant::plain("pencil")),
+            ("ascii".into(), StyleVariant::plain("ascii")),
+        ]);
+        let rows = legend(&ids);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].id, rows[0].name.as_str()), (1, "ascii"));
+        assert_eq!(rows[1].color, debug_color(2));
+        assert_eq!(
+            legend_line(&ids),
+            "style mask: 1 ascii (blue), 2 pencil (lime)"
+        );
     }
 
     fn world_with(entities: &[(&str, Option<&str>, Option<&str>)]) -> FlintWorld {

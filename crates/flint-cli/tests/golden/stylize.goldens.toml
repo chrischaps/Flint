@@ -119,6 +119,28 @@ name = "style-mask"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
 
+# The shared geometry edges (#301) every edge-reading style sees: hue is
+# the direction across the edge, silhouettes solid, creases softer
+[[case]]
+name = "edges-view"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "edges_view"]
+
+# A user style reading them (demo/styles/inkline.*, inputs = ["edges"])
+# beside edges_view in one frame: the pass runs once for both, and at
+# --render-scale 0.5 both read it by UV at the scene's smaller size
+[[case]]
+name = "edges-inkline-scale05"
+scene = "demo/pbr_test.scene.toml"
+args = ["--no-grid", "--render-scale", "0.5", "--style", "edges_view", "--style", "inkline"]
+
+# Under MSAA 4 the mask is drawn 4x against the scene's samples and
+# resolved, any styled sample winning (#306), so thin edges keep their ids
+[[case]]
+name = "style-mask-msaa4"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
+
 # Per-entity ASCII (#266): the props scene as authored (its two
 # style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
 # whole frame with those props as variants, and the props on object grids
@@ -143,6 +165,14 @@ args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
+
+# The veil (#290): a glyph stone behind a campfire and a glyph crate behind
+# glass. The fire stays fire and the glass fades the crate's glyphs by its
+# coverage; before #290 both were glyphized as the entity behind them
+[[case]]
+name = "style-veil"
+scene = "demo/style_veil.scene.toml"
+args = ["--no-grid", "--particle-time", "2"]
 
 # --- pencil sketch (#273) ---------------------------------------------------
 #
@@ -268,3 +298,16 @@ scene = "demo/stylize_props.scene.toml"
 width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
+
+# Terrain and styled transparents in the mask (#310): ASCII hills cut
+# around smooth props, and a styled glass pane drawing what's behind it in
+# glyphs; then the mask itself
+[[case]]
+name = "style-terrain"
+scene = "demo/style_terrain.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "style-terrain-mask"
+scene = "demo/style_terrain.scene.toml"
+args = ["--no-grid", "--debug-mode", "style"]

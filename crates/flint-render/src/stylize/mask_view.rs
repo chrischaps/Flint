@@ -45,6 +45,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     ],
     options: &[],
     uses_mask: true,
+    needs: &[],
     hints: &[
         StyleHint::new(
             "shading",

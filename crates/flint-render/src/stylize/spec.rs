@@ -9,15 +9,20 @@
 //! --style kuwahara:radius=6
 //! --style ascii:off                      turn off a style the scene has on
 //! --style invert:order=0                 run first in its stage (#299)
+//! --style ascii:color=tint,tint=#4dff73  a colour (#315): #rrggbb, or r/g/b
+//! --style ascii:tint=0.3/1/0.4
 //! ```
 //!
 //! Keys are checked against the style's descriptor: a number for each of
 //! its [`params`](super::StyleDescriptor::params), text for each of its
 //! [`options`](super::StyleDescriptor::options) (one of its `choices`
-//! when it lists them), and `enabled` / `off`. Values outside a
+//! when it lists them), a colour for each of its
+//! [`colors`](super::StyleDescriptor::colors) (`#rrggbb` or `r/g/b`, since
+//! commas split keys; its channels `tint_r`... still take numbers), and
+//! `enabled` / `off`. Values outside a
 //! parameter's F4 range are taken as written, as a scene's are.
 
-use super::{find, names, registry, StyleDescriptor};
+use super::{color_from_text, find, names, registry, StyleDescriptor};
 use crate::postprocess::PostProcessConfig;
 
 /// One parsed `--style` word.
@@ -40,7 +45,8 @@ impl StyleSpec {
         };
         if name == "help" {
             return Err(format!(
-                "the registered styles and their keys:\n{}",
+                "the registered styles and their keys (`flint render --list-styles` gives \
+                 ranges, stages and --json):\n{}",
                 style_spec_help()
             ));
         }
@@ -106,6 +112,12 @@ impl StyleSpec {
             }
             if descriptor.options.iter().any(|o| o.name == key) {
                 config.styles.set_option(&self.name, key, value);
+            } else if let Some(color) = descriptor.color_setting(key) {
+                if let Some(rgb) = color_from_text(value) {
+                    for (p, v) in color.channels.iter().zip(rgb) {
+                        config.styles.set_param(&self.name, p.name, v);
+                    }
+                }
             } else if let Ok(n) = value.parse::<f32>() {
                 config.styles.set_param(&self.name, key, n);
             }
@@ -140,6 +152,14 @@ fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), Str
         }
         return Ok(());
     }
+    if descriptor.color_setting(key).is_some() {
+        return match color_from_text(value) {
+            Some(_) => Ok(()),
+            None => Err(format!(
+                "{name}: {key} must be a colour, #rrggbb or r/g/b (0.3/1/0.4), not '{value}'"
+            )),
+        };
+    }
     if descriptor.params.iter().any(|p| p.name == key) {
         return number(name, key, value);
     }
@@ -157,18 +177,29 @@ fn number(name: &str, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn known_keys(descriptor: &StyleDescriptor) -> String {
-    let mut keys: Vec<String> = descriptor
-        .params
-        .iter()
-        .map(|p| format!("{}={}", p.name, p.default))
-        .chain(descriptor.options.iter().map(|o| {
-            if o.choices.is_empty() {
-                format!("{}=<text>", o.name)
-            } else {
-                format!("{}={}", o.name, o.choices.join("|"))
+    let mut keys: Vec<String> = {
+        let mut params: Vec<String> = Vec::new();
+        for p in descriptor.params {
+            match descriptor.color_of(p.name) {
+                Some(c) if std::ptr::eq(c.channels[0], p) => {
+                    let [r, g, b] = c.default_rgb();
+                    params.push(format!("{}={r}/{g}/{b}", c.base));
+                }
+                Some(_) => {}
+                None => params.push(format!("{}={}", p.name, p.default)),
             }
-        }))
-        .collect();
+        }
+        params
+            .into_iter()
+            .chain(descriptor.options.iter().map(|o| {
+                if o.choices.is_empty() {
+                    format!("{}=<text>", o.name)
+                } else {
+                    format!("{}={}", o.name, o.choices.join("|"))
+                }
+            }))
+            .collect()
+    };
     keys.push("order=<n>".to_string());
     keys.push("off".to_string());
     keys.join(", ")
@@ -193,6 +224,27 @@ mod tests {
         assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
         assert_eq!(config.styles.option("ascii", "ramp"), Some("blocks"));
         assert_eq!(config.styles.option("ascii", "color"), Some("tint"));
+    }
+
+    #[test]
+    fn a_colour_is_one_key_in_hex_or_slashes() {
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(&mut config, "ascii:color=tint,tint=0.3/1/0.4").unwrap();
+        assert_eq!(config.styles.param("ascii", "tint_r"), Some(0.3));
+        assert_eq!(config.styles.param("ascii", "tint_g"), Some(1.0));
+        assert_eq!(config.styles.param("ascii", "tint_b"), Some(0.4));
+        apply_style_spec(&mut config, "ascii:tint=#ff8000").unwrap();
+        let ascii = find("ascii").unwrap();
+        assert_eq!(ascii.color(&config, "tint"), [1.0, 128.0 / 255.0, 0.0]);
+        // A channel on its own is still a number
+        apply_style_spec(&mut config, "ascii:tint_b=0.5").unwrap();
+        assert_eq!(config.styles.param("ascii", "tint_b"), Some(0.5));
+        let bad = StyleSpec::parse("ascii:tint=green").unwrap_err();
+        assert!(bad.contains("#rrggbb"), "{bad}");
+        assert!(StyleSpec::parse("ascii:tint=1/1").is_err());
+        let help = style_spec_help();
+        assert!(help.contains("tint=0.35/1/0.45"), "{help}");
+        assert!(!help.contains("tint_r="), "{help}");
     }
 
     #[test]

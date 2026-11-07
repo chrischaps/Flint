@@ -14,7 +14,10 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
-    #[arg(required_unless_present_any = ["list_gpus", "look"], default_value = "")]
+    #[arg(
+        required_unless_present_any = ["list_gpus", "look", "list_styles"],
+        default_value = ""
+    )]
     pub scene: String,
 
     /// Output image path
@@ -354,6 +357,16 @@ pub struct RenderArgs {
     #[arg(long)]
     pub kuwahara_anisotropy: Option<f32>,
 
+    /// Shared geometry edges (#301): the relative view-distance step that
+    /// is a silhouette, for every style that reads them (default: 0.6)
+    #[arg(long)]
+    pub edge_depth: Option<f32>,
+
+    /// Shared geometry edges (#301): the rebuilt-normal change that is a
+    /// crease (default: 2.5)
+    #[arg(long)]
+    pub edge_normal: Option<f32>,
+
     /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
     /// 5=underwater)
     #[arg(long)]
@@ -412,6 +425,34 @@ pub struct RenderArgs {
     /// List available GPU adapters and exit
     #[arg(long)]
     pub list_gpus: bool,
+
+    /// List every registered style (#303): its stage, where a scene sets
+    /// it, and each parameter's default and range, then exit. With a
+    /// scene, the user styles in its `styles/` folder are listed too
+    #[arg(long)]
+    pub list_styles: bool,
+
+    /// With --list-styles: print the list as JSON
+    #[arg(long, requires = "list_styles")]
+    pub json: bool,
+}
+
+/// `--list-styles [--json]`: the registry as text or JSON, with the user
+/// styles beside the scene when one is given.
+fn list_styles(args: &RenderArgs) -> Result<()> {
+    use flint_render::stylize::{catalog, custom};
+    if !args.scene.is_empty() {
+        let scene_dir = Path::new(&args.scene).parent().unwrap_or(Path::new("."));
+        for message in custom::load_dir(scene_dir) {
+            eprintln!("warning: {message}");
+        }
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&catalog::catalog())?);
+    } else {
+        print!("{}", catalog::catalog_text());
+    }
+    Ok(())
 }
 
 fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
@@ -424,6 +465,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
             println!("{a}");
         }
         return Ok(());
+    }
+    if args.list_styles {
+        return list_styles(&args);
     }
     if args.look.as_deref() == Some("help") {
         print!("{}", super::look::help(&args.scene));
@@ -796,8 +840,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
         );
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-        let img = image::RgbaImage::from_raw(width, height, pixels)
+        let mut img = image::RgbaImage::from_raw(width, height, pixels)
             .context("Failed to create image from pixel data")?;
+        // The style mask view says which hue is which style (#309): in the
+        // terminal once, and on every frame's corner
+        if renderer.debug_state().mode == DebugMode::StyleMask && !args.no_postprocess {
+            let ids = renderer.style_ids();
+            if i == 0 {
+                println!("{}", flint_render::style_mask::legend_line(ids));
+            }
+            super::style_sheet::draw_legend(&mut img, &flint_render::style_mask::legend(ids));
+        }
         if let Some(sweep) = &args.sweep {
             println!("  {} = {}", sweep.name(), sweep.values[i]);
         }
@@ -932,6 +985,12 @@ fn post_process_config(
                 pp_config.styles.set_enabled("kuwahara", true);
             }
         }
+        if let Some(depth) = args.edge_depth {
+            pp_config.edge_depth = depth;
+        }
+        if let Some(normal) = args.edge_normal {
+            pp_config.edge_normal = normal;
+        }
         if let Some(grain) = args.film_grain {
             pp_config.film_grain = grain;
         }
@@ -1037,10 +1096,8 @@ fn apply_ascii_style_flags(
             styles.set_option(NAME, "color", "palette");
         }
     }
-    if let Some([r, g, b]) = args.ascii_tint {
-        styles.set_param(NAME, "tint_r", r);
-        styles.set_param(NAME, "tint_g", g);
-        styles.set_param(NAME, "tint_b", b);
+    if let Some(rgb) = args.ascii_tint {
+        styles.set_color(NAME, "tint", rgb);
         if args.ascii_color.is_none() {
             styles.set_option(NAME, "color", "tint");
         }
@@ -1187,6 +1244,8 @@ fn load_terrain_for_render(
             &config.layer_textures,
             scene_dir,
         );
+        // A style_mask on the terrain entity masks its chunks (#310)
+        renderer.set_terrain_entity(Some(entity.id));
 
         // Load grass if enabled
         let grass_config = flint_terrain::GrassConfig::from_component(terrain_comp, false);

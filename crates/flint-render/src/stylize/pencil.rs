@@ -131,6 +131,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     uses_mask: false,
+    needs: &[],
     hints: &[
         StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
         StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),

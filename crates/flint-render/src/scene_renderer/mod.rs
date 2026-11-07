@@ -499,6 +499,9 @@ pub struct SceneRenderer {
     terrain_material_buffer: Option<wgpu::Buffer>,
     terrain_total_chunks: u32,
     terrain_visible_chunks: u32,
+    /// The entity the loaded terrain belongs to, so a `style_mask` on it
+    /// masks the chunks (#310). Set by [`SceneRenderer::set_terrain_entity`].
+    terrain_entity: Option<flint_core::EntityId>,
     camera_frustum: Option<crate::frustum::Frustum>,
     /// Level-of-detail and draw-distance scales (#56)
     lod_settings: LodSettings,
@@ -631,6 +634,9 @@ pub struct SceneRenderer {
     sample_count: u32,
     msaa_color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     msaa_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// A new id each time `msaa_depth` is made, so the style mask can keep
+    /// a bind group over it (#306).
+    msaa_depth_id: u64,
     depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
     depth_resolve_layout: Option<wgpu::BindGroupLayout>,
     // Post-processing
@@ -821,6 +827,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -900,6 +907,7 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -1570,9 +1578,19 @@ impl SceneRenderer {
         self.reload_terrain_geometry(device, chunks, transform);
     }
 
+    /// Name the entity the loaded terrain belongs to (#310): a
+    /// `style_mask` (or a style's own component) on it, or on an ancestor,
+    /// then masks the terrain's chunks like any styled mesh. Hosts call it
+    /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
+    /// terrain unmasked, as it was before.
+    pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
+        self.terrain_entity = entity;
+    }
+
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain_draws.clear();
+        self.terrain_entity = None;
         self.terrain_material_bind_group = None;
         self.terrain_material_buffer = None;
     }
@@ -2305,6 +2323,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -2386,6 +2405,7 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -2833,6 +2853,11 @@ impl SceneRenderer {
             t * cascade_count
         };
 
+        let style_memory = self.style_target_summary();
+        let fxaa_target = self
+            .postprocess_resources
+            .as_ref()
+            .is_some_and(|r| r.fxaa.is_some()) as u32;
         crate::render_stats::RenderStats {
             draw_calls,
             triangles,
@@ -2862,8 +2887,26 @@ impl SceneRenderer {
                 .as_ref()
                 .map_or(0.0, |t| t.timings().frame_ms),
             scene_resolution: self.scene_size().into(),
+            style_targets: style_memory.count,
+            style_target_bytes: style_memory.bytes,
+            full_size_targets: style_memory.full_size + fxaa_target,
             ..Default::default()
         }
+    }
+
+    /// The style chain's textures (#302): see
+    /// [`StyleTargets::summary`](crate::stylize::StyleTargets::summary).
+    pub fn style_target_summary(&self) -> crate::stylize::TargetSummary {
+        self.postprocess_resources
+            .as_ref()
+            .map(|r| {
+                r.styles.summary(
+                    self.surface_format,
+                    self.surface_size.0,
+                    self.surface_size.1,
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Time the frame's phases on the GPU, or stop (ADR 0108): the grass
@@ -4527,8 +4570,9 @@ impl SceneRenderer {
         &self.style_blend_by_entity
     }
 
-    /// Record the style mask pass over this frame's visible opaque draws
-    /// (static, procedural and skinned) of styled entities. The mask is
+    /// Record the style mask pass over this frame's visible draws of
+    /// styled entities: terrain chunks, opaque static, procedural and
+    /// skinned draws, then transparents over them (#310). The mask is
     /// cleared even with none, so a style never reads a stale frame.
     fn encode_style_mask(
         &mut self,
@@ -4541,16 +4585,48 @@ impl SceneRenderer {
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
-        if self.style_mask_pass.is_none() {
-            let Some(skinned) = &self.skinned_pipeline else {
-                return;
-            };
-            self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
+        let Some(skinned) = &self.skinned_pipeline else {
+            return;
+        };
+        let pass = self.style_mask_pass.get_or_insert_with(|| {
+            crate::style_mask::StyleMaskPass::new(
                 device,
-                &self.pipeline.transform_bind_group_layout,
-                &skinned.bone_bind_group_layout,
-            ));
-        }
+                &crate::style_mask::MaskLayouts {
+                    transform: &self.pipeline.transform_bind_group_layout,
+                    material: &self.pipeline.material_bind_group_layout,
+                    light: &self.pipeline.light_bind_group_layout,
+                    bones: &skinned.bone_bind_group_layout,
+                },
+            )
+        });
+        // Under MSAA the mask is drawn 4x against the scene's own samples
+        // and resolved, so a feature thinner than a pixel keeps the pixels
+        // the scene's samples gave it (#306).
+        let msaa_depth = match &self.msaa_depth {
+            Some((texture, view))
+                if self.sample_count == crate::style_mask::MSAA_SAMPLES
+                    && texture.size().width == resources.width
+                    && texture.size().height == resources.height =>
+            {
+                pass.ensure_msaa(
+                    device,
+                    &self.pipeline.transform_bind_group_layout,
+                    &skinned.bone_bind_group_layout,
+                );
+                Some(crate::style_mask::MsaaDepth {
+                    view,
+                    id: self.msaa_depth_id,
+                })
+            }
+            _ => None,
+        };
+        let veil_target = resources.styles.get(
+            device,
+            crate::style_mask::VEIL_TARGET,
+            crate::style_mask::VEIL_FORMAT,
+            resources.width,
+            resources.height,
+        );
         let mask = resources.styles.get(
             device,
             crate::style_mask::MASK_TARGET,
@@ -4568,6 +4644,29 @@ impl SceneRenderer {
         };
         let mut draws = Vec::new();
         if !ids.is_empty() {
+            // Terrain first (#310): the props on it are drawn after, and
+            // each fragment's depth test decides who owns a pixel anyway
+            if let Some(id) = id_of(&self.terrain_entity) {
+                let blend = blend_of(&self.terrain_entity);
+                let frustum = self.camera_frustum.as_ref();
+                let visible = |d: &&TerrainDrawCall| {
+                    frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
+                };
+                draws.extend(
+                    self.terrain_draws
+                        .iter()
+                        .filter(visible)
+                        .map(|d| crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id,
+                            blend,
+                        }),
+                );
+            }
             draws.extend(
                 self.entity_draws
                     .iter()
@@ -4595,6 +4694,82 @@ impl SceneRenderer {
                     blend: blend_of(&d.entity_id),
                 })
             }));
+            // Styled transparents last, back to front as the scene drew
+            // them (#310). They write no depth, so the depth test keeps them
+            // behind the opaques in front of them and nothing else: where
+            // one shows, it is the nearest styled surface and its id
+            // replaces what's behind. A styled glass is a lens, drawing
+            // what's seen through it in its style.
+            draws.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe)
+                    .filter_map(|d| {
+                        Some(crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id: id_of(&d.entity_id)?,
+                            blend: blend_of(&d.entity_id),
+                        })
+                    }),
+            );
+            draws.extend(self.transparent_skinned_draws.iter().filter_map(|d| {
+                Some(crate::style_mask::MaskDraw {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                    id: id_of(&d.entity_id)?,
+                    blend: blend_of(&d.entity_id),
+                })
+            }));
+        }
+        // What's in front of them (#290): transparents that aren't styled
+        // themselves, and every particle
+        let mut veil = crate::style_mask::Veil {
+            light_bind_group: &self.light_bind_group,
+            meshes: Vec::new(),
+            particles: None,
+        };
+        if !draws.is_empty() {
+            let unstyled = |e: &Option<flint_core::EntityId>| id_of(e).is_none();
+            veil.meshes.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe && unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: None,
+                    }),
+            );
+            veil.meshes.extend(
+                self.transparent_skinned_draws
+                    .iter()
+                    .filter(|d| unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: Some(&d.bone_bind_group),
+                    }),
+            );
+            veil.particles =
+                self.particle_pipeline
+                    .as_ref()
+                    .map(|pipeline| crate::style_mask::VeilParticles {
+                        pipeline,
+                        draws: &self.particle_draws,
+                    });
         }
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
@@ -4602,10 +4777,13 @@ impl SceneRenderer {
                 queue,
                 encoder,
                 &resources.binds,
-                &mask.view,
+                &mask,
+                &veil_target.view,
                 depth_view,
                 depth_owned,
+                msaa_depth,
                 &draws,
+                &veil,
             );
         }
     }
@@ -4860,6 +5038,15 @@ impl SceneRenderer {
         }
     }
 
+    /// How many times the shared style edge pass (#301) has been drawn
+    /// since this renderer was made: one a frame while any style that
+    /// needs the edges is on, however many do.
+    pub fn style_edge_runs(&self) -> u64 {
+        self.postprocess_pipeline
+            .as_ref()
+            .map_or(0, |pp| pp.styles.edge_runs())
+    }
+
     /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),
     /// from when Kuwahara was the only style.
     pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
@@ -4920,6 +5107,7 @@ impl SceneRenderer {
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         self.msaa_color = Some((color, color_view, width, height));
         self.msaa_depth = Some((depth, depth_view));
+        self.msaa_depth_id = crate::bind_cache::gpu_id();
     }
 
     /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).
