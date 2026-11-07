@@ -209,7 +209,7 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     );
     let world = FlintWorld::new();
     let mut config = renderer.post_process_config().clone();
-    config.kuwahara_enabled = true;
+    config.styles.set_enabled("kuwahara", true);
     renderer.set_post_process_config(config.clone());
     renderer.ensure_style_resources(&gpu.device);
     let painted = gpu.frame(&mut renderer, &world);

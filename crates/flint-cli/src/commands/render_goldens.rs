@@ -22,7 +22,15 @@
 //! scene = "demo/pbr_test.scene.toml"
 //! golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 //! args = ["--style", "ascii"]
+//! text = "ascii_pbr_test.txt"     # optional (#317): the ASCII grid, compared exactly
+//! text_cells = 0                  # ...or with at most this many cells different
 //! ```
+//!
+//! A case with `text` is a structural golden too: it renders with
+//! `--ascii-text` and its character grid must match the checked-in one
+//! cell for cell (the PNG stays the visual check). A miss writes
+//! `<name>.text.diff` beside the render, each differing row shown as the
+//! golden's line over the render's with a caret under each cell that moved.
 //!
 //! Each case's render, and a diff image when it fails, land in `--out-dir`
 //! (default: the system temp dir), with a `report.json` of every case's
@@ -149,6 +157,59 @@ struct Case {
     height: Option<u32>,
     #[serde(default)]
     tolerance: ToleranceOverride,
+    /// The ASCII grid's golden (#317), beside the manifest.
+    #[serde(default)]
+    text: Option<String>,
+    /// How many of the grid's cells may differ from it (default 0).
+    #[serde(default)]
+    text_cells: usize,
+}
+
+/// How a render's ASCII grid compares with its golden text (#317).
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct TextComparison {
+    /// Cells whose character differs (a missing or extra cell counts).
+    pub cells: usize,
+    /// Rows holding any of them.
+    pub rows: usize,
+    pub size: [usize; 2],
+    pub golden_size: [usize; 2],
+}
+
+/// Compare a grid with its golden, cell for cell, and write the rows that
+/// differ: the golden's, the render's, and a caret under each moved cell.
+pub fn compare_text(want: &str, got: &str) -> (TextComparison, String) {
+    let w: Vec<Vec<char>> = want.lines().map(|l| l.chars().collect()).collect();
+    let g: Vec<Vec<char>> = got.lines().map(|l| l.chars().collect()).collect();
+    let size = |rows: &[Vec<char>]| [rows.first().map_or(0, Vec::len), rows.len()];
+    let mut cmp = TextComparison {
+        size: size(&g),
+        golden_size: size(&w),
+        ..Default::default()
+    };
+    let mut diff = String::new();
+    for y in 0..w.len().max(g.len()) {
+        let (a, b) = (
+            w.get(y).map_or(&[][..], |r| &r[..]),
+            g.get(y).map_or(&[][..], |r| &r[..]),
+        );
+        let marks: String = (0..a.len().max(b.len()))
+            .map(|x| if a.get(x) == b.get(x) { ' ' } else { '^' })
+            .collect();
+        let moved = marks.matches('^').count();
+        if moved > 0 {
+            cmp.cells += moved;
+            cmp.rows += 1;
+            let line = |r: &[char]| r.iter().collect::<String>();
+            diff.push_str(&format!(
+                "row {y}: {moved} cell(s)\n  golden |{}|\n  render |{}|\n          {}\n",
+                line(a),
+                line(b),
+                marks.trim_end()
+            ));
+        }
+    }
+    (cmp, diff)
 }
 
 /// How one render compares with its golden.
@@ -226,6 +287,8 @@ struct CaseReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<TextComparison>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
 }
 
@@ -244,13 +307,18 @@ pub fn adapter_key(info: &wgpu::AdapterInfo) -> String {
     }
 }
 
-/// `<dir>/<stem>.<key>.png`: the variant of `golden` for adapter `key`.
+/// `<dir>/<stem>.<key>.<ext>`: the variant of `golden` (an image, or a
+/// text golden's `.txt`) for adapter `key`.
 fn variant_path(golden: &Path, key: &str) -> PathBuf {
     let stem = golden
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    golden.with_file_name(format!("{stem}.{key}.png"))
+    let ext = golden
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "png".into());
+    golden.with_file_name(format!("{stem}.{key}.{ext}"))
 }
 
 pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
@@ -374,6 +442,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             variant: variant.as_ref().map(|v| v.display().to_string()),
             adapter: adapter.clone(),
             diff: None,
+            text: None,
             message: None,
         };
         if no_gpu {
@@ -383,6 +452,21 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         }
 
         let _ = std::fs::remove_file(&render);
+        // A text golden has adapter variants too (#314): a glyph that flips
+        // on WARP moves its cell, as it moves pixels
+        let text_golden = case.text.as_ref().map(|t| {
+            let plain = here.join(t);
+            match key.as_deref().map(|k| variant_path(&plain, k)) {
+                Some(v) if args.bless_variant || v.exists() => v,
+                _ => plain,
+            }
+        });
+        let text_render = out_dir.join(format!("{}.txt", case.name));
+        let _ = std::fs::remove_file(&text_render);
+        let text_args: Vec<std::ffi::OsString> = match &text_golden {
+            Some(_) => vec!["--ascii-text".into(), text_render.clone().into_os_string()],
+            None => Vec::new(),
+        };
         let started = std::time::Instant::now();
         let output = Command::new(&flint)
             .current_dir(&root)
@@ -396,6 +480,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             ])
             .args(&manifest.suite.args)
             .args(&case.args)
+            .args(&text_args)
             .arg("--output")
             .arg(&render)
             .output()
@@ -425,12 +510,25 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             .with_context(|| format!("reading {}", render.display()))?
             .to_rgba8();
 
+        let got_text = match &text_golden {
+            Some(_) => Some(
+                std::fs::read_to_string(&text_render)
+                    .with_context(|| format!("reading {}", text_render.display()))?,
+            ),
+            None => None,
+        };
+
         if args.bless || args.bless_variant {
             if let Some(parent) = golden.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
             got.save(&golden)
                 .with_context(|| format!("writing {}", golden.display()))?;
+            if let (Some(path), Some(text)) = (&text_golden, &got_text) {
+                std::fs::write(path, text)
+                    .with_context(|| format!("writing {}", path.display()))?;
+                println!("  BLESS {:<28} -> {}", case.name, path.display());
+            }
             println!("  BLESS {:<28} -> {}", case.name, golden.display());
             report.status = "blessed";
             reports.push(report);
@@ -466,7 +564,36 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             continue;
         }
         let (cmp, diff) = compare(&want, &got, tolerance.level);
-        let pass = cmp.passes(&tolerance);
+        let mut pass = cmp.passes(&tolerance);
+        // The structural golden (#317): the grid, cell for cell
+        if let (Some(path), Some(got_text)) = (&text_golden, &got_text) {
+            let want_text = std::fs::read_to_string(path).unwrap_or_default();
+            let (tc, text_diff) = compare_text(&want_text, got_text);
+            let text_pass = tc.size == tc.golden_size && tc.cells <= case.text_cells;
+            println!(
+                "  {}  {:<28} text {}x{}: {} cell(s) in {} row(s) differ (limit {})",
+                if text_pass { "PASS" } else { "FAIL" },
+                case.name,
+                tc.size[0],
+                tc.size[1],
+                tc.cells,
+                tc.rows,
+                case.text_cells
+            );
+            if tc.cells > 0 {
+                let diff_path = out_dir.join(format!("{}.text.diff", case.name));
+                std::fs::write(&diff_path, text_diff).ok();
+            }
+            if !text_pass {
+                report.message = Some(format!(
+                    "text: {} cell(s) differ from {}",
+                    tc.cells,
+                    path.display()
+                ));
+            }
+            pass &= text_pass;
+            report.text = Some(tc);
+        }
         println!(
             "  {}  {:<28} {:>6.2}% past {} (limit {:.2}%), mean {:.2} (limit {:.2}), max {}, {} ms{}",
             if pass { "PASS" } else { "FAIL" },
@@ -589,12 +716,31 @@ mod tests {
             variant_path(Path::new("g/kuwahara.png"), "warp"),
             Path::new("g/kuwahara.warp.png")
         );
+        assert_eq!(
+            variant_path(Path::new("g/ascii_pbr_test.txt"), "warp"),
+            Path::new("g/ascii_pbr_test.warp.txt")
+        );
     }
 
     fn stylize_manifest() -> (PathBuf, Manifest) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stylize.goldens.toml");
         let manifest = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         (path, manifest)
+    }
+
+    #[test]
+    fn text_goldens_count_each_moved_cell() {
+        let (same, diff) = compare_text("ab\ncd\n", "ab\ncd\n");
+        assert_eq!((same.cells, diff.as_str()), (0, ""));
+        let (moved, diff) = compare_text("##..\n....\n", "#=..\n...:\n");
+        assert_eq!((moved.cells, moved.rows), (2, 2));
+        assert!(diff.contains("golden |##..|") && diff.contains("render |#=..|"));
+        assert!(diff.contains("           ^\n"), "{diff}");
+        let (short, _) = compare_text("ab\ncd\n", "ab\n");
+        assert_eq!(
+            (short.cells, short.golden_size, short.size),
+            (2, [2, 2], [2, 1])
+        );
     }
 
     #[test]
@@ -609,18 +755,26 @@ mod tests {
                 .unwrap_or_else(|| format!("{}.png", case.name));
             assert!(dir.join(&name).exists(), "{} has no golden", case.name);
             used.insert(name);
+            if let Some(text) = &case.text {
+                assert!(dir.join(text).exists(), "{} has no text golden", case.name);
+                used.insert(text.clone());
+            }
         }
         // An adapter's variant (#314) belongs to the golden it varies
         let keys = ["warp", "lavapipe", "vulkan", "dx12", "metal", "gl"];
         for entry in std::fs::read_dir(dir).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            let Some(stem) = name.strip_suffix(".png") else {
+            let Some((stem, ext)) = name
+                .strip_suffix(".png")
+                .map(|s| (s, "png"))
+                .or_else(|| name.strip_suffix(".txt").map(|s| (s, "txt")))
+            else {
                 continue;
             };
             let owner = match stem.rsplit_once('.') {
                 Some((base, key)) => {
                     assert!(keys.contains(&key), "{name}: unknown adapter key '{key}'");
-                    format!("{base}.png")
+                    format!("{base}.{ext}")
                 }
                 None => name.clone(),
             };
@@ -663,11 +817,10 @@ mod tests {
     fn every_shipped_look_has_a_golden_case() {
         let (_, manifest) = stylize_manifest();
         for look in crate::commands::look::builtin_names() {
-            let reached = manifest.cases.iter().any(|c| {
-                c.args
-                    .windows(2)
-                    .any(|w| w[0] == "--look" && w[1] == look)
-            });
+            let reached = manifest
+                .cases
+                .iter()
+                .any(|c| c.args.windows(2).any(|w| w[0] == "--look" && w[1] == look));
             assert!(
                 reached,
                 "look '{look}' has no case in stylize.goldens.toml: add one and --bless it"

@@ -23,7 +23,7 @@ WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara,
 WARN style 'invert' has no parameter 'wobble'; it takes: strength
 ```
 
-Kuwahara predates the table and keeps its own `kuwahara_*` fields (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
+Kuwahara's table is `[post_process.styles.kuwahara]`. Scenes from before the table spell it `kuwahara_enabled`, `kuwahara_radius` and so on in `[post_process]`; those keys are folded into the table when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
 
 From the command line, `--style name[:key=value,...]` turns any registered style on over a scene without editing it (#271), on `flint render` and on `flint edit <model or effect> --render`:
 
@@ -48,8 +48,9 @@ flint render demo/user_styles.scene.toml --list-styles --json
 
 ```text
 kuwahara (Kuwahara) [hdr, builtin]
-  [post_process] kuwahara_*
-  kuwahara_radius      4  [1 .. 8, integer]
+  [post_process.styles.kuwahara]
+  radius      4  [1 .. 8, integer]  — The brush: each sector's reach in scene pixels; bigger is more painterly and costs more
+  sharpness   8  [1 .. 16]  — How strongly the least varied sector wins; lower blends sectors more softly
   ...
 invert (Invert) [display, builtin]
   [post_process.styles.invert]
@@ -58,7 +59,7 @@ invert (Invert) [display, builtin]
 
 Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `label`, `help`; empty choices take any text) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
-The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
+The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
@@ -83,7 +84,7 @@ The same editor is the player's **F3 Styles** panel, which appears with the othe
 
 | Style | Stage | Parameters |
 |-------|-------|------------|
-| `kuwahara` | HDR | the `kuwahara_*` fields |
+| `kuwahara` | HDR | `radius` (whole pixels), `sharpness`, `hardness`, `anisotropy`; see [Post-Processing](post-processing.md#kuwahara-painterly-filter) |
 | `watercolor` | Display | see [Watercolor](#watercolor) |
 | `ascii` | Display | see [ASCII](#ascii) |
 | `pencil` | Display | see [Pencil](#pencil) |
@@ -290,7 +291,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **Fields.** Every key of the table above except `font` and `scope`, all optional. A field the entity leaves out comes from the scene's table, then the style's default. The schema gives no field a default on purpose, since the loader would fill it in and hide the scene's setting. An archetype's `[archetype.<name>.defaults.ascii_style]` is a preset too, and an entity's own fields merge over it field by field.
 - **Descendants** inherit their ancestor's style until one carries an `ascii_style` or `style_mask` of its own; the nearest wins. A plain `style_mask { style = "ascii" }` is the same as an empty `ascii_style`.
 - **Ids.** Entities with the same settings share one style mask id. Each distinct set of settings is a variant, and the pass looks up each pixel's settings by its id. One frame holds 63 variants among mask ids below 256; more are drawn like the whole frame, with a warning.
-- **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel.
+- **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel. With a `footprint` of 2 or more those 16 samples are summed once a cell, in a pre-pass (#313, `ascii_variant_cells.wgsl`), rather than in each of the cell's pixels. Variants on one grid (the same cell, origin and footprint) share a band of rows, and each cell keeps the first two of the band's variants met in it. A pixel of a third variant still sums for itself, and so does a variant past 8 grids. At footprint 1 every pixel sums for itself: its 16 loads hit the 16 texels its cell shares, so they come from the texture cache, and there a pre-pass over every cell cost more than it saved. The pixels are the same either way, to the bit. Timings are in [Profiling](../guides/profiling.md#gpu-timing).
 - **The whole frame.** With the scene's table on and `scope = "screen"` (or `--ascii`), everything is glyphs and entities still change their own settings; `enabled = false` keeps one smooth.
 - **Grids.** By default every styled entity shares the screen's grid, which keeps glyphs aligned where props meet (the spike's finding, #261). `grid = "object"` pins an entity's cells to its projected origin: its glyphs hold still while it slides across the screen, but still swim when it turns or comes closer (#277). Each such entity gets a variant of its own.
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
@@ -537,7 +538,7 @@ flint render scene.toml --look ink_wash --style kuwahara:radius=3 -o sharper.png
 
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 
-- any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=3,6,9`. Values are checked against the style's range;
+- any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;
 - any `[post_process]` field, written `post.<field>`: `post.exposure=0.8,1.2`. Use `|` between values to sweep a vector: `post.fog_color=0,0,0|0.7,0.75,0.82`;
 - `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks.
 
@@ -564,13 +565,13 @@ Each style belongs to one of two stages:
 scene (HDR, render scale)
   -> style mask (Rg16Uint: id + blend, only while a style reads it)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
-  -> SSAO, volumetric, bloom
+  -> SSAO, volumetric (depth), bloom (the original HDR, or the HDR styles' result: feeds_bloom)
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
   -> Display styles (watercolor, ASCII, pencil, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```
 
-- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. SSAO and bloom read the unstylized scene.
+- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. Bloom reads the unstylized scene unless a style feeds it (below). SSAO and volumetrics read depth and shadows, never colour, so no style changes them; the composite lays them over the stylized image.
 - **Display stage.** The finished, tonemapped picture at output resolution, after the render-scale upscale and before FXAA and the HUD. This is where glyphs and lines stay crisp under `--render-scale` (the ASCII spike's finding).
 
 Styles of one stage run one after another, each reading the one before it. The framework ping-pongs between two targets it owns, so any number of styles chain without a style knowing its neighbours.
@@ -592,11 +593,33 @@ order = 9
 
 - Any number works: an integer, a fraction to slip between two (`order = 2.5`), or a negative to go before everything.
 - Only styles of the same stage compare. An HDR style always runs before a display style.
-- A table switches its style on, so to place a style without turning it on write `enabled = false` beside `order`. Kuwahara takes `order` in a `[post_process.styles.kuwahara]` table, as it keeps its other settings in its `kuwahara_*` fields.
+- A table switches its style on, so to place a style without turning it on write `enabled = false` beside `order`. Kuwahara takes `order` in its `[post_process.styles.kuwahara]` table like any other style.
 - `--style ascii:order=0` sets it from the command line, and `--sweep watercolor.order=0,9` lays the orders side by side.
 - The F4 Styles section opens with each stage's chain, first to last; **swap** runs a style before the one ahead of it, and Copy TOML writes the `order` back out.
 
 `order` is a key of every style's own table, not a `style_order = [...]` list on `[post_process]`, because everything else about a style lives in its table: a [look](#looks-and-sweeps) or a `--style` word that adds one style can place it without restating every other style, Copy TOML stays one block, and a list naming a style the scene doesn't use would need its own warnings. The cost is that the whole order isn't written in one place, which is what the F4 chain line shows instead. No style may name a parameter or option `order` or `enabled`.
+
+### Bloom from a style
+
+By default bloom's threshold reads the scene *under* the HDR styles: light comes from the world, not the brush, so a painted surface keeps the halo its original bright pixels had. A style whose own bright shapes should glow (ink brighter than white, a bleeding highlight) **feeds bloom** instead: bloom then reads the HDR stage's result (#300).
+
+- A style says so in its descriptor (`feeds_bloom: true`) or, for a user style, in its `.shader.toml` (`feeds_bloom = true`, `stage = "hdr"` only).
+- A scene overrides it in the style's table, Kuwahara's included:
+
+  ```toml
+  [post_process.styles.kuwahara]
+  feeds_bloom = true
+  ```
+- On the command line: `--style kuwahara:feeds_bloom=1`, `--sweep neon.feeds_bloom=0,1`. In F4 it is the **Feeds bloom** checkbox under each HDR style in Styles, Kuwahara's included, and Copy TOML writes it when it differs from the style's default.
+- When any HDR style that ran this frame feeds bloom, bloom reads the stage's final result, every style in it included. A display style can't feed bloom: it runs after it (`feeds_bloom` on one is a warning). ASCII's phosphor halo is its own `glow` for that reason.
+
+Kuwahara's default is unchanged: off.
+
+| ![neon isolines, bloom reading the original scene: the lines are flat, the lamp's halo glows where the style dimmed it](../images/bloom-follows-style-neon-off.png) | ![neon isolines feeding bloom: each line glows](../images/bloom-follows-style-neon-on.png) |
+|---|---|
+| `demo/neon_bloom.scene.toml --style neon:feeds_bloom=0`: bloom reads the scene under the style. The lines are flat, and the lamp, which the style dimmed to a fifth, still haloes at full strength | The scene as written (`neon` says `feeds_bloom = true`): bloom reads the styled picture, so each line glows and the lamp's halo shrinks with it |
+| ![Kuwahara, bloom from the original scene](../images/bloom-follows-style-kuwahara-off.png) | ![Kuwahara feeding bloom](../images/bloom-follows-style-kuwahara-on.png) |
+| Kuwahara at its default (`neon_bloom` with `--style neon:off --style kuwahara:radius=8 --exposure 2.2`, a crop at 2x): the lamp's halo keeps the original, unpainted rim | The same with `kuwahara:feeds_bloom=1`: the halo follows the painted strokes, so the rim breaks where the filter broke it. Subtle at Kuwahara's sizes, which is why it stays off by default |
 
 ## Writing a style
 
@@ -614,6 +637,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
     hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
     component: None,               // Some("ascii_style"): entities take the style per entity (#266)
+    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
 };
 ```
@@ -692,6 +716,7 @@ name = "greyscale"         # the file stem; lowercase, digits and _
 stage = "display"          # or "hdr"
 shader = "greyscale.wgsl"
 inputs = []                # any of "depth", "mask", "edges"; colour is always there
+# feeds_bloom = true       # hdr only: bloom reads this style's result (#300)
 
 [params.amount]
 default = 1.0
@@ -742,7 +767,7 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
 
 ## Goldens
 
@@ -756,7 +781,7 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 
 | Case | What it pins |
 |------|--------------|
-| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off |
+| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off, and its character grid exactly (`ascii_pbr_test.txt`, #317) |
 | `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props`, with edges |
 | `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points (edges off: the editor grid would be traced) |
 | `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid (edges off) |

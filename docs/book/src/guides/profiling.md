@@ -23,7 +23,22 @@ Each line is a **scope**, a stretch of the frame between two timestamps the GPU 
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
 - `Kuwahara`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
-- Each stylize pass under its label, after `Composite` for the display-stage ones: `ASCII` (#265, about 0.15 ms at 1080p on an RTX 4070), `Invert`. The ASCII spike (#261) times its `ASCII mask` and `ASCII` while `--ascii=<mode>` is set.
+- Each stylize pass under its label, after `Composite` for the display-stage ones: `ASCII` (#265, about 0.15 ms at 1080p on an RTX 4070), `Invert`. The ASCII spike (#261) times its `ASCII mask` and `ASCII` while `--ascii=<mode>` is set. One scope covers all of a style's passes, so turn a part off to see its share. In ASCII the [edge passes](../concepts/stylize-passes.md#edges) are most of it: in a 4K close-up of `demo/ascii_entities`, the scope read 1.6 ms with `edges` on and 0.36--0.45 ms with `edges=0` (#313; their cost is #347).
+
+The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 240`, the least of 5 processes per binary with main and the branch taking turns, `edges=0`). The close-up is `--target=-0.2,0.8,4.2 --distance 2.6 --yaw 20 --pitch 10`, so the styled props fill most of the frame:
+
+| Case | Before | After |
+|---|---|---|
+| Close-up, footprint 2, 4K | 0.449 ms | 0.361 ms |
+| Close-up, footprint 2, 4K (an earlier run) | 0.485 ms | 0.405 ms |
+| Close-up, footprint 2, 1080p | 0.155 ms | 0.146 ms |
+| Close-up, footprint 4, 1080p | 0.151 ms | 0.137 ms |
+| Close-up, footprint 4, 4K | 0.393 ms | 0.409 ms |
+| Scene camera, footprint 2, 1080p | 0.174 ms | 0.174 ms |
+| Scene camera, footprint 2, 4K | 0.274 ms | 0.298 ms |
+| Close-up, footprint 1, 4K (the same code in both) | 0.360 ms | 0.389 ms |
+
+The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
 `flint render --gpu-time <frames>` prints the same scopes for one headless frame drawn that many times, so a pass can be timed without a window.
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
