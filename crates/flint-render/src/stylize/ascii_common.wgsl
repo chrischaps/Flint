@@ -8,7 +8,7 @@
 // there (a ramp is a ladder of what the eye sees), and decode back.
 
 // One per-entity variant's settings (#266), drawn per pixel in the glyph
-// pass from its own samples.
+// pass from its own samples: a row of the `variants` storage buffer (#336).
 struct Variant {
     cell: vec2<f32>,
     origin: vec2<f32>,
@@ -104,14 +104,12 @@ struct AsciiUniforms {
     palette: array<vec4<f32>, 32>,
     // The same inks in OKLab (#320), for matching (palette.wgsl)
     palette_lab: array<vec4<f32>, 32>,
-    // Per-entity variants (#266). x: rows in use (1 = the whole frame
-    // alone); y: 1 when the whole frame passes through (only entities
-    // asked). Row 0 is unused: the whole frame draws from the fields above
-    // and the cell state. z: bands in the variant cell state (#313).
+    // Per-entity variants (#266). x: rows of `variants` in use (1 = the
+    // whole frame alone); y: 1 when the whole frame passes through (only
+    // entities asked). Row 0 is unused: the whole frame draws from the
+    // fields above and the cell state. z: bands in the variant cell state
+    // (#313).
     variant_meta: vec4<u32>,
-    variants: array<Variant, 64>,
-    // The variant slot of each mask id below 256, four ids a vec4.
-    slots: array<vec4<u32>, 64>,
     // The variant cell state's bands (#313), `variant_meta.z` of them: each
     // grid's cell and origin, and (first row, rows, columns, footprint as
     // f32 bits)
@@ -123,6 +121,21 @@ struct AsciiUniforms {
 const MAX_BANDS: u32 = 8u;
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
+// The variant table (#336), sized to the frame: every per-entity variant's
+// row, and the slot (row) of each mask id, 0 for an id not drawn as a
+// variant. A frame without per-entity variants (variant_meta.x == 1)
+// never reads them, so full-screen ASCII costs what it did when the table
+// lived in the uniform.
+@group(0) @binding(1) var<storage, read> variants: array<Variant>;
+@group(0) @binding(2) var<storage, read> slots: array<u32>;
+
+// The variant slot of mask id `id`: 0 (the whole frame) past the table
+fn slot_of(id: u32) -> u32 {
+    if id >= arrayLength(&slots) {
+        return 0u;
+    }
+    return slots[id];
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -176,11 +189,17 @@ const STATS_GAMMA_MIN: f32 = 0.35;
 const STATS_GAMMA_MAX: f32 = 2.5;
 
 fn slot_exposure(slot: u32) -> f32 {
-    return select(u.variants[slot].exposure, u.exposure, slot == 0u);
+    if slot == 0u {
+        return u.exposure;
+    }
+    return variants[slot].exposure;
 }
 
 fn slot_normalize(slot: u32) -> f32 {
-    return select(u.variants[slot].stretch, u.stretch, slot == 0u);
+    if slot == 0u {
+        return u.stretch;
+    }
+    return variants[slot].stretch;
 }
 
 // A display colour with `gain` (2^exposure) applied in linear light

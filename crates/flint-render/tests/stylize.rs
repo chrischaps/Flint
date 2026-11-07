@@ -1432,3 +1432,106 @@ fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
     assert!(covered.len() > n / 8, "the boxes cover too little to tell");
     assert_eq!(missed, 0, "{missed} box pixels were not masked");
 }
+
+/// #336: a wall of 506 props, each in ASCII on a grid of its own
+/// (`grid = "object"`, so every styled root is a variant of its own, with
+/// mask ids far past 256). The variant table used to hold 63 variants among
+/// ids below 256, and the rest drew like the whole frame, which here (only
+/// entities asked) passes the picture through: most of the wall stayed
+/// plain. Now every prop is a row of the table and every pixel a prop
+/// covers is drawn in glyphs; a frame later the table's buffers hold still.
+#[test]
+fn five_hundred_anchored_props_each_draw_on_their_own_grid() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let anchored = || {
+        let mut t = toml::Table::new();
+        t.insert("grid".into(), "object".into());
+        t.insert("cell".into(), 3.0.into());
+        toml::Value::Table(t)
+    };
+    // Facing the default camera at (10, 10, 10), as the mask buffer test's
+    let (cols, rows) = (23, 22);
+    let (s, t) = (std::f64::consts::FRAC_1_SQRT_2, 6f64.sqrt().recip());
+    let (u, v) = ([s, -s, 0.0], [t, t, -2.0 * t]);
+    let mut world = FlintWorld::new();
+    let mut props = Vec::new();
+    for i in 0..cols * rows {
+        let e = world.spawn(format!("prop{i:03}")).unwrap();
+        let (a, b) = (
+            (i % cols) as f64 - cols as f64 / 2.0,
+            (i / cols) as f64 - rows as f64 / 2.0,
+        );
+        let at: [f64; 3] = std::array::from_fn(|k| (a * u[k] + b * v[k]) * 0.6);
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.24; 3]));
+        bounds.insert("max".into(), vec3([0.24; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        props.push(e);
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+    let plain = gpu.frame(&mut renderer, &world);
+    for &e in &props {
+        world.set_component(e, "ascii_style", anchored()).unwrap();
+    }
+    let styled = gpu.frame(&mut renderer, &world);
+    // One variant a prop, and ids well past the old 256
+    let ids = renderer.style_ids();
+    let variants = ids.variants_of("ascii").count();
+    let top = ids
+        .variants_of("ascii")
+        .map(|(id, _)| id)
+        .max()
+        .unwrap_or(0);
+    eprintln!("{variants} ascii variants, highest id {top}");
+    assert_eq!(variants, props.len(), "a prop shares another's variant");
+    assert!(top > 256);
+
+    let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+    let n = (SIZE * SIZE) as usize;
+    // A prop's own pixels, not the ground its ambient occlusion darkens by
+    // a level or two
+    let covered: Vec<usize> = (0..n)
+        .filter(|&i| {
+            let (a, b) = (px(&plain, i), px(&empty, i));
+            (0..3).any(|k| a[k].abs_diff(b[k]) > 16)
+        })
+        .collect();
+    let untouched = covered
+        .iter()
+        .filter(|&&i| px(&styled, i) == px(&plain, i))
+        .count();
+    eprintln!("{} covered pixels, {untouched} drawn plain", covered.len());
+    assert!(covered.len() > n / 4, "the props cover too little to tell");
+    // A glyph cell can land on the very colour of the shading here and
+    // there; a prop left out of the table leaves all its pixels plain
+    assert!(
+        untouched * 50 < covered.len(),
+        "{untouched} of {} prop pixels drew plain",
+        covered.len()
+    );
+
+    // Warmed up, the table holds: no buffer or bind group a frame
+    gpu.frame(&mut renderer, &world);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    assert_eq!(gpu.frame(&mut renderer, &world), styled);
+    assert_eq!(renderer.kept_post_binds(), binds);
+    assert_eq!(held(&gpu), objects, "the variant table allocated a frame");
+}
