@@ -130,7 +130,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             choices: GRIDS,
         },
     ],
-    enabled: None,
     uses_mask: false,
     needs: &[],
     hints: &[

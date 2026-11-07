@@ -4788,6 +4788,15 @@ impl SceneRenderer {
         }
     }
 
+    /// The entity style mask's per-draw uniform bytes and how many styled
+    /// draws the last frame masked (#311); `None` before a frame needed
+    /// the mask.
+    pub fn style_mask_draws(&self) -> Option<(u64, usize)> {
+        self.style_mask_pass
+            .as_ref()
+            .map(|p| (p.draw_buffer_bytes(), p.last_draws()))
+    }
+
     /// The render scale [`set_render_scale`](Self::set_render_scale) set.
     pub fn render_scale(&self) -> f32 {
         self.render_scale
@@ -5032,13 +5041,8 @@ impl SceneRenderer {
                  Try updating your graphics drivers.",
                 failed.label
             );
-            if failed.uses_style_table() {
-                self.postprocess_config.styles.set_enabled(failed.name, false);
-                self.authored_postprocess.styles.set_enabled(failed.name, false);
-            } else if failed.name == "kuwahara" {
-                self.postprocess_config.kuwahara_enabled = false;
-                self.authored_postprocess.kuwahara_enabled = false;
-            }
+            self.postprocess_config.styles.set_enabled(failed.name, false);
+            self.authored_postprocess.styles.set_enabled(failed.name, false);
             self.device_lost = true;
         }
     }
@@ -5046,6 +5050,30 @@ impl SceneRenderer {
     /// How many times the shared style edge pass (#301) has been drawn
     /// since this renderer was made: one a frame while any style that
     /// needs the edges is on, however many do.
+    /// Have glyph styles (ASCII) keep each frame's character grid as text
+    /// (#317), for [`style_text`](Self::style_text). Costs one pass of a
+    /// fragment per cell and a copy to the CPU a frame, so it's off unless
+    /// asked for. Does nothing without post-processing, where no style runs.
+    pub fn set_style_text_capture(&mut self, on: bool) {
+        if let Some(pp) = &mut self.postprocess_pipeline {
+            pp.styles.set_text_capture(on);
+        }
+    }
+
+    /// The character grid style `name` drew in the last frame rendered
+    /// with text capture on, once its submission is done (this waits on
+    /// the device). `None` if that style draws no glyphs or didn't run.
+    pub fn style_text(
+        &self,
+        device: &wgpu::Device,
+        name: &str,
+    ) -> Option<crate::stylize::GlyphText> {
+        self.postprocess_pipeline
+            .as_ref()?
+            .styles
+            .read_text(name, device)
+    }
+
     pub fn style_edge_runs(&self) -> u64 {
         self.postprocess_pipeline
             .as_ref()
