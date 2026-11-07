@@ -16,6 +16,8 @@
 //! edge_max = 3.0        # more than this is texture (grass), not a line
 //! edge_depth = 0.6      # relative view-distance step that is an edge
 //! edge_normal = 2.5     # normal change (Sobel) that is a crease
+//! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
+//! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
 //! ```
 //!
 //! It runs at the display stage: on the finished picture at output
@@ -71,6 +73,21 @@
 //! it is what separates one styled entity from another, and it is always
 //! drawn. Edges follow the screen grid: per-entity variants on an object
 //! grid keep their tone glyphs.
+//!
+//! ## Silhouettes (#288)
+//!
+//! A per-entity variant cuts its silhouette to the pixel but fills it
+//! with cells: a leg thinner than a cell holds a sliver of one glyph,
+//! mostly ground, and reads as a smudge. Two ink floors keep thin features
+//! there. `outline` (points) inks the variant's own pixels that lie within
+//! that distance of another mask slot, so the silhouette is drawn as a
+//! line inside it, and a feature two outlines wide is solid ink.
+//! `min_coverage` floors the ink of every pixel in a cell the variant only
+//! grazes (under a quarter of the cell's colour samples, easing out by
+//! five eighths). Both are floors on the glyph's coverage, inked as the
+//! glyph is, so a palette or tint holds; the whole frame's cells (slot 0)
+//! have no silhouette and are untouched. `ground = "inverse"` already
+//! fills the cell with ink and ignores them.
 
 use super::kit;
 use super::{
@@ -214,6 +231,18 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 0.2,
             max: 8.0,
         },
+        StyleParam {
+            name: "outline",
+            default: 1.0,
+            min: 0.0,
+            max: 4.0,
+        },
+        StyleParam {
+            name: "min_coverage",
+            default: 0.5,
+            min: 0.0,
+            max: 1.0,
+        },
     ],
     options: &[
         StyleOption {
@@ -340,6 +369,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "edge_normal",
             "Edge crease",
             "The normal change that counts as a crease; lower finds more",
+        ),
+        StyleHint::new(
+            "outline",
+            "Silhouette (pt)",
+            "Per-entity: inks the entity's own pixels this wide along its silhouette, so legs and rails thinner than a cell keep their shape; 0 = off",
+        ),
+        StyleHint::new(
+            "min_coverage",
+            "Min coverage",
+            "Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1",
         ),
     ],
     component: Some("ascii_style"),
@@ -574,7 +613,11 @@ struct VariantUniform {
     palette_bg: [f32; 3],
     palette_len: u32,
     palette_match: u32,
-    _pad: [u32; 3],
+    /// Silhouette outline width in output pixels (#288; 0 = off).
+    outline: f32,
+    /// The least ink of a cell this variant only grazes (#288).
+    min_coverage: f32,
+    _pad: u32,
 }
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
@@ -934,6 +977,7 @@ fn variant_uniform(
     ramp: (u32, u32),
     palette: &PalettePlace,
     flags: u32,
+    pixels_per_point: f32,
 ) -> VariantUniform {
     VariantUniform {
         cell,
@@ -955,8 +999,25 @@ fn variant_uniform(
         palette_bg: palette.background,
         palette_len: palette.len,
         palette_match: palette.matching,
-        _pad: [0; 3],
+        outline: outline_pixels(param("outline"), pixels_per_point),
+        min_coverage: param("min_coverage").clamp(0.0, 1.0),
+        _pad: 0,
     }
+}
+
+/// The silhouette outline (#288), `points` wide, in output pixels: at
+/// least one whole pixel when on, so a 1 pt line never vanishes between
+/// samples on a fractional display.
+fn outline_pixels(points: f32, pixels_per_point: f32) -> f32 {
+    if !(points > 0.0) {
+        return 0.0;
+    }
+    let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+        pixels_per_point
+    } else {
+        1.0
+    };
+    (points * ppp).clamp(1.0, 4.0)
 }
 
 /// Where one palette sits in the uniform's packed inks.
@@ -1202,7 +1263,14 @@ impl Ascii {
             };
             slots[id as usize] = rows.len() as u32;
             rows.push(variant_uniform(
-                &param, &option, cell, origin, ramp, &palette, flags,
+                &param,
+                &option,
+                cell,
+                origin,
+                ramp,
+                &palette,
+                flags,
+                frame.pixels_per_point,
             ));
         }
         (rows, slots)
@@ -1691,6 +1759,19 @@ mod tests {
         assert_eq!(cell_pixels(0.5, 1.0, [8, 8]), [2.0, 2.0]);
         assert_eq!(cell_pixels(8.0, f32::NAN, [8, 8]), [8.0, 8.0]);
         assert_eq!(cell_pixels(8.0, 0.0, [8, 8]), [8.0, 8.0]);
+    }
+
+    #[test]
+    fn the_silhouette_outline_is_in_points_and_never_under_a_pixel() {
+        assert_eq!(outline_pixels(1.0, 1.0), 1.0);
+        assert_eq!(outline_pixels(1.0, 2.0), 2.0);
+        // On when asked for, even at half a point on a 1x display
+        assert_eq!(outline_pixels(0.5, 1.0), 1.0);
+        // Off, and broken input, are off; the ring search stops at 4 px
+        assert_eq!(outline_pixels(0.0, 2.0), 0.0);
+        assert_eq!(outline_pixels(f32::NAN, 1.0), 0.0);
+        assert_eq!(outline_pixels(3.0, 2.0), 4.0);
+        assert_eq!(outline_pixels(1.0, f32::NAN), 1.0);
     }
 
     #[test]

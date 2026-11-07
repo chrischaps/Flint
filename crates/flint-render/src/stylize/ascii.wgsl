@@ -177,8 +177,9 @@ fn frame_look() -> Variant {
 
 // A cell of colour `col`, tone `t` and ramp step `step`, drawn in look `v`
 // at the pixel `local` in its cell; `edge` is the cell's line glyph slot
-// (#267), or 4 for none
-fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edge: u32) -> vec3<f32> {
+// (#267), or 4 for none. `floor` is the least ink the pixel takes (#288: a
+// silhouette or a thin feature's pixel), 0 for the glyph alone.
+fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
     let n = max(v.ramp_len, 1u);
     var step = min(step_in, n - 1u);
     // Inverse: the ink fills the cell and the glyph is cut from it, so the
@@ -199,6 +200,10 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edg
         if u.edges >= 0.5 {
             origin = edge_origin;
         }
+    }
+    // Inverse already fills the cell with ink; a floor there would cut it
+    if !inverse {
+        coverage = max(coverage, floor_in);
     }
     let lum = luma(col);
 
@@ -337,7 +342,41 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     if all(v.cell == u.cell) && all(v.origin == u.origin) {
         edge = edge_slot(cell);
     }
-    return shade(v, col, t, step, local, edge);
+    // A feature thinner than a cell holds a sliver of one glyph, mostly
+    // ground: at cell 8 a bench's 3 px leg is a dark smudge (#288). Two
+    // floors keep it: the variant's own pixels along its silhouette take
+    // full ink, so the mask's edge is drawn to the pixel, and a cell the
+    // variant only grazes (under a quarter of its samples, easing out by
+    // five eighths) inks its pixels at least `min_coverage`.
+    let share = count / 16.0;
+    var floor_ink = v.min_coverage * (1.0 - smoothstep(0.25, 0.625, share));
+    if v.outline > 0.0 && on_silhouette(slot, p, v.outline) {
+        floor_ink = 1.0;
+    }
+    return shade(v, col, t, step, local, edge, floor_ink);
+}
+
+// Whether the pixel at `p`, of variant `slot`, lies within `width` output
+// pixels of a pixel of another slot: rings of the 8 compass neighbours at
+// each whole pixel out to the width (at most 4), the last at the width.
+fn on_silhouette(slot: u32, p: vec2<f32>, width: f32) -> bool {
+    let rings = min(i32(ceil(width)), 4);
+    for (var k = 1; k <= rings; k++) {
+        let r = min(f32(k), width);
+        for (var i = 0; i < 8; i++) {
+            let a = f32(i) * 0.7853982;
+            // Diagonals step a whole pixel on each axis, so a 1 px
+            // outline also sees the corner neighbours
+            var d = vec2<f32>(cos(a), sin(a));
+            if (i & 1) == 1 {
+                d = sign(d);
+            }
+            if slot_at(p + d * r) != slot {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 @fragment
@@ -382,7 +421,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
         let col = vec3<f32>(state.rgb) / UNORM16;
         let t = banded(tone(luma(col)));
-        out = shade(frame_look(), col, t, state.a, local, edge_slot(cell));
+        out = shade(frame_look(), col, t, state.a, local, edge_slot(cell), 0.0);
     }
     return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);
 }

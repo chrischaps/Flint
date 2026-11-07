@@ -30,8 +30,10 @@ struct Variant {
     palette_bg: vec3<f32>,
     palette_len: u32,
     palette_match: u32,
-    _p0: u32,
-    _p1: u32,
+    // #288: silhouette outline width in output pixels (0 = off), and the
+    // ink floor for a cell this variant only grazes
+    outline: f32,
+    min_coverage: f32,
     _p2: u32,
 };
 
