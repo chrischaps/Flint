@@ -682,6 +682,22 @@ How it's drawn:
 - **Only when wanted.** The mask target and its pipelines exist only once a style with `uses_mask` (or the debug view) is on. At 1080p on an RTX 4070 the pass costs about 0.02 ms (0.03 ms under MSAA 4) for the demo scene's six styled entities.
 - **What's masked.** Static glTF meshes, procedural boxes and skinned meshes. Particles, sprites, grass, terrain and water never are.
 
+### What's in front: the veil
+
+Transparents and particles write no depth, so the depth test alone can't see them: where fire or glass sits in front of a styled stone, the stone's id would stay in the mask and the style would draw the fire as if it were stone. The rule (#290) is that **what's in front unmasks by its coverage.** Just before the mask, a veil pass draws every visible transparent mesh (static and skinned) and every particle into an `R8Unorm` target, depth-tested against the scene and never writing it, with the alpha it is drawn with (an additive particle covers by its alpha times its brightest channel). Layers blend "over" each other, so two faces of 50% glass cover 75%. The mask then writes each styled pixel's blend times what the veil leaves uncovered.
+
+![Before #290: the campfire in front of the glyph stone is turned into stone glyphs, and the glass in front of the crate disappears into the crate's](../images/style-veil-before.png)
+
+![After: the fire draws as fire over the stone, and behind the 45% glass the crate's glyphs show through at the share the glass leaves](../images/style-veil-after.png)
+
+```bash
+flint render demo/style_veil.scene.toml --particle-time 2 --output veil.png
+```
+
+- A style that honours the blend (ASCII, and user styles through `flint_style_blend`) shows the fire as fire and the stone through any uncovered share. A fully covered pixel keeps its id at blend 0, so under a whole-frame ASCII the stone behind thick smoke is a smooth hole, as a blend-0 entity is. Pencil and watercolor ignore `.g` and still draw what's in front in their style until the framework cross-fade (#396).
+- A transparent that is itself styled stays out of the veil: whether a styled transparent should be drawn in its style is #310.
+- The pass costs about 0.02 ms at 1080p on an RTX 4070 for `demo/style_veil.scene.toml` (69 particles and a pane), and is skipped in a frame with no styled draws.
+
 To read it in a style, set `uses_mask: true`, make a layout with `kit::mask_layout` and bind it with `frame.mask_bind(...)`; in WGSL it is a `texture_2d<u32>` read with `textureLoad`, the id in `.r` and the blend in `.g` (`stylize/mask_view.rs` and `mask_view.wgsl` show the whole thing). A per-entity style honours a blend by mixing its pixel with its input by `f32(m.g) / 65535.0`; one that ignores `.g` draws every entity at blend 1.
 
 ### Per-entity settings

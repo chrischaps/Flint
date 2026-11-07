@@ -670,3 +670,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     return vec4<f32>(color, final_alpha);
 }
+
+// The style veil (#290): how much of the pixel this transparent surface
+// covers, the same alpha fs_main draws with, for the entity style mask, so
+// glass in front of a styled entity takes that share of the pixel back
+// from the style. Only the material group and the light group's sampler
+// are read; the targets are single-sample R8Unorm with "over" blending.
+@fragment
+fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    let scaled_uv = in.uv * material.texture_scale;
+    var alpha = material.base_color.a;
+    if (material.use_vertex_color == 1u) {
+        alpha = in.color.a;
+        if (material.vertex_emission == 1u) {
+            alpha = 1.0;
+        }
+    }
+    if (material.has_base_color_tex == 1u) {
+        alpha = textureSample(base_color_texture, material_sampler, scaled_uv).a * alpha;
+    }
+    return vec4<f32>(clamp(alpha * material.opacity, 0.0, 1.0));
+}

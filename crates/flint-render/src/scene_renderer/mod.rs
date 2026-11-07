@@ -4656,10 +4656,21 @@ impl SceneRenderer {
             };
             self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
                 device,
-                &self.pipeline.transform_bind_group_layout,
-                &skinned.bone_bind_group_layout,
+                &crate::style_mask::MaskLayouts {
+                    transform: &self.pipeline.transform_bind_group_layout,
+                    material: &self.pipeline.material_bind_group_layout,
+                    light: &self.pipeline.light_bind_group_layout,
+                    bones: &skinned.bone_bind_group_layout,
+                },
             ));
         }
+        let veil_target = resources.styles.get(
+            device,
+            crate::style_mask::VEIL_TARGET,
+            crate::style_mask::VEIL_FORMAT,
+            resources.width,
+            resources.height,
+        );
         let mask = resources.styles.get(
             device,
             crate::style_mask::MASK_TARGET,
@@ -4705,6 +4716,49 @@ impl SceneRenderer {
                 })
             }));
         }
+        // What's in front of them (#290): transparents that aren't styled
+        // themselves, and every particle
+        let mut veil = crate::style_mask::Veil {
+            light_bind_group: &self.light_bind_group,
+            meshes: Vec::new(),
+            particles: None,
+        };
+        if !draws.is_empty() {
+            let unstyled = |e: &Option<flint_core::EntityId>| id_of(e).is_none();
+            veil.meshes.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe && unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: None,
+                    }),
+            );
+            veil.meshes.extend(
+                self.transparent_skinned_draws
+                    .iter()
+                    .filter(|d| unstyled(&d.entity_id))
+                    .map(|d| crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: Some(&d.bone_bind_group),
+                    }),
+            );
+            veil.particles =
+                self.particle_pipeline
+                    .as_ref()
+                    .map(|pipeline| crate::style_mask::VeilParticles {
+                        pipeline,
+                        draws: &self.particle_draws,
+                    });
+        }
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
                 device,
@@ -4712,9 +4766,11 @@ impl SceneRenderer {
                 encoder,
                 &resources.binds,
                 &mask.view,
+                &veil_target.view,
                 depth_view,
                 depth_owned,
                 &draws,
+                &veil,
             );
         }
     }
