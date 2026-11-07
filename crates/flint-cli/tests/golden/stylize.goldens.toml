@@ -19,10 +19,13 @@
 # a frame most likely to shade differently on another GPU.
 
 # Across adapters (#314): goldens are blessed on an RTX 4070 under Vulkan,
-# and CI compares on WARP. The glyph tolerance below held for 29 of the 30
-# glyph cases on WARP (worst: edges-view at 1.25% / mean 2.80) and on the
-# same RTX under DX12. ascii-full-msaa4 missed by its mean on both (3.77,
-# 3.47): MSAA resolves differ by backend. The smooth styles' 8-level
+# and CI compares on WARP. The glyph tolerance below held for 30 of the 32
+# glyph cases on WARP (worst: edges-view at 1.25% / mean 2.80). The two
+# misses were by their mean: ascii-full-msaa4 (3.77; 3.47 on the same RTX
+# under DX12: MSAA resolves differ by backend) and style-terrain (3.36,
+# glyph flips across a whole hillside). A broken grid reads a mean of
+# 15 on WARP, five times its noise. WARP itself is deterministic: its
+# variants match byte for byte run to run. The smooth styles' 8-level
 # limits can't hold across adapters at all: WARP's drift (kuwahara mean
 # 0.71, watercolor-kuwahara 0.89) is the size of a real regression
 # (radius 4 against 5 is 0.39). Where a case misses on WARP it has a
