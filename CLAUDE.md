@@ -32,7 +32,8 @@ Flint uses an **edit -> validate -> play** loop:
    # Debug/post-processing flags:
    #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style
    #                          (style = the entity style mask, #263: needs post-processing;
-   #                          prints and draws a legend of each id's hue, #309)
+   #                          prints and draws a legend of each id's hue, #309; runs mask_view
+   #                          alone, the scene's other styles suspended, #334)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
