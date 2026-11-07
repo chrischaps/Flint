@@ -41,8 +41,10 @@ struct Variant {
     // ink floor for a cell this variant only grazes
     outline: f32,
     min_coverage: f32,
-    _p3: u32,
-    _p4: u32,
+    // #320: ordered dither between the two nearest inks, 0..1
+    palette_dither: f32,
+    // #320: palette chroma before matching
+    chroma: f32,
 };
 
 struct AsciiUniforms {
@@ -88,6 +90,10 @@ struct AsciiUniforms {
     // The whole frame's exposure and normalisation (#289), as a variant's
     exposure: f32,
     stretch: f32,
+    // The whole frame's palette chroma and ink dither (#320)
+    chroma: f32,
+    palette_dither: f32,
+    _pad_palette: vec2<u32>,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -96,6 +102,8 @@ struct AsciiUniforms {
     // Every variant's palette inks, display values (rgb, unused w); the
     // whole frame's first
     palette: array<vec4<f32>, 32>,
+    // The same inks in OKLab (#320), for matching (palette.wgsl)
+    palette_lab: array<vec4<f32>, 32>,
     // Per-entity variants (#266). x: rows in use (1 = the whole frame
     // alone); y: 1 when the whole frame passes through (only entities
     // asked). Row 0 is unused: the whole frame draws from the fields above
