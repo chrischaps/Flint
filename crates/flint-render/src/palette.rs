@@ -19,6 +19,7 @@
 //! scene's folder then its parent, or a `.palette.toml` path. Every read
 //! goes through the vfs.
 
+use crate::file_watch::FileStamps;
 use flint_core::vfs;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -289,11 +290,13 @@ background = "#000000""##
 }
 
 /// Palettes by the name a style gives, loaded once each. Failures are
-/// kept, so a bad name warns once rather than every frame.
+/// kept, so a bad name warns once rather than every frame. [`Self::poll`]
+/// forgets them all when a file one depended on changes on disk (#323).
 #[derive(Default)]
 pub struct PaletteCache {
     search: Vec<PathBuf>,
     palettes: HashMap<String, Result<Arc<Palette>, PaletteError>>,
+    stamps: FileStamps,
 }
 
 impl PaletteCache {
@@ -302,6 +305,7 @@ impl PaletteCache {
         Self {
             search,
             palettes: HashMap::new(),
+            stamps: FileStamps::default(),
         }
     }
 
@@ -315,7 +319,14 @@ impl PaletteCache {
         if let Some(found) = self.palettes.get(name) {
             return found.clone();
         }
-        let loaded = self.resolve(name);
+        let candidates = self.candidates(name);
+        // Watch the candidates up to the one that loads: an edit to it, or a
+        // file appearing ahead of it (or at all, after a failure), reloads
+        let found = candidates.iter().position(vfs::is_file);
+        for path in &candidates[..found.map_or(candidates.len(), |i| i + 1)] {
+            self.stamps.watch(path);
+        }
+        let loaded = self.resolve(name, &candidates, found);
         if let Err(e) = &loaded {
             tracing::warn!("palette `{name}`: {e}");
         }
@@ -326,10 +337,24 @@ impl PaletteCache {
     /// Forget every palette, so the next [`Self::get`] reads files again.
     pub fn clear(&mut self) {
         self.palettes.clear();
+        self.stamps.clear();
     }
 
-    fn resolve(&self, name: &str) -> Result<Arc<Palette>, PaletteError> {
-        let candidates: Vec<PathBuf> = if name.ends_with(PALETTE_SUFFIX) {
+    /// Whether a file a palette was read from (or looked for at) has
+    /// changed on disk since; if so the cache is cleared, so the next
+    /// [`Self::get`] reads it again. Native only (a bundle never changes):
+    /// on the web this is always `false`. A few `stat`s; hosts call it a
+    /// few times a second, not every frame.
+    pub fn poll(&mut self) -> bool {
+        let changed = self.stamps.changed();
+        if changed {
+            self.clear();
+        }
+        changed
+    }
+
+    fn candidates(&self, name: &str) -> Vec<PathBuf> {
+        if name.ends_with(PALETTE_SUFFIX) {
             let mut c: Vec<PathBuf> = self.search.iter().map(|d| d.join(name)).collect();
             c.push(PathBuf::from(name));
             c
@@ -338,10 +363,18 @@ impl PaletteCache {
                 .iter()
                 .map(|d| d.join("palettes").join(format!("{name}{PALETTE_SUFFIX}")))
                 .collect()
-        };
+        }
+    }
+
+    fn resolve(
+        &self,
+        name: &str,
+        candidates: &[PathBuf],
+        found: Option<usize>,
+    ) -> Result<Arc<Palette>, PaletteError> {
         // A file beside the scene wins over a built-in of the same name
-        if let Some(path) = candidates.iter().find(|p| vfs::is_file(p)) {
-            return Palette::load(path).map(Arc::new);
+        if let Some(i) = found {
+            return Palette::load(&candidates[i]).map(Arc::new);
         }
         if let Some(p) = Palette::builtin(name) {
             return Ok(p);
@@ -432,6 +465,57 @@ mod tests {
             PaletteMatch::Luminance
         );
         assert!(cache.get("nope").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #323: an edited palette, a typo fixed on disk, and a file that
+    /// appears ahead of a built-in each clear the cache at the next poll.
+    #[test]
+    fn the_cache_reloads_what_changes_on_disk() {
+        let dir = std::env::temp_dir().join(format!("flint-palette-poll-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("palettes")).unwrap();
+        let file = dir.join("palettes/tide.palette.toml");
+        std::fs::write(&file, r##"colors = ["#ff0000"]"##).unwrap();
+        let mut cache = PaletteCache::new(vec![dir.clone()]);
+        let before = cache.get("tide").unwrap();
+        assert!(!cache.poll(), "nothing changed yet");
+        assert!(Arc::ptr_eq(&before, &cache.get("tide").unwrap()));
+
+        // An edited ink
+        std::fs::write(&file, r##"colors = ["#00ff00", "#0000ff"]"##).unwrap();
+        assert!(cache.poll());
+        let after = cache.get("tide").unwrap();
+        assert_eq!(after.colors().len(), 2);
+        assert_eq!(after.colors()[0], [0.0, 1.0, 0.0]);
+        assert!(!cache.poll(), "re-read, so settled again");
+
+        // A name that failed is looked for again once its file appears
+        assert!(cache.get("reef").is_err());
+        assert!(!cache.poll());
+        std::fs::write(
+            dir.join("palettes/reef.palette.toml"),
+            r##"colors = ["#ffffff"]"##,
+        )
+        .unwrap();
+        assert!(cache.poll());
+        assert!(cache.get("reef").is_ok());
+
+        // A file beside the scene shadows a built-in once it exists
+        assert_eq!(
+            cache.get("amber").unwrap().matching(),
+            PaletteMatch::Luminance
+        );
+        std::fs::write(
+            dir.join("palettes/amber.palette.toml"),
+            r##"match = "nearest"
+colors = ["#ffaa00"]"##,
+        )
+        .unwrap();
+        assert!(cache.poll());
+        assert_eq!(
+            cache.get("amber").unwrap().matching(),
+            PaletteMatch::Nearest
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

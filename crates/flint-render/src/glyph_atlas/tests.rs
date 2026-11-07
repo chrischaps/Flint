@@ -415,3 +415,59 @@ fn the_atlas_uploads_and_reads_back() {
         );
     }
 }
+
+/// #323: on disk, an edited ramp, a font file that appears (a typo fixed),
+/// and an edited font file each clear the cache at the next poll, and the
+/// next get hands out a new set.
+#[test]
+fn the_cache_reloads_what_changes_on_disk() {
+    let dir = std::env::temp_dir().join(format!("flint-glyphs-poll-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    let plain = dir.join("fonts/plain.glyphs.toml");
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
+    let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+    let before = cache.get("plain").unwrap();
+    assert!(!cache.poll(), "nothing changed yet");
+    assert!(Arc::ptr_eq(&before, &cache.get("plain").unwrap()));
+
+    // A ramp edited
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:#@\"\n").unwrap();
+    assert!(cache.poll());
+    let after = cache.get("plain").unwrap();
+    assert!(
+        !Arc::ptr_eq(&before, &after),
+        "a new Arc re-uploads the atlas"
+    );
+    assert_eq!(after.default_ramp().glyphs(), &[' ', '.', ':', '#', '@']);
+    assert!(!cache.poll(), "re-read, so settled again");
+
+    // A set whose font file is missing fails, and loads once it's there
+    std::fs::write(
+        dir.join("fonts/grid.glyphs.toml"),
+        "[font]\nfile = \"grid.png\"\ncell = [8, 8]\nchars = \" -\"\n\
+         [ramps.r]\nglyphs = \" -\"\n[edges]\nvertical = \"-\"\ndiagonal = \"-\"\nantidiagonal = \"-\"\n",
+    )
+    .unwrap();
+    assert!(cache.get("grid").is_err());
+    let png = |row: u32| {
+        let mut img = image::GrayImage::new(16, 8);
+        for x in 0..8 {
+            img.put_pixel(x + 8, row, image::Luma([255]));
+        }
+        img.save(dir.join("fonts/grid.png")).unwrap();
+    };
+    png(4);
+    assert!(cache.poll());
+    assert_eq!(
+        cache.get("grid").unwrap().atlas().sample('-', 3, 4),
+        Some(255)
+    );
+
+    // The font file itself redrawn (same size: the stamp's time must see it)
+    png(2);
+    assert!(cache.poll());
+    let grid = cache.get("grid").unwrap();
+    assert_eq!(grid.atlas().sample('-', 3, 4), Some(0));
+    assert_eq!(grid.atlas().sample('-', 3, 2), Some(255));
+    std::fs::remove_dir_all(&dir).ok();
+}

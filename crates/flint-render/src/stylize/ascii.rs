@@ -1027,7 +1027,13 @@ struct Fonts {
     /// Per-entity warnings already given (too many variants, a font of
     /// its own, a ramp or palette that doesn't fit), so each is said once.
     warned_variants: std::collections::HashSet<String>,
+    /// Frames drawn since the caches last looked at the disk (#323).
+    since_poll: u32,
 }
+
+/// The ASCII style asks its caches whether a palette or glyph set file
+/// changed every this many frames: a quarter second at 60 fps.
+const POLL_FRAMES: u32 = 15;
 
 impl Fonts {
     /// Look in the scene's folder and its parent, as the player finds
@@ -1546,6 +1552,27 @@ impl Ascii {
             fonts.palettes = PaletteCache::new(search.clone());
             fonts.search = search;
             fonts.loaded = None;
+        }
+        // Hot reload (#323): a changed palette or glyph set file clears its
+        // cache; a new set is a new Arc, so the atlas re-uploads below, and
+        // palettes are packed afresh every frame
+        fonts.since_poll += 1;
+        if fonts.since_poll >= POLL_FRAMES {
+            fonts.since_poll = 0;
+            let glyphs = fonts.cache.poll();
+            let palettes = fonts.palettes.poll();
+            if glyphs || palettes {
+                tracing::info!(
+                    "ascii: reloading {}",
+                    match (glyphs, palettes) {
+                        (true, true) => "glyph sets and palettes",
+                        (true, false) => "glyph sets",
+                        _ => "palettes",
+                    }
+                );
+                fonts.warned = None;
+                fonts.warned_variants.clear();
+            }
         }
         let name = frame.option("font").to_string();
         let set = fonts
