@@ -222,9 +222,16 @@ args = ["--style", "ascii"]     # any flint render flags
 | `--bless` | Write each render over its golden instead of comparing. Look at them before committing |
 | `--case <name>` | Only this case, or every case whose name contains it; repeatable |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level) and `report.json` go; default a folder in the system temp dir |
-| `--require-gpu` | Fail instead of skipping when there is no GPU adapter |
+| `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
+| `--bless-variant` | Write each render as this adapter's variant of its golden, `<stem>.<key>.png` |
 
-Without a GPU adapter every case is skipped and the suite passes, which is what happens on CI today. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
+Without a GPU adapter every case is skipped and the suite passes, unless `--require-gpu` or `FLINT_REQUIRE_GPU=1` is given. Under `FLINT_REQUIRE_GPU`, an adapter named by `WGPU_ADAPTER_NAME` that doesn't exist is also a failure; without it, the suite falls back to the default adapter.
+
+### Adapters and golden variants
+
+Two adapters never render exactly alike. The difference is usually small, but a backend can be as far off as a real regression, so a golden can carry a **variant** per adapter beside it: `kuwahara.warp.png` next to `kuwahara.png`. The suite prints the adapter it found and its key: `warp` (WARP, the software DX12 adapter), `lavapipe` (Mesa's software Vulkan), or else the backend's name (`vulkan`, `dx12`, `metal`, `gl`). A case compares with its adapter's variant when there is one, and with the plain golden otherwise. `--bless` rewrites whichever of the two the case compared with, and `--bless-variant` creates the variant. Each case in `report.json` records `adapter`, the `golden` it compared with, and `variant`, the path where this adapter's variant would go.
+
+On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. wgpu hides WARP on a machine that has a GPU, so WARP variants can't be rendered locally. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
 
 ## Visual Regression Testing
 

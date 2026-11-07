@@ -137,7 +137,13 @@ Flint uses an **edit -> validate -> play** loop:
    **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
-   --test render_goldens` runs it. A new style adds a case. A `.suite.toml` there is still music to WAV.
+   --test render_goldens` runs it. A new style adds a case. CI runs the goldens and
+   `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`) with `FLINT_REQUIRE_GPU=1`,
+   which turns a GPU test's skip into a failure (`gpu_select::skip_without_gpu`; a new GPU
+   test calls it). A golden may have a per-adapter variant `<stem>.<warp|lavapipe|vulkan|dx12>.png`
+   (`--bless-variant`); wgpu hides WARP on a machine with a GPU, so WARP variants come from
+   the job's `stylize-goldens-warp` artifact. Two traps it caught (DX12/FXC only): a `switch`
+   miscompiled, and `fract(theta - base)` on a ±ε knife edge. A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 
