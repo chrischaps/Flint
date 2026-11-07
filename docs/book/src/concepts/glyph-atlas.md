@@ -82,6 +82,8 @@ horizontal = "~"
 
 Failures are cached too, so a bad name warns once rather than every frame.
 
+**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and the candidates searched ahead of it (absent ones too). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. On the web the bundle is fixed and nothing is polled. `demo/ascii_tidepool.scene.toml` names `demo/fonts/tidepool.glyphs.toml` to try it on.
+
 ## Web and bundles
 
 Every read goes through `flint_core::vfs`: the TOML through `vfs::read_to_string`, fonts through `vfs::read`, grid images through `flint_render::open_image`. A game bundle served on the web loads a set exactly as the disk does. `flint bundle` packs `fonts/` and fails if a `*.glyphs.toml` names a font file that isn't packed.

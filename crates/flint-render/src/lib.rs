@@ -11,6 +11,7 @@ pub mod bitmap_font;
 mod camera;
 mod context;
 mod debug;
+mod file_watch;
 pub mod frustum;
 pub mod gpu_select;
 pub mod bind_cache;

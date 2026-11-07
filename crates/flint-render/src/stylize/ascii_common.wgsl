@@ -34,13 +34,17 @@ struct Variant {
     // how far (0..1) its tone is stretched over the slot's own range
     exposure: f32,
     stretch: f32,
-    _p2: u32,
+    // #313: the first row + 1 of the variant's band in the variant cell
+    // state (ascii_variant_cells.wgsl), 0 when it has none
+    cell_row: u32,
     // #288: silhouette outline width in output pixels (0 = off), and the
     // ink floor for a cell this variant only grazes
     outline: f32,
     min_coverage: f32,
-    _p3: u32,
-    _p4: u32,
+    // #320: ordered dither between the two nearest inks, 0..1
+    palette_dither: f32,
+    // #320: palette chroma before matching
+    chroma: f32,
 };
 
 struct AsciiUniforms {
@@ -86,6 +90,10 @@ struct AsciiUniforms {
     // The whole frame's exposure and normalisation (#289), as a variant's
     exposure: f32,
     stretch: f32,
+    // The whole frame's palette chroma and ink dither (#320)
+    chroma: f32,
+    palette_dither: f32,
+    _pad_palette: vec2<u32>,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -94,15 +102,25 @@ struct AsciiUniforms {
     // Every variant's palette inks, display values (rgb, unused w); the
     // whole frame's first
     palette: array<vec4<f32>, 32>,
+    // The same inks in OKLab (#320), for matching (palette.wgsl)
+    palette_lab: array<vec4<f32>, 32>,
     // Per-entity variants (#266). x: rows in use (1 = the whole frame
     // alone); y: 1 when the whole frame passes through (only entities
     // asked). Row 0 is unused: the whole frame draws from the fields above
-    // and the cell state.
+    // and the cell state. z: bands in the variant cell state (#313).
     variant_meta: vec4<u32>,
     variants: array<Variant, 64>,
     // The variant slot of each mask id below 256, four ids a vec4.
     slots: array<vec4<u32>, 64>,
+    // The variant cell state's bands (#313), `variant_meta.z` of them: each
+    // grid's cell and origin, and (first row, rows, columns, footprint as
+    // f32 bits)
+    bands: array<vec4<f32>, 8>,
+    band_rows: array<vec4<u32>, 8>,
 };
+
+// Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
+const MAX_BANDS: u32 = 8u;
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
 

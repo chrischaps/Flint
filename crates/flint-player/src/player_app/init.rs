@@ -105,6 +105,8 @@ impl PlayerApp {
             scene_sheen: None,
             scene_camera: None,
             scene_post_process: None,
+            style_specs: Vec::new(),
+            style_time: None,
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -240,6 +242,25 @@ impl PlayerApp {
     #[cfg(target_os = "android")]
     pub fn set_android_axis_reader(&mut self, reader: fn() -> [f32; 4]) {
         self.android_axis_reader = Some(reader);
+    }
+
+    /// The post-processing config a scene starts with: its `[post_process]`
+    /// with the `--style` words written over it (#328). `None` when the
+    /// scene authors no block and there are no words, so the renderer keeps
+    /// what it has, as before.
+    pub fn scene_post_config(&self) -> Option<flint_render::PostProcessConfig> {
+        if self.scene_post_process.is_none() && self.style_specs.is_empty() {
+            return None;
+        }
+        let mut config = self
+            .scene_post_process
+            .as_ref()
+            .map(scene_loading::post_process_config_from_def)
+            .unwrap_or_default();
+        for e in flint_render::stylize::apply_style_specs(&mut config, &self.style_specs) {
+            tracing::warn!("{e}");
+        }
+        Some(config)
     }
 
     /// Apply scene-level camera configuration from `CameraDef`
@@ -579,9 +600,8 @@ impl PlayerApp {
         self.apply_camera_tuning();
 
         // Apply scene-level post-processing config
-        if let Some(pp_def) = &self.scene_post_process {
-            scene_renderer
-                .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
+        if let Some(config) = self.scene_post_config() {
+            scene_renderer.set_post_process_config(config);
             scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
@@ -948,4 +968,56 @@ fn procgen_disk_config(scene_dir: &Path) -> Option<flint_procgen::DiskCacheConfi
         .filter(|p| vfs::is_dir(p.join("schemas")) || vfs::is_dir(p.join("specs")))
         .unwrap_or(scene_dir);
     Some(flint_procgen::DiskCacheConfig::in_project(project))
+}
+
+#[cfg(test)]
+mod style_word_tests {
+    use super::PlayerApp;
+
+    fn app() -> PlayerApp {
+        PlayerApp::new(
+            flint_ecs::FlintWorld::new(),
+            "style_words.scene.toml".into(),
+            false,
+            None,
+            None,
+        )
+    }
+
+    fn scene(post: &str) -> flint_scene::PostProcessDef {
+        let doc: toml::Table = post.parse().unwrap();
+        doc["post_process"].clone().try_into().unwrap()
+    }
+
+    #[test]
+    fn without_words_or_a_block_the_renderer_keeps_its_config() {
+        assert!(app().scene_post_config().is_none());
+    }
+
+    #[test]
+    fn style_words_win_over_every_scene_they_meet() {
+        let mut app = app();
+        app.style_specs = vec!["ascii:cell=12".into()];
+
+        // A scene with no [post_process] still gets the style
+        let config = app.scene_post_config().unwrap();
+        assert!(config.styles.is_enabled("ascii"));
+        assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
+
+        // A scene that authors the same style, and keeps its own bloom:
+        // the word wins on the style and leaves the rest alone. This is
+        // what a transition re-reads (#328)
+        app.scene_post_process = Some(scene(
+            "[post_process]\nbloom_intensity = 0.3\n\
+             [post_process.styles.ascii]\ncell = 6\nramp = \"blocks\"\n",
+        ));
+        let config = app.scene_post_config().unwrap();
+        assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
+        assert_eq!(config.styles.option("ascii", "ramp"), Some("blocks"));
+        assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
+
+        // ascii:off turns off a style the scene has on
+        app.style_specs = vec!["ascii:off".into()];
+        assert!(!app.scene_post_config().unwrap().styles.is_enabled("ascii"));
+    }
 }

@@ -35,6 +35,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("anisotropy", "Anisotropy", "How far strokes stretch along the image's edges; 0 is round"),
     ],
     component: None,
+    feeds_bloom: false,
     create: |d| Box::new(Kuwahara::new(d)),
 };
 

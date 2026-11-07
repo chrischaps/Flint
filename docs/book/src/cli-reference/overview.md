@@ -58,6 +58,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
+| `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off`. Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
+| `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).

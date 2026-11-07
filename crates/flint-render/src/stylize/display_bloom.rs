@@ -118,6 +118,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         ),
     ],
     component: None,
+    // A display style draws after bloom; it is the bloom here
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Display Bloom Uniform BGL");

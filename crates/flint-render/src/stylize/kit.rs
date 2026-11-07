@@ -111,7 +111,7 @@ pub fn fullscreen_pipeline_entry(
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    fullscreen_pipeline_with(device, label, module, fragment, layouts, format, None)
+    fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], None)
 }
 
 /// [`fullscreen_pipeline_entry`] with a blend: a style with several passes
@@ -126,6 +126,42 @@ pub fn fullscreen_pipeline_with(
     format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
+    fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], blend)
+}
+
+/// [`fullscreen_pipeline`] writing one target per format, `fs_main`'s
+/// `@location(i)` into the i-th (#313).
+pub fn fullscreen_pipeline_targets(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    layouts: &[&wgpu::BindGroupLayout],
+    formats: &[wgpu::TextureFormat],
+) -> wgpu::RenderPipeline {
+    fullscreen_pipeline_entry_targets(device, label, module, "fs_main", layouts, formats, None)
+}
+
+/// The full-screen pipelines' one maker: entry point `fragment`, a target
+/// per format, each with `blend`.
+fn fullscreen_pipeline_entry_targets(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    formats: &[wgpu::TextureFormat],
+    blend: Option<wgpu::BlendState>,
+) -> wgpu::RenderPipeline {
+    let targets: Vec<Option<wgpu::ColorTargetState>> = formats
+        .iter()
+        .map(|format| {
+            Some(wgpu::ColorTargetState {
+                format: *format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        })
+        .collect();
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: layouts,
@@ -143,11 +179,7 @@ pub fn fullscreen_pipeline_with(
         fragment: Some(wgpu::FragmentState {
             module,
             entry_point: Some(fragment),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            targets: &targets,
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState {
@@ -196,4 +228,40 @@ pub fn fullscreen_pass(
         pipeline,
         groups,
     );
+}
+
+/// [`fullscreen_pass`] into several targets at once (a pipeline from
+/// [`fullscreen_pipeline_targets`]), each cleared to black first.
+pub fn fullscreen_pass_targets(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    targets: &[&wgpu::TextureView],
+    pipeline: &wgpu::RenderPipeline,
+    groups: &[&wgpu::BindGroup],
+) {
+    let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = targets
+        .iter()
+        .map(|view| {
+            Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })
+        })
+        .collect();
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &attachments,
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    });
+    pass.set_pipeline(pipeline);
+    for (i, group) in groups.iter().enumerate() {
+        pass.set_bind_group(i as u32, *group, &[]);
+    }
+    pass.draw(0..3, 0..1);
 }
