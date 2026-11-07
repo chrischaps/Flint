@@ -496,6 +496,184 @@ fn ascii_palette_modes_draw_only_the_palettes_colours() {
     );
 }
 
+/// The colour of grid pixel (x, y) in the palette agreement test: 16
+/// steps of each channel over the 64x64 target.
+fn grid_colour(x: u32, y: u32) -> [f32; 3] {
+    let i = y * SIZE + x;
+    [i % 16, (i / 16) % 16, i / 256].map(|c| c as f32 / 15.0)
+}
+
+const PALETTE_HARNESS: &str = r#"
+struct Harness {
+    inks: array<vec4<f32>, 32>,
+    lab: array<vec4<f32>, 32>,
+    // len, chroma, dither, unused
+    look: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> h: Harness;
+fn palette_ink(i: u32) -> vec3<f32> { return h.inks[i].rgb; }
+fn palette_ink_lab(i: u32) -> vec3<f32> { return h.lab[i].rgb; }
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<u32>(floor(pos.xy));
+    let i = p.y * 64u + p.x;
+    let c = vec3<f32>(f32(i % 16u), f32((i / 16u) % 16u), f32(i / 256u)) / 15.0;
+    let ink = pal_pick(0u, u32(h.look.x), c, h.look.y, h.look.z, vec2<i32>(p));
+    // The target is sRGB: hand it linear so its bytes are the display ink
+    let lo = ink / 12.92;
+    let hi = pow((ink + 0.055) / 1.055, vec3<f32>(2.4));
+    return vec4<f32>(select(hi, lo, ink <= vec3<f32>(0.04045)), 1.0);
+}
+"#;
+
+/// `Palette::pick` and `palette.wgsl`'s `pal_pick` give every colour of a
+/// grid the same ink, with chroma pushed and dither on (#320). A colour
+/// within float noise of a tie (two inks, or the dither threshold) may go
+/// either way and is left out.
+#[test]
+fn the_palette_matcher_agrees_with_its_cpu_reference() {
+    use flint_render::palette::{bayer4, oklab, Palette, PALETTE_WGSL};
+    use wgpu::util::DeviceExt;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let device = &gpu.device;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("palette harness"),
+        source: wgpu::ShaderSource::Wgsl(format!("{PALETTE_WGSL}\n{PALETTE_HARNESS}").into()),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            }),
+        ),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(FORMAT.into())],
+            compilation_options: Default::default(),
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let mut checked = 0;
+    for (name, chroma, dither) in [
+        ("cga", 1.0, 0.0),
+        ("cga16", 1.0, 0.0),
+        ("cga16", 2.0, 0.0),
+        ("cga", 1.5, 1.0),
+        ("cga16", 2.5, 0.6),
+        ("cga-warm", 0.0, 0.0),
+    ] {
+        let palette = Palette::builtin(name).unwrap();
+        let mut data: Vec<f32> = Vec::new();
+        let pad = |v: &mut Vec<f32>, rows: Vec<[f32; 3]>| {
+            for i in 0..32 {
+                let c = rows.get(i).copied().unwrap_or_default();
+                v.extend([c[0], c[1], c[2], 0.0]);
+            }
+        };
+        pad(&mut data, palette.colors().to_vec());
+        pad(&mut data, palette.lab_colors());
+        data.extend([palette.colors().len() as f32, chroma, dither, 0.0]);
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gpu.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        let pixels = gpu.pixels();
+
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let colour = grid_colour(x, y);
+                let ([_, _], [d1, d2]) = palette.nearest_two(colour, chroma);
+                // A tie between the two nearest, or a share on the
+                // dither's threshold, is float noise either side
+                let share = d1.sqrt() / (d1.sqrt() + d2.sqrt()).max(1e-6);
+                if (d2 - d1).abs() < 1e-5
+                    || (dither > 0.0
+                        && (share * dither - bayer4([x as i32, y as i32])).abs() < 1e-4)
+                {
+                    continue;
+                }
+                let want = palette
+                    .pick(colour, chroma, dither, [x as i32, y as i32])
+                    .map(|v| (v * 255.0).round() as u8);
+                let at = ((y * SIZE + x) * 4) as usize;
+                let got = &pixels[at..at + 3];
+                assert!(
+                    (0..3).all(|i| got[i].abs_diff(want[i]) <= 1),
+                    "{name} chroma {chroma} dither {dither}: {colour:?} (lab {:?}) at ({x}, {y}) \
+                     is {got:?} on the GPU, {want:?} on the CPU",
+                    oklab(colour)
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 6 * 4000, "only {checked} colours compared");
+}
+
 /// Cells (8 px) whose pixels differ between two RGBA8 frames.
 fn changed_cells(a: &[u8], b: &[u8]) -> usize {
     let n = SIZE as usize / 8;

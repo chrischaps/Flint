@@ -179,6 +179,18 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             max: 1.0,
         },
         StyleParam {
+            name: "chroma",
+            default: 1.0,
+            min: 0.0,
+            max: 4.0,
+        },
+        StyleParam {
+            name: "palette_dither",
+            default: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
             name: "exposure",
             default: 0.0,
             min: -4.0,
@@ -351,6 +363,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "dither",
             "Dither",
             "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
+        ),
+        StyleHint::new(
+            "chroma",
+            "Palette chroma",
+            "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
+        ),
+        StyleHint::new(
+            "palette_dither",
+            "Palette dither",
+            "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
         ),
         StyleHint::new(
             "scope",
@@ -656,6 +678,10 @@ struct AsciiUniforms {
     /// The whole frame's exposure in stops and tone stretch (#289).
     exposure: f32,
     stretch: f32,
+    /// The whole frame's palette chroma and ink dither (#320).
+    chroma: f32,
+    palette_dither: f32,
+    _pad_palette: [u32; 2],
     /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
     /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
@@ -665,6 +691,8 @@ struct AsciiUniforms {
     /// Every variant's palette inks, one palette after another (the whole
     /// frame's first; display values, rgb, unused w).
     palette: [[f32; 4]; MAX_COLORS],
+    /// The same inks in OKLab (#320; L, a, b, unused w), for matching.
+    palette_lab: [[f32; 4]; MAX_COLORS],
     /// x: rows of `variants` in use (1 = the whole frame alone); y: 1 when
     /// the whole frame passes through (only entities asked, #266).
     variant_meta: [u32; 4],
@@ -700,12 +728,15 @@ struct VariantUniform {
     /// Exposure in stops and tone stretch, 0..1 (#289).
     exposure: f32,
     stretch: f32,
-    _pad: u32,
+    /// Palette chroma before matching (#320).
+    chroma: f32,
     /// Silhouette outline width in output pixels (#288; 0 = off).
     outline: f32,
     /// The least ink of a cell this variant only grazes (#288).
     min_coverage: f32,
-    _pad_silhouette: [u32; 2],
+    /// Ordered dither between the two nearest inks, 0..1 (#320).
+    palette_dither: f32,
+    _pad: u32,
 }
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
@@ -847,6 +878,7 @@ const CELLS_SHADER: &str = concat!(
 );
 const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
+    include_str!("../palette.wgsl"),
     include_str!("ascii.wgsl")
 );
 const STATS_SHADER: &str = concat!(
@@ -1110,11 +1142,12 @@ fn variant_uniform(
         palette_match: palette.matching,
         exposure: param("exposure").clamp(-8.0, 8.0),
         stretch: param("normalize").clamp(0.0, 1.0),
-        _pad: 0,
+        chroma: param("chroma").clamp(0.0, 8.0),
         // In points here; the caller scales it to pixels (`outline_pixels`)
         outline: param("outline"),
         min_coverage: param("min_coverage").clamp(0.0, 1.0),
-        _pad_silhouette: [0; 2],
+        palette_dither: param("palette_dither").clamp(0.0, 1.0),
+        _pad: 0,
     }
 }
 
@@ -1146,6 +1179,8 @@ struct PalettePlace {
 #[derive(Default)]
 struct Palettes {
     inks: Vec<[f32; 4]>,
+    /// The inks in OKLab, beside `inks` (#320).
+    lab: Vec<[f32; 4]>,
     placed: Vec<(String, PalettePlace)>,
 }
 
@@ -1168,6 +1203,9 @@ impl Palettes {
         };
         self.inks
             .extend(colors.iter().map(|c| [c[0], c[1], c[2], 1.0]));
+        self.lab.resize(at.start as usize, [0.0; 4]);
+        self.lab
+            .extend(palette.lab_colors().iter().map(|c| [c[0], c[1], c[2], 0.0]));
         self.placed.push((palette.name().to_string(), at));
         Some(at)
     }
@@ -1719,9 +1757,13 @@ impl StylePass for Ascii {
             edge_on: u32::from(edges > 0.0),
             exposure: frame.param("exposure").clamp(-8.0, 8.0),
             stretch: frame.param("normalize").clamp(0.0, 1.0),
+            chroma: frame.param("chroma").clamp(0.0, 8.0),
+            palette_dither: frame.param("palette_dither").clamp(0.0, 1.0),
+            _pad_palette: [0; 2],
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],
+            palette_lab: [[0.0; 4]; MAX_COLORS],
             variant_meta: [
                 variants.len() as u32,
                 !(frame.whole_frame() && frame.option("scope") != "entities") as u32,
@@ -1739,6 +1781,7 @@ impl StylePass for Ascii {
             pair[(i % 2) * 2 + 1] = y;
         }
         uniforms.palette[..palettes.inks.len()].copy_from_slice(&palettes.inks);
+        uniforms.palette_lab[..palettes.lab.len()].copy_from_slice(&palettes.lab);
         uniforms.variants[..variants.len()].copy_from_slice(&variants);
         for (i, slot) in slots.iter().enumerate() {
             uniforms.slots[i / 4][i % 4] = *slot;
@@ -1814,18 +1857,18 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        // 144 bytes of scalars (#267's edge strength included), 2
-        // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 32 vec4<f32> of
-        // palette, then the variant table's 16-byte header, its rows of 128
+        // 160 bytes of scalars (#267's edge strength, #320's palette look), 2
+        // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 2 x 32 vec4<f32> of
+        // palette (inks, then their OKLab), then the variant table's 16-byte header, its rows of 128
         // (#288's silhouette floors are the last 16) and its 64 vec4<u32>
         // of slots (#266)
         assert_eq!(std::mem::size_of::<VariantUniform>(), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
-            144 + 2 * 16 + 64 * 16 + MAX_COLORS * 16 + 16 + MAX_VARIANTS * 128 + 64 * 16
+            160 + 2 * 16 + 64 * 16 + 2 * MAX_COLORS * 16 + 16 + MAX_VARIANTS * 128 + 64 * 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
-        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 144);
+        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
         assert_eq!(std::mem::size_of::<EdgeUniforms>(), 128);
         assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 48);
     }

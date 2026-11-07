@@ -127,24 +127,23 @@ fn glyph_coverage(origin: vec2<u32>, local: vec2<f32>, cell_size: vec2<f32>) -> 
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// The palette ink for a cell of full-value `hue` and tone `t`, from the
-// inks at `start`
-fn palette_ink(start: u32, len: u32, matching: u32, hue: vec3<f32>, t: f32) -> vec3<f32> {
-    let n = max(len, 1u);
-    if matching == 1u {
-        return u.palette[start + min(u32(t * f32(n)), n - 1u)].rgb;
+// The inks palette.wgsl's matcher reads
+fn palette_ink(i: u32) -> vec3<f32> {
+    return u.palette[i].rgb;
+}
+
+fn palette_ink_lab(i: u32) -> vec3<f32> {
+    return u.palette_lab[i].rgb;
+}
+
+// The palette ink for a cell of full-value `hue` and tone `t` in look `v`,
+// from its inks; `cell` places the cell in the dither pattern (#320)
+fn cell_ink(v: Variant, hue: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
+    let n = max(v.palette_len, 1u);
+    if v.palette_match == 1u {
+        return u.palette[v.palette_start + min(u32(t * f32(n)), n - 1u)].rgb;
     }
-    var best = u.palette[start].rgb;
-    var best_d = 1e9;
-    for (var i = 0u; i < n; i++) {
-        let c = u.palette[start + i].rgb;
-        let d = dot(c - hue, c - hue);
-        if d < best_d {
-            best_d = d;
-            best = c;
-        }
-    }
-    return best;
+    return pal_pick(v.palette_start, n, hue, v.chroma, v.palette_dither, vec2<i32>(cell));
 }
 
 // How much of the glyph lies within a couple of pixels of `local`, less
@@ -185,6 +184,8 @@ fn frame_look() -> Variant {
     v.palette_match = u.palette_match;
     v.exposure = u.exposure;
     v.stretch = u.stretch;
+    v.chroma = u.chroma;
+    v.palette_dither = u.palette_dither;
     return v;
 }
 
@@ -192,7 +193,7 @@ fn frame_look() -> Variant {
 // at the pixel `local` in its cell; `edge` is the cell's line glyph slot
 // (#267), or 4 for none. `floor` is the least ink the pixel takes (#288: a
 // silhouette or a thin feature's pixel), 0 for the glyph alone.
-fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
+fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
     let n = max(v.ramp_len, 1u);
     var step = min(step_in, n - 1u);
     // Inverse: the ink fills the cell and the glyph is cut from it, so the
@@ -239,7 +240,7 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edg
             ground = vec3<f32>(lum * v.background);
         }
         case 4u: {
-            ink = palette_ink(v.palette_start, v.palette_len, v.palette_match, hue, t);
+            ink = cell_ink(v, hue, t, cell);
             ground = v.palette_bg;
         }
         default: {
@@ -367,7 +368,7 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     if v.outline > 0.0 && on_silhouette(slot, p, v.outline) {
         floor_ink = 1.0;
     }
-    return shade(v, col, t, step, local, edge, floor_ink);
+    return shade(v, col, t, step, cell, local, edge, floor_ink);
 }
 
 // Whether the pixel at `p`, of variant `slot`, lies within `width` output
@@ -435,7 +436,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
         let col = vec3<f32>(state.rgb) / UNORM16;
         let t = banded(tone(slot_luma(col, 0u)));
-        out = shade(frame_look(), col, t, state.a, local, edge_slot(cell), 0.0);
+        out = shade(frame_look(), col, t, state.a, cell, local, edge_slot(cell), 0.0);
     }
     return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);
 }
