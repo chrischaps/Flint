@@ -166,12 +166,31 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# The variant cell pre-pass (#313) sums a variant's cells once, but only at
+# a footprint of 2 or more: these pin it on both grids. Blessed with main's
+# binary from before #313, so they say the pre-pass draws the same pixels
+[[case]]
+name = "ascii-style-footprint2"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
+
+[[case]]
+name = "ascii-style-object-footprint3"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
+
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
 # both carried in the mask's .g beside their ids
 [[case]]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
+
+# The same through the variant cell pre-pass (#313), blessed as above
+[[case]]
+name = "ascii-blend-footprint2"
+scene = "demo/stylize_blend.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
 
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
 # glass. The fire stays fire and the glass fades the crate's glyphs by its
