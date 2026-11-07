@@ -86,11 +86,24 @@
 //! style that honours the blend (ASCII, user styles through
 //! `flint_style_blend`) shows the fire as fire and the stone through any
 //! uncovered share; a fully covered pixel keeps its id at blend 0. A
-//! transparent that is itself styled is left out of the veil (whether it
-//! should be stylized is #310).
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
 //!
-//! Sprites, grass, terrain and water stay unmasked and out of the veil:
-//! they write no mask (and, but for terrain, no depth either).
+//! ## Terrain and transparents (#310)
+//!
+//! Terrain chunks are masked when the terrain's entity (named by
+//! `SceneRenderer::set_terrain_entity`) is styled: they use the standard
+//! `Vertex` and transform layout, so the static pipeline draws them as is.
+//!
+//! A styled transparent is a lens. Its draws come after every opaque one,
+//! back to front as the scene drew them; they write no depth, but each
+//! fragment still tests against the opaques' depth, so where one shows it
+//! is the nearest styled surface and its id replaces what's behind it. The
+//! style then draws the whole pixel, glass and what's seen through it.
+//!
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
