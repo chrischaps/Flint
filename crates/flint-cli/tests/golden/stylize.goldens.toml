@@ -99,6 +99,19 @@ name = "ascii-full-dither"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii:dither=1"]
 
+# Exposure and normalisation (#289): the whole frame's tones stretched over
+# the ramp from this frame's own statistics, then only the styled props,
+# each stretched over its own range after half a stop of exposure
+[[case]]
+name = "ascii-full-normalize"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:normalize=1"]
+
+[[case]]
+name = "ascii-entities-normalize"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
+
 # --- per-entity ASCII -----------------------------------------------------
 
 # The spike's screen-grid mode: only the named props are glyphs

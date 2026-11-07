@@ -24,6 +24,13 @@
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
 @group(2) @binding(0) var history: texture_2d<u32>;
+// Each slot's tone range (#289, ascii_stats_resolve.wgsl); slot 0 is ours
+@group(3) @binding(0) var tone_stats: texture_2d<f32>;
+
+// The tone luminance of a cell colour: stretched over the frame's range
+fn cell_luma(col: vec3<f32>) -> f32 {
+    return stretched(luma(col), textureLoad(tone_stats, vec2<i32>(0, 0), 0), u.stretch);
+}
 
 // Colour change (in luminance) over which smoothing lets go: below LO the
 // cell averages fully, above HI it takes the new colour.
@@ -65,14 +72,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<u32> {
             sum += shown(vec2<i32>(floor(q)));
         }
     }
-    var col = sum / 16.0;
+    // Exposure (#289) first, so the history and the glyph pass see the
+    // colour the cell is drawn in
+    var col = exposed(sum / 16.0, exp2(u.exposure));
 
     let n = max(u.ramp_len, 1u);
     var kept = -1;
     if u.history == 1u {
         let prev = textureLoad(history, index, 0);
         let prev_col = vec3<f32>(prev.rgb) / UNORM16;
-        let jump = abs(luma(col) - luma(prev_col));
+        let jump = abs(cell_luma(col) - cell_luma(prev_col));
         let w = clamp(u.smoothing, 0.0, 0.99) * (1.0 - smoothstep(SNAP_LO, SNAP_HI, jump));
         col = mix(col, prev_col, w);
         kept = i32(min(prev.a, n - 1u));
@@ -80,7 +89,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<u32> {
 
     // The tone, dithered on the grid by up to one band
     let bands = select(f32(n), u.levels, u.levels >= 1.0);
-    let t = tone(luma(col)) + (bayer(index) - 0.5) * u.dither / bands;
+    let t = tone(cell_luma(col)) + (bayer(index) - 0.5) * u.dither / bands;
     var step = step_of(t, n);
     if kept >= 0 && u.hysteresis > 0.0 {
         // Keep last frame's glyph if a tone within the margin would draw it

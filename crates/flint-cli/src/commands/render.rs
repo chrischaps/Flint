@@ -192,6 +192,16 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ascii_dither: Option<f32>,
 
+    /// ASCII style: stops of gain on each cell's colour before its glyph
+    /// is picked (-4 to 4, default 0; #289)
+    #[arg(long, allow_hyphen_values = true)]
+    pub ascii_exposure: Option<f32>,
+
+    /// ASCII style: stretch each style id's luminance range over the
+    /// glyph ramp, measured from this frame (0-1, default 0; #289)
+    #[arg(long)]
+    pub ascii_normalize: Option<f32>,
+
     /// ASCII style coverage (#266): `screen` glyphizes the whole frame;
     /// `entities` only the entities with an `ascii_style` (or a
     /// `style_mask` naming ascii), the other flags being their preset.
@@ -1036,6 +1046,8 @@ fn apply_ascii_style_flags(
         || args.ascii_edge_threshold.is_some()
         || args.ascii_edge_max.is_some()
         || args.ascii_dither.is_some()
+        || args.ascii_exposure.is_some()
+        || args.ascii_normalize.is_some()
         || args.ascii_scope.is_some()
         || args.ascii_grid.is_some();
     if args.ascii.is_some() || style_only {
@@ -1113,6 +1125,8 @@ fn apply_ascii_style_flags(
         ("edge_depth", args.ascii_edge_depth),
         ("edge_normal", args.ascii_edge_normal),
         ("dither", args.ascii_dither),
+        ("exposure", args.ascii_exposure),
+        ("normalize", args.ascii_normalize),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);

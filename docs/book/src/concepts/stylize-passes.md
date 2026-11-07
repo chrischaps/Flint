@@ -105,6 +105,8 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
 | `background` | `0.15` | How much of the cell's colour fills behind its glyph: 0 is black, 1 the cell's colour |
 | `brightness`, `contrast` | `0`, `1` | Luminance remap before the ramp: contrast about mid-grey, then an offset |
+| `exposure` | `0` | Stops of gain on each cell's colour, in linear light, before its glyph and ink are picked (-4--4, `--ascii-exposure`). See [dark props](#dark-props-exposure-and-normalize) |
+| `normalize` | `0` | Stretch the style's own luminance range over the ramp, measured from the same frame: the whole frame's, or each styled entity's (0--1, `--ascii-normalize`; #289) |
 | `ink` | `1` | Glyph brightness |
 | `levels` | `0` | Quantize the tone to this many bands (0 keeps every step of the ramp) |
 | `footprint` | `1` | Average each cell's colour over this many cells (wider settles texture noise) |
@@ -202,6 +204,31 @@ Edges come from geometry, never from colour, so a wood texture makes none but a 
 Under a render scale the edge pixels are the scene's, so a line is still one cell wide. The editor grid of `flint render` (on unless `--no-grid`) writes depth, so its lines are traced too; renders of the look pass `--no-grid`.
 
 Edges come with the colour modes: line glyphs are inked as the cell's tone glyph would be, cut out of the ink under `ground = "inverse"`, and glow around them. The edge cells lie on the screen grid, so per-entity variants on that grid get them, and a variant on `grid = "object"` keeps its tone glyphs. Edge cells keep no history: under #277's temporal stability the tone glyphs hold still and the lines follow the geometry each frame. The [stylize goldens](#goldens) pin pbr_test without edges (the #265 golden, unchanged), with edges, and the sphere and box above.
+
+### Dark props: exposure and normalize
+
+Glyph density follows luminance, so a dark prop maps to `.` and `-` and nearly disappears: a barrel in the meadow reads as a black shape with a few dots. Carrying hue in the ink helps, but the brightness is still gone. A `luminance` palette (`phosphor`, `amber`, `mono`) dims it twice, since it picks the ink rung by the same tone (#289).
+
+Two settings fix it, on the scene's table or on one entity's `ascii_style`:
+
+- **`exposure`**, in stops: the cell's colour times 2^exposure in linear light, before the glyph and ink are picked. Simple, but a dark prop's range stays narrow, only higher up.
+- **`normalize`**, 0 to 1: the style's own tone range is stretched over the whole ramp. Each style id has its own range: the whole frame's (slot 0), and each per-entity variant's, so a dark barrel and a bright sign in one frame are stretched separately. 1 maps the range onto 0..1; between 0 and 1 mixes the stretched tone with the plain one.
+
+```toml
+[entities.barrel.ascii_style]
+normalize = 1.0     # its own tones over every glyph of the ramp
+exposure = 0.5      # optional: half a stop first
+```
+
+![The meadow barrel four ways: smooth; plain glyphs, mostly dots; brightness 0.35 and contrast 1.4, brighter but still narrow; normalize = 1, the full ramp from dots to @ with the hoops as rows of = and -](../images/ascii-normalize-barrel.png)
+
+*The barrel in `demo/ascii_entities.scene.toml` at 1280x720, cropped and doubled: smooth, plain, the `brightness = 0.35, contrast = 1.4` it needed before, and `normalize = 1` (its setting now). Its lower half averages 0.024 luminance in the smooth render, so it stays sparse even stretched: that is real darkness, not lost detail.*
+
+![Three barrels: plain, exposure 1.5, normalize 1](../images/ascii-dark-props.png)
+
+*`demo/ascii_dark_props.scene.toml`: plain, `exposure = 1.5` and `normalize = 1`, side by side.*
+
+The range is measured from the same frame, so `flint render` stays deterministic and nothing lags a frame behind: two small passes before the cell pass walk a fixed 320x180 lattice over the picture, sum each slot's samples (count, luminance, luminance squared) row by row, and resolve each slot's range as its mean -/+ 2 standard deviations. The range maps linearly onto 0..1, then a gamma (0.35 to 2.5) puts the slot's mean at mid-grey, since a lit top and a shadowed side are often both in range and the linear stretch alone leaves the shadow blank. That is a percentile without a histogram: a highlight or a crack moves it far less than it would a min and max. A range narrower than 0.08 is widened around its middle, so a flat wall's noise doesn't fill the ramp. The passes run only when some slot asks for `normalize`; brightness and contrast then apply to the stretched tone as before. On an RTX 4070 at 1080p, `demo/ascii_dark_props.scene.toml`'s ASCII pass took 0.37--0.43 ms without a normalised barrel and 0.45--0.54 ms with one (`--gpu-time 240`, two runs each): about 0.1 ms for the statistics.
 
 ## Per-entity ASCII
 

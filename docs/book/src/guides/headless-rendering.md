@@ -100,6 +100,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--ascii-tint <r,g,b>` / `--ascii-background <f32>` | phosphor green / `0.15` | ASCII style tint and how much cell colour fills behind glyphs |
 | `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
 | `--ascii-dither` | `0` | ASCII style ordered dither, fixed to the cell grid (#277) |
+| `--ascii-exposure` / `--ascii-normalize` | `0` / `0` | ASCII style exposure in stops, and per-style-id tone normalisation so dark props stay legible (#289) |
 | `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
 | `--ascii=<mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` (the `=` is required) |
 | `--ascii-entities <list>` | (none) | Names, `prefix*` or `*` the masked ASCII modes stylize |
