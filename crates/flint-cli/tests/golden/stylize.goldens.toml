@@ -159,6 +159,14 @@ name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
 
+# The veil (#290): a glyph stone behind a campfire and a glyph crate behind
+# glass. The fire stays fire and the glass fades the crate's glyphs by its
+# coverage; before #290 both were glyphized as the entity behind them
+[[case]]
+name = "style-veil"
+scene = "demo/style_veil.scene.toml"
+args = ["--no-grid", "--particle-time", "2"]
+
 # --- pencil sketch (#273) ---------------------------------------------------
 #
 # Strokes are thin, hard-edged and everywhere, so a GPU that rounds one

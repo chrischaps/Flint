@@ -82,6 +82,7 @@
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
+pub mod catalog;
 pub mod custom;
 pub mod edges;
 pub mod kit;
@@ -90,7 +91,7 @@ mod targets;
 
 pub use edges::EDGE_FORMAT;
 pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
-pub use targets::{StyleTargets, StyleTexture};
+pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 
 use crate::bind_cache::BindCache;
 use crate::postprocess::PostProcessConfig;
@@ -1153,7 +1154,10 @@ pub fn stage_chain(
 
 /// Which view each style of a stage reads and writes: `Input` is what the
 /// stage starts from, `Ping(n)` the framework's two targets, `Final` the
-/// caller's target.
+/// caller's target. In the display stage ([`display_plan`]) the input is
+/// the framework's own texture, so a later style may write it again, and
+/// `Final` may be read too when it is a texture the frame owns (FXAA's
+/// intermediate, #302).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Input,
@@ -1179,6 +1183,44 @@ pub fn plan(count: usize, to_final: bool) -> Vec<(Slot, Slot)> {
     steps
 }
 
+/// The display stage's plan for `count` styles (#302): the slot the
+/// composite draws into, and each style's (reads, writes). The stage owns
+/// its input, so after the first style has read it the input is free to
+/// be a ping: a chain of any length needs one texture beside it, and only
+/// from two styles on. With `final_owned` (FXAA on, whose intermediate is
+/// the final target) the intermediate is the other texture: the composite
+/// draws into whichever of the two the chain's parity leaves the last
+/// style writing the intermediate, so the stage adds one full-size texture
+/// to FXAA's, never more.
+pub fn display_plan(count: usize, final_owned: bool) -> (Slot, Vec<(Slot, Slot)>) {
+    if count == 0 {
+        return (Slot::Final, Vec::new());
+    }
+    let pair = match (final_owned, count % 2) {
+        (false, _) => [Slot::Input, Slot::Ping(0)],
+        (true, 1) => [Slot::Input, Slot::Final],
+        (true, _) => [Slot::Final, Slot::Input],
+    };
+    let steps = (0..count)
+        .map(|i| {
+            let dst = if i + 1 == count {
+                Slot::Final
+            } else {
+                pair[(i + 1) % 2]
+            };
+            (pair[i % 2], dst)
+        })
+        .collect();
+    (pair[0], steps)
+}
+
+/// How many textures of its own a stage's `steps` draw through: the pings
+/// they name, plus the input when the stage owns it (the display stage).
+pub fn plan_textures(steps: &[(Slot, Slot)], owns_input: bool) -> usize {
+    let used = |slot: Slot| steps.iter().any(|(s, d)| *s == slot || *d == slot);
+    (owns_input && !steps.is_empty()) as usize + (0..2).filter(|n| used(Slot::Ping(*n))).count()
+}
+
 /// Ids of the views a style's input can be, for keying bind groups.
 pub(crate) mod input_id {
     /// The scene's HDR buffer.
@@ -1189,6 +1231,8 @@ pub(crate) mod input_id {
     pub const DISPLAY_IN: u64 = 3;
     /// The display stage's ping targets: `DISPLAY_PING + n`.
     pub const DISPLAY_PING: u64 = 4;
+    /// FXAA's intermediate, when the display stage draws through it (#302).
+    pub const FXAA_IN: u64 = 6;
 }
 
 const HDR_PINGS: [&str; 2] = ["style hdr ping 0", "style hdr ping 1"];
@@ -1198,29 +1242,38 @@ const DISPLAY_PINGS: [&str; 2] = ["style display ping 0", "style display ping 1"
 pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &mut dyn FnMut(&mut wgpu::CommandEncoder))
     + 's;
 
-/// Run `styles` (one stage's, in order) from `input`, ping-ponging through
-/// the stage's targets. With `to`, the last style writes there and this
-/// returns `None`; without, it returns the target holding the result and
-/// that target's input id. `frame` carries the stage's size and format;
-/// its descriptor is set per style.
+/// Run `styles` (one stage's, in order) by `steps` ([`plan`] or
+/// [`display_plan`], one per style), from `input` through the stage's ping
+/// targets; only the pings the steps name are made. With `to`, the last
+/// style writes there and this returns `None`; without, it returns the
+/// target holding the result and that target's input id. `frame` carries
+/// the stage's size and format; its descriptor is set per style.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_stage(
     styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+    steps: &[(Slot, Slot)],
     frame: &mut StyleFrame<'_>,
     stage: StyleStage,
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
-    to: Option<&wgpu::TextureView>,
+    to: Option<StyleInput<'_>>,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
+    debug_assert_eq!(styles.len(), steps.len());
     let (names, base) = match stage {
         StyleStage::Hdr => (HDR_PINGS, input_id::HDR_PING),
         StyleStage::Display => (DISPLAY_PINGS, input_id::DISPLAY_PING),
     };
     let mut result = None;
-    let pings: Vec<Arc<StyleTexture>> = (0..styles.len().min(2))
-        .map(|n| frame.target(names[n], frame.format))
-        .collect();
-    for ((descriptor, pass), (src, dst)) in styles.iter().zip(plan(styles.len(), to.is_some())) {
+    let pings: [Option<Arc<StyleTexture>>; 2] = std::array::from_fn(|n| {
+        let slot = Slot::Ping(n as u8);
+        steps
+            .iter()
+            .any(|(s, d)| *s == slot || *d == slot)
+            .then(|| frame.target(names[n], frame.format))
+    });
+    let ping = |n: u8| pings[n as usize].as_ref().expect("a ping the steps name");
+    for ((descriptor, pass), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
         frame.descriptor = *descriptor;
         let src = match src {
             Slot::Input => StyleInput {
@@ -1228,21 +1281,30 @@ pub(crate) fn run_stage(
                 id: input.id,
             },
             Slot::Ping(n) => StyleInput {
-                view: &pings[n as usize].view,
+                view: &ping(n).view,
                 id: base + u64::from(n),
             },
-            Slot::Final => unreachable!("no style reads the final target"),
+            Slot::Final => {
+                let to = to.as_ref().expect("planned with a final target");
+                StyleInput {
+                    view: to.view,
+                    id: to.id,
+                }
+            }
         };
         let dst_view = match dst {
             Slot::Ping(n) => {
-                result = Some((pings[n as usize].clone(), base + u64::from(n)));
-                &pings[n as usize].view
+                result = Some((ping(n).clone(), base + u64::from(n)));
+                &ping(n).view
             }
             Slot::Final => {
                 result = None;
-                to.expect("planned with a final target")
+                to.as_ref().expect("planned with a final target").view
             }
-            Slot::Input => unreachable!("no style writes its stage's input"),
+            Slot::Input => {
+                result = None;
+                input.view
+            }
         };
         let frame = &*frame;
         scope(descriptor.label, encoder, &mut |encoder| {
@@ -1597,6 +1659,56 @@ mod tests {
                 assert!(plan(n, to_final).iter().all(|(s, d)| s != d));
             }
         }
+    }
+
+    /// #302: the display stage reuses its input, and with FXAA on its
+    /// intermediate, so no chain holds more than two full-size textures.
+    #[test]
+    fn the_display_plan_draws_through_two_textures_at_most() {
+        use Slot::*;
+        assert_eq!(display_plan(0, false), (Final, vec![]));
+        assert_eq!(display_plan(1, false), (Input, vec![(Input, Final)]));
+        assert_eq!(display_plan(1, true), (Input, vec![(Input, Final)]));
+        assert_eq!(
+            display_plan(2, false),
+            (Input, vec![(Input, Ping(0)), (Ping(0), Final)])
+        );
+        assert_eq!(
+            display_plan(2, true),
+            (Final, vec![(Final, Input), (Input, Final)])
+        );
+        assert_eq!(
+            display_plan(3, false),
+            (
+                Input,
+                vec![(Input, Ping(0)), (Ping(0), Input), (Input, Final)]
+            )
+        );
+        for n in 0..8 {
+            for owned in [false, true] {
+                let (first, steps) = display_plan(n, owned);
+                assert_eq!(steps.len(), n);
+                // Each style reads what the one before wrote (the first,
+                // what the composite drew) and none reads what it writes
+                let mut wrote = first;
+                for (s, d) in &steps {
+                    assert_eq!(*s, wrote, "{n} styles, fxaa {owned}");
+                    assert_ne!(s, d);
+                    wrote = *d;
+                }
+                assert_eq!(wrote, Final);
+                assert!(steps.iter().all(|(s, _)| owned || *s != Final));
+                assert!(steps.iter().all(|(s, d)| *s != Ping(1) && *d != Ping(1)));
+                // Textures of the stage's own, plus FXAA's
+                let full = plan_textures(&steps, true) + owned as usize;
+                assert!(full <= 2, "{n} styles, fxaa {owned}: {full}");
+            }
+        }
+        assert_eq!(plan_textures(&display_plan(1, false).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(1, true).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(2, true).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(3, false).1, true), 2);
+        assert_eq!(plan_textures(&plan(3, false), false), 2);
     }
 
     #[test]
