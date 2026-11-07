@@ -11,8 +11,7 @@
 #
 # Per-entity ASCII (#266) has cases of its own below. The props scene's
 # barrel and YBot carry `style_mask { style = "ascii" }`, so since #266
-# they are glyphs in every props case, the Kuwahara one included. The
-# spike's masked modes (#261) stay until #293 removes them.
+# they are glyphs in every props case, the Kuwahara one included.
 #
 # The props cases use demo/stylize_props.scene.toml, which loads in a few
 # seconds in a debug build (style_mask.scene.toml's grass and 32 MB bench
@@ -99,19 +98,20 @@ name = "ascii-full-dither"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii:dither=1"]
 
+# Exposure and normalisation (#289): the whole frame's tones stretched over
+# the ramp from this frame's own statistics, then only the styled props,
+# each stretched over its own range after half a stop of exposure
+[[case]]
+name = "ascii-full-normalize"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:normalize=1"]
+
+[[case]]
+name = "ascii-entities-normalize"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
+
 # --- per-entity ASCII -----------------------------------------------------
-
-# The spike's screen-grid mode: only the named props are glyphs
-[[case]]
-name = "ascii-entity"
-scene = "demo/stylize_props.scene.toml"
-args = ["--no-grid", "--ascii=entity", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
-
-# The spike's object-anchored grid: each prop's cells start at its origin
-[[case]]
-name = "ascii-entity-object"
-scene = "demo/stylize_props.scene.toml"
-args = ["--no-grid", "--ascii=entity-object", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
 
 # The entity style mask (#263) the per-entity styles read: one hue a style
 [[case]]
@@ -143,6 +143,14 @@ args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
+
+# The veil (#290): a glyph stone behind a campfire and a glyph crate behind
+# glass. The fire stays fire and the glass fades the crate's glyphs by its
+# coverage; before #290 both were glyphized as the entity behind them
+[[case]]
+name = "style-veil"
+scene = "demo/style_veil.scene.toml"
+args = ["--no-grid", "--particle-time", "2"]
 
 # --- pencil sketch (#273) ---------------------------------------------------
 #

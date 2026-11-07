@@ -1373,6 +1373,7 @@ impl SceneRenderer {
         let hdr_result = match &mut style_frame {
             Some(frame) if !hdr_styles.is_empty() => crate::stylize::run_stage(
                 &hdr_styles,
+                &crate::stylize::plan(hdr_styles.len(), false),
                 frame,
                 crate::stylize::StyleStage::Hdr,
                 encoder,
@@ -1386,33 +1387,6 @@ impl SceneRenderer {
             _ => None,
         };
         let hdr_scene = hdr_result.as_ref().map(|(t, id)| (&t.view, *id));
-
-        // ASCII spike (#261): glyphize the scene (the HDR styles' output
-        // when any ran) into the spike's target, which the composite reads.
-        let ascii_view = match &self.ascii_spike {
-            Some(spike)
-                if config.enabled && self.ascii_config.mode != crate::AsciiSpikeMode::Off =>
-            {
-                let input = hdr_scene.map_or(&resources.hdr_view, |(v, _)| v);
-                let ascii_camera = crate::ascii_spike::AsciiCamera {
-                    inv_view_proj: camera.inverse_view_projection_matrix(),
-                    position: camera.position_array(),
-                };
-                scoped("ASCII", encoder, &mut |encoder| {
-                    spike.encode_glyphs(
-                        device,
-                        queue,
-                        encoder,
-                        input,
-                        depth_view,
-                        &ascii_camera,
-                        &self.ascii_config,
-                    )
-                });
-                spike.output_view()
-            }
-            _ => None,
-        };
 
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {
@@ -1479,8 +1453,13 @@ impl SceneRenderer {
         };
         // Display stage (#262): with display styles on, the composite draws
         // into the stage's input at output resolution, and the last style
-        // writes what the composite would have.
+        // writes what the composite would have. The plan (#302) reuses the
+        // input as a ping, and with FXAA on its intermediate as the other
+        // texture, so the stage adds at most one full-size texture to
+        // FXAA's (two without FXAA, from three styles on: in + one ping).
         let display_size = self.surface_size;
+        let (composite_slot, display_steps) =
+            crate::stylize::display_plan(display_styles.len(), fxaa_active);
         let display_in = (!display_styles.is_empty()).then(|| {
             resources.styles.get(
                 device,
@@ -1490,19 +1469,18 @@ impl SceneRenderer {
                 display_size.1,
             )
         });
-        let composite_target = display_in.as_ref().map_or(final_target, |t| &t.view);
-        // The scene the composite reads: the spike's glyphs, the HDR
-        // styles' result, or the HDR buffer
-        let (scene, scene_kept) = match (ascii_view, hdr_scene) {
-            (Some(view), _) => (crate::stylize::StyleInput { view, id: u64::MAX }, false),
-            (None, Some((view, id))) => (crate::stylize::StyleInput { view, id }, true),
-            (None, None) => (
-                crate::stylize::StyleInput {
-                    view: &resources.hdr_view,
-                    id: crate::stylize::input_id::HDR,
-                },
-                true,
-            ),
+        let composite_target = match (&display_in, composite_slot) {
+            (Some(input), crate::stylize::Slot::Input) => &input.view,
+            _ => final_target,
+        };
+        // The scene the composite reads: the HDR styles' result, or the
+        // HDR buffer
+        let scene = match hdr_scene {
+            Some((view, id)) => crate::stylize::StyleInput { view, id },
+            None => crate::stylize::StyleInput {
+                view: &resources.hdr_view,
+                id: crate::stylize::input_id::HDR,
+            },
         };
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
@@ -1521,7 +1499,6 @@ impl SceneRenderer {
             (self.ocean_time % 100_000.0) as f32,
             self.ground_fog.as_ref(),
             &scene,
-            scene_kept,
             if fxaa_active {
                 None
             } else {
@@ -1535,6 +1512,7 @@ impl SceneRenderer {
             frame.format = pp.surface_format;
             crate::stylize::run_stage(
                 &display_styles,
+                &display_steps,
                 frame,
                 crate::stylize::StyleStage::Display,
                 encoder,
@@ -1542,7 +1520,11 @@ impl SceneRenderer {
                     view: &input.view,
                     id: crate::stylize::input_id::DISPLAY_IN,
                 },
-                Some(final_target),
+                // Read back only when it's FXAA's intermediate
+                Some(crate::stylize::StyleInput {
+                    view: final_target,
+                    id: crate::stylize::input_id::FXAA_IN,
+                }),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);

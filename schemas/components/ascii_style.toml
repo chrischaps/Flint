@@ -16,6 +16,8 @@ glow = { type = "f32", min = 0.0, max = 2.0, description = "A halo around each g
 tint = { type = "vec3", description = "Ink colour for color = \"tint\", RGB 0-1; sets the style's tint_r, tint_g and tint_b" }
 brightness = { type = "f32", min = -1.0, max = 1.0, description = "Added to the cell's luminance before it picks a glyph" }
 contrast = { type = "f32", min = 0.0, max = 4.0, description = "Luminance contrast about mid-grey before it picks a glyph" }
+exposure = { type = "f32", min = -4.0, max = 4.0, description = "Stops of gain on the cell's colour (linear light) before it picks a glyph and ink: +1 doubles it. For a prop too dark to read (#289)" }
+normalize = { type = "f32", min = 0.0, max = 1.0, description = "Stretch this entity's own luminance range (its mean +/- 2 deviations, measured each frame) over the whole glyph ramp: 1 full, 0 off. A dark barrel draws every glyph instead of dots (#289)" }
 background = { type = "f32", min = 0.0, max = 1.0, description = "How much of the cell's colour shows behind its glyph (0 = black ground)" }
 ink = { type = "f32", min = 0.0, max = 2.0, description = "Ink brightness multiplier" }
 levels = { type = "f32", min = 0.0, max = 16.0, description = "Tone bands (0 = smooth); a few bands give the drawn look" }

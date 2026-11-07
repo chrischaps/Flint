@@ -23,6 +23,17 @@
 // The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
 // line glyph slot + 1 (0 = none), y = its length in cell widths
 @group(3) @binding(2) var edge_cells: texture_2d<f32>;
+// Each slot's tone range (#289, ascii_stats_resolve.wgsl)
+@group(3) @binding(3) var tone_stats: texture_2d<f32>;
+
+// The tone luminance of a colour in `slot`: stretched over the slot's range
+fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
+    let amount = slot_normalize(slot);
+    if amount <= 0.0 {
+        return luma(col);
+    }
+    return stretched(luma(col), textureLoad(tone_stats, vec2<i32>(i32(slot), 0), 0), amount);
+}
 
 fn edge_cell_at(c: vec2<i32>) -> vec4<f32> {
     let cmax = vec2<i32>(textureDimensions(edge_cells)) - vec2<i32>(1);
@@ -172,6 +183,8 @@ fn frame_look() -> Variant {
     v.palette_bg = u.palette_bg;
     v.palette_len = u.palette_len;
     v.palette_match = u.palette_match;
+    v.exposure = u.exposure;
+    v.stretch = u.stretch;
     return v;
 }
 
@@ -329,8 +342,9 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
             count += w;
         }
     }
-    let col = select(shown_entity(vec2<i32>(floor(p))), sum / max(count, 1.0), count > 0.0);
-    var t = clamp((luma(col) - 0.5) * v.contrast + 0.5 + v.brightness, 0.0, 1.0);
+    let raw = select(shown_entity(vec2<i32>(floor(p))), sum / max(count, 1.0), count > 0.0);
+    let col = exposed(raw, exp2(v.exposure));
+    var t = clamp((slot_luma(col, slot) - 0.5) * v.contrast + 0.5 + v.brightness, 0.0, 1.0);
     if v.levels >= 1.0 {
         t = round(t * v.levels) / v.levels;
     }
@@ -420,7 +434,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // The cell's colour and glyph, as the cell pass left them
         let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
         let col = vec3<f32>(state.rgb) / UNORM16;
-        let t = banded(tone(luma(col)));
+        let t = banded(tone(slot_luma(col, 0u)));
         out = shade(frame_look(), col, t, state.a, local, edge_slot(cell), 0.0);
     }
     return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);

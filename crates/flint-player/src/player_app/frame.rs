@@ -1892,6 +1892,16 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
                             format_count(stats.grass_instances)
                         ));
                     }
+                    // Style chain memory (#302): every target, and how
+                    // many are full output size (FXAA's included)
+                    if stats.style_targets > 0 {
+                        ui.label(format!(
+                            "Style targets: {} ({:.1} MB, {} full-size)",
+                            stats.style_targets,
+                            stats.style_target_bytes as f64 / (1024.0 * 1024.0),
+                            stats.full_size_targets
+                        ));
+                    }
 
                     ui.separator();
 

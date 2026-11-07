@@ -31,14 +31,17 @@
 //!
 //! ## Order
 //!
-//! Styles of one stage run in registration order, each reading the one
-//! before it. The stages sit at two fixed places in the post chain:
+//! Styles of one stage run one after another, each reading the one before
+//! it, in the order their tables give (`order = <n>` in
+//! `[post_process.styles.<name>]`, #299; [`chain_order`]). A style without
+//! one stands at its registration index, so a scene that says nothing
+//! runs in registration order; ties keep registration order too. The
+//! stages sit at two fixed places in the post chain:
 //!
 //! ```text
 //! scene (HDR, render scale)
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
-//!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
 //!   -> Display styles (ASCII, pencil, invert) surface format, output resolution
@@ -69,13 +72,14 @@
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
+pub mod catalog;
 pub mod custom;
 pub mod kit;
 mod spec;
 mod targets;
 
 pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
-pub use targets::{StyleTargets, StyleTexture};
+pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 
 use crate::bind_cache::BindCache;
 use crate::postprocess::PostProcessConfig;
@@ -346,6 +350,13 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     let mut out = format!("[post_process.styles.{}]\n", descriptor.name);
     if !descriptor.is_enabled(config) {
         out.push_str("enabled = false\n");
+    }
+    if let Some(order) = config.styles.order(descriptor.name) {
+        if order.fract() == 0.0 {
+            out.push_str(&format!("order = {}\n", order as i64));
+        } else {
+            out.push_str(&format!("order = {}\n", toml_float(order)));
+        }
     }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
@@ -690,7 +701,14 @@ pub struct StyleSetting {
     pub enabled: bool,
     pub params: BTreeMap<String, f32>,
     pub options: BTreeMap<String, String>,
+    /// Where the style stands in its stage's chain (#299): lower runs
+    /// first. `None` is its registration index ([`chain_order`]).
+    pub order: Option<f32>,
 }
+
+/// Keys every style's table reads besides its own parameters and options;
+/// no style may name a parameter or option after one.
+pub const RESERVED_KEYS: [&str; 2] = ["enabled", "order"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -740,12 +758,30 @@ impl StyleSettings {
         self.styles.get(name)
     }
 
-    /// Put style `name`'s parameters and options back to their defaults,
-    /// leaving it on or off as it was.
+    /// Style `name`'s authored place in its stage, if it has one (#299).
+    pub fn order(&self, name: &str) -> Option<f32> {
+        self.styles.get(name)?.order
+    }
+
+    /// Give style `name` a place in its stage, or (`None`) put it back at
+    /// its registration index.
+    pub fn set_order(&mut self, name: &str, order: Option<f32>) {
+        match self.styles.get_mut(name) {
+            Some(setting) => setting.order = order,
+            None if order.is_some() => {
+                self.styles.entry(name.to_string()).or_default().order = order;
+            }
+            None => {}
+        }
+    }
+
+    /// Put style `name`'s parameters, options and place in the chain back
+    /// to their defaults, leaving it on or off as it was.
     pub fn reset(&mut self, name: &str) {
         if let Some(setting) = self.styles.get_mut(name) {
             setting.params.clear();
             setting.options.clear();
+            setting.order = None;
         }
     }
 
@@ -801,6 +837,17 @@ impl StyleSettings {
                         None => {
                             warnings.push(format!("styles.{name}.enabled must be true or false"))
                         }
+                    }
+                    continue;
+                }
+                if key == "order" {
+                    let number = value
+                        .as_float()
+                        .or_else(|| value.as_integer().map(|i| i as f64))
+                        .filter(|n| n.is_finite());
+                    match number {
+                        Some(n) => setting.order = Some(n as f32),
+                        None => warnings.push(format!("styles.{name}.order must be a number")),
                     }
                     continue;
                 }
@@ -938,21 +985,56 @@ impl StyleSet {
         if !config.enabled {
             return Vec::new();
         }
-        registry()
+        let mut on: Vec<(f32, (&'static StyleDescriptor, &dyn StylePass))> = registry()
             .iter()
+            .enumerate()
             .zip(&self.built)
             .zip(&self.from)
             // A pass built from a descriptor since replaced waits for ensure
-            .filter(|((d, _), from)| **from == descriptor_id(d))
-            .filter(|((d, _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter_map(|((d, built), _)| built.as_deref().map(|p| (*d, p)))
-            .collect()
+            .filter(|(((_, d), _), from)| **from == descriptor_id(d))
+            .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
+            .filter_map(|(((i, d), built), _)| {
+                built
+                    .as_deref()
+                    .map(|p| (chain_order(i, d, config), (*d, p)))
+            })
+            .collect();
+        // Stable: equal orders keep registration order
+        on.sort_by(|a, b| a.0.total_cmp(&b.0));
+        on.into_iter().map(|(_, style)| style).collect()
     }
+}
+
+/// Where the style at registry index `index` stands in its stage's chain
+/// (#299): its table's `order`, else the index itself, so a scene that
+/// orders nothing runs in registration order. Lower runs first.
+pub fn chain_order(index: usize, descriptor: &StyleDescriptor, config: &PostProcessConfig) -> f32 {
+    config.styles.order(descriptor.name).unwrap_or(index as f32)
+}
+
+/// Every registered style of `stage`, in the order its chain would run
+/// them under `config` (on or not), with each one's [`chain_order`]. What
+/// the F4 menu lists; [`StyleSet::active`] keeps the ones that are on.
+pub fn stage_chain(
+    stage: StyleStage,
+    config: &PostProcessConfig,
+) -> Vec<(&'static StyleDescriptor, f32)> {
+    let mut chain: Vec<(&'static StyleDescriptor, f32)> = registry()
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.stage == stage)
+        .map(|(i, d)| (*d, chain_order(i, d, config)))
+        .collect();
+    chain.sort_by(|a, b| a.1.total_cmp(&b.1));
+    chain
 }
 
 /// Which view each style of a stage reads and writes: `Input` is what the
 /// stage starts from, `Ping(n)` the framework's two targets, `Final` the
-/// caller's target.
+/// caller's target. In the display stage ([`display_plan`]) the input is
+/// the framework's own texture, so a later style may write it again, and
+/// `Final` may be read too when it is a texture the frame owns (FXAA's
+/// intermediate, #302).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Input,
@@ -978,6 +1060,44 @@ pub fn plan(count: usize, to_final: bool) -> Vec<(Slot, Slot)> {
     steps
 }
 
+/// The display stage's plan for `count` styles (#302): the slot the
+/// composite draws into, and each style's (reads, writes). The stage owns
+/// its input, so after the first style has read it the input is free to
+/// be a ping: a chain of any length needs one texture beside it, and only
+/// from two styles on. With `final_owned` (FXAA on, whose intermediate is
+/// the final target) the intermediate is the other texture: the composite
+/// draws into whichever of the two the chain's parity leaves the last
+/// style writing the intermediate, so the stage adds one full-size texture
+/// to FXAA's, never more.
+pub fn display_plan(count: usize, final_owned: bool) -> (Slot, Vec<(Slot, Slot)>) {
+    if count == 0 {
+        return (Slot::Final, Vec::new());
+    }
+    let pair = match (final_owned, count % 2) {
+        (false, _) => [Slot::Input, Slot::Ping(0)],
+        (true, 1) => [Slot::Input, Slot::Final],
+        (true, _) => [Slot::Final, Slot::Input],
+    };
+    let steps = (0..count)
+        .map(|i| {
+            let dst = if i + 1 == count {
+                Slot::Final
+            } else {
+                pair[(i + 1) % 2]
+            };
+            (pair[i % 2], dst)
+        })
+        .collect();
+    (pair[0], steps)
+}
+
+/// How many textures of its own a stage's `steps` draw through: the pings
+/// they name, plus the input when the stage owns it (the display stage).
+pub fn plan_textures(steps: &[(Slot, Slot)], owns_input: bool) -> usize {
+    let used = |slot: Slot| steps.iter().any(|(s, d)| *s == slot || *d == slot);
+    (owns_input && !steps.is_empty()) as usize + (0..2).filter(|n| used(Slot::Ping(*n))).count()
+}
+
 /// Ids of the views a style's input can be, for keying bind groups.
 pub(crate) mod input_id {
     /// The scene's HDR buffer.
@@ -988,6 +1108,8 @@ pub(crate) mod input_id {
     pub const DISPLAY_IN: u64 = 3;
     /// The display stage's ping targets: `DISPLAY_PING + n`.
     pub const DISPLAY_PING: u64 = 4;
+    /// FXAA's intermediate, when the display stage draws through it (#302).
+    pub const FXAA_IN: u64 = 6;
 }
 
 const HDR_PINGS: [&str; 2] = ["style hdr ping 0", "style hdr ping 1"];
@@ -997,29 +1119,38 @@ const DISPLAY_PINGS: [&str; 2] = ["style display ping 0", "style display ping 1"
 pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &mut dyn FnMut(&mut wgpu::CommandEncoder))
     + 's;
 
-/// Run `styles` (one stage's, in order) from `input`, ping-ponging through
-/// the stage's targets. With `to`, the last style writes there and this
-/// returns `None`; without, it returns the target holding the result and
-/// that target's input id. `frame` carries the stage's size and format;
-/// its descriptor is set per style.
+/// Run `styles` (one stage's, in order) by `steps` ([`plan`] or
+/// [`display_plan`], one per style), from `input` through the stage's ping
+/// targets; only the pings the steps name are made. With `to`, the last
+/// style writes there and this returns `None`; without, it returns the
+/// target holding the result and that target's input id. `frame` carries
+/// the stage's size and format; its descriptor is set per style.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_stage(
     styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+    steps: &[(Slot, Slot)],
     frame: &mut StyleFrame<'_>,
     stage: StyleStage,
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
-    to: Option<&wgpu::TextureView>,
+    to: Option<StyleInput<'_>>,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
+    debug_assert_eq!(styles.len(), steps.len());
     let (names, base) = match stage {
         StyleStage::Hdr => (HDR_PINGS, input_id::HDR_PING),
         StyleStage::Display => (DISPLAY_PINGS, input_id::DISPLAY_PING),
     };
     let mut result = None;
-    let pings: Vec<Arc<StyleTexture>> = (0..styles.len().min(2))
-        .map(|n| frame.target(names[n], frame.format))
-        .collect();
-    for ((descriptor, pass), (src, dst)) in styles.iter().zip(plan(styles.len(), to.is_some())) {
+    let pings: [Option<Arc<StyleTexture>>; 2] = std::array::from_fn(|n| {
+        let slot = Slot::Ping(n as u8);
+        steps
+            .iter()
+            .any(|(s, d)| *s == slot || *d == slot)
+            .then(|| frame.target(names[n], frame.format))
+    });
+    let ping = |n: u8| pings[n as usize].as_ref().expect("a ping the steps name");
+    for ((descriptor, pass), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
         frame.descriptor = *descriptor;
         let src = match src {
             Slot::Input => StyleInput {
@@ -1027,21 +1158,30 @@ pub(crate) fn run_stage(
                 id: input.id,
             },
             Slot::Ping(n) => StyleInput {
-                view: &pings[n as usize].view,
+                view: &ping(n).view,
                 id: base + u64::from(n),
             },
-            Slot::Final => unreachable!("no style reads the final target"),
+            Slot::Final => {
+                let to = to.as_ref().expect("planned with a final target");
+                StyleInput {
+                    view: to.view,
+                    id: to.id,
+                }
+            }
         };
         let dst_view = match dst {
             Slot::Ping(n) => {
-                result = Some((pings[n as usize].clone(), base + u64::from(n)));
-                &pings[n as usize].view
+                result = Some((ping(n).clone(), base + u64::from(n)));
+                &ping(n).view
             }
             Slot::Final => {
                 result = None;
-                to.expect("planned with a final target")
+                to.as_ref().expect("planned with a final target").view
             }
-            Slot::Input => unreachable!("no style writes its stage's input"),
+            Slot::Input => {
+                result = None;
+                input.view
+            }
         };
         let frame = &*frame;
         scope(descriptor.label, encoder, &mut |encoder| {
@@ -1056,7 +1196,8 @@ pub(crate) fn run_stage(
 // ---------------------------------------------------------------------------
 
 /// Declare the style modules and the registry in one list: adding a style
-/// is its module plus its name here. Order is chain order within a stage.
+/// is its module plus its name here. Order is a stage's default chain
+/// order; a scene's `order` keys can rearrange it ([`chain_order`]).
 macro_rules! register_styles {
     ($($module:ident),* $(,)?) => {
         $(mod $module;)*
@@ -1294,6 +1435,88 @@ mod tests {
     }
 
     #[test]
+    fn order_keys_rearrange_a_stage_and_default_to_registration() {
+        let names = |config: &PostProcessConfig| -> Vec<&str> {
+            stage_chain(StyleStage::Display, config)
+                .iter()
+                .map(|(d, _)| d.name)
+                .filter(|n| ["watercolor", "ascii", "pencil", "invert"].contains(n))
+                .collect()
+        };
+        // Nothing said: registration order, which is today's
+        let mut config = PostProcessConfig::default();
+        assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
+        let registered: Vec<&str> = registry()
+            .iter()
+            .filter(|d| d.stage == StyleStage::Display)
+            .map(|d| d.name)
+            .collect();
+        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+            .iter()
+            .map(|(d, _)| d.name)
+            .collect();
+        assert_eq!(chain, registered);
+
+        // Watercolor over ASCII, from the scene's syntax
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            r#"
+            [watercolor]
+            order = 10
+            [ascii]
+            order = 2.5
+            [invert]
+            enabled = false
+            order = "first"
+            "#,
+        )
+        .unwrap();
+        let (styles, warnings) = StyleSettings::from_tables(&tables);
+        assert_eq!(warnings, vec!["styles.invert.order must be a number"]);
+        assert_eq!(styles.order("watercolor"), Some(10.0));
+        config.styles = styles;
+        assert_eq!(names(&config), ["ascii", "pencil", "invert", "watercolor"]);
+        // A tie keeps registration order: pencil (3) and ascii at 3
+        config.styles.set_order("ascii", Some(3.0));
+        assert_eq!(names(&config), ["ascii", "pencil", "invert", "watercolor"]);
+        // Defaults puts it back
+        config.styles.reset("watercolor");
+        config.styles.set_order("ascii", None);
+        assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
+        // Ordering a style it has no table for doesn't switch it on
+        config.styles.set_order("pencil", Some(0.0));
+        assert!(!config.styles.is_enabled("pencil"));
+        assert_eq!(names(&config)[0], "pencil");
+    }
+
+    #[test]
+    fn style_toml_keeps_the_order() {
+        let watercolor = find("watercolor").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("watercolor", true);
+        config.styles.set_order("watercolor", Some(5.0));
+        assert_eq!(
+            style_toml(watercolor, &config),
+            "[post_process.styles.watercolor]\norder = 5\n"
+        );
+        config.styles.set_order("watercolor", Some(0.5));
+        assert!(style_toml(watercolor, &config).contains("order = 0.5\n"));
+    }
+
+    #[test]
+    fn no_style_names_a_setting_after_a_reserved_key() {
+        for d in registry() {
+            for key in RESERVED_KEYS {
+                assert!(
+                    d.params.iter().all(|p| p.name != key)
+                        && d.options.iter().all(|o| o.name != key),
+                    "{}.{key}",
+                    d.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn plan_ping_pongs_and_ends_where_asked() {
         use Slot::*;
         assert_eq!(plan(0, true), vec![]);
@@ -1313,6 +1536,56 @@ mod tests {
                 assert!(plan(n, to_final).iter().all(|(s, d)| s != d));
             }
         }
+    }
+
+    /// #302: the display stage reuses its input, and with FXAA on its
+    /// intermediate, so no chain holds more than two full-size textures.
+    #[test]
+    fn the_display_plan_draws_through_two_textures_at_most() {
+        use Slot::*;
+        assert_eq!(display_plan(0, false), (Final, vec![]));
+        assert_eq!(display_plan(1, false), (Input, vec![(Input, Final)]));
+        assert_eq!(display_plan(1, true), (Input, vec![(Input, Final)]));
+        assert_eq!(
+            display_plan(2, false),
+            (Input, vec![(Input, Ping(0)), (Ping(0), Final)])
+        );
+        assert_eq!(
+            display_plan(2, true),
+            (Final, vec![(Final, Input), (Input, Final)])
+        );
+        assert_eq!(
+            display_plan(3, false),
+            (
+                Input,
+                vec![(Input, Ping(0)), (Ping(0), Input), (Input, Final)]
+            )
+        );
+        for n in 0..8 {
+            for owned in [false, true] {
+                let (first, steps) = display_plan(n, owned);
+                assert_eq!(steps.len(), n);
+                // Each style reads what the one before wrote (the first,
+                // what the composite drew) and none reads what it writes
+                let mut wrote = first;
+                for (s, d) in &steps {
+                    assert_eq!(*s, wrote, "{n} styles, fxaa {owned}");
+                    assert_ne!(s, d);
+                    wrote = *d;
+                }
+                assert_eq!(wrote, Final);
+                assert!(steps.iter().all(|(s, _)| owned || *s != Final));
+                assert!(steps.iter().all(|(s, d)| *s != Ping(1) && *d != Ping(1)));
+                // Textures of the stage's own, plus FXAA's
+                let full = plan_textures(&steps, true) + owned as usize;
+                assert!(full <= 2, "{n} styles, fxaa {owned}: {full}");
+            }
+        }
+        assert_eq!(plan_textures(&display_plan(1, false).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(1, true).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(2, true).1, true), 1);
+        assert_eq!(plan_textures(&display_plan(3, false).1, true), 2);
+        assert_eq!(plan_textures(&plan(3, false), false), 2);
     }
 
     #[test]

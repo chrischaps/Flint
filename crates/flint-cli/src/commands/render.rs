@@ -14,7 +14,10 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
-    #[arg(required_unless_present_any = ["list_gpus", "look"], default_value = "")]
+    #[arg(
+        required_unless_present_any = ["list_gpus", "look", "list_styles"],
+        default_value = ""
+    )]
     pub scene: String,
 
     /// Output image path
@@ -112,22 +115,12 @@ pub struct RenderArgs {
     #[arg(long, value_name = "KEY=VALUE,...")]
     pub quality: Option<String>,
 
-    /// ASCII: bare `--ascii` turns on the full-screen ASCII style (#265,
-    /// `[post_process.styles.ascii]`). The spike's prototypes (#261) are
-    /// `--ascii=full` (whole screen), `--ascii=entity` (only
-    /// --ascii-entities, screen grid) and `--ascii=entity-object` (only
-    /// those, a grid anchored at each entity's projected origin). The `=`
-    /// is required so that `--ascii <scene>` reads the scene as the scene
-    #[arg(
-        long,
-        num_args = 0..=1,
-        require_equals = true,
-        default_missing_value = "style"
-    )]
-    pub ascii: Option<String>,
+    /// Turn on the full-screen ASCII style (#265,
+    /// `[post_process.styles.ascii]`)
+    #[arg(long)]
+    pub ascii: bool,
 
-    /// ASCII cell width in points (default 8; the style's height follows
-    /// the font, the spike's cells are square scene pixels)
+    /// ASCII cell width in points (default 8; the height follows the font)
     #[arg(long)]
     pub ascii_cell: Option<f32>,
 
@@ -192,6 +185,16 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ascii_dither: Option<f32>,
 
+    /// ASCII style: stops of gain on each cell's colour before its glyph
+    /// is picked (-4 to 4, default 0; #289)
+    #[arg(long, allow_hyphen_values = true)]
+    pub ascii_exposure: Option<f32>,
+
+    /// ASCII style: stretch each style id's luminance range over the
+    /// glyph ramp, measured from this frame (0-1, default 0; #289)
+    #[arg(long)]
+    pub ascii_normalize: Option<f32>,
+
     /// ASCII style coverage (#266): `screen` glyphizes the whole frame;
     /// `entities` only the entities with an `ascii_style` (or a
     /// `style_mask` naming ascii), the other flags being their preset.
@@ -210,18 +213,11 @@ pub struct RenderArgs {
     #[arg(long)]
     pub pixels_per_point: Option<f32>,
 
-    /// Entities the masked ASCII modes stylize: comma-separated names,
-    /// `prefix*`, or `*` for all (children go with their parent)
-    #[arg(long, value_delimiter = ',')]
-    pub ascii_entities: Vec<String>,
-
-    /// ASCII tone bands (style default 0, spike default 4; 0 keeps the
-    /// whole ramp)
+    /// ASCII tone bands (default 0, which keeps the whole ramp)
     #[arg(long)]
     pub ascii_levels: Option<f32>,
 
-    /// ASCII tone footprint in cells (style default 1, spike default 2;
-    /// 1 = each cell alone)
+    /// ASCII tone footprint in cells (default 1 = each cell alone)
     #[arg(long)]
     pub ascii_footprint: Option<f32>,
 
@@ -255,11 +251,6 @@ pub struct RenderArgs {
     /// an edge (default 2.5; lower finds more)
     #[arg(long)]
     pub ascii_edge_normal: Option<f32>,
-
-    /// In the masked ASCII modes, draw unmasked pixels as the plain scene
-    /// rather than black with their edges
-    #[arg(long)]
-    pub ascii_scene_background: bool,
 
     /// Draw the scene at this fraction of the image on each side
     /// (0.25-1), upscaled in the composite, as flint-player's
@@ -424,6 +415,34 @@ pub struct RenderArgs {
     /// List available GPU adapters and exit
     #[arg(long)]
     pub list_gpus: bool,
+
+    /// List every registered style (#303): its stage, where a scene sets
+    /// it, and each parameter's default and range, then exit. With a
+    /// scene, the user styles in its `styles/` folder are listed too
+    #[arg(long)]
+    pub list_styles: bool,
+
+    /// With --list-styles: print the list as JSON
+    #[arg(long, requires = "list_styles")]
+    pub json: bool,
+}
+
+/// `--list-styles [--json]`: the registry as text or JSON, with the user
+/// styles beside the scene when one is given.
+fn list_styles(args: &RenderArgs) -> Result<()> {
+    use flint_render::stylize::{catalog, custom};
+    if !args.scene.is_empty() {
+        let scene_dir = Path::new(&args.scene).parent().unwrap_or(Path::new("."));
+        for message in custom::load_dir(scene_dir) {
+            eprintln!("warning: {message}");
+        }
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&catalog::catalog())?);
+    } else {
+        print!("{}", catalog::catalog_text());
+    }
+    Ok(())
 }
 
 fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
@@ -436,6 +455,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
             println!("{a}");
         }
         return Ok(());
+    }
+    if args.list_styles {
+        return list_styles(&args);
     }
     if args.look.as_deref() == Some("help") {
         print!("{}", super::look::help(&args.scene));
@@ -709,41 +731,6 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if let Some(px) = args.pixels_per_point {
         renderer.pixels_per_point = px;
     }
-    if let Some(mode) = args.ascii.as_ref().filter(|m| *m != ASCII_STYLE) {
-        let mode = flint_render::AsciiSpikeMode::parse(mode).with_context(|| {
-            format!("--ascii: unknown mode '{mode}' (bare --ascii, or the spike's full, entity, entity-object)")
-        })?;
-        let mut config = flint_render::AsciiSpikeConfig {
-            mode,
-            entities: args.ascii_entities.clone(),
-            ..Default::default()
-        };
-        if let Some(cell) = args.ascii_cell {
-            config.cell_px = cell;
-        }
-        if let Some(levels) = args.ascii_levels {
-            config.levels = levels;
-        }
-        if let Some(footprint) = args.ascii_footprint {
-            config.footprint = footprint;
-        }
-        if let Some(t) = args.ascii_edge_depth {
-            config.depth_threshold = t;
-        }
-        if let Some(t) = args.ascii_edge_normal {
-            config.normal_threshold = t;
-        }
-        config.edges = !args.ascii_no_edges;
-        config.scene_background = args.ascii_scene_background;
-        if mode.is_masked() && config.entities.is_empty() {
-            anyhow::bail!(
-                "--ascii {} needs --ascii-entities",
-                args.ascii.as_ref().unwrap()
-            );
-        }
-        renderer.set_ascii_spike(&ctx.device, config);
-    }
-
     // Post time for grain/mode animation and animated styles. Headless
     // renders leave this 0.0 so PNG snapshots stay deterministic;
     // --style-time (or the older --grain-time) pins an explicit frame.
@@ -1005,22 +992,17 @@ fn post_process_config(
     }
 }
 
-/// What bare `--ascii` parses as: the ASCII style, not a spike mode.
-const ASCII_STYLE: &str = "style";
-
 /// The ASCII style's flags (#265) onto `[post_process.styles.ascii]`.
-/// Bare `--ascii`, or any flag only the style reads, turns the style on;
-/// the flags the spike shares (`--ascii-cell`, `--ascii-levels`,
-/// `--ascii-footprint`, `--ascii-no-edges`, `--ascii-edge-depth`,
-/// `--ascii-edge-normal`) go to whichever of the two is on.
+/// `--ascii`, or any flag that sets the look (font, ramp, colour, scope,
+/// edges...), turns the style on; the tuning flags (`--ascii-cell`,
+/// `--ascii-levels`, `--ascii-footprint`, `--ascii-no-edges`,
+/// `--ascii-edge-depth`, `--ascii-edge-normal`) tune it once it's on,
+/// from the flag or the scene.
 fn apply_ascii_style_flags(
     args: &RenderArgs,
     pp: &mut flint_render::PostProcessConfig,
 ) -> Result<()> {
     const NAME: &str = "ascii";
-    if args.ascii.as_deref().is_some_and(|m| m != ASCII_STYLE) {
-        return Ok(()); // a spike mode
-    }
     let style_only = args.ascii_font.is_some()
         || args.ascii_ramp.is_some()
         || args.ascii_color.is_some()
@@ -1036,9 +1018,11 @@ fn apply_ascii_style_flags(
         || args.ascii_edge_threshold.is_some()
         || args.ascii_edge_max.is_some()
         || args.ascii_dither.is_some()
+        || args.ascii_exposure.is_some()
+        || args.ascii_normalize.is_some()
         || args.ascii_scope.is_some()
         || args.ascii_grid.is_some();
-    if args.ascii.is_some() || style_only {
+    if args.ascii || style_only {
         pp.styles.set_enabled(NAME, true);
     }
     if !pp.styles.is_enabled(NAME) {
@@ -1113,6 +1097,8 @@ fn apply_ascii_style_flags(
         ("edge_depth", args.ascii_edge_depth),
         ("edge_normal", args.ascii_edge_normal),
         ("dither", args.ascii_dither),
+        ("exposure", args.ascii_exposure),
+        ("normalize", args.ascii_normalize),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);
