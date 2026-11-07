@@ -348,6 +348,9 @@ impl RenderDebugPanel {
                 &mut self.pp.kuwahara_anisotropy,
                 0.0..=2.0,
             );
+            if let Some(kuwahara) = flint_render::stylize::find("kuwahara") {
+                f.pp_changed |= crate::styles_ui::feeds_bloom_checkbox(ui, kuwahara, &mut self.pp);
+            }
         });
 
         // Registered styles with settings in the style table (#262), one

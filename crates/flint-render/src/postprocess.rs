@@ -1736,7 +1736,10 @@ impl PostProcessPipeline {
     }
 
     /// Run the bloom downsample/upsample chain.
-    /// Reads from the HDR scene texture and writes to bloom mip chain.
+    /// Reads `source` (the HDR scene, or the HDR styles' result when one
+    /// of them feeds bloom, #300) and writes to bloom mip chain. The
+    /// threshold's bind group over it is kept, keyed by `source.id`, so
+    /// the view must live as long as `resources` (both do).
     ///
     /// Each step reads its own slot of the bloom uniform buffer (#139):
     /// the steps used to share one, rewritten and submitted step by step.
@@ -1749,6 +1752,7 @@ impl PostProcessPipeline {
         device: &wgpu::Device,
         resources: &PostProcessResources,
         config: &PostProcessConfig,
+        source: &crate::stylize::StyleInput<'_>,
     ) {
         let mips = resources.bloom_mip_count;
         if mips == 0 {
@@ -1799,9 +1803,10 @@ impl PostProcessPipeline {
                 })
             })
         };
-        // The source of each step: the HDR scene (variant 0) or a mip (1 + i)
-        let source_bg = |variant: usize, view: &wgpu::TextureView| {
-            resources.binds.get("bloom source", variant as u64, || {
+        // The source of each step: a mip (1 + i), or the threshold's input
+        // under its own name, keyed by the input's id
+        let source_bg = |name: &'static str, variant: u64, view: &wgpu::TextureView| {
+            resources.binds.get(name, variant, || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Bloom Source BG"),
                     layout: &self.bloom_texture_bgl,
@@ -1826,7 +1831,10 @@ impl PostProcessPipeline {
             &resources.bloom_mips[0].view,
             Some(wgpu::Color::BLACK),
             &self.bloom_threshold_pipeline,
-            &[&uniform_bg(0), &source_bg(0, &resources.hdr_view)],
+            &[
+                &uniform_bg(0),
+                &source_bg("bloom input", source.id, source.view),
+            ],
         );
 
         // Step 2: Progressive downsample mip[0] → mip[1] → ... → mip[N-1]
@@ -1839,7 +1847,7 @@ impl PostProcessPipeline {
                 &self.bloom_downsample_pipeline,
                 &[
                     &uniform_bg(i),
-                    &source_bg(i, &resources.bloom_mips[i - 1].view),
+                    &source_bg("bloom source", i as u64, &resources.bloom_mips[i - 1].view),
                 ],
             );
         }
@@ -1855,7 +1863,11 @@ impl PostProcessPipeline {
                 &self.bloom_upsample_pipeline,
                 &[
                     &uniform_bg(mips + i),
-                    &source_bg(i + 2, &resources.bloom_mips[i + 1].view),
+                    &source_bg(
+                        "bloom source",
+                        (i + 2) as u64,
+                        &resources.bloom_mips[i + 1].view,
+                    ),
                 ],
             );
         }

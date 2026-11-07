@@ -21,6 +21,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     needs: &[],
     hints: &[],
     component: None,
+    feeds_bloom: false,
     create: |d| Box::new(Kuwahara::new(d)),
 };
 
