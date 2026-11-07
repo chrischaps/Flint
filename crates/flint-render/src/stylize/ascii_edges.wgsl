@@ -21,12 +21,22 @@
 struct EdgeUniforms {
     inv_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
-    // The ascii style's mask id; 0xFFFF when no entity asks for it
-    style_id: u32,
+    _pad0: u32,
     _pad: vec2<f32>,
     depth_threshold: f32,
     normal_threshold: f32,
+    // The mask ids drawn in this style (#266: the plain `ascii` id and
+    // every per-entity variant's), one bit each for ids below 256
+    ours: array<vec4<u32>, 2>,
 };
+
+fn is_ours(id: u32) -> bool {
+    if id == 0u || id >= 256u {
+        return false;
+    }
+    let word = u.ours[id / 128u][(id / 32u) % 4u];
+    return ((word >> (id % 32u)) & 1u) == 1u;
+}
 
 @group(0) @binding(0) var<uniform> u: EdgeUniforms;
 @group(1) @binding(0) var scene_depth: texture_depth_2d;
@@ -119,10 +129,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             ngy += ky[k] * n;
             mean_dist += dist / 9.0;
             // A styled entity's outline: an id change where one side is
-            // ascii's, kept where this pixel is the nearer one
+            // this style's, kept where this pixel is the nearer one. Two of
+            // its variants meeting is an outline too, which is what
+            // separates one styled prop from the next.
             let id = id_at(c + vec2<i32>(i - 1, j - 1), size);
-            if id != centre_id && (id == u.style_id || centre_id == u.style_id) {
-                let step = select(-1.0, 1.0, id == u.style_id);
+            if id != centre_id && (is_ours(id) || is_ours(centre_id)) {
+                let step = select(-1.0, 1.0, id > centre_id);
                 igx += kx[k] * step;
                 igy += ky[k] * step;
                 if dist >= 0.999 {

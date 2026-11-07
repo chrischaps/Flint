@@ -2,7 +2,8 @@
 //! finished frame, switching it off gives back the exact bytes, the chain
 //! survives a resize, and an HDR style and a display style run in one
 //! frame without a validation error. The ASCII style (#265) draws one
-//! glyph per cell on one grid, and its cells scale with pixels per point.
+//! glyph per cell on one grid, and its cells scale with pixels per point;
+//! with its history on (#277) a wobbling camera leaves its glyphs still.
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -400,3 +401,97 @@ fn ascii_palette_modes_draw_only_the_palettes_colours() {
         "glow darkened a pixel"
     );
 }
+
+/// Cells (8 px) whose pixels differ between two RGBA8 frames.
+fn changed_cells(a: &[u8], b: &[u8]) -> usize {
+    let n = SIZE as usize / 8;
+    (0..n * n)
+        .filter(|i| block(a, 8, i % n, i / n) != block(b, 8, i % n, i / n))
+        .count()
+}
+
+#[test]
+fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    // A box: its edges cut cells, whose tones sit between the box's and
+    // the sky's, on ramp boundaries
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, 0.0, 0.0]));
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+
+    let run = |temporal: &str| -> Vec<Vec<u8>> {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_option("ascii", "temporal", temporal);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        (0..24)
+            .map(|i| {
+                // A camera that wobbles back and forth by a fraction of a
+                // cell, as a hand-held or idle-sway camera does
+                let mut camera = Camera::default();
+                let wobble = if i % 2 == 0 { 0.0 } else { WOBBLE };
+                camera.target.x += wobble;
+                camera.target.y += wobble;
+                renderer.update_from_world(&world, &gpu.device);
+                renderer.render_to(
+                    &gpu.device,
+                    &gpu.queue,
+                    &gpu.depth_view,
+                    &camera,
+                    &gpu.color_view,
+                );
+                gpu.device.poll(wgpu::Maintain::Wait);
+                gpu.pixels()
+            })
+            .collect()
+    };
+    let flips = |frames: &[Vec<u8>]| -> usize {
+        frames[1..]
+            .iter()
+            .zip(frames)
+            .map(|(b, a)| changed_cells(a, b))
+            .sum()
+    };
+
+    let off = run("off");
+    let on = run("on");
+    // The first frame has no past: it is exactly the stateless style's
+    assert_eq!(on[0], off[0], "the first frame differs with history on");
+    let (off_flips, on_flips) = (flips(&off), flips(&on));
+    eprintln!("cells changed over 23 frames: off {off_flips}, on {on_flips}");
+    assert!(
+        off_flips > 0,
+        "the wobble moved no glyph; the bench tests nothing"
+    );
+    assert!(
+        on_flips * 4 <= off_flips,
+        "history should hold most glyphs still: off {off_flips}, on {on_flips}"
+    );
+    // The same frames in, the same frames out
+    assert_eq!(run("on"), on, "a second run differs");
+}
+
+/// How far the wobbling camera's target moves, in metres.
+const WOBBLE: f32 = 0.08;

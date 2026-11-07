@@ -9,9 +9,10 @@
 # after a deliberate change, and look at what you bless: the renders land
 # in the suite's out dir with a diff beside any that moved.
 #
-# Per-entity ASCII is covered twice for now: the spike's masked modes
-# (#261, static meshes, screen and object grids) and the entity style mask
-# that the real per-entity style (#266) reads. #266 adds its own case here.
+# Per-entity ASCII (#266) has cases of its own below. The props scene's
+# barrel and YBot carry `style_mask { style = "ascii" }`, so since #266
+# they are glyphs in every props case, the Kuwahara one included. The
+# spike's masked modes (#261) stay until #293 removes them.
 #
 # The props cases use demo/stylize_props.scene.toml, which loads in a few
 # seconds in a debug build (style_mask.scene.toml's grass and 32 MB bench
@@ -91,6 +92,13 @@ name = "ascii-edges-scale05"
 scene = "demo/ascii_edges.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5"]
 
+# The grid-fixed ordered dither (#277): the one temporal-stability knob a
+# single frame shows (smoothing and hysteresis need a frame before)
+[[case]]
+name = "ascii-full-dither"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:dither=1"]
+
 # --- per-entity ASCII -----------------------------------------------------
 
 # The spike's screen-grid mode: only the named props are glyphs
@@ -110,6 +118,24 @@ args = ["--no-grid", "--ascii=entity-object", "--ascii-entities", "barrel,cask,c
 name = "style-mask"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
+
+# Per-entity ASCII (#266): the props scene as authored (its two
+# style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
+# whole frame with those props as variants, and the props on object grids
+[[case]]
+name = "ascii-style-entities"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "ascii-style-screen"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "screen"]
+
+[[case]]
+name = "ascii-style-object"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
 # --- the other registered styles ------------------------------------------
 #

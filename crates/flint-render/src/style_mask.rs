@@ -12,6 +12,28 @@
 //! Its descendants inherit the style unless they carry a `style_mask` of
 //! their own; `enabled = false` takes an entity and its subtree out again.
 //!
+//! ## Per-entity settings (#266)
+//!
+//! A style that takes settings per entity names a component of its own
+//! ([`StyleDescriptor::component`], `ascii_style` for ASCII). Its fields are
+//! the style's parameters and options, and any it leaves out come from the
+//! scene's `[post_process.styles.<name>]` table, then the style's defaults:
+//!
+//! ```toml
+//! [entities.barrel.ascii_style]
+//! ramp = "blocks"
+//! tint = [1.0, 0.7, 0.3]   # a 3-array fills a style's tint_r/g/b
+//! ```
+//!
+//! Each distinct set of settings is a [`StyleVariant`] with an id of its
+//! own, so entities that say the same thing share an id and a pass reads
+//! the settings of every pixel's id from one small table. A style whose
+//! `grid` option is `object` gets one variant per styled root, anchored at
+//! that root's world origin. `enabled = false` on the component is an
+//! opt-out variant: it keeps the entity out of that style even where the
+//! style covers the whole screen. A plain `style_mask { style = "ascii" }`
+//! is the same as an empty `ascii_style`.
+//!
 //! ## How the mask is drawn
 //!
 //! The ASCII spike (#261) measured the two ways to write it and chose a
@@ -36,11 +58,14 @@
 //! no mask (and, but for terrain, no depth either).
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
+//! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
+use crate::postprocess::PostProcessConfig;
+use crate::stylize::StyleDescriptor;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The mask's format: one style id a pixel, 0 where no style drew.
 pub const STYLE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
@@ -70,15 +95,118 @@ const DRAW_STRIDE: u64 = 256;
 // Style names -> ids
 // ---------------------------------------------------------------------------
 
+/// What one style id stands for (#266): the style that draws it and the
+/// settings its entities give that differ from the scene's.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct StyleVariant {
+    /// The style's registered name (or whatever a `style_mask` names).
+    pub style: String,
+    /// Parameters set on the entity's style component.
+    pub params: BTreeMap<String, f32>,
+    /// Options set on the entity's style component.
+    pub options: BTreeMap<String, String>,
+    /// An opt-out (`enabled = false` on the style component): these pixels
+    /// are left alone even where the style covers the whole screen.
+    pub off: bool,
+    /// The world-space point an object-anchored grid (`grid = "object"`)
+    /// is pinned to: the styled root's origin, this frame.
+    pub anchor: Option<[f32; 3]>,
+}
+
+impl StyleVariant {
+    /// A variant with nothing of its own.
+    pub fn plain(style: &str) -> Self {
+        Self {
+            style: style.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Parameter `name`: the entity's, else the scene's, else the default.
+    pub fn param(&self, d: &StyleDescriptor, config: &PostProcessConfig, name: &str) -> f32 {
+        self.params
+            .get(name)
+            .copied()
+            .unwrap_or_else(|| d.param(config, name))
+    }
+
+    /// Option `name`: the entity's, else the scene's, else the default.
+    pub fn option<'a>(
+        &'a self,
+        d: &StyleDescriptor,
+        config: &'a PostProcessConfig,
+        name: &str,
+    ) -> &'a str {
+        match self.options.get(name) {
+            Some(v) => v,
+            None => d.option(config, name),
+        }
+    }
+}
+
 /// The styles entities ask for, numbered from 1 in name order. Ids change
 /// only when the set of names does, and are the same for the same scene
 /// on every run (no entity id or hash order goes into them).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+///
+/// A name is a style's, with its per-entity settings spelled after it when
+/// it has any (`ascii{ramp=blocks}`, `ascii@barrel`, `ascii{off}`), so
+/// entities asking for the same thing share a name and so an id.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct StyleIds {
     names: Vec<String>,
+    /// What each name stands for, beside `names`.
+    variants: Vec<StyleVariant>,
 }
 
 impl StyleIds {
+    /// What id `id` stands for.
+    pub fn variant(&self, id: u16) -> Option<&StyleVariant> {
+        (id as usize)
+            .checked_sub(1)
+            .and_then(|i| self.variants.get(i))
+    }
+
+    /// `(id, variant)` for every variant of style `style`, in id order.
+    pub fn variants_of<'a>(
+        &'a self,
+        style: &'a str,
+    ) -> impl Iterator<Item = (u16, &'a StyleVariant)> + 'a {
+        self.variants
+            .iter()
+            .enumerate()
+            .filter(move |(_, v)| v.style == style)
+            .map(|(i, v)| ((i + 1) as u16, v))
+    }
+
+    /// Whether an entity asks to be drawn in `style` (an opt-out doesn't).
+    pub fn requests(&self, style: &str) -> bool {
+        self.variants.iter().any(|v| v.style == style && !v.off)
+    }
+
+    /// Whether any entity names `style`, opt-outs included.
+    pub fn mentions(&self, style: &str) -> bool {
+        self.variants.iter().any(|v| v.style == style)
+    }
+
+    /// Make the table hold exactly `entries` (any order; a repeated name
+    /// keeps its first variant). Returns whether the set of names changed;
+    /// the variants (their anchors move) are taken either way.
+    pub fn set(&mut self, mut entries: Vec<(String, StyleVariant)>) -> bool {
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.dedup_by(|a, b| a.0 == b.0);
+        entries.truncate(u16::MAX as usize - 1);
+        let same = self.names.len() == entries.len()
+            && self.names.iter().zip(&entries).all(|(a, (b, _))| a == b);
+        if same {
+            for (slot, (_, v)) in self.variants.iter_mut().zip(entries) {
+                *slot = v;
+            }
+            return false;
+        }
+        (self.names, self.variants) = entries.into_iter().unzip();
+        true
+    }
+
     /// The id of style `name`, if any entity asks for it.
     pub fn id(&self, name: &str) -> Option<u16> {
         self.names
@@ -114,16 +242,12 @@ impl StyleIds {
     /// Make the table hold exactly `names` (any order, repeats allowed).
     /// Allocates only when the set changed. Returns whether it did.
     pub fn sync(&mut self, names: &mut Vec<&str>) -> bool {
-        names.sort_unstable();
-        names.dedup();
-        names.truncate(u16::MAX as usize - 1);
-        if self.names.len() == names.len()
-            && self.names.iter().zip(names.iter()).all(|(a, b)| a == b)
-        {
-            return false;
-        }
-        self.names = names.iter().map(|n| n.to_string()).collect();
-        true
+        self.set(
+            names
+                .iter()
+                .map(|n| (n.to_string(), StyleVariant::plain(n)))
+                .collect(),
+        )
     }
 }
 
@@ -138,24 +262,156 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Find every styled entity's id: those with a `style_mask` and their
-/// descendants, the nearest `style_mask` winning. Fills `out` (cleared
-/// first) with the non-zero ids only and syncs `ids` with the names used.
-pub(crate) fn resolve(world: &FlintWorld, ids: &mut StyleIds, out: &mut HashMap<EntityId, u16>) {
+/// Read a style component's fields into `variant`: the descriptor's
+/// options as strings, its parameters as numbers, and a 3-array `x` as the
+/// parameters `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
+/// style doesn't take, a value of the wrong type) is skipped: the scene
+/// loader has already warned about it against the component's schema.
+pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
+    let number = |v: &toml::Value| {
+        v.as_float()
+            .or_else(|| v.as_integer().map(|i| i as f64))
+            .map(|n| n as f32)
+    };
+    for (key, value) in table {
+        if d.options.iter().any(|o| o.name == key) {
+            if let Some(text) = value.as_str() {
+                variant.options.insert(key.clone(), text.to_string());
+            }
+        } else if d.params.iter().any(|p| p.name == key) {
+            if let Some(n) = number(value) {
+                variant.params.insert(key.clone(), n);
+            }
+        } else if let Some([r, g, b]) = value.as_array().map(Vec::as_slice) {
+            let channels = ["r", "g", "b"].map(|c| format!("{key}_{c}"));
+            if channels
+                .iter()
+                .all(|c| d.params.iter().any(|p| p.name == c))
+            {
+                for (c, v) in channels.into_iter().zip([r, g, b]) {
+                    if let Some(n) = number(v) {
+                        variant.params.insert(c, n);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The name a variant goes by: its style, `@root` when it is anchored to
+/// one, then its settings in key order (`{off}` for an opt-out). Equal
+/// settings give equal names, so their entities share an id.
+fn variant_name(v: &StyleVariant, root: &str) -> String {
+    let mut name = v.style.clone();
+    if v.anchor.is_some() {
+        name.push('@');
+        name.push_str(root);
+    }
+    let mut settings: Vec<String> = Vec::new();
+    if v.off {
+        settings.push("off".into());
+    } else {
+        // Both maps are sorted; merge them so the spelling is canonical
+        let mut all: Vec<(&str, String)> = v
+            .params
+            .iter()
+            .map(|(k, n)| (k.as_str(), format!("{k}={n}")))
+            .chain(
+                v.options
+                    .iter()
+                    .map(|(k, s)| (k.as_str(), format!("{k}={s}"))),
+            )
+            .collect();
+        all.sort_by(|a, b| a.0.cmp(b.0));
+        settings.extend(all.into_iter().map(|(_, s)| s));
+    }
+    if !settings.is_empty() {
+        name.push('{');
+        name.push_str(&settings.join(","));
+        name.push('}');
+    }
+    name
+}
+
+/// What a styled root asks for: its variant's name and the variant, or
+/// `None` for a `style_mask` opt-out. A style component (in registry
+/// order) wins over a `style_mask` on the same entity.
+fn request(
+    world: &FlintWorld,
+    config: &PostProcessConfig,
+    root: EntityId,
+) -> Option<(String, StyleVariant)> {
+    let from_component = crate::stylize::registry().iter().find_map(|d| {
+        let table = world.get_component(root, d.component?)?.as_table()?;
+        let mut v = StyleVariant::plain(d.name);
+        if table.get("enabled").and_then(|e| e.as_bool()) == Some(false) {
+            v.off = true;
+        } else {
+            read_overrides(d, table, &mut v);
+        }
+        Some((*d, v))
+    });
+    let (descriptor, mut variant) = match from_component {
+        Some((d, v)) => (Some(d), v),
+        None => {
+            let style = requested_style(world, root)?;
+            (crate::stylize::find(style), StyleVariant::plain(style))
+        }
+    };
+    // An object-anchored grid: one variant per root, pinned to its origin
+    if let Some(d) = descriptor.filter(|d| d.component.is_some() && !variant.off) {
+        if variant.option(d, config, "grid") == "object" {
+            let p = world.get_world_position(root).unwrap_or_default();
+            variant.anchor = Some([p.x, p.y, p.z]);
+        }
+    }
+    let name = variant_name(&variant, world.get_name(root).unwrap_or(""));
+    Some((name, variant))
+}
+
+/// Whether any entity carries a `style_mask` or a style's own component.
+pub(crate) fn any_styled(world: &FlintWorld) -> bool {
+    !world
+        .entities_with_component(STYLE_MASK_COMPONENT)
+        .is_empty()
+        || crate::stylize::registry()
+            .iter()
+            .filter_map(|d| d.component)
+            .any(|c| !world.entities_with_component(c).is_empty())
+}
+
+/// Find every styled entity's id: those with a `style_mask` or a style's
+/// own component (`ascii_style`), and their descendants, the nearest
+/// winning. Fills `out` (cleared first) with the non-zero ids only and sets
+/// `ids` to the variants used. `config` supplies the scene's settings a
+/// variant falls back on (its grid).
+pub(crate) fn resolve(
+    world: &FlintWorld,
+    config: &PostProcessConfig,
+    ids: &mut StyleIds,
+    out: &mut HashMap<EntityId, u16>,
+) {
     out.clear();
-    let roots: &HashSet<EntityId> = world.entities_with_component(STYLE_MASK_COMPONENT);
-    if roots.is_empty() {
-        ids.sync(&mut Vec::new());
+    if !any_styled(world) {
+        ids.set(Vec::new());
         return;
     }
-    let mut names: Vec<&str> = roots
+    let mut roots: HashSet<EntityId> = world.entities_with_component(STYLE_MASK_COMPONENT).clone();
+    for c in crate::stylize::registry()
         .iter()
-        .filter_map(|&e| requested_style(world, e))
+        .filter_map(|d| d.component)
+    {
+        roots.extend(world.entities_with_component(c));
+    }
+    let requests: Vec<(EntityId, Option<(String, StyleVariant)>)> = roots
+        .iter()
+        .map(|&e| (e, request(world, config, e)))
         .collect();
-    ids.sync(&mut names);
+    ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
     let mut stack = Vec::new();
-    for &root in roots {
-        let Some(id) = requested_style(world, root).and_then(|n| ids.id(n)) else {
+    for (root, req) in &requests {
+        let root = *root;
+        let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
         stack.clear();
@@ -518,7 +774,7 @@ mod tests {
         ]);
         let mut ids = StyleIds::default();
         let mut out = HashMap::new();
-        resolve(&world, &mut ids, &mut out);
+        resolve(&world, &PostProcessConfig::default(), &mut ids, &mut out);
         let get = |n: &str| out.get(&world.get_id(n).unwrap()).copied();
         let ascii = ids.id("ascii");
         let pencil = ids.id("pencil");
@@ -529,5 +785,171 @@ mod tests {
         assert_eq!(get("flag"), None);
         assert_eq!(get("cloth"), None);
         assert_eq!(get("tree"), None);
+    }
+
+    fn with_component(world: &mut FlintWorld, name: &str, component: &str, toml_src: &str) {
+        let id = world
+            .get_id(name)
+            .unwrap_or_else(|| world.spawn(name).unwrap());
+        let table: toml::Table = toml::from_str(toml_src).unwrap();
+        world
+            .set_component(id, component, toml::Value::Table(table))
+            .unwrap();
+    }
+
+    fn resolved(
+        world: &FlintWorld,
+        config: &PostProcessConfig,
+    ) -> (StyleIds, HashMap<EntityId, u16>) {
+        let mut ids = StyleIds::default();
+        let mut out = HashMap::new();
+        resolve(world, config, &mut ids, &mut out);
+        (ids, out)
+    }
+
+    #[test]
+    fn equal_settings_share_an_id_and_others_get_their_own() {
+        let mut world = FlintWorld::new();
+        with_component(
+            &mut world,
+            "barrel",
+            "ascii_style",
+            "ramp = \"blocks\"\ncell = 12",
+        );
+        with_component(
+            &mut world,
+            "crate",
+            "ascii_style",
+            "cell = 12.0\nramp = \"blocks\"",
+        );
+        with_component(&mut world, "lamp", "ascii_style", "tint = [1.0, 0.5, 0]");
+        with_component(&mut world, "bench", "ascii_style", "");
+        with_component(&mut world, "stool", "style_mask", "style = \"ascii\"");
+        // The schema's default for `enabled` rides along and changes nothing
+        with_component(&mut world, "table", "ascii_style", "enabled = true");
+        let (ids, out) = resolved(&world, &PostProcessConfig::default());
+        let get = |n: &str| out[&world.get_id(n).unwrap()];
+        assert_eq!(get("barrel"), get("crate"), "integer 12 and 12.0 agree");
+        assert_ne!(get("barrel"), get("lamp"));
+        assert_eq!(
+            get("bench"),
+            get("stool"),
+            "an empty ascii_style is a plain style_mask"
+        );
+        assert_eq!(get("bench"), get("table"));
+        assert_eq!(ids.name(get("bench")), Some("ascii"));
+        assert_eq!(ids.name(get("barrel")), Some("ascii{cell=12,ramp=blocks}"));
+
+        let lamp = ids.variant(get("lamp")).unwrap();
+        assert_eq!(lamp.style, "ascii");
+        assert_eq!(
+            lamp.params.get("tint_g"),
+            Some(&0.5),
+            "a 3-array fills tint_r/g/b"
+        );
+        assert_eq!(lamp.params.get("tint_b"), Some(&0.0));
+        assert!(ids.requests("ascii"));
+        assert_eq!(ids.variants_of("ascii").count(), 3);
+    }
+
+    #[test]
+    fn an_opt_out_is_a_variant_that_asks_for_nothing() {
+        let mut world = FlintWorld::new();
+        with_component(
+            &mut world,
+            "cart",
+            "ascii_style",
+            "enabled = false\ncell = 4",
+        );
+        let (ids, out) = resolved(&world, &PostProcessConfig::default());
+        let id = out[&world.get_id("cart").unwrap()];
+        assert_eq!(
+            ids.name(id),
+            Some("ascii{off}"),
+            "an opt-out's settings don't matter"
+        );
+        assert!(ids.variant(id).unwrap().off);
+        assert!(
+            !ids.requests("ascii"),
+            "an opt-out alone doesn't switch the style on"
+        );
+        assert!(ids.mentions("ascii"));
+    }
+
+    #[test]
+    fn an_entity_falls_back_on_the_scenes_settings_then_the_defaults() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_param("ascii", "cell", 10.0);
+        config.styles.set_option("ascii", "color", "tint");
+        let mut v = StyleVariant::plain("ascii");
+        v.params.insert("cell".into(), 16.0);
+        assert_eq!(v.param(ascii, &config, "cell"), 16.0);
+        assert_eq!(v.option(ascii, &config, "color"), "tint");
+        assert_eq!(v.param(ascii, &config, "ink"), 1.0);
+    }
+
+    #[test]
+    fn an_object_grid_anchors_each_root_and_its_children_ride_along() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "cart", "ascii_style", "grid = \"object\"");
+        with_component(
+            &mut world,
+            "cart",
+            "transform",
+            "position = [1.0, 2.0, 3.0]",
+        );
+        with_component(&mut world, "wagon", "ascii_style", "grid = \"object\"");
+        let wheel = world.spawn("wheel").unwrap();
+        world.set_parent_by_name("wheel", "cart").unwrap();
+        let (ids, out) = resolved(&world, &PostProcessConfig::default());
+        let cart = out[&world.get_id("cart").unwrap()];
+        assert_eq!(out[&wheel], cart, "a child shares its root's grid");
+        assert_ne!(
+            cart,
+            out[&world.get_id("wagon").unwrap()],
+            "one grid per root"
+        );
+        assert_eq!(ids.name(cart), Some("ascii@cart{grid=object}"));
+        assert_eq!(ids.variant(cart).unwrap().anchor, Some([1.0, 2.0, 3.0]));
+
+        // The scene's table can ask for object grids for everyone
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "bench", "style_mask", "style = \"ascii\"");
+        let mut config = PostProcessConfig::default();
+        config.styles.set_option("ascii", "grid", "object");
+        let (ids, out) = resolved(&world, &config);
+        let bench = out[&world.get_id("bench").unwrap()];
+        assert_eq!(ids.name(bench), Some("ascii@bench"));
+    }
+
+    #[test]
+    fn a_style_component_beats_a_style_mask_on_the_same_entity() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "style_mask", "style = \"pencil\"");
+        with_component(&mut world, "barrel", "ascii_style", "ramp = \"blocks\"");
+        let (ids, out) = resolved(&world, &PostProcessConfig::default());
+        let id = out[&world.get_id("barrel").unwrap()];
+        assert_eq!(ids.variant(id).unwrap().style, "ascii");
+        assert!(!ids.mentions("pencil"));
+    }
+
+    #[test]
+    fn entities_switch_a_per_entity_style_on_without_a_table() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let invert = crate::stylize::find("invert").unwrap();
+        let config = PostProcessConfig::default();
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "bench", "style_mask", "style = \"ascii\"");
+        with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
+        let (ids, _) = resolved(&world, &config);
+        assert!(ascii.is_on(&config, &ids));
+        assert!(ascii.reads_mask(&config, &ids));
+        assert!(!invert.is_on(&config, &ids), "invert isn't per-entity");
+        assert!(crate::stylize::any_uses_mask(&config, &ids));
+        // Nobody asking: off, and the mask isn't drawn
+        let (none, _) = resolved(&FlintWorld::new(), &config);
+        assert!(!ascii.is_on(&config, &none));
+        assert!(!crate::stylize::any_uses_mask(&config, &none));
     }
 }

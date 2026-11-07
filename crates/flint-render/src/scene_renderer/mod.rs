@@ -583,6 +583,11 @@ pub struct SceneRenderer {
     /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
     /// it. Hosts with a window set it; 1 headless.
     pub pixels_per_point: f32,
+    /// Frames drawn through the post chain, handed to styles as
+    /// [`StyleFrame::frame`](crate::stylize::StyleFrame::frame) (#277).
+    style_frame_serial: std::sync::atomic::AtomicU64,
+    /// Bumped by [`reset_style_history`](Self::reset_style_history).
+    style_history_epoch: u64,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
@@ -827,6 +832,8 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -2306,6 +2313,8 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -3149,9 +3158,17 @@ impl SceneRenderer {
 
         self.resolve_ascii_targets(world);
         self.sync_debug_styles();
-        if self.style_mask_wanted() {
-            crate::style_mask::resolve(world, &mut self.style_ids, &mut self.style_by_entity);
+        // Ids for every styled entity: they say which styles are on for
+        // entities alone (#266) as well as what the mask holds (#263)
+        if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
+            crate::style_mask::resolve(
+                world,
+                &self.postprocess_config,
+                &mut self.style_ids,
+                &mut self.style_by_entity,
+            );
         } else {
+            self.style_ids.set(Vec::new());
             self.style_by_entity.clear();
         }
 
@@ -3955,6 +3972,14 @@ impl SceneRenderer {
         self.apply_ambient_override();
     }
 
+    /// Forget what styles remember of earlier frames (ASCII's temporal
+    /// stability, #277): call it when the picture stops following on from
+    /// the last one, on a scene change or a camera cut. The next frame is
+    /// drawn as if it were the first.
+    pub fn reset_style_history(&mut self) {
+        self.style_history_epoch = self.style_history_epoch.wrapping_add(1);
+    }
+
     /// Clear any scene-authored ambient override, restoring the built-in
     /// default (needed on scene transitions so an old scene's ambient never
     /// leaks into a scene that doesn't author one).
@@ -4373,7 +4398,7 @@ impl SceneRenderer {
     /// up and a style that reads it is on (#263).
     fn style_mask_wanted(&self) -> bool {
         self.postprocess_resources.is_some()
-            && crate::stylize::any_uses_mask(&self.postprocess_config)
+            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_ids)
     }
 
     /// Keep the `style` debug view's style (`mask_view`) on while that
@@ -4546,7 +4571,7 @@ impl SceneRenderer {
         let surface_format = pp.surface_format;
         for failed in pp
             .styles
-            .ensure(device, surface_format, &self.postprocess_config)
+            .ensure(device, surface_format, &self.postprocess_config, &self.style_ids)
         {
             tracing::warn!(
                 "{} style unavailable: GPU driver crashed during shader compilation. \

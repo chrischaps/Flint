@@ -1,127 +1,96 @@
-// ASCII edges (#267), pass 2 of 3: which glyph cells draw a line glyph.
+// ASCII cell pass (#265, #277): one fragment a glyph cell. It averages the
+// cell's colour from the picture, picks the cell's ramp step, and writes
+// both into the cell state the glyph pass draws from.
 //
-// One fragment per cell of the ASCII grid (the target is the grid, one
-// texel a cell, offset by one so the part cell at the top left is 0, 0).
-// It reads every edge pixel of its cell, not a sparse lattice, so a
-// one-pixel outline can't slip between samples and leave a gap.
+// Temporal stability (#277). Glyphs shimmer in motion because a cell's
+// tone sits near a step boundary and the smallest change (a sub-pixel
+// slide of the camera, a texel of specular) tips it to the neighbouring
+// glyph and back. Three things hold it still, each its own parameter:
 //
-// The edge pixels' structure tensors are summed: its dominant orientation
-// is the line's direction, smoothed over the whole cell, with no voting
-// bins (Kuwahara's tensor, but over geometry edges, not colour). How much
-// edge the cell holds is measured in cell widths, so a line straight
-// across counts 1 at any cell size:
-//   - at least `threshold` of edge and the cell draws a line glyph;
-//   - more than `max_len` and it's texture-like geometry (grass, foliage),
-//     not an outline, and keeps its tone glyph;
-//   - a styled entity's outline needs only `threshold` and ignores
-//     `max_len`, so it is always drawn.
-// Output: x = the edge glyph's slot + 1 (0 = no edge; slots in
-// `EdgeGlyphs::all()` order: horizontal, vertical, diagonal,
-// antidiagonal), y = the edge length in cell widths that decided it (the
-// outline's, for an outline), z = 1 for an outline.
+// - smoothing: the cell keeps part of last frame's colour (an exponential
+//   average), except where the colour jumped (something new came into the
+//   cell), which takes the new colour at once so nothing ghosts.
+// - hysteresis: the cell keeps last frame's glyph while its tone is within
+//   that many ramp steps of the glyph's band; it changes only when the
+//   tone has clearly moved on.
+// - dither: an ordered (Bayer) offset fixed to the grid, before the ramp,
+//   so a smooth gradient breaks into a stable pattern rather than one
+//   hard, crawling boundary.
+//
+// Last frame's state is read from the other of two textures the style
+// ping-pongs; on a first frame (`u.history == 0`) none of it is read and
+// the result is exactly the stateless style's.
 
-struct CellUniforms {
-    cell: vec2<f32>,
-    origin: vec2<f32>,
-    size: vec2<f32>,
-    threshold: f32,
-    max_len: f32,
-    // The edge texture's size: the depth's, smaller than `size` under a
-    // render scale
-    edge_size: vec2<f32>,
-    _pad: vec2<f32>,
-};
+@group(1) @binding(0) var input_texture: texture_2d<f32>;
+@group(1) @binding(1) var input_sampler: sampler;
+@group(2) @binding(0) var history: texture_2d<u32>;
 
-@group(0) @binding(0) var<uniform> u: CellUniforms;
-@group(1) @binding(0) var edges: texture_2d<f32>;
+// Colour change (in luminance) over which smoothing lets go: below LO the
+// cell averages fully, above HI it takes the new colour.
+const SNAP_LO: f32 = 0.06;
+const SNAP_HI: f32 = 0.2;
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-    var out: VertexOutput;
-    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-    return out;
+fn shown(p: vec2<i32>) -> vec3<f32> {
+    let max_px = vec2<i32>(u.size) - vec2<i32>(1);
+    let c = clamp(textureLoad(input_texture, clamp(p, vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(c, to_display(c), u.srgb == 1u);
 }
 
-const PI: f32 = 3.14159265;
+// The ramp step a tone draws, after the optional tone bands.
+fn step_of(tone_in: f32, n: u32) -> u32 {
+    return min(u32(banded(tone_in) * f32(n)), n - 1u);
+}
 
-// The edge glyph slot for a line whose direction is `angle` radians from
-// +x with y up, as `EdgeGlyphs::for_angle` picks it.
-fn slot_for(angle: f32) -> u32 {
-    let a = angle - floor(angle / PI) * PI;
-    let eighth = PI / 8.0;
-    if a < eighth || a >= 7.0 * eighth {
-        return 0u;
-    }
-    if a < 3.0 * eighth {
-        return 2u;
-    }
-    if a < 5.0 * eighth {
-        return 1u;
-    }
-    return 3u;
+// A 4x4 Bayer threshold in [0, 1), fixed to the cell grid.
+fn bayer(c: vec2<i32>) -> f32 {
+    let m = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+    let i = vec2<u32>(c & vec2<i32>(3));
+    return (f32(m[i.y * 4u + i.x]) + 0.5) / 16.0;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let index = floor(in.position.xy) - 1.0;
-    let cell_min = index * u.cell + u.origin;
-    // Big cells are sampled every `stride` pixels; each sample stands for
-    // that many pixels of a line crossing it
-    let stride = max(1.0, ceil(max(u.cell.x, u.cell.y) / 16.0));
-    let max_px = vec2<i32>(u.size) - vec2<i32>(1);
-    let edge_max_px = vec2<i32>(u.edge_size) - vec2<i32>(1);
-    let to_edge = u.edge_size / u.size;
-    let weight = min(min(to_edge.x, to_edge.y), 1.0);
+fn fs_main(in: VertexOutput) -> @location(0) vec4<u32> {
+    let index = vec2<i32>(floor(in.position.xy));
+    let cell = vec2<f32>(index - vec2<i32>(CELL_OFFSET));
+    let cell_min = cell * u.cell + u.origin;
 
-    var all_j = vec3<f32>(0.0);
-    var all_n = 0.0;
-    var out_j = vec3<f32>(0.0);
-    var out_n = 0.0;
-    for (var y = 0.5 * stride; y < u.cell.y; y += stride) {
-        for (var x = 0.5 * stride; x < u.cell.x; x += stride) {
-            let p = vec2<i32>(floor(cell_min + vec2<f32>(x, y)));
-            if any(p < vec2<i32>(0)) || any(p > max_px) {
-                continue;
-            }
-            // The edge pixel under this output pixel. Under a render scale
-            // a one-pixel line is 1/scale output pixels wide, so each hit
-            // weighs `scale` and lengths stay in output cell widths
-            let q = min(vec2<i32>((vec2<f32>(p) + 0.5) * to_edge), edge_max_px);
-            let e = textureLoad(edges, q, 0);
-            if e.w > 0.5 {
-                all_j += e.xyz;
-                all_n += weight;
-                if e.w > 1.5 {
-                    out_j += e.xyz;
-                    out_n += weight;
-                }
-            }
+    // The cell's colour: the mean of a 4x4 lattice over a footprint
+    // `footprint` cells wide, centred on the cell
+    let foot = u.cell * max(u.footprint, 1.0);
+    let centre = cell_min + 0.5 * u.cell;
+    var sum = vec3<f32>(0.0);
+    for (var j = 0; j < 4; j++) {
+        for (var i = 0; i < 4; i++) {
+            let q = centre + ((vec2<f32>(f32(i), f32(j)) + 0.5) / 4.0 - 0.5) * foot;
+            sum += shown(vec2<i32>(floor(q)));
         }
     }
-    let width = max(u.cell.x, 1.0);
-    let all_len = all_n * stride / width;
-    let out_len = out_n * stride / width;
+    var col = sum / 16.0;
 
-    var j = vec3<f32>(0.0);
-    var outline = 0.0;
-    if out_len >= u.threshold {
-        j = out_j;
-        outline = 1.0;
-    } else if all_len >= u.threshold && all_len <= u.max_len {
-        j = all_j;
-    } else {
-        return vec4<f32>(0.0, all_len, 0.0, 0.0);
+    let n = max(u.ramp_len, 1u);
+    var kept = -1;
+    if u.history == 1u {
+        let prev = textureLoad(history, index, 0);
+        let prev_col = vec3<f32>(prev.rgb) / UNORM16;
+        let jump = abs(luma(col) - luma(prev_col));
+        let w = clamp(u.smoothing, 0.0, 0.99) * (1.0 - smoothstep(SNAP_LO, SNAP_HI, jump));
+        col = mix(col, prev_col, w);
+        kept = i32(min(prev.a, n - 1u));
     }
-    // The gradient's dominant angle (screen space, y down); the line runs
-    // across it. In y-up terms the gradient's angle is the negation.
-    let grad = 0.5 * atan2(2.0 * j.y, j.x - j.z);
-    let slot = slot_for(PI * 0.5 - grad);
-    // y = the length that decided it, which the glyph pass compares with
-    // its neighbours' to thin a line that splits between two cells
-    return vec4<f32>(f32(slot) + 1.0, select(all_len, out_len, outline > 0.5), outline, 0.0);
+
+    // The tone, dithered on the grid by up to one band
+    let bands = select(f32(n), u.levels, u.levels >= 1.0);
+    let t = tone(luma(col)) + (bayer(index) - 0.5) * u.dither / bands;
+    var step = step_of(t, n);
+    if kept >= 0 && u.hysteresis > 0.0 {
+        // Keep last frame's glyph if a tone within the margin would draw it
+        let margin = u.hysteresis / bands;
+        let k = u32(kept);
+        if k >= step_of(t - margin, n) && k <= step_of(t + margin, n) {
+            step = k;
+        }
+    }
+
+    let stored = vec3<u32>(round(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)) * UNORM16));
+    return vec4<u32>(stored, step);
 }

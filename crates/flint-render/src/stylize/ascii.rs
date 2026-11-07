@@ -29,20 +29,53 @@
 //! (a [`Palette`]: nearest ink, as a CGA screen, or a tone ladder, as a
 //! phosphor tube).
 //!
-//! Edges (#267): luminance alone loses silhouettes, so cells along the
-//! scene's edges draw the glyph set's line glyphs (`─ │ ╱ ╲` in the
-//! built-in set) instead of a tone glyph. Three passes: `ascii_edges.wgsl`
-//! finds edge pixels from geometry (depth, normals rebuilt from it, and
-//! the style mask, where an ascii-styled entity's outline is always an
-//! edge), `ascii_cells.wgsl` reduces each glyph cell to one line glyph by
-//! the summed structure tensor of every edge pixel in it, and the glyph
-//! pass draws it. Away from edges cells keep their luminance glyphs.
+//! It draws in two passes. The cell pass writes one texel a cell (the
+//! cell's colour and its ramp step) into a small state texture; the glyph
+//! pass draws each cell's glyph from it. The state is kept from frame to
+//! frame for temporal stability (#277): a cell keeps part of last frame's
+//! colour (`smoothing`) and last frame's glyph while its tone stays within
+//! `hysteresis` ramp steps of it, and an optional grid-fixed ordered
+//! `dither` breaks gradients into a stable pattern. `temporal = "off"`
+//! draws every frame as if it were the first. History counts only when
+//! the last frame the renderer drew was the one before and nothing about
+//! the grid, ramp or [`StyleFrame::history_epoch`] changed, so a single
+//! headless render is exactly the stateless style's, and a
+//! `--frame-step` capture gives it the same frames every run.
 //!
-//! Per-entity selection (#266) builds on it.
+//! ## Per entity (#266)
+//!
+//! An entity with an `ascii_style` component (or a `style_mask` naming
+//! `ascii`) is drawn in glyphs with no table at all, the rest of the frame
+//! passing through; `scope = "entities"` keeps a table as the preset those
+//! entities start from. Each pixel's mask id picks a row of the variant
+//! table (slot 0 is the table's own, drawn from the cell state above), so
+//! props can differ in cell, ramp, colour, palette and grid in one pass.
+//! Per-entity rows are drawn per pixel in the glyph pass, from their own
+//! samples only, and don't keep history yet (#277's smoothing, hysteresis
+//! and dither apply to the whole frame's cells). `grid = "object"` pins a
+//! variant's cells to its root's projected origin. The frame's ramps and
+//! palettes are packed into one table each.
+//!
+//! ## Edges (#267)
+//!
+//! Luminance alone loses silhouettes, so cells along the scene's edges
+//! draw the glyph set's line glyphs (`─ │ ╱ ╲` in the built-in set)
+//! instead of a tone glyph. Two more passes, before the glyph pass:
+//! `ascii_edges.wgsl` finds edge pixels from geometry at the depth's
+//! resolution (depth, normals rebuilt from it, and the style mask), and
+//! `ascii_edge_cells.wgsl` reduces each glyph cell to one line glyph by the
+//! summed structure tensor of every edge pixel in it. The glyph pass draws
+//! it over the tone glyph, thinning a line that splits between two cells.
+//! A mask outline fires wherever the id changes and either side is one of
+//! this style's ids (the plain `ascii` id or any per-entity variant's), so
+//! it is what separates one styled entity from another, and it is always
+//! drawn. Edges follow the screen grid: per-entity variants on an object
+//! grid keep their tone glyphs.
 
 use super::kit;
 use super::{
     StyleDescriptor, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage,
+    StyleTexture,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
@@ -110,6 +143,48 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             max: 4.0,
         },
         StyleParam {
+            name: "smoothing",
+            default: 0.6,
+            min: 0.0,
+            max: 0.95,
+        },
+        StyleParam {
+            name: "hysteresis",
+            default: 0.35,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "dither",
+            default: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "tint_r",
+            default: 0.35,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "tint_g",
+            default: 1.0,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "tint_b",
+            default: 0.45,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "glow",
+            default: 0.0,
+            min: 0.0,
+            max: 2.0,
+        },
+        StyleParam {
             name: "edges",
             default: 1.0,
             min: 0.0,
@@ -139,30 +214,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 0.2,
             max: 8.0,
         },
-        StyleParam {
-            name: "tint_r",
-            default: 0.35,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "tint_g",
-            default: 1.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "tint_b",
-            default: 0.45,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "glow",
-            default: 0.0,
-            min: 0.0,
-            max: 2.0,
-        },
     ],
     options: &[
         StyleOption {
@@ -190,17 +241,84 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             default: "dim",
             choices: GROUND_MODES,
         },
+        StyleOption {
+            name: "temporal",
+            default: "on",
+            choices: TEMPORAL_MODES,
+        },
+        StyleOption {
+            name: "scope",
+            default: "screen",
+            choices: SCOPES,
+        },
+        StyleOption {
+            name: "grid",
+            default: "screen",
+            choices: GRIDS,
+        },
     ],
     enabled: None,
     // The mask gives styled entities their outlines (#267); with no entity
     // asking for a style it is one cleared target and an empty pass
     uses_mask: true,
+    component: Some("ascii_style"),
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");
         let input_bgl = kit::sampled_layout(device, "ASCII Input BGL");
-        let atlas_bgl = load_layout(device, "ASCII Atlas BGL");
-        let cells_bgl = load_layout(device, "ASCII Cells BGL");
+        let cells_bgl = kit::uint_layout(device, "ASCII Cells BGL");
+        let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Atlas BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        // The glyph pass's per-entity inputs (#266): the picture, for the
+        // per-pixel variants and the pixels that pass through, and the mask
+        let entity_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Entity BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // The edge cells (#267): every bind group is taken, so they
+                // ride with the entity inputs
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
         let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
         let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ASCII Depth BGL"),
@@ -216,7 +334,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             }],
         });
         let mask_bgl = kit::mask_layout(device, "ASCII Mask BGL");
-        // Bound in place of the mask if a frame comes without one
+        // Bound while no entity asks for the style: one unstyled pixel
         let no_mask = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ASCII No Mask"),
             size: wgpu::Extent3d {
@@ -231,24 +349,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        let no_mask_view = no_mask.create_view(&Default::default());
         let no_mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ASCII No Mask BG"),
             layout: &mask_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    &no_mask.create_view(&Default::default()),
-                ),
+                resource: wgpu::BindingResource::TextureView(&no_mask_view),
             }],
         });
         Box::new(Ascii {
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "ASCII Pipeline",
-                &kit::shader(device, "ASCII Shader", include_str!("ascii.wgsl")),
-                &[&uniform_bgl, &input_bgl, &atlas_bgl, &cells_bgl],
-                d.format,
-            ),
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
                 "ASCII Edge Pipeline",
@@ -260,59 +370,55 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                 &[&uniform_bgl, &depth_bgl, &mask_bgl],
                 EDGE_FORMAT,
             ),
-            cell_pipeline: kit::fullscreen_pipeline(
+            edge_cell_pipeline: kit::fullscreen_pipeline(
                 device,
-                "ASCII Cell Pipeline",
+                "ASCII Edge Cell Pipeline",
                 &kit::shader(
                     device,
-                    "ASCII Cell Shader",
-                    include_str!("ascii_cells.wgsl"),
+                    "ASCII Edge Cell Shader",
+                    include_str!("ascii_edge_cells.wgsl"),
                 ),
                 &[&uniform_bgl, &edges_in_bgl],
-                CELL_FORMAT,
+                EDGE_CELL_FORMAT,
             ),
-            uniforms: kit::uniform_buffer::<AsciiUniforms>(device, "ASCII Uniforms"),
             edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
-            cell_uniforms: kit::uniform_buffer::<CellUniforms>(device, "ASCII Cell Uniforms"),
-            uniform_bgl,
-            input_bgl,
-            atlas_bgl,
-            cells_bgl,
+            edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
+                device,
+                "ASCII Edge Cell Uniforms",
+            ),
             edges_in_bgl,
             depth_bgl,
             mask_bgl,
-            _no_mask: no_mask,
             no_mask_bind,
-            fonts: Mutex::new(Fonts::default()),
             edges: Mutex::new(None),
-            cells: Mutex::new(None),
+            edge_cells: Mutex::new(None),
+            cells_pipeline: kit::fullscreen_pipeline(
+                device,
+                "ASCII Cells Pipeline",
+                &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
+                &[&uniform_bgl, &input_bgl, &cells_bgl],
+                CELL_FORMAT,
+            ),
+            pipeline: kit::fullscreen_pipeline(
+                device,
+                "ASCII Pipeline",
+                &kit::shader(device, "ASCII Shader", GLYPH_SHADER),
+                &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+                d.format,
+            ),
+            entity_bgl,
+            _no_mask: no_mask,
+            no_mask_view,
+            uniforms: kit::uniform_buffer::<AsciiUniforms>(device, "ASCII Uniforms"),
+            uniform_bgl,
+            input_bgl,
+            cells_bgl,
+            atlas_bgl,
+            fonts: Mutex::new(Fonts::default()),
+            history: Mutex::new(History::default()),
         })
     },
 };
-
-/// Edge pixels: the unit gradient's structure tensor and the edge's kind.
-const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
-const CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The style mask id meaning "no entity asks for ascii".
-const NO_STYLE_ID: u32 = 0xFFFF;
-
-/// A fragment-stage texture at binding 0 read with `textureLoad`.
-fn load_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some(label),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        }],
-    })
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -337,31 +443,77 @@ struct AsciiUniforms {
     palette_match: u32,
     palette_bg: [f32; 3],
     _pad: u32,
-    /// Line glyphs' strength over the tone glyph.
+    smoothing: f32,
+    hysteresis: f32,
+    dither: f32,
+    history: u32,
+    /// Line glyphs' strength over the tone glyph (#267).
     edges: f32,
-    /// Whether the edge and cell passes ran this frame.
+    /// Whether the edge passes ran this frame.
     edge_on: u32,
     _pad_edges: [u32; 2],
-    /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order.
+    /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
+    /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
+    /// Every variant's ramp, one after another (the whole frame's first):
+    /// each step's atlas cell origin, two steps a vec4.
     ramp: [[u32; 4]; MAX_RAMP / 2],
+    /// Every variant's palette inks, one palette after another (the whole
+    /// frame's first; display values, rgb, unused w).
     palette: [[f32; 4]; MAX_COLORS],
+    /// x: rows of `variants` in use (1 = the whole frame alone); y: 1 when
+    /// the whole frame passes through (only entities asked, #266).
+    variant_meta: [u32; 4],
+    variants: [VariantUniform; MAX_VARIANTS],
+    /// The variant slot of each mask id, four ids a vec4.
+    slots: [[u32; 4]; MAX_IDS / 4],
 }
 
+/// One per-entity variant's settings (#266). Row 0 is unused: the whole
+/// frame draws from the uniform's own fields and the cell state.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct VariantUniform {
+    cell: [f32; 2],
+    origin: [f32; 2],
+    tint: [f32; 3],
+    color_mode: u32,
+    brightness: f32,
+    contrast: f32,
+    background: f32,
+    ink: f32,
+    levels: f32,
+    footprint: f32,
+    ramp_start: u32,
+    ramp_len: u32,
+    flags: u32,
+    glow: f32,
+    ground: u32,
+    palette_start: u32,
+    palette_bg: [f32; 3],
+    palette_len: u32,
+    palette_match: u32,
+    _pad: [u32; 3],
+}
+
+/// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct EdgeUniforms {
     inv_view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 3],
-    style_id: u32,
+    _pad0: u32,
     _pad: [f32; 2],
     depth_threshold: f32,
     normal_threshold: f32,
+    /// One bit for each mask id below [`MAX_IDS`] drawn in this style.
+    ours: [[u32; 4]; 2],
 }
 
+/// The edge cell pass's uniforms (#267), `ascii_edge_cells.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-struct CellUniforms {
+struct EdgeCellUniforms {
     cell: [f32; 2],
     origin: [f32; 2],
     size: [f32; 2],
@@ -371,17 +523,210 @@ struct CellUniforms {
     _pad: [f32; 2],
 }
 
-/// The grid's size in cells for a frame of `size` pixels, plus one: the
-/// cell pass's target is offset by one so the part cell left of or above
-/// the origin is texel 0.
-pub fn grid_cells(size: [u32; 2], cell: [f32; 2], origin: [f32; 2]) -> [u32; 2] {
-    let n = |px: u32, c: f32, o: f32| {
-        ((px.max(1) as f32 - 1.0 - o) / c.max(1.0)).floor().max(0.0) as u32 + 2
+/// Edge pixels: the unit gradient's structure tensor and the edge's kind.
+const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
+const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The bit set of this style's mask ids for the edge pass: the plain
+/// `ascii` id, and every id the variant table gives a slot of its own.
+fn our_ids(style_id: Option<u16>, slots: &[u32; MAX_IDS]) -> [[u32; 4]; 2] {
+    let mut bits = [[0u32; 4]; 2];
+    let mut set = |id: usize| {
+        if id > 0 && id < MAX_IDS {
+            bits[id / 128][(id / 32) % 4] |= 1 << (id % 32);
+        }
     };
+    if let Some(id) = style_id {
+        set(id as usize);
+    }
+    for (id, slot) in slots.iter().enumerate() {
+        if *slot != 0 {
+            set(id);
+        }
+    }
+    bits
+}
+
+/// A fragment-stage texture at binding 0 read with `textureLoad`.
+fn load_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    })
+}
+
+/// A target of the style's own at a size the chain's don't come in: the
+/// edge pixels at the depth's size, the edge cells at the grid's. Kept
+/// while the size holds; `generation` keys bind groups over it.
+struct Owned {
+    size: [u32; 2],
+    generation: u64,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind: wgpu::BindGroup,
+}
+
+impl Owned {
+    /// `slot`'s target, remade at `size` when it's another size.
+    fn ensure<'s>(
+        slot: &'s mut Option<Owned>,
+        device: &wgpu::Device,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+        layout: &wgpu::BindGroupLayout,
+    ) -> &'s Owned {
+        let size = [size[0].max(1), size[1].max(1)];
+        if slot.as_ref().is_none_or(|o| o.size != size) {
+            let generation = slot.as_ref().map_or(0, |o| o.generation + 1);
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&Default::default());
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                }],
+            });
+            *slot = Some(Owned {
+                size,
+                generation,
+                _texture: texture,
+                view,
+                bind,
+            });
+        }
+        slot.as_ref().expect("made above")
+    }
+}
+
+/// The cell pass's output: one texel a cell, the cell's colour as 16-bit
+/// unorm in RGB and its ramp step in A.
+pub const CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
+
+const CELLS_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_cells.wgsl")
+);
+const GLYPH_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii.wgsl")
+);
+
+/// The `temporal` option's spellings: `off` draws every frame as if it
+/// were the first.
+pub const TEMPORAL_MODES: &[&str] = &["on", "off"];
+
+/// What a `[post_process.styles.ascii]` table covers: the whole frame, or
+/// only the entities that ask (#266), the table then being their preset.
+pub const SCOPES: &[&str] = &["screen", "entities"];
+
+/// Where a variant's cells line up: one grid centred on the frame, or a
+/// grid pinned to each styled root's projected origin (#266).
+pub const GRIDS: &[&str] = &["screen", "object"];
+
+/// Variants one frame can hold, the whole-frame one included; any more
+/// are drawn as the whole frame is (logged once).
+pub const MAX_VARIANTS: usize = 64;
+
+/// Mask ids the variant table covers; a variant with a higher id is drawn
+/// as the whole frame is (logged once).
+pub const MAX_IDS: usize = 256;
+
+/// A variant's flag: leave its pixels as they are.
+const PASS_THROUGH: u32 = 1;
+
+/// The cell state texture's size for a `size` frame: every whole and part
+/// cell, plus the one texel left of (above) the origin the shaders offset
+/// by (`CELL_OFFSET`).
+pub fn cell_grid(size: [u32; 2], cell: [f32; 2], origin: [f32; 2]) -> [u32; 2] {
+    let n = |len: u32, c: f32, o: f32| ((len as f32 - o) / c).ceil().max(0.0) as u32 + 1;
     [
         n(size[0], cell[0], origin[0]),
         n(size[1], cell[1], origin[1]),
     ]
+}
+
+/// What last frame's cells must share with this frame's to be its past:
+/// the same grid over the same picture size, the same ramp (a step means
+/// a glyph only within one ramp) and the same history epoch.
+#[derive(Clone, PartialEq, Debug)]
+struct HistoryKey {
+    epoch: u64,
+    size: [u32; 2],
+    grid: [u32; 2],
+    cell: [u32; 2],
+    origin: [u32; 2],
+    font: String,
+    ramp: String,
+    ramp_len: u32,
+}
+
+/// The two cell state textures the style ping-pongs and what it last drew.
+#[derive(Default)]
+struct History {
+    /// Held so a texture's address can't come back as another's while a
+    /// bind group over it is cached; `generation` keys those bind groups.
+    textures: Option<[Arc<StyleTexture>; 2]>,
+    generation: u64,
+    /// Which texture this frame writes.
+    parity: usize,
+    /// The key and frame number of the last frame drawn.
+    last: Option<(HistoryKey, u64)>,
+}
+
+impl History {
+    /// Take this frame's textures; true when they're not last frame's
+    /// (made again on a resize or cell change), so nothing in them is
+    /// history.
+    fn adopt(&mut self, textures: [Arc<StyleTexture>; 2]) -> bool {
+        let same = self
+            .textures
+            .as_ref()
+            .is_some_and(|t| Arc::ptr_eq(&t[0], &textures[0]) && Arc::ptr_eq(&t[1], &textures[1]));
+        if !same {
+            self.textures = Some(textures);
+            self.generation += 1;
+            self.parity = 0;
+        }
+        !same
+    }
+
+    /// Whether last frame's cells hold this frame's past, and note this
+    /// frame as drawn.
+    fn advance(&mut self, key: HistoryKey, frame: u64, temporal: bool) -> bool {
+        let follows = self
+            .last
+            .as_ref()
+            .is_some_and(|(k, f)| *k == key && f.wrapping_add(1) == frame);
+        self.last = Some((key, frame));
+        temporal && follows
+    }
 }
 
 /// The cell, in output pixels, for a cell `points` wide at
@@ -444,6 +789,9 @@ struct Fonts {
     loaded: Option<LoadedFont>,
     /// The last (font, ramp) a warning was given for, so it's said once.
     warned: Option<(String, String)>,
+    /// Per-entity warnings already given (too many variants, a font of
+    /// its own, a ramp or palette that doesn't fit), so each is said once.
+    warned_variants: std::collections::HashSet<String>,
 }
 
 impl Fonts {
@@ -462,86 +810,399 @@ impl Fonts {
     }
 }
 
-/// A target of the style's own at a size the chain's targets don't come in
-/// (the framework's are the frame's size): the edge pixels at the depth's
-/// size, and the cells at the grid's. Kept while the size holds, with the
-/// bind group the next pass reads it through.
-struct Owned {
-    size: [u32; 2],
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    bind: wgpu::BindGroup,
-}
-
-impl Owned {
-    /// `slot`'s target, remade at `size` when it's another size.
-    fn ensure<'s>(
-        slot: &'s mut Option<Owned>,
-        device: &wgpu::Device,
-        label: &'static str,
-        format: wgpu::TextureFormat,
-        size: [u32; 2],
-        layout: &wgpu::BindGroupLayout,
-    ) -> &'s Owned {
-        let size = [size[0].max(1), size[1].max(1)];
-        if slot.as_ref().is_none_or(|o| o.size != size) {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&Default::default());
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(label),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                }],
-            });
-            *slot = Some(Owned {
-                size,
-                _texture: texture,
-                view,
-                bind,
-            });
-        }
-        slot.as_ref().expect("made above")
-    }
-}
-
 struct Ascii {
+    cells_pipeline: wgpu::RenderPipeline,
     pipeline: wgpu::RenderPipeline,
-    edge_pipeline: wgpu::RenderPipeline,
-    cell_pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
-    edge_uniforms: wgpu::Buffer,
-    cell_uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
-    atlas_bgl: wgpu::BindGroupLayout,
     cells_bgl: wgpu::BindGroupLayout,
+    atlas_bgl: wgpu::BindGroupLayout,
+    entity_bgl: wgpu::BindGroupLayout,
+    _no_mask: wgpu::Texture,
+    no_mask_view: wgpu::TextureView,
+    fonts: Mutex<Fonts>,
+    history: Mutex<History>,
+    edge_pipeline: wgpu::RenderPipeline,
+    edge_cell_pipeline: wgpu::RenderPipeline,
+    edge_uniforms: wgpu::Buffer,
+    edge_cell_uniforms: wgpu::Buffer,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
-    _no_mask: wgpu::Texture,
     no_mask_bind: wgpu::BindGroup,
-    fonts: Mutex<Fonts>,
     edges: Mutex<Option<Owned>>,
-    cells: Mutex<Option<Owned>>,
+    edge_cells: Mutex<Option<Owned>>,
+}
+
+/// A variant's settings, read through the getters of the whole frame or of
+/// one per-entity variant.
+fn variant_uniform(
+    param: &dyn Fn(&str) -> f32,
+    option: &dyn Fn(&str) -> String,
+    cell: [f32; 2],
+    origin: [f32; 2],
+    ramp: (u32, u32),
+    palette: &PalettePlace,
+    flags: u32,
+) -> VariantUniform {
+    VariantUniform {
+        cell,
+        origin,
+        tint: [param("tint_r"), param("tint_g"), param("tint_b")],
+        color_mode: color_mode(&option("color")),
+        brightness: param("brightness"),
+        contrast: param("contrast").max(0.0),
+        background: param("background").clamp(0.0, 1.0),
+        ink: param("ink").max(0.0),
+        levels: param("levels").max(0.0),
+        footprint: param("footprint").clamp(1.0, 8.0),
+        ramp_start: ramp.0,
+        ramp_len: ramp.1,
+        flags,
+        glow: param("glow").max(0.0),
+        ground: ground_mode(&option("ground")),
+        palette_start: palette.start,
+        palette_bg: palette.background,
+        palette_len: palette.len,
+        palette_match: palette.matching,
+        _pad: [0; 3],
+    }
+}
+
+/// Where one palette sits in the uniform's packed inks.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PalettePlace {
+    start: u32,
+    len: u32,
+    matching: u32,
+    background: [f32; 3],
+}
+
+/// The palettes in use, packed one after another into the uniform.
+#[derive(Default)]
+struct Palettes {
+    inks: Vec<[f32; 4]>,
+    placed: Vec<(String, PalettePlace)>,
+}
+
+impl Palettes {
+    /// Where `palette` sits, packing it on first use; `None` when its inks
+    /// don't fit in what's left.
+    fn place(&mut self, palette: &Palette) -> Option<PalettePlace> {
+        if let Some((_, at)) = self.placed.iter().find(|(n, _)| n == palette.name()) {
+            return Some(*at);
+        }
+        let colors = palette.colors();
+        if colors.is_empty() || self.inks.len() + colors.len() > MAX_COLORS {
+            return None;
+        }
+        let at = PalettePlace {
+            start: self.inks.len() as u32,
+            len: colors.len() as u32,
+            matching: palette.matching().index(),
+            background: palette.background(),
+        };
+        self.inks
+            .extend(colors.iter().map(|c| [c[0], c[1], c[2], 1.0]));
+        self.placed.push((palette.name().to_string(), at));
+        Some(at)
+    }
+}
+
+/// Where an anchored grid starts: a cell centred on `anchor`, folded into
+/// the first cell so the shader's arithmetic stays small.
+pub fn anchored_origin(anchor: [f32; 2], cell: [f32; 2]) -> [f32; 2] {
+    [
+        (anchor[0] - 0.5 * cell[0]).rem_euclid(cell[0]).round(),
+        (anchor[1] - 0.5 * cell[1]).rem_euclid(cell[1]).round(),
+    ]
+}
+
+/// The ramps in use, packed one after another into the uniform.
+#[derive(Default)]
+struct Ramps {
+    steps: Vec<u32>,
+    placed: Vec<(String, (u32, u32))>,
+}
+
+impl Ramps {
+    /// Where ramp `name` of `set` sits, packing it on first use; `None`
+    /// when it doesn't fit in what's left.
+    fn place(&mut self, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
+        if let Some((_, at)) = self.placed.iter().find(|(n, _)| n == name) {
+            return Some(*at);
+        }
+        let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
+        let fit = fit_ramp(ramp.atlas_indices());
+        if self.steps.len() + fit.len() > MAX_RAMP {
+            return None;
+        }
+        let at = (self.steps.len() as u32, fit.len() as u32);
+        self.steps.extend(fit);
+        self.placed.push((name.to_string(), at));
+        Some(at)
+    }
+}
+
+/// A kept bind group of one cell state texture, keyed by the history's
+/// generation and which of the two it is.
+fn cells_bind(
+    frame: &StyleFrame<'_>,
+    name: &'static str,
+    layout: &wgpu::BindGroupLayout,
+    texture: &StyleTexture,
+    variant: u64,
+) -> Arc<wgpu::BindGroup> {
+    frame.bind(name, variant, || {
+        frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(name),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture.view),
+            }],
+        })
+    })
 }
 
 impl Ascii {
+    /// The glyph pass's picture and mask: the mask while any per-entity
+    /// variant is in the table, else the one-pixel stand-in.
+    fn entity_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        input: &StyleInput<'_>,
+        with_mask: bool,
+        edge_cells: &Owned,
+    ) -> Arc<wgpu::BindGroup> {
+        let mask = frame.mask.filter(|_| with_mask);
+        let make = |mask: &wgpu::TextureView| {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Entity BG"),
+                layout: &self.entity_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(mask),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&edge_cells.view),
+                    },
+                ],
+            })
+        };
+        // The edge cells are remade when the grid changes size: their
+        // generation is part of the key
+        let key = (edge_cells.generation << 33) ^ (input.id * 2 + mask.is_some() as u64);
+        frame.bind("ASCII Entity BG", key, || {
+            make(mask.unwrap_or(&self.no_mask_view))
+        })
+    }
+
+    /// Row 0 (the whole frame's, drawn from the cell state) and a row for
+    /// each per-entity variant (#266), with the slot of every mask id.
+    #[allow(clippy::too_many_arguments)]
+    fn variant_table(
+        &self,
+        frame: &StyleFrame<'_>,
+        fonts: &mut Fonts,
+        set: &GlyphSet,
+        glyph: [u32; 2],
+        ramps: &mut Ramps,
+        palettes: &mut Palettes,
+        base_ramp: (u32, u32),
+    ) -> (Vec<VariantUniform>, [u32; MAX_IDS]) {
+        let mut rows = vec![VariantUniform::zeroed()];
+        let mut slots = [0u32; MAX_IDS];
+        let base_font = frame.option("font").to_string();
+        let palette_for = |fonts: &mut Fonts, color: &str, name: &str| -> Option<Arc<Palette>> {
+            if color != "palette" {
+                return None;
+            }
+            let name = if name.is_empty() {
+                DEFAULT_PALETTE
+            } else {
+                name
+            };
+            Some(
+                fonts
+                    .palettes
+                    .get(name)
+                    .ok()
+                    .unwrap_or_else(|| Palette::builtin(DEFAULT_PALETTE).expect("built-in")),
+            )
+        };
+        for (id, v) in frame.variants() {
+            let warn_once = |fonts: &mut Fonts, key: String, text: String| {
+                if fonts.warned_variants.insert(key) {
+                    tracing::warn!("ascii: {text}");
+                }
+            };
+            if rows.len() == MAX_VARIANTS || id as usize >= MAX_IDS {
+                warn_once(
+                    fonts,
+                    "overflow".into(),
+                    format!(
+                        "more per-entity variants than the {} (or ids past {MAX_IDS}) one \
+                         frame holds; the rest are drawn like the whole frame",
+                        MAX_VARIANTS - 1
+                    ),
+                );
+                continue;
+            }
+            let param = |n: &str| frame.variant_param(v, n);
+            let option = |n: &str| frame.variant_option(v, n).to_string();
+            if option("font") != base_font {
+                warn_once(
+                    fonts,
+                    format!("font {}", option("font")),
+                    format!(
+                        "per-entity fonts aren't supported yet; `{}` is drawn in `{base_font}`",
+                        option("font")
+                    ),
+                );
+            }
+            let ramp = ramps.place(set, &option("ramp")).unwrap_or_else(|| {
+                warn_once(
+                    fonts,
+                    format!("ramp {}", option("ramp")),
+                    format!(
+                        "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in all); \
+                         using the scene's",
+                        option("ramp")
+                    ),
+                );
+                base_ramp
+            });
+            let palette = match palette_for(fonts, &option("color"), &option("palette")) {
+                None => PalettePlace::default(),
+                Some(p) => palettes.place(&p).unwrap_or_else(|| {
+                    warn_once(
+                        fonts,
+                        format!("palette {}", p.name()),
+                        format!(
+                            "palette `{}` doesn't fit beside the others ({MAX_COLORS} inks \
+                             in all); using the scene's",
+                            p.name()
+                        ),
+                    );
+                    palettes
+                        .placed
+                        .first()
+                        .map(|(_, at)| *at)
+                        .unwrap_or_default()
+                }),
+            };
+            let cell = cell_pixels(param("cell"), frame.pixels_per_point, glyph);
+            let origin = v.anchor.and_then(|a| frame.project(a)).map_or_else(
+                || grid_origin([frame.width, frame.height], cell),
+                |at| anchored_origin(at, cell),
+            );
+            let flags = if v.off { PASS_THROUGH } else { 0 };
+            slots[id as usize] = rows.len() as u32;
+            rows.push(variant_uniform(
+                &param, &option, cell, origin, ramp, &palette, flags,
+            ));
+        }
+        (rows, slots)
+    }
+
+    /// Edge pixels from depth, normals and the mask, then each cell's line
+    /// glyph from them (#267).
+    fn encode_edges(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        edge_cells: &Owned,
+        cell: [f32; 2],
+        origin: [f32; 2],
+        ours: [[u32; 4]; 2],
+    ) {
+        let edge_uniforms = EdgeUniforms {
+            inv_view_proj: frame.camera.inv_view_proj,
+            camera_pos: frame.camera.position,
+            _pad0: 0,
+            _pad: [0.0; 2],
+            depth_threshold: frame.param("edge_depth").max(1e-3),
+            normal_threshold: frame.param("edge_normal").max(1e-3),
+            ours,
+        };
+        frame
+            .queue
+            .write_buffer(&self.edge_uniforms, 0, bytemuck::bytes_of(&edge_uniforms));
+        // At the depth's size, so a line is one depth pixel wide
+        let mut edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
+        let edges = Owned::ensure(
+            &mut edges_slot,
+            frame.device,
+            "ASCII Edges",
+            EDGE_FORMAT,
+            frame.depth_size,
+            &self.edges_in_bgl,
+        );
+        let depth = frame.depth_bind("ASCII Depth BG", 0, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Depth BG"),
+                layout: &self.depth_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(frame.depth),
+                }],
+            })
+        });
+        let mask = frame.mask_bind("ASCII Mask BG", &self.mask_bgl);
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge Pass",
+            &edges.view,
+            &self.edge_pipeline,
+            &[
+                &frame.uniform(
+                    "ASCII Edge Uniform BG",
+                    &self.uniform_bgl,
+                    &self.edge_uniforms,
+                ),
+                &depth,
+                mask.as_deref().unwrap_or(&self.no_mask_bind),
+            ],
+        );
+
+        let cell_uniforms = EdgeCellUniforms {
+            cell,
+            origin,
+            size: [frame.width as f32, frame.height as f32],
+            threshold: frame.param("edge_threshold").max(0.01),
+            max_len: frame.param("edge_max"),
+            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
+            _pad: [0.0; 2],
+        };
+        frame.queue.write_buffer(
+            &self.edge_cell_uniforms,
+            0,
+            bytemuck::bytes_of(&cell_uniforms),
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge Cell Pass",
+            &edge_cells.view,
+            &self.edge_cell_pipeline,
+            &[
+                &frame.uniform(
+                    "ASCII Edge Cell Uniform BG",
+                    &self.uniform_bgl,
+                    &self.edge_cell_uniforms,
+                ),
+                &edges.bind,
+            ],
+        );
+    }
+
     /// The font the config names, uploaded; the built-in set when it can't
     /// be loaded (the cache has warned).
     fn font<'f>(&self, frame: &StyleFrame<'_>, fonts: &'f mut Fonts) -> &'f LoadedFont {
@@ -612,13 +1273,12 @@ impl StylePass for Ascii {
         let atlas = set.atlas();
         let glyph = atlas.cell_size();
         let steps = fit_ramp(ramp.atlas_indices());
-        let mut ramp_origins = [[0u32; 4]; MAX_RAMP / 2];
-        for (i, index) in steps.iter().enumerate() {
-            let [x, y] = atlas.cell_origin(*index);
-            let slot = &mut ramp_origins[i / 2];
-            slot[(i % 2) * 2] = x;
-            slot[(i % 2) * 2 + 1] = y;
-        }
+        // Ramps and palettes are packed, the whole frame's first so its
+        // steps and inks sit where the cell state expects them
+        let mut ramps = Ramps::default();
+        let base_ramp = ramps
+            .place(&set, ramp.name())
+            .expect("the first ramp is resampled to fit");
         let palette = if frame.option("color") == "palette" {
             let name = match frame.option("palette") {
                 "" => DEFAULT_PALETTE,
@@ -629,9 +1289,24 @@ impl StylePass for Ascii {
             None
         }
         .unwrap_or_else(|| Palette::builtin(DEFAULT_PALETTE).expect("built-in"));
+        let mut palettes = Palettes::default();
+        let _ = palettes.place(&palette);
+        let (variants, slots) = self.variant_table(
+            frame,
+            &mut fonts,
+            &set,
+            glyph,
+            &mut ramps,
+            &mut palettes,
+            base_ramp,
+        );
         let cell = cell_pixels(frame.param("cell"), frame.pixels_per_point, glyph);
         let size = [frame.width, frame.height];
         let origin = grid_origin(size, cell);
+        let grid = cell_grid(size, cell, origin);
+
+        // Edges (#267): line glyphs from geometry, one texel a cell on the
+        // same grid as the cell state
         let mut edge_glyphs = [[0u32; 4]; 2];
         for (i, ch) in set.edges().all().iter().enumerate() {
             // A set's edge glyphs are always in its atlas (GlyphSet checks)
@@ -642,18 +1317,45 @@ impl StylePass for Ascii {
             edge_glyphs[i / 2][(i % 2) * 2 + 1] = y;
         }
         let edges = frame.param("edges").clamp(0.0, 1.0);
-        let mut cells_slot = self.cells.lock().unwrap_or_else(|e| e.into_inner());
-        let cells = Owned::ensure(
-            &mut cells_slot,
+        let mut edge_cells_slot = self.edge_cells.lock().unwrap_or_else(|e| e.into_inner());
+        let edge_cells = Owned::ensure(
+            &mut edge_cells_slot,
             frame.device,
-            "ASCII Cells",
-            CELL_FORMAT,
-            grid_cells(size, cell, origin),
-            &self.cells_bgl,
+            "ASCII Edge Cells",
+            EDGE_CELL_FORMAT,
+            grid,
+            &self.edges_in_bgl,
         );
         if edges > 0.0 {
-            self.encode_edges(frame, encoder, cells, cell, origin);
+            let ours = our_ids(frame.style_id(STYLE.name), &slots);
+            self.encode_edges(frame, encoder, edge_cells, cell, origin, ours);
         }
+
+        // Last frame's cells and this frame's, ping-ponged (#277)
+        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        let textures = [
+            frame.target_sized("ascii.cells.a", CELL_FORMAT, grid[0], grid[1]),
+            frame.target_sized("ascii.cells.b", CELL_FORMAT, grid[0], grid[1]),
+        ];
+        let fresh = history.adopt(textures);
+        let key = HistoryKey {
+            epoch: frame.history_epoch,
+            size,
+            grid,
+            cell: cell.map(f32::to_bits),
+            origin: origin.map(f32::to_bits),
+            font: set.name().to_string(),
+            ramp: ramp.name().to_string(),
+            ramp_len: steps.len() as u32,
+        };
+        let temporal = frame.option("temporal") != "off";
+        let past = history.advance(key, frame.frame, temporal) && !fresh;
+        let (write, read) = (history.parity, 1 - history.parity);
+        history.parity = read;
+        let generation = history.generation;
+        let pair = history.textures.clone().expect("adopted above");
+        drop(history);
+
         let uniforms = AsciiUniforms {
             cell,
             origin,
@@ -679,16 +1381,64 @@ impl StylePass for Ascii {
             palette_match: palette.matching().index(),
             palette_bg: palette.background(),
             _pad: 0,
+            smoothing: frame.param("smoothing").clamp(0.0, 0.99),
+            hysteresis: frame.param("hysteresis").max(0.0),
+            dither: frame.param("dither").max(0.0),
+            history: past as u32,
             edges,
             edge_on: u32::from(edges > 0.0),
             _pad_edges: [0; 2],
             edge_glyphs,
-            ramp: ramp_origins,
-            palette: palette.uniform_colors(),
+            ramp: [[0; 4]; MAX_RAMP / 2],
+            palette: [[0.0; 4]; MAX_COLORS],
+            variant_meta: [
+                variants.len() as u32,
+                !(frame.whole_frame() && frame.option("scope") != "entities") as u32,
+                0,
+                0,
+            ],
+            variants: [VariantUniform::zeroed(); MAX_VARIANTS],
+            slots: [[0; 4]; MAX_IDS / 4],
         };
+        let mut uniforms = uniforms;
+        for (i, index) in ramps.steps.iter().enumerate() {
+            let [x, y] = atlas.cell_origin(*index);
+            let pair = &mut uniforms.ramp[i / 2];
+            pair[(i % 2) * 2] = x;
+            pair[(i % 2) * 2 + 1] = y;
+        }
+        uniforms.palette[..palettes.inks.len()].copy_from_slice(&palettes.inks);
+        uniforms.variants[..variants.len()].copy_from_slice(&variants);
+        for (i, slot) in slots.iter().enumerate() {
+            uniforms.slots[i / 4][i % 4] = *slot;
+        }
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+        let uniform = frame.uniform("ASCII Uniform BG", &self.uniform_bgl, &self.uniforms);
+        let variant = |i: usize| generation * 2 + i as u64;
+
+        // Cell pass: each cell's colour and glyph, from the picture and
+        // (when it follows on) last frame's cells
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Cells",
+            &pair[write].view,
+            &self.cells_pipeline,
+            &[
+                &uniform,
+                &frame.sampled_input("ASCII Input BG", &self.input_bgl, input),
+                &cells_bind(
+                    frame,
+                    "ASCII History BG",
+                    &self.cells_bgl,
+                    &pair[read],
+                    variant(read),
+                ),
+            ],
+        );
+
+        // Glyph pass: draw the cells
         let font = fonts.loaded.as_ref().expect("loaded by font()");
         kit::fullscreen_pass(
             encoder,
@@ -696,99 +1446,16 @@ impl StylePass for Ascii {
             output,
             &self.pipeline,
             &[
-                &frame.uniform("ASCII Uniform BG", &self.uniform_bgl, &self.uniforms),
-                &frame.sampled_input("ASCII Input BG", &self.input_bgl, input),
+                &uniform,
+                &cells_bind(
+                    frame,
+                    "ASCII Cells BG",
+                    &self.cells_bgl,
+                    &pair[write],
+                    variant(write),
+                ),
                 &font.bind,
-                &cells.bind,
-            ],
-        );
-    }
-}
-
-impl Ascii {
-    /// Edge pixels from depth, normals and the mask, then each cell's line
-    /// glyph from them (#267).
-    fn encode_edges(
-        &self,
-        frame: &StyleFrame<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        cells: &Owned,
-        cell: [f32; 2],
-        origin: [f32; 2],
-    ) {
-        let edge_uniforms = EdgeUniforms {
-            inv_view_proj: frame.camera.inv_view_proj,
-            camera_pos: frame.camera.position,
-            style_id: frame.style_id(STYLE.name).map_or(NO_STYLE_ID, u32::from),
-            _pad: [0.0; 2],
-            depth_threshold: frame.param("edge_depth").max(1e-3),
-            normal_threshold: frame.param("edge_normal").max(1e-3),
-        };
-        frame
-            .queue
-            .write_buffer(&self.edge_uniforms, 0, bytemuck::bytes_of(&edge_uniforms));
-        // At the depth's size, so a line is one depth pixel wide
-        let mut edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
-        let edges = Owned::ensure(
-            &mut edges_slot,
-            frame.device,
-            "ASCII Edges",
-            EDGE_FORMAT,
-            frame.depth_size,
-            &self.edges_in_bgl,
-        );
-        let depth = frame.depth_bind("ASCII Depth BG", 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ASCII Depth BG"),
-                layout: &self.depth_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(frame.depth),
-                }],
-            })
-        });
-        let mask = frame.mask_bind("ASCII Mask BG", &self.mask_bgl);
-        kit::fullscreen_pass(
-            encoder,
-            "ASCII Edge Pass",
-            &edges.view,
-            &self.edge_pipeline,
-            &[
-                &frame.uniform(
-                    "ASCII Edge Uniform BG",
-                    &self.uniform_bgl,
-                    &self.edge_uniforms,
-                ),
-                &depth,
-                mask.as_deref().unwrap_or(&self.no_mask_bind),
-            ],
-        );
-
-        let cell_uniforms = CellUniforms {
-            cell,
-            origin,
-            size: [frame.width as f32, frame.height as f32],
-            threshold: frame.param("edge_threshold").max(0.01),
-            max_len: frame.param("edge_max"),
-            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
-            _pad: [0.0; 2],
-        };
-        frame
-            .queue
-            .write_buffer(&self.cell_uniforms, 0, bytemuck::bytes_of(&cell_uniforms));
-        let edges_in = &edges.bind;
-        kit::fullscreen_pass(
-            encoder,
-            "ASCII Cell Pass",
-            &cells.view,
-            &self.cell_pipeline,
-            &[
-                &frame.uniform(
-                    "ASCII Cell Uniform BG",
-                    &self.uniform_bgl,
-                    &self.cell_uniforms,
-                ),
-                edges_in,
+                &self.entity_bind(frame, input, variants.len() > 1, edge_cells),
             ],
         );
     }
@@ -800,32 +1467,65 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        // 128 bytes of scalars, 2 vec4<u32> of edge glyphs, 64 vec4<u32> of
-        // ramp, then the palette's vec4<f32>s
+        // 144 bytes of scalars (#267's edge strength included), 2
+        // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 32 vec4<f32> of
+        // palette, then the variant table's 16-byte header, its rows of 112
+        // and its 64 vec4<u32> of slots (#266)
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 112);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
-            128 + 2 * 16 + 64 * 16 + MAX_COLORS * 16
+            144 + 2 * 16 + 64 * 16 + MAX_COLORS * 16 + 16 + MAX_VARIANTS * 112 + 64 * 16
         );
-        assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 112);
-        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 128);
-        assert_eq!(std::mem::offset_of!(AsciiUniforms, ramp), 160);
-        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 96);
-        assert_eq!(std::mem::size_of::<CellUniforms>(), 48);
+        assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
+        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 144);
+        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 48);
     }
 
     #[test]
-    fn the_cell_grid_covers_the_part_cells_at_both_borders() {
-        // Whole cells, no origin: 160 cells and one spare for the offset
-        assert_eq!(grid_cells([1280, 720], [8.0, 8.0], [0.0, 0.0]), [161, 91]);
-        // 1283 leaves 3 px: origin 1, a part cell at each border
-        let origin = grid_origin([1283, 725], [8.0, 8.0]);
-        let [w, h] = grid_cells([1283, 725], [8.0, 8.0], origin);
-        // The last pixel's cell, offset by one, is the last texel
-        let last = |px: u32, o: f32| ((px as f32 - 1.0 - o) / 8.0).floor() as u32 + 1;
-        assert_eq!(w - 1, last(1283, origin[0]));
-        assert_eq!(h - 1, last(725, origin[1]));
-        // The first pixel's cell is -1 when the origin isn't 0: texel 0
-        assert_eq!(((0.0 - origin[0]) / 8.0).floor() as i32 + 1, 0);
+    fn the_edge_shaders_validate_and_their_uniforms_match_rust() {
+        for (name, src, size) in [
+            (
+                "ascii_edges.wgsl",
+                include_str!("ascii_edges.wgsl"),
+                std::mem::size_of::<EdgeUniforms>(),
+            ),
+            (
+                "ascii_edge_cells.wgsl",
+                include_str!("ascii_edge_cells.wgsl"),
+                std::mem::size_of::<EdgeCellUniforms>(),
+            ),
+        ] {
+            let module = naga::front::wgsl::parse_str(src).expect(name);
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect(name);
+            let (_, u) = module
+                .global_variables
+                .iter()
+                .find(|(_, v)| v.name.as_deref() == Some("u"))
+                .expect("uniform u");
+            assert_eq!(
+                module.types[u.ty].inner.size(module.to_ctx()) as usize,
+                size,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn our_ids_hold_the_plain_id_and_every_variant() {
+        let mut slots = [0u32; MAX_IDS];
+        slots[3] = 1;
+        slots[200] = 2;
+        let bits = our_ids(Some(5), &slots);
+        let has = |id: usize| bits[id / 128][(id / 32) % 4] & (1 << (id % 32)) != 0;
+        assert!(has(3) && has(5) && has(200));
+        assert!(!has(0) && !has(4) && !has(255));
+        assert_eq!(our_ids(None, &[0; MAX_IDS]), [[0; 4]; 2]);
     }
 
     #[test]
@@ -843,6 +1543,47 @@ mod tests {
         let edges = STYLE.params.iter().find(|p| p.name == "edges").unwrap();
         assert_eq!(edges.default, 1.0);
         assert!(STYLE.uses_mask, "outlines read the style mask");
+    }
+
+    #[test]
+    fn the_cell_grid_covers_every_part_cell_and_the_offset() {
+        // 1280 / 8 = 160 whole cells, plus the offset texel
+        assert_eq!(cell_grid([1280, 720], [8.0, 8.0], [0.0, 0.0]), [161, 91]);
+        // 1283 leaves 3 px: 1 left of the origin, 2 at the right, so 162
+        let origin = grid_origin([1283, 725], [8.0, 8.0]);
+        assert_eq!(cell_grid([1283, 725], [8.0, 8.0], origin), [162, 92]);
+    }
+
+    fn key(epoch: u64) -> HistoryKey {
+        HistoryKey {
+            epoch,
+            size: [64, 64],
+            grid: [9, 9],
+            cell: [8, 8],
+            origin: [0, 0],
+            font: "builtin".into(),
+            ramp: "classic".into(),
+            ramp_len: 10,
+        }
+    }
+
+    #[test]
+    fn history_counts_only_when_the_last_frame_drawn_was_the_one_before() {
+        let mut h = History::default();
+        // A first frame has no past
+        assert!(!h.advance(key(0), 10, true));
+        assert!(h.advance(key(0), 11, true));
+        // A frame drawn without the style in between starts it over
+        assert!(!h.advance(key(0), 13, true));
+        assert!(h.advance(key(0), 14, true));
+        // So does a new epoch (a scene change), or any change of the key
+        assert!(!h.advance(key(1), 15, true));
+        let mut other = key(1);
+        other.ramp = "blocks".into();
+        assert!(!h.advance(other, 16, true));
+        // And `temporal = "off"` never reads it
+        assert!(!h.advance(key(1), 17, true));
+        assert!(!h.advance(key(1), 18, false));
     }
 
     #[test]
@@ -918,5 +1659,62 @@ mod tests {
                 "built-in set has no ramp {choice}"
             );
         }
+    }
+    #[test]
+    fn the_shader_validates_and_its_uniforms_match_rust() {
+        let module = naga::front::wgsl::parse_str(GLYPH_SHADER).expect("parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("ascii.wgsl validates");
+        let (_, u) = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("u"))
+            .expect("uniform u");
+        let size = module.types[u.ty].inner.size(module.to_ctx());
+        assert_eq!(size as usize, std::mem::size_of::<AsciiUniforms>());
+    }
+
+    #[test]
+    fn an_anchored_grid_centres_a_cell_on_its_anchor() {
+        // A cell centred on (100, 50): its corner is at (96, 46), which
+        // folds to (0, 6) for 8 px cells
+        assert_eq!(anchored_origin([100.0, 50.0], [8.0, 8.0]), [0.0, 6.0]);
+        // Off screen to the left still folds into the first cell
+        assert_eq!(anchored_origin([-3.0, 4.0], [8.0, 8.0]), [1.0, 0.0]);
+        let o = anchored_origin([1234.5, 777.25], [12.0, 12.0]);
+        assert!(o.iter().all(|c| (0.0..=12.0).contains(c)), "{o:?}");
+    }
+
+    #[test]
+    fn ramps_pack_once_each_and_refuse_what_does_not_fit() {
+        let set = GlyphSet::builtin();
+        let mut ramps = Ramps::default();
+        let classic = ramps.place(&set, "classic").unwrap();
+        assert_eq!(classic.0, 0);
+        let blocks = ramps.place(&set, "blocks").unwrap();
+        assert_eq!(blocks.0, classic.1, "packed after the first");
+        assert_eq!(ramps.place(&set, "classic"), Some(classic), "placed once");
+        // Fill what's left, then one more doesn't fit
+        ramps.steps.resize(MAX_RAMP, 0);
+        assert_eq!(ramps.place(&set, "minimal"), None);
+    }
+
+    #[test]
+    fn palettes_pack_once_each_and_refuse_what_does_not_fit() {
+        let mut palettes = Palettes::default();
+        let cga = Palette::builtin("cga").unwrap();
+        let at = palettes.place(&cga).unwrap();
+        assert_eq!((at.start, at.len as usize), (0, cga.colors().len()));
+        let amber = Palette::builtin("amber").unwrap();
+        let next = palettes.place(&amber).unwrap();
+        assert_eq!(next.start, at.len, "packed after the first");
+        assert_eq!(palettes.place(&cga), Some(at), "placed once");
+        // cga16's 15 inks don't fit in what's left of 32 after more of them
+        palettes.inks.resize(MAX_COLORS - 2, [0.0; 4]);
+        assert_eq!(palettes.place(&Palette::builtin("cga16").unwrap()), None);
     }
 }
