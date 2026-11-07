@@ -74,7 +74,7 @@ The difference shows under a render scale. Here is `demo/pbr_test.scene.toml` at
 
 | ![Display stage: sharp 8 px glyphs on a crisp grid](../images/stylized-stage-display-scale05.png) | ![HDR stage: 16 px glyphs, blurred and bloomed](../images/stylized-stage-hdr-scale05.png) |
 |---|---|
-| `--style ascii:edges=0 --render-scale 0.5`: Display (shipped; edges off to match the spike) | `--ascii=full --render-scale 0.5`: the spike's HDR placement |
+| `--style ascii:edges=0 --render-scale 0.5`: Display (shipped; edges off to match the spike) | `--ascii=full --render-scale 0.5`: the spike's HDR placement (captured before #293 removed the spike) |
 
 At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px cell becomes a soft 16 px glyph, and bloom haloes the bright ones. At the Display stage the cells are drawn after the upscale, so they stay 8 px and sharp at any render scale. Cells are sized in points, so they keep their size on a high-DPI display too.
 

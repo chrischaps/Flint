@@ -30,8 +30,10 @@ struct Variant {
     palette_bg: vec3<f32>,
     palette_len: u32,
     palette_match: u32,
-    _p0: u32,
-    _p1: u32,
+    // Tone normalisation (#289): stops of gain on the cell's colour, and
+    // how far (0..1) its tone is stretched over the slot's own range
+    exposure: f32,
+    stretch: f32,
     _p2: u32,
 };
 
@@ -75,8 +77,9 @@ struct AsciiUniforms {
     // edge passes ran
     edges: f32,
     edge_on: u32,
-    _pad_edges0: u32,
-    _pad_edges1: u32,
+    // The whole frame's exposure and normalisation (#289), as a variant's
+    exposure: f32,
+    stretch: f32,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -134,6 +137,58 @@ fn tone(lum: f32) -> f32 {
 fn banded(tone_in: f32) -> f32 {
     let t = clamp(tone_in, 0.0, 1.0);
     return select(t, round(t * u.levels) / u.levels, u.levels >= 1.0);
+}
+
+// Tone normalisation (#289). The tone statistics lattice (ascii_stats*.wgsl)
+const STATS_COLS: u32 = 320u;
+const STATS_ROWS: u32 = 180u;
+// The range a slot normalises onto: its mean -/+ this many deviations
+const STATS_SPREAD: f32 = 2.0;
+// The narrowest range a slot is stretched from, so a flat wall's noise
+// doesn't fill the whole ramp
+const STATS_MIN_SPAN: f32 = 0.08;
+// How far the gamma that puts a slot's mean at mid-grey may bend the tone
+const STATS_GAMMA_MIN: f32 = 0.35;
+const STATS_GAMMA_MAX: f32 = 2.5;
+
+fn slot_exposure(slot: u32) -> f32 {
+    return select(u.variants[slot].exposure, u.exposure, slot == 0u);
+}
+
+fn slot_normalize(slot: u32) -> f32 {
+    return select(u.variants[slot].stretch, u.stretch, slot == 0u);
+}
+
+// A display colour with `gain` (2^exposure) applied in linear light
+fn exposed(c: vec3<f32>, gain: f32) -> vec3<f32> {
+    if gain == 1.0 {
+        return c;
+    }
+    if u.srgb == 1u {
+        return clamp(to_display(to_linear(c) * gain), vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    return clamp(c * gain, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Luminance stretched by `amount` from the slot's range `stats` (lo, hi,
+// mean, valid) onto 0..1; unchanged with no statistics. The range maps
+// linearly, then a gamma puts the slot's mean at mid-grey: a lit top and a
+// shadowed side are often both in the range, and the linear stretch alone
+// would leave the shadow side blank.
+fn stretched(lum: f32, stats: vec4<f32>, amount: f32) -> f32 {
+    if amount <= 0.0 || stats.w < 0.5 {
+        return lum;
+    }
+    var lo = stats.x;
+    var span = stats.y - stats.x;
+    if span < STATS_MIN_SPAN {
+        lo = clamp(0.5 * (stats.x + stats.y) - 0.5 * STATS_MIN_SPAN, 0.0, 1.0 - STATS_MIN_SPAN);
+        span = STATS_MIN_SPAN;
+    }
+    let t = clamp((lum - lo) / span, 0.0, 1.0);
+    let m = clamp((stats.z - lo) / span, 0.05, 0.95);
+    let gamma = clamp(log2(0.5) / log2(m), STATS_GAMMA_MIN, STATS_GAMMA_MAX);
+    return mix(lum, pow(t, gamma), clamp(amount, 0.0, 1.0));
 }
 
 // The cell state texture is one texel a cell, offset by one so the part

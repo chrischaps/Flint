@@ -100,16 +100,14 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--ascii-tint <r,g,b>` / `--ascii-background <f32>` | phosphor green / `0.15` | ASCII style tint and how much cell colour fills behind glyphs |
 | `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
 | `--ascii-dither` | `0` | ASCII style ordered dither, fixed to the cell grid (#277) |
+| `--ascii-exposure` / `--ascii-normalize` | `0` / `0` | ASCII style exposure in stops, and per-style-id tone normalisation so dark props stay legible (#289) |
 | `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
-| `--ascii=<mode>` | (none) | ASCII spike (#261): `full`, `entity` or `entity-object` (the `=` is required) |
-| `--ascii-entities <list>` | (none) | Names, `prefix*` or `*` the masked ASCII modes stylize |
-| `--ascii-cell <n>` | `8` | ASCII cell width (style: points; spike: scene pixels) |
-| `--ascii-levels <n>` / `--ascii-footprint <cells>` | style `0` / `1`, spike `4` / `2` | ASCII tone bands and tone footprint |
+| `--ascii-cell <n>` | `8` | ASCII cell width in points |
+| `--ascii-levels <n>` / `--ascii-footprint <cells>` | `0` / `1` | ASCII tone bands and tone footprint |
 | `--ascii-no-edges` | `false` | No line glyphs on edges |
 | `--ascii-edges <f32>` | `1` | ASCII style edge glyph strength (0 off) |
 | `--ascii-edge-threshold <f32>` / `--ascii-edge-max <f32>` | `0.5` / `3` | ASCII style: cell widths of edge that make a line glyph, and past which it's texture |
 | `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
-| `--ascii-scene-background` | `false` | Masked modes: plain scene outside the mask, not black |
 
 ## Lighting Flags
 

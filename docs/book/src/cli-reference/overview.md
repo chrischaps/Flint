@@ -291,7 +291,6 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
 | `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
-| `--ascii=<mode>` | (none) | The ASCII spike's prototypes (#261), with the `=`: `full` glyphizes the whole frame; `entity` only `--ascii-entities` on one screen grid; `entity-object` only those, each on a grid anchored at its projected origin |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
 | `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
 | `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
@@ -303,18 +302,17 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `--ascii-ink <f32>` | `1` | *Style:* glyph ink brightness |
 | `--ascii-dither <f32>` | `0` | *Style:* ordered dither before the ramp, fixed to the grid (#277) |
+| `--ascii-exposure <f32>` / `--ascii-normalize <f32>` | `0` / `0` | *Style:* stops of gain on each cell's colour; stretch each style id's tone range over the ramp, from this frame (#289) |
 | `--pixels-per-point <f32>` | `1` | A high-DPI window's scale factor: styles sized in points (ASCII cells) scale by it |
-| `--ascii-entities <list>` | (none) | Entities the spike's masked modes stylize: comma-separated names, `prefix*`, or `*`; children go with their parent. Static meshes only (skinned, terrain, grass and particles aren't masked) |
-| `--ascii-cell <n>` | `8` | ASCII cell width: in points for the style (height follows the font), in square scene pixels for the spike |
-| `--ascii-levels <n>` | `0` style, `4` spike | ASCII tone bands; `0` keeps the whole ramp |
-| `--ascii-footprint <cells>` | `1` style, `2` spike | How many cells wide each cell's tone is averaged over |
+| `--ascii-cell <n>` | `8` | ASCII cell width in points (height follows the font) |
+| `--ascii-levels <n>` | `0` | ASCII tone bands; `0` keeps the whole ramp |
+| `--ascii-footprint <cells>` | `1` | How many cells wide each cell's tone is averaged over |
 | `--ascii-no-edges` | `false` | Turn off the line glyphs (`─ │ ╱ ╲`) drawn on depth, normal and silhouette edges; the style's `edges = 0` |
 | `--ascii-edges <f32>` | `1` | *Style:* edge glyph strength over the tone glyph, 0 off to 1 ([Edges](../concepts/stylize-passes.md#edges), #267) |
 | `--ascii-edge-threshold <f32>` | `0.5` | *Style:* cell widths of edge a cell needs to draw a line glyph (lower finds more) |
 | `--ascii-edge-max <f32>` | `3` | *Style:* more edge than this is texture (grass) and keeps its tone glyph; a styled entity's outline ignores it |
 | `--ascii-edge-depth <f32>` | `0.6` | Relative view-distance step that counts as an edge (lower finds more) |
 | `--ascii-edge-normal <f32>` | `2.5` | Normal change that counts as a crease (lower finds more) |
-| `--ascii-scene-background` | `false` | In the masked modes, draw unmasked pixels as the plain scene instead of black with their edges |
 | `--no-postprocess` | `false` | Disable post-processing |
 | `--bloom-intensity <f32>` | `0.04` | Bloom strength |
 | `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |

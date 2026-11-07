@@ -8,7 +8,7 @@
 # each prop's ascii_style changes only what it needs:
 #   bench          amber blocks, banded           a static glTF mesh
 #   ybot           the scene's preset             a skinned mesh
-#   barrel         brightened, its own grid       grid = "object"
+#   barrel         normalized, its own grid       grid = "object", normalize = 1
 #   crate          phosphor green, inherited by the lantern on it
 #   lantern_glass  stays smooth                   enabled = false
 # Delete scope = "entities" and the whole frame is glyphs, the lantern's
@@ -139,8 +139,9 @@ scale = [0.5, 0.5, 0.5]
 asset = "barrel"
 [entities.barrel.ascii_style]
 grid = "object"
-brightness = 0.35
-contrast = 1.4
+# Dark wood: its own tones stretched over the ramp (#289), in place of the
+# brightness 0.35 / contrast 1.4 it needed before
+normalize = 1.0
 
 [entities.crate]
 archetype = "furniture"
