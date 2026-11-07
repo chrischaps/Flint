@@ -1247,6 +1247,8 @@ fn load_terrain_for_render(
             &config.layer_textures,
             scene_dir,
         );
+        // A style_mask on the terrain entity masks its chunks (#310)
+        renderer.set_terrain_entity(Some(entity.id));
 
         // Load grass if enabled
         let grass_config = flint_terrain::GrassConfig::from_component(terrain_comp, false);
