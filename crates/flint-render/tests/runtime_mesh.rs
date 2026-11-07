@@ -71,7 +71,7 @@ macro_rules! gpu_or_skip {
         match gpu() {
             Some(g) => g,
             None => {
-                eprintln!("no GPU adapter; skipping");
+                flint_render::gpu_select::skip_without_gpu("no GPU adapter");
                 return;
             }
         }

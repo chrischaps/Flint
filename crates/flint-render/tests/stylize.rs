@@ -124,7 +124,7 @@ impl Gpu {
 #[test]
 fn a_display_style_inverts_the_frame_and_lets_it_go() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -196,7 +196,7 @@ fn a_display_style_inverts_the_frame_and_lets_it_go() {
 #[test]
 fn hdr_and_display_styles_chain_in_one_frame() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -237,7 +237,7 @@ fn hdr_and_display_styles_chain_in_one_frame() {
 #[test]
 fn display_styles_with_fxaa_hold_two_full_size_textures() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let world = FlintWorld::new();
@@ -282,7 +282,7 @@ fn display_styles_with_fxaa_hold_two_full_size_textures() {
 #[test]
 fn an_authored_order_rearranges_a_stage() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A fresh renderer per frame, so ASCII's cell history starts clean
@@ -336,7 +336,7 @@ fn block(pixels: &[u8], period: usize, cx: usize, cy: usize) -> Vec<u8> {
 #[test]
 fn ascii_draws_one_glyph_per_cell_on_one_grid() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -424,7 +424,7 @@ fn hex_bytes(palette: &flint_render::palette::Palette) -> Vec<[u8; 3]> {
 fn ascii_palette_modes_draw_only_the_palettes_colours() {
     use flint_render::palette::Palette;
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -685,7 +685,7 @@ fn changed_cells(a: &[u8], b: &[u8]) -> usize {
 #[test]
 fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A box: its edges cut cells, whose tones sit between the box's and
@@ -786,7 +786,7 @@ fn held(gpu: &Gpu) -> [usize; 4] {
 #[test]
 fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut world = FlintWorld::new();
@@ -865,7 +865,7 @@ fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
 #[test]
 fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     use flint_render::entity_style::{set_entity_style, set_style_param};
@@ -997,7 +997,7 @@ fn coloured(pixels: &[u8]) -> Vec<bool> {
 #[test]
 fn two_styles_share_one_edge_pass_a_frame() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A user style that paints white where the shared edges say edge
@@ -1118,7 +1118,7 @@ fn two_styles_share_one_edge_pass_a_frame() {
 #[test]
 fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     use flint_render::entity_style::{clear_entity_style, set_entity_style, set_style_param};

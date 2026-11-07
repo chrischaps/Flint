@@ -369,7 +369,7 @@ fn a_set_loads_from_a_game_bundle() {
 #[test]
 fn the_atlas_uploads_and_reads_back() {
     let Ok(ctx) = pollster::block_on(crate::HeadlessContext::new(4, 4)) else {
-        eprintln!("no GPU adapter; skipping the upload round-trip");
+        crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let atlas = GlyphAtlas::builtin();
