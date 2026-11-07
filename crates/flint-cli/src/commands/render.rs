@@ -120,6 +120,18 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ascii: bool,
 
+    /// Also write the ASCII style's character grid as UTF-8 text (#317):
+    /// one line per cell row, one character per cell, the same cells as
+    /// the PNG (a cell the picture passes through is a space). Needs the
+    /// ASCII style on (--ascii, a look, or the scene's own ascii)
+    #[arg(long, value_name = "FILE")]
+    pub ascii_text: Option<String>,
+
+    /// The same grid with 24-bit ANSI colours (each glyph's ink over its
+    /// ground), for `cat` in a terminal
+    #[arg(long, value_name = "FILE")]
+    pub ascii_text_ansi: Option<String>,
+
     /// ASCII cell width in points (default 8; the height follows the font)
     #[arg(long)]
     pub ascii_cell: Option<f32>,
@@ -476,6 +488,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
     }
+    let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
+    if wants_text && args.sweep.is_some() {
+        anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
+    }
     // User-authored styles (#274): registered before anything reads a
     // `[post_process.styles]` table, a look or a --style that names one
     let scene_dir = Path::new(&args.scene)
@@ -715,6 +731,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
     // Post-processing: the first column's (the only one without --sweep)
     renderer.set_post_process_config(configs[0].clone());
+    renderer.set_style_text_capture(wants_text);
     renderer.ensure_style_resources(&ctx.device);
     renderer.ensure_fxaa_resources(&ctx.device);
 
@@ -840,6 +857,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
         );
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
+        if wants_text {
+            write_ascii_text(&args, renderer.style_text(&ctx.device, "ascii"))?;
+        }
         let mut img = image::RgbaImage::from_raw(width, height, pixels)
             .context("Failed to create image from pixel data")?;
         // The style mask view says which hue is which style (#309): in the
@@ -884,6 +904,31 @@ pub fn run(args: RenderArgs) -> Result<()> {
         args.output
     );
 
+    Ok(())
+}
+
+/// Write the ASCII grid (#317) to --ascii-text / --ascii-text-ansi.
+fn write_ascii_text(
+    args: &RenderArgs,
+    text: Option<flint_render::stylize::GlyphText>,
+) -> Result<()> {
+    let Some(text) = text else {
+        anyhow::bail!(
+            "--ascii-text: the ASCII style didn't draw this frame; turn it on with --ascii, \
+             a look, or the scene's [post_process.styles.ascii] / ascii_style entities"
+        );
+    };
+    if let Some(path) = &args.ascii_text {
+        std::fs::write(path, text.to_text()).context(format!("Failed to write {path}"))?;
+        println!("Wrote {}x{} ASCII grid to {path}", text.cols, text.rows);
+    }
+    if let Some(path) = &args.ascii_text_ansi {
+        std::fs::write(path, text.to_ansi()).context(format!("Failed to write {path}"))?;
+        println!(
+            "Wrote {}x{} ANSI ASCII grid to {path}",
+            text.cols, text.rows
+        );
+    }
     Ok(())
 }
 
@@ -972,21 +1017,18 @@ fn post_process_config(
         if let Some(samples) = args.volumetric_samples {
             pp_config.volumetric_samples = samples;
         }
-        if let Some(radius) = args.kuwahara_radius {
-            pp_config.kuwahara_radius = radius;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(sharpness) = args.kuwahara_sharpness {
-            pp_config.kuwahara_sharpness = sharpness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(hardness) = args.kuwahara_hardness {
-            pp_config.kuwahara_hardness = hardness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(anisotropy) = args.kuwahara_anisotropy {
-            pp_config.kuwahara_anisotropy = anisotropy;
-            pp_config.kuwahara_enabled = true;
+        // The --kuwahara-* flags write Kuwahara's style table (#298)
+        let kuwahara = [
+            ("radius", args.kuwahara_radius.map(|r| r as f32)),
+            ("sharpness", args.kuwahara_sharpness),
+            ("hardness", args.kuwahara_hardness),
+            ("anisotropy", args.kuwahara_anisotropy),
+        ];
+        for (key, value) in kuwahara {
+            if let Some(value) = value {
+                pp_config.styles.set_param("kuwahara", key, value);
+                pp_config.styles.set_enabled("kuwahara", true);
+            }
         }
         if let Some(depth) = args.edge_depth {
             pp_config.edge_depth = depth;

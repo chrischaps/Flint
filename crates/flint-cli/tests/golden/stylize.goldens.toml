@@ -40,6 +40,10 @@ name = "ascii-full"
 scene = "demo/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"
 args = ["--style", "ascii:edges=0"]
+# The structural golden (#317): the same frame's 80x45 character grid,
+# which must match cell for cell. A tone glyph that moved shows as a caret
+# in <out>/ascii-full.text.diff, readable without opening an image
+text = "ascii_pbr_test.txt"
 
 [[case]]
 name = "ascii-full-detailed-tint"
@@ -148,6 +152,9 @@ args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 name = "ascii-style-entities"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid"]
+# Per entity (#317): the barrel and YBot are glyphs, every other cell is a
+# space (the picture passes through, and the pencil props draw over theirs)
+text = "ascii-style-entities.txt"
 
 [[case]]
 name = "ascii-style-screen"
@@ -159,12 +166,31 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# The variant cell pre-pass (#313) sums a variant's cells once, but only at
+# a footprint of 2 or more: these pin it on both grids. Blessed with main's
+# binary from before #313, so they say the pre-pass draws the same pixels
+[[case]]
+name = "ascii-style-footprint2"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
+
+[[case]]
+name = "ascii-style-object-footprint3"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
+
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
 # both carried in the mask's .g beside their ids
 [[case]]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
+
+# The same through the variant cell pre-pass (#313), blessed as above
+[[case]]
+name = "ascii-blend-footprint2"
+scene = "demo/stylize_blend.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
 
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
 # glass. The fire stays fire and the glass fades the crate's glyphs by its

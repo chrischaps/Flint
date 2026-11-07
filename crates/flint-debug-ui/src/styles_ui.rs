@@ -23,6 +23,34 @@ use flint_render::stylize::{self, StyleControl, StyleDescriptor, StyleSettings, 
 use flint_render::PostProcessConfig;
 use std::collections::HashMap;
 
+/// The "Feeds bloom" checkbox of an HDR style (#300): whether bloom
+/// reads the style's result or the unstylized scene. Returns whether it
+/// changed. Draws nothing for a display style, which runs after bloom.
+pub fn feeds_bloom_checkbox(
+    ui: &mut egui::Ui,
+    style: &'static StyleDescriptor,
+    pp: &mut PostProcessConfig,
+) -> bool {
+    if style.stage != StyleStage::Hdr {
+        return false;
+    }
+    let mut feeds = style.feeds_bloom_in(pp);
+    let changed = ui
+        .checkbox(&mut feeds, "Feeds bloom")
+        .on_hover_text(
+            "On: bloom glows from this style's output, so its own bright shapes halo. \
+             Off: bloom reads the scene under the style, so halos sit where the original \
+             bright pixels were. Scene key: feeds_bloom",
+        )
+        .changed();
+    if changed {
+        // Back at the default, say nothing: the scene's TOML stays clean
+        let choice = (feeds != style.feeds_bloom).then_some(feeds);
+        pp.styles.set_feeds_bloom(style.name, choice);
+    }
+    changed
+}
+
 /// What one frame of the editor changed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StylesEdit {
@@ -75,11 +103,7 @@ impl StylesEditor {
         self.marked = 0;
         edit.changed |= chain_ui(ui, pp);
         let mut any = false;
-        for style in stylize::registry()
-            .iter()
-            .copied()
-            .filter(|s| s.uses_style_table())
-        {
+        for style in stylize::registry().iter().copied() {
             any = true;
             edit.merge(self.section(ui, style, pp, authored));
         }
@@ -162,6 +186,7 @@ impl StylesEditor {
                                 ui.end_row();
                             }
                         });
+                    edit.changed |= feeds_bloom_checkbox(ui, style, pp);
                 });
                 ui.horizontal(|ui| {
                     if ui
@@ -526,7 +551,7 @@ mod tests {
 
     fn all_on() -> PostProcessConfig {
         let mut pp = PostProcessConfig::default();
-        for s in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for s in stylize::registry().iter() {
             pp.styles.set_enabled(s.name, true);
         }
         pp
@@ -537,7 +562,7 @@ mod tests {
         let mut editor = StylesEditor::default();
         let mut pp = all_on();
         let text = drawn_text(&mut editor, &mut pp, None);
-        for style in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for style in stylize::registry().iter() {
             assert!(text.contains(&style.label.to_string()), "{}", style.label);
             for control in style.controls() {
                 let label = style.label_for(control.name());

@@ -4,45 +4,9 @@
 //! descriptors, so a new style (built-in or a `styles/<name>.shader.toml`
 //! once [`custom::load_dir`](super::custom::load_dir) has run) appears with
 //! no change here.
-//!
-//! Kuwahara is the one exception while it keeps its settings in
-//! `kuwahara_*` fields on `[post_process]` and its descriptor has no
-//! params: [`KUWAHARA_PARAMS`] gives them here, with the F4 menu's ranges,
-//! so it lists like any other style. Once the descriptor declares its own
-//! (#298 moves them into the style table) those are listed instead, and
-//! this fallback can go.
 
-use super::{is_builtin, registry, StyleDescriptor, StyleParam, StyleStage};
+use super::{is_builtin, registry, StyleDescriptor, StyleStage};
 use serde::Serialize;
-
-/// Kuwahara's settings as params, with the ranges the F4 menu offers.
-/// `--style kuwahara:<name>=` and `[post_process] kuwahara_<name>` set them.
-pub const KUWAHARA_PARAMS: [StyleParam; 4] = [
-    StyleParam {
-        name: "radius",
-        default: 4.0,
-        min: 1.0,
-        max: 8.0,
-    },
-    StyleParam {
-        name: "sharpness",
-        default: 8.0,
-        min: 1.0,
-        max: 16.0,
-    },
-    StyleParam {
-        name: "hardness",
-        default: 8.0,
-        min: 1.0,
-        max: 16.0,
-    },
-    StyleParam {
-        name: "anisotropy",
-        default: 1.0,
-        min: 0.0,
-        max: 2.0,
-    },
-];
 
 /// One registered style, as listed.
 #[derive(Debug, Clone, Serialize)]
@@ -54,8 +18,7 @@ pub struct StyleListing {
     pub stage: &'static str,
     /// `"builtin"`, or `"user"` for a `styles/<name>.shader.toml`.
     pub source: &'static str,
-    /// Where a scene sets it: `[post_process.styles.<name>]`, or for
-    /// Kuwahara, `[post_process]` with `kuwahara_` before each key.
+    /// Where a scene sets it: `[post_process.styles.<name>]`.
     pub table: String,
     /// The component an entity takes the style with (per-entity styles).
     pub component: Option<String>,
@@ -85,7 +48,7 @@ pub struct ColorListing {
 #[derive(Debug, Clone, Serialize)]
 pub struct ParamListing {
     pub name: String,
-    /// The key a scene writes (`kuwahara_radius` for Kuwahara, else `name`).
+    /// The key a scene writes in the style's table (the same as `name`).
     pub key: String,
     pub default: f32,
     /// The F4 menu's range. A value outside it is taken as written.
@@ -117,9 +80,6 @@ pub fn catalog() -> Vec<StyleListing> {
 
 /// One style's listing.
 pub fn listing(d: &StyleDescriptor) -> StyleListing {
-    // The legacy fields, only while the descriptor declares none (#298)
-    let kuwahara = d.name == "kuwahara" && d.params.is_empty();
-    let params: &[StyleParam] = if kuwahara { &KUWAHARA_PARAMS } else { d.params };
     let help = |name: &str| d.hint(name).map(|h| h.help.to_string()).unwrap_or_default();
     StyleListing {
         name: d.name.to_string(),
@@ -133,27 +93,19 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
         } else {
             "user"
         },
-        table: if kuwahara {
-            "[post_process] kuwahara_*".to_string()
-        } else {
-            format!("[post_process.styles.{}]", d.name)
-        },
+        table: format!("[post_process.styles.{}]", d.name),
         component: d.component.map(str::to_string),
         uses_mask: d.uses_mask,
-        params: params
+        params: d
+            .params
             .iter()
             .map(|p| ParamListing {
                 name: p.name.to_string(),
-                key: if kuwahara {
-                    format!("kuwahara_{}", p.name)
-                } else {
-                    p.name.to_string()
-                },
+                key: p.name.to_string(),
                 default: p.default,
                 min: p.min,
                 max: p.max,
-                integer: (kuwahara && p.name == "radius")
-                    || d.hint(p.name).is_some_and(|h| h.integer),
+                integer: d.hint(p.name).is_some_and(|h| h.integer),
                 color: d.color_of(p.name).map(|c| c.base.to_string()),
                 label: d.label_for(p.name),
                 help: help(p.name),
@@ -283,8 +235,9 @@ mod tests {
         assert_eq!(kuwahara.stage, "hdr");
         let radius = kuwahara.params.iter().find(|p| p.name == "radius").unwrap();
         assert_eq!((radius.min, radius.max, radius.default), (1.0, 8.0, 4.0));
-        // The legacy field, or the table key once #298 lands
-        assert!(radius.key == "kuwahara_radius" || radius.key == "radius");
+        // Its table key since #298
+        assert_eq!(radius.key, "radius");
+        assert_eq!(kuwahara.table, "[post_process.styles.kuwahara]");
         assert!(radius.integer);
         let invert = all.iter().find(|s| s.name == "invert").unwrap();
         assert_eq!(invert.stage, "display");
