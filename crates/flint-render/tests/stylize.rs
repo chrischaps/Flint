@@ -962,6 +962,113 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
 
+/// #335: two entities in one frame draw in two glyph sets. The right cube
+/// names a set whose every glyph is solid ink in tall 4x8 cells: tinted
+/// red, all of its pixels turn red, while the left cube, in the built-in
+/// letters, keeps its ground between glyphs and doesn't change a pixel.
+#[test]
+fn two_entities_draw_in_two_glyph_sets_in_one_frame() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_core::vfs::{self, MemorySource};
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut src = MemorySource::new();
+    let solid = "####\n".repeat(8);
+    src.insert("fonts/solid.txt", format!("== #\n{solid}"));
+    src.insert(
+        "fonts/solid.glyphs.toml",
+        "[font]\nfile = \"solid.txt\"\ncell = [4, 8]\n[ramps.ink]\nglyphs = \"#\"\n\
+         [edges]\nhorizontal = \"#\"\nvertical = \"#\"\ndiagonal = \"#\"\nantidiagonal = \"#\"\n",
+    );
+    vfs::scoped(std::sync::Arc::new(src), || {
+        let mut world = FlintWorld::new();
+        boxed(&mut world, "left", 1.0, 0.0, None);
+        boxed(&mut world, "right", 1.0, 0.0, None);
+        let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+        for (name, x) in [("left", -2.2), ("right", 2.2)] {
+            let id = world.get_id(name).unwrap();
+            let mut transform = toml::Table::new();
+            transform.insert("position".into(), vec3([x, 0.0, 0.0]));
+            transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+            world
+                .set_component(id, "transform", transform.into())
+                .unwrap();
+            set_entity_style(&mut world, id, "ascii").unwrap();
+            set_style_param(&mut world, id, "cell", 4.0.into()).unwrap();
+            set_style_param(&mut world, id, "color", "tint".into()).unwrap();
+            set_style_param(&mut world, id, "tint", vec3([1.0, 0.0, 0.0])).unwrap();
+            set_style_param(&mut world, id, "outline", 0.0.into()).unwrap();
+            set_style_param(&mut world, id, "min_coverage", 0.0.into()).unwrap();
+        }
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let letters = gpu.frame(&mut renderer, &world);
+        let right = world.get_id("right").unwrap();
+        set_style_param(&mut world, right, "font", "solid".into()).unwrap();
+        let fonts = gpu.frame(&mut renderer, &world);
+        assert_eq!(renderer.style_ids().len(), 2, "one id each");
+
+        // Per half: pixels the style inked red, and red-tinted pixels that
+        // aren't solid red (ground between glyphs, or a glyph's edge)
+        let side = |frame: &[u8], right: bool| {
+            let (mut red, mut ground) = (0, 0);
+            for (i, p) in frame.chunks(4).enumerate() {
+                if ((i % SIZE as usize) >= SIZE as usize / 2) != right {
+                    continue;
+                }
+                let tinted = p[1] < 8 && p[2] < 8;
+                red += (tinted && p[0] > 250) as usize;
+                ground += (tinted && p[0] <= 250) as usize;
+            }
+            (red, ground)
+        };
+        let half = |frame: &[u8], right: bool| -> Vec<u8> {
+            frame
+                .chunks(SIZE as usize * 4)
+                .flat_map(|row| {
+                    let mid = row.len() / 2;
+                    if right {
+                        row[mid..].to_vec()
+                    } else {
+                        row[..mid].to_vec()
+                    }
+                })
+                .collect()
+        };
+        let (letters_red, letters_ground) = side(&letters, true);
+        let (solid_red, solid_ground) = side(&fonts, true);
+        eprintln!(
+            "right cube: letters {letters_red} ink / {letters_ground} ground, \
+             solid {solid_red} ink / {solid_ground} ground"
+        );
+        assert!(
+            letters_ground > letters_red / 4,
+            "letters leave ground showing"
+        );
+        assert!(
+            solid_red > letters_red + letters_ground / 2,
+            "the solid set inks the cube"
+        );
+        assert!(
+            solid_ground * 20 < solid_red,
+            "almost nothing of it is ground"
+        );
+        assert_eq!(
+            half(&fonts, false),
+            half(&letters, false),
+            "the left cube's letters don't change"
+        );
+    });
+}
+
 /// A tilted box filling the middle of the frame: silhouettes against the
 /// sky and creases where its faces meet.
 fn box_world() -> FlintWorld {
