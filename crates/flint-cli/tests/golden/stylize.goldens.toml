@@ -137,6 +137,13 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
+# both carried in the mask's .g beside their ids
+[[case]]
+name = "ascii-blend"
+scene = "demo/stylize_blend.scene.toml"
+args = ["--no-grid"]
+
 # --- the other registered styles ------------------------------------------
 #
 # Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph

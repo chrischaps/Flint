@@ -36,7 +36,7 @@
 //!
 //! ```text
 //! scene (HDR, render scale)
-//!   -> style mask (R16Uint ids, while a style reads it; #263)
+//!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
 //!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)

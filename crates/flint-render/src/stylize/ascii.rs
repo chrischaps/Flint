@@ -256,6 +256,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             default: "screen",
             choices: GRIDS,
         },
+        StyleOption {
+            name: "transition",
+            default: "fade",
+            choices: TRANSITIONS,
+        },
     ],
     enabled: None,
     // The mask gives styled entities their outlines (#267); with no entity
@@ -303,6 +308,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "grid",
             "Grid",
             "screen: one grid centred on the frame; object: cells pinned to each styled entity's origin",
+        ),
+        StyleHint::new(
+            "transition",
+            "Transition",
+            "How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches",
         ),
         StyleHint::new("tint", "Tint", "The ink for colour mode tint"),
         StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
@@ -721,6 +731,11 @@ pub const SCOPES: &[&str] = &["screen", "entities"];
 /// grid pinned to each styled root's projected origin (#266).
 pub const GRIDS: &[&str] = &["screen", "object"];
 
+/// How an entity part-way into ASCII (`blend` below 1, #278) shows it:
+/// every pixel a mix of its shading and its glyph, or that share of its
+/// cells turned to glyphs whole, in patches that grow as the blend rises.
+pub const TRANSITIONS: &[&str] = &["fade", "dissolve"];
+
 /// Variants one frame can hold, the whole-frame one included; any more
 /// are drawn as the whole frame is (logged once).
 pub const MAX_VARIANTS: usize = 64;
@@ -731,6 +746,9 @@ pub const MAX_IDS: usize = 256;
 
 /// A variant's flag: leave its pixels as they are.
 const PASS_THROUGH: u32 = 1;
+
+/// A variant's flag: a blend below 1 turns whole cells (#278).
+const DISSOLVE: u32 = 2;
 
 /// The cell state texture's size for a `size` frame: every whole and part
 /// cell, plus the one texel left of (above) the origin the shaders offset
@@ -1175,7 +1193,13 @@ impl Ascii {
                 || grid_origin([frame.width, frame.height], cell),
                 |at| anchored_origin(at, cell),
             );
-            let flags = if v.off { PASS_THROUGH } else { 0 };
+            let flags = if v.off {
+                PASS_THROUGH
+            } else if option("transition") == "dissolve" {
+                DISSOLVE
+            } else {
+                0
+            };
             slots[id as usize] = rows.len() as u32;
             rows.push(variant_uniform(
                 &param, &option, cell, origin, ramp, &palette, flags,

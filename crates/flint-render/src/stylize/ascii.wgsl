@@ -10,6 +10,11 @@
 // averages only the lattice samples of the pixel's own variant, so a
 // styled prop's glyphs carry its colour, not the background's, and its
 // silhouette is the mask's, to the pixel.
+//
+// Blend (#278): the mask's .g says how much of the style a pixel's entity
+// asks for. Below 1 the glyph pixel is mixed with the picture as it came
+// (fade), or the cell is drawn whole or not at all, by its patch noise
+// (dissolve, flag 2).
 
 @group(1) @binding(0) var cells: texture_2d<u32>;
 @group(2) @binding(0) var atlas: texture_2d<f32>;
@@ -241,14 +246,51 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step_in: u32, local: vec2<f32>, edg
 
 // The variant slot of the pixel at `p` (output pixels): the mask is at the
 // scene's resolution, so it is read by position scaled to it.
-fn slot_at(p: vec2<f32>) -> u32 {
+fn mask_texel(p: vec2<f32>) -> vec2<u32> {
     let msize = vec2<i32>(textureDimensions(style_mask));
     let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    let id = textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
+    return textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+}
+
+fn slot_of(id: u32) -> u32 {
     if id >= 256u {
         return 0u;
     }
     return u.slots[id / 4u][id % 4u];
+}
+
+fn slot_at(p: vec2<f32>) -> u32 {
+    return slot_of(mask_texel(p).x);
+}
+
+fn cell_hash(c: vec2<f32>) -> f32 {
+    return fract(sin(dot(c, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+fn value_noise(q: vec2<f32>) -> f32 {
+    let i = floor(q);
+    let f = fract(q);
+    let s = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(cell_hash(i), cell_hash(i + vec2<f32>(1.0, 0.0)), s.x),
+        mix(cell_hash(i + vec2<f32>(0.0, 1.0)), cell_hash(i + vec2<f32>(1.0, 1.0)), s.x),
+        s.y,
+    );
+}
+
+// A cell's place in the dissolve order, 0..1: half patch noise a few cells
+// across (so glyphs arrive in patches that grow, like a tear spreading),
+// half per-cell hash (so a patch's edge is ragged and a small prop, which
+// holds only a few noise lattice points, still turns about `blend` of its
+// cells). The sum of two near-uniform values is triangular; its CDF maps
+// it back to uniform, so the share of turned cells follows the blend.
+fn dissolve_order(cell: vec2<f32>) -> f32 {
+    let n = value_noise(cell * 0.3) * 0.65 + value_noise(cell * 0.6 + vec2<f32>(31.0, 7.0)) * 0.35;
+    // Value noise piles up in the middle; spread it back toward 0..1
+    let patches = clamp((n - 0.5) * 2.0 + 0.5, 0.0, 1.0);
+    let s = 0.5 * (patches + cell_hash(cell + vec2<f32>(17.0, 5.0)));
+    let u = select(1.0 - 2.0 * (1.0 - s) * (1.0 - s), 2.0 * s * s, s < 0.5);
+    return clamp(u, 0.0, 0.9999);
 }
 
 fn shown_entity(p: vec2<i32>) -> vec3<f32> {
@@ -302,15 +344,32 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.position.xy;
     var slot = 0u;
+    // How much of the style the pixel's entity asks for, 0..1 (mask .g)
+    var blend = 1.0;
     if u.variant_meta.x > 1u {
-        slot = slot_at(p);
+        let m = mask_texel(p);
+        slot = slot_of(m.x);
+        blend = f32(m.y) / 65535.0;
     }
     var out: vec3<f32>;
     if slot != 0u {
-        if (u.variants[slot].flags & 1u) != 0u {
+        let v = u.variants[slot];
+        if (v.flags & 1u) != 0u {
             return passed(p);
         }
+        if blend <= 0.0 {
+            return passed(p);
+        }
+        if blend < 1.0 && (v.flags & 2u) != 0u {
+            let cell = floor((p - v.origin) / v.cell);
+            if dissolve_order(cell) >= blend {
+                return passed(p);
+            }
+        }
         out = variant_pixel(slot, p);
+        if blend < 1.0 && (v.flags & 2u) == 0u {
+            out = mix(shown_entity(vec2<i32>(floor(p))), out, blend);
+        }
     } else {
         if u.variant_meta.y == 1u {
             return passed(p);

@@ -5,6 +5,8 @@ description = "Draws this entity (and its descendants) as ASCII glyphs while the
 # in, and a filled-in field would hide the scene's own setting.
 [component.ascii_style.fields]
 enabled = { type = "bool", description = "false keeps this entity and its subtree out of ASCII, even when the scene's style covers the whole frame" }
+blend = { type = "f32", min = 0.0, max = 1.0, description = "How much of the ASCII look this entity (and its subtree) is drawn with: 0 its own shading, 1 glyphs (the default when left out). Ramp it from a script with set_style_param(id, \"blend\", x) to fade a prop into text; it rides in the style mask beside the id, so a ramp makes no new variant (#278)" }
+transition = { type = "enum", values = ["fade", "dissolve"], description = "How a blend below 1 shows: fade mixes every pixel with the glyphs; dissolve turns that share of the entity's cells to glyphs whole, in patches that grow with the blend" }
 cell = { type = "f32", min = 4.0, max = 32.0, description = "Cell width in points; the height follows the font's glyph aspect" }
 ramp = { type = "string", description = "A ramp of the scene's glyph set: classic, blocks, minimal or detailed for the built-in set" }
 color = { type = "enum", values = ["source", "tint", "raw", "mono", "palette"], description = "Ink colour: source (the surface's hue at full value), tint (one colour), raw (the cell's own colour), mono (white on grey), palette (the inks of `palette`)" }

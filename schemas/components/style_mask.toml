@@ -4,3 +4,4 @@ description = "Puts an entity (and its descendants) under a per-entity style: th
 [component.style_mask.fields]
 style = { type = "string", description = "Name of the style this entity is drawn in (e.g. \"ascii\"). Entities sharing a name share a mask id; ids are numbered by name order", default = "default" }
 enabled = { type = "bool", description = "false takes this entity and its descendants out of any style, including one inherited from an ancestor", default = true }
+blend = { type = "f32", min = 0.0, max = 1.0, description = "How much of the style this entity is drawn with, 0 (its own shading) to 1 (the style's; the default when left out). Written into the mask beside the id (#278). A style component's own blend wins over this one" }

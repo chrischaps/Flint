@@ -453,6 +453,8 @@ pub struct SceneRenderer {
     /// Styled entities -> their mask id, rebuilt each `update_from_world`
     /// while the mask is wanted (empty otherwise).
     style_by_entity: HashMap<flint_core::EntityId, u16>,
+    /// The blend of each styled entity drawn at less than 1 (#278).
+    style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
@@ -753,6 +755,7 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
@@ -2232,6 +2235,7 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
@@ -3161,15 +3165,17 @@ impl SceneRenderer {
         // Ids for every styled entity: they say which styles are on for
         // entities alone (#266) as well as what the mask holds (#263)
         if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
-            crate::style_mask::resolve(
+            crate::style_mask::resolve_blended(
                 world,
                 &self.postprocess_config,
                 &mut self.style_ids,
                 &mut self.style_by_entity,
+                &mut self.style_blend_by_entity,
             );
         } else {
             self.style_ids.set(Vec::new());
             self.style_by_entity.clear();
+            self.style_blend_by_entity.clear();
         }
 
         // Extract lights from scene entities
@@ -4438,6 +4444,12 @@ impl SceneRenderer {
         &self.style_by_entity
     }
 
+    /// How much of its style each styled entity drawn at less than 1 is
+    /// drawn with (#278); an entity missing here is fully styled.
+    pub fn styled_blends(&self) -> &HashMap<flint_core::EntityId, f32> {
+        &self.style_blend_by_entity
+    }
+
     /// Record the style mask pass over this frame's visible opaque draws
     /// (static, procedural and skinned) of styled entities. The mask is
     /// cleared even with none, so a style never reads a stale frame.
@@ -4470,7 +4482,13 @@ impl SceneRenderer {
             resources.height,
         );
         let ids = &self.style_by_entity;
+        let blends = &self.style_blend_by_entity;
         let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
+        let blend_of = |e: &Option<flint_core::EntityId>| {
+            e.as_ref()
+                .and_then(|e| blends.get(e).copied())
+                .unwrap_or(1.0)
+        };
         let mut draws = Vec::new();
         if !ids.is_empty() {
             draws.extend(
@@ -4485,6 +4503,7 @@ impl SceneRenderer {
                             transform_bind_group: &d.transform_bind_group,
                             bones: None,
                             id: id_of(&d.entity_id)?,
+                            blend: blend_of(&d.entity_id),
                         })
                     }),
             );
@@ -4496,6 +4515,7 @@ impl SceneRenderer {
                     transform_bind_group: &d.transform_bind_group,
                     bones: Some(&d.bone_bind_group),
                     id: id_of(&d.entity_id)?,
+                    blend: blend_of(&d.entity_id),
                 })
             }));
         }
