@@ -123,6 +123,22 @@ impl StylesEditor {
                         "Runs on the finished picture at output resolution, before FXAA"
                     }
                 });
+                // A user-authored style (ADR 0112, #275): where it lives, and
+                // whether it compiles
+                if let Some(source) = stylize::custom::source(style.name) {
+                    ui.weak("user").on_hover_text(format!(
+                        "{}\n{}\nSaving either file reloads it",
+                        source.toml_path.display(),
+                        source.wgsl_path.display()
+                    ));
+                    if let Some((_, error)) = stylize::custom::errors()
+                        .into_iter()
+                        .find(|(name, _)| name == style.name)
+                    {
+                        ui.colored_label(ui.visuals().error_fg_color, "error")
+                            .on_hover_text(error);
+                    }
+                }
                 if let Some(authored) = authored {
                     if !pp.styles.same_style(style.name, authored) {
                         ui.colored_label(ui.visuals().warn_fg_color, "edited")

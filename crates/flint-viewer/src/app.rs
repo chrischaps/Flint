@@ -67,6 +67,7 @@ pub fn run(
     let constraint_registry =
         ConstraintRegistry::load_from_directory(schemas_path).unwrap_or_default();
 
+    load_user_styles(scene_path);
     let (world, scene_file) = load_scene(scene_path, &registry)?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
@@ -195,6 +196,7 @@ pub fn run_editor(
         .and_then(|p| ConstraintRegistry::load_from_directory(p).ok())
         .unwrap_or_default();
 
+    load_user_styles(scene_path);
     let (world, scene_file) = load_scene(scene_path, &registry)?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
@@ -315,6 +317,8 @@ pub struct ViewerApp {
     dirty: bool,
     last_save_time: Option<Instant>,
     suppress_reload_until: Option<Instant>,
+    /// Frames counted for the user style poll in `check_reload` (#275).
+    user_style_polls: u32,
 
     // Pending edit actions from inspector (collected inside egui closure, applied after)
     pending_edits: Vec<EditAction>,
@@ -364,6 +368,22 @@ pub struct ViewerApp {
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
 /// none (every style off) when it has no `[post_process]` block.
+/// The folder a scene file sits in.
+fn scene_dir_of(scene_path: &str) -> &Path {
+    Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
+/// the scene can see, before its `[post_process]` is read, so its tables
+/// for them aren't dropped as unknown (#275).
+fn load_user_styles(scene_path: &str) {
+    for message in flint_render::stylize::custom::load_dir(scene_dir_of(scene_path)) {
+        eprintln!("Warning: {message}");
+    }
+}
+
 fn authored_styles(def: Option<&PostProcessDef>) -> flint_render::stylize::StyleSettings {
     def.map(|d| post_process_config_from_def(d).styles)
         .unwrap_or_default()
@@ -415,6 +435,7 @@ impl ViewerApp {
             dirty: false,
             last_save_time: None,
             suppress_reload_until: None,
+            user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
             dirty_fields: std::collections::HashSet::new(),
@@ -468,6 +489,7 @@ impl ViewerApp {
             dirty: false,
             last_save_time: None,
             suppress_reload_until: None,
+            user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
             dirty_fields: std::collections::HashSet::new(),
@@ -1184,7 +1206,11 @@ impl ViewerApp {
         let mut gizmo_edits: Vec<EditAction> = Vec::new();
         let mut gizmo_drag_just_ended = false;
 
+        // User styles that don't compile (#275), shown until they do
+        let style_errors = flint_render::stylize::custom::errors();
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
             if show_panels {
                 // Left side panel: scene tree
                 egui::SidePanel::left("scene_tree_panel")
@@ -1884,10 +1910,23 @@ impl ViewerApp {
             }
         }
 
-        let (needs_reload, scene_path) = {
+        let (mut needs_reload, scene_path) = {
             let state = self.state.lock().unwrap();
             (state.needs_reload, state.scene_path.clone())
         };
+
+        // User styles (#275): the watcher sees `<scene>/styles/`, but not
+        // the parent's `styles/` a game keeps beside `levels/`, so poll the
+        // descriptions a few times a second too. A changed one reloads the
+        // scene, which reads its settings for the style again.
+        self.user_style_polls = self.user_style_polls.wrapping_add(1);
+        if needs_reload || self.user_style_polls % 15 == 0 {
+            let reload = flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path));
+            for message in &reload.messages {
+                eprintln!("Warning: {message}");
+            }
+            needs_reload |= reload.changed();
+        }
 
         if needs_reload {
             {

@@ -376,6 +376,7 @@ impl PlayerApp {
                         .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s))
                 });
                 self.scene_camera = scene_file.camera.clone();
+                super::scene_loading::load_user_styles(&new_scene_path);
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;

@@ -1464,7 +1464,46 @@ impl PlayerApp {
     }
 
     #[profiling::function]
+    /// Hot reload of user styles' descriptions (#275, natively): a few
+    /// times a second, look for edited or new `styles/*.shader.toml`, and
+    /// read the scene's settings again for each style that changed, since
+    /// its tables were checked against the old parameters. The WGSL files
+    /// are polled by the styles themselves.
+    fn poll_user_styles(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static FRAMES: AtomicU32 = AtomicU32::new(0);
+            if FRAMES.fetch_add(1, Ordering::Relaxed) % 15 != 0 {
+                return;
+            }
+            let scene_dir = std::path::Path::new(&self.scene_path)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf();
+            let reload = flint_render::stylize::custom::reload_changed(&scene_dir);
+            for message in &reload.messages {
+                tracing::warn!("{message}");
+            }
+            if !reload.changed() {
+                return;
+            }
+            if let Some(renderer) = &mut self.scene_renderer {
+                let authored = self
+                    .scene_post_process
+                    .as_ref()
+                    .map(super::scene_loading::post_process_config_from_def)
+                    .unwrap_or_default();
+                let mut config = renderer.post_process_config().clone();
+                flint_render::stylize::custom::refresh_settings(&mut config, &authored, &reload);
+                renderer.set_post_process_config(config);
+            }
+        }
+    }
+
     fn sync_renderer(&mut self) {
+        self.poll_user_styles();
+
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.camera_offset = [self.camera.position.x, self.camera.position.y];
@@ -1627,6 +1666,10 @@ impl PlayerApp {
             None
         };
 
+        // User styles that don't compile (#275): shown until they do
+        #[cfg(feature = "debug-hud")]
+        let style_errors = flint_render::stylize::custom::errors();
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // Layers, back to front: script UI, game egui, debug panels.
             // Script UI first: it shares the background layer with any game
@@ -1664,6 +1707,9 @@ impl PlayerApp {
             if let Some(ref stats) = stats_data {
                 render_stats_overlay(ctx, stats, debug_width);
             }
+
+            #[cfg(feature = "debug-hud")]
+            flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
         });
 
         self.draw_commands = draw_commands;

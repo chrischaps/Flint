@@ -5,6 +5,7 @@ mod ocean_panel;
 mod particles_panel;
 mod reality_panel;
 mod render_panel;
+mod style_errors;
 mod styles_panel;
 mod styles_ui;
 mod tod_panel;
@@ -21,6 +22,7 @@ pub use particles_panel::{
 };
 pub use reality_panel::{RealityDebugPanel, RealityPanelConfig};
 pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
+pub use style_errors::paint_style_errors;
 pub use styles_panel::{StyledEntityRow, StylesDebugPanel, STYLES_DEBUG_PANEL};
 pub use styles_ui::{StylesEdit, StylesEditor};
 pub use tod_panel::{TimeOfDayDebugPanel, TimeOfDayPanelConfig};

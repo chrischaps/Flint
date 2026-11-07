@@ -40,9 +40,12 @@
 //! for changes (natively, a few times a second) and rebuilt in place; an
 //! edit that fails keeps the last good build drawing.
 //!
-//! The registry is append-only ([`super::register_runtime`]): a loaded
-//! style keeps its parameters for the run. Editing the `.shader.toml`
-//! needs a restart in this prototype; #275 builds that.
+//! The registry is append-only ([`super::register_runtime`]): a style keeps
+//! its index for the run. An edited `.shader.toml` is read again by
+//! [`reload_changed`] (#275), which hosts call a few times a second: the
+//! new descriptor takes the old one's index ([`super::replace_runtime`]),
+//! the renderer builds it again on the next frame, and the host re-reads
+//! the scene's settings for it ([`refresh_settings`]).
 
 use super::kit;
 use super::{
@@ -633,7 +636,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
     }
     if report.loops > 0 {
         report.warnings.push(format!(
-            "{file}: {} loop{}: a loop that never ends hangs the GPU until the driver resets it \
+            "{file}: warning: {} loop{}: a loop that never ends hangs the GPU until the driver resets it \
              (TDR); keep its bound a constant or a clamped parameter",
             report.loops,
             if report.loops == 1 { "" } else { "s" }
@@ -641,7 +644,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
     }
     if report.texture_reads > TEXTURE_READ_WARN {
         report.warnings.push(format!(
-            "{file}: {} texture reads written out; each runs once a pixel",
+            "{file}: warning: {} texture reads written out; each runs once a pixel",
             report.texture_reads
         ));
     }
@@ -713,6 +716,10 @@ struct Loaded {
     names: BindNames,
     /// The last error (load, check or build), for hosts to show.
     error: Mutex<Option<String>>,
+    /// The `.shader.toml`'s modified time when last read
+    /// ([`reload_changed`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    toml_modified: Mutex<Option<std::time::SystemTime>>,
 }
 
 #[derive(Clone, Copy)]
@@ -773,11 +780,7 @@ pub fn load_dir(scene_dir: &Path) -> Vec<String> {
 
 /// Register the style `path` describes (see [`load_dir`]).
 pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> {
-    let text =
-        flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let def: ShaderStyleDef =
-        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let source = def.check(path)?;
+    let source = read_source(path)?;
     if let Some(existing) = loaded(&source.name) {
         if existing.source.toml_path != source.toml_path {
             messages.push(format!(
@@ -789,6 +792,30 @@ pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> 
         }
         return Ok(());
     }
+    install(source, messages, false);
+    Ok(())
+}
+
+/// Read and check the description at `path` (not its shader).
+fn read_source(path: &Path) -> Result<StyleSource, String> {
+    let text =
+        flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let def: ShaderStyleDef =
+        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    def.check(path)
+}
+
+/// The modified time of `path` on disk, for the reload polls (native
+/// only: hot reload reads the disk, never the vfs, and a bundle never
+/// changes).
+#[cfg(not(target_arch = "wasm32"))]
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Make `source`'s descriptor and register it: appended, or with
+/// `replace`, put where the style of the same name stands (#275).
+fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // A shader that fails registers anyway: it draws a passthrough and its
     // error waits for the host, so a typo never takes a style's settings away
     let error = match flint_core::vfs::read_to_string(&source.wgsl_path) {
@@ -846,22 +873,179 @@ pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> 
         component: None,
         create,
     }));
+    // The chain's bind cache keys on these names, so each install gets its
+    // own: a replaced style (#275) builds new buffers and layouts, and a
+    // cached group under the old name would bind the old pass's buffers
+    // (frozen at the old values, or the wrong size for a new param count)
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let names = BindNames {
-        frame: leak(format!("{name} style frame BG")),
-        input: leak(format!("{name} style input BG")),
-        extra: leak(format!("{name} style depth/mask BG")),
+        frame: leak(format!("{name} style frame BG #{generation}")),
+        input: leak(format!("{name} style input BG #{generation}")),
+        extra: leak(format!("{name} style depth/mask BG #{generation}")),
         pass: leak(format!("{name} style pass")),
     };
-    LOADED
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(Arc::new(Loaded {
-            source,
-            names,
-            error: Mutex::new(error),
-        }));
-    super::register_runtime(descriptor);
-    Ok(())
+    let loaded = Arc::new(Loaded {
+        #[cfg(not(target_arch = "wasm32"))]
+        toml_modified: Mutex::new(modified(&source.toml_path)),
+        source,
+        names,
+        error: Mutex::new(error),
+    });
+    let mut all = LOADED.write().unwrap_or_else(|e| e.into_inner());
+    match all
+        .iter_mut()
+        .find(|l| replace && l.source.name == loaded.source.name)
+    {
+        Some(slot) => {
+            *slot = loaded;
+            drop(all);
+            super::replace_runtime(descriptor);
+        }
+        None => {
+            all.push(loaded);
+            drop(all);
+            super::register_runtime(descriptor);
+        }
+    }
+}
+
+/// What [`reload_changed`] did.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Reload {
+    /// Styles whose `.shader.toml` was read again and replaced (new
+    /// parameters, a new stage, another shader). A host re-reads its
+    /// scene's `[post_process.styles.<name>]` for each, since the tables
+    /// were checked against the old parameters.
+    pub replaced: Vec<String>,
+    /// Styles found in a style folder for the first time.
+    pub added: Vec<String>,
+    /// Load errors and check warnings, one line each.
+    pub messages: Vec<String>,
+}
+
+impl Reload {
+    /// Whether the registry changed.
+    pub fn changed(&self) -> bool {
+        !self.replaced.is_empty() || !self.added.is_empty()
+    }
+}
+
+/// Hot reload of the descriptions (#275), natively: read again every
+/// loaded `.shader.toml` whose modified time moved, and load any new one
+/// in `scene_dir`'s style folders. A description that no longer reads
+/// keeps the style as it was and shows the error ([`errors`]); one that
+/// does replaces the style at its registry index, so the renderer builds
+/// it again on the next frame. The WGSL itself is polled by the pass, so
+/// a shader edit needs nothing from the host.
+///
+/// Costs one `stat` a loaded style and one directory listing a style
+/// folder: call it a few times a second, not every frame. On the web it
+/// does nothing.
+pub fn reload_changed(scene_dir: &Path) -> Reload {
+    let mut reload = Reload::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let current: Vec<Arc<Loaded>> = LOADED.read().unwrap_or_else(|e| e.into_inner()).clone();
+        for l in current {
+            let now = modified(&l.source.toml_path);
+            if now.is_none() || now == *l.toml_modified.lock().unwrap_or_else(|e| e.into_inner()) {
+                continue;
+            }
+            match read_source(&l.source.toml_path) {
+                Ok(source) => {
+                    let name = source.name.clone();
+                    install(source, &mut reload.messages, true);
+                    tracing::info!("style '{name}': {} reloaded", l.source.toml_path.display());
+                    reload.replaced.push(name);
+                }
+                Err(e) => {
+                    // Keep drawing what was there; don't read it again until
+                    // it changes once more
+                    reload.messages.push(e.clone());
+                    *l.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
+                    *l.toml_modified.lock().unwrap_or_else(|e| e.into_inner()) = now;
+                }
+            }
+        }
+        let (before, known): (Vec<String>, Vec<PathBuf>) = LOADED
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|l| (l.source.name.clone(), l.source.toml_path.clone()))
+            .unzip();
+        // New files; one that failed is tried again only once it changes,
+        // so a broken new file reports once, not four times a second
+        static REFUSED: Mutex<BTreeMap<PathBuf, Option<std::time::SystemTime>>> =
+            Mutex::new(BTreeMap::new());
+        for dir in style_dirs(scene_dir) {
+            let Ok(mut entries) = std::fs::read_dir(&dir).map(|rd| {
+                rd.filter_map(|e| e.ok().map(|e| e.path()))
+                    .collect::<Vec<_>>()
+            }) else {
+                continue;
+            };
+            entries.sort();
+            for path in entries {
+                let is_style = path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .is_some_and(|f| f.ends_with(SUFFIX));
+                if !is_style || known.contains(&path) {
+                    continue;
+                }
+                let now = modified(&path);
+                let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+                if refused.get(&path) == Some(&now) {
+                    continue;
+                }
+                match load_file(&path, &mut reload.messages) {
+                    Ok(()) => {
+                        // Skipped (its name is loaded from another folder):
+                        // said once, like a failure
+                        let took = LOADED
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .iter()
+                            .any(|l| l.source.toml_path == path);
+                        if took {
+                            refused.remove(&path);
+                        } else {
+                            refused.insert(path, now);
+                        }
+                    }
+                    Err(e) => {
+                        reload.messages.push(e);
+                        refused.insert(path, now);
+                    }
+                }
+            }
+        }
+        reload.added = LOADED
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|l| l.source.name.clone())
+            .filter(|n| !before.contains(n))
+            .collect();
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = scene_dir;
+    reload
+}
+
+/// Re-read the settings of each style `reload` touched from `authored`
+/// (the scene's `[post_process]`, parsed again now that the registry
+/// knows their new parameters) into `config`, leaving every other style as
+/// the host has it (#275).
+pub fn refresh_settings(
+    config: &mut crate::postprocess::PostProcessConfig,
+    authored: &crate::postprocess::PostProcessConfig,
+    reload: &Reload,
+) {
+    for name in reload.replaced.iter().chain(&reload.added) {
+        config.styles.restore(name, &authored.styles);
+    }
 }
 
 /// Every loaded user style with its current error, for a host to show
@@ -876,6 +1060,19 @@ pub fn errors() -> Vec<(String, String)> {
             Some((l.source.name.clone(), error))
         })
         .collect()
+}
+
+/// Record that style `name`'s pass panicked while it was built (the
+/// renderer caught it): it stays off, and its error says so.
+pub fn report_build_panic(name: &str) {
+    if let Some(l) = loaded(name) {
+        let e = format!(
+            "{}: building the style panicked; it stays off until its files change",
+            l.source.toml_path.display()
+        );
+        tracing::warn!("style '{name}': {e}");
+        *l.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
+    }
 }
 
 /// The source a loaded user style was read from.
@@ -1574,5 +1771,190 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert!(load_dir(&dir).is_empty());
         assert_eq!(super::super::registry().len(), before);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn index_of(name: &str) -> usize {
+        super::super::registry()
+            .iter()
+            .position(|d| d.name == name)
+            .unwrap()
+    }
+
+    /// #275: an edited `.shader.toml` replaces its style at the same
+    /// registry index with the new parameters; a broken edit keeps the old
+    /// one and reports; a new file in the folder is picked up; and the
+    /// scene's settings are read again for what changed.
+    #[test]
+    fn toml_edits_replace_the_style_in_place() {
+        let dir = std::env::temp_dir().join(format!("flint-user-toml-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        let toml_path = styles.join("utest_edit.shader.toml");
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_edit\"\nshader = \"edit.wgsl\"\n\
+             [params.a]\ndefault = 0.5\nmin = 0\nmax = 1\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("edit.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_dir(&dir).is_empty());
+        let index = index_of("utest_edit");
+        let old = super::super::find("utest_edit").unwrap();
+        let old_bind = loaded("utest_edit").unwrap().names.frame;
+        assert!(
+            reload_changed(&dir).replaced.is_empty(),
+            "nothing changed yet"
+        );
+
+        // A new parameter, a new label
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_edit\"\nlabel = \"Edited\"\nshader = \"edit.wgsl\"\n\
+             [params.a]\ndefault = 0.5\nmin = 0\nmax = 1\n\
+             [params.b]\ndefault = 2\nmin = 0\nmax = 4\n",
+        )
+        .unwrap();
+        let reload = reload_changed(&dir);
+        assert_eq!(reload.replaced, vec!["utest_edit".to_string()]);
+        assert!(reload.changed());
+        let new = super::super::find("utest_edit").unwrap();
+        assert!(!std::ptr::eq(old, new), "a new descriptor");
+        assert_eq!(index_of("utest_edit"), index, "at the same index");
+        // Its bind groups are cached under new names: the old ones hold the
+        // old pass's buffers
+        assert_ne!(loaded("utest_edit").unwrap().names.frame, old_bind);
+        assert_eq!(new.label, "Edited");
+        assert_eq!(new.param(&Default::default(), "b"), 2.0);
+        assert_eq!(super::source("utest_edit").unwrap().params.len(), 2);
+
+        // The scene's table, read again, now keeps `b`
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_edit]\nb = 3\n").unwrap();
+        let (styles_read, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let authored = crate::postprocess::PostProcessConfig {
+            styles: styles_read,
+            ..Default::default()
+        };
+        let mut live = crate::postprocess::PostProcessConfig::default();
+        live.styles.set_enabled("invert", true); // the host's own edit, kept
+        refresh_settings(&mut live, &authored, &reload);
+        assert_eq!(live.styles.param("utest_edit", "b"), Some(3.0));
+        assert!(live.styles.is_enabled("utest_edit"));
+        assert!(live.styles.is_enabled("invert"));
+
+        // A broken edit keeps the style as it was and says why
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_edit\"\nshader = \n",
+        )
+        .unwrap();
+        let reload = reload_changed(&dir);
+        assert!(reload.replaced.is_empty());
+        assert_eq!(reload.messages.len(), 1, "{:?}", reload.messages);
+        assert!(std::ptr::eq(super::super::find("utest_edit").unwrap(), new));
+        assert!(errors().iter().any(|(n, _)| n == "utest_edit"));
+        // ... and isn't read again until it changes once more
+        assert!(reload_changed(&dir).messages.is_empty());
+
+        // A new file is added
+        std::fs::write(
+            styles.join("utest_added.shader.toml"),
+            "version = 1\nname = \"utest_added\"\nshader = \"edit.wgsl\"\n",
+        )
+        .unwrap();
+        let reload = reload_changed(&dir);
+        assert_eq!(reload.added, vec!["utest_added".to_string()]);
+        assert!(super::super::find("utest_added").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #275: the renderer's [`StyleSet`](super::super::StyleSet) throws a
+    /// pass away when its descriptor is replaced, and builds the new one.
+    #[test]
+    fn a_replaced_descriptor_is_built_again() {
+        let Some((device, _queue)) = device() else {
+            eprintln!("no GPU adapter; skipped");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("flint-user-set-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        let toml_path = styles.join("utest_set.shader.toml");
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_set\"\nshader = \"set.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("set.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_dir(&dir).is_empty());
+        let mut config = crate::postprocess::PostProcessConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        config.styles.set_enabled("utest_set", true);
+        let ids = crate::style_mask::StyleIds::default();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut set = super::super::StyleSet::default();
+        assert!(set.ensure(&device, format, &config, &ids).is_empty());
+        let active = |set: &super::super::StyleSet| {
+            set.active(StyleStage::Display, &config, &ids)
+                .iter()
+                .filter(|(d, _)| d.name == "utest_set")
+                .map(|(d, _)| *d as *const StyleDescriptor)
+                .collect::<Vec<_>>()
+        };
+        let before = active(&set);
+        assert_eq!(before.len(), 1);
+
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_set\"\nshader = \"set.wgsl\"\n\
+             [params.k]\ndefault = 1\nmin = 0\nmax = 1\n",
+        )
+        .unwrap();
+        assert_eq!(reload_changed(&dir).replaced.len(), 1);
+        assert!(active(&set).is_empty(), "the stale pass isn't drawn");
+        assert!(set.ensure(&device, format, &config, &ids).is_empty());
+        let after = active(&set);
+        assert_eq!(after.len(), 1);
+        assert_ne!(before, after, "built from the new descriptor");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #275: a web bundle is a `MemorySource`; styles load from it through
+    /// the vfs exactly as from disk, and a shader missing from it is an
+    /// error (`flint bundle` reports it) rather than a crash.
+    #[test]
+    fn styles_load_from_a_bundle() {
+        let source: flint_core::vfs::MemorySource = [
+            (
+                "styles/utest_bundled.shader.toml",
+                "version = 1\nname = \"utest_bundled\"\nshader = \"bundled.wgsl\"\n\
+                 [params.k]\ndefault = 0.5\nmin = 0\nmax = 1\n"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            ("styles/bundled.wgsl", PASSTHROUGH.as_bytes().to_vec()),
+            (
+                "styles/utest_unpacked.shader.toml",
+                "version = 1\nname = \"utest_unpacked\"\nshader = \"missing.wgsl\"\n"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            ("levels/a.scene.toml", b"[scene]\nname = \"a\"\n".to_vec()),
+        ]
+        .into_iter()
+        .collect();
+        let messages = flint_core::vfs::scoped(Arc::new(source), || load_dir(Path::new("levels")));
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("missing.wgsl"), "{messages:?}");
+        let bundled = super::super::find("utest_bundled").expect("found via ../styles");
+        assert_eq!(bundled.param(&Default::default(), "k"), 0.5);
+        assert!(errors().iter().any(|(n, _)| n == "utest_unpacked"));
+        assert!(!errors().iter().any(|(n, _)| n == "utest_bundled"));
     }
 }

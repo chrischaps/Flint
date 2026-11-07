@@ -4951,6 +4951,13 @@ impl SceneRenderer {
             .styles
             .ensure(device, surface_format, &self.postprocess_config, &self.style_ids)
         {
+            if !crate::stylize::is_builtin(failed.name) {
+                // A user style (ADR 0112) that panicked building is its
+                // author's bug, not a lost device: it stays off and says so
+                crate::stylize::custom::report_build_panic(failed.name);
+                self.postprocess_config.styles.set_enabled(failed.name, false);
+                continue;
+            }
             tracing::warn!(
                 "{} style unavailable: GPU driver crashed during shader compilation. \
                  Try updating your graphics drivers.",

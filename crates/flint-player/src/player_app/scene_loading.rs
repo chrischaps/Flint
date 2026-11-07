@@ -26,6 +26,20 @@ use std::path::{Path, PathBuf};
 /// `flint_player::post_process_config_from_def` path (flint-cli uses it).
 pub use flint_render::post_process_config_from_def;
 
+/// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
+/// a scene at `scene_path` can see, before its `[post_process]` is read:
+/// a table naming a style the registry doesn't know is dropped with a
+/// warning. Styles already registered are kept, so a scene change only
+/// adds (#275).
+pub fn load_user_styles(scene_path: &str) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    for message in flint_render::stylize::custom::load_dir(scene_dir) {
+        tracing::warn!("{message}");
+    }
+}
+
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
 /// Info about loaded grass, returned from terrain loading for debug panel creation.
 /// The fields are only read by the `debug-hud` grass panel construction.

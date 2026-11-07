@@ -563,9 +563,9 @@ What the framework does so a style doesn't have to:
 
 ## User-authored styles
 
-*Prototype (#274, [ADR 0112](../../../adr/0112-user-authored-styles.md)); `flint render` loads them today, and the player, viewer and on-screen errors come with #275.*
+*Experimental, format version 1 ([ADR 0112](../../../adr/0112-user-authored-styles.md); #274, #275). `flint render`, `flint edit`, `flint-player`, `flint bundle` and the web player all load them.*
 
-A game can write a style without touching the engine: a `styles/<name>.shader.toml` and one WGSL function beside it. Flint finds them in the scene's `styles/` folder, then in the folder above (as it finds models).
+A game can write a style without touching the engine: a `styles/<name>.shader.toml` and one WGSL function beside it. Flint finds them in the scene's `styles/` folder, then in the folder above (as it finds models), so a game with `levels/` and `styles/` side by side needs nothing else. Start from the commented template, `demo/styles/template.shader.toml` and `template.wgsl`: copy both into your `styles/`, rename them and edit.
 
 ```toml
 # styles/greyscale.shader.toml
@@ -603,7 +603,21 @@ Flint writes everything around the function: the bindings, a `params` struct wit
 | `flint_depth(uv)`, `flint_view_depth(uv)`, `flint_world_pos(uv)` | with `inputs = ["depth"]`: raw depth, metres from the eye, the world position |
 | `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` names this style (their `blend`) |
 
-**When it goes wrong.** Flint checks the composed shader with naga before the GPU sees it. An error names your file, line and column, quotes the line, and gives a hint if you called a depth or mask helper without declaring the input. A style that doesn't compile still loads and draws its input unchanged, so the scene keeps its other styles. Edit the `.wgsl` while it runs and Flint rebuilds it about four times a second. If the edit is broken, the last good build keeps drawing. Loops are allowed, but each one is warned about: a loop that never ends hangs the GPU until the driver resets it.
+**When it goes wrong.** Flint checks the composed shader with naga before the GPU sees it. An error names your file, line and column, quotes the line, and gives a hint if you called a depth or mask helper without declaring the input. A style that doesn't compile still loads and draws its input unchanged, so the scene keeps its other styles. Loops are allowed, but each one is warned about: a loop that never ends hangs the GPU until the driver resets it.
+
+**Hot reload.** Natively, both files reload while the player or viewer runs, a few times a second:
+
+- Save the `.wgsl` and the next frames draw it. If the edit doesn't compile, the last good build keeps drawing.
+- Save the `.shader.toml` and the style is replaced where it stands in the chain, with its new parameters, label, stage, inputs or shader. The scene's `[post_process.styles.<name>]` is read again against them (other F4 edits stay). A description that no longer reads keeps the old style and reports.
+- A new `*.shader.toml` dropped into a `styles/` folder is picked up too.
+
+Until a broken style compiles, a card in the bottom-left corner of the player and the viewer shows its error with the line it points at, and the style's F4 header is tagged `error` (hover it for the message; the `user` tag beside it names both files). `flint render` prints the same message and renders the passthrough.
+
+| ![a cyanotype from a game folder, drawn by flint-player](../images/user-style-cyanotype.png) | ![the same style mid-edit: a typo, the card, the last good build](../images/user-style-error-card.png) |
+|---|---|
+| A game outside the engine (`levels/`, `styles/cyanotype.*`) in `flint-player`, after its `.wgsl` was edited live | The next save had a typo (`params.exposre`): the card names `cyanotype.wgsl:7:57` and quotes the line while the last good build keeps drawing |
+
+**On the web.** `flint bundle` packs `styles/` with the rest of the game. It loads every user style each scene sees from the packed files, the way the browser will, and refuses the bundle if a description doesn't read, its shader isn't packed or the shader doesn't compile. In the browser the style is checked by the browser's own compiler, and nothing reloads (#415 tracks showing those errors on the page).
 
 | ![hologram](../images/user-style-hologram.png) `hologram`: `inputs = ["mask"]`; the YBot and the barrel carry `style_mask { style = "hologram" }`, the barrel at `blend = 0.6` | ![contour](../images/user-style-contour.png) `--style contour`: `inputs = ["depth"]`; height lines from `flint_world_pos`, range rings round the eye |
 |---|---|

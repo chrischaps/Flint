@@ -497,7 +497,12 @@ mod tests {
     #[test]
     fn every_registered_style_has_a_golden_case() {
         let (_, manifest) = stylize_manifest();
-        for d in flint_render::stylize::registry() {
+        // Built-ins only: user styles (ADR 0112) that other tests in this
+        // process registered aren't the engine's to golden (#417)
+        for d in flint_render::stylize::registry()
+            .iter()
+            .filter(|d| flint_render::stylize::is_builtin(d.name))
+        {
             let reached = manifest.cases.iter().any(|c| {
                 c.args.windows(2).any(|w| {
                     (w[0] == "--style"

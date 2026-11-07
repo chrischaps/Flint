@@ -223,6 +223,9 @@ impl PlayerApp {
         }
 
         self.scene_camera = scene_file.camera.clone();
+        // User styles first: the post_process tables are read against the
+        // registry, and a table for an unloaded style is dropped
+        super::scene_loading::load_user_styles(&self.scene_path);
         self.scene_post_process = scene_file.post_process.clone();
     }
 
