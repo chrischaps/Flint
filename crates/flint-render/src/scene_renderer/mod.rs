@@ -4689,6 +4689,15 @@ impl SceneRenderer {
         }
     }
 
+    /// The entity style mask's per-draw uniform bytes and how many styled
+    /// draws the last frame masked (#311); `None` before a frame needed
+    /// the mask.
+    pub fn style_mask_draws(&self) -> Option<(u64, usize)> {
+        self.style_mask_pass
+            .as_ref()
+            .map(|p| (p.draw_buffer_bytes(), p.last_draws()))
+    }
+
     /// The render scale [`set_render_scale`](Self::set_render_scale) set.
     pub fn render_scale(&self) -> f32 {
         self.render_scale

@@ -870,3 +870,95 @@ fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
         "the veil didn't weaken the style ({weak} vs {strong})"
     );
 }
+
+#[test]
+fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let probe = |on: bool| {
+        let mut t = toml::Table::new();
+        t.insert("style".into(), "probe".into());
+        t.insert("enabled".into(), on.into());
+        toml::Value::Table(t)
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_debug_mode(flint_render::DebugMode::StyleMask);
+
+    // One styled box: the buffer stays at its 4 KB start (#311; it was 1 MB)
+    let mut one = FlintWorld::new();
+    let e = one.spawn("box").unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0; 3]));
+    bounds.insert("max".into(), vec3([1.0; 3]));
+    one.set_component(e, "bounds", bounds.into()).unwrap();
+    one.set_component(e, "style_mask", probe(true)).unwrap();
+    gpu.frame(&mut renderer, &one);
+    let (bytes, draws) = renderer.style_mask_draws().expect("no mask pass");
+    eprintln!("one styled box: {bytes} bytes for {draws} draws");
+    assert_eq!(draws, 1);
+    assert!(bytes <= 4096, "{bytes} bytes for one draw");
+
+    // A wall of small boxes facing the default camera at (10, 10, 10),
+    // more than the old fixed 4096 slots held, few hiding another
+    let side = 70;
+    let (s, t) = (std::f64::consts::FRAC_1_SQRT_2, 6f64.sqrt().recip());
+    let (u, v) = ([s, -s, 0.0], [t, t, -2.0 * t]);
+    let mut world = FlintWorld::new();
+    let mut boxes = Vec::new();
+    for i in 0..side * side {
+        let e = world.spawn(format!("box{i}")).unwrap();
+        let (a, b) = (
+            (i % side) as f64 - side as f64 / 2.0,
+            (i / side) as f64 - side as f64 / 2.0,
+        );
+        let at: [f64; 3] = std::array::from_fn(|k| (a * u[k] + b * v[k]) * 0.19);
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.07; 3]));
+        bounds.insert("max".into(), vec3([0.07; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        boxes.push(e);
+    }
+    let set_style = |world: &mut FlintWorld, on: bool| {
+        for &e in &boxes {
+            world.set_component(e, "style_mask", probe(on)).unwrap();
+        }
+    };
+    set_style(&mut world, false);
+    let unstyled = gpu.frame(&mut renderer, &world);
+    set_style(&mut world, true);
+    let styled = gpu.frame(&mut renderer, &world);
+    let (bytes, draws) = renderer.style_mask_draws().unwrap();
+    eprintln!("{} boxes: {bytes} bytes for {draws} draws", side * side);
+    assert!(draws > 4096, "only {draws} styled draws reached the mask");
+    assert!(bytes >= draws as u64 * 256);
+
+    // Every box drawn is masked: no pixel the boxes cover stays unstyled
+    let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+    let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+    let n = (SIZE * SIZE) as usize;
+    let covered: Vec<usize> = (0..n)
+        .filter(|&i| px(&unstyled, i) != px(&empty, i))
+        .collect();
+    let missed = covered
+        .iter()
+        .filter(|&&i| px(&styled, i) == px(&unstyled, i))
+        .count();
+    eprintln!("{} covered pixels, {missed} left unmasked", covered.len());
+    assert!(covered.len() > n / 8, "the boxes cover too little to tell");
+    assert_eq!(missed, 0, "{missed} box pixels were not masked");
+}
