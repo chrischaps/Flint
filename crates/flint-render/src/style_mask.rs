@@ -344,8 +344,9 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 }
 
 /// Read a style component's fields into `variant`: the descriptor's
-/// options as strings, its parameters as numbers, and a 3-array `x` as the
-/// parameters `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
+/// options as strings, its parameters as numbers, and a colour `x` (a
+/// 3-array, [`StyleColor`](crate::stylize::StyleColor)) as the parameters
+/// `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
 /// style doesn't take, a value of the wrong type) is skipped: the scene
 /// loader has already warned about it against the component's schema.
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
@@ -363,16 +364,10 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
             if let Some(n) = number(value) {
                 variant.params.insert(key.clone(), n);
             }
-        } else if let Some([r, g, b]) = value.as_array().map(Vec::as_slice) {
-            let channels = ["r", "g", "b"].map(|c| format!("{key}_{c}"));
-            if channels
-                .iter()
-                .all(|c| d.params.iter().any(|p| p.name == c))
-            {
-                for (c, v) in channels.into_iter().zip([r, g, b]) {
-                    if let Some(n) = number(v) {
-                        variant.params.insert(c, n);
-                    }
+        } else if let Some(color) = d.color_setting(key) {
+            if let Some(rgb) = crate::stylize::color_from_toml(value) {
+                for (p, n) in color.channels.iter().zip(rgb) {
+                    variant.params.insert(p.name.to_string(), n);
                 }
             }
         }

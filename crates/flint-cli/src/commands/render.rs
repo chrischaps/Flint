@@ -1099,10 +1099,8 @@ fn apply_ascii_style_flags(
             styles.set_option(NAME, "color", "palette");
         }
     }
-    if let Some([r, g, b]) = args.ascii_tint {
-        styles.set_param(NAME, "tint_r", r);
-        styles.set_param(NAME, "tint_g", g);
-        styles.set_param(NAME, "tint_b", b);
+    if let Some(rgb) = args.ascii_tint {
+        styles.set_color(NAME, "tint", rgb);
         if args.ascii_color.is_none() {
             styles.set_option(NAME, "color", "tint");
         }

@@ -147,7 +147,7 @@ pub struct StyleOption {
 /// A colour is three parameters named `<base>_r`, `<base>_g`, `<base>_b`
 /// (each 0..1, display values: what the eye sees, sRGB-encoded): the
 /// menu folds them into one colour picker, and its hint is the base's
-/// (`tint`).
+/// (`tint`). See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
 pub struct StyleHint {
     /// The parameter, option or colour base the hint is for.
@@ -202,6 +202,71 @@ impl StyleControl {
             StyleControl::Color { base, .. } => base,
         }
     }
+}
+
+/// One colour setting of a style (#315): the parameters `<base>_r`,
+/// `<base>_g` and `<base>_b`, each 0..1 in display values, that a scene
+/// writes as one key, `tint = [1.0, 0.7, 0.25]` (or `tint = "#ffb340"`),
+/// a style reads with [`StyleFrame::color`], F4 shows as one picker and
+/// Copy TOML writes back as one array. The channels stay parameters
+/// underneath, so a per-entity variant row, a uniform and `--style
+/// ascii:tint_g=0.5` see three numbers as they always did.
+#[derive(Clone, Copy, Debug)]
+pub struct StyleColor {
+    /// The key a scene writes (`tint`).
+    pub base: &'static str,
+    pub channels: [&'static StyleParam; 3],
+}
+
+impl StyleColor {
+    /// The colour the channels' defaults make.
+    pub fn default_rgb(&self) -> [f32; 3] {
+        self.channels.map(|c| c.default)
+    }
+}
+
+/// A colour from a TOML value: an array of three numbers (`[1.0, 0.7,
+/// 0.25]`, integers allowed) or a `#rrggbb` string (`"#ffb340"`), both in
+/// display values, 0..1 per channel.
+pub fn color_from_toml(value: &toml::Value) -> Option<[f32; 3]> {
+    if let Some(text) = value.as_str() {
+        return color_from_hex(text);
+    }
+    let number = |v: &toml::Value| {
+        v.as_float()
+            .or_else(|| v.as_integer().map(|i| i as f64))
+            .filter(|n| n.is_finite())
+            .map(|n| n as f32)
+    };
+    match value.as_array()?.as_slice() {
+        [r, g, b] => Some([number(r)?, number(g)?, number(b)?]),
+        _ => None,
+    }
+}
+
+/// `#rrggbb` (or `rrggbb`) as 0..1 channels.
+pub fn color_from_hex(text: &str) -> Option<[f32; 3]> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?].map(|c| c as f32 / 255.0))
+}
+
+/// A colour as command-line text (#315): `#rrggbb`, or `r/g/b` with each
+/// channel a number (`0.3/1/0.4`). `--style` keys are split on commas, so
+/// a colour there can't be `r,g,b`.
+pub fn color_from_text(text: &str) -> Option<[f32; 3]> {
+    let text = text.trim();
+    if text.starts_with('#') {
+        return color_from_hex(text);
+    }
+    let parts: Vec<f32> = text
+        .split('/')
+        .map(|p| p.trim().parse::<f32>().ok().filter(|n| n.is_finite()))
+        .collect::<Option<_>>()?;
+    <[f32; 3]>::try_from(parts).ok()
 }
 
 /// What the framework needs to build a style.
@@ -334,29 +399,75 @@ impl StyleDescriptor {
         }
     }
 
+    /// The colour whose key is `base` (`tint`), if the style has its three
+    /// channels.
+    pub fn color_setting(&self, base: &str) -> Option<StyleColor> {
+        let params: &'static [StyleParam] = self.params;
+        let find = |c: &str| {
+            let name = format!("{base}_{c}");
+            params.iter().find(|p| p.name == name)
+        };
+        let (r, g, b) = (find("r")?, find("g")?, find("b")?);
+        // The red channel's name, less `_r`, is the 'static base
+        let base = &r.name[..r.name.len() - 2];
+        Some(StyleColor {
+            base,
+            channels: [r, g, b],
+        })
+    }
+
+    /// The style's colours (#315), in the order their red channels stand.
+    pub fn colors(&self) -> Vec<StyleColor> {
+        self.params
+            .iter()
+            .filter_map(|p| p.name.strip_suffix("_r"))
+            .filter_map(|base| self.color_setting(base))
+            .collect()
+    }
+
+    /// The colour a parameter is a channel of, if it is one.
+    pub fn color_of(&self, param: &str) -> Option<StyleColor> {
+        ["_r", "_g", "_b"]
+            .iter()
+            .find_map(|c| param.strip_suffix(c))
+            .and_then(|base| self.color_setting(base))
+    }
+
+    /// Colour `base` in `config`, each channel as set or its default. A
+    /// name that is no colour of this style reads black.
+    pub fn color(&self, config: &PostProcessConfig, base: &str) -> [f32; 3] {
+        match self.color_setting(base) {
+            Some(c) => c.channels.map(|p| self.param(config, p.name)),
+            None => [0.0; 3],
+        }
+    }
+
+    /// The keys a scene's table for this style takes besides `enabled` and
+    /// `order`: options, then parameters with each colour's channels folded
+    /// into its one key (`tint`), for error messages.
+    pub fn setting_keys(&self) -> Vec<&'static str> {
+        let mut keys: Vec<&'static str> = self.options.iter().map(|o| o.name).collect();
+        for p in self.params {
+            match self.color_of(p.name) {
+                Some(c) if !keys.contains(&c.base) => keys.push(c.base),
+                Some(_) => {}
+                None => keys.push(p.name),
+            }
+        }
+        keys
+    }
+
     /// The rows of this style's F4 section, in drawing order.
     pub fn controls(&self) -> Vec<StyleControl> {
         let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
-        let find = |name: String| self.params.iter().find(|p| p.name == name);
         for p in self.params {
-            if let Some(base) = p.name.strip_suffix("_r") {
-                if let (Some(g), Some(b)) = (find(format!("{base}_g")), find(format!("{base}_b"))) {
-                    rows.push(StyleControl::Color {
-                        base,
-                        channels: [p, g, b],
-                    });
-                    continue;
-                }
-            }
-            let folded = ["_g", "_b"].iter().any(|suffix| {
-                p.name.strip_suffix(suffix).is_some_and(|base| {
-                    ["_r", "_g", "_b"]
-                        .iter()
-                        .all(|c| find(format!("{base}{c}")).is_some())
-                })
-            });
-            if !folded {
-                rows.push(StyleControl::Param(p));
+            match self.color_of(p.name) {
+                Some(c) if std::ptr::eq(c.channels[0], p) => rows.push(StyleControl::Color {
+                    base: c.base,
+                    channels: c.channels,
+                }),
+                Some(_) => {}
+                None => rows.push(StyleControl::Param(p)),
             }
         }
         rows
@@ -396,6 +507,15 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
         }
     }
     for p in descriptor.params {
+        // A colour is one array key, where its red channel stands (#315)
+        if let Some(c) = descriptor.color_of(p.name) {
+            let value = descriptor.color(config, c.base);
+            if std::ptr::eq(c.channels[0], p) && value != c.default_rgb() {
+                let [r, g, b] = value.map(toml_float);
+                out.push_str(&format!("{} = [{r}, {g}, {b}]\n", c.base));
+            }
+            continue;
+        }
         let value = descriptor.param(config, p.name);
         if value != p.default {
             let integer =
@@ -539,6 +659,12 @@ impl StyleFrame<'_> {
     /// This style's option `name`, from the config or its default.
     pub fn option(&self, name: &str) -> &str {
         self.descriptor.option(self.config, name)
+    }
+
+    /// This style's colour `name` (`tint`, #315): its `_r`/`_g`/`_b`
+    /// channels from the config or their defaults, in display values.
+    pub fn color(&self, name: &str) -> [f32; 3] {
+        self.descriptor.color(self.config, name)
     }
 
     /// A texture of the style's own, `width` x `height` in `format`, made
@@ -685,6 +811,15 @@ impl StyleFrame<'_> {
         variant.param(self.descriptor, self.config, name)
     }
 
+    /// Colour `name` of `variant` (#315), channel by channel: the entity's,
+    /// else the scene's, else the style's default.
+    pub fn variant_color(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> [f32; 3] {
+        match self.descriptor.color_setting(name) {
+            Some(c) => c.channels.map(|p| self.variant_param(variant, p.name)),
+            None => [0.0; 3],
+        }
+    }
+
     /// Option `name` of `variant`: the entity's, else the scene's, else the
     /// style's default.
     pub fn variant_option<'v>(
@@ -805,6 +940,14 @@ impl StyleSettings {
             .insert(param.to_string(), value);
     }
 
+    /// Set colour `base` (`tint`, #315) of style `name`: its `_r`, `_g`
+    /// and `_b` channels.
+    pub fn set_color(&mut self, name: &str, base: &str, rgb: [f32; 3]) {
+        for (c, v) in ["r", "g", "b"].iter().zip(rgb) {
+            self.set_param(name, &format!("{base}_{c}"), v);
+        }
+    }
+
     pub fn option(&self, name: &str, option: &str) -> Option<&str> {
         self.styles
             .get(name)?
@@ -880,8 +1023,9 @@ impl StyleSettings {
     }
 
     /// Read a scene's `[post_process.styles]` tables. A table switches its
-    /// style on unless it says `enabled = false`; every other key is a
-    /// number. Returns the settings and a warning for each name, key or
+    /// style on unless it says `enabled = false`; an option is a string, a
+    /// parameter a number, and a colour (#315) an array of three numbers
+    /// or a `#rrggbb` string (its channels may still be set one by one). Returns the settings and a warning for each name, key or
     /// value the registry doesn't know.
     pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
         let mut settings = Self::default();
@@ -928,13 +1072,21 @@ impl StyleSettings {
                     }
                     continue;
                 }
+                if let Some(color) = descriptor.color_setting(key) {
+                    match color_from_toml(value) {
+                        Some(rgb) => {
+                            for (p, v) in color.channels.iter().zip(rgb) {
+                                setting.params.insert(p.name.to_string(), v);
+                            }
+                        }
+                        None => warnings.push(format!(
+                            "styles.{name}.{key} must be a colour: [r, g, b] (0-1) or \"#rrggbb\""
+                        )),
+                    }
+                    continue;
+                }
                 if !descriptor.params.iter().any(|p| p.name == key) {
-                    let known: Vec<&str> = descriptor
-                        .params
-                        .iter()
-                        .map(|p| p.name)
-                        .chain(descriptor.options.iter().map(|o| o.name))
-                        .collect();
+                    let known = descriptor.setting_keys();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
                         if known.is_empty() {
@@ -1472,6 +1624,63 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_is_one_key_in_a_scene() {
+        let ascii = find("ascii").unwrap();
+        let colors = ascii.colors();
+        assert_eq!(colors.len(), 1);
+        assert_eq!(colors[0].base, "tint");
+        assert_eq!(colors[0].default_rgb(), [0.35, 1.0, 0.45]);
+        assert_eq!(ascii.color_of("tint_g").unwrap().base, "tint");
+        assert!(ascii.color_of("glow").is_none());
+        assert!(ascii.color_setting("glow").is_none());
+        let keys = ascii.setting_keys();
+        assert!(keys.contains(&"tint") && !keys.iter().any(|k| k.starts_with("tint_")));
+
+        let read = |text: &str| {
+            let tables: BTreeMap<String, toml::Table> = toml::from_str(text).unwrap();
+            let (styles, warnings) = StyleSettings::from_tables(&tables);
+            let config = PostProcessConfig {
+                styles,
+                ..Default::default()
+            };
+            (ascii.color(&config, "tint"), warnings)
+        };
+        // An array, integers allowed
+        assert_eq!(
+            read("[ascii]\ntint = [1.0, 0.7, 0]\n"),
+            ([1.0, 0.7, 0.0], vec![])
+        );
+        // A hex string, in display values
+        let (hex, warnings) = read("[ascii]\ntint = \"#ff8000\"\n");
+        assert!(warnings.is_empty());
+        assert_eq!(hex, [1.0, 128.0 / 255.0, 0.0]);
+        // A channel on its own still works, the rest default
+        assert_eq!(read("[ascii]\ntint_g = 0.2\n").0, [0.35, 0.2, 0.45]);
+        // Not a colour: a warning that says what is, and the default holds
+        for bad in ["tint = [1.0, 0.5]", "tint = \"green\"", "tint = 3"] {
+            let (rgb, warnings) = read(&format!("[ascii]\n{bad}\n"));
+            assert_eq!(rgb, [0.35, 1.0, 0.45], "{bad}");
+            assert!(warnings[0].contains("[r, g, b]"), "{bad}: {warnings:?}");
+        }
+        // An unknown key lists the colour once, by its key
+        let (_, warnings) = read("[ascii]\nhue = 1\n");
+        assert!(
+            warnings[0].contains("tint") && !warnings[0].contains("tint_r"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn colour_text_is_hex_or_slashes() {
+        assert_eq!(color_from_text("#00ff00"), Some([0.0, 1.0, 0.0]));
+        assert_eq!(color_from_text("0.3/1/0.4"), Some([0.3, 1.0, 0.4]));
+        assert_eq!(color_from_text(" 1 / 0 / 0 "), Some([1.0, 0.0, 0.0]));
+        for bad in ["", "#0f0", "#gg0000", "1/2", "1/2/3/4", "red", "nan/0/0"] {
+            assert_eq!(color_from_text(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn labels_come_from_hints_or_the_name() {
         let ascii = find("ascii").unwrap();
         assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
@@ -1494,7 +1703,7 @@ mod tests {
         let text = style_toml(ascii, &config);
         assert_eq!(
             text,
-            "[post_process.styles.ascii]\ncolor = \"palette\"\ncell = 12\ntint_r = 1.0\nglow = 0.35\n"
+            "[post_process.styles.ascii]\ncolor = \"palette\"\ncell = 12\ntint = [1.0, 1.0, 0.45]\nglow = 0.35\n"
         );
         // It is the scene's syntax: parse it the way a scene is read
         let doc: toml::Table = text.parse().unwrap();
