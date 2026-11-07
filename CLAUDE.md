@@ -57,6 +57,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
    #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
+   #                          (nearest inks match in OKLab; --style ascii:chroma=2,palette_dither=1
+   #                           pushes saturation and Bayer-mixes the two nearest inks, #320)
    #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
    #   --ascii-text frame.txt  --ascii-text-ansi frame.ans
    #                          (#317: the glyph grid as text, a line per cell row, cell for
