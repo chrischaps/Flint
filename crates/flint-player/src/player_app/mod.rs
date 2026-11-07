@@ -30,6 +30,7 @@ mod music_session;
 mod pacing;
 mod perf;
 mod persist;
+mod quality;
 pub mod render_scale;
 mod touch_overlay;
 pub(crate) mod scene_loading;
@@ -137,7 +138,10 @@ pub struct CaptureConfig {
     pub(crate) perf_draws: u64,
     pub(crate) perf_entity_draws: u64,
     pub(crate) perf_culled: u64,
+    /// Of those, set aside by level of detail / draw distance (#56)
+    pub(crate) perf_lod_culled: u64,
     pub(crate) perf_triangles: u64,
+    pub(crate) perf_shadow_triangles: u64,
     /// GPU frame times summed over frames that had one (ADR 0108)
     pub(crate) perf_gpu_ms: f64,
     pub(crate) perf_gpu_frames: u64,
@@ -273,6 +277,13 @@ pub struct PlayerApp {
     /// not on the disk, and always off on the web.
     pub procgen_disk_cache: bool,
     dynamic_scale: render_scale::DynamicScale,
+    /// `key=value,...` quality settings applied over `msaa_sample_count`,
+    /// `render_scale` and the `FLINT_SHADOW*` switches at startup
+    /// (FlintKart#55): `--quality`, the page's `?quality=`, an Android dev
+    /// profile's `[quality]`. Scripts change them later with `set_quality`.
+    pub quality_overrides: String,
+    /// The quality settings in force (see `quality.rs`).
+    quality: flint_render::QualitySettings,
     /// Which refreshes the web player draws (#140, `?fps=`); `None` draws
     /// every one, as the desktop always does. See `set_frame_rate`.
     frame_pacer: Option<frame_rate::FramePacer>,

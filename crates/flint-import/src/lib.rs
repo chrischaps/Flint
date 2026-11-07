@@ -10,5 +10,5 @@ pub use gltf_import::import_gltf;
 pub use types::{
     AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
     ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeletalClip,
-    ImportedSkeleton, ImportedTexture, JointProperty, MeshBounds,
+    ImportedSkeleton, ImportedTexture, JointProperty, LodBand, MeshBounds,
 };

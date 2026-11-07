@@ -60,6 +60,17 @@ pub struct ParticlePipeline {
 const INITIAL_INSTANCE_CAPACITY: u32 = 1024;
 
 impl ParticlePipeline {
+    /// Rebuild the blend-mode pipelines for `sample_count` (an MSAA change,
+    /// FlintKart#55), keeping the buffers and bind groups.
+    pub fn rebuild_for_samples(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) {
+        self.pipelines = Self::new(device, format, sample_count).pipelines;
+    }
+
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Particle Shader"),

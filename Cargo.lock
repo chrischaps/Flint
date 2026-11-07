@@ -1561,6 +1561,7 @@ dependencies = [
  "flint-schema",
  "log",
  "ndk",
+ "toml",
  "winit",
 ]
 
@@ -1758,6 +1759,7 @@ dependencies = [
  "gltf",
  "image",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "toml",
 ]
@@ -1849,6 +1851,7 @@ dependencies = [
  "image",
  "js-sys",
  "kira",
+ "log",
  "pollster",
  "profiling",
  "rhai",

@@ -18,6 +18,7 @@ mod id;
 pub mod ik;
 pub mod ocean;
 pub mod projection;
+pub mod quality;
 pub mod quat;
 pub mod ray_mesh;
 pub mod spline;

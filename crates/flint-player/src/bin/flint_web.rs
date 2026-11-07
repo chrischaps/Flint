@@ -27,6 +27,9 @@
 //!                   that scale instead, whatever the DPR (`scale=1` is
 //!                   native); `auto` keeps the cap and steps under it when
 //!                   frames run over budget for seconds
+//!   quality=k=v,... quality settings over msaa and scale (FlintKart#55), as
+//!                   flint-player's --quality: `quality=shadow_cascades=1,ssao=0`
+//!                   (comma-separated; scripts change them with set_quality)
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
@@ -101,6 +104,8 @@ mod web {
         touch: flint_runtime::TouchControlsMode,
         /// `fps=`: which refreshes are drawn (#140).
         fps: flint_player::FrameRateSetting,
+        /// `quality=key=value,...`: quality settings (FlintKart#55).
+        quality: String,
     }
 
     impl WebArgs {
@@ -146,6 +151,7 @@ mod web {
                             flint_player::FrameRateSetting::Native
                         }
                     }),
+                quality: get("quality").unwrap_or_default(),
             }
         }
     }
@@ -233,6 +239,7 @@ mod web {
         );
         app.msaa_sample_count = args.msaa;
         app.render_scale = args.render_scale;
+        app.quality_overrides = args.quality;
         app.input.touch_controls_mut().set_mode(args.touch);
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;

@@ -1,0 +1,5 @@
+[component.lod]
+description = "Distance limits for a model entity (#56). Levels of detail themselves are authored in the model, as each glTF mesh's extras.flint_lod = { near, far, draw_distance, ref_min, ref_max }; this caps the whole entity. Both scale with the renderer's draw-distance scale (set_draw_distance_scale)."
+
+[component.lod.fields]
+draw_distance = { type = "f32", default = 0.0, description = "Metres from the camera to the model's bounds past which it is not drawn (nor casts shadows); 0 = no limit. Applies to a multi-node model's nodes too." }

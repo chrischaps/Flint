@@ -104,6 +104,49 @@ impl SceneRenderer {
             .unwrap_or(true)
     }
 
+    /// The `lod.draw_distance` of `entity_id`, or else of its parent (a
+    /// multi-node model's nodes are children of the entity that named it).
+    /// Zero, negative or absent: no limit.
+    pub(super) fn ecs_draw_distance(world: &FlintWorld, entity_id: EntityId) -> Option<f32> {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get("lod"))
+                .and_then(|l| l.get("draw_distance"))
+                .and_then(toml_f32)
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .filter(|d| *d > 0.0)
+    }
+
+    /// A model draw's level of detail: the mesh's band (its reference box,
+    /// or else its own bounds, in world space) with the entity's draw
+    /// distance folded in. `None` when neither limits it.
+    pub(super) fn draw_lod(
+        gpu_mesh: &crate::gpu_mesh::GpuMesh,
+        entity_draw_distance: Option<f32>,
+        model_matrix: &[[f32; 4]; 4],
+        world_aabb: Option<([f32; 3], [f32; 3])>,
+    ) -> Option<super::DrawLod> {
+        if gpu_mesh.lod.is_none() && entity_draw_distance.is_none() {
+            return None;
+        }
+        let mut band = gpu_mesh.lod.unwrap_or_default();
+        if let Some(d) = entity_draw_distance {
+            band.draw_distance = band.draw_distance.min(d);
+        }
+        let (ref_min, ref_max) = match band.ref_box {
+            Some((lo, hi)) => transform_aabb(model_matrix, lo, hi),
+            None => world_aabb?,
+        };
+        Some(super::DrawLod {
+            band,
+            ref_min,
+            ref_max,
+        })
+    }
+
     /// A number in the `material` component of `entity_id`, or else of its
     /// parent.
     fn ecs_material_f32(world: &FlintWorld, entity_id: EntityId, key: &str) -> Option<f32> {
@@ -410,6 +453,7 @@ impl SceneRenderer {
         };
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
+        let entity_draw_distance = Self::ecs_draw_distance(world, entity_id);
 
         for (mesh_index, gpu_mesh) in gpu_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
@@ -560,6 +604,12 @@ impl SceneRenderer {
                 gpu_mesh.aabb_min,
                 gpu_mesh.aabb_max,
             ));
+            draw.lod = Self::draw_lod(
+                gpu_mesh,
+                entity_draw_distance,
+                &model_matrix,
+                draw.world_aabb,
+            );
 
             if is_transparent {
                 self.transparent_draws.push(draw);
