@@ -65,13 +65,14 @@ invert (Invert) [display, builtin]
   strength  1  [0 .. 1]  — How far toward the negative: 0 = none, 1 = full
 ```
 
-Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `label`, `help`; empty choices take any text) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
+Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
 The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
-- **A row per setting.** A combo per option with a closed list of choices, a text field per option that takes any name (a font; it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)).
+- **A row per setting.** A combo per option with a list of choices, a text field per option that takes any name (it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)).
+- **The scene's own files** (#322). An option can find its choices at run time (`StyleOption::discovered`), and ASCII's do: `palette` offers the built-ins, then every `palettes/*.palette.toml` beside the scene or in its parent; `font` offers `builtin`, then every `fonts/*.glyphs.toml` there; and `ramp` offers the ramps the chosen font has, so a project's set lists its own names rather than the built-in four. The folders are read through the vfs, so a bundle on the web lists the same files. The list is found when the scene loads (and reloads) and when another option it depends on changes, not every frame. A value the scene names that isn't listed (a palette by its path) still shows, selected. `flint render <scene> --list-styles` lists the same choices.
 - **↺** beside a value that isn't the default puts it back.
 - **Defaults** clears the style's values. **Authored** puts back what the scene says, on and off included. **Copy TOML** puts the `[post_process.styles.<name>]` block that reproduces what's on screen on the clipboard, with only the values that differ from the defaults, so a look tuned by eye goes back into the scene in one paste:
 
@@ -692,7 +693,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     label: "Invert",               // F4 and --gpu-time
     stage: StyleStage::Display,
     params: &[StyleParam { name: "strength", default: 1.0, min: 0.0, max: 1.0 }],
-    options: &[],                  // named strings: StyleOption { name, default, choices }
+    options: &[],                  // named strings: StyleOption::new(name, default, choices),
+                                   //   .discovered(fn) to find choices beside the scene (#322)
     enabled: None,                 // None: read `enabled` from the style table
     uses_mask: false,              // true: the renderer draws the entity style mask for it
     needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
@@ -702,6 +704,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
 };
 ```
+
+An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files("palettes", ".palette.toml")` (names in the scene's folder, its parent and `.`, through the vfs) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.
 
 `hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`edge_max` becomes "Edge max") on a plain slider. A hint gives a setting (or a colour, by its key) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size).
 
