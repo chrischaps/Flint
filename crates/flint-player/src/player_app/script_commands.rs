@@ -7,6 +7,7 @@
 use super::music_guide_panel;
 use super::music_session;
 use super::scene_loading;
+use super::style_commands::{self, StyleApplied};
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -21,7 +22,24 @@ use std::path::Path;
 impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
+            match style_commands::apply_style_command(&mut self.world, &cmd) {
+                StyleApplied::NotAStyleCommand => {}
+                StyleApplied::Done(event) => {
+                    if let Some(event) = event {
+                        self.physics.push_event(event);
+                    }
+                    continue;
+                }
+                StyleApplied::Failed(message) => {
+                    tracing::warn!(target: "script", "{message}");
+                    continue;
+                }
+            }
             match cmd {
+                // Applied above
+                ScriptCommand::SetEntityStyle { .. }
+                | ScriptCommand::SetStyleParam { .. }
+                | ScriptCommand::ClearEntityStyle { .. } => {}
                 ScriptCommand::PlaySound {
                     name,
                     volume,

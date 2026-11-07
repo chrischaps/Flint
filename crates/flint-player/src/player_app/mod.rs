@@ -35,6 +35,7 @@ mod touch_overlay;
 pub(crate) mod scene_loading;
 pub mod procgen_assets;
 mod script_commands;
+pub mod style_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
 mod transition;

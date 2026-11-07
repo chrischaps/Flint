@@ -19,7 +19,7 @@ CAM="--no-grid --target 0.7,0.7,4.2 --distance 5.2 --yaw 29 --pitch 10 --width 1
 | ![Only the props as glyphs](../images/stylized-per-entity.png) | |
 | **Per entity.** The scene as authored: each prop's `ascii_style`, scope `entities` | |
 
-- **The whole frame** is one glyph field. Sky, grass and ground all turn into texture, and the props are defined only by the tone and hue of their own cells against it. The lantern's glass box (`enabled = false`) stays smooth even here.
+- **The whole frame** is one glyph field. Sky, grass and ground all turn into texture, and the props stand out by their own tone and hue and by edge lines along their outlines. The barrel has none, because it asks for its own grid (below). The lantern's glass box (`enabled = false`) stays smooth even here.
 - **Per entity** leaves the world smooth and draws only the props in glyphs, so the eye goes straight to them. Each prop can take its own settings: the bench is amber blocks, the crate phosphor green, the YBot the scene's preset.
 
 Neither is "the" ASCII mode. They are the same pass: per entity chooses *which pixels* the pass touches, and the whole frame is its "everything" case. Mix them: with a whole-frame table on, an entity's `ascii_style` still changes its own settings, and `enabled = false` keeps it smooth.
@@ -38,11 +38,11 @@ tint = [1.0, 0.70, 0.30]
 
 The worry about per-entity glyphs was that they would not line up on one grid. They do by default. Every styled entity shares the screen's grid, so a prop's cells continue the field around it. The zoom below is the crate and its lantern at 4x, nearest-neighbour, with the whole frame on:
 
-| ![Screen grid: the crate's # columns continue the ground's + columns](../images/stylized-grid-screen-zoom.png) | ![Object grid: the crate's columns start at their own offset](../images/stylized-grid-object-zoom.png) |
+| ![Screen grid: the crate's # columns continue the ground's + columns, and an edge outline frames it](../images/stylized-grid-screen-zoom.png) | ![Object grid: the crate's columns start at their own offset, with no outline](../images/stylized-grid-object-zoom.png) |
 |---|---|
 | `--ascii-scope screen`: one grid | `--ascii-scope screen --ascii-grid object`: each prop on its own |
 
-On the left, the crate's `#` columns sit exactly under the ground's `+` columns. On the right, the crate's grid is pinned to its projected origin. Its rows and columns start a few pixels off the field's, and wherever the two meet, cells are cut in half. That seam is what the spike (#261) found, and it is why `grid = "object"` is opt-in per entity rather than the default.
+On the left, the crate's `#` columns sit exactly under the ground's `+` columns. On the right, the crate's grid is pinned to its projected origin. Its rows and columns start a few pixels off the field's, and wherever the two meet, cells are cut in half. The crate also loses its outline: [edge glyphs](../concepts/stylize-passes.md#edges) lie on the screen grid, so a variant on its own grid keeps only its tone glyphs. That seam is what the spike (#261) found, and it is why `grid = "object"` is opt-in per entity rather than the default.
 
 What the object grid buys: a prop's glyphs hold still while it *slides* across the screen. They still swim when it turns or comes closer, because an anchor point can't follow rotation or depth. For a prop that moves sideways and nothing else (a sign on a train, a card dealt across a table), set it on that one entity:
 
@@ -55,13 +55,13 @@ For everything else, temporal stability (#277: per-cell history and hysteresis) 
 
 ## Edges give an object its shape
 
-Glyphs alone define an object only by tone, so a prop the same brightness as the ground disappears into it. The crate on the right of `demo/stylize_props.scene.toml` is nearly invisible without edges. With geometry edges (depth steps, creases and mask changes, never colour) it is a drawn box:
+Glyphs alone define an object only by tone, so a prop close to the ground's brightness blurs into it. Without edges, the crate on the right of `demo/stylize_props.scene.toml` is only a patch of brighter glyphs, and the barrel's top runs into the ground behind it. With geometry edges (depth steps, creases and mask changes, never colour), the crate becomes a drawn box with a lid:
 
-| ![No edges: the crate on the right is lost in the ground](../images/stylized-edges-off.png) | ![Edges: line glyphs outline the crate, the barrel and the figure](../images/stylized-edges-on.png) |
+| ![No edges: the crate on the right is a patch of brighter glyphs](../images/stylized-edges-off.png) | ![Edges: line glyphs outline the crate, the barrel and the figure](../images/stylized-edges-on.png) |
 |---|---|
-| no edges | edges |
+| `--style ascii:edges=0` | `--style ascii` (edges are on by default, #267) |
 
-These two use the spike's prototype (`--ascii=full --ascii-no-edges` and `--ascii=full`), because the shipped edge glyphs (#267) are still in review. The idea carries over unchanged. Edges, not the mask, are what give a styled object definition. They are also what a pencil style will draw its contours from.
+Edges, not the mask, are what give a styled object definition. They are also what a pencil style will draw its contours from.
 
 ## Where in the frame a style runs
 
@@ -74,7 +74,7 @@ The difference shows under a render scale. Here is `demo/pbr_test.scene.toml` at
 
 | ![Display stage: sharp 8 px glyphs on a crisp grid](../images/stylized-stage-display-scale05.png) | ![HDR stage: 16 px glyphs, blurred and bloomed](../images/stylized-stage-hdr-scale05.png) |
 |---|---|
-| `--style ascii --render-scale 0.5`: Display (shipped) | `--ascii=full --render-scale 0.5`: the spike's HDR placement |
+| `--style ascii:edges=0 --render-scale 0.5`: Display (shipped; edges off to match the spike) | `--ascii=full --render-scale 0.5`: the spike's HDR placement |
 
 At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px cell becomes a soft 16 px glyph, and bloom haloes the bright ones. At the Display stage the cells are drawn after the upscale, so they stay 8 px and sharp at any render scale. Cells are sized in points, so they keep their size on a high-DPI display too.
 

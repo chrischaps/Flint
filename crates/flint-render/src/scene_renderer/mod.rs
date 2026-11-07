@@ -4416,6 +4416,15 @@ impl SceneRenderer {
         }
     }
 
+    /// Bind groups the post chain keeps (its styles' among them). Steady
+    /// from frame to frame while nothing new is switched on, so tests can
+    /// show a per-frame change makes none (#269).
+    pub fn kept_post_binds(&self) -> usize {
+        self.postprocess_resources
+            .as_ref()
+            .map_or(0, |r| r.binds.len())
+    }
+
     /// The style ids the mask uses: which number each `style_mask` style
     /// name has this frame.
     pub fn style_ids(&self) -> &crate::style_mask::StyleIds {

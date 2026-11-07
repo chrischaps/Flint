@@ -54,7 +54,7 @@ Why, from the spike's renders (#261, findings 1-3):
 - **Definition comes from edges, not from the mask.** A pixel-exact mask
   silhouette cuts glyph cells in half, which reads as a cut-out with ASCII
   texture. The tavern became legible once geometry-only edges (depth,
-  normals and mask id, never colour) drew line glyphs (#267).
+  normals and mask id, never colour) drew line glyphs. These shipped as #267, on by default. They lie on the screen grid, so an object-grid variant gets none: one more reason the screen grid is the default.
 
 ### 2. Two stages, chosen per style
 
