@@ -1387,33 +1387,6 @@ impl SceneRenderer {
         };
         let hdr_scene = hdr_result.as_ref().map(|(t, id)| (&t.view, *id));
 
-        // ASCII spike (#261): glyphize the scene (the HDR styles' output
-        // when any ran) into the spike's target, which the composite reads.
-        let ascii_view = match &self.ascii_spike {
-            Some(spike)
-                if config.enabled && self.ascii_config.mode != crate::AsciiSpikeMode::Off =>
-            {
-                let input = hdr_scene.map_or(&resources.hdr_view, |(v, _)| v);
-                let ascii_camera = crate::ascii_spike::AsciiCamera {
-                    inv_view_proj: camera.inverse_view_projection_matrix(),
-                    position: camera.position_array(),
-                };
-                scoped("ASCII", encoder, &mut |encoder| {
-                    spike.encode_glyphs(
-                        device,
-                        queue,
-                        encoder,
-                        input,
-                        depth_view,
-                        &ascii_camera,
-                        &self.ascii_config,
-                    )
-                });
-                spike.output_view()
-            }
-            _ => None,
-        };
-
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {
             scoped("SSAO", encoder, &mut |encoder| {
@@ -1491,18 +1464,14 @@ impl SceneRenderer {
             )
         });
         let composite_target = display_in.as_ref().map_or(final_target, |t| &t.view);
-        // The scene the composite reads: the spike's glyphs, the HDR
-        // styles' result, or the HDR buffer
-        let (scene, scene_kept) = match (ascii_view, hdr_scene) {
-            (Some(view), _) => (crate::stylize::StyleInput { view, id: u64::MAX }, false),
-            (None, Some((view, id))) => (crate::stylize::StyleInput { view, id }, true),
-            (None, None) => (
-                crate::stylize::StyleInput {
-                    view: &resources.hdr_view,
-                    id: crate::stylize::input_id::HDR,
-                },
-                true,
-            ),
+        // The scene the composite reads: the HDR styles' result, or the
+        // HDR buffer
+        let scene = match hdr_scene {
+            Some((view, id)) => crate::stylize::StyleInput { view, id },
+            None => crate::stylize::StyleInput {
+                view: &resources.hdr_view,
+                id: crate::stylize::input_id::HDR,
+            },
         };
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
@@ -1521,7 +1490,6 @@ impl SceneRenderer {
             (self.ocean_time % 100_000.0) as f32,
             self.ground_fog.as_ref(),
             &scene,
-            scene_kept,
             if fxaa_active {
                 None
             } else {

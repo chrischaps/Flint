@@ -153,8 +153,9 @@ with the same settings share an id.
   (#298). Styles run in registration order within a stage unless a
   table's `order` key places them (#299).
 - The spike's code (`ascii_spike.rs`, `--ascii=full|entity|entity-object`)
-  stays only until #293 removes it. The goldens `ascii-entity` and
-  `ascii-entity-object` still pin it.
+  is gone (#293); `docs/design/ascii-spike.md` keeps its findings, and
+  the per-entity goldens (`ascii-style-entities`, `-screen`, `-object`)
+  pin the shipped style.
 
 ## Measured
 
