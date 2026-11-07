@@ -2,6 +2,8 @@
 
 A stylize pass is a full-screen effect that changes how the picture looks rather than how the light behaves: the painterly Kuwahara filter, and the ASCII, watercolor and pencil styles planned after it (epic #260). They share one framework in `flint-render` (`crates/flint-render/src/stylize/`), so a new style is mostly a shader and a parameter list.
 
+This page is the reference. For choosing between a whole-frame and a per-entity style, which grid glyphs sit on and which stage a style runs at, with the captures the choice was made from, see the guide [Stylized Rendering](../guides/stylized-rendering.md) and [ADR 0111](https://github.com/chrischaps/flint/blob/main/docs/adr/0111-stylized-rendering.md).
+
 ## Using a style
 
 A scene switches a style on with a table under `[post_process]`:
@@ -29,7 +31,7 @@ From the command line, `--style name[:key=value,...]` turns any registered style
 flint render demo/pbr_test.scene.toml --style ascii
 flint render demo/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
 flint render demo/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
-flint render levels/tavern.scene.toml --style ascii:off       # a style the scene has on, off
+flint render levels/tavern.scene.toml --style ascii:off       # the scene's table off (entities' ascii_style stay on, #376)
 flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render demo/pbr_test.scene.toml --style help            # every style and its keys
 ```
