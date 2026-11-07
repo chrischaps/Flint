@@ -32,6 +32,7 @@
 //! ramps and edges name; a missing one is an error naming it.
 
 use super::{printable_ascii, GlyphAtlas, GlyphError};
+use crate::file_watch::FileStamps;
 use flint_core::vfs;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -465,10 +466,14 @@ fn build_atlas(
 /// `<dir>/fonts/<name>.glyphs.toml` in each search directory, the scene's
 /// folder then its parent, as the player finds `fonts/`. Failures are kept
 /// too, so a bad name is reported once rather than every frame.
+/// [`Self::poll`] forgets them all when a file one depended on (the
+/// `.glyphs.toml`, its font file, a candidate searched ahead of it) changes
+/// on disk (#323).
 #[derive(Default)]
 pub struct GlyphSetCache {
     search: Vec<PathBuf>,
     sets: HashMap<String, Result<Arc<GlyphSet>, GlyphError>>,
+    stamps: FileStamps,
 }
 
 impl GlyphSetCache {
@@ -477,6 +482,7 @@ impl GlyphSetCache {
         Self {
             search,
             sets: HashMap::new(),
+            stamps: FileStamps::default(),
         }
     }
 
@@ -506,23 +512,39 @@ impl GlyphSetCache {
     /// Forget every set, so the next [`Self::get`] reads the files again.
     pub fn clear(&mut self) {
         self.sets.clear();
+        self.stamps.clear();
     }
 
-    fn resolve(&self, name: &str) -> Result<Arc<GlyphSet>, GlyphError> {
+    /// Whether a file a set was read from (or looked for at) has changed on
+    /// disk since; if so the cache is cleared, so the next [`Self::get`]
+    /// reads it again and hands out a new `Arc`. Native only (a bundle
+    /// never changes): on the web this is always `false`. A few `stat`s;
+    /// hosts call it a few times a second, not every frame.
+    pub fn poll(&mut self) -> bool {
+        let changed = self.stamps.changed();
+        if changed {
+            self.clear();
+        }
+        changed
+    }
+
+    fn resolve(&mut self, name: &str) -> Result<Arc<GlyphSet>, GlyphError> {
         if name.is_empty() || name == BUILTIN_SET {
             return Ok(GlyphSet::builtin());
         }
-        let candidates: Vec<PathBuf> = if name.ends_with(GLYPHS_SUFFIX) {
-            let mut c: Vec<PathBuf> = self.search.iter().map(|d| d.join(name)).collect();
-            c.push(PathBuf::from(name));
-            c
-        } else {
-            self.search
-                .iter()
-                .map(|d| d.join("fonts").join(format!("{name}{GLYPHS_SUFFIX}")))
-                .collect()
-        };
-        match candidates.iter().find(|p| vfs::is_file(p)) {
+        let candidates = self.candidates(name);
+        // Watch the candidates up to the one that loads, and its font file:
+        // an edit to either, or a file appearing ahead of it (or at all,
+        // after a failure), reloads
+        let found = candidates.iter().position(vfs::is_file);
+        for path in &candidates[..found.map_or(candidates.len(), |i| i + 1)] {
+            self.stamps.watch(path);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(font) = found.and_then(|i| font_file_of(&candidates[i])) {
+            self.stamps.watch(&font);
+        }
+        match found.map(|i| &candidates[i]) {
             Some(path) => GlyphSet::load(path).map(Arc::new),
             None => Err(GlyphError::Read(format!(
                 "no glyph set `{name}` (looked for {})",
@@ -534,4 +556,27 @@ impl GlyphSetCache {
             ))),
         }
     }
+
+    fn candidates(&self, name: &str) -> Vec<PathBuf> {
+        if name.ends_with(GLYPHS_SUFFIX) {
+            let mut c: Vec<PathBuf> = self.search.iter().map(|d| d.join(name)).collect();
+            c.push(PathBuf::from(name));
+            c
+        } else {
+            self.search
+                .iter()
+                .map(|d| d.join("fonts").join(format!("{name}{GLYPHS_SUFFIX}")))
+                .collect()
+        }
+    }
+}
+
+/// The font file a `*.glyphs.toml` names (`[font] file`), resolved beside
+/// it, read leniently so a set that fails to build still watches its font.
+#[cfg(not(target_arch = "wasm32"))]
+fn font_file_of(path: &Path) -> Option<PathBuf> {
+    let text = vfs::read_to_string(path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    let file = value.get("font")?.get("file")?.as_str()?;
+    Some(path.parent().unwrap_or_else(|| Path::new("")).join(file))
 }
