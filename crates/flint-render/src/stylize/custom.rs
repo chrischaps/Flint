@@ -1725,7 +1725,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     #[test]
     fn hot_reload_keeps_the_last_good_build() {
         let Some((device, _queue)) = device() else {
-            eprintln!("no GPU adapter; skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let dir = std::env::temp_dir().join(format!("flint-user-reload-{}", std::process::id()));
@@ -1937,7 +1937,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     #[test]
     fn a_replaced_descriptor_is_built_again() {
         let Some((device, _queue)) = device() else {
-            eprintln!("no GPU adapter; skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let dir = std::env::temp_dir().join(format!("flint-user-set-{}", std::process::id()));

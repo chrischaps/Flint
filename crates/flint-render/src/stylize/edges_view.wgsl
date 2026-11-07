@@ -50,20 +50,15 @@ fn to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
-// A hue for an orientation: the doubled angle, so d and -d agree
+// A hue for an orientation: the doubled angle, so d and -d agree.
+// Branchless (the usual hsv-to-rgb ramp): the six-case `switch` this was
+// compiled wrong under DX12's FXC, which zeroed the red channel of pixels
+// that took none of its colour (#314)
 fn orientation_color(d: vec2<f32>) -> vec3<f32> {
     let a = atan2(2.0 * d.x * d.y, d.x * d.x - d.y * d.y); // -pi..pi
-    let h = (a / 6.2831853 + 0.5) * 6.0;
-    let x = 1.0 - abs((h % 2.0) - 1.0);
-    var c: vec3<f32>;
-    switch min(u32(h), 5u) {
-        case 0u: { c = vec3<f32>(1.0, x, 0.0); }
-        case 1u: { c = vec3<f32>(x, 1.0, 0.0); }
-        case 2u: { c = vec3<f32>(0.0, 1.0, x); }
-        case 3u: { c = vec3<f32>(0.0, x, 1.0); }
-        case 4u: { c = vec3<f32>(x, 0.0, 1.0); }
-        default: { c = vec3<f32>(1.0, 0.0, x); }
-    }
+    let h = a / 6.2831853 + 0.5; // 0..1
+    let ramp = abs(fract(vec3<f32>(h) + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0;
+    let c = clamp(ramp, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec3<f32>(0.2) + 0.8 * c;
 }
 

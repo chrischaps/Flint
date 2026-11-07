@@ -29,7 +29,16 @@
 //! numbers. `--bless` writes the renders over the goldens after a
 //! deliberate change; look at them before committing. Without a GPU
 //! adapter every case is skipped and the suite passes, unless
-//! `--require-gpu`.
+//! `--require-gpu` or `FLINT_REQUIRE_GPU=1` (#314; CI's software-adapter
+//! job sets the variable).
+//!
+//! Adapters differ (#314): a golden may have a variant per adapter beside
+//! it, `<stem>.<key>.png`, where the key is [`adapter_key`]'s (`warp`,
+//! `lavapipe`, else the backend: `vulkan`, `dx12`, `metal`, `gl`). A case
+//! compares with its adapter's variant when there is one, else with the
+//! plain golden. `--bless` rewrites whichever of the two the case compares
+//! with; `--bless-variant` writes this adapter's variant. Each report
+//! names the adapter, the golden compared and where a variant would go.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -40,8 +49,14 @@ use std::process::Command;
 #[derive(clap::Args, Debug, Default)]
 pub struct GoldenArgs {
     /// Goldens: write each render over its golden instead of comparing
+    /// (this adapter's variant, when the case has one)
     #[arg(long)]
     pub bless: bool,
+
+    /// Goldens: write each render as this adapter's variant of its golden,
+    /// `<stem>.<adapter>.png`, for a case another adapter draws differently
+    #[arg(long)]
+    pub bless_variant: bool,
 
     /// Goldens: run only the cases whose name contains this (repeatable)
     #[arg(long = "case")]
@@ -199,11 +214,43 @@ struct CaseReport {
     comparison: Option<Comparison>,
     tolerance: Tolerance,
     render: String,
+    /// The golden this case compared with: the plain one or a variant.
     golden: String,
+    /// Where this adapter's variant of the golden goes (#314), whether or
+    /// not there is one: the path to copy a render to when blessing a
+    /// variant by hand from another machine (a CI artifact).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adapter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+}
+
+/// The key an adapter's golden variants carry (#314): `warp` for the
+/// software DX12 adapter, `lavapipe` for Mesa's software Vulkan, else the
+/// backend's name. Keyed by backend rather than by GPU: one card under
+/// DX12 and Vulkan differs more than two cards under one backend.
+pub fn adapter_key(info: &wgpu::AdapterInfo) -> String {
+    let software = info.device_type == wgpu::DeviceType::Cpu
+        || info.name.contains("Basic Render Driver")
+        || info.name.to_lowercase().contains("llvmpipe");
+    match info.backend {
+        wgpu::Backend::Dx12 if software => "warp".into(),
+        wgpu::Backend::Vulkan if software => "lavapipe".into(),
+        b => format!("{b:?}").to_lowercase(),
+    }
+}
+
+/// `<dir>/<stem>.<key>.png`: the variant of `golden` for adapter `key`.
+fn variant_path(golden: &Path, key: &str) -> PathBuf {
+    let stem = golden
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    golden.with_file_name(format!("{stem}.{key}.png"))
 }
 
 pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
@@ -269,6 +316,28 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         if args.bless { ", blessing" } else { "" },
         root.display()
     );
+    // The adapter the cases' `flint render`s will pick (they inherit
+    // WGPU_BACKEND / WGPU_ADAPTER_NAME), so a report says what drew it:
+    // the tolerance holds between adapters, not pixels (#314)
+    let info = pollster::block_on(flint_render::gpu_select::request_adapter(
+        &flint_render::gpu_select::instance(),
+        None,
+    ))
+    .map(|a| a.get_info());
+    let adapter = info
+        .as_ref()
+        .map(|i| format!("{} ({:?}, {:?})", i.name, i.device_type, i.backend));
+    let key = info.as_ref().map(adapter_key);
+    println!(
+        "adapter: {}{}",
+        adapter.as_deref().unwrap_or("none found"),
+        key.as_deref()
+            .map(|k| format!(", golden variants '*.{k}.png'"))
+            .unwrap_or_default()
+    );
+    if args.bless_variant && key.is_none() {
+        bail!("--bless-variant needs an adapter to name the variant after");
+    }
 
     let mut reports = Vec::new();
     let mut failed = 0usize;
@@ -281,11 +350,17 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             share: case.tolerance.share.unwrap_or(manifest.tolerance.share),
             mean: case.tolerance.mean.unwrap_or(manifest.tolerance.mean),
         };
-        let golden = here.join(
+        let plain = here.join(
             case.golden
                 .clone()
                 .unwrap_or_else(|| format!("{}.png", case.name)),
         );
+        // This adapter's variant, when it has one, is the golden (#314)
+        let variant = key.as_deref().map(|k| variant_path(&plain, k));
+        let golden = match &variant {
+            Some(v) if args.bless_variant || v.exists() => v.clone(),
+            _ => plain.clone(),
+        };
         let render = out_dir.join(format!("{}.png", case.name));
         let mut report = CaseReport {
             name: case.name.clone(),
@@ -296,6 +371,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             tolerance,
             render: render.display().to_string(),
             golden: golden.display().to_string(),
+            variant: variant.as_ref().map(|v| v.display().to_string()),
+            adapter: adapter.clone(),
             diff: None,
             message: None,
         };
@@ -348,7 +425,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             .with_context(|| format!("reading {}", render.display()))?
             .to_rgba8();
 
-        if args.bless {
+        if args.bless || args.bless_variant {
             if let Some(parent) = golden.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -391,7 +468,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         let (cmp, diff) = compare(&want, &got, tolerance.level);
         let pass = cmp.passes(&tolerance);
         println!(
-            "  {}  {:<28} {:>6.2}% past {} (limit {:.2}%), mean {:.2} (limit {:.2}), max {}, {} ms",
+            "  {}  {:<28} {:>6.2}% past {} (limit {:.2}%), mean {:.2} (limit {:.2}), max {}, {} ms{}",
             if pass { "PASS" } else { "FAIL" },
             case.name,
             cmp.far_share * 100.0,
@@ -400,7 +477,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             cmp.mean,
             tolerance.mean,
             cmp.max,
-            ms
+            ms,
+            if golden != plain { ", against its variant" } else { "" }
         );
         if !pass || cmp.changed > 0 {
             let path = out_dir.join(format!("{}.diff.png", case.name));
@@ -419,10 +497,13 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     println!("renders and report in {}", out_dir.display());
 
     if no_gpu {
-        if args.require_gpu {
-            bail!("no GPU adapter, and --require-gpu");
+        if args.require_gpu || flint_render::gpu_select::gpu_required() {
+            bail!(
+                "no GPU adapter, and --require-gpu (or FLINT_REQUIRE_GPU); adapters: {:?}",
+                flint_render::list_adapters()
+            );
         }
-        println!("no GPU adapter: skipped (pass --require-gpu to fail instead)");
+        println!("no GPU adapter: skipped (--require-gpu or FLINT_REQUIRE_GPU=1 fails instead)");
         return Ok(());
     }
     if failed > 0 {
@@ -461,6 +542,55 @@ mod tests {
         assert!(!c.passes(&Tolerance::default()));
     }
 
+    #[test]
+    fn variants_are_keyed_by_backend_and_software_adapters_by_name() {
+        let info = |name: &str, device_type, backend| wgpu::AdapterInfo {
+            name: name.into(),
+            vendor: 0,
+            device: 0,
+            device_type,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+        };
+        use wgpu::{Backend, DeviceType};
+        let warp = info(
+            "Microsoft Basic Render Driver",
+            DeviceType::Cpu,
+            Backend::Dx12,
+        );
+        assert_eq!(adapter_key(&warp), "warp");
+        // Headless Windows lists a WARP that claims to be integrated
+        let warp2 = info(
+            "Microsoft Basic Render Driver",
+            DeviceType::IntegratedGpu,
+            Backend::Dx12,
+        );
+        assert_eq!(adapter_key(&warp2), "warp");
+        let lava = info(
+            "llvmpipe (LLVM 15.0.7, 256 bits)",
+            DeviceType::Cpu,
+            Backend::Vulkan,
+        );
+        assert_eq!(adapter_key(&lava), "lavapipe");
+        let rtx = info(
+            "NVIDIA GeForce RTX 4070",
+            DeviceType::DiscreteGpu,
+            Backend::Vulkan,
+        );
+        assert_eq!(adapter_key(&rtx), "vulkan");
+        let rtx = info(
+            "NVIDIA GeForce RTX 4070",
+            DeviceType::DiscreteGpu,
+            Backend::Dx12,
+        );
+        assert_eq!(adapter_key(&rtx), "dx12");
+        assert_eq!(
+            variant_path(Path::new("g/kuwahara.png"), "warp"),
+            Path::new("g/kuwahara.warp.png")
+        );
+    }
+
     fn stylize_manifest() -> (PathBuf, Manifest) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stylize.goldens.toml");
         let manifest = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -480,14 +610,24 @@ mod tests {
             assert!(dir.join(&name).exists(), "{} has no golden", case.name);
             used.insert(name);
         }
+        // An adapter's variant (#314) belongs to the golden it varies
+        let keys = ["warp", "lavapipe", "vulkan", "dx12", "metal", "gl"];
         for entry in std::fs::read_dir(dir).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            if name.ends_with(".png") {
-                assert!(
-                    used.contains(&name),
-                    "{name} is no case's golden: remove it, or add its case"
-                );
-            }
+            let Some(stem) = name.strip_suffix(".png") else {
+                continue;
+            };
+            let owner = match stem.rsplit_once('.') {
+                Some((base, key)) => {
+                    assert!(keys.contains(&key), "{name}: unknown adapter key '{key}'");
+                    format!("{base}.png")
+                }
+                None => name.clone(),
+            };
+            assert!(
+                used.contains(&owner),
+                "{name} is no case's golden: remove it, or add its case"
+            );
         }
     }
 
