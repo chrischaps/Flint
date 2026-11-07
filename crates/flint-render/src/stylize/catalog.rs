@@ -68,7 +68,9 @@ pub struct OptionListing {
     pub name: String,
     pub default: String,
     /// The values offered; empty means any text (a file or set name).
+    /// Only these when `closed` (#318); suggestions otherwise.
     pub choices: Vec<String>,
+    pub closed: bool,
     pub label: String,
     pub help: String,
 }
@@ -118,6 +120,7 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
                 name: o.name.to_string(),
                 default: o.default.to_string(),
                 choices: o.choices.iter().map(|c| c.to_string()).collect(),
+                closed: o.closed,
                 label: d.label_for(o.name),
                 help: help(o.name),
             })
@@ -163,7 +166,12 @@ pub fn catalog_text() -> String {
             let choices = if o.choices.is_empty() {
                 "<text>".to_string()
             } else {
-                o.choices.join("|")
+                let list = o.choices.join("|");
+                if o.closed {
+                    list
+                } else {
+                    format!("{list}|<text>")
+                }
             };
             out.push_str(&format!(
                 "  {:width$}  \"{}\"  {}{}\n",
