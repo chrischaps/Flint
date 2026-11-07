@@ -64,7 +64,10 @@ jobs:
       - name: cargo test -p flint-render --test stylize
         run: cargo test -p flint-render --test stylize
 
+      # Even when the GPU tests failed: one regression should show in both,
+      # and the goldens' numbers are the cross-adapter record
       - name: cargo test -p flint-cli --test render_goldens
+        if: success() || failure()
         run: cargo test -p flint-cli --test render_goldens
 
       - name: Goldens summary
