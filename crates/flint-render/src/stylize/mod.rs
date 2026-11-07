@@ -41,7 +41,7 @@
 //!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
-//!   -> Display styles (ASCII, invert)        surface format, output resolution
+//!   -> Display styles (ASCII, pencil, invert) surface format, output resolution
 //!   -> FXAA
 //!   -> surface
 //! ```
@@ -835,7 +835,7 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, ascii, invert, mask_view);
+register_styles!(kuwahara, ascii, pencil, invert, mask_view);
 
 /// Every registered style, in chain order.
 pub fn registry() -> &'static [&'static StyleDescriptor] {
