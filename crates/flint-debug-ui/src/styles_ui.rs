@@ -73,6 +73,7 @@ impl StylesEditor {
     ) -> StylesEdit {
         let mut edit = StylesEdit::default();
         self.marked = 0;
+        edit.changed |= chain_ui(ui, pp);
         let mut any = false;
         for style in stylize::registry()
             .iter()
@@ -362,6 +363,79 @@ impl StylesEditor {
     }
 }
 
+/// The styles on in `stage`, in the order its chain runs them (#299).
+pub fn chain_of(stage: StyleStage, pp: &PostProcessConfig) -> Vec<(&'static StyleDescriptor, f32)> {
+    stylize::stage_chain(stage, pp)
+        .into_iter()
+        .filter(|(d, _)| d.is_enabled(pp))
+        .collect()
+}
+
+/// Run `chain[i]` one place earlier, swapping its order with the style
+/// before it. Equal orders (both at their defaults' tie) step the moved one
+/// just in front instead, so the move always shows.
+pub fn move_earlier(
+    pp: &mut PostProcessConfig,
+    chain: &[(&'static StyleDescriptor, f32)],
+    i: usize,
+) {
+    let ((a, oa), (b, ob)) = (chain[i - 1], chain[i]);
+    if oa == ob {
+        pp.styles.set_order(b.name, Some(oa - 0.5));
+    } else {
+        pp.styles.set_order(b.name, Some(oa));
+        pp.styles.set_order(a.name, Some(ob));
+    }
+}
+
+/// The chain line of each stage with a style on: its styles in running
+/// order, with buttons to move one earlier or later. True when the order
+/// changed.
+fn chain_ui(ui: &mut egui::Ui, pp: &mut PostProcessConfig) -> bool {
+    let mut changed = false;
+    for (stage, name) in [(StyleStage::Hdr, "HDR"), (StyleStage::Display, "Display")] {
+        let chain = chain_of(stage, pp);
+        if chain.is_empty() {
+            continue;
+        }
+        let mut swap = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.weak(format!("{name} chain:")).on_hover_text(
+                "The styles on in this stage, first to last: each reads the one before. \
+                 `order = <n>` in a style's table sets its place (lower runs first); \
+                 without one a style stands at its registration index",
+            );
+            for (i, (style, order)) in chain.iter().enumerate() {
+                if i > 0 {
+                    ui.weak("→");
+                    if ui
+                        .small_button("swap")
+                        .on_hover_text(format!(
+                            "Run {} before {}",
+                            style.label,
+                            chain[i - 1].0.label
+                        ))
+                        .clicked()
+                    {
+                        swap = Some(i);
+                    }
+                }
+                let authored = pp.styles.order(style.name).is_some();
+                ui.label(style.label).on_hover_text(if authored {
+                    format!("order = {}", number(*order, false))
+                } else {
+                    format!("order {} (its registration index)", number(*order, false))
+                });
+            }
+        });
+        if let Some(i) = swap {
+            move_earlier(pp, &chain, i);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// The id of a free-text option's field.
 fn text_id(style: &str, option: &str) -> egui::Id {
     egui::Id::new(("style option text", style, option))
@@ -557,6 +631,37 @@ mod tests {
         );
         assert!(edit.changed);
         assert_eq!(pp.styles.option("ascii", "font"), Some("term"));
+    }
+
+    #[test]
+    fn the_chain_line_lists_the_stage_in_order_and_swaps() {
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("watercolor", true);
+        pp.styles.set_enabled("ascii", true);
+        pp.styles.set_enabled("invert", true);
+        let names = |pp: &PostProcessConfig| -> Vec<&str> {
+            chain_of(StyleStage::Display, pp)
+                .iter()
+                .map(|(d, _)| d.name)
+                .collect()
+        };
+        assert_eq!(names(&pp), ["watercolor", "ascii", "invert"]);
+        let text = drawn_text(&mut StylesEditor::default(), &mut pp, None);
+        assert!(text.contains(&"Display chain:".to_string()), "{text:?}");
+        assert!(!text.iter().any(|t| t == "HDR chain:"), "nothing on in HDR");
+
+        // ASCII before watercolor: the two swap orders
+        let chain = chain_of(StyleStage::Display, &pp);
+        move_earlier(&mut pp, &chain, 1);
+        assert_eq!(names(&pp), ["ascii", "watercolor", "invert"]);
+        assert_eq!(pp.styles.order("ascii"), Some(1.0));
+        assert_eq!(pp.styles.order("watercolor"), Some(2.0));
+        // A tie still moves
+        pp.styles.set_order("invert", Some(2.0));
+        assert_eq!(names(&pp), ["ascii", "watercolor", "invert"]);
+        let chain = chain_of(StyleStage::Display, &pp);
+        move_earlier(&mut pp, &chain, 2);
+        assert_eq!(names(&pp), ["ascii", "invert", "watercolor"]);
     }
 
     #[test]

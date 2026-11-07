@@ -230,6 +230,51 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     }
 }
 
+/// #299: two styles of one stage in the two orders draw two pictures, and
+/// a scene that orders nothing draws what registration order always drew.
+#[test]
+fn an_authored_order_rearranges_a_stage() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    // A fresh renderer per frame, so ASCII's cell history starts clean
+    let draw = |orders: Option<(f32, f32)>| {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_enabled("invert", true);
+        if let Some((ascii, invert)) = orders {
+            config.styles.set_order("ascii", Some(ascii));
+            config.styles.set_order("invert", Some(invert));
+        }
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        gpu.frame(&mut renderer, &FlintWorld::new())
+    };
+    let default = draw(None);
+    let ascii_first = draw(Some((0.0, 1.0)));
+    let invert_first = draw(Some((1.0, 0.0)));
+    // Registration order is ascii then invert, and stays the default
+    assert_eq!(default, ascii_first);
+    let differing = ascii_first
+        .chunks(4)
+        .zip(invert_first.chunks(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert!(
+        differing > (SIZE * SIZE / 4) as usize,
+        "only {differing} pixels differ between the orders"
+    );
+}
+
 /// The `period` x `period` block at cell (cx, cy) of an RGBA8 frame.
 fn block(pixels: &[u8], period: usize, cx: usize, cy: usize) -> Vec<u8> {
     let size = SIZE as usize;
