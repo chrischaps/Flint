@@ -37,6 +37,10 @@ const BUILTIN: &[(&str, &str)] = &[
         "graphite",
         include_str!("../../../../styles/graphite.look.toml"),
     ),
+    (
+        "watercolor",
+        include_str!("../../../../styles/watercolor.look.toml"),
+    ),
 ];
 
 /// The names of the looks compiled in.

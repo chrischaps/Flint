@@ -1,0 +1,20 @@
+[component.watercolor_style]
+description = "Paints this entity (and its descendants) in watercolor while the rest of the scene stays as it is (#272): soft washes, wandering borders, pigment pooled along edges and settled into the paper's grain. Every field is optional: one left out comes from the scene's [post_process.styles.watercolor] table, then the style's default. Entities with equal settings share one style mask id. Static, procedural and skinned meshes are painted; particles, sprites, grass, terrain and water are not. With [post_process.styles.watercolor] on, the whole frame is painted and `enabled = false` keeps an entity out. Book: concepts/stylize-passes.md"
+
+# No field has a default on purpose: the scene loader fills schema defaults
+# in, and a filled-in field would hide the scene's own setting.
+[component.watercolor_style.fields]
+enabled = { type = "bool", description = "false keeps this entity and its subtree unpainted, even when the scene's watercolor covers the whole frame" }
+wash = { type = "f32", min = 0.0, max = 16.0, description = "How far pigment diffuses, in points. One radius serves the whole frame: the largest any entity or the scene asks for" }
+bleed = { type = "f32", min = 0.0, max = 1.0, description = "How much of the colour is the diffused wash (0 = crisp, 1 = all wash)" }
+wobble = { type = "f32", min = 0.0, max = 8.0, description = "How far wash borders and the silhouette wander, in points" }
+wobble_scale = { type = "f32", min = 8.0, max = 200.0, description = "The wander's wavelength, in points" }
+edge = { type = "f32", min = 0.0, max = 4.0, description = "Pigment pooling (edge darkening) where colour changes" }
+edge_depth = { type = "f32", min = 0.0, max = 2.0, description = "Pigment pooling along the near side of silhouettes, from depth" }
+edge_width = { type = "f32", min = 0.5, max = 6.0, description = "How wide the pooled rim along a silhouette is, in points" }
+turbulence = { type = "f32", min = 0.0, max = 1.0, description = "Low-frequency blotches of thicker and thinner pigment" }
+granulation = { type = "f32", min = 0.0, max = 2.0, description = "Pigment settling into the paper's valleys, strongest in dark washes" }
+grain = { type = "f32", min = 0.0, max = 1.0, description = "The paper's relief, shading even bare paper" }
+grain_scale = { type = "f32", min = 0.25, max = 4.0, description = "The paper's tooth: bigger is coarser" }
+pigment = { type = "f32", min = 0.2, max = 2.0, description = "Overall pigment density: below 1 dilutes, above 1 deepens" }
+paper = { type = "vec3", description = "The paper's colour, RGB 0-1; sets the style's paper_r, paper_g and paper_b" }
