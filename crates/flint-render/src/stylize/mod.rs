@@ -122,6 +122,71 @@ pub struct StyleOption {
     pub choices: &'static [&'static str],
 }
 
+/// How the F4 menu presents one parameter or option (#268): a readable
+/// label, a hover line, and whether only whole numbers make sense. Hints
+/// are optional; a setting without one shows its name ("tint_r" ->
+/// "Tint r") on a plain slider, so a new style needs none to be tunable.
+///
+/// A colour is three parameters named `<base>_r`, `<base>_g`, `<base>_b`
+/// (each 0..1, display values: what the eye sees, sRGB-encoded): the
+/// menu folds them into one colour picker, and its hint is the base's
+/// (`tint`).
+#[derive(Clone, Copy, Debug)]
+pub struct StyleHint {
+    /// The parameter, option or colour base the hint is for.
+    pub name: &'static str,
+    pub label: &'static str,
+    /// One line for the hover text; empty for none.
+    pub help: &'static str,
+    /// Whole numbers only (a cell size, a count): the slider steps by 1.
+    pub integer: bool,
+}
+
+impl StyleHint {
+    pub const fn new(name: &'static str, label: &'static str, help: &'static str) -> Self {
+        Self {
+            name,
+            label,
+            help,
+            integer: false,
+        }
+    }
+
+    /// The same hint, stepping by whole numbers.
+    pub const fn integer(self) -> Self {
+        Self {
+            integer: true,
+            ..self
+        }
+    }
+}
+
+/// One row of a style's section in the F4 menu, in the order it is drawn:
+/// options first (they change what the sliders mean), then parameters,
+/// with each `<base>_r/_g/_b` triple folded into a [`Color`](Self::Color)
+/// where its red channel stood.
+#[derive(Clone, Copy, Debug)]
+pub enum StyleControl {
+    Option(&'static StyleOption),
+    Param(&'static StyleParam),
+    Color {
+        /// The name before `_r` (`tint`), which hints are keyed by.
+        base: &'static str,
+        channels: [&'static StyleParam; 3],
+    },
+}
+
+impl StyleControl {
+    /// The parameter, option or colour base this row edits.
+    pub fn name(&self) -> &'static str {
+        match self {
+            StyleControl::Option(o) => o.name,
+            StyleControl::Param(p) => p.name,
+            StyleControl::Color { base, .. } => base,
+        }
+    }
+}
+
 /// What the framework needs to build a style.
 #[derive(Clone, Copy)]
 pub struct StyleDevice<'a> {
@@ -151,6 +216,8 @@ pub struct StyleDescriptor {
     /// such style is on, the renderer draws the mask each frame and hands
     /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
     pub uses_mask: bool,
+    /// How the F4 menu labels its settings ([`StyleHint`]); `&[]` is fine.
+    pub hints: &'static [StyleHint],
     /// The component an entity takes this style with, its fields being the
     /// style's parameters and options (`ascii_style`, #266). A style with
     /// one is per-entity: an entity carrying it (or a `style_mask` naming
@@ -211,6 +278,100 @@ impl StyleDescriptor {
             .find(|o| o.name == name)
             .map_or("", |o| o.default);
         config.styles.option(self.name, name).unwrap_or(default)
+    }
+
+    /// The hint for a parameter, option or colour base, if the style gives
+    /// one.
+    pub fn hint(&self, name: &str) -> Option<&'static StyleHint> {
+        self.hints.iter().find(|h| h.name == name)
+    }
+
+    /// What the F4 menu calls setting `name`: its hint's label, or the
+    /// name made readable (`tint_r` -> `Tint r`).
+    pub fn label_for(&self, name: &str) -> String {
+        match self.hint(name) {
+            Some(h) => h.label.to_string(),
+            None => humanize(name),
+        }
+    }
+
+    /// The rows of this style's F4 section, in drawing order.
+    pub fn controls(&self) -> Vec<StyleControl> {
+        let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
+        let find = |name: String| self.params.iter().find(|p| p.name == name);
+        for p in self.params {
+            if let Some(base) = p.name.strip_suffix("_r") {
+                if let (Some(g), Some(b)) = (find(format!("{base}_g")), find(format!("{base}_b"))) {
+                    rows.push(StyleControl::Color {
+                        base,
+                        channels: [p, g, b],
+                    });
+                    continue;
+                }
+            }
+            let folded = ["_g", "_b"].iter().any(|suffix| {
+                p.name.strip_suffix(suffix).is_some_and(|base| {
+                    ["_r", "_g", "_b"]
+                        .iter()
+                        .all(|c| find(format!("{base}{c}")).is_some())
+                })
+            });
+            if !folded {
+                rows.push(StyleControl::Param(p));
+            }
+        }
+        rows
+    }
+}
+
+/// `tint_r` -> `Tint r`: a setting's name as a label.
+fn humanize(name: &str) -> String {
+    let spaced = name.replace('_', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Style `descriptor`'s settings in `config` as the scene TOML that would
+/// set them (#268), for the F4 menu's Copy TOML: the table header, and
+/// only the values that differ from the defaults. A style that is off says
+/// so, since a table on its own switches its style on.
+pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> String {
+    let mut out = format!("[post_process.styles.{}]\n", descriptor.name);
+    if !descriptor.is_enabled(config) {
+        out.push_str("enabled = false\n");
+    }
+    for o in descriptor.options {
+        let value = descriptor.option(config, o.name);
+        if value != o.default {
+            out.push_str(&format!("{} = {:?}\n", o.name, value));
+        }
+    }
+    for p in descriptor.params {
+        let value = descriptor.param(config, p.name);
+        if value != p.default {
+            let integer =
+                descriptor.hint(p.name).is_some_and(|h| h.integer) && value.fract() == 0.0;
+            if integer {
+                out.push_str(&format!("{} = {}\n", p.name, value as i64));
+            } else {
+                out.push_str(&format!("{} = {}\n", p.name, toml_float(value)));
+            }
+        }
+    }
+    out
+}
+
+/// An `f32` as a TOML float: the shortest spelling that reads back the
+/// same, with a `.0` so it stays a float.
+fn toml_float(value: f32) -> String {
+    let text = format!("{value}");
+    if text.contains(['.', 'e', 'E']) || !value.is_finite() {
+        text
+    } else {
+        format!("{text}.0")
     }
 }
 
@@ -570,6 +731,41 @@ impl StyleSettings {
             .insert(option.to_string(), value.to_string());
     }
 
+    /// Style `name`'s settings, if it has any.
+    pub fn get(&self, name: &str) -> Option<&StyleSetting> {
+        self.styles.get(name)
+    }
+
+    /// Put style `name`'s parameters and options back to their defaults,
+    /// leaving it on or off as it was.
+    pub fn reset(&mut self, name: &str) {
+        if let Some(setting) = self.styles.get_mut(name) {
+            setting.params.clear();
+            setting.options.clear();
+        }
+    }
+
+    /// Make style `name` exactly what it is in `from` (the scene's
+    /// authored settings): on, off and every value; no settings in `from`
+    /// means none here.
+    pub fn restore(&mut self, name: &str, from: &StyleSettings) {
+        match from.styles.get(name) {
+            Some(setting) => {
+                self.styles.insert(name.to_string(), setting.clone());
+            }
+            None => {
+                self.styles.remove(name);
+            }
+        }
+    }
+
+    /// Whether style `name` is set the same here and in `other`. A style
+    /// with no settings is the same as one that is off with none.
+    pub fn same_style(&self, name: &str, other: &StyleSettings) -> bool {
+        let empty = StyleSetting::default();
+        self.styles.get(name).unwrap_or(&empty) == other.styles.get(name).unwrap_or(&empty)
+    }
+
     /// The styles that have settings, by name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &StyleSetting)> {
         self.styles.iter().map(|(k, v)| (k.as_str(), v))
@@ -887,6 +1083,145 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn hints_name_real_settings() {
+        for d in registry() {
+            let rows = d.controls();
+            for h in d.hints {
+                assert!(
+                    rows.iter().any(|r| r.name() == h.name),
+                    "{}: hint '{}' names no option, parameter or colour",
+                    d.name,
+                    h.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn controls_fold_rgb_triples_and_keep_every_setting() {
+        let ascii = find("ascii").unwrap();
+        let rows = ascii.controls();
+        // Options first
+        let first_param = rows
+            .iter()
+            .position(|r| !matches!(r, StyleControl::Option(_)))
+            .unwrap();
+        assert_eq!(first_param, ascii.options.len());
+        // tint_r/g/b became one colour row
+        let colors: Vec<_> = rows
+            .iter()
+            .filter_map(|r| match r {
+                StyleControl::Color { base, channels } => Some((*base, channels.map(|c| c.name))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(colors, vec![("tint", ["tint_r", "tint_g", "tint_b"])]);
+        // Every param is reachable exactly once
+        for d in registry() {
+            let mut seen: Vec<&str> = Vec::new();
+            for r in d.controls() {
+                match r {
+                    StyleControl::Param(p) => seen.push(p.name),
+                    StyleControl::Color { channels, .. } => {
+                        seen.extend(channels.iter().map(|c| c.name))
+                    }
+                    StyleControl::Option(_) => {}
+                }
+            }
+            seen.sort();
+            let mut all: Vec<&str> = d.params.iter().map(|p| p.name).collect();
+            all.sort();
+            assert_eq!(seen, all, "{}", d.name);
+        }
+    }
+
+    #[test]
+    fn labels_come_from_hints_or_the_name() {
+        let ascii = find("ascii").unwrap();
+        assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
+        assert!(ascii.hint("cell").unwrap().integer);
+        assert_eq!(humanize("tint_r"), "Tint r");
+        assert_eq!(humanize(""), "");
+    }
+
+    #[test]
+    fn style_toml_writes_only_changes_and_reads_back() {
+        let ascii = find("ascii").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        assert_eq!(style_toml(ascii, &config), "[post_process.styles.ascii]\n");
+        config.styles.set_param("ascii", "cell", 12.0);
+        config.styles.set_param("ascii", "glow", 0.35);
+        config.styles.set_param("ascii", "tint_r", 1.0);
+        config.styles.set_option("ascii", "color", "palette");
+        config.styles.set_option("ascii", "font", "builtin"); // the default
+        let text = style_toml(ascii, &config);
+        assert_eq!(
+            text,
+            "[post_process.styles.ascii]\ncolor = \"palette\"\ncell = 12\ntint_r = 1.0\nglow = 0.35\n"
+        );
+        // It is the scene's syntax: parse it the way a scene is read
+        let doc: toml::Table = text.parse().unwrap();
+        let tables: BTreeMap<String, toml::Table> = doc["post_process"]["styles"]
+            .as_table()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_table().unwrap().clone()))
+            .collect();
+        let (read, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let back = PostProcessConfig {
+            styles: read,
+            ..Default::default()
+        };
+        for p in ascii.params {
+            assert_eq!(
+                ascii.param(&back, p.name),
+                ascii.param(&config, p.name),
+                "{}",
+                p.name
+            );
+        }
+        for o in ascii.options {
+            assert_eq!(
+                ascii.option(&back, o.name),
+                ascii.option(&config, o.name),
+                "{}",
+                o.name
+            );
+        }
+        // An off style says so
+        config.styles.set_enabled("ascii", false);
+        assert!(style_toml(ascii, &config).contains("enabled = false\n"));
+    }
+
+    #[test]
+    fn reset_restore_and_compare() {
+        let mut live = StyleSettings::default();
+        live.set_enabled("ascii", true);
+        live.set_param("ascii", "cell", 16.0);
+        live.set_option("ascii", "ramp", "blocks");
+        live.reset("ascii");
+        assert!(live.is_enabled("ascii"));
+        assert_eq!(live.param("ascii", "cell"), None);
+        assert_eq!(live.option("ascii", "ramp"), None);
+
+        let mut authored = StyleSettings::default();
+        authored.set_enabled("ascii", true);
+        authored.set_param("ascii", "cell", 10.0);
+        assert!(!live.same_style("ascii", &authored));
+        live.set_param("ascii", "glow", 1.0);
+        live.restore("ascii", &authored);
+        assert!(live.same_style("ascii", &authored));
+        assert_eq!(live.param("ascii", "glow"), None);
+        // Restoring a style the scene never set removes it
+        live.set_enabled("invert", true);
+        live.restore("invert", &authored);
+        assert!(!live.is_enabled("invert"));
+        assert!(live.same_style("invert", &StyleSettings::default()));
     }
 
     #[test]

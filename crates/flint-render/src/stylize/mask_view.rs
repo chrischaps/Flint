@@ -14,7 +14,9 @@
 //! [`StyleFrame::mask_bind`] for the bind group.
 
 use super::kit;
-use super::{StyleDescriptor, StyleFrame, StyleInput, StyleParam, StylePass, StyleStage};
+use super::{
+    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass, StyleStage,
+};
 use bytemuck::{Pod, Zeroable};
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
@@ -44,6 +46,23 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],
     enabled: None,
     uses_mask: true,
+    hints: &[
+        StyleHint::new(
+            "shading",
+            "Shading",
+            "How much of the scene's light shows under each style's hue",
+        ),
+        StyleHint::new(
+            "dim",
+            "Unstyled dim",
+            "Brightness of the grey unstyled pixels fade to",
+        ),
+        StyleHint::new(
+            "outline",
+            "Outline (px)",
+            "Width of the white line where two style ids meet",
+        ),
+    ],
     component: None,
     create: |d| {
         let device = d.device;
