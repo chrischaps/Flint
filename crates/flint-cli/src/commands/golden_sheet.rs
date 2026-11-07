@@ -432,6 +432,8 @@ mod tests {
             tolerance: Tolerance::default(),
             render: String::new(),
             golden: String::new(),
+            variant: None,
+            adapter: None,
             diff: (changed > 0).then(String::new),
             text: None,
             text_cells: 0,
