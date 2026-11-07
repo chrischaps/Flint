@@ -972,21 +972,18 @@ fn post_process_config(
         if let Some(samples) = args.volumetric_samples {
             pp_config.volumetric_samples = samples;
         }
-        if let Some(radius) = args.kuwahara_radius {
-            pp_config.kuwahara_radius = radius;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(sharpness) = args.kuwahara_sharpness {
-            pp_config.kuwahara_sharpness = sharpness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(hardness) = args.kuwahara_hardness {
-            pp_config.kuwahara_hardness = hardness;
-            pp_config.kuwahara_enabled = true;
-        }
-        if let Some(anisotropy) = args.kuwahara_anisotropy {
-            pp_config.kuwahara_anisotropy = anisotropy;
-            pp_config.kuwahara_enabled = true;
+        // The --kuwahara-* flags write Kuwahara's style table (#298)
+        let kuwahara = [
+            ("radius", args.kuwahara_radius.map(|r| r as f32)),
+            ("sharpness", args.kuwahara_sharpness),
+            ("hardness", args.kuwahara_hardness),
+            ("anisotropy", args.kuwahara_anisotropy),
+        ];
+        for (key, value) in kuwahara {
+            if let Some(value) = value {
+                pp_config.styles.set_param("kuwahara", key, value);
+                pp_config.styles.set_enabled("kuwahara", true);
+            }
         }
         if let Some(depth) = args.edge_depth {
             pp_config.edge_depth = depth;

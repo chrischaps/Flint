@@ -9,7 +9,8 @@ mod prefab;
 mod saver;
 
 pub use format::{
-    CameraDef, EntityDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata,
+    fold_legacy_style_keys, CameraDef, EntityDef, PostProcessDef, PrefabFile, PrefabInstance,
+    SceneFile, SceneMetadata, LEGACY_STYLE_KEYS,
 };
 pub use loader::{load_scene, load_scene_string, reload_scene, reload_scene_string};
 pub use patcher::SceneDocument;

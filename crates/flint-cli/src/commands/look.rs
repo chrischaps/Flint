@@ -130,6 +130,13 @@ pub fn overlay(base: Option<&PostProcessDef>, over: &toml::Table) -> Result<Post
         }
         None => toml::Table::new(),
     };
+    // Both sides in the style-table spelling first (#298), so a look's
+    // `[styles.kuwahara] radius` overrides a scene's `kuwahara_radius`
+    // and the other way round
+    flint_scene::fold_legacy_style_keys(&mut table);
+    let mut over = over.clone();
+    flint_scene::fold_legacy_style_keys(&mut over);
+    let over = &over;
     let known = known_fields();
     for key in over.keys() {
         if !known.iter().any(|k| k == key) {

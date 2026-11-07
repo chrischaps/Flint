@@ -44,7 +44,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     options: &[],
-    enabled: None,
     uses_mask: true,
     needs: &[],
     hints: &[

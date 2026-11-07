@@ -304,7 +304,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             choices: TRANSITIONS,
         },
     ],
-    enabled: None,
     // The mask gives styled entities their outlines (#267); with no entity
     // asking for a style it is one cleared target and an empty pass
     uses_mask: true,

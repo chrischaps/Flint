@@ -5041,13 +5041,8 @@ impl SceneRenderer {
                  Try updating your graphics drivers.",
                 failed.label
             );
-            if failed.uses_style_table() {
-                self.postprocess_config.styles.set_enabled(failed.name, false);
-                self.authored_postprocess.styles.set_enabled(failed.name, false);
-            } else if failed.name == "kuwahara" {
-                self.postprocess_config.kuwahara_enabled = false;
-                self.authored_postprocess.kuwahara_enabled = false;
-            }
+            self.postprocess_config.styles.set_enabled(failed.name, false);
+            self.authored_postprocess.styles.set_enabled(failed.name, false);
             self.device_lost = true;
         }
     }
