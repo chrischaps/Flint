@@ -86,8 +86,8 @@ pub fn set_entity_style(world: &mut FlintWorld, id: EntityId, style: &str) -> Re
 
 /// Set one setting of `id`'s style: a parameter (a number, clamped to the
 /// style's range), an option (a string), `enabled` (a bool), `blend` (a
-/// number, clamped to 0..1; #278), or a 3-array for a parameter split into
-/// `_r`/`_g`/`_b` (`tint`). Returns the style.
+/// number, clamped to 0..1; #278), or a colour (`tint`: a 3-array or a
+/// `"#rrggbb"` string, stored as the array; #315). Returns the style.
 pub fn set_style_param(
     world: &mut FlintWorld,
     id: EntityId,
@@ -129,22 +129,20 @@ pub fn set_style_param(
             Some(_) => value,
             None => return wrong("a string"),
         }
-    } else if ["r", "g", "b"]
-        .iter()
-        .all(|c| d.params.iter().any(|p| p.name == format!("{param}_{c}")))
-    {
-        match value
-            .as_array()
-            .map(|a| a.iter().map(number).collect::<Option<Vec<_>>>())
-        {
-            Some(Some(rgb)) if rgb.len() == 3 => {
-                toml::Value::Array(rgb.into_iter().map(toml::Value::Float).collect())
-            }
-            _ => return wrong("an array of three numbers"),
+    } else if let Some(color) = d.color_setting(param) {
+        // A colour (#315): three numbers or "#rrggbb", stored as the array
+        // the component's schema types it as, each channel in its range
+        match stylize::color_from_toml(&value) {
+            Some(rgb) => toml::Value::Array(
+                rgb.iter()
+                    .zip(color.channels)
+                    .map(|(v, p)| toml::Value::Float(v.clamp(p.min, p.max) as f64))
+                    .collect(),
+            ),
+            None => return wrong("a colour: [r, g, b] or \"#rrggbb\""),
         }
     } else {
-        let mut known: Vec<&str> = d.params.iter().map(|p| p.name).collect();
-        known.extend(d.options.iter().map(|o| o.name));
+        let known = d.setting_keys();
         return Err(format!(
             "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
             known.join(", ")
@@ -263,6 +261,10 @@ mod tests {
         assert!(e.contains("a number"), "{e}");
         let e = set_style_param(&mut world, barrel, "colour", "tint".into()).unwrap_err();
         assert!(e.contains("no setting") && e.contains("color"), "{e}");
+        // A colour is named once, by its key, not its channels (#315)
+        assert!(e.contains("tint") && !e.contains("tint_r"), "{e}");
+        let e = set_style_param(&mut world, barrel, "tint", "green".into()).unwrap_err();
+        assert!(e.contains("#rrggbb"), "{e}");
         // A failed edit leaves the component as it was
         assert_eq!(
             world.get_component(barrel, "ascii_style"),
