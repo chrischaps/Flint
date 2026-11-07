@@ -137,6 +137,44 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# --- pencil sketch (#273) ---------------------------------------------------
+#
+# Strokes are thin, hard-edged and everywhere, so a GPU that rounds one
+# hash's float differently moves a stroke a pixel: the glyph tolerance.
+# The props bench's cask and crate carry style_mask "pencil", so since
+# #273 they are sketched in every props case.
+
+# The whole frame: surface hatching, contours, paper; the ASCII props
+# stay glyphs (pencil leaves another style's pixels alone)
+[[case]]
+name = "pencil-full"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "pencil"]
+
+# Another hand: a seed and screen hatching at one angle, at 2x (sizes in points)
+[[case]]
+name = "pencil-screen-seed-hidpi"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "pencil:direction=screen,seed=7,angle=35", "--pixels-per-point", "2"]
+
+[[case]]
+name = "pencil-tensor"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
+
+# Per-entity pencil_style variants (coloured, screen, object grid, blue
+# lead, an opt-out) as the demo scene authors them
+[[case]]
+name = "pencil-entities"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid"]
+
+# Boiling lines: the post clock moves the seed, in whole steps
+[[case]]
+name = "pencil-boil"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1.3"]
+
 # --- the other registered styles ------------------------------------------
 #
 # Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph
