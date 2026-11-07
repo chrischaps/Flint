@@ -34,6 +34,73 @@ impl PlayerApp {
             .push(Box::new(flint_debug_ui::ParticlesDebugPanel::new()));
     }
 
+    /// The style settings the scene authors (its `[post_process.styles]`;
+    /// none when it has no `[post_process]` block), for the style editor's
+    /// Authored button and markers (#268).
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn authored_styles(&self) -> flint_render::stylize::StyleSettings {
+        self.scene_post_process
+            .as_ref()
+            .map(|d| super::scene_loading::post_process_config_from_def(d).styles)
+            .unwrap_or_default()
+    }
+
+    /// Create the Rendering & Effects panel (ADR 0053), or point the one
+    /// that survived a scene transition at the new scene's authored styles.
+    /// Every scene has a renderer to tune, so it is unconditional;
+    /// registered closed, F4 summons it. `show_freeze` is true because
+    /// player scripts drive post fields.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_render_debug_panel(&mut self) {
+        let authored = self.authored_styles();
+        let existing = self
+            .debug_panels
+            .iter_mut()
+            .filter(|p| p.name() == flint_debug_ui::RENDER_DEBUG_PANEL)
+            .find_map(|p| {
+                p.as_any_mut()
+                    .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
+            });
+        match existing {
+            Some(panel) => panel.set_authored_styles(Some(authored)),
+            None => {
+                let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
+                panel.set_authored_styles(Some(authored));
+                self.debug_panels.push(Box::new(panel));
+            }
+        }
+    }
+
+    /// Drop the panels that belong to the scene being left (grass, ocean,
+    /// particles, styles, ...), keeping the player's own: Rendering &
+    /// Effects (F4) and the game's (ADR 0107), open or closed as they were.
+    /// The `create_*` calls after the new scene loads make the rest again.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn drop_scene_debug_panels(&mut self) {
+        self.debug_panels.retain(|p| {
+            p.name() == flint_debug_ui::RENDER_DEBUG_PANEL || p.as_any().is::<ExtensionPanel>()
+        });
+    }
+
+    /// Create the F3 Styles panel (#268) when the scene uses a style: a
+    /// `[post_process.styles]` table, or an entity with a `style_mask`.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_styles_debug_panel(&mut self) {
+        let authored = self.authored_styles();
+        let has_table = authored.iter().next().is_some();
+        let has_mask = !self
+            .world
+            .entities_with_component(flint_render::style_mask::STYLE_MASK_COMPONENT)
+            .is_empty();
+        if !has_table && !has_mask {
+            return;
+        }
+        self.debug_panels
+            .push(Box::new(flint_debug_ui::StylesDebugPanel::new(Some(
+                authored,
+            ))));
+    }
+
     /// Create the ocean tuning panel if the scene has an `ocean` component.
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_ocean_debug_panel(&mut self) {
@@ -505,9 +572,102 @@ fn debug_area(
         .rect
 }
 
+/// The scene's styled entities for the F3 Styles panel: each entity
+/// with a `style_mask`, by name, with its style's mask-view hue.
+#[cfg(feature = "debug-hud")]
+pub(super) fn styled_entity_rows(
+    world: &flint_ecs::FlintWorld,
+    ids: &flint_render::style_mask::StyleIds,
+) -> Vec<flint_debug_ui::StyledEntityRow> {
+    use flint_render::style_mask::{debug_color, STYLE_MASK_COMPONENT};
+    let mut rows: Vec<_> = world
+        .entities_with_component(STYLE_MASK_COMPONENT)
+        .iter()
+        .filter_map(|&id| {
+            let name = world.get_name(id)?.to_string();
+            let mask = world.get_components(id)?.get(STYLE_MASK_COMPONENT)?;
+            let style = mask.get("style")?.as_str()?.to_string();
+            let enabled = mask
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let color = ids.id(&style).map(debug_color);
+            Some(flint_debug_ui::StyledEntityRow {
+                name,
+                style,
+                enabled,
+                color,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
+}
+
 #[cfg(all(test, feature = "debug-hud"))]
 mod tests {
     use super::*;
+
+    fn app() -> PlayerApp {
+        PlayerApp::new(
+            flint_ecs::FlintWorld::new(),
+            "panels_test.scene.toml".into(),
+            false,
+            None,
+            None,
+        )
+    }
+
+    fn names(app: &PlayerApp) -> Vec<&str> {
+        app.debug_panels.iter().map(|p| p.name()).collect()
+    }
+
+    fn styled_scene() -> flint_scene::PostProcessDef {
+        let doc: toml::Table = "[post_process.styles.ascii]\ncell = 12\n".parse().unwrap();
+        doc["post_process"].clone().try_into().unwrap()
+    }
+
+    #[test]
+    fn a_styled_scene_gets_the_f3_styles_panel_and_a_plain_one_does_not() {
+        let mut plain = app();
+        plain.create_styles_debug_panel();
+        assert!(names(&plain).is_empty(), "no style, no panel");
+
+        let mut styled = app();
+        styled.scene_post_process = Some(styled_scene());
+        assert_eq!(styled.authored_styles().param("ascii", "cell"), Some(12.0));
+        styled.create_styles_debug_panel();
+        assert_eq!(names(&styled), [flint_debug_ui::STYLES_DEBUG_PANEL]);
+    }
+
+    #[test]
+    fn f4_and_the_games_panels_outlive_a_scene_transition() {
+        let mut app = app();
+        app.scene_post_process = Some(styled_scene());
+        app.debug_panels.push(Box::new(Dummy));
+        app.create_styles_debug_panel();
+        app.create_render_debug_panel();
+        app.debug_panels.push(Box::new(ExtensionPanel {
+            extension: 0,
+            name: "Net".into(),
+            open: true,
+        }));
+        // F4 is open going into the transition
+        for p in app.debug_panels.iter_mut() {
+            if p.name() == flint_debug_ui::RENDER_DEBUG_PANEL {
+                p.toggle();
+            }
+        }
+
+        app.drop_scene_debug_panels();
+        assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
+        // The new scene's creators don't make a second F4, and it stays open
+        app.scene_post_process = None;
+        app.create_styles_debug_panel();
+        app.create_render_debug_panel();
+        assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
+        assert!(app.debug_panels[0].is_open());
+    }
 
     struct Dummy;
     impl flint_debug_ui::DebugPanel for Dummy {

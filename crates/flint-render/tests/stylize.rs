@@ -14,6 +14,7 @@ const SIZE: u32 = 64;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct Gpu {
+    instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     color: wgpu::Texture,
@@ -57,6 +58,7 @@ fn gpu() -> Option<Gpu> {
             color_view: color.create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             color,
+            instance,
             device,
             queue,
         })
@@ -495,3 +497,97 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
 
 /// How far the wobbling camera's target moves, in metres.
 const WOBBLE: f32 = 0.08;
+
+/// The GPU objects the application holds: buffers, bind groups, textures
+/// and texture views.
+fn held(gpu: &Gpu) -> [usize; 4] {
+    let Some(report) = gpu.instance.generate_report() else {
+        return [0; 4];
+    };
+    let hub = report.hub_report();
+    [
+        hub.buffers.num_kept_from_user,
+        hub.bind_groups.num_kept_from_user,
+        hub.textures.num_kept_from_user,
+        hub.texture_views.num_kept_from_user,
+    ]
+}
+
+#[test]
+fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+
+    // What set_entity_style does: the cube, and only the cube, in glyphs
+    flint_render::entity_style::set_entity_style(&mut world, cube, "ascii").unwrap();
+    let styled = gpu.frame(&mut renderer, &world);
+    assert_ne!(styled, plain, "the style drew nothing");
+    assert_eq!(
+        styled[..4],
+        plain[..4],
+        "the sky's corner should stay smooth"
+    );
+
+    // Warm up (the mask target and the first binds), then animate the
+    // cell and glow every frame, as a script tweening them would
+    let animate = |renderer: &mut SceneRenderer, world: &mut FlintWorld, i: usize| {
+        let t = i as f64 / 24.0;
+        flint_render::entity_style::set_style_param(world, cube, "cell", (6.0 + 6.0 * t).into())
+            .unwrap();
+        flint_render::entity_style::set_style_param(world, cube, "glow", t.into()).unwrap();
+        gpu.frame(renderer, world)
+    };
+    animate(&mut renderer, &mut world, 0);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    let mut seen = std::collections::BTreeSet::new();
+    for i in 1..=24 {
+        seen.insert(animate(&mut renderer, &mut world, i));
+    }
+    eprintln!(
+        "24 animated frames: {} distinct, post binds {binds} -> {}, held {objects:?} -> {:?}",
+        seen.len(),
+        renderer.kept_post_binds(),
+        held(&gpu)
+    );
+    assert!(seen.len() > 4, "the animation changed nothing on screen");
+    assert_eq!(
+        renderer.kept_post_binds(),
+        binds,
+        "a param change kept a new bind group"
+    );
+    assert_eq!(
+        held(&gpu),
+        objects,
+        "a param change left GPU objects behind"
+    );
+
+    // What clear_entity_style does: the plain frame, byte for byte
+    assert!(flint_render::entity_style::clear_entity_style(
+        &mut world, cube
+    ));
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}

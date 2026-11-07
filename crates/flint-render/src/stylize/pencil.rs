@@ -49,7 +49,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage,
+    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
+    StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::{Arc, Mutex};
@@ -131,6 +132,32 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     ],
     enabled: None,
     uses_mask: false,
+    hints: &[
+        StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
+        StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
+        StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity, so strokes travel with it"),
+        StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
+        StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
+        StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
+        StyleHint::new("angle", "Angle (deg)", "The base hatch angle; where surface or tensor directions are unsure it shows through"),
+        StyleHint::new("brightness", "Brightness", "Shifts the tone before it picks hatch layers"),
+        StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before it picks hatch layers"),
+        StyleHint::new("darkness", "Stroke darkness", "How dark one hatch stroke is"),
+        StyleHint::new("shade", "Rubbed shade", "Soft graphite under the strokes, in the darks"),
+        StyleHint::new("contour", "Outline", "Outline strength; 0 = none"),
+        StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
+        StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
+        StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
+        StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
+        StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
+        StyleHint::new("sketchy", "Sketchy", "A second, offset outline beside the first"),
+        StyleHint::new("grain", "Paper grain", "Paper grain, and how much its tooth breaks the strokes"),
+        StyleHint::new("color", "Colour", "0 draws on paper; 1 draws over the scene's own colour (coloured pencil)"),
+        StyleHint::new("seed", "Seed", "Another whole number is another hand; the same seed draws the same picture").integer(),
+        StyleHint::new("boil", "Boil (per s)", "Redraws a second, for animated lines; 0 = still"),
+        StyleHint::new("paper", "Paper", "Paper colour (display values)"),
+        StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
+    ],
     component: Some("pencil_style"),
     create: |d| {
         let device = d.device;

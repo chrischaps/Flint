@@ -56,6 +56,7 @@
 - [Writing Constraints](guides/writing-constraints.md)
 - [Importing Assets](guides/importing-assets.md)
 - [Headless Rendering](guides/headless-rendering.md)
+- [Stylized Rendering](guides/stylized-rendering.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
 - [Building a Game Project](guides/building-a-game-project.md)
 - [Deploying to Android](guides/android.md)

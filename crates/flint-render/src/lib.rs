@@ -33,6 +33,7 @@ pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
+pub mod entity_style;
 pub mod style_mask;
 pub mod stylize;
 pub mod skinned_pipeline;

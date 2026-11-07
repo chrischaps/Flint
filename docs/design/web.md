@@ -701,6 +701,78 @@ same pixels give or take the scene showing through behind it. Float's
 halftone dots are a world-space grid, so they stay where they are; their
 antialiased edges are a scene pixel wide, so they're a little softer.
 
+## Stylize passes (#270)
+
+The ASCII style (#265, per entity since #266, temporal since #277) adds
+two things to a frame: the entity style mask (`Style mask`, a redraw of
+the styled entities' ids after the scene pass) and the glyph style itself
+(`ASCII`, a cell pass and a glyph pass at the display stage). Measured on
+`demo/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
+RTX 4070 laptop, release build, 1920x1080 output, `flint render
+--gpu-time 240`, best of five processes since other jobs shared the GPU:
+
+| | Style mask | ASCII | together |
+|---|---|---|---|
+| per entity, Vulkan | 0.023 | 0.047 | 0.070 ms |
+| per entity, DX12 | 0.013 | 0.044 | 0.057 ms |
+| full screen over the same props, Vulkan | 0.023 | 0.063 | 0.086 ms |
+| full screen over the same props, DX12 | 0.013 | 0.061 | 0.074 ms |
+| full screen, no styled entities (no mask), Vulkan / DX12 | | 0.044 / 0.042 | |
+| per entity at `--render-scale 0.75`, Vulkan / DX12 | 0.020 / 0.012 | 0.048 / 0.043 | |
+| per entity at `--render-scale 0.5`, Vulkan / DX12 | 0.018 / 0.012 | 0.047 / 0.043 | |
+| full screen at `--pixels-per-point 2` (16 px cells) | | 0.043 / 0.040 | |
+
+That is under 0.1 ms of a 16.7 ms frame: SSAO (0.9 ms) costs ten times
+as much. The browser, Chrome 156 over CDP on the same machine, read from
+`?perf=1` with the canvas fixed at 1920x1080 device pixels, the bundle
+of that scene and two variants (`ascii_none`, `ascii_full`):
+
+| page | scene | Style mask | ASCII | bind groups a frame | passes |
+|---|---|---|---|---|---|
+| DPR 1, no style | 1920x1080 | | | 2 | 17 |
+| DPR 1, per entity | 1920x1080 | 0.02--0.03 | 0.09--0.12 | 3 | 20 |
+| DPR 1, full screen | 1920x1080 | 0.02--0.03 | 0.12--0.20 | 3 | 20 |
+| DPR 2 (cap 1.5), no style | 1440x810 | | | 0 | 18 |
+| DPR 2, per entity | 1440x810 | 0.02--0.03 | 0.08--0.10 | 0 | 21 |
+| DPR 2, full screen | 1440x810 | 0.02 | 0.11--0.16 | 0 | 21 |
+
+The browser's ASCII is about twice the desktop's, still a tenth of a
+millisecond. Every page held 16.7 ms rAF frames. One DPR 2 full-screen
+window read `Style mask` 0.54--0.76 ms (and Bloom, SSAO up with it) and
+didn't come back on a second load (0.02 ms); it was the GPU's clock or
+another job, not the mask. The style adds three render passes (mask,
+cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
+group a frame: the mask's draw group over the caller's depth view, which
+wgpu 23 can't key (the same reason the base chain makes two there). Under
+a render scale the chain owns its depth and all of them are kept.
+
+**Cells are output pixels.** ASCII runs at the display stage, after the
+upscale, so a render scale or the web's DPR cap changes only the scene
+under the glyphs, never the grid: 8 pt cells are 16 device pixels at DPR
+2 whether the scene draws at 1, 0.75 or 0.5. Its cost follows the output
+size, not the scene's (0.047 ms at every scale above), and the mask, at
+the scene's size, gets cheaper with it. A scale step under `auto` used
+to rebuild every style target and drop ASCII's per-cell history with
+them, a frame of shimmer each step; now `resize_postprocess` keeps the
+style targets when only the scale moved (the surface is the same size,
+so the display-stage ones are too), and HDR-stage ones are remade at the
+new size on next use (`a_render_scale_step_keeps_the_style_targets`).
+
+**DX12.** The ASCII and mask passes read every texture with
+`textureLoad` and bind no sampler of their own (the chain's one linear
+sampler is in the input group bound once a pass), so they add nothing to
+the 2048-slot sampler heap. `flint-player` on `WGPU_BACKEND=dx12` played
+the per-entity scene 23 s at 1080p, and the full-screen one under
+`--render-scale auto`, with no errors. Under Fifo the player's GPU
+timings read 2--4x high (ASCII 0.29--0.37 ms, SSAO 4.4 ms) because the
+GPU clocks down at 60 fps; `FLINT_VSYNC=0` gave ASCII 0.06--0.07 ms and
+the mask 0.01 ms. Compare passes with vsync off, or with `flint render
+--gpu-time`.
+
+**Not done:** a phone. The Pixel 8 Pro (the shared phone, behind
+`C:/Users/chris/dev/.pixel-lock`) wasn't measured; a tile GPU's
+bandwidth is where a full-screen pass would show first.
+
 ## Touch (#132)
 
 A phone gets past Begin, and its fingers arrive as the engine's touches.

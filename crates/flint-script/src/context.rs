@@ -255,6 +255,23 @@ pub enum ScriptCommand {
         param: String,
         value: f64,
     },
+    /// Draw an entity (and its descendants) in a per-entity style such as
+    /// `ascii` (#269). The player adds the style's component.
+    SetEntityStyle {
+        entity_id: i64,
+        style: String,
+    },
+    /// Change one setting of an entity's style: a parameter (number), an
+    /// option (string), `enabled` (bool) or a 3-array such as `tint`.
+    SetStyleParam {
+        entity_id: i64,
+        param: String,
+        value: toml::Value,
+    },
+    /// Take an entity's own style off again.
+    ClearEntityStyle {
+        entity_id: i64,
+    },
     LoadScene {
         path: String,
     },

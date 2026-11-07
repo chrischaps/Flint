@@ -308,7 +308,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii-cell <n>` | `8` | ASCII cell width: in points for the style (height follows the font), in square scene pixels for the spike |
 | `--ascii-levels <n>` | `0` style, `4` spike | ASCII tone bands; `0` keeps the whole ramp |
 | `--ascii-footprint <cells>` | `1` style, `2` spike | How many cells wide each cell's tone is averaged over |
-| `--ascii-no-edges` | `false` | Turn off the line glyphs (`\| / - \`) drawn on depth, normal and silhouette edges |
+| `--ascii-no-edges` | `false` | Turn off the line glyphs (`─ │ ╱ ╲`) drawn on depth, normal and silhouette edges; the style's `edges = 0` |
+| `--ascii-edges <f32>` | `1` | *Style:* edge glyph strength over the tone glyph, 0 off to 1 ([Edges](../concepts/stylize-passes.md#edges), #267) |
+| `--ascii-edge-threshold <f32>` | `0.5` | *Style:* cell widths of edge a cell needs to draw a line glyph (lower finds more) |
+| `--ascii-edge-max <f32>` | `3` | *Style:* more edge than this is texture (grass) and keeps its tone glyph; a styled entity's outline ignores it |
 | `--ascii-edge-depth <f32>` | `0.6` | Relative view-distance step that counts as an edge (lower finds more) |
 | `--ascii-edge-normal <f32>` | `2.5` | Normal change that counts as a crease (lower finds more) |
 | `--ascii-scene-background` | `false` | In the masked modes, draw unmasked pixels as the plain scene instead of black with their edges |

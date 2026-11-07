@@ -685,11 +685,9 @@ impl PlayerApp {
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
             self.create_particles_debug_panel();
-            // Rendering & Effects (ADR 0053): unconditional — every scene has
-            // a renderer to tune. Registered closed; F4 summons it. show_freeze
-            // is true here because player scripts drive post fields.
-            self.debug_panels
-                .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
+            self.create_styles_debug_panel();
+            // Rendering & Effects (ADR 0053): unconditional, F4 summons it
+            self.create_render_debug_panel();
             // The game's own (ADR 0107), after the engine's.
             self.create_extension_debug_panels();
         }

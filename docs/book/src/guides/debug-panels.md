@@ -8,7 +8,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 | Key | What it toggles | Host |
 |-----|-----------------|------|
-| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles), and every panel a game added | player |
+| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles, styles), and every panel a game added | player |
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
 | `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
@@ -20,7 +20,7 @@ The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per
 
 ## Layout
 
-Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over a per-panel weight so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Grass Debug 22, Reality 20, Weather 15, Particles 14, Day / Time 10, and anything else, including every game-supplied panel, 6. The assignment is deterministic and never produces an empty column.
+Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over a per-panel weight so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Styles 24, Grass Debug 22, Reality 20, Weather 15, Particles 14, Day / Time 10, and anything else, including every game-supplied panel, 6. The assignment is deterministic and never produces an empty column.
 
 A panel can instead ask for the `Bottom` layout, a full-width strip. The Manifest Map uses it; timeline-shaped panels should.
 
@@ -30,7 +30,7 @@ The panels are the top layer of the player's egui pass. Back to front, it draws 
 
 ## The Panel Roster
 
-Scene-component panels are created **only when their driving component is present** on some entity, so a scene with no ocean never sees an ocean panel.
+Scene-component panels are created **only when their driving component is present** on some entity, so a scene with no ocean never sees an ocean panel. A scene transition (`load_scene`) drops them and makes the new scene's; Rendering & Effects and a game's own panels stay, open or closed as they were.
 
 | Panel | Component | What it tunes |
 |-------|-----------|---------------|
@@ -44,6 +44,7 @@ Scene-component panels are created **only when their driving component is presen
 | Dead Calm | `dead_calm` | Dead-calm state |
 | Rendering & Effects | always, when a renderer exists | See below |
 | Particles | `particle_emitter` or `particle_effect` | Alive counts per effect instance, play / stop / burst, the global particle budget, and a draw toggle that keeps simulating while hiding the result |
+| Styles | a `[post_process.styles]` table, or a `style_mask` entity | The [style editor](../concepts/stylize-passes.md) F4 has, plus the scene's styled entities, each with its style and that style's mask-view hue |
 | Music Guide | active music session | Upcoming input windows and per-channel targets |
 | Manifest Map | active music session | Suite structure, playhead, this run's history |
 
@@ -60,6 +61,7 @@ One consolidated home for every render and post-effect control. Its groups, top 
 - **Bloom**: enabled, intensity, threshold, soft threshold.
 - **Grade / Grain / FXAA**: lift, gamma, gain, a "Neutral grade" reset, film grain, FXAA.
 - **Kuwahara**: enabled, radius, sharpness, hardness, anisotropy.
+- **Styles**: a section per registered style (ASCII, invert, mask view, and any added later), drawn from its declaration, with Defaults, Authored and Copy TOML buttons. See [Stylize Passes](../concepts/stylize-passes.md).
 - **Render mode**: mode combo (none, matrix, blood, drunk, tron, underwater), mix, the four mode params.
 - **Dither / Volumetric**: dither on/off and intensity, volumetric on/off, samples, density, decay.
 - **Shadows**: enabled, resolution combo (512, 1024, 2048, 4096). Changing resolution rebuilds the shadow pass.
