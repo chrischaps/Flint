@@ -1318,12 +1318,19 @@ impl SceneRenderer {
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
         let ids = &self.style_ids;
-        let hdr_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Hdr, config, ids);
-        let display_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Display, config, ids);
+        // The `style` debug view shows the mask over the plain scene (#334):
+        // mask_view runs alone, so no other style's output speckles its hues
+        let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        let hdr_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Hdr, config, ids),
+            solo,
+        );
+        let display_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Display, config, ids),
+            solo,
+        );
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
         let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {

@@ -870,7 +870,7 @@ Descendants inherit their ancestor's style until one of them carries a `style_ma
 
 ![The style mask debug view over demo/style_mask.scene.toml: the bench and the skinned YBot in one hue ("ascii"), the barrel, the crate and the lantern it carries in another ("pencil"), the opted-out box on the crate grey, and the legend in the lower left naming each hue](../images/style-mask-debug.png)
 
-See it with the `style` debug view, which switches the `mask_view` style on:
+See it with the `style` debug view, which switches the `mask_view` style on and runs it alone: while the view is up the scene's other styles, of either stage, are suspended, so the hues lie over the plain scene rather than over glyphs or hatching (#334). A scene that turns `mask_view` on in its own `[post_process.styles]` keeps its chain, the mask view reading whatever ran before it:
 
 ```bash
 flint render demo/style_mask.scene.toml --debug-mode style --output mask.png
