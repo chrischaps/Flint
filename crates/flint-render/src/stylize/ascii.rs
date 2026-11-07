@@ -55,9 +55,23 @@
 //! props can differ in cell, ramp, colour, palette and grid in one pass.
 //! Per-entity rows are drawn per pixel in the glyph pass, from their own
 //! samples only, and don't keep history yet (#277's smoothing, hysteresis
-//! and dither apply to the whole frame's cells). `grid = "object"` pins a
+//! and dither apply to the whole frame's cells). With a `footprint` of 2
+//! or more those samples are summed once a cell (#313):
+//! `ascii_variant_cells.wgsl` gives each grid a band of rows (variants
+//! with the same cell, origin and footprint share one) and stores the
+//! first two of a band's variants met in each cell; a pixel of a third,
+//! of a variant past [`MAX_BANDS`] grids, or of a footprint-1 variant
+//! (whose loads hit the cache) sums for itself. `grid = "object"` pins a
 //! variant's cells to its root's projected origin. The frame's ramps and
 //! palettes are packed into one table each.
+//!
+//! A variant may name a font of its own (#335). The frame's glyph sets
+//! (the whole frame's first, up to [`MAX_FONTS`]) are stacked in one atlas
+//! texture, [`GpuGlyphStack`], uploaded again only when the sets change;
+//! the ramp table's origins point into the stack, and each variant row
+//! carries its font's glyph cell and where its four edge glyphs sit in the
+//! ramp table, so its cell takes that font's aspect and its outlines that
+//! font's line glyphs.
 //!
 //! ## Edges (#267)
 //!
@@ -91,14 +105,16 @@
 //! fills the cell with ink and ignores them.
 
 use super::kit;
+use super::text::{self, GlyphCell, GlyphText};
 use super::{
     choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
     StyleParam, StylePass, StyleStage, StyleTexture,
 };
-use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas, BUILTIN_SET, GLYPHS_SUFFIX};
+use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Ramp steps the uniform holds; a longer ramp is resampled to this many.
@@ -205,6 +221,18 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
         StyleParam {
             name: "dither",
+            default: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "chroma",
+            default: 1.0,
+            min: 0.0,
+            max: 4.0,
+        },
+        StyleParam {
+            name: "palette_dither",
             default: 0.0,
             min: 0.0,
             max: 1.0,
@@ -344,7 +372,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             discover: None,
         },
     ],
-    enabled: None,
     // The mask gives styled entities their outlines (#267); with no entity
     // asking for a style it is one cleared target and an empty pass
     uses_mask: true,
@@ -391,6 +418,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "dither",
             "Dither",
             "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
+        ),
+        StyleHint::new(
+            "chroma",
+            "Palette chroma",
+            "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
+        ),
+        StyleHint::new(
+            "palette_dither",
+            "Palette dither",
+            "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
         ),
         StyleHint::new(
             "scope",
@@ -446,6 +483,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         ),
     ],
     component: Some("ascii_style"),
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");
@@ -507,6 +545,27 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // The variant cells' two entries (#313), likewise
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -594,6 +653,15 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             &[&uniform_bgl, &stats_in_bgl],
             STATS_FORMAT,
         );
+        // Per-entity variant cells (#313): the picture and the mask in, as
+        // the tone statistics read them
+        let variant_cells_pipeline = kit::fullscreen_pipeline_targets(
+            device,
+            "ASCII Variant Cells Pipeline",
+            &kit::shader(device, "ASCII Variant Cells Shader", VARIANT_CELLS_SHADER),
+            &[&uniform_bgl, &stats_in_bgl],
+            &[VARIANT_CELL_FORMAT; 2],
+        );
         let stats_resolve_pipeline = kit::fullscreen_pipeline(
             device,
             "ASCII Stats Resolve Pipeline",
@@ -601,6 +669,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             &[&uniform_bgl, &edges_in_bgl],
             STATS_FORMAT,
         );
+        let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
         Box::new(Ascii {
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
@@ -636,6 +705,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             edges: Mutex::new(None),
             edge_cells: Mutex::new(None),
             cells_pipeline,
+            variant_cells_pipeline,
+            variant_cells: Mutex::new([None, None]),
             stats_pipeline,
             stats_resolve_pipeline,
             stats_in_bgl,
@@ -644,10 +715,20 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             pipeline: kit::fullscreen_pipeline(
                 device,
                 "ASCII Pipeline",
-                &kit::shader(device, "ASCII Shader", GLYPH_SHADER),
+                &glyph_module,
                 &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
                 d.format,
             ),
+            text_pipeline: kit::fullscreen_pipeline_entry(
+                device,
+                "ASCII Text Pipeline",
+                &glyph_module,
+                "fs_text",
+                &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+                TEXT_FORMAT,
+            ),
+            capture: AtomicBool::new(false),
+            text: Mutex::new(None),
             entity_bgl,
             _no_mask: no_mask,
             no_mask_view,
@@ -696,6 +777,10 @@ struct AsciiUniforms {
     /// The whole frame's exposure in stops and tone stretch (#289).
     exposure: f32,
     stretch: f32,
+    /// The whole frame's palette chroma and ink dither (#320).
+    chroma: f32,
+    palette_dither: f32,
+    _pad_palette: [u32; 2],
     /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
     /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
@@ -705,12 +790,19 @@ struct AsciiUniforms {
     /// Every variant's palette inks, one palette after another (the whole
     /// frame's first; display values, rgb, unused w).
     palette: [[f32; 4]; MAX_COLORS],
+    /// The same inks in OKLab (#320; L, a, b, unused w), for matching.
+    palette_lab: [[f32; 4]; MAX_COLORS],
     /// x: rows of `variants` in use (1 = the whole frame alone); y: 1 when
     /// the whole frame passes through (only entities asked, #266).
     variant_meta: [u32; 4],
     variants: [VariantUniform; MAX_VARIANTS],
     /// The variant slot of each mask id, four ids a vec4.
     slots: [[u32; 4]; MAX_IDS / 4],
+    /// The variant cell state's bands (#313), `variant_meta[2]` of them:
+    /// each grid's cell and origin, and its (first row, rows, columns,
+    /// footprint's f32 bits).
+    bands: [[f32; 4]; MAX_BANDS],
+    band_rows: [[u32; 4]; MAX_BANDS],
 }
 
 /// One per-entity variant's settings (#266). Row 0 is unused: the whole
@@ -740,13 +832,28 @@ struct VariantUniform {
     /// Exposure in stops and tone stretch, 0..1 (#289).
     exposure: f32,
     stretch: f32,
-    _pad: u32,
+    /// The first row + 1 of the variant's band in the variant cell state
+    /// (#313); 0 when it has none and the glyph pass samples for itself.
+    cell_row: u32,
     /// Silhouette outline width in output pixels (#288; 0 = off).
     outline: f32,
     /// The least ink of a cell this variant only grazes (#288).
     min_coverage: f32,
-    _pad_silhouette: [u32; 2],
+    /// Ordered dither between the two nearest inks, 0..1 (#320).
+    palette_dither: f32,
+    /// Palette chroma before matching (#320).
+    chroma: f32,
+    /// The variant's font's glyph cell in atlas pixels (#335).
+    glyph: [f32; 2],
+    /// Where the variant's four edge glyphs sit in the ramp table, or
+    /// [`NO_EDGE_START`] for the whole frame's (a variant in its font).
+    edge_start: u32,
+    _pad_font: u32,
 }
+
+/// A variant whose edge glyphs are the uniform's own; `NO_EDGE_START` in
+/// ascii_common.wgsl.
+const NO_EDGE_START: u32 = u32::MAX;
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
 #[repr(C)]
@@ -887,7 +994,12 @@ const CELLS_SHADER: &str = concat!(
 );
 const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
+    include_str!("../palette.wgsl"),
     include_str!("ascii.wgsl")
+);
+const VARIANT_CELLS_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_variant_cells.wgsl")
 );
 const STATS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
@@ -897,6 +1009,90 @@ const STATS_RESOLVE_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii_stats_resolve.wgsl")
 );
+
+/// The variant cell state (#313): two textures, a texel a cell in each,
+/// each texel a variant's colour sum (f32 bits in RGB) and its slot,
+/// sample count and overflow bit in A.
+const VARIANT_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+
+/// Grids the variant cell state holds (#313), each a band of rows; a
+/// variant on another grid samples for itself. `MAX_BANDS` in
+/// ascii_common.wgsl.
+pub const MAX_BANDS: usize = 8;
+
+/// The least footprint a variant's cells are summed in the pre-pass at
+/// (#313). At 1 the glyph pass's 16 loads a pixel all land on the 16
+/// texels its cell shares, so they come from the texture cache, and the
+/// pre-pass (a whole screen of cells a band) cost more than it saved: at
+/// 4K on an RTX 4070, ASCII went 0.285 -> 0.326 ms on
+/// `demo/ascii_entities`. At 2 the lattice spreads over four cells' worth
+/// of picture and the pre-pass wins (0.485 -> 0.405 ms close up).
+const MIN_BAND_FOOTPRINT: f32 = 2.0;
+
+/// The variant cell state's widest and tallest, inside the least texture
+/// size every backend offers.
+const MAX_BAND_TEXELS: u32 = 8192;
+
+/// One grid's rows in the variant cell state (#313).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Band {
+    cell: [f32; 2],
+    origin: [f32; 2],
+    footprint: f32,
+    /// The band's first row, its rows and its cells across.
+    row: u32,
+    rows: u32,
+    cols: u32,
+}
+
+/// Gives each drawn per-entity variant (rows past 0) with a footprint of
+/// at least [`MIN_BAND_FOOTPRINT`] the band of its grid: variants with the
+/// same cell, origin and footprint share one, so their cells are summed in
+/// one pass. Narrower variants, variants past [`MAX_BANDS`] grids and
+/// ones past the texture's size get none and sample in the glyph pass.
+fn assign_bands(rows: &mut [VariantUniform], size: [u32; 2]) -> Vec<Band> {
+    let mut bands: Vec<Band> = Vec::new();
+    let mut next = 0u32;
+    for row in rows.iter_mut().skip(1) {
+        row.cell_row = 0;
+        if row.flags & PASS_THROUGH != 0 || row.footprint < MIN_BAND_FOOTPRINT {
+            continue;
+        }
+        let same = |b: &&Band| {
+            b.cell.map(f32::to_bits) == row.cell.map(f32::to_bits)
+                && b.origin.map(f32::to_bits) == row.origin.map(f32::to_bits)
+                && b.footprint.to_bits() == row.footprint.to_bits()
+        };
+        if let Some(b) = bands.iter().find(same) {
+            row.cell_row = b.row + 1;
+            continue;
+        }
+        let grid = cell_grid(size, row.cell, row.origin);
+        if bands.len() == MAX_BANDS || grid[0] > MAX_BAND_TEXELS || next + grid[1] > MAX_BAND_TEXELS
+        {
+            continue;
+        }
+        bands.push(Band {
+            cell: row.cell,
+            origin: row.origin,
+            footprint: row.footprint,
+            row: next,
+            rows: grid[1],
+            cols: grid[0],
+        });
+        row.cell_row = next + 1;
+        next += grid[1];
+    }
+    bands
+}
+
+/// The variant cell state's size for `bands`: a texel a cell across the
+/// widest band, every band's rows stacked.
+fn band_texture_size(bands: &[Band]) -> [u32; 2] {
+    let wide = bands.iter().map(|b| b.cols).max().unwrap_or(0);
+    let tall = bands.last().map_or(0, |b| b.row + b.rows);
+    [wide.max(1), tall.max(1)]
+}
 
 /// The tone statistics (#289): a texel per (slot, lattice row) of count,
 /// sum and sum of squares, then a texel per slot of its range.
@@ -1048,12 +1244,20 @@ fn fit_ramp(indices: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// The set in use and its atlas on the GPU.
-struct LoadedFont {
-    name: String,
-    set: Arc<GlyphSet>,
-    _gpu: GpuGlyphAtlas,
+/// The sets in use and their atlases stacked on the GPU (#335).
+struct LoadedStack {
+    sets: Vec<Arc<GlyphSet>>,
+    gpu: GpuGlyphStack,
     bind: wgpu::BindGroup,
+}
+
+impl LoadedStack {
+    /// Glyph `index` of font `font`'s origin in the stack.
+    fn origin(&self, font: u32, index: u32) -> [u32; 2] {
+        let font = font as usize;
+        let [x, y] = self.sets[font].atlas().cell_origin(index);
+        [x, y + self.gpu.tops[font]]
+    }
 }
 
 #[derive(Default)]
@@ -1061,13 +1265,19 @@ struct Fonts {
     search: Vec<PathBuf>,
     cache: GlyphSetCache,
     palettes: PaletteCache,
-    loaded: Option<LoadedFont>,
+    stack: Option<LoadedStack>,
     /// The last (font, ramp) a warning was given for, so it's said once.
     warned: Option<(String, String)>,
-    /// Per-entity warnings already given (too many variants, a font of
-    /// its own, a ramp or palette that doesn't fit), so each is said once.
+    /// Per-entity warnings already given (too many variants or fonts, a
+    /// ramp or palette that doesn't fit), so each is said once.
     warned_variants: std::collections::HashSet<String>,
+    /// Frames drawn since the caches last looked at the disk (#323).
+    since_poll: u32,
 }
+
+/// The ASCII style asks its caches whether a palette or glyph set file
+/// changed every this many frames: a quarter second at 60 fps.
+const POLL_FRAMES: u32 = 15;
 
 impl Fonts {
     /// Look in the scene's folder and its parent, as the player finds
@@ -1087,6 +1297,9 @@ impl Fonts {
 
 struct Ascii {
     cells_pipeline: wgpu::RenderPipeline,
+    /// Per-entity variant cells (#313): their pass and its two entries.
+    variant_cells_pipeline: wgpu::RenderPipeline,
+    variant_cells: Mutex<[Option<Owned>; 2]>,
     stats_pipeline: wgpu::RenderPipeline,
     stats_resolve_pipeline: wgpu::RenderPipeline,
     stats_in_bgl: wgpu::BindGroupLayout,
@@ -1114,6 +1327,124 @@ struct Ascii {
     no_mask_bind: wgpu::BindGroup,
     edges: Mutex<Option<Owned>>,
     edge_cells: Mutex<Option<Owned>>,
+    /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
+    /// while `capture` is on, into `text` and copied to its read-back.
+    text_pipeline: wgpu::RenderPipeline,
+    capture: AtomicBool,
+    text: Mutex<Option<TextCapture>>,
+}
+
+/// The text pass's texel per cell: glyph code, ink, ground, styled.
+const TEXT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+const TEXT_TEXEL_BYTES: u32 = 16;
+
+/// The text pass's target and read-back for one grid size, and what the
+/// last frame copied into it needs to become text.
+struct TextCapture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+    grid: [u32; 2],
+    /// Bytes a row of the read-back, padded to wgpu's copy alignment.
+    row_bytes: u32,
+    /// The grid's first visible column and row: the offset texel is off
+    /// screen when the grid starts at the frame's edge.
+    first: [u32; 2],
+    /// Each glyph's atlas origin (packed `x | y << 16`) to its character.
+    glyphs: Vec<(u32, char)>,
+    /// Mask ids a display style after ASCII draws over: their cells show
+    /// that style in the finished frame, so they're written as passed.
+    overdrawn: Vec<u32>,
+    /// Whether a frame has been copied in since the last read.
+    copied: bool,
+}
+
+impl TextCapture {
+    fn new(device: &wgpu::Device, grid: [u32; 2]) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ASCII Text"),
+            size: wgpu::Extent3d {
+                width: grid[0].max(1),
+                height: grid[1].max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TEXT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let row_bytes = (grid[0].max(1) * TEXT_TEXEL_BYTES).div_ceil(align) * align;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ASCII Text Read-back"),
+            size: (row_bytes * grid[1].max(1)) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            texture,
+            view,
+            buffer,
+            grid,
+            row_bytes,
+            first: [0, 0],
+            glyphs: Vec::new(),
+            overdrawn: Vec::new(),
+            copied: false,
+        }
+    }
+
+    /// The copied frame as text; waits on the device for the copy.
+    fn read(&mut self, device: &wgpu::Device) -> Option<GlyphText> {
+        if !self.copied {
+            return None;
+        }
+        let slice = self.buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range();
+        let words = |x: u32, y: u32| -> [u32; 4] {
+            let at = (y * self.row_bytes + x * TEXT_TEXEL_BYTES) as usize;
+            let w: &[u8] = &data[at..at + TEXT_TEXEL_BYTES as usize];
+            std::array::from_fn(|i| u32::from_le_bytes(w[i * 4..i * 4 + 4].try_into().unwrap()))
+        };
+        let [cols, rows] = [
+            self.grid[0].saturating_sub(self.first[0]),
+            self.grid[1].saturating_sub(self.first[1]),
+        ];
+        let mut cells = Vec::with_capacity((cols * rows) as usize);
+        for y in 0..rows {
+            for x in 0..cols {
+                let [code, ink, ground, id] = words(x + self.first[0], y + self.first[1]);
+                let ours = code != text::TEXT_NONE && !self.overdrawn.contains(&id);
+                let glyph = ours.then(|| {
+                    self.glyphs
+                        .iter()
+                        .find(|(o, _)| *o == code)
+                        .map_or('?', |(_, c)| *c)
+                });
+                // Over a cell another style draws, the ground alone
+                let ground = text::unpack_rgb(ground);
+                let ink = if code != text::TEXT_NONE && !ours {
+                    ground
+                } else {
+                    text::unpack_rgb(ink)
+                };
+                cells.push(GlyphCell { glyph, ink, ground });
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+        self.copied = false;
+        Some(GlyphText { cols, rows, cells })
+    }
 }
 
 /// A variant's settings, read through the getters of the whole frame or of
@@ -1150,11 +1481,17 @@ fn variant_uniform(
         palette_match: palette.matching,
         exposure: param("exposure").clamp(-8.0, 8.0),
         stretch: param("normalize").clamp(0.0, 1.0),
-        _pad: 0,
+        // Given by `assign_bands`
+        cell_row: 0,
         // In points here; the caller scales it to pixels (`outline_pixels`)
         outline: param("outline"),
         min_coverage: param("min_coverage").clamp(0.0, 1.0),
-        _pad_silhouette: [0; 2],
+        palette_dither: param("palette_dither").clamp(0.0, 1.0),
+        chroma: param("chroma").clamp(0.0, 8.0),
+        // The caller's, from the variant's font (#335)
+        glyph: [0.0; 2],
+        edge_start: NO_EDGE_START,
+        _pad_font: 0,
     }
 }
 
@@ -1186,6 +1523,8 @@ struct PalettePlace {
 #[derive(Default)]
 struct Palettes {
     inks: Vec<[f32; 4]>,
+    /// The inks in OKLab, beside `inks` (#320).
+    lab: Vec<[f32; 4]>,
     placed: Vec<(String, PalettePlace)>,
 }
 
@@ -1208,6 +1547,9 @@ impl Palettes {
         };
         self.inks
             .extend(colors.iter().map(|c| [c[0], c[1], c[2], 1.0]));
+        self.lab.resize(at.start as usize, [0.0; 4]);
+        self.lab
+            .extend(palette.lab_colors().iter().map(|c| [c[0], c[1], c[2], 0.0]));
         self.placed.push((palette.name().to_string(), at));
         Some(at)
     }
@@ -1222,29 +1564,113 @@ pub fn anchored_origin(anchor: [f32; 2], cell: [f32; 2]) -> [f32; 2] {
     ]
 }
 
-/// The ramps in use, packed one after another into the uniform.
+/// The ramps in use, packed one after another into the uniform: each step
+/// a (font, atlas index) pair, the font an index into the frame's
+/// [`FontsInUse`] (#335), made an origin in the glyph stack at upload.
 #[derive(Default)]
 struct Ramps {
-    steps: Vec<u32>,
-    placed: Vec<(String, (u32, u32))>,
+    steps: Vec<(u32, u32)>,
+    placed: Vec<((u32, String), (u32, u32))>,
 }
 
+/// The key a font's four edge glyphs are packed under in [`Ramps`]; no
+/// ramp is named with a NUL.
+const EDGES_KEY: &str = "\0edges";
+
 impl Ramps {
-    /// Where ramp `name` of `set` sits, packing it on first use; `None`
-    /// when it doesn't fit in what's left.
-    fn place(&mut self, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
-        if let Some((_, at)) = self.placed.iter().find(|(n, _)| n == name) {
-            return Some(*at);
-        }
+    /// Where ramp `name` of `set` (font `font`) sits, packing it on first
+    /// use; `None` when it doesn't fit in what's left.
+    fn place(&mut self, font: u32, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
         let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
         let fit = fit_ramp(ramp.atlas_indices());
-        if self.steps.len() + fit.len() > MAX_RAMP {
+        self.pack(font, name, fit)
+    }
+
+    /// Ramp `name` of font `font` and the font's edge glyphs (#335), both
+    /// or neither: (the ramp's start and length, the edges' start).
+    fn place_with_edges(
+        &mut self,
+        font: u32,
+        set: &GlyphSet,
+        name: &str,
+    ) -> Option<((u32, u32), u32)> {
+        let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
+        let fit = fit_ramp(ramp.atlas_indices());
+        let atlas = set.atlas();
+        let edges: Vec<u32> = set
+            .edges()
+            .all()
+            .iter()
+            .map(|c| atlas.index_of(*c).unwrap_or(0))
+            .collect();
+        let need = |key: &str, len: usize| {
+            if self.find(font, key).is_some() {
+                0
+            } else {
+                len
+            }
+        };
+        if self.steps.len() + need(name, fit.len()) + need(EDGES_KEY, edges.len()) > MAX_RAMP {
             return None;
         }
-        let at = (self.steps.len() as u32, fit.len() as u32);
-        self.steps.extend(fit);
-        self.placed.push((name.to_string(), at));
+        let ramp = self.pack(font, name, fit)?;
+        let edges = self.pack(font, EDGES_KEY, edges)?;
+        Some((ramp, edges.0))
+    }
+
+    fn find(&self, font: u32, name: &str) -> Option<(u32, u32)> {
+        self.placed
+            .iter()
+            .find(|((f, n), _)| *f == font && n == name)
+            .map(|(_, at)| *at)
+    }
+
+    fn pack(&mut self, font: u32, name: &str, indices: Vec<u32>) -> Option<(u32, u32)> {
+        if let Some(at) = self.find(font, name) {
+            return Some(at);
+        }
+        if self.steps.len() + indices.len() > MAX_RAMP {
+            return None;
+        }
+        let at = (self.steps.len() as u32, indices.len() as u32);
+        self.steps.extend(indices.into_iter().map(|i| (font, i)));
+        self.placed.push(((font, name.to_string()), at));
         Some(at)
+    }
+}
+
+/// Fonts one frame can draw in (#335), the whole frame's first; a variant
+/// naming another past these is drawn in the whole frame's (logged once).
+pub const MAX_FONTS: usize = 8;
+
+/// The tallest glyph stack, inside the least texture size every backend
+/// offers; a font that would pass it is drawn in the whole frame's.
+const MAX_STACK_TEXELS: u32 = 8192;
+
+/// The glyph sets a frame draws in (#335): the whole frame's at 0, then
+/// each per-entity variant's own in the order the variants name them.
+struct FontsInUse {
+    sets: Vec<Arc<GlyphSet>>,
+}
+
+impl FontsInUse {
+    fn new(base: Arc<GlyphSet>) -> Self {
+        Self { sets: vec![base] }
+    }
+
+    /// `set`'s index, adding it on first use; `None` when the frame holds
+    /// [`MAX_FONTS`] already or its atlas would make the stack too tall.
+    fn index(&mut self, set: &Arc<GlyphSet>) -> Option<u32> {
+        if let Some(i) = self.sets.iter().position(|s| Arc::ptr_eq(s, set)) {
+            return Some(i as u32);
+        }
+        let tall: u32 = self.sets.iter().map(|s| s.atlas().size()[1]).sum();
+        let [w, h] = set.atlas().size();
+        if self.sets.len() == MAX_FONTS || tall + h > MAX_STACK_TEXELS || w > MAX_STACK_TEXELS {
+            return None;
+        }
+        self.sets.push(set.clone());
+        Some(self.sets.len() as u32 - 1)
     }
 }
 
@@ -1279,6 +1705,7 @@ impl Ascii {
         with_mask: bool,
         edge_cells: &Owned,
         stats: &Owned,
+        variant_cells: [&Owned; 2],
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let make = |mask: &wgpu::TextureView| {
@@ -1302,6 +1729,14 @@ impl Ascii {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(&stats.view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&variant_cells[0].view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&variant_cells[1].view),
+                    },
                 ],
             })
         };
@@ -1309,6 +1744,7 @@ impl Ascii {
         // generation is part of the key
         let key = (edge_cells.generation << 40)
             ^ (stats.generation << 33)
+            ^ (variant_cells[0].generation << 52)
             ^ (input.id * 2 + mask.is_some() as u64);
         frame.bind("ASCII Entity BG", key, || {
             make(mask.unwrap_or(&self.no_mask_view))
@@ -1316,21 +1752,20 @@ impl Ascii {
     }
 
     /// Row 0 (the whole frame's, drawn from the cell state) and a row for
-    /// each per-entity variant (#266), with the slot of every mask id.
-    #[allow(clippy::too_many_arguments)]
+    /// each per-entity variant (#266), with the slot of every mask id. A
+    /// variant naming a font of its own (#335) adds it to `in_use`.
     fn variant_table(
         &self,
         frame: &StyleFrame<'_>,
         fonts: &mut Fonts,
-        set: &GlyphSet,
-        glyph: [u32; 2],
+        in_use: &mut FontsInUse,
         ramps: &mut Ramps,
         palettes: &mut Palettes,
         base_ramp: (u32, u32),
     ) -> (Vec<VariantUniform>, [u32; MAX_IDS]) {
         let mut rows = vec![VariantUniform::zeroed()];
         let mut slots = [0u32; MAX_IDS];
-        let base_font = frame.option("font").to_string();
+        let base = in_use.sets[0].clone();
         let palette_for = |fonts: &mut Fonts, color: &str, name: &str| -> Option<Arc<Palette>> {
             if color != "palette" {
                 return None;
@@ -1368,28 +1803,51 @@ impl Ascii {
             }
             let param = |n: &str| frame.variant_param(v, n);
             let option = |n: &str| frame.variant_option(v, n).to_string();
-            if option("font") != base_font {
-                warn_once(
-                    fonts,
-                    format!("font {}", option("font")),
-                    format!(
-                        "per-entity fonts aren't supported yet; `{}` is drawn in `{base_font}`",
-                        option("font")
-                    ),
-                );
-            }
-            let ramp = ramps.place(set, &option("ramp")).unwrap_or_else(|| {
-                warn_once(
-                    fonts,
-                    format!("ramp {}", option("ramp")),
-                    format!(
-                        "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in all); \
-                         using the scene's",
-                        option("ramp")
-                    ),
-                );
-                base_ramp
-            });
+            // The variant's own font (#335): its ramp and its edge glyphs
+            // packed beside the others, its glyph cell its own. One that
+            // doesn't fit is drawn in the whole frame's font
+            let font_name = option("font");
+            let set = self.set_named(fonts, &font_name);
+            let own = if Arc::ptr_eq(&set, &base) {
+                None
+            } else {
+                let placed = in_use.index(&set).and_then(|font| {
+                    ramps
+                        .place_with_edges(font, &set, &option("ramp"))
+                        .map(|(ramp, edges)| (set.atlas().cell_size(), ramp, edges))
+                });
+                if placed.is_none() {
+                    warn_once(
+                        fonts,
+                        format!("font {font_name}"),
+                        format!(
+                            "font `{font_name}` doesn't fit beside the others ({MAX_FONTS} \
+                             fonts, {MAX_STACK_TEXELS} atlas rows, {MAX_RAMP} ramp steps in \
+                             all); drawn in `{}`",
+                            base.name()
+                        ),
+                    );
+                }
+                placed
+            };
+            let (glyph, ramp, edge_start) = match own {
+                Some(placed) => placed,
+                None => {
+                    let ramp = ramps.place(0, &base, &option("ramp")).unwrap_or_else(|| {
+                        warn_once(
+                            fonts,
+                            format!("ramp {}", option("ramp")),
+                            format!(
+                                "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in \
+                                 all); using the scene's",
+                                option("ramp")
+                            ),
+                        );
+                        base_ramp
+                    });
+                    (base.atlas().cell_size(), ramp, NO_EDGE_START)
+                }
+            };
             let palette = match palette_for(fonts, &option("color"), &option("palette")) {
                 None => PalettePlace::default(),
                 Some(p) => palettes.place(&p).unwrap_or_else(|| {
@@ -1424,6 +1882,8 @@ impl Ascii {
             slots[id as usize] = rows.len() as u32;
             let mut row = variant_uniform(&param, &option, cell, origin, ramp, &palette, flags);
             row.tint = frame.variant_color(v, "tint");
+            row.glyph = [glyph[0] as f32, glyph[1] as f32];
+            row.edge_start = edge_start;
             // The row holds the outline in points; the shader wants pixels
             row.outline = outline_pixels(row.outline, frame.pixels_per_point);
             rows.push(row);
@@ -1541,26 +2001,7 @@ impl Ascii {
             [MAX_VARIANTS as u32, STATS_ROWS],
             &self.edges_in_bgl,
         );
-        let mask = frame.mask.filter(|_| with_mask);
-        let key = input.id * 2 + mask.is_some() as u64;
-        let input_bind = frame.bind("ASCII Stats In BG", key, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ASCII Stats In BG"),
-                layout: &self.stats_in_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(
-                            mask.unwrap_or(&self.no_mask_view),
-                        ),
-                    },
-                ],
-            })
-        });
+        let input_bind = self.picture_bind(frame, input, with_mask);
         kit::fullscreen_pass(
             encoder,
             "ASCII Tone Stat Rows",
@@ -1577,27 +2018,95 @@ impl Ascii {
         );
     }
 
-    /// The font the config names, uploaded; the built-in set when it can't
-    /// be loaded (the cache has warned).
-    fn font<'f>(&self, frame: &StyleFrame<'_>, fonts: &'f mut Fonts) -> &'f LoadedFont {
+    /// The picture and (while any per-entity variant is drawn) the mask,
+    /// as the tone statistics and the variant cells read them.
+    fn picture_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        input: &StyleInput<'_>,
+        with_mask: bool,
+    ) -> Arc<wgpu::BindGroup> {
+        let mask = frame.mask.filter(|_| with_mask);
+        let key = input.id * 2 + mask.is_some() as u64;
+        frame.bind("ASCII Stats In BG", key, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Stats In BG"),
+                layout: &self.stats_in_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(
+                            mask.unwrap_or(&self.no_mask_view),
+                        ),
+                    },
+                ],
+            })
+        })
+    }
+
+    /// Once a frame: the caches follow the scene's folder, and every
+    /// [`POLL_FRAMES`] a changed palette or glyph set file clears its cache
+    /// (#323). A reloaded set is a new Arc, so the stack re-uploads, and
+    /// palettes are packed afresh every frame.
+    fn refresh_fonts(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
         let search = Fonts::search_for(frame.scene_dir);
         if fonts.search != search {
             fonts.cache = GlyphSetCache::new(search.clone());
             fonts.palettes = PaletteCache::new(search.clone());
             fonts.search = search;
-            fonts.loaded = None;
+            fonts.stack = None;
         }
-        let name = frame.option("font").to_string();
-        let set = fonts
+        fonts.since_poll += 1;
+        if fonts.since_poll >= POLL_FRAMES {
+            fonts.since_poll = 0;
+            let glyphs = fonts.cache.poll();
+            let palettes = fonts.palettes.poll();
+            if glyphs || palettes {
+                tracing::info!(
+                    "ascii: reloading {}",
+                    match (glyphs, palettes) {
+                        (true, true) => "glyph sets and palettes",
+                        (true, false) => "glyph sets",
+                        _ => "palettes",
+                    }
+                );
+                fonts.warned = None;
+                fonts.warned_variants.clear();
+            }
+        }
+    }
+
+    /// The glyph set `name`, the built-in set when it can't be loaded (the
+    /// cache has warned).
+    fn set_named(&self, fonts: &mut Fonts, name: &str) -> Arc<GlyphSet> {
+        fonts
             .cache
-            .get(&name)
-            .unwrap_or_else(|_| GlyphSet::builtin());
-        let stale = fonts
-            .loaded
-            .as_ref()
-            .is_none_or(|l| l.name != name || !Arc::ptr_eq(&l.set, &set));
+            .get(name)
+            .unwrap_or_else(|_| GlyphSet::builtin())
+    }
+
+    /// The atlases of `in_use` stacked on the GPU, uploaded again only
+    /// when the frame's sets change (#335).
+    fn stack<'f>(
+        &self,
+        frame: &StyleFrame<'_>,
+        fonts: &'f mut Fonts,
+        in_use: &FontsInUse,
+    ) -> &'f LoadedStack {
+        let stale = fonts.stack.as_ref().is_none_or(|l| {
+            l.sets.len() != in_use.sets.len()
+                || l.sets
+                    .iter()
+                    .zip(&in_use.sets)
+                    .any(|(a, b)| !Arc::ptr_eq(a, b))
+        });
         if stale {
-            let gpu = GpuGlyphAtlas::upload(frame.device, frame.queue, set.atlas(), "ASCII Atlas");
+            let atlases: Vec<_> = in_use.sets.iter().map(|s| &**s.atlas()).collect();
+            let gpu = GpuGlyphStack::upload(frame.device, frame.queue, &atlases, "ASCII Atlas");
             let bind = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Atlas BG"),
                 layout: &self.atlas_bgl,
@@ -1606,14 +2115,13 @@ impl Ascii {
                     resource: wgpu::BindingResource::TextureView(&gpu.view),
                 }],
             });
-            fonts.loaded = Some(LoadedFont {
-                name,
-                set,
-                _gpu: gpu,
+            fonts.stack = Some(LoadedStack {
+                sets: in_use.sets.clone(),
+                gpu,
                 bind,
             });
         }
-        fonts.loaded.as_ref().expect("loaded above")
+        fonts.stack.as_ref().expect("loaded above")
     }
 }
 
@@ -1627,7 +2135,8 @@ impl StylePass for Ascii {
     ) {
         let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
         let ramp_name = frame.option("ramp").to_string();
-        let set = self.font(frame, &mut fonts).set.clone();
+        self.refresh_fonts(frame, &mut fonts);
+        let set = self.set_named(&mut fonts, frame.option("font"));
         let ramp = match set.ramp(&ramp_name) {
             Some(r) => r,
             None => {
@@ -1651,7 +2160,7 @@ impl StylePass for Ascii {
         // steps and inks sit where the cell state expects them
         let mut ramps = Ramps::default();
         let base_ramp = ramps
-            .place(&set, ramp.name())
+            .place(0, &set, ramp.name())
             .expect("the first ramp is resampled to fit");
         let palette = if frame.option("color") == "palette" {
             let name = match frame.option("palette") {
@@ -1665,11 +2174,11 @@ impl StylePass for Ascii {
         .unwrap_or_else(|| Palette::builtin(DEFAULT_PALETTE).expect("built-in"));
         let mut palettes = Palettes::default();
         let _ = palettes.place(&palette);
-        let (variants, slots) = self.variant_table(
+        let mut in_use = FontsInUse::new(set.clone());
+        let (mut variants, slots) = self.variant_table(
             frame,
             &mut fonts,
-            &set,
-            glyph,
+            &mut in_use,
             &mut ramps,
             &mut palettes,
             base_ramp,
@@ -1678,6 +2187,8 @@ impl StylePass for Ascii {
         let size = [frame.width, frame.height];
         let origin = grid_origin(size, cell);
         let grid = cell_grid(size, cell, origin);
+        // Each per-entity variant's band of cells (#313)
+        let bands = assign_bands(&mut variants, size);
 
         // Edges (#267): line glyphs from geometry, one texel a cell on the
         // same grid as the cell state
@@ -1759,29 +2270,43 @@ impl StylePass for Ascii {
             edge_on: u32::from(edges > 0.0),
             exposure: frame.param("exposure").clamp(-8.0, 8.0),
             stretch: frame.param("normalize").clamp(0.0, 1.0),
+            chroma: frame.param("chroma").clamp(0.0, 8.0),
+            palette_dither: frame.param("palette_dither").clamp(0.0, 1.0),
+            _pad_palette: [0; 2],
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],
+            palette_lab: [[0.0; 4]; MAX_COLORS],
             variant_meta: [
                 variants.len() as u32,
                 !(frame.whole_frame() && frame.option("scope") != "entities") as u32,
-                0,
+                bands.len() as u32,
                 0,
             ],
             variants: [VariantUniform::zeroed(); MAX_VARIANTS],
             slots: [[0; 4]; MAX_IDS / 4],
+            bands: [[0.0; 4]; MAX_BANDS],
+            band_rows: [[0; 4]; MAX_BANDS],
         };
         let mut uniforms = uniforms;
-        for (i, index) in ramps.steps.iter().enumerate() {
-            let [x, y] = atlas.cell_origin(*index);
+        // Every font the frame draws in, stacked; the whole frame's is at
+        // the top, so its origins are its atlas's own
+        let stack = self.stack(frame, &mut fonts, &in_use);
+        for (i, (font, index)) in ramps.steps.iter().enumerate() {
+            let [x, y] = stack.origin(*font, *index);
             let pair = &mut uniforms.ramp[i / 2];
             pair[(i % 2) * 2] = x;
             pair[(i % 2) * 2 + 1] = y;
         }
         uniforms.palette[..palettes.inks.len()].copy_from_slice(&palettes.inks);
+        uniforms.palette_lab[..palettes.lab.len()].copy_from_slice(&palettes.lab);
         uniforms.variants[..variants.len()].copy_from_slice(&variants);
         for (i, slot) in slots.iter().enumerate() {
             uniforms.slots[i / 4][i % 4] = *slot;
+        }
+        for (i, b) in bands.iter().enumerate() {
+            uniforms.bands[i] = [b.cell[0], b.cell[1], b.origin[0], b.origin[1]];
+            uniforms.band_rows[i] = [b.row, b.rows, b.cols, b.footprint.to_bits()];
         }
         frame
             .queue
@@ -1825,27 +2350,160 @@ impl StylePass for Ascii {
             ],
         );
 
+        // Variant cells (#313): each per-entity variant cell's colour sum,
+        // once a cell rather than in each of its pixels
+        let mut variant_cells_slot = self.variant_cells.lock().unwrap_or_else(|e| e.into_inner());
+        let [first_slot, second_slot] = &mut *variant_cells_slot;
+        let band_size = band_texture_size(&bands);
+        let variant_cells = [
+            Owned::ensure(
+                first_slot,
+                frame.device,
+                "ASCII Variant Cells A",
+                VARIANT_CELL_FORMAT,
+                band_size,
+                &self.cells_bgl,
+            ),
+            Owned::ensure(
+                second_slot,
+                frame.device,
+                "ASCII Variant Cells B",
+                VARIANT_CELL_FORMAT,
+                band_size,
+                &self.cells_bgl,
+            ),
+        ];
+        if !bands.is_empty() {
+            kit::fullscreen_pass_targets(
+                encoder,
+                "ASCII Variant Cells",
+                &[&variant_cells[0].view, &variant_cells[1].view],
+                &self.variant_cells_pipeline,
+                &[&uniform, &self.picture_bind(frame, input, true)],
+            );
+        }
+
         // Glyph pass: draw the cells
-        let font = fonts.loaded.as_ref().expect("loaded by font()");
-        kit::fullscreen_pass(
-            encoder,
-            "ASCII Pass",
-            output,
-            &self.pipeline,
-            &[
-                &uniform,
-                &cells_bind(
-                    frame,
-                    "ASCII Cells BG",
-                    &self.cells_bgl,
-                    &pair[write],
-                    variant(write),
-                ),
-                &font.bind,
-                &self.entity_bind(frame, input, variants.len() > 1, edge_cells, stats),
-            ],
+        let font = fonts.stack.as_ref().expect("stacked above");
+        let cells = cells_bind(
+            frame,
+            "ASCII Cells BG",
+            &self.cells_bgl,
+            &pair[write],
+            variant(write),
         );
+        // A cell whose entity a later display style draws over isn't ours
+        // in the finished frame (#317): the text pass reads the mask for it
+        let capturing = self.capture.load(Ordering::Relaxed);
+        let overdrawn = if capturing {
+            overdrawn_ids(frame)
+        } else {
+            Vec::new()
+        };
+        let with_mask = variants.len() > 1 || !overdrawn.is_empty();
+        let entity = self.entity_bind(frame, input, with_mask, edge_cells, stats, variant_cells);
+        let groups = [&*uniform, &*cells, &font.bind, &*entity];
+        kit::fullscreen_pass(encoder, "ASCII Pass", output, &self.pipeline, &groups);
+
+        // The same cells as text (#317), when asked
+        if capturing {
+            let mut slot = self.text.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.as_ref().is_none_or(|t| t.grid != grid) {
+                *slot = Some(TextCapture::new(frame.device, grid));
+            }
+            let capture = slot.as_mut().expect("made above");
+            kit::fullscreen_pass(
+                encoder,
+                "ASCII Text",
+                &capture.view,
+                &self.text_pipeline,
+                &groups,
+            );
+            encoder.copy_texture_to_buffer(
+                capture.texture.as_image_copy(),
+                wgpu::ImageCopyBuffer {
+                    buffer: &capture.buffer,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(capture.row_bytes),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width: grid[0],
+                    height: grid[1],
+                    depth_or_array_layers: 1,
+                },
+            );
+            capture.first = text_first(origin);
+            // Every font's glyphs, at their places in the stack (#335)
+            capture.glyphs = font
+                .sets
+                .iter()
+                .enumerate()
+                .flat_map(|(f, set)| {
+                    set.atlas()
+                        .glyphs()
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, ch)| ((f as u32, i as u32), *ch))
+                })
+                .map(|((f, i), ch)| {
+                    let [x, y] = font.origin(f, i);
+                    (x | (y << 16), ch)
+                })
+                .collect();
+            capture.overdrawn = overdrawn;
+            capture.copied = true;
+        }
     }
+
+    fn set_text_capture(&self, on: bool) {
+        self.capture.store(on, Ordering::Relaxed);
+        if !on {
+            *self.text.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+
+    fn read_text(&self, device: &wgpu::Device) -> Option<GlyphText> {
+        self.text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()?
+            .read(device)
+    }
+}
+
+/// The style mask ids whose pixels a display style that runs after ASCII
+/// draws over (#317): an entity of another style that's on this frame.
+fn overdrawn_ids(frame: &StyleFrame<'_>) -> Vec<u32> {
+    let chain = super::stage_chain(StyleStage::Display, frame.config);
+    let Some(ours) = chain.iter().position(|(d, _)| d.name == STYLE.name) else {
+        return Vec::new();
+    };
+    let later: Vec<&str> = chain[ours + 1..]
+        .iter()
+        .filter(|(d, _)| d.is_on(frame.config, frame.style_ids))
+        .map(|(d, _)| d.name)
+        .collect();
+    frame
+        .style_ids
+        .iter()
+        .filter(|(id, _)| {
+            frame
+                .style_ids
+                .variant(*id)
+                .is_some_and(|v| !v.off && later.contains(&v.style.as_str()))
+        })
+        .map(|(id, _)| u32::from(id))
+        .collect()
+}
+
+/// The text grid's first visible texel (#317): the cell state's texel 0
+/// holds the part cell left of (above) the origin, which is off screen
+/// when the grid starts at the frame's edge.
+fn text_first(origin: [f32; 2]) -> [u32; 2] {
+    origin.map(|o| u32::from(o <= 0.0))
 }
 
 #[cfg(test)]
@@ -1854,18 +2512,27 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        // 144 bytes of scalars (#267's edge strength included), 2
-        // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 32 vec4<f32> of
-        // palette, then the variant table's 16-byte header, its rows of 128
-        // (#288's silhouette floors are the last 16) and its 64 vec4<u32>
-        // of slots (#266)
-        assert_eq!(std::mem::size_of::<VariantUniform>(), 128);
+        // 160 bytes of scalars (#267's edge strength, #320's palette look), 2
+        // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 2 x 32 vec4<f32> of
+        // palette (inks, then their OKLab), then the variant table's 16-byte
+        // header, its rows of 144 (#288's silhouette floors and #320's
+        // palette look, then #335's glyph cell and edge start) and its 64
+        // vec4<u32> of slots (#266), and the variant cell bands' two vec4
+        // each (#313)
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
+        assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
-            144 + 2 * 16 + 64 * 16 + MAX_COLORS * 16 + 16 + MAX_VARIANTS * 128 + 64 * 16
+            160 + 2 * 16
+                + 64 * 16
+                + 2 * MAX_COLORS * 16
+                + 16
+                + MAX_VARIANTS * 144
+                + 64 * 16
+                + MAX_BANDS * 32
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
-        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 144);
+        assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
         assert_eq!(std::mem::size_of::<EdgeUniforms>(), 128);
         assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 48);
     }
@@ -2176,6 +2843,7 @@ mod tests {
             ("ascii_cells.wgsl", CELLS_SHADER),
             ("ascii_stats.wgsl", STATS_SHADER),
             ("ascii_stats_resolve.wgsl", STATS_RESOLVE_SHADER),
+            ("ascii_variant_cells.wgsl", VARIANT_CELLS_SHADER),
         ] {
             let module = naga::front::wgsl::parse_str(src).expect(name);
             naga::valid::Validator::new(
@@ -2188,6 +2856,78 @@ mod tests {
         // The lattice's rows are one constant in two languages
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const STATS_ROWS: u32 = {STATS_ROWS}u;")));
+        // And so are the variant cell state's bands (#313)
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const MAX_BANDS: u32 = {MAX_BANDS}u;")));
+    }
+
+    fn variant_row(cell: f32, origin: [f32; 2], footprint: f32, flags: u32) -> VariantUniform {
+        VariantUniform {
+            cell: [cell, cell],
+            origin,
+            footprint,
+            flags,
+            ..VariantUniform::zeroed()
+        }
+    }
+
+    #[test]
+    fn variants_on_one_grid_share_a_band_and_bands_stack() {
+        let size = [1280, 720];
+        let mut rows = vec![
+            VariantUniform::zeroed(),
+            variant_row(8.0, [0.0, 0.0], 2.0, 0),
+            // Same grid: the same band
+            variant_row(8.0, [0.0, 0.0], 2.0, 0),
+            // Another footprint lays another lattice: a band of its own
+            variant_row(8.0, [0.0, 0.0], 3.0, 0),
+            // Passes through: no cells
+            variant_row(8.0, [0.0, 0.0], 2.0, PASS_THROUGH),
+            // An object grid
+            variant_row(12.0, [3.0, 5.0], 2.0, 0),
+            // A footprint of 1 samples in the glyph pass, from the cache
+            variant_row(8.0, [0.0, 0.0], 1.0, 0),
+        ];
+        let bands = assign_bands(&mut rows, size);
+        assert_eq!(bands.len(), 3);
+        let grid = cell_grid(size, [8.0; 2], [0.0; 2]);
+        assert_eq!(
+            (bands[0].row, bands[0].rows, bands[0].cols),
+            (0, grid[1], grid[0])
+        );
+        assert_eq!(bands[1].row, grid[1]);
+        assert_eq!(bands[2].row, 2 * grid[1]);
+        let cells: Vec<u32> = rows.iter().map(|r| r.cell_row).collect();
+        assert_eq!(cells, [0, 1, 1, grid[1] + 1, 0, 2 * grid[1] + 1, 0]);
+        let wide = cell_grid(size, [12.0; 2], [3.0, 5.0]);
+        assert_eq!(
+            band_texture_size(&bands),
+            [grid[0].max(wide[0]), 2 * grid[1] + wide[1]]
+        );
+        // With no bands the texture is a stand-in texel
+        assert_eq!(band_texture_size(&[]), [1, 1]);
+    }
+
+    #[test]
+    fn grids_past_the_band_limit_sample_for_themselves() {
+        let mut rows = vec![VariantUniform::zeroed()];
+        for i in 0..MAX_BANDS + 2 {
+            rows.push(variant_row(8.0 + i as f32, [0.0, 0.0], 2.0, 0));
+        }
+        let bands = assign_bands(&mut rows, [640, 360]);
+        assert_eq!(bands.len(), MAX_BANDS);
+        assert!(rows[1..=MAX_BANDS].iter().all(|r| r.cell_row > 0));
+        assert!(rows[MAX_BANDS + 1..].iter().all(|r| r.cell_row == 0));
+        // 2 px cells at 4K are 1081 rows a band: the eighth won't fit
+        let mut tall = vec![VariantUniform::zeroed()];
+        for footprint in 2..=MAX_BANDS + 1 {
+            tall.push(variant_row(2.0, [0.0, 0.0], footprint as f32, 0));
+        }
+        let bands = assign_bands(&mut tall, [3840, 2160]);
+        let [w, h] = band_texture_size(&bands);
+        assert!(w <= MAX_BAND_TEXELS && h <= MAX_BAND_TEXELS);
+        assert_eq!(bands.len(), MAX_BANDS - 1);
+        assert_eq!(tall[MAX_BANDS].cell_row, 0);
     }
 
     #[test]
@@ -2217,14 +2957,75 @@ mod tests {
     fn ramps_pack_once_each_and_refuse_what_does_not_fit() {
         let set = GlyphSet::builtin();
         let mut ramps = Ramps::default();
-        let classic = ramps.place(&set, "classic").unwrap();
+        let classic = ramps.place(0, &set, "classic").unwrap();
         assert_eq!(classic.0, 0);
-        let blocks = ramps.place(&set, "blocks").unwrap();
+        let blocks = ramps.place(0, &set, "blocks").unwrap();
         assert_eq!(blocks.0, classic.1, "packed after the first");
-        assert_eq!(ramps.place(&set, "classic"), Some(classic), "placed once");
+        assert_eq!(
+            ramps.place(0, &set, "classic"),
+            Some(classic),
+            "placed once"
+        );
+        // Another font's ramp of the same name is its own (#335)
+        let other = ramps.place(1, &set, "classic").unwrap();
+        assert_eq!(other.0, blocks.0 + blocks.1);
+        assert!(ramps.steps[other.0 as usize..].iter().all(|(f, _)| *f == 1));
         // Fill what's left, then one more doesn't fit
-        ramps.steps.resize(MAX_RAMP, 0);
-        assert_eq!(ramps.place(&set, "minimal"), None);
+        ramps.steps.resize(MAX_RAMP, (0, 0));
+        assert_eq!(ramps.place(0, &set, "minimal"), None);
+    }
+
+    #[test]
+    fn a_fonts_ramp_and_edges_pack_together_or_not_at_all() {
+        let set = GlyphSet::builtin();
+        let mut ramps = Ramps::default();
+        let (ramp, edges) = ramps.place_with_edges(1, &set, "classic").unwrap();
+        assert_eq!(ramp.0, 0);
+        assert_eq!(edges, ramp.1, "the edges follow the ramp");
+        let atlas = set.atlas();
+        let packed: Vec<u32> = ramps.steps[edges as usize..edges as usize + 4]
+            .iter()
+            .map(|(_, i)| *i)
+            .collect();
+        let want: Vec<u32> = set
+            .edges()
+            .all()
+            .iter()
+            .map(|c| atlas.index_of(*c).unwrap())
+            .collect();
+        assert_eq!(packed, want, "in EdgeGlyphs::all() order");
+        // Again: placed once, edges shared by the font's ramps
+        let len = ramps.steps.len();
+        assert_eq!(
+            ramps.place_with_edges(1, &set, "classic"),
+            Some((ramp, edges))
+        );
+        let (_, again) = ramps.place_with_edges(1, &set, "blocks").unwrap();
+        assert_eq!(again, edges);
+        assert!(ramps.steps.len() > len);
+        // Room for the ramp but not its edges: neither is packed
+        let blocks = set.ramp("minimal").unwrap().len();
+        ramps.steps.resize(MAX_RAMP - blocks - 3, (0, 0));
+        let before = ramps.steps.len();
+        assert_eq!(ramps.place_with_edges(2, &set, "minimal"), None);
+        assert_eq!(ramps.steps.len(), before);
+    }
+
+    #[test]
+    fn fonts_in_use_are_counted_once_and_capped() {
+        let base = GlyphSet::builtin();
+        let mut in_use = FontsInUse::new(base.clone());
+        assert_eq!(in_use.index(&base), Some(0));
+        let other =
+            |n: &str| Arc::new(GlyphSet::from_toml(n, "", Path::new(".")).expect("built-in cells"));
+        let a = other("a");
+        assert_eq!(in_use.index(&a), Some(1));
+        assert_eq!(in_use.index(&a), Some(1), "the same set once");
+        for i in 2..MAX_FONTS {
+            assert_eq!(in_use.index(&other(&format!("f{i}"))), Some(i as u32));
+        }
+        assert_eq!(in_use.index(&other("one too many")), None);
+        assert_eq!(in_use.sets.len(), MAX_FONTS);
     }
 
     #[test]

@@ -58,6 +58,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
+| `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off`. Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
+| `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
@@ -300,6 +302,8 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |
 | `--ascii-glow <f32>` | `0` | *Style:* halo around bright glyphs (0.6 reads as a phosphor tube) |
 | `--ascii-tint <r,g,b>` | `0.35,1,0.45` | *Style:* the tint colour; sets `--ascii-color tint` unless that's given |
+| `--ascii-text <file>` | (none) | Also write the ASCII grid as UTF-8 text: a line per cell row, a character per cell, matching the PNG (a passed-through cell is a space; #317, [Reading a render as text](../guides/headless-rendering.md#reading-a-render-as-text)). Needs the style on; not with `--sweep` |
+| `--ascii-text-ansi <file>` | (none) | The same grid with 24-bit ANSI colours, each glyph's ink over its ground |
 | `--ascii-background <f32>` | `0.15` | *Style:* how much of the cell's colour fills behind its glyph (0 black) |
 | `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `--ascii-ink <f32>` | `1` | *Style:* glyph ink brightness |

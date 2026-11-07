@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn the_arena_pages_its_slots_and_uploads_them_together() {
         let Some((device, queue)) = device() else {
-            eprintln!("no GPU adapter: skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let mut arena = TransformArena::default();

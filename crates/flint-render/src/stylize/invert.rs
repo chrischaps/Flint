@@ -26,7 +26,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         max: 1.0,
     }],
     options: &[],
-    enabled: None,
     uses_mask: false,
     needs: &[],
     hints: &[StyleHint::new(
@@ -35,6 +34,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         "How far toward the negative: 0 = none, 1 = full",
     )],
     component: None,
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");

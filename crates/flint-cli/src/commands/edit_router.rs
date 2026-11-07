@@ -166,8 +166,8 @@ pub struct EditArgs {
     #[arg(long)]
     pub preset: Option<String>,
 
-    /// `--style name[:key=value,...]` and `--style-time` (model,
-    /// particles; with --render)
+    /// `--style name[:key=value,...]` and `--style-time` (the scene viewer,
+    /// kept through hot reloads; model and particles with --render)
     #[command(flatten)]
     pub style: crate::commands::common_args::StyleArgs,
 }
@@ -178,11 +178,13 @@ pub fn run(args: EditArgs) -> Result<()> {
     let styled = !args.style.styles.is_empty() || args.style.style_time.is_some();
     let renders =
         args.render.is_some() && matches!(file_kind, FileKind::Model | FileKind::ParticleEffect);
-    if styled && !renders {
+    // The scene viewer takes them too (#328), but not the spline editor
+    let scene_viewer = matches!(file_kind, FileKind::Scene) && !args.spline;
+    if styled && !renders && !scene_viewer {
         eprintln!(
-            "warning: --style / --style-time apply to `--render` of a model or a \
-             .particles.toml; this editor ignores them (the scene viewer's F4 \
-             menu has a Styles section, and `flint render --style` takes a scene)"
+            "warning: --style / --style-time apply to the scene viewer and to \
+             `--render` of a model or a .particles.toml; this editor ignores them \
+             (`flint render --style` takes a scene)"
         );
     }
 
@@ -206,6 +208,10 @@ pub fn run(args: EditArgs) -> Result<()> {
                     schemas_path,
                     !args.no_inspector,
                     args.auto_orbit,
+                    flint_viewer::app::ViewerStyle {
+                        specs: args.style.styles.clone(),
+                        time: args.style.style_time,
+                    },
                 )
             }
         }

@@ -141,11 +141,7 @@ fxaa = false
 | `dof_strength` | f32 | `0` | Depth-of-field defocus; `0` = sharp |
 | `dof_focus_distance` | f32 | `10.0` | Focus plane distance in view metres |
 | `dof_focus_range` | f32 | `5.0` | Half-width of the in-focus band in view metres |
-| `kuwahara_enabled` | bool | `false` | Anisotropic Kuwahara (painterly) pre-pass |
-| `kuwahara_radius` | u32 | `4` | Filter radius in pixels |
-| `kuwahara_sharpness` | f32 | `8.0` | Sector weighting sharpness |
-| `kuwahara_hardness` | f32 | `8.0` | Sector edge hardness |
-| `kuwahara_anisotropy` | f32 | `1.0` | `0` = isotropic, `1` = fully anisotropic |
+| `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness`, `kuwahara_anisotropy` | | | Older spellings of `[post_process.styles.kuwahara]`, still read (see [Post-Processing](../concepts/post-processing.md#kuwahara-painterly-filter)) |
 | `film_grain` | f32 | `0` | Animated grain; `0.02`–`0.05` is subtle |
 | `grade_lift` | `[f32; 3]` | `[0, 0, 0]` | Per-channel add after ACES tone mapping |
 | `grade_gamma` | `[f32; 3]` | `[1, 1, 1]` | Per-channel midtone curve |

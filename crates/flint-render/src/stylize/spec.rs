@@ -6,9 +6,10 @@
 //! --style ascii                          the style at its defaults
 //! --style ascii:cell=12,ramp=blocks      a parameter (number) and an option (text)
 //! --style invert:strength=0.5
-//! --style kuwahara:radius=6              Kuwahara's own kuwahara_* fields
+//! --style kuwahara:radius=6
 //! --style ascii:off                      turn off a style the scene has on
 //! --style invert:order=0                 run first in its stage (#299)
+//! --style kuwahara:feeds_bloom=1         bloom reads the painted image (#300)
 //! --style ascii:color=tint,tint=#4dff73  a colour (#315): #rrggbb, or r/g/b
 //! --style ascii:tint=0.3/1/0.4
 //! ```
@@ -25,10 +26,6 @@
 use super::{color_from_text, find, names, registry, StyleDescriptor};
 use crate::postprocess::PostProcessConfig;
 
-/// Kuwahara keeps its settings in `kuwahara_*` fields, not the style
-/// table (it predates it); these are the keys `--style kuwahara:` takes.
-const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
-
 /// One parsed `--style` word.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyleSpec {
@@ -36,6 +33,9 @@ pub struct StyleSpec {
     pub enabled: bool,
     /// `key=value` pairs in the order given.
     pub settings: Vec<(String, String)>,
+    /// `feeds_bloom=true|false` (#300): whether bloom reads the style's
+    /// result; `None` leaves the scene's choice.
+    pub feeds_bloom: Option<bool>,
 }
 
 impl StyleSpec {
@@ -64,6 +64,7 @@ impl StyleSpec {
             name: name.to_string(),
             enabled: true,
             settings: Vec::new(),
+            feeds_bloom: None,
         };
         for pair in rest.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             if pair == "off" {
@@ -89,6 +90,19 @@ impl StyleSpec {
                 };
                 continue;
             }
+            if key == "feeds_bloom" {
+                if descriptor.stage != super::StyleStage::Hdr {
+                    return Err(format!(
+                        "{name}: feeds_bloom is for hdr styles; {name} draws after bloom"
+                    ));
+                }
+                parsed.feeds_bloom = Some(match value {
+                    "true" | "1" | "on" => true,
+                    "false" | "0" | "off" => false,
+                    _ => return Err(format!("{name}: feeds_bloom must be true or false")),
+                });
+                continue;
+            }
             if key == "order" {
                 number(name, key, value)?;
             } else {
@@ -102,25 +116,15 @@ impl StyleSpec {
     /// Write this spec into `config`: the style on (or off) with its
     /// settings, over whatever the scene said.
     pub fn apply(&self, config: &mut PostProcessConfig) {
-        // Any style's place in its stage (#299), Kuwahara's included
+        // Any style's place in its stage (#299) and whether it feeds bloom
+        // (#300)
         for (key, value) in &self.settings {
             if key == "order" {
                 config.styles.set_order(&self.name, value.parse().ok());
             }
         }
-        if self.name == "kuwahara" {
-            config.kuwahara_enabled = self.enabled;
-            for (key, value) in &self.settings {
-                let n: f32 = value.parse().unwrap_or_default();
-                match key.as_str() {
-                    "radius" => config.kuwahara_radius = n.round().max(1.0) as u32,
-                    "sharpness" => config.kuwahara_sharpness = n,
-                    "hardness" => config.kuwahara_hardness = n,
-                    "anisotropy" => config.kuwahara_anisotropy = n,
-                    _ => {}
-                }
-            }
-            return;
+        if let Some(feeds) = self.feeds_bloom {
+            config.styles.set_feeds_bloom(&self.name, Some(feeds));
         }
         let descriptor = find(&self.name).expect("checked by parse");
         config.styles.set_enabled(&self.name, self.enabled);
@@ -149,6 +153,33 @@ pub fn apply_style_spec(config: &mut PostProcessConfig, spec: &str) -> Result<()
     Ok(())
 }
 
+/// Write every word of `specs` into `config`, in order (a later word
+/// wins), and return the errors of the words that didn't parse, each
+/// naming its word. The windowed hosts (#328: `flint-player --style`,
+/// `flint edit scene.toml --style`, the web's `?style=`) call this over
+/// the scene's config at every load, transition and hot reload, so the
+/// command line keeps winning over what the scene authors.
+pub fn apply_style_specs(config: &mut PostProcessConfig, specs: &[String]) -> Vec<String> {
+    specs
+        .iter()
+        .filter_map(|spec| {
+            apply_style_spec(config, spec)
+                .err()
+                .map(|e| format!("--style {spec}: {e}"))
+        })
+        .collect()
+}
+
+/// Check every word of `specs` against the registry, for a host to refuse
+/// a typo at start. Call it once the scene's user styles are registered
+/// (`custom::load_dir`), since a word may name one.
+pub fn check_style_specs(specs: &[String]) -> Result<(), String> {
+    for spec in specs {
+        StyleSpec::parse(spec).map_err(|e| format!("--style {spec}: {e}"))?;
+    }
+    Ok(())
+}
+
 /// One line per registered style with the keys `--style` takes, for help
 /// text and error messages.
 pub fn style_spec_help() -> String {
@@ -161,15 +192,6 @@ pub fn style_spec_help() -> String {
 
 fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), String> {
     let name = descriptor.name;
-    if name == "kuwahara" {
-        if !KUWAHARA_KEYS.contains(&key) {
-            return Err(format!(
-                "kuwahara has no key '{key}'; it takes: {}",
-                known_keys(descriptor)
-            ));
-        }
-        return number(name, key, value);
-    }
     if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
         // An option whose choices are found at run time (a palette file,
         // a font's ramps) is open: the style resolves the name, and warns
@@ -207,9 +229,7 @@ fn number(name: &str, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn known_keys(descriptor: &StyleDescriptor) -> String {
-    let mut keys: Vec<String> = if descriptor.name == "kuwahara" {
-        KUWAHARA_KEYS.iter().map(|k| k.to_string()).collect()
-    } else {
+    let mut keys: Vec<String> = {
         let mut params: Vec<String> = Vec::new();
         for p in descriptor.params {
             match descriptor.color_of(p.name) {
@@ -236,6 +256,9 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
             .collect()
     };
     keys.push("order=<n>".to_string());
+    if descriptor.stage == super::StyleStage::Hdr {
+        keys.push(format!("feeds_bloom={}", descriptor.feeds_bloom));
+    }
     keys.push("off".to_string());
     keys.join(", ")
 }
@@ -294,13 +317,12 @@ mod tests {
     }
 
     #[test]
-    fn kuwahara_writes_its_own_fields() {
+    fn kuwahara_writes_its_style_table() {
         let mut config = PostProcessConfig::default();
         apply_style_spec(&mut config, "kuwahara:radius=6,anisotropy=0.5").unwrap();
-        assert!(config.kuwahara_enabled);
-        assert_eq!(config.kuwahara_radius, 6);
-        assert_eq!(config.kuwahara_anisotropy, 0.5);
-        assert!(!config.styles.is_enabled("kuwahara"));
+        assert!(config.styles.is_enabled("kuwahara"));
+        assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
+        assert_eq!(config.styles.param("kuwahara", "anisotropy"), Some(0.5));
     }
 
     #[test]
@@ -311,9 +333,25 @@ mod tests {
         assert_eq!(config.styles.param("invert", "strength"), Some(0.5));
         apply_style_spec(&mut config, "kuwahara:order=-1").unwrap();
         assert_eq!(config.styles.order("kuwahara"), Some(-1.0));
-        assert!(config.kuwahara_enabled);
+        assert!(config.styles.is_enabled("kuwahara"));
         assert!(StyleSpec::parse("ascii:order=soon").is_err());
         assert!(style_spec_help().contains("order=<n>"));
+    }
+
+    #[test]
+    fn feeds_bloom_is_for_hdr_styles() {
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(&mut config, "kuwahara:feeds_bloom=1,radius=6").unwrap();
+        assert!(config.styles.is_enabled("kuwahara"));
+        assert_eq!(config.styles.feeds_bloom("kuwahara"), Some(true));
+        assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
+        assert!(find("kuwahara").unwrap().feeds_bloom_in(&config));
+        // Not a parameter: it never lands in the params
+        assert_eq!(config.styles.param("kuwahara", "feeds_bloom"), None);
+        let display = StyleSpec::parse("ascii:feeds_bloom=1").unwrap_err();
+        assert!(display.contains("hdr"), "{display}");
+        assert!(StyleSpec::parse("kuwahara:feeds_bloom=maybe").is_err());
+        assert!(style_spec_help().contains("feeds_bloom=false"));
     }
 
     #[test]
@@ -328,6 +366,30 @@ mod tests {
         assert!(nan.contains("number"), "{nan}");
         assert!(StyleSpec::parse("ascii:cell").is_err());
         assert!(StyleSpec::parse("kuwahara:cell=3").is_err());
+    }
+
+    #[test]
+    fn a_list_of_words_applies_in_order_and_names_the_bad_ones() {
+        let mut config = PostProcessConfig::default();
+        let words = [
+            "ascii:cell=12".to_string(),
+            "watercolour".to_string(),
+            "ascii:cell=6".to_string(),
+        ];
+        let errors = apply_style_specs(&mut config, &words);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0].starts_with("--style watercolour:"),
+            "{}",
+            errors[0]
+        );
+        // The good words still landed, the later one winning
+        assert!(config.styles.is_enabled("ascii"));
+        assert_eq!(config.styles.param("ascii", "cell"), Some(6.0));
+        assert!(check_style_specs(&words[..1]).is_ok());
+        assert!(check_style_specs(&words)
+            .unwrap_err()
+            .contains("watercolour"));
     }
 
     #[test]

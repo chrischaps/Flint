@@ -1,5 +1,6 @@
 # Flint's CI. No GPU here, and AudioManager::new() / Gilrs::new() can fail
-# headless, so the native test suite stays local for now (`cargo test`).
+# headless, so most of the native test suite stays local for now (`cargo
+# test`). The GPU tests and render goldens run on a software adapter (#314).
 name: CI
 
 on:
@@ -34,3 +35,50 @@ jobs:
 
       - name: cargo clippy --target wasm32-unknown-unknown -p flint-player
         run: bash scripts/wasm-check.sh
+
+  # The GPU tests and render goldens (#314) on WARP, the software DX12
+  # adapter every Windows ships. A runner has no GPU, and these tests skip
+  # without an adapter, so before this job they passed on every PR without
+  # running. FLINT_REQUIRE_GPU turns each skip into a failure, so a missing
+  # WARP can't look green. Run it locally the same way:
+  #   WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME="Microsoft Basic Render Driver" \
+  #   FLINT_REQUIRE_GPU=1 cargo test -p flint-cli --test render_goldens
+  gpu:
+    name: GPU tests (WARP)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      WGPU_BACKEND: dx12
+      WGPU_ADAPTER_NAME: Microsoft Basic Render Driver
+      FLINT_REQUIRE_GPU: "1"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gpu-warp
+
+      - name: cargo test -p flint-render --test stylize
+        run: cargo test -p flint-render --test stylize
+
+      # Even when the GPU tests failed: one regression should show in both,
+      # and the goldens' numbers are the cross-adapter record
+      - name: cargo test -p flint-cli --test render_goldens
+        if: success() || failure()
+        run: cargo test -p flint-cli --test render_goldens
+
+      - name: Goldens summary
+        if: always()
+        shell: bash
+        run: python scripts/goldens-summary.py target/tmp/stylize-goldens/report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload renders and diffs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylize-goldens-warp
+          path: target/tmp/stylize-goldens/
+          if-no-files-found: warn

@@ -23,7 +23,7 @@ WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara,
 WARN style 'invert' has no parameter 'wobble'; it takes: strength
 ```
 
-Kuwahara predates the table and keeps its own `kuwahara_*` fields (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
+Kuwahara's table is `[post_process.styles.kuwahara]`. Scenes from before the table spell it `kuwahara_enabled`, `kuwahara_radius` and so on in `[post_process]`; those keys are folded into the table when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
 
 From the command line, `--style name[:key=value,...]` turns any registered style on over a scene without editing it (#271), on `flint render` and on `flint edit <model or effect> --render`:
 
@@ -37,6 +37,14 @@ flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render demo/pbr_test.scene.toml --style help            # every style and its keys
 ```
 
+The windowed hosts take the same words (#328): `flint play`, `flint-player` and the scene viewer (`flint edit scene.toml`), with `--style-time` beside them. They write the words over the scene's `[post_process]` when it loads and again after each scene transition (the player), each hot reload and each authored/default swap in F4 (the viewer), so the command line keeps winning over the file. F4 and the F3 Styles panel still edit the live result, and their Authored button goes back to what the scene says. On the web the query takes them as `?style=ascii:cell=12`, repeated for more than one (`?style=ascii&style=invert`).
+
+```bash
+flint play demo/stylize_props.scene.toml --style ascii
+flint-player demo/stylize_props.scene.toml --schemas schemas --style pencil:spacing=5 --style-time 1.5
+flint edit demo/stylize_props.scene.toml --watch --style ascii:cell=10
+```
+
 ### Listing the styles
 
 `flint render --list-styles` prints every registered style (#303): its stage, where a scene sets it, its options with their choices and its parameters with their defaults, F4 ranges and whether they step by whole numbers, each with its hover help. Add `--json` for an agent; give a scene and the user styles in its `styles/` folder are listed too:
@@ -48,8 +56,9 @@ flint render demo/user_styles.scene.toml --list-styles --json
 
 ```text
 kuwahara (Kuwahara) [hdr, builtin]
-  [post_process] kuwahara_*
-  kuwahara_radius      4  [1 .. 8, integer]
+  [post_process.styles.kuwahara]
+  radius      4  [1 .. 8, integer]  — The brush: each sector's reach in scene pixels; bigger is more painterly and costs more
+  sharpness   8  [1 .. 16]  — How strongly the least varied sector wins; lower blends sectors more softly
   ...
 invert (Invert) [display, builtin]
   [post_process.styles.invert]
@@ -58,7 +67,7 @@ invert (Invert) [display, builtin]
 
 Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
-The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
+The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
@@ -84,7 +93,7 @@ The same editor is the player's **F3 Styles** panel, which appears with the othe
 
 | Style | Stage | Parameters |
 |-------|-------|------------|
-| `kuwahara` | HDR | the `kuwahara_*` fields |
+| `kuwahara` | HDR | `radius` (whole pixels), `sharpness`, `hardness`, `anisotropy`; see [Post-Processing](post-processing.md#kuwahara-painterly-filter) |
 | `watercolor` | Display | see [Watercolor](#watercolor) |
 | `ascii` | Display | see [ASCII](#ascii) |
 | `pencil` | Display | see [Pencil](#pencil) |
@@ -132,8 +141,10 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark. `mono`: white glyphs on grey. `palette`: the inks of `palette` (see [Colour modes](#colour-modes)) |
 | `tint` | `[0.35, 1.0, 0.45]` | With `color = "tint"`: the ink, a [colour](#colours) (`[r, g, b]` 0--1 in display values, or `"#59ff73"`). `--ascii-tint r,g,b` sets it |
 | `palette` | `phosphor` | With `color = "palette"`: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, or a palette file. One that can't be found warns once and uses `phosphor` |
+| `chroma` | `1` | With a `nearest` palette: scale each cell's saturation (OKLab a/b) before its ink is matched, so a muted scene reaches the palette's colours (0--4; 0 matches on lightness alone). See [Palettes](#palettes-match-in-oklab) |
+| `palette_dither` | `0` | With a `nearest` palette: mix each cell's two nearest inks by a 4x4 Bayer pattern on the cell grid, in proportion to how far the cell sits between them (0--1), so a gradient steps through inks instead of banding into one |
 | `ground` | `dim` | Behind the glyph: `dim` (the mode's own: the cell's colour times `background`, or the palette's background), `black`, or `inverse` (the ink fills the cell and the glyph is cut out of it; the ramp runs backwards so bright cells stay bright) |
-| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
+| `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom, so it stops at the cell's edge: for glow that crosses cells, add [display bloom](#display-bloom) |
 | `background` | `0.15` | How much of the cell's colour fills behind its glyph: 0 is black, 1 the cell's colour |
 | `brightness`, `contrast` | `0`, `1` | Luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `exposure` | `0` | Stops of gain on each cell's colour, in linear light, before its glyph and ink are picked (-4--4, `--ascii-exposure`). See [dark props](#dark-props-exposure-and-normalize) |
@@ -186,7 +197,7 @@ The glyph's shape carries brightness; its colour sets the mood (#276). Every cap
 | ![source](../images/ascii-color-source-pbr-test.png) `--ascii` (source) | ![tint](../images/ascii-color-tint-pbr-test.png) `--ascii-color tint` |
 | ![raw](../images/ascii-color-raw-pbr-test.png) `--ascii-color raw` | ![mono](../images/ascii-color-mono-pbr-test.png) `--ascii-color mono` |
 | ![phosphor](../images/ascii-color-phosphor-pbr-test.png) `--ascii-palette phosphor --ascii-glow 0.6` | ![amber](../images/ascii-color-amber-pbr-test.png) `--ascii-palette amber --ascii-ramp blocks` |
-| ![cga](../images/ascii-color-cga-pbr-test.png) `--ascii-palette cga` | ![cga16](../images/ascii-color-cga16-pbr-test.png) `--ascii-palette cga16` |
+| ![cga](../images/ascii-palette-cga-pbr-test-oklab.png) `--ascii-palette cga` | ![cga16](../images/ascii-palette-cga16-pbr-test-oklab.png) `--ascii-palette cga16` |
 | ![inverse](../images/ascii-color-inverse-pbr-test.png) `--ascii-palette cga-warm --ascii-ground inverse` | ![black](../images/ascii-color-black-pbr-test.png) `--ascii-ground black` |
 | ![tidepool](../images/ascii-color-tidepool-pbr-test.png) `--ascii-palette tidepool` (`demo/palettes/tidepool.palette.toml`) | |
 
@@ -205,7 +216,7 @@ background = "#0d1b2a"     # default black
 colors = ["#1b998b", "#3a86ff", "#ed217c", "#ff9b71", "#fffd82", "#e8f1f2"]
 ```
 
-`nearest` gives each cell the ink nearest its hue at full value (plain RGB distance), so a dark red still reads red and glyph density alone says it's dark; desaturated cells land on the palette's lightest neutral. `luminance` lists the inks darkest first and picks one by the cell's tone, as a one-colour phosphor tube does. Up to 32 inks. A file wins over a built-in of the same name; `PaletteCache` resolves names the way `GlyphSetCache` resolves fonts, through the vfs.
+`nearest` gives each cell the ink nearest its hue at full value, so a dark red still reads red and glyph density alone says it's dark. Distance is measured in OKLab (#320, below), and the style's `chroma` and `palette_dither` shape the match. `luminance` lists the inks darkest first and picks one by the cell's tone, as a one-colour phosphor tube does. Up to 32 inks. A file wins over a built-in of the same name; `PaletteCache` resolves names the way `GlyphSetCache` resolves fonts, through the vfs, and hot-reloads the same way (#323): change an ink with the viewer or player open and the frame recolours within a second (half a second, measured on `demo/ascii_tidepool.scene.toml`), and a file that appears beside the scene takes over a built-in of its name. Natively only; a web bundle never changes.
 
 | Built-in | Match | Inks |
 |---|---|---|
@@ -215,6 +226,26 @@ colors = ["#1b998b", "#3a86ff", "#ed217c", "#ff9b71", "#fffd82", "#e8f1f2"]
 | `phosphor` | luminance | four greens on near-black |
 | `amber` | luminance | four ambers on near-black |
 | `mono` | luminance | four greys on black |
+
+#### Palettes match in OKLab
+
+A `nearest` palette compares colours in [OKLab](https://bottosson.github.io/posts/oklab/) (#320), where the distance between two colours follows how different they look. Plain RGB distance read wrong in two ways. Under `cga16`, a full-value red `(1, 0, 0)` is nearer `#aa0000` than `#ff5555` in RGB, so saturated objects took the dim text-mode inks on top of the darkening that glyph density already does. Under `cga`, every muted colour went to white. OKLab fixes the first. Two style keys deal with the second, since a near-grey really is nearest the white ink:
+
+- `chroma` scales the cell's OKLab a/b before matching. pbr_test's floor is a muted blue (`#636380`): at `chroma = 3` it is far enough from white to reach the cyan and magenta.
+- `palette_dither` mixes the two nearest inks on a 4x4 Bayer pattern fixed to the cell grid. A cell takes the second ink in proportion to how far it sits between the two, so a gradient steps through the inks instead of banding into one.
+
+Each pair below is the same 640x360 crop (from 1280x720), before #320 (RGB), after it with the defaults, and after it with `--style ascii:chroma=3,palette_dither=1`:
+
+| `--ascii-palette` | RGB (before) | OKLab | OKLab, `chroma = 3`, `palette_dither = 1` |
+|---|---|---|---|
+| `cga`, pbr_test | ![](../images/ascii-palette-cga-pbr-test-rgb.png) | ![](../images/ascii-palette-cga-pbr-test-oklab.png) | ![](../images/ascii-palette-cga-pbr-test-dither.png) |
+| `cga16`, pbr_test | ![](../images/ascii-palette-cga16-pbr-test-rgb.png) | ![](../images/ascii-palette-cga16-pbr-test-oklab.png) | ![](../images/ascii-palette-cga16-pbr-test-dither.png) |
+| `cga`, mesh_meadow | ![](../images/ascii-palette-cga-mesh-meadow-rgb.png) | ![](../images/ascii-palette-cga-mesh-meadow-oklab.png) | ![](../images/ascii-palette-cga-mesh-meadow-dither.png) |
+| `cga16`, mesh_meadow | ![](../images/ascii-palette-cga16-mesh-meadow-rgb.png) | ![](../images/ascii-palette-cga16-mesh-meadow-oklab.png) | ![](../images/ascii-palette-cga16-mesh-meadow-dither.png) |
+
+Under `cga16` the red box now takes `#ff5555` rather than `#aa0000`, the cube's top turns cyan, and the meadow's grass is green where RGB made it yellow. Its path, a muted tan, comes out grey with the defaults, and yellow and red with chroma pushed. The meadow's sky stays white or grey under any setting. That is correct: it is `#cbccd0`, close to neutral.
+
+The CPU reference is `Palette::pick(colour, chroma, dither, cell)`, and the shader's is `pal_pick` in `crates/flint-render/src/palette.wgsl`, which the glyph pass includes. Inks are converted to OKLab once a frame on the CPU. A GPU test (`the_palette_matcher_agrees_with_its_cpu_reference`) holds the two to the same ink over a grid of 4096 colours with chroma and dither on. A `luminance` palette ignores both keys. Matching in OKLab costs about 0.03 ms at 1080p for `cga16`'s 15 inks (0.076 ms before, 0.103 ms after, `--gpu-time 240` on an RTX 4070 with edges off). Dither adds about 0.003 ms.
 
 On an RTX 4070 at 1080p the pass costs 0.143 ms in `source`, 0.152 ms matching `cga16`'s 15 inks, 0.144 ms with `ground = "inverse"` and 0.220 ms with `glow` on (24 more glyph reads a pixel).
 
@@ -288,17 +319,18 @@ levels = 4
 enabled = false               # stays smooth, even under a whole-frame ASCII
 ```
 
-- **Fields.** Every key of the table above except `font` and `scope`, all optional. A field the entity leaves out comes from the scene's table, then the style's default. The schema gives no field a default on purpose, since the loader would fill it in and hide the scene's setting. An archetype's `[archetype.<name>.defaults.ascii_style]` is a preset too, and an entity's own fields merge over it field by field.
+- **Fields.** Every key of the table above except `scope`, all optional. A field the entity leaves out comes from the scene's table, then the style's default. The schema gives no field a default on purpose, since the loader would fill it in and hide the scene's setting. An archetype's `[archetype.<name>.defaults.ascii_style]` is a preset too, and an entity's own fields merge over it field by field.
 - **Descendants** inherit their ancestor's style until one carries an `ascii_style` or `style_mask` of its own; the nearest wins. A plain `style_mask { style = "ascii" }` is the same as an empty `ascii_style`.
 - **Ids.** Entities with the same settings share one style mask id. Each distinct set of settings is a variant, and the pass looks up each pixel's settings by its id. One frame holds 63 variants among mask ids below 256; more are drawn like the whole frame, with a warning.
-- **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel.
+- **Colour.** A cell's colour averages only the samples of the pixel's own variant, so a styled prop's glyphs carry its colour, not the meadow's behind it. Its silhouette is the mask's, to the pixel. With a `footprint` of 2 or more those 16 samples are summed once a cell, in a pre-pass (#313, `ascii_variant_cells.wgsl`), rather than in each of the cell's pixels. Variants on one grid (the same cell, origin and footprint) share a band of rows, and each cell keeps the first two of the band's variants met in it. A pixel of a third variant still sums for itself, and so does a variant past 8 grids. At footprint 1 every pixel sums for itself: its 16 loads hit the 16 texels its cell shares, so they come from the texture cache, and there a pre-pass over every cell cost more than it saved. The pixels are the same either way, to the bit. Timings are in [Profiling](../guides/profiling.md#gpu-timing).
 - **The whole frame.** With the scene's table on and `scope = "screen"` (or `--ascii`), everything is glyphs and entities still change their own settings; `enabled = false` keeps one smooth.
 - **Grids.** By default every styled entity shares the screen's grid, which keeps glyphs aligned where props meet (the spike's finding, #261). `grid = "object"` pins an entity's cells to its projected origin: its glyphs hold still while it slides across the screen, but still swim when it turns or comes closer (#277). Each such entity gets a variant of its own.
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
 - **Edges between entities** come from [edges](#edges) (#267). Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap would run together. The edge passes draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from one of the style's ids to any other: the plain `ascii` id or any variant's, so a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask. Variants on `grid = "object"` don't draw edges yet, because the edge cells are on the screen grid.
 - **Temporal stability** (#277's `smoothing`, `hysteresis` and `dither`) applies to the whole frame's cells. A per-entity variant is drawn per pixel on its own grid and keeps no history yet, so a styled prop can still shimmer in motion.
 - **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
-- **Not yet:** a per-entity `font` (one glyph set a frame; a different one warns and draws in the scene's), and ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
+- **Fonts** (#335). An entity's `font` names its own glyph set, so props can draw in different fonts in one frame. Every set in use is stacked into one atlas texture (`GpuGlyphStack`, uploaded again only when the frame's sets change), and each variant's row carries its font's glyph cell and where its ramp and its four edge glyphs sit, so the cell's height follows that font's aspect and the edges are drawn in its own line glyphs. A frame holds up to 8 fonts and an atlas stack up to 8192 pixels tall. A font that doesn't fit, or whose ramp and edges don't fit in the frame's 128 ramp steps, draws in the scene's font, with a warning. `demo/ascii_fonts.scene.toml` draws a YBot and a barrel in a hand-drawn halftone set (`demo/fonts/halftone.glyphs.toml`, 8x12 cells) beside props in the built-in letters.
+- **Not yet:** ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
 ```bash
 flint render demo/ascii_entities.scene.toml --output ascii.png              # as authored
@@ -500,6 +532,36 @@ flint render demo/stylize_props.scene.toml --look watercolor --sweep watercolor.
 
 At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns off the scene's table, not entities that carry a `watercolor_style` of their own; set `enabled = false` on them, as with ASCII.
 
+## Display bloom
+
+Display styles draw after the scene's bloom has run, so their bright marks can't feed it. ASCII's `glow` makes up for that inside each glyph's cell, but it stops at the cell's edge: a glyph never lights its neighbours, and a bright run of cells doesn't bloom as one. The `display_bloom` style (#321) is a bloom over the displayed picture, for any display style that wants one (ASCII's glyphs, pencil's highlights, a CRT look):
+
+```toml
+[post_process.styles.display_bloom]
+intensity = 1.5    # how much halo is added
+threshold = 0.55   # display value (0-1) a pixel's brightest channel must pass
+knee = 0.25        # softness of that threshold, as a share of it
+levels = 5         # how far it reaches: each level doubles it (in points)
+saturation = 1.0   # 1 keeps the glyph's hue, 0 glows white
+```
+
+![pbr_test in phosphor ASCII at 3x, glow 0.6 alone on the left and with display bloom on the right: the bright box's glyphs share one halo that spills across their cells and over the grid lines beside it](../images/display-bloom-phosphor-crop.png)
+
+*A crop of `flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --ascii-glow 0.6` at 1280x720, shown at 3x, without and with `--style display_bloom`.*
+
+- **Where it runs.** It's registered after ASCII and pencil, so by default it blooms what they drew. Give it an `order` to place it elsewhere in the display chain ([Order within a stage](#order-within-a-stage)).
+- **The threshold is on what you see.** A pixel passes by its brightest channel in display values (0--1), with a soft knee. The halo itself adds in linear light. At the defaults the dim grass glyphs stay clean and only the lit box and the ridge glow; a lower `threshold` or a wider `knee` lifts the whole field.
+- **The chain** has the HDR bloom's shape: a threshold into a half-size mip (four taps over each 4x4 block, so a one-pixel stroke lands whole), a 13-tap downsample per level, a tent upsample added back up level by level, and a composite that adds the result over the input. The mips are `Rgba16Float` textures of the style's own (`StyleFrame::target_sized`), the first mip chain a display style keeps. Each step has its own uniform slot, because every write lands before the frame's one submission.
+- **`levels` is in points.** On a 2x display the chain takes one more level, so the halo keeps its size next to cells that also grew. The intensity is divided by the levels drawn, so changing the reach doesn't change the brightness.
+- It's a whole-frame style with no per-entity component.
+
+At 1080p on an RTX 4070 it costs **0.066 ms** (5 levels; `flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom --width 1920 --height 1080 --gpu-time 240`). Its mips add about 5.5 MB at 1080p (a half-size `Rgba16Float` texture and the quarter, eighth... ones under it). The `display-bloom` golden pins it over phosphor ASCII.
+
+```bash
+flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom -o glow.png
+flint render demo/pbr_test.scene.toml --ascii --ascii-palette phosphor --style display_bloom --sweep display_bloom.knee=0,0.25,0.5 -o knee.png
+```
+
 ## Looks and sweeps
 
 A **look** (#279) is a named preset you can put over any scene. It lives in `styles/<name>.look.toml`, next to the `*.style.toml` generation guides, and has two tables. `[look]` says what the look is and which sweeps to try first. `[post_process]` is a block in exactly the scene format. The look's block is merged into the scene's own `[post_process]` key by key: tables merge and everything else replaces, so a look changes only the keys it names. A field or style the engine doesn't know is an error that names the closest real one, because otherwise a typo would quietly fall back to a default.
@@ -538,7 +600,7 @@ flint render scene.toml --look ink_wash --style kuwahara:radius=3 -o sharper.png
 
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 
-- any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=3,6,9`. Values are checked against the style's range;
+- any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;
 - any `[post_process]` field, written `post.<field>`: `post.exposure=0.8,1.2`. Use `|` between values to sweep a vector: `post.fog_color=0,0,0|0.7,0.75,0.82`;
 - `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks.
 
@@ -565,13 +627,13 @@ Each style belongs to one of two stages:
 scene (HDR, render scale)
   -> style mask (Rg16Uint: id + blend, only while a style reads it)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
-  -> SSAO, volumetric, bloom
+  -> SSAO, volumetric (depth), bloom (the original HDR, or the HDR styles' result: feeds_bloom)
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
-  -> Display styles (watercolor, ASCII, pencil, invert) surface format, output resolution
+  -> Display styles (watercolor, ASCII, pencil, display bloom, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```
 
-- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. SSAO and bloom read the unstylized scene.
+- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. Bloom reads the unstylized scene unless a style feeds it (below). SSAO and volumetrics read depth and shadows, never colour, so no style changes them; the composite lays them over the stylized image.
 - **Display stage.** The finished, tonemapped picture at output resolution, after the render-scale upscale and before FXAA and the HUD. This is where glyphs and lines stay crisp under `--render-scale` (the ASCII spike's finding).
 
 Styles of one stage run one after another, each reading the one before it. The framework ping-pongs between two targets it owns, so any number of styles chain without a style knowing its neighbours.
@@ -580,7 +642,7 @@ The display stage keeps its memory to two full-size textures (#302). At 1440p ea
 
 ### Order within a stage
 
-By default a stage runs its styles in registration order: kuwahara, watercolor, ascii, pencil, invert, mask_view, then user styles in the order they loaded. A style's table can give it a place of its own with `order` (#299). Lower runs first; a style without one stands at its registration index (watercolor 1, ascii 2, pencil 3, invert 4), and equal orders keep registration order:
+By default a stage runs its styles in registration order: kuwahara, watercolor, ascii, pencil, display_bloom, invert, mask_view, edges_view, then user styles in the order they loaded. A style's table can give it a place of its own with `order` (#299). Lower runs first; a style without one stands at its registration index (watercolor 1, ascii 2, pencil 3, display_bloom 4, invert 5), and equal orders keep registration order:
 
 ```toml
 # ASCII first, then watercolor paints over the glyphs
@@ -593,11 +655,33 @@ order = 9
 
 - Any number works: an integer, a fraction to slip between two (`order = 2.5`), or a negative to go before everything.
 - Only styles of the same stage compare. An HDR style always runs before a display style.
-- A table switches its style on, so to place a style without turning it on write `enabled = false` beside `order`. Kuwahara takes `order` in a `[post_process.styles.kuwahara]` table, as it keeps its other settings in its `kuwahara_*` fields.
+- A table switches its style on, so to place a style without turning it on write `enabled = false` beside `order`. Kuwahara takes `order` in its `[post_process.styles.kuwahara]` table like any other style.
 - `--style ascii:order=0` sets it from the command line, and `--sweep watercolor.order=0,9` lays the orders side by side.
 - The F4 Styles section opens with each stage's chain, first to last; **swap** runs a style before the one ahead of it, and Copy TOML writes the `order` back out.
 
 `order` is a key of every style's own table, not a `style_order = [...]` list on `[post_process]`, because everything else about a style lives in its table: a [look](#looks-and-sweeps) or a `--style` word that adds one style can place it without restating every other style, Copy TOML stays one block, and a list naming a style the scene doesn't use would need its own warnings. The cost is that the whole order isn't written in one place, which is what the F4 chain line shows instead. No style may name a parameter or option `order` or `enabled`.
+
+### Bloom from a style
+
+By default bloom's threshold reads the scene *under* the HDR styles: light comes from the world, not the brush, so a painted surface keeps the halo its original bright pixels had. A style whose own bright shapes should glow (ink brighter than white, a bleeding highlight) **feeds bloom** instead: bloom then reads the HDR stage's result (#300).
+
+- A style says so in its descriptor (`feeds_bloom: true`) or, for a user style, in its `.shader.toml` (`feeds_bloom = true`, `stage = "hdr"` only).
+- A scene overrides it in the style's table, Kuwahara's included:
+
+  ```toml
+  [post_process.styles.kuwahara]
+  feeds_bloom = true
+  ```
+- On the command line: `--style kuwahara:feeds_bloom=1`, `--sweep neon.feeds_bloom=0,1`. In F4 it is the **Feeds bloom** checkbox under each HDR style in Styles, Kuwahara's included, and Copy TOML writes it when it differs from the style's default.
+- When any HDR style that ran this frame feeds bloom, bloom reads the stage's final result, every style in it included. A display style can't feed bloom: it runs after it (`feeds_bloom` on one is a warning). ASCII's phosphor halo is its own `glow` for that reason.
+
+Kuwahara's default is unchanged: off.
+
+| ![neon isolines, bloom reading the original scene: the lines are flat, the lamp's halo glows where the style dimmed it](../images/bloom-follows-style-neon-off.png) | ![neon isolines feeding bloom: each line glows](../images/bloom-follows-style-neon-on.png) |
+|---|---|
+| `demo/neon_bloom.scene.toml --style neon:feeds_bloom=0`: bloom reads the scene under the style. The lines are flat, and the lamp, which the style dimmed to a fifth, still haloes at full strength | The scene as written (`neon` says `feeds_bloom = true`): bloom reads the styled picture, so each line glows and the lamp's halo shrinks with it |
+| ![Kuwahara, bloom from the original scene](../images/bloom-follows-style-kuwahara-off.png) | ![Kuwahara feeding bloom](../images/bloom-follows-style-kuwahara-on.png) |
+| Kuwahara at its default (`neon_bloom` with `--style neon:off --style kuwahara:radius=8 --exposure 2.2`, a crop at 2x): the lamp's halo keeps the original, unpainted rim | The same with `kuwahara:feeds_bloom=1`: the halo follows the painted strokes, so the rim breaks where the filter broke it. Subtle at Kuwahara's sizes, which is why it stays off by default |
 
 ## Writing a style
 
@@ -616,6 +700,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
     hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
     component: None,               // Some("ascii_style"): entities take the style per entity (#266)
+    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
 };
 ```
@@ -696,6 +781,7 @@ name = "greyscale"         # the file stem; lowercase, digits and _
 stage = "display"          # or "hdr"
 shader = "greyscale.wgsl"
 inputs = []                # any of "depth", "mask", "edges"; colour is always there
+# feeds_bloom = true       # hdr only: bloom reads this style's result (#300)
 
 [params.amount]
 default = 1.0
@@ -746,11 +832,11 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
 
 ## Goldens
 
-Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case with `flint render` and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite.
+Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case with `flint render` and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite. CI runs it on WARP for every PR (#314), against a `<stem>.warp.png` variant where WARP's render differs from the golden by more than the tolerance allows ([adapters and variants](../guides/headless-rendering.md#adapters-and-golden-variants)).
 
 ```bash
 flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
@@ -760,7 +846,7 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 
 | Case | What it pins |
 |------|--------------|
-| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off |
+| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off, and its character grid exactly (`ascii_pbr_test.txt`, #317) |
 | `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props`, with edges |
 | `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points (edges off: the editor grid would be traced) |
 | `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid (edges off) |
@@ -819,7 +905,7 @@ Descendants inherit their ancestor's style until one of them carries a `style_ma
 
 ![The style mask debug view over demo/style_mask.scene.toml: the bench and the skinned YBot in one hue ("ascii"), the barrel, the crate and the lantern it carries in another ("pencil"), the opted-out box on the crate grey, and the legend in the lower left naming each hue](../images/style-mask-debug.png)
 
-See it with the `style` debug view, which switches the `mask_view` style on:
+See it with the `style` debug view, which switches the `mask_view` style on and runs it alone: while the view is up the scene's other styles, of either stage, are suspended, so the hues lie over the plain scene rather than over glyphs or hatching (#334). A scene that turns `mask_view` on in its own `[post_process.styles]` keeps its chain, the mask view reading whatever ran before it:
 
 ```bash
 flint render demo/style_mask.scene.toml --debug-mode style --output mask.png

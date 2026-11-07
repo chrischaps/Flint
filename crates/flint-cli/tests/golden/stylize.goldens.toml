@@ -18,6 +18,24 @@
 # took 20-90 s), and turn the grid off: its far-off moire is the part of
 # a frame most likely to shade differently on another GPU.
 
+# Across adapters (#314): goldens are blessed on an RTX 4070 under Vulkan,
+# and CI compares on WARP. The glyph tolerance below held for 29 of the 31
+# glyph cases on WARP (worst: edges-view at 1.25% / mean 2.80). The two
+# misses were by their mean: ascii-full-msaa4 (3.77; 3.47 on the same RTX
+# under DX12: MSAA resolves differ by backend) and style-terrain (3.36,
+# glyph flips across a whole hillside). A broken grid reads a mean of
+# 15 on WARP, five times its noise. WARP itself is deterministic: its
+# variants match byte for byte run to run. The smooth styles' 8-level
+# limits can't hold across adapters at all: WARP's drift (kuwahara mean
+# 0.71, watercolor-kuwahara 0.89) is the size of a real regression
+# (radius 4 against 5 is 0.39). Where a case misses on WARP it has a
+# `<golden>.warp.png` variant, taken from CI's stylize-goldens-warp
+# artifact; a deliberate change re-blesses those from the next run's.
+# The exact text goldens (#317) moved on WARP too: 55 cells of ascii-full
+# and 2 of ascii-style-entities, each a neighbour on the ramp (`=` for
+# `+`), never a shifted grid. They have `.warp.txt` variants, so each
+# adapter stays exact rather than every adapter getting an allowance.
+
 [suite]
 name = "stylize"
 root = "../../../.."
@@ -40,6 +58,10 @@ name = "ascii-full"
 scene = "demo/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"
 args = ["--style", "ascii:edges=0"]
+# The structural golden (#317): the same frame's 80x45 character grid,
+# which must match cell for cell. A tone glyph that moved shows as a caret
+# in <out>/ascii-full.text.diff, readable without opening an image
+text = "ascii_pbr_test.txt"
 
 [[case]]
 name = "ascii-full-detailed-tint"
@@ -148,6 +170,9 @@ args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 name = "ascii-style-entities"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid"]
+# Per entity (#317): the barrel and YBot are glyphs, every other cell is a
+# space (the picture passes through, and the pencil props draw over theirs)
+text = "ascii-style-entities.txt"
 
 [[case]]
 name = "ascii-style-screen"
@@ -159,12 +184,31 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# The variant cell pre-pass (#313) sums a variant's cells once, but only at
+# a footprint of 2 or more: these pin it on both grids. Blessed with main's
+# binary from before #313, so they say the pre-pass draws the same pixels
+[[case]]
+name = "ascii-style-footprint2"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
+
+[[case]]
+name = "ascii-style-object-footprint3"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
+
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
 # both carried in the mask's .g beside their ids
 [[case]]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
 args = ["--no-grid"]
+
+# The same through the variant cell pre-pass (#313), blessed as above
+[[case]]
+name = "ascii-blend-footprint2"
+scene = "demo/stylize_blend.scene.toml"
+args = ["--no-grid", "--style", "ascii:footprint=2"]
 
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
 # glass. The fire stays fire and the glass fades the crate's glyphs by its
@@ -219,6 +263,13 @@ args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1
 # filter's drift is small and everywhere. Kuwahara at radius 4 against
 # this radius-5 golden is 1.05% past 8 levels with a mean of 0.39, which
 # the ASCII limits pass and these fail.
+
+# Display bloom (#321) over phosphor ASCII: the bright box's glyphs glow
+# across their cells. Edges off, so pbr_test's grid isn't traced
+[[case]]
+name = "display-bloom"
+scene = "demo/pbr_test.scene.toml"
+args = ["--ascii", "--ascii-palette", "phosphor", "--ascii-edges", "0", "--style", "display_bloom"]
 
 [[case]]
 name = "invert"

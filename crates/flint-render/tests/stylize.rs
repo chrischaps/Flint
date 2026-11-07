@@ -124,7 +124,7 @@ impl Gpu {
 #[test]
 fn a_display_style_inverts_the_frame_and_lets_it_go() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -196,7 +196,7 @@ fn a_display_style_inverts_the_frame_and_lets_it_go() {
 #[test]
 fn hdr_and_display_styles_chain_in_one_frame() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -209,7 +209,7 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     );
     let world = FlintWorld::new();
     let mut config = renderer.post_process_config().clone();
-    config.kuwahara_enabled = true;
+    config.styles.set_enabled("kuwahara", true);
     renderer.set_post_process_config(config.clone());
     renderer.ensure_style_resources(&gpu.device);
     let painted = gpu.frame(&mut renderer, &world);
@@ -237,7 +237,7 @@ fn hdr_and_display_styles_chain_in_one_frame() {
 #[test]
 fn display_styles_with_fxaa_hold_two_full_size_textures() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let world = FlintWorld::new();
@@ -282,7 +282,7 @@ fn display_styles_with_fxaa_hold_two_full_size_textures() {
 #[test]
 fn an_authored_order_rearranges_a_stage() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A fresh renderer per frame, so ASCII's cell history starts clean
@@ -336,7 +336,7 @@ fn block(pixels: &[u8], period: usize, cx: usize, cy: usize) -> Vec<u8> {
 #[test]
 fn ascii_draws_one_glyph_per_cell_on_one_grid() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -424,7 +424,7 @@ fn hex_bytes(palette: &flint_render::palette::Palette) -> Vec<[u8; 3]> {
 fn ascii_palette_modes_draw_only_the_palettes_colours() {
     use flint_render::palette::Palette;
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(
@@ -496,6 +496,184 @@ fn ascii_palette_modes_draw_only_the_palettes_colours() {
     );
 }
 
+/// The colour of grid pixel (x, y) in the palette agreement test: 16
+/// steps of each channel over the 64x64 target.
+fn grid_colour(x: u32, y: u32) -> [f32; 3] {
+    let i = y * SIZE + x;
+    [i % 16, (i / 16) % 16, i / 256].map(|c| c as f32 / 15.0)
+}
+
+const PALETTE_HARNESS: &str = r#"
+struct Harness {
+    inks: array<vec4<f32>, 32>,
+    lab: array<vec4<f32>, 32>,
+    // len, chroma, dither, unused
+    look: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> h: Harness;
+fn palette_ink(i: u32) -> vec3<f32> { return h.inks[i].rgb; }
+fn palette_ink_lab(i: u32) -> vec3<f32> { return h.lab[i].rgb; }
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<u32>(floor(pos.xy));
+    let i = p.y * 64u + p.x;
+    let c = vec3<f32>(f32(i % 16u), f32((i / 16u) % 16u), f32(i / 256u)) / 15.0;
+    let ink = pal_pick(0u, u32(h.look.x), c, h.look.y, h.look.z, vec2<i32>(p));
+    // The target is sRGB: hand it linear so its bytes are the display ink
+    let lo = ink / 12.92;
+    let hi = pow((ink + 0.055) / 1.055, vec3<f32>(2.4));
+    return vec4<f32>(select(hi, lo, ink <= vec3<f32>(0.04045)), 1.0);
+}
+"#;
+
+/// `Palette::pick` and `palette.wgsl`'s `pal_pick` give every colour of a
+/// grid the same ink, with chroma pushed and dither on (#320). A colour
+/// within float noise of a tie (two inks, or the dither threshold) may go
+/// either way and is left out.
+#[test]
+fn the_palette_matcher_agrees_with_its_cpu_reference() {
+    use flint_render::palette::{bayer4, oklab, Palette, PALETTE_WGSL};
+    use wgpu::util::DeviceExt;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let device = &gpu.device;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("palette harness"),
+        source: wgpu::ShaderSource::Wgsl(format!("{PALETTE_WGSL}\n{PALETTE_HARNESS}").into()),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            }),
+        ),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(FORMAT.into())],
+            compilation_options: Default::default(),
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let mut checked = 0;
+    for (name, chroma, dither) in [
+        ("cga", 1.0, 0.0),
+        ("cga16", 1.0, 0.0),
+        ("cga16", 2.0, 0.0),
+        ("cga", 1.5, 1.0),
+        ("cga16", 2.5, 0.6),
+        ("cga-warm", 0.0, 0.0),
+    ] {
+        let palette = Palette::builtin(name).unwrap();
+        let mut data: Vec<f32> = Vec::new();
+        let pad = |v: &mut Vec<f32>, rows: Vec<[f32; 3]>| {
+            for i in 0..32 {
+                let c = rows.get(i).copied().unwrap_or_default();
+                v.extend([c[0], c[1], c[2], 0.0]);
+            }
+        };
+        pad(&mut data, palette.colors().to_vec());
+        pad(&mut data, palette.lab_colors());
+        data.extend([palette.colors().len() as f32, chroma, dither, 0.0]);
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gpu.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        let pixels = gpu.pixels();
+
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let colour = grid_colour(x, y);
+                let ([_, _], [d1, d2]) = palette.nearest_two(colour, chroma);
+                // A tie between the two nearest, or a share on the
+                // dither's threshold, is float noise either side
+                let share = d1.sqrt() / (d1.sqrt() + d2.sqrt()).max(1e-6);
+                if (d2 - d1).abs() < 1e-5
+                    || (dither > 0.0
+                        && (share * dither - bayer4([x as i32, y as i32])).abs() < 1e-4)
+                {
+                    continue;
+                }
+                let want = palette
+                    .pick(colour, chroma, dither, [x as i32, y as i32])
+                    .map(|v| (v * 255.0).round() as u8);
+                let at = ((y * SIZE + x) * 4) as usize;
+                let got = &pixels[at..at + 3];
+                assert!(
+                    (0..3).all(|i| got[i].abs_diff(want[i]) <= 1),
+                    "{name} chroma {chroma} dither {dither}: {colour:?} (lab {:?}) at ({x}, {y}) \
+                     is {got:?} on the GPU, {want:?} on the CPU",
+                    oklab(colour)
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 6 * 4000, "only {checked} colours compared");
+}
+
 /// Cells (8 px) whose pixels differ between two RGBA8 frames.
 fn changed_cells(a: &[u8], b: &[u8]) -> usize {
     let n = SIZE as usize / 8;
@@ -507,7 +685,7 @@ fn changed_cells(a: &[u8], b: &[u8]) -> usize {
 #[test]
 fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A box: its edges cut cells, whose tones sit between the box's and
@@ -608,7 +786,7 @@ fn held(gpu: &Gpu) -> [usize; 4] {
 #[test]
 fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let mut world = FlintWorld::new();
@@ -687,7 +865,7 @@ fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
 #[test]
 fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     use flint_render::entity_style::{set_entity_style, set_style_param};
@@ -784,6 +962,113 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
 
+/// #335: two entities in one frame draw in two glyph sets. The right cube
+/// names a set whose every glyph is solid ink in tall 4x8 cells: tinted
+/// red, all of its pixels turn red, while the left cube, in the built-in
+/// letters, keeps its ground between glyphs and doesn't change a pixel.
+#[test]
+fn two_entities_draw_in_two_glyph_sets_in_one_frame() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_core::vfs::{self, MemorySource};
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut src = MemorySource::new();
+    let solid = "####\n".repeat(8);
+    src.insert("fonts/solid.txt", format!("== #\n{solid}"));
+    src.insert(
+        "fonts/solid.glyphs.toml",
+        "[font]\nfile = \"solid.txt\"\ncell = [4, 8]\n[ramps.ink]\nglyphs = \"#\"\n\
+         [edges]\nhorizontal = \"#\"\nvertical = \"#\"\ndiagonal = \"#\"\nantidiagonal = \"#\"\n",
+    );
+    vfs::scoped(std::sync::Arc::new(src), || {
+        let mut world = FlintWorld::new();
+        boxed(&mut world, "left", 1.0, 0.0, None);
+        boxed(&mut world, "right", 1.0, 0.0, None);
+        let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+        for (name, x) in [("left", -2.2), ("right", 2.2)] {
+            let id = world.get_id(name).unwrap();
+            let mut transform = toml::Table::new();
+            transform.insert("position".into(), vec3([x, 0.0, 0.0]));
+            transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+            world
+                .set_component(id, "transform", transform.into())
+                .unwrap();
+            set_entity_style(&mut world, id, "ascii").unwrap();
+            set_style_param(&mut world, id, "cell", 4.0.into()).unwrap();
+            set_style_param(&mut world, id, "color", "tint".into()).unwrap();
+            set_style_param(&mut world, id, "tint", vec3([1.0, 0.0, 0.0])).unwrap();
+            set_style_param(&mut world, id, "outline", 0.0.into()).unwrap();
+            set_style_param(&mut world, id, "min_coverage", 0.0.into()).unwrap();
+        }
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let letters = gpu.frame(&mut renderer, &world);
+        let right = world.get_id("right").unwrap();
+        set_style_param(&mut world, right, "font", "solid".into()).unwrap();
+        let fonts = gpu.frame(&mut renderer, &world);
+        assert_eq!(renderer.style_ids().len(), 2, "one id each");
+
+        // Per half: pixels the style inked red, and red-tinted pixels that
+        // aren't solid red (ground between glyphs, or a glyph's edge)
+        let side = |frame: &[u8], right: bool| {
+            let (mut red, mut ground) = (0, 0);
+            for (i, p) in frame.chunks(4).enumerate() {
+                if ((i % SIZE as usize) >= SIZE as usize / 2) != right {
+                    continue;
+                }
+                let tinted = p[1] < 8 && p[2] < 8;
+                red += (tinted && p[0] > 250) as usize;
+                ground += (tinted && p[0] <= 250) as usize;
+            }
+            (red, ground)
+        };
+        let half = |frame: &[u8], right: bool| -> Vec<u8> {
+            frame
+                .chunks(SIZE as usize * 4)
+                .flat_map(|row| {
+                    let mid = row.len() / 2;
+                    if right {
+                        row[mid..].to_vec()
+                    } else {
+                        row[..mid].to_vec()
+                    }
+                })
+                .collect()
+        };
+        let (letters_red, letters_ground) = side(&letters, true);
+        let (solid_red, solid_ground) = side(&fonts, true);
+        eprintln!(
+            "right cube: letters {letters_red} ink / {letters_ground} ground, \
+             solid {solid_red} ink / {solid_ground} ground"
+        );
+        assert!(
+            letters_ground > letters_red / 4,
+            "letters leave ground showing"
+        );
+        assert!(
+            solid_red > letters_red + letters_ground / 2,
+            "the solid set inks the cube"
+        );
+        assert!(
+            solid_ground * 20 < solid_red,
+            "almost nothing of it is ground"
+        );
+        assert_eq!(
+            half(&fonts, false),
+            half(&letters, false),
+            "the left cube's letters don't change"
+        );
+    });
+}
+
 /// A tilted box filling the middle of the frame: silhouettes against the
 /// sky and creases where its faces meet.
 fn box_world() -> FlintWorld {
@@ -819,7 +1104,7 @@ fn coloured(pixels: &[u8]) -> Vec<bool> {
 #[test]
 fn two_styles_share_one_edge_pass_a_frame() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     // A user style that paints white where the shared edges say edge
@@ -940,7 +1225,7 @@ fn two_styles_share_one_edge_pass_a_frame() {
 #[test]
 fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
     let Some(gpu) = gpu() else {
-        eprintln!("no GPU adapter; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     use flint_render::entity_style::{clear_entity_style, set_entity_style, set_style_param};

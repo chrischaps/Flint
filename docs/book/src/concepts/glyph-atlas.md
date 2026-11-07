@@ -16,12 +16,14 @@ Every ASCII look needs glyphs on the GPU. `flint_render::glyph_atlas` rasterizes
 | `GlyphSet` | An atlas with its ramps, a default ramp and edge glyphs, loaded from a `*.glyphs.toml`. |
 | `GlyphSetCache` | Sets by name, each loaded once. |
 | `GpuGlyphAtlas` | The atlas uploaded once as an `R8Unorm` texture: sample `.r` for ink. |
+| `GpuGlyphStack` | Several atlases stacked top to bottom in one `R8Unorm` texture, atlas `i` at row `tops[i]` (#335). Each atlas keeps its gutter on every side, so no glyph reads into the next. ASCII uses it to draw more than one font a frame. |
 
-An atlas comes from one of three sources:
+An atlas comes from one of four sources:
 
 - **The built-in set** (`GlyphSet::builtin()`), a hand-drawn 8x8 font made for the engine (`crates/flint-render/src/glyph_atlas/builtin_8x8.txt`, editable as text) with no font licence attached. Built once per process.
 - **A TTF or OTF**, rasterized with `ab_glyph` at a line height in pixels. The cell is the line height by the widest advance, and each glyph sits on the baseline, centred in its cell.
 - **A bitmap grid image** (PNG or JPEG), cut into cells left to right, top to bottom.
+- **Pixel text** (`.txt`), cells drawn by hand in the built-in set's format: `== c` starts a glyph, then a row of `#` ink and `.` paper per pixel row. Give the cell, `cell = [w, h]`, under `[font]`. `demo/fonts/halftone.txt` is one: a dot screen in 8x12 cells.
 
 ## Built-in ramps
 
@@ -81,6 +83,8 @@ horizontal = "~"
 - a bare name such as `terminal` to `<dir>/fonts/terminal.glyphs.toml`, searching the scene's folder and then its parent, the same rule the player uses to find `fonts/`.
 
 Failures are cached too, so a bad name warns once rather than every frame.
+
+**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and the candidates searched ahead of it (absent ones too). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. On the web the bundle is fixed and nothing is polled. `demo/ascii_tidepool.scene.toml` names `demo/fonts/tidepool.glyphs.toml` to try it on.
 
 ## Web and bundles
 

@@ -50,7 +50,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     options: &[],
-    enabled: None,
     uses_mask: false,
     needs: &[StyleNeed::Edges],
     hints: &[
@@ -71,6 +70,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         ),
     ],
     component: None,
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Edges View Uniform BGL");

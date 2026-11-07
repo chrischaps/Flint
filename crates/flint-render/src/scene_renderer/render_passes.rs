@@ -1318,12 +1318,19 @@ impl SceneRenderer {
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
         let ids = &self.style_ids;
-        let hdr_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Hdr, config, ids);
-        let display_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Display, config, ids);
+        // The `style` debug view shows the mask over the plain scene (#334):
+        // mask_view runs alone, so no other style's output speckles its hues
+        let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        let hdr_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Hdr, config, ids),
+            solo,
+        );
+        let display_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Display, config, ids),
+            solo,
+        );
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
         let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {
@@ -1443,10 +1450,22 @@ impl SceneRenderer {
             }
         }
 
-        // Run bloom if post-processing effects are enabled
+        // Run bloom if post-processing effects are enabled. It reads the
+        // unstylized scene, unless an HDR style that ran says it feeds
+        // bloom (#300): then the stage's result, so the style's own bright
+        // shapes glow.
         if config.enabled && config.bloom_enabled && resources.bloom_mip_count > 0 {
+            let source = match hdr_scene {
+                Some((view, id)) if hdr_styles.iter().any(|(d, _)| d.feeds_bloom_in(config)) => {
+                    crate::stylize::StyleInput { view, id }
+                }
+                _ => crate::stylize::StyleInput {
+                    view: &resources.hdr_view,
+                    id: crate::stylize::input_id::HDR,
+                },
+            };
             scoped("Bloom", encoder, &mut |encoder| {
-                pp.run_bloom(queue, encoder, device, resources, config)
+                pp.run_bloom(queue, encoder, device, resources, config, &source)
             });
         }
 
