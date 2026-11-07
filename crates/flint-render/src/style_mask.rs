@@ -513,6 +513,73 @@ pub fn debug_color(id: u16) -> [f32; 3] {
     [0.25 + 0.75 * r, 0.25 + 0.75 * g, 0.25 + 0.75 * b]
 }
 
+/// A word for [`debug_color`]'s hue of `id`, so a legend can say "blue"
+/// rather than a triple (#309). `NO_STYLE` is "black".
+pub fn debug_color_name(id: u16) -> &'static str {
+    if id == NO_STYLE {
+        return "black";
+    }
+    let degrees = (id as f32 * 0.618_034).fract() * 360.0;
+    const NAMES: [(f32, &str); 12] = [
+        (15.0, "red"),
+        (40.0, "orange"),
+        (68.0, "yellow"),
+        (100.0, "lime"),
+        (145.0, "green"),
+        (170.0, "mint"),
+        (195.0, "cyan"),
+        (220.0, "azure"),
+        (255.0, "blue"),
+        (285.0, "violet"),
+        (325.0, "magenta"),
+        (345.0, "pink"),
+    ];
+    NAMES
+        .iter()
+        .find(|(below, _)| degrees < *below)
+        .map_or("red", |(_, name)| name)
+}
+
+/// One row of the style mask view's legend: an id, the style variant it
+/// stands for and the colour the view paints it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    pub id: u16,
+    /// The variant's name, as [`StyleIds`] holds it (`ascii`, `ascii{off}`).
+    pub name: String,
+    /// The view's display colour, 0..1.
+    pub color: [f32; 3],
+    /// A word for the colour ([`debug_color_name`]).
+    pub color_name: &'static str,
+}
+
+/// The legend for the style mask view (#309): each id in `ids`, in id
+/// order, with its hue.
+pub fn legend(ids: &StyleIds) -> Vec<LegendEntry> {
+    ids.iter()
+        .map(|(id, name)| LegendEntry {
+            id,
+            name: name.to_string(),
+            color: debug_color(id),
+            color_name: debug_color_name(id),
+        })
+        .collect()
+}
+
+/// The legend on one line, as `flint render` prints it:
+/// `style mask: 1 ascii (blue), 2 pencil (green)`, or a note that nothing
+/// is styled.
+pub fn legend_line(ids: &StyleIds) -> String {
+    if ids.is_empty() {
+        return "style mask: no styled entities".to_string();
+    }
+    let rows: Vec<String> = legend(ids)
+        .iter()
+        .map(|e| format!("{} {} ({})", e.id, e.name, e.color_name))
+        .collect();
+    format!("style mask: {}", rows.join(", "))
+}
+
 // ---------------------------------------------------------------------------
 // The pass
 // ---------------------------------------------------------------------------
@@ -804,6 +871,27 @@ mod tests {
             let d: f32 = ca.iter().zip(cb).map(|(x, y)| (x - y).abs()).sum();
             assert!(d > 0.3, "{a} and {} look alike", a + 1);
         }
+    }
+
+    #[test]
+    fn the_legend_names_each_id_and_its_hue() {
+        assert_eq!(debug_color_name(NO_STYLE), "black");
+        assert_eq!(debug_color_name(1), "blue");
+        assert_eq!(debug_color_name(2), "lime");
+        let mut ids = StyleIds::default();
+        assert_eq!(legend_line(&ids), "style mask: no styled entities");
+        ids.set(vec![
+            ("pencil".into(), StyleVariant::plain("pencil")),
+            ("ascii".into(), StyleVariant::plain("ascii")),
+        ]);
+        let rows = legend(&ids);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].id, rows[0].name.as_str()), (1, "ascii"));
+        assert_eq!(rows[1].color, debug_color(2));
+        assert_eq!(
+            legend_line(&ids),
+            "style mask: 1 ascii (blue), 2 pencil (lime)"
+        );
     }
 
     fn world_with(entities: &[(&str, Option<&str>, Option<&str>)]) -> FlintWorld {

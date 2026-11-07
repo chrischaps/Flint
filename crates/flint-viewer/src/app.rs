@@ -1026,6 +1026,7 @@ impl ViewerApp {
                 self.camera.fov,
             );
         }
+        rp.set_style_ids(renderer.style_ids());
     }
 
     fn animate_camera(&mut self) {

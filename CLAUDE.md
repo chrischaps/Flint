@@ -31,7 +31,8 @@ Flint uses an **edit -> validate -> play** loop:
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
    # Debug/post-processing flags:
    #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style
-   #                          (style = the entity style mask, #263: needs post-processing)
+   #                          (style = the entity style mask, #263: needs post-processing;
+   #                          prints and draws a legend of each id's hue, #309)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
