@@ -302,6 +302,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
 | `--ascii-ink <f32>` | `1` | *Style:* glyph ink brightness |
 | `--ascii-dither <f32>` | `0` | *Style:* ordered dither before the ramp, fixed to the grid (#277) |
+| `--ascii-exposure <f32>` / `--ascii-normalize <f32>` | `0` / `0` | *Style:* stops of gain on each cell's colour; stretch each style id's tone range over the ramp, from this frame (#289) |
 | `--pixels-per-point <f32>` | `1` | A high-DPI window's scale factor: styles sized in points (ASCII cells) scale by it |
 | `--ascii-cell <n>` | `8` | ASCII cell width in points (height follows the font) |
 | `--ascii-levels <n>` | `0` | ASCII tone bands; `0` keeps the whole ramp |
