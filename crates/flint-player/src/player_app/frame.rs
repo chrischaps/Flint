@@ -1489,12 +1489,10 @@ impl PlayerApp {
             if !reload.changed() {
                 return;
             }
+            // What the scene authors, with --style over it, so a reloaded
+            // style a word names keeps the word's settings (#328)
+            let authored = self.scene_post_config().unwrap_or_default();
             if let Some(renderer) = &mut self.scene_renderer {
-                let authored = self
-                    .scene_post_process
-                    .as_ref()
-                    .map(super::scene_loading::post_process_config_from_def)
-                    .unwrap_or_default();
                 let mut config = renderer.post_process_config().clone();
                 flint_render::stylize::custom::refresh_settings(&mut config, &authored, &reload);
                 renderer.set_post_process_config(config);
@@ -1539,6 +1537,10 @@ impl PlayerApp {
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;
+            // --style-time holds the post time, as `flint render`'s does (#328)
+            if let Some(t) = self.style_time {
+                renderer.ocean_time = t as f64;
+            }
 
             let cam_pos = self.camera.position;
             let grass_entities = vec![GrassEntityPosition {

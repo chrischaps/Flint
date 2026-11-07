@@ -153,6 +153,33 @@ pub fn apply_style_spec(config: &mut PostProcessConfig, spec: &str) -> Result<()
     Ok(())
 }
 
+/// Write every word of `specs` into `config`, in order (a later word
+/// wins), and return the errors of the words that didn't parse, each
+/// naming its word. The windowed hosts (#328: `flint-player --style`,
+/// `flint edit scene.toml --style`, the web's `?style=`) call this over
+/// the scene's config at every load, transition and hot reload, so the
+/// command line keeps winning over what the scene authors.
+pub fn apply_style_specs(config: &mut PostProcessConfig, specs: &[String]) -> Vec<String> {
+    specs
+        .iter()
+        .filter_map(|spec| {
+            apply_style_spec(config, spec)
+                .err()
+                .map(|e| format!("--style {spec}: {e}"))
+        })
+        .collect()
+}
+
+/// Check every word of `specs` against the registry, for a host to refuse
+/// a typo at start. Call it once the scene's user styles are registered
+/// (`custom::load_dir`), since a word may name one.
+pub fn check_style_specs(specs: &[String]) -> Result<(), String> {
+    for spec in specs {
+        StyleSpec::parse(spec).map_err(|e| format!("--style {spec}: {e}"))?;
+    }
+    Ok(())
+}
+
 /// One line per registered style with the keys `--style` takes, for help
 /// text and error messages.
 pub fn style_spec_help() -> String {
@@ -333,6 +360,30 @@ mod tests {
         assert!(nan.contains("number"), "{nan}");
         assert!(StyleSpec::parse("ascii:cell").is_err());
         assert!(StyleSpec::parse("kuwahara:cell=3").is_err());
+    }
+
+    #[test]
+    fn a_list_of_words_applies_in_order_and_names_the_bad_ones() {
+        let mut config = PostProcessConfig::default();
+        let words = [
+            "ascii:cell=12".to_string(),
+            "watercolour".to_string(),
+            "ascii:cell=6".to_string(),
+        ];
+        let errors = apply_style_specs(&mut config, &words);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0].starts_with("--style watercolour:"),
+            "{}",
+            errors[0]
+        );
+        // The good words still landed, the later one winning
+        assert!(config.styles.is_enabled("ascii"));
+        assert_eq!(config.styles.param("ascii", "cell"), Some(6.0));
+        assert!(check_style_specs(&words[..1]).is_ok());
+        assert!(check_style_specs(&words)
+            .unwrap_err()
+            .contains("watercolour"));
     }
 
     #[test]

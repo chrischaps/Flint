@@ -23,8 +23,9 @@ pub struct ChartCommonArgs {
     pub base_dir: Option<String>,
 }
 
-/// `--style` and `--style-time`, shared by `flint render` and the
-/// headless `flint edit --render` paths (#271).
+/// `--style` and `--style-time`, shared by `flint render`, the headless
+/// `flint edit --render` paths (#271), `flint play` and the scene viewer
+/// (#328, which write the words over every scene load and hot reload).
 #[derive(clap::Args, Clone, Debug, Default)]
 pub struct StyleArgs {
     /// Turn on a registered style over the scene's post-processing:

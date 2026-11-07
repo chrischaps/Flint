@@ -76,6 +76,9 @@ Flint uses an **edit -> validate -> play** loop:
    #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
    #                          direction surface|screen|tensor, seed, boil; demo/pencil_sketch)
    #   --style-time 1.5       (post time animated styles read; default 0)
+   #                          (#328: --style/--style-time also on flint play, flint-player and
+   #                           flint edit scene.toml, kept through transitions and hot reloads;
+   #                           the web's ?style=ascii:cell=12, repeatable)
    #   --edge-depth 0.6 --edge-normal 2.5   (#301: the shared geometry edges' thresholds;
    #                          `--style edges_view` shows them)
    #   --list-styles [--json] (#303: every registered style, its stage, table, and each
