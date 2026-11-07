@@ -114,14 +114,15 @@ fn ramp_origin(step: u32) -> vec2<u32> {
 // px, a 1.5x display) each atlas pixel keeps one width and only its border
 // pixels blend, so strokes don't alternate 1 and 2 px. The atlas's
 // one-pixel gutter is empty, so the neighbours past a glyph's edge read as
-// no ink.
-fn glyph_coverage(origin: vec2<u32>, local: vec2<f32>, cell_size: vec2<f32>) -> f32 {
-    let scale = cell_size / u.glyph;
+// no ink. `glyph` is the font's glyph cell in atlas pixels (#335: each
+// variant's own font).
+fn glyph_coverage(origin: vec2<u32>, local: vec2<f32>, cell_size: vec2<f32>, glyph: vec2<f32>) -> f32 {
+    let scale = cell_size / glyph;
     let gp = local / scale - 0.5;
     let base = floor(gp);
     let f = clamp((gp - base - 0.5) * scale + 0.5, vec2<f32>(0.0), vec2<f32>(1.0));
     let o = vec2<i32>(origin);
-    let hi = vec2<i32>(u.glyph);
+    let hi = vec2<i32>(glyph);
     let b = vec2<i32>(base);
     let i0 = clamp(b, vec2<i32>(-1), hi);
     let i1 = clamp(b + vec2<i32>(1), vec2<i32>(-1), hi);
@@ -153,14 +154,14 @@ fn cell_ink(v: Variant, hue: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
 
 // How much of the glyph lies within a couple of pixels of `local`, less
 // what's under it: the halo a bright glyph throws on its own cell.
-fn glyph_halo(origin: vec2<u32>, local: vec2<f32>, coverage: f32, cell_size: vec2<f32>) -> f32 {
-    let r = max(cell_size.x / u.glyph.x, 1.0) * 1.25;
+fn glyph_halo(origin: vec2<u32>, local: vec2<f32>, coverage: f32, cell_size: vec2<f32>, glyph: vec2<f32>) -> f32 {
+    let r = max(cell_size.x / glyph.x, 1.0) * 1.25;
     var sum = 0.0;
     for (var k = 0; k < 8; k++) {
         let a = f32(k) * 0.7853982;
         let d = vec2<f32>(cos(a), sin(a));
-        sum += glyph_coverage(origin, local + d * r, cell_size);
-        sum += 0.5 * glyph_coverage(origin, local + d * r * 2.0, cell_size);
+        sum += glyph_coverage(origin, local + d * r, cell_size, glyph);
+        sum += 0.5 * glyph_coverage(origin, local + d * r * 2.0, cell_size, glyph);
     }
     return max(sum / 12.0 - coverage, 0.0);
 }
@@ -191,6 +192,8 @@ fn frame_look() -> Variant {
     v.stretch = u.stretch;
     v.chroma = u.chroma;
     v.palette_dither = u.palette_dither;
+    v.glyph = u.glyph;
+    v.edge_start = NO_EDGE_START;
     return v;
 }
 
@@ -210,7 +213,12 @@ fn tone_origin(v: Variant, step_in: u32) -> vec2<u32> {
     return ramp_origin(v.ramp_start + step);
 }
 
-fn edge_origin(edge: u32) -> vec2<u32> {
+// The line glyph `edge`'s atlas origin in look `v`: the whole frame's, or
+// (#335) the four a variant of another font keeps in the ramp table
+fn edge_origin(v: Variant, edge: u32) -> vec2<u32> {
+    if v.edge_start != NO_EDGE_START {
+        return ramp_origin(v.edge_start + edge);
+    }
     let pair = u.edge_glyphs[edge / 2u];
     return select(pair.xy, pair.zw, (edge & 1u) == 1u);
 }
@@ -219,7 +227,7 @@ fn edge_origin(edge: u32) -> vec2<u32> {
 // glyph on an edge drawn at half strength or more, else the tone glyph.
 fn shown_origin(v: Variant, step: u32, edge: u32) -> vec2<u32> {
     if edge < 4u && u.edges >= 0.5 {
-        return edge_origin(edge);
+        return edge_origin(v, edge);
     }
     return tone_origin(v, step);
 }
@@ -277,11 +285,11 @@ fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
 
 fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
     let inverse = v.ground == 2u;
-    var coverage = glyph_coverage(tone_origin(v, step), local, v.cell);
+    var coverage = glyph_coverage(tone_origin(v, step), local, v.cell, v.glyph);
     // On an edge, the line glyph over the tone glyph; the glow follows
     // whichever glyph mostly shows
     if edge < 4u {
-        coverage = mix(coverage, glyph_coverage(edge_origin(edge), local, v.cell), u.edges);
+        coverage = mix(coverage, glyph_coverage(edge_origin(v, edge), local, v.cell, v.glyph), u.edges);
     }
     let origin = shown_origin(v, step, edge);
     // Inverse already fills the cell with ink; a floor there would cut it
@@ -293,7 +301,7 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: 
     let ground = inks.ground;
     var out = mix(ground, ink, coverage);
     if v.glow > 0.0 && !inverse {
-        out += ink * (v.glow * (0.35 + 0.65 * t)) * glyph_halo(origin, local, coverage, v.cell);
+        out += ink * (v.glow * (0.35 + 0.65 * t)) * glyph_halo(origin, local, coverage, v.cell, v.glyph);
     }
     return clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
 }

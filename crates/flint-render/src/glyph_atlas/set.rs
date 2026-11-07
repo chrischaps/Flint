@@ -13,6 +13,10 @@
 //! # first_char = 32           # cell 0 holds this character...
 //! # chars = " !\"#..."        # ...or name every cell's character in order
 //! # invert = false            # true for dark ink on light paper
+//! # Or cells drawn by hand in builtin_8x8.txt's format (`== c`, then a row
+//! # of `#` ink and `.` paper per pixel row):
+//! # file = "halftone.txt"
+//! # cell = [8, 12]
 //!
 //! [ramps.classic]             # no ink to most ink
 //! glyphs = " .:-=+*#%@"
@@ -453,8 +457,19 @@ fn build_atlas(
             };
             GlyphAtlas::from_grid_image(&image, cell, chars, font.invert)
         }
+        "txt" => {
+            // Hand-drawn cells in the built-in set's format (#335)
+            let cell = font.cell.ok_or_else(|| {
+                GlyphError::Parse(format!(
+                    "{font_file} is drawn pixel text: give its cell = [w, h]"
+                ))
+            })?;
+            let text = vfs::read_to_string(&path)
+                .map_err(|e| GlyphError::Read(format!("{}: {e}", path.display())))?;
+            GlyphAtlas::from_pixel_text(&text, cell)
+        }
         _ => Err(GlyphError::Parse(format!(
-            "font file {font_file}: expected .ttf, .otf, .png or .jpg"
+            "font file {font_file}: expected .ttf, .otf, .png, .jpg or .txt"
         ))),
     }
 }

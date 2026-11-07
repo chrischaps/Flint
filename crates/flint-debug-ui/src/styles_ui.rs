@@ -19,9 +19,12 @@
 //! Both the F4 Rendering & Effects panel and the F3 Styles panel draw this
 //! editor; it edits a [`PostProcessConfig`]'s `styles` and nothing else.
 
-use flint_render::stylize::{self, StyleControl, StyleDescriptor, StyleSettings, StyleStage};
+use flint_render::stylize::{
+    self, ChoiceScope, StyleControl, StyleDescriptor, StyleOption, StyleSettings, StyleStage,
+};
 use flint_render::PostProcessConfig;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// The "Feeds bloom" checkbox of an HDR style (#300): whether bloom
 /// reads the style's result or the unstylized scene. Returns whether it
@@ -88,9 +91,63 @@ pub struct StylesEditor {
     pub last_copied: Option<String>,
     /// How many values the last frame marked as differing from the scene.
     pub marked: usize,
+    /// The scene's folder, where options find their run-time choices (its
+    /// palettes and glyph sets, #322); set by the host on scene load.
+    scene_dir: Option<PathBuf>,
+    /// Each option's run-time choices, by (style, option) and the other
+    /// options' values they were found under, so a combo lists the folder
+    /// once rather than every frame. Dropped when the scene changes.
+    choices: HashMap<(&'static str, &'static str), (String, Vec<String>)>,
 }
 
 impl StylesEditor {
+    /// The scene's folder, where options look for its palettes and glyph
+    /// sets (#322); `None` offers the built-ins only. Calling it again (a
+    /// scene load or reload) finds new files.
+    pub fn set_scene_dir(&mut self, scene_dir: Option<PathBuf>) {
+        self.scene_dir = scene_dir;
+        self.choices.clear();
+    }
+
+    /// The scene folder the editor looks in.
+    pub fn scene_dir(&self) -> Option<&Path> {
+        self.scene_dir.as_deref()
+    }
+
+    /// The values the combo offers for `o`: its fixed choices, or what its
+    /// `discover` finds beside the scene, cached until another option of
+    /// the style (the font, for ramps) or the scene changes.
+    pub fn choices(
+        &mut self,
+        style: &'static StyleDescriptor,
+        o: &StyleOption,
+        pp: &PostProcessConfig,
+    ) -> Vec<String> {
+        if o.discover.is_none() {
+            return o.choices.iter().map(|c| c.to_string()).collect();
+        }
+        let others: String = style
+            .options
+            .iter()
+            .filter(|other| other.name != o.name)
+            .map(|other| format!("{}={};", other.name, style.option(pp, other.name)))
+            .collect();
+        if let Some((key, found)) = self.choices.get(&(style.name, o.name)) {
+            if *key == others {
+                return found.clone();
+            }
+        }
+        let option = |name: &str| style.option(pp, name).to_string();
+        let scope = ChoiceScope {
+            scene_dir: self.scene_dir.as_deref(),
+            option: &option,
+        };
+        let found = o.choices_in(&scope);
+        self.choices
+            .insert((style.name, o.name), (others, found.clone()));
+        found
+    }
+
     /// Draw every table style's section, editing `pp.styles`. `authored`
     /// is the scene's own `[post_process.styles]`, when the host knows it.
     pub fn ui(
@@ -264,9 +321,10 @@ impl StylesEditor {
                         .to_string()
                 });
                 let mut picked = None;
+                let choices = self.choices(style, o, pp);
                 {
                     with_help(ui.label(&label));
-                    if o.choices.is_empty() {
+                    if choices.is_empty() {
                         let key = (style.name, o.name);
                         let buffer = self.text.entry(key).or_insert_with(|| current.clone());
                         let r = ui.add(
@@ -300,14 +358,18 @@ impl StylesEditor {
                                 {
                                     picked = Some(String::new());
                                 }
-                                for choice in o.choices {
-                                    if ui.selectable_label(current == *choice, *choice).clicked() {
-                                        picked = Some(choice.to_string());
+                                for choice in &choices {
+                                    if ui
+                                        .selectable_label(current == *choice, choice.as_str())
+                                        .clicked()
+                                    {
+                                        picked = Some(choice.clone());
                                     }
                                 }
                                 // A value the scene names that the list
-                                // doesn't (a palette file) stays pickable
-                                if !current.is_empty() && !o.choices.contains(&current.as_str()) {
+                                // doesn't (a palette by its path) stays
+                                // pickable
+                                if !current.is_empty() && !choices.contains(&current) {
                                     let _ = ui.selectable_label(true, &current);
                                 }
                             });
@@ -592,26 +654,6 @@ mod tests {
         assert_eq!(editor.marked, 1);
     }
 
-    /// One frame of the editor with `events` as input.
-    fn frame(
-        ctx: &egui::Context,
-        editor: &mut StylesEditor,
-        pp: &mut PostProcessConfig,
-        events: Vec<egui::Event>,
-    ) -> StylesEdit {
-        let mut edit = StylesEdit::default();
-        let input = egui::RawInput {
-            events,
-            ..Default::default()
-        };
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                edit.merge(editor.ui(ui, pp, None));
-            });
-        });
-        edit
-    }
-
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::Key {
             key,
@@ -622,40 +664,93 @@ mod tests {
         }
     }
 
+    /// A style with a free-text option (no choices, none found), as a
+    /// file-named setting is. Registered nowhere; drawn by hand.
+    static TEXT_STYLE: StyleDescriptor = StyleDescriptor {
+        name: "text_test",
+        label: "Text test",
+        stage: StyleStage::Display,
+        params: &[],
+        options: &[StyleOption::new("file", "", &[])],
+        uses_mask: false,
+        needs: &[],
+        hints: &[],
+        component: None,
+        feeds_bloom: false,
+        create: |_| unreachable!("never drawn"),
+    };
+
     #[test]
-    fn typing_a_font_name_survives_frames_and_commits_on_enter() {
+    fn typing_a_file_name_survives_frames_and_commits_on_enter() {
         // The field used to be over a fresh copy of the config each
         // frame, so every keystroke was gone by the next one
         let ctx = egui::Context::default();
         let mut editor = StylesEditor::default();
-        let mut pp = all_on();
-        frame(&ctx, &mut editor, &mut pp, vec![]);
-        ctx.memory_mut(|m| m.request_focus(text_id("ascii", "font")));
-        frame(&ctx, &mut editor, &mut pp, vec![]);
-        frame(
-            &ctx,
-            &mut editor,
-            &mut pp,
-            vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
-        );
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled(TEXT_STYLE.name, true);
+        let mut frame = |pp: &mut PostProcessConfig, events: Vec<egui::Event>| {
+            let mut edit = StylesEdit::default();
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    edit.merge(editor.section(ui, &TEXT_STYLE, pp, None));
+                });
+            });
+            edit
+        };
+        frame(&mut pp, vec![]);
+        ctx.memory_mut(|m| m.request_focus(text_id("text_test", "file")));
+        frame(&mut pp, vec![]);
+        frame(&mut pp, vec![key(egui::Key::A, egui::Modifiers::COMMAND)]);
         for c in ["t", "e", "r", "m"] {
-            let edit = frame(
-                &ctx,
-                &mut editor,
-                &mut pp,
-                vec![egui::Event::Text(c.into())],
-            );
+            let edit = frame(&mut pp, vec![egui::Event::Text(c.into())]);
             assert!(!edit.changed, "typing doesn't apply until Enter");
         }
-        assert_eq!(pp.styles.option("ascii", "font"), None);
-        let edit = frame(
-            &ctx,
-            &mut editor,
-            &mut pp,
-            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
-        );
+        assert_eq!(pp.styles.option("text_test", "file"), None);
+        let edit = frame(&mut pp, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
         assert!(edit.changed);
-        assert_eq!(pp.styles.option("ascii", "font"), Some("term"));
+        assert_eq!(pp.styles.option("text_test", "file"), Some("term"));
+    }
+
+    #[test]
+    fn the_scene_folder_adds_its_palettes_fonts_and_ramps() {
+        let mut src = flint_core::vfs::MemorySource::new();
+        src.insert(
+            "demo/palettes/tidepool.palette.toml",
+            "colors = [\"#0a3d62\", \"#3c6382\"]\n",
+        );
+        src.insert(
+            "demo/fonts/plain.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n",
+        );
+        flint_core::vfs::scoped(std::sync::Arc::new(src), || {
+            let ascii = stylize::find("ascii").unwrap();
+            let option = |name: &str| ascii.options.iter().find(|o| o.name == name).unwrap();
+            let mut editor = StylesEditor::default();
+            let mut pp = all_on();
+            // No scene: the built-ins
+            let palettes = editor.choices(ascii, option("palette"), &pp);
+            assert!(!palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
+            editor.set_scene_dir(Some(PathBuf::from("demo")));
+            let palettes = editor.choices(ascii, option("palette"), &pp);
+            assert!(palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
+            assert!(palettes.iter().any(|p| p == "phosphor"), "built-ins stay");
+            let fonts = editor.choices(ascii, option("font"), &pp);
+            assert_eq!(fonts, ["builtin", "plain"]);
+            // The ramp list is the chosen font's, found again when it changes
+            let ramps = editor.choices(ascii, option("ramp"), &pp);
+            assert!(ramps.iter().any(|r| r == "classic"), "{ramps:?}");
+            pp.styles.set_option("ascii", "font", "plain");
+            assert_eq!(editor.choices(ascii, option("ramp"), &pp), ["dots"]);
+            // A fixed list is the descriptor's own
+            assert_eq!(
+                editor.choices(ascii, option("color"), &pp),
+                option("color").choices
+            );
+        });
     }
 
     #[test]

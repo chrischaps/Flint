@@ -90,7 +90,7 @@ At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px
 | A painterly look that the fog and grade should touch | an HDR-stage style |
 | Marks that stay crisp under `--render-scale` | a Display-stage style |
 
-Today the mask covers static glTF meshes, procedural boxes and skinned meshes. Terrain, grass, particles, sprites and water can only be styled by the whole frame (#290, #310). A frame holds one glyph set (#335) and up to 4095 per-entity variants (#336).
+Today the mask covers static glTF meshes, procedural boxes and skinned meshes. Terrain, grass, particles, sprites and water can only be styled by the whole frame (#290, #310). A frame holds up to 8 glyph sets, one per entity if you like (#335), and up to 4095 per-entity variants (#336).
 
 ## Tuning a look
 

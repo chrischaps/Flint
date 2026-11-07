@@ -45,7 +45,16 @@ struct Variant {
     palette_dither: f32,
     // #320: palette chroma before matching
     chroma: f32,
+    // #335: the variant's font's glyph cell in atlas pixels (each font's
+    // atlas is stacked in the one texture), and where its four edge glyphs'
+    // origins sit in the ramp table (NO_EDGE_START: the uniform's own)
+    glyph: vec2<f32>,
+    edge_start: u32,
+    _p5: u32,
 };
+
+// A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
+const NO_EDGE_START: u32 = 0xffffffffu;
 
 struct AsciiUniforms {
     // Cell size in output pixels, and where the grid starts (centred, so

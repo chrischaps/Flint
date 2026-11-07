@@ -453,16 +453,21 @@ pub struct RenderArgs {
 /// styles beside the scene when one is given.
 fn list_styles(args: &RenderArgs) -> Result<()> {
     use flint_render::stylize::{catalog, custom};
-    if !args.scene.is_empty() {
-        let scene_dir = Path::new(&args.scene).parent().unwrap_or(Path::new("."));
-        for message in custom::load_dir(scene_dir) {
+    // The scene's user styles, and its palettes and fonts as choices (#322)
+    let scene_dir =
+        (!args.scene.is_empty()).then(|| Path::new(&args.scene).parent().unwrap_or(Path::new(".")));
+    if let Some(dir) = scene_dir {
+        for message in custom::load_dir(dir) {
             eprintln!("warning: {message}");
         }
     }
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&catalog::catalog())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&catalog::catalog_for(scene_dir))?
+        );
     } else {
-        print!("{}", catalog::catalog_text());
+        print!("{}", catalog::catalog_text_for(scene_dir));
     }
     Ok(())
 }
@@ -471,7 +476,56 @@ fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
     super::look::Sweep::parse(s)
 }
 
+/// A GPU kept between renders in one process (#329). `flint render` makes
+/// its own; `render-suite` hands every case the same one, so a suite pays
+/// for one device instead of one a case. Each render still builds its own
+/// `SceneRenderer`, so nothing but the device and its two targets carries
+/// over.
+#[derive(Default)]
+pub struct RenderHost {
+    ctx: Option<HeadlessContext>,
+    /// The `--gpu` the device was made for.
+    gpu: Option<String>,
+    /// Devices made so far (one, unless a case asked for another GPU).
+    pub devices_made: usize,
+}
+
+impl RenderHost {
+    /// Let the device go; the next render makes a new one. For after a
+    /// panic, when the device may be in no state to trust.
+    pub fn drop_device(&mut self) {
+        self.ctx = None;
+    }
+
+    fn context(
+        &mut self,
+        width: u32,
+        height: u32,
+        gpu: &Option<String>,
+    ) -> Result<&HeadlessContext> {
+        if self.ctx.is_some() && self.gpu != *gpu {
+            self.ctx = None;
+        }
+        match &mut self.ctx {
+            Some(ctx) => ctx.resize(width, height),
+            None => {
+                let ctx = pollster::block_on(HeadlessContext::new(width, height))
+                    .context("Failed to create headless render context")?;
+                self.ctx = Some(ctx);
+                self.gpu = gpu.clone();
+                self.devices_made += 1;
+            }
+        }
+        Ok(self.ctx.as_ref().unwrap())
+    }
+}
+
 pub fn run(args: RenderArgs) -> Result<()> {
+    run_in(args, &mut RenderHost::default())
+}
+
+/// `flint render` on `host`'s GPU (made on first use).
+pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.list_gpus {
         for a in flint_render::list_adapters() {
             println!("{a}");
@@ -564,8 +618,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         println!("Look: {} ({})", look.name, look.source);
     }
 
-    let ctx = pollster::block_on(HeadlessContext::new(width, height))
-        .context("Failed to create headless render context")?;
+    let ctx = host.context(width, height, &args.gpu)?;
 
     // Configure camera — scene-level first, then CLI overrides take precedence
     let mut camera = Camera::new();
@@ -834,10 +887,18 @@ pub fn run(args: RenderArgs) -> Result<()> {
             "GPU time over {} frames at {}x{} (scene {}x{}):",
             frames, width, height, sw, sh
         );
+        // As wide as the longest label (a style's, such as "Display bloom")
+        let w = stats
+            .gpu_passes
+            .iter()
+            .map(|p| p.label.len())
+            .max()
+            .unwrap_or(0)
+            .max(12);
         for pass in &stats.gpu_passes {
-            println!("  {:<12} {:>7.3} ms", pass.label, pass.ms);
+            println!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
         }
-        println!("  {:<12} {:>7.3} ms", "frame", stats.gpu_frame_ms);
+        println!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
     }
 
     // Render each column (one without --sweep), reading each back

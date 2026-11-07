@@ -38,7 +38,9 @@ pub const MAX_COLORS: usize = 32;
 pub const PALETTE_SUFFIX: &str = ".palette.toml";
 
 /// The palettes built into the engine, by name.
-pub const BUILTIN_PALETTES: &[&str] = &["cga", "cga-warm", "cga16", "phosphor", "amber", "mono"];
+pub const BUILTIN_PALETTES: &[&str] = &[
+    "cga", "cga-warm", "cga16", "phosphor", "amber", "mono", "paper",
+];
 
 /// How a palette's ink is chosen for a colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Deserialize)]
@@ -207,24 +209,7 @@ impl Palette {
     /// the indices of the nearest and the next, and their squared OKLab
     /// distances. The first of equals wins, as in the shader.
     pub fn nearest_two(&self, color: [f32; 3], chroma: f32) -> ([usize; 2], [f32; 2]) {
-        let mut lab = oklab(color);
-        lab[1] *= chroma;
-        lab[2] *= chroma;
-        let (mut best, mut second) = (0, 0);
-        let (mut best_d, mut second_d) = (1e9_f32, 1e9_f32);
-        for (i, ink) in self.colors.iter().enumerate() {
-            let e = oklab(*ink);
-            let d = (0..3)
-                .map(|k| (e[k] - lab[k]) * (e[k] - lab[k]))
-                .sum::<f32>();
-            if d < best_d {
-                (second, second_d) = (best, best_d);
-                (best, best_d) = (i, d);
-            } else if d < second_d {
-                (second, second_d) = (i, d);
-            }
-        }
-        ([best, second], [best_d, second_d])
+        nearest_two_in(&self.colors, color, chroma)
     }
 
     /// The ink for `color` with its chroma scaled by `chroma`, and
@@ -232,15 +217,46 @@ impl Palette {
     /// Bayer pattern on the cell grid: `cell` is the cell's index. The CPU
     /// reference for `pal_pick` in `palette.wgsl`.
     pub fn pick(&self, color: [f32; 3], chroma: f32, dither: f32, cell: [i32; 2]) -> [f32; 3] {
-        let ([best, second], [best_d, second_d]) = self.nearest_two(color, chroma);
-        if dither > 0.0 && self.colors.len() > 1 {
-            let d1 = best_d.sqrt();
-            let share = d1 / (d1 + second_d.sqrt()).max(1e-6);
-            if bayer4(cell) < share * dither {
-                return self.colors[second];
+        pick_in(&self.colors, color, chroma, dither, cell)
+    }
+
+    /// The table the palette style (#324) quantizes to: the ground is a
+    /// colour like any other there, so a dark pixel can fall to CGA's black
+    /// or a light one to paper. Nearest puts the ground first; a ladder
+    /// takes it in at its own lightness, so paper's ground is the top rung
+    /// and phosphor's the bottom one. At most [`MAX_COLORS`] + 1 colours.
+    pub fn table(&self) -> Vec<[f32; 3]> {
+        let mut table = self.colors.clone();
+        match self.matching {
+            PaletteMatch::Nearest => table.insert(0, self.background),
+            PaletteMatch::Luminance => {
+                let at = table
+                    .iter()
+                    .position(|c| luma(*c) > luma(self.background))
+                    .unwrap_or(table.len());
+                table.insert(at, self.background);
             }
         }
-        self.colors[best]
+        table
+    }
+
+    /// The colour the palette style draws for a block of colour `color`
+    /// (display values) in block `cell`. Nearest: `pal_pick` over
+    /// [`table`](Self::table) with `chroma` and `dither`. A ladder: the
+    /// rung for the colour's luminance, moved up to half a rung either way
+    /// by `dither` and the cell's Bayer threshold (as `palette.wgsl` in
+    /// `stylize/` draws it).
+    pub fn quantize(&self, color: [f32; 3], chroma: f32, dither: f32, cell: [i32; 2]) -> [f32; 3] {
+        let table = self.table();
+        match self.matching {
+            PaletteMatch::Nearest => pick_in(&table, color, chroma, dither, cell),
+            PaletteMatch::Luminance => {
+                let n = table.len();
+                let t = luma(color).clamp(0.0, 1.0);
+                let td = (t + (bayer4(cell) - 0.5) * dither / n as f32).clamp(0.0, 1.0);
+                table[((td * n as f32) as usize).min(n - 1)]
+            }
+        }
     }
 
     /// The rung of a luminance ladder for tone `t` (0-1).
@@ -310,6 +326,52 @@ pub fn oklab(display: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Rec. 709 luminance of a display colour, as the shaders weigh it.
+pub fn luma(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// [`Palette::nearest_two`] over any list of inks.
+pub fn nearest_two_in(inks: &[[f32; 3]], color: [f32; 3], chroma: f32) -> ([usize; 2], [f32; 2]) {
+    let mut lab = oklab(color);
+    lab[1] *= chroma;
+    lab[2] *= chroma;
+    let (mut best, mut second) = (0, 0);
+    let (mut best_d, mut second_d) = (1e9_f32, 1e9_f32);
+    for (i, ink) in inks.iter().enumerate() {
+        let e = oklab(*ink);
+        let d = (0..3)
+            .map(|k| (e[k] - lab[k]) * (e[k] - lab[k]))
+            .sum::<f32>();
+        if d < best_d {
+            (second, second_d) = (best, best_d);
+            (best, best_d) = (i, d);
+        } else if d < second_d {
+            (second, second_d) = (i, d);
+        }
+    }
+    ([best, second], [best_d, second_d])
+}
+
+/// [`Palette::pick`] over any list of inks: `pal_pick` on the CPU.
+pub fn pick_in(
+    inks: &[[f32; 3]],
+    color: [f32; 3],
+    chroma: f32,
+    dither: f32,
+    cell: [i32; 2],
+) -> [f32; 3] {
+    let ([best, second], [best_d, second_d]) = nearest_two_in(inks, color, chroma);
+    if dither > 0.0 && inks.len() > 1 {
+        let d1 = best_d.sqrt();
+        let share = d1 / (d1 + second_d.sqrt()).max(1e-6);
+        if bayer4(cell) < share * dither {
+            return inks[second];
+        }
+    }
+    inks[best]
+}
+
 /// A 4x4 Bayer threshold in (0, 1) for the cell at `cell`, as `pal_bayer`.
 pub fn bayer4(cell: [i32; 2]) -> f32 {
     const M: [u32; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
@@ -372,6 +434,14 @@ background = "#120800""##
             r##"match = "luminance"
 colors = ["#5a5a5a", "#999999", "#d0d0d0", "#ffffff"]
 background = "#000000""##
+        }
+        // Dark inks on a light ground (#324): ink, wash and pencil on
+        // cream paper. The palette style takes the paper in as the top
+        // rung; ASCII draws it with `ground = "inverse"` (see the book)
+        "paper" => {
+            r##"match = "luminance"
+colors = ["#1b1a22", "#4b4654", "#8c8479", "#c9bfae"]
+background = "#f3ecdc""##
         }
         _ => return None,
     })

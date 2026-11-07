@@ -98,7 +98,7 @@ pub fn fullscreen_pipeline(
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    fullscreen_pipeline_entry(device, label, module, "fs_main", layouts, format)
+    fullscreen_pipeline_with(device, label, module, "fs_main", layouts, format, None)
 }
 
 /// [`fullscreen_pipeline`] with the fragment entry point `fragment`, for a
@@ -111,7 +111,22 @@ pub fn fullscreen_pipeline_entry(
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format])
+    fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], None)
+}
+
+/// [`fullscreen_pipeline_entry`] with a blend: a style with several passes
+/// in one module (a bloom chain's threshold, downsample, additive upsample
+/// and composite, #321).
+pub fn fullscreen_pipeline_with(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+) -> wgpu::RenderPipeline {
+    fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], blend)
 }
 
 /// [`fullscreen_pipeline`] writing one target per format, `fs_main`'s
@@ -123,11 +138,11 @@ pub fn fullscreen_pipeline_targets(
     layouts: &[&wgpu::BindGroupLayout],
     formats: &[wgpu::TextureFormat],
 ) -> wgpu::RenderPipeline {
-    fullscreen_pipeline_entry_targets(device, label, module, "fs_main", layouts, formats)
+    fullscreen_pipeline_entry_targets(device, label, module, "fs_main", layouts, formats, None)
 }
 
 /// The full-screen pipelines' one maker: entry point `fragment`, a target
-/// per format.
+/// per format, each with `blend`.
 fn fullscreen_pipeline_entry_targets(
     device: &wgpu::Device,
     label: &str,
@@ -135,13 +150,14 @@ fn fullscreen_pipeline_entry_targets(
     fragment: &str,
     layouts: &[&wgpu::BindGroupLayout],
     formats: &[wgpu::TextureFormat],
+    blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
     let targets: Vec<Option<wgpu::ColorTargetState>> = formats
         .iter()
         .map(|format| {
             Some(wgpu::ColorTargetState {
                 format: *format,
-                blend: None,
+                blend,
                 write_mask: wgpu::ColorWrites::ALL,
             })
         })

@@ -65,6 +65,14 @@
 //! variant's cells to its root's projected origin. The frame's ramps and
 //! palettes are packed into one table each.
 //!
+//! A variant may name a font of its own (#335). The frame's glyph sets
+//! (the whole frame's first, up to [`MAX_FONTS`]) are stacked in one atlas
+//! texture, [`GpuGlyphStack`], uploaded again only when the sets change;
+//! the ramp table's origins point into the stack, and each variant row
+//! carries its font's glyph cell and where its four edge glyphs sit in the
+//! ramp table, so its cell takes that font's aspect and its outlines that
+//! font's line glyphs.
+//!
 //! ## Edges (#267)
 //!
 //! Luminance alone loses silhouettes, so cells along the scene's edges
@@ -99,11 +107,11 @@
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage, StyleTexture,
+    choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
+    StyleParam, StylePass, StyleStage, StyleTexture,
 };
-use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
-use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
+use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
+use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,6 +128,37 @@ pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
 
 /// The palette `color = "palette"` uses when the scene names none.
 pub const DEFAULT_PALETTE: &str = "phosphor";
+
+/// The built-in glyph set's ramps, in the order the menu offers them.
+pub const RAMPS: &[&str] = &["classic", "blocks", "minimal", "detailed"];
+
+/// The fonts to offer (#322): the built-in set, then every
+/// `fonts/*.glyphs.toml` beside the scene or in its parent.
+fn font_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(&[BUILTIN_SET], scope.files("fonts", GLYPHS_SUFFIX))
+}
+
+/// The palettes to offer (#322): the built-ins, then every
+/// `palettes/*.palette.toml` beside the scene or in its parent.
+pub(super) fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(BUILTIN_PALETTES, scope.files("palettes", PALETTE_SUFFIX))
+}
+
+/// The ramps the chosen font has (#322): a project's set names its own,
+/// which needn't be the built-in four. A font that doesn't load draws with
+/// the built-in set, so that set's ramps are offered then.
+fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    // The built-in set's four, in the descriptor's order
+    let builtin = || RAMPS.iter().map(|r| r.to_string()).collect();
+    let font = (scope.option)("font");
+    if font.is_empty() || font == BUILTIN_SET {
+        return builtin();
+    }
+    match GlyphSetCache::new(scope.search()).get(&font) {
+        Ok(set) => set.ramps().map(|r| r.name().to_string()).collect(),
+        Err(_) => builtin(),
+    }
+}
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     name: "ascii",
@@ -282,46 +321,55 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "font",
             default: "builtin",
             choices: &[],
+            discover: Some(font_choices),
         },
         StyleOption {
             name: "ramp",
             default: "",
-            choices: &["classic", "blocks", "minimal", "detailed"],
+            choices: RAMPS,
+            discover: Some(ramp_choices),
         },
         StyleOption {
             name: "color",
             default: "source",
             choices: COLOR_MODES,
+            discover: None,
         },
         StyleOption {
             name: "palette",
             default: DEFAULT_PALETTE,
             choices: BUILTIN_PALETTES,
+            discover: Some(palette_choices),
         },
         StyleOption {
             name: "ground",
             default: "dim",
             choices: GROUND_MODES,
+            discover: None,
         },
         StyleOption {
             name: "temporal",
             default: "on",
             choices: TEMPORAL_MODES,
+            discover: None,
         },
         StyleOption {
             name: "scope",
             default: "screen",
             choices: SCOPES,
+            discover: None,
         },
         StyleOption {
             name: "grid",
             default: "screen",
             choices: GRIDS,
+            discover: None,
         },
         StyleOption {
             name: "transition",
             default: "fade",
             choices: TRANSITIONS,
+            discover: None,
         },
     ],
     // The mask gives styled entities their outlines (#267); with no entity
@@ -808,7 +856,17 @@ struct VariantUniform {
     palette_dither: f32,
     /// Palette chroma before matching (#320).
     chroma: f32,
+    /// The variant's font's glyph cell in atlas pixels (#335).
+    glyph: [f32; 2],
+    /// Where the variant's four edge glyphs sit in the ramp table, or
+    /// [`NO_EDGE_START`] for the whole frame's (a variant in its font).
+    edge_start: u32,
+    _pad_font: u32,
 }
+
+/// A variant whose edge glyphs are the uniform's own; `NO_EDGE_START` in
+/// ascii_common.wgsl.
+const NO_EDGE_START: u32 = u32::MAX;
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
 #[repr(C)]
@@ -1017,7 +1075,7 @@ const CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii_cells.wgsl")
 );
-const GLYPH_SHADER: &str = concat!(
+pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
     include_str!("ascii.wgsl")
@@ -1271,12 +1329,20 @@ fn fit_ramp(indices: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// The set in use and its atlas on the GPU.
-struct LoadedFont {
-    name: String,
-    set: Arc<GlyphSet>,
-    _gpu: GpuGlyphAtlas,
+/// The sets in use and their atlases stacked on the GPU (#335).
+struct LoadedStack {
+    sets: Vec<Arc<GlyphSet>>,
+    gpu: GpuGlyphStack,
     bind: wgpu::BindGroup,
+}
+
+impl LoadedStack {
+    /// Glyph `index` of font `font`'s origin in the stack.
+    fn origin(&self, font: u32, index: u32) -> [u32; 2] {
+        let font = font as usize;
+        let [x, y] = self.sets[font].atlas().cell_origin(index);
+        [x, y + self.gpu.tops[font]]
+    }
 }
 
 #[derive(Default)]
@@ -1284,11 +1350,11 @@ struct Fonts {
     search: Vec<PathBuf>,
     cache: GlyphSetCache,
     palettes: PaletteCache,
-    loaded: Option<LoadedFont>,
+    stack: Option<LoadedStack>,
     /// The last (font, ramp) a warning was given for, so it's said once.
     warned: Option<(String, String)>,
-    /// Per-entity warnings already given (too many variants, a font of
-    /// its own, a ramp or palette that doesn't fit), so each is said once.
+    /// Per-entity warnings already given (too many variants or fonts, a
+    /// ramp or palette that doesn't fit), so each is said once.
     warned_variants: std::collections::HashSet<String>,
     /// Frames drawn since the caches last looked at the disk (#323).
     since_poll: u32,
@@ -1511,6 +1577,10 @@ fn variant_uniform(
         min_coverage: param("min_coverage").clamp(0.0, 1.0),
         palette_dither: param("palette_dither").clamp(0.0, 1.0),
         chroma: param("chroma").clamp(0.0, 8.0),
+        // The caller's, from the variant's font (#335)
+        glyph: [0.0; 2],
+        edge_start: NO_EDGE_START,
+        _pad_font: 0,
     }
 }
 
@@ -1583,29 +1653,113 @@ pub fn anchored_origin(anchor: [f32; 2], cell: [f32; 2]) -> [f32; 2] {
     ]
 }
 
-/// The ramps in use, packed one after another into the uniform.
+/// The ramps in use, packed one after another into the uniform: each step
+/// a (font, atlas index) pair, the font an index into the frame's
+/// [`FontsInUse`] (#335), made an origin in the glyph stack at upload.
 #[derive(Default)]
 struct Ramps {
-    steps: Vec<u32>,
-    placed: Vec<(String, (u32, u32))>,
+    steps: Vec<(u32, u32)>,
+    placed: Vec<((u32, String), (u32, u32))>,
 }
 
+/// The key a font's four edge glyphs are packed under in [`Ramps`]; no
+/// ramp is named with a NUL.
+const EDGES_KEY: &str = "\0edges";
+
 impl Ramps {
-    /// Where ramp `name` of `set` sits, packing it on first use; `None`
-    /// when it doesn't fit in what's left.
-    fn place(&mut self, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
-        if let Some((_, at)) = self.placed.iter().find(|(n, _)| n == name) {
-            return Some(*at);
-        }
+    /// Where ramp `name` of `set` (font `font`) sits, packing it on first
+    /// use; `None` when it doesn't fit in what's left.
+    fn place(&mut self, font: u32, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
         let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
         let fit = fit_ramp(ramp.atlas_indices());
-        if self.steps.len() + fit.len() > MAX_RAMP {
+        self.pack(font, name, fit)
+    }
+
+    /// Ramp `name` of font `font` and the font's edge glyphs (#335), both
+    /// or neither: (the ramp's start and length, the edges' start).
+    fn place_with_edges(
+        &mut self,
+        font: u32,
+        set: &GlyphSet,
+        name: &str,
+    ) -> Option<((u32, u32), u32)> {
+        let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
+        let fit = fit_ramp(ramp.atlas_indices());
+        let atlas = set.atlas();
+        let edges: Vec<u32> = set
+            .edges()
+            .all()
+            .iter()
+            .map(|c| atlas.index_of(*c).unwrap_or(0))
+            .collect();
+        let need = |key: &str, len: usize| {
+            if self.find(font, key).is_some() {
+                0
+            } else {
+                len
+            }
+        };
+        if self.steps.len() + need(name, fit.len()) + need(EDGES_KEY, edges.len()) > MAX_RAMP {
             return None;
         }
-        let at = (self.steps.len() as u32, fit.len() as u32);
-        self.steps.extend(fit);
-        self.placed.push((name.to_string(), at));
+        let ramp = self.pack(font, name, fit)?;
+        let edges = self.pack(font, EDGES_KEY, edges)?;
+        Some((ramp, edges.0))
+    }
+
+    fn find(&self, font: u32, name: &str) -> Option<(u32, u32)> {
+        self.placed
+            .iter()
+            .find(|((f, n), _)| *f == font && n == name)
+            .map(|(_, at)| *at)
+    }
+
+    fn pack(&mut self, font: u32, name: &str, indices: Vec<u32>) -> Option<(u32, u32)> {
+        if let Some(at) = self.find(font, name) {
+            return Some(at);
+        }
+        if self.steps.len() + indices.len() > MAX_RAMP {
+            return None;
+        }
+        let at = (self.steps.len() as u32, indices.len() as u32);
+        self.steps.extend(indices.into_iter().map(|i| (font, i)));
+        self.placed.push(((font, name.to_string()), at));
         Some(at)
+    }
+}
+
+/// Fonts one frame can draw in (#335), the whole frame's first; a variant
+/// naming another past these is drawn in the whole frame's (logged once).
+pub const MAX_FONTS: usize = 8;
+
+/// The tallest glyph stack, inside the least texture size every backend
+/// offers; a font that would pass it is drawn in the whole frame's.
+const MAX_STACK_TEXELS: u32 = 8192;
+
+/// The glyph sets a frame draws in (#335): the whole frame's at 0, then
+/// each per-entity variant's own in the order the variants name them.
+struct FontsInUse {
+    sets: Vec<Arc<GlyphSet>>,
+}
+
+impl FontsInUse {
+    fn new(base: Arc<GlyphSet>) -> Self {
+        Self { sets: vec![base] }
+    }
+
+    /// `set`'s index, adding it on first use; `None` when the frame holds
+    /// [`MAX_FONTS`] already or its atlas would make the stack too tall.
+    fn index(&mut self, set: &Arc<GlyphSet>) -> Option<u32> {
+        if let Some(i) = self.sets.iter().position(|s| Arc::ptr_eq(s, set)) {
+            return Some(i as u32);
+        }
+        let tall: u32 = self.sets.iter().map(|s| s.atlas().size()[1]).sum();
+        let [w, h] = set.atlas().size();
+        if self.sets.len() == MAX_FONTS || tall + h > MAX_STACK_TEXELS || w > MAX_STACK_TEXELS {
+            return None;
+        }
+        self.sets.push(set.clone());
+        Some(self.sets.len() as u32 - 1)
     }
 }
 
@@ -1747,14 +1901,13 @@ impl Ascii {
     }
 
     /// Row 0 (the whole frame's, drawn from the cell state) and a row for
-    /// each per-entity variant (#266), with the slot of every mask id.
-    #[allow(clippy::too_many_arguments)]
+    /// each per-entity variant (#266), with the slot of every mask id. A
+    /// variant naming a font of its own (#335) adds it to `in_use`.
     fn variant_table(
         &self,
         frame: &StyleFrame<'_>,
         fonts: &mut Fonts,
-        set: &GlyphSet,
-        glyph: [u32; 2],
+        in_use: &mut FontsInUse,
         ramps: &mut Ramps,
         palettes: &mut Palettes,
         base_ramp: (u32, u32),
@@ -1769,7 +1922,7 @@ impl Ascii {
                 .max()
                 .unwrap_or(1)
         ];
-        let base_font = frame.option("font").to_string();
+        let base = in_use.sets[0].clone();
         let palette_for = |fonts: &mut Fonts, color: &str, name: &str| -> Option<Arc<Palette>> {
             if color != "palette" {
                 return None;
@@ -1807,28 +1960,51 @@ impl Ascii {
             }
             let param = |n: &str| frame.variant_param(v, n);
             let option = |n: &str| frame.variant_option(v, n).to_string();
-            if option("font") != base_font {
-                warn_once(
-                    fonts,
-                    format!("font {}", option("font")),
-                    format!(
-                        "per-entity fonts aren't supported yet; `{}` is drawn in `{base_font}`",
-                        option("font")
-                    ),
-                );
-            }
-            let ramp = ramps.place(set, &option("ramp")).unwrap_or_else(|| {
-                warn_once(
-                    fonts,
-                    format!("ramp {}", option("ramp")),
-                    format!(
-                        "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in all); \
-                         using the scene's",
-                        option("ramp")
-                    ),
-                );
-                base_ramp
-            });
+            // The variant's own font (#335): its ramp and its edge glyphs
+            // packed beside the others, its glyph cell its own. One that
+            // doesn't fit is drawn in the whole frame's font
+            let font_name = option("font");
+            let set = self.set_named(fonts, &font_name);
+            let own = if Arc::ptr_eq(&set, &base) {
+                None
+            } else {
+                let placed = in_use.index(&set).and_then(|font| {
+                    ramps
+                        .place_with_edges(font, &set, &option("ramp"))
+                        .map(|(ramp, edges)| (set.atlas().cell_size(), ramp, edges))
+                });
+                if placed.is_none() {
+                    warn_once(
+                        fonts,
+                        format!("font {font_name}"),
+                        format!(
+                            "font `{font_name}` doesn't fit beside the others ({MAX_FONTS} \
+                             fonts, {MAX_STACK_TEXELS} atlas rows, {MAX_RAMP} ramp steps in \
+                             all); drawn in `{}`",
+                            base.name()
+                        ),
+                    );
+                }
+                placed
+            };
+            let (glyph, ramp, edge_start) = match own {
+                Some(placed) => placed,
+                None => {
+                    let ramp = ramps.place(0, &base, &option("ramp")).unwrap_or_else(|| {
+                        warn_once(
+                            fonts,
+                            format!("ramp {}", option("ramp")),
+                            format!(
+                                "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in \
+                                 all); using the scene's",
+                                option("ramp")
+                            ),
+                        );
+                        base_ramp
+                    });
+                    (base.atlas().cell_size(), ramp, NO_EDGE_START)
+                }
+            };
             let palette = match palette_for(fonts, &option("color"), &option("palette")) {
                 None => PalettePlace::default(),
                 Some(p) => palettes.place(&p).unwrap_or_else(|| {
@@ -1863,6 +2039,8 @@ impl Ascii {
             slots[id as usize] = rows.len() as u32;
             let mut row = variant_uniform(&param, &option, cell, origin, ramp, &palette, flags);
             row.tint = frame.variant_color(v, "tint");
+            row.glyph = [glyph[0] as f32, glyph[1] as f32];
+            row.edge_start = edge_start;
             // The row holds the outline in points; the shader wants pixels
             row.outline = outline_pixels(row.outline, frame.pixels_per_point);
             rows.push(row);
@@ -2021,19 +2199,18 @@ impl Ascii {
         })
     }
 
-    /// The font the config names, uploaded; the built-in set when it can't
-    /// be loaded (the cache has warned).
-    fn font<'f>(&self, frame: &StyleFrame<'_>, fonts: &'f mut Fonts) -> &'f LoadedFont {
+    /// Once a frame: the caches follow the scene's folder, and every
+    /// [`POLL_FRAMES`] a changed palette or glyph set file clears its cache
+    /// (#323). A reloaded set is a new Arc, so the stack re-uploads, and
+    /// palettes are packed afresh every frame.
+    fn refresh_fonts(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
         let search = Fonts::search_for(frame.scene_dir);
         if fonts.search != search {
             fonts.cache = GlyphSetCache::new(search.clone());
             fonts.palettes = PaletteCache::new(search.clone());
             fonts.search = search;
-            fonts.loaded = None;
+            fonts.stack = None;
         }
-        // Hot reload (#323): a changed palette or glyph set file clears its
-        // cache; a new set is a new Arc, so the atlas re-uploads below, and
-        // palettes are packed afresh every frame
         fonts.since_poll += 1;
         if fonts.since_poll >= POLL_FRAMES {
             fonts.since_poll = 0;
@@ -2052,17 +2229,35 @@ impl Ascii {
                 fonts.warned_variants.clear();
             }
         }
-        let name = frame.option("font").to_string();
-        let set = fonts
+    }
+
+    /// The glyph set `name`, the built-in set when it can't be loaded (the
+    /// cache has warned).
+    fn set_named(&self, fonts: &mut Fonts, name: &str) -> Arc<GlyphSet> {
+        fonts
             .cache
-            .get(&name)
-            .unwrap_or_else(|_| GlyphSet::builtin());
-        let stale = fonts
-            .loaded
-            .as_ref()
-            .is_none_or(|l| l.name != name || !Arc::ptr_eq(&l.set, &set));
+            .get(name)
+            .unwrap_or_else(|_| GlyphSet::builtin())
+    }
+
+    /// The atlases of `in_use` stacked on the GPU, uploaded again only
+    /// when the frame's sets change (#335).
+    fn stack<'f>(
+        &self,
+        frame: &StyleFrame<'_>,
+        fonts: &'f mut Fonts,
+        in_use: &FontsInUse,
+    ) -> &'f LoadedStack {
+        let stale = fonts.stack.as_ref().is_none_or(|l| {
+            l.sets.len() != in_use.sets.len()
+                || l.sets
+                    .iter()
+                    .zip(&in_use.sets)
+                    .any(|(a, b)| !Arc::ptr_eq(a, b))
+        });
         if stale {
-            let gpu = GpuGlyphAtlas::upload(frame.device, frame.queue, set.atlas(), "ASCII Atlas");
+            let atlases: Vec<_> = in_use.sets.iter().map(|s| &**s.atlas()).collect();
+            let gpu = GpuGlyphStack::upload(frame.device, frame.queue, &atlases, "ASCII Atlas");
             let bind = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Atlas BG"),
                 layout: &self.atlas_bgl,
@@ -2071,14 +2266,13 @@ impl Ascii {
                     resource: wgpu::BindingResource::TextureView(&gpu.view),
                 }],
             });
-            fonts.loaded = Some(LoadedFont {
-                name,
-                set,
-                _gpu: gpu,
+            fonts.stack = Some(LoadedStack {
+                sets: in_use.sets.clone(),
+                gpu,
                 bind,
             });
         }
-        fonts.loaded.as_ref().expect("loaded above")
+        fonts.stack.as_ref().expect("loaded above")
     }
 }
 
@@ -2092,7 +2286,8 @@ impl StylePass for Ascii {
     ) {
         let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
         let ramp_name = frame.option("ramp").to_string();
-        let set = self.font(frame, &mut fonts).set.clone();
+        self.refresh_fonts(frame, &mut fonts);
+        let set = self.set_named(&mut fonts, frame.option("font"));
         let ramp = match set.ramp(&ramp_name) {
             Some(r) => r,
             None => {
@@ -2116,7 +2311,7 @@ impl StylePass for Ascii {
         // steps and inks sit where the cell state expects them
         let mut ramps = Ramps::default();
         let base_ramp = ramps
-            .place(&set, ramp.name())
+            .place(0, &set, ramp.name())
             .expect("the first ramp is resampled to fit");
         let palette = if frame.option("color") == "palette" {
             let name = match frame.option("palette") {
@@ -2130,11 +2325,11 @@ impl StylePass for Ascii {
         .unwrap_or_else(|| Palette::builtin(DEFAULT_PALETTE).expect("built-in"));
         let mut palettes = Palettes::default();
         let _ = palettes.place(&palette);
+        let mut in_use = FontsInUse::new(set.clone());
         let (mut variants, mut slots) = self.variant_table(
             frame,
             &mut fonts,
-            &set,
-            glyph,
+            &mut in_use,
             &mut ramps,
             &mut palettes,
             base_ramp,
@@ -2244,8 +2439,11 @@ impl StylePass for Ascii {
             band_rows: [[0; 4]; MAX_BANDS],
         };
         let mut uniforms = uniforms;
-        for (i, index) in ramps.steps.iter().enumerate() {
-            let [x, y] = atlas.cell_origin(*index);
+        // Every font the frame draws in, stacked; the whole frame's is at
+        // the top, so its origins are its atlas's own
+        let stack = self.stack(frame, &mut fonts, &in_use);
+        for (i, (font, index)) in ramps.steps.iter().enumerate() {
+            let [x, y] = stack.origin(*font, *index);
             let pair = &mut uniforms.ramp[i / 2];
             pair[(i % 2) * 2] = x;
             pair[(i % 2) * 2 + 1] = y;
@@ -2331,7 +2529,7 @@ impl StylePass for Ascii {
         }
 
         // Glyph pass: draw the cells
-        let font = fonts.loaded.as_ref().expect("loaded by font()");
+        let font = fonts.stack.as_ref().expect("stacked above");
         let cells = cells_bind(
             frame,
             "ASCII Cells BG",
@@ -2383,13 +2581,21 @@ impl StylePass for Ascii {
                 },
             );
             capture.first = text_first(origin);
-            capture.glyphs = atlas
-                .glyphs()
+            // Every font's glyphs, at their places in the stack (#335)
+            capture.glyphs = font
+                .sets
                 .iter()
                 .enumerate()
-                .map(|(i, ch)| {
-                    let [x, y] = atlas.cell_origin(i as u32);
-                    (x | (y << 16), *ch)
+                .flat_map(|(f, set)| {
+                    set.atlas()
+                        .glyphs()
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, ch)| ((f as u32, i as u32), *ch))
+                })
+                .map(|((f, i), ch)| {
+                    let [x, y] = font.origin(f, i);
+                    (x | (y << 16), ch)
                 })
                 .collect();
             capture.overdrawn = overdrawn;
@@ -2454,10 +2660,12 @@ mod tests {
         // 160 bytes of scalars (#267's edge strength, #320's palette look), 2
         // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 2 x 32 vec4<f32> of
         // palette (inks, then their OKLab), then the variant table's 16-byte
-        // header (its rows of 128, #288's silhouette floors the last 16, and
-        // its slots are storage buffers since #336), and the variant cell
+        // header (its rows, and its slots, are storage buffers since #336:
+        // a row is 144 bytes, #288's silhouette floors and #320's palette
+        // look, then #335's glyph cell and edge start), and the variant cell
         // bands' two vec4 each (#313)
-        assert_eq!(std::mem::size_of::<VariantUniform>(), 128);
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
+        assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
             160 + 2 * 16 + 64 * 16 + 2 * MAX_COLORS * 16 + 16 + MAX_BANDS * 32
@@ -2626,6 +2834,97 @@ mod tests {
         for choice in palette.choices {
             assert!(Palette::builtin(choice).is_some(), "{choice}");
         }
+    }
+
+    /// A game folder in memory, as a bundle gives it on the web: a level
+    /// beside its own palette, and a palette and two fonts one folder up.
+    fn game_files() -> flint_core::vfs::MemorySource {
+        let mut src = flint_core::vfs::MemorySource::new();
+        src.insert("game/levels/a.scene.toml", "[scene]\nname = \"a\"\n");
+        src.insert(
+            "game/levels/palettes/tidepool.palette.toml",
+            "colors = [\"#0a3d62\", \"#3c6382\"]\n",
+        );
+        src.insert(
+            "game/palettes/dusk.palette.toml",
+            "colors = [\"#2d1b3d\", \"#f2a65a\"]\n",
+        );
+        // Not a palette: a stray file in the folder is not offered
+        src.insert("game/palettes/readme.txt", "notes");
+        src.insert(
+            "game/fonts/plain.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n\n[ramps.bars]\nglyphs = \" -=#\"\n",
+        );
+        src.insert(
+            "game/fonts/terminal.glyphs.toml",
+            "[ramps.x]\nglyphs = \" x\"\n",
+        );
+        src
+    }
+
+    fn option(name: &str) -> &'static StyleOption {
+        STYLE.options.iter().find(|o| o.name == name).unwrap()
+    }
+
+    #[test]
+    fn palettes_and_fonts_beside_the_scene_are_offered() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let scope = ChoiceScope::defaults(Some(dir));
+            let palettes = option("palette").choices_in(&scope);
+            let mut want: Vec<String> = BUILTIN_PALETTES.iter().map(|s| s.to_string()).collect();
+            want.extend(["dusk".to_string(), "tidepool".to_string()]);
+            assert_eq!(palettes, want);
+            assert_eq!(
+                option("font").choices_in(&scope),
+                ["builtin", "plain", "terminal"]
+            );
+            // With no scene, the built-ins alone
+            let none = ChoiceScope::defaults(None);
+            assert_eq!(option("palette").choices_in(&none), BUILTIN_PALETTES);
+            assert_eq!(option("font").choices_in(&none), ["builtin"]);
+        });
+    }
+
+    #[test]
+    fn the_ramp_list_follows_the_chosen_font() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let font = |name: &'static str| {
+                move |o: &str| match o {
+                    "font" => name.to_string(),
+                    _ => String::new(),
+                }
+            };
+            let plain = font("plain");
+            let scope = ChoiceScope {
+                scene_dir: Some(dir),
+                option: &plain,
+            };
+            let mut ramps = option("ramp").choices_in(&scope);
+            ramps.sort();
+            assert_eq!(ramps, ["bars", "dots"]);
+            // The built-in font (or one that won't load) has the built-in four
+            let missing = font("nonesuch");
+            for f in [&font("builtin") as &dyn Fn(&str) -> String, &missing] {
+                let scope = ChoiceScope {
+                    scene_dir: Some(dir),
+                    option: f,
+                };
+                let ramps = option("ramp").choices_in(&scope);
+                for r in option("ramp").choices {
+                    assert!(ramps.iter().any(|x| x == r), "{r} in {ramps:?}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn found_options_stay_open_to_the_command_line() {
+        // `--style ascii:palette=tidepool` names a file the style resolves
+        let mut config = crate::PostProcessConfig::default();
+        assert!(super::super::apply_style_spec(&mut config, "ascii:palette=tidepool").is_ok());
+        assert!(super::super::apply_style_spec(&mut config, "ascii:color=plaid").is_err());
     }
 
     #[test]
@@ -2797,14 +3096,75 @@ mod tests {
     fn ramps_pack_once_each_and_refuse_what_does_not_fit() {
         let set = GlyphSet::builtin();
         let mut ramps = Ramps::default();
-        let classic = ramps.place(&set, "classic").unwrap();
+        let classic = ramps.place(0, &set, "classic").unwrap();
         assert_eq!(classic.0, 0);
-        let blocks = ramps.place(&set, "blocks").unwrap();
+        let blocks = ramps.place(0, &set, "blocks").unwrap();
         assert_eq!(blocks.0, classic.1, "packed after the first");
-        assert_eq!(ramps.place(&set, "classic"), Some(classic), "placed once");
+        assert_eq!(
+            ramps.place(0, &set, "classic"),
+            Some(classic),
+            "placed once"
+        );
+        // Another font's ramp of the same name is its own (#335)
+        let other = ramps.place(1, &set, "classic").unwrap();
+        assert_eq!(other.0, blocks.0 + blocks.1);
+        assert!(ramps.steps[other.0 as usize..].iter().all(|(f, _)| *f == 1));
         // Fill what's left, then one more doesn't fit
-        ramps.steps.resize(MAX_RAMP, 0);
-        assert_eq!(ramps.place(&set, "minimal"), None);
+        ramps.steps.resize(MAX_RAMP, (0, 0));
+        assert_eq!(ramps.place(0, &set, "minimal"), None);
+    }
+
+    #[test]
+    fn a_fonts_ramp_and_edges_pack_together_or_not_at_all() {
+        let set = GlyphSet::builtin();
+        let mut ramps = Ramps::default();
+        let (ramp, edges) = ramps.place_with_edges(1, &set, "classic").unwrap();
+        assert_eq!(ramp.0, 0);
+        assert_eq!(edges, ramp.1, "the edges follow the ramp");
+        let atlas = set.atlas();
+        let packed: Vec<u32> = ramps.steps[edges as usize..edges as usize + 4]
+            .iter()
+            .map(|(_, i)| *i)
+            .collect();
+        let want: Vec<u32> = set
+            .edges()
+            .all()
+            .iter()
+            .map(|c| atlas.index_of(*c).unwrap())
+            .collect();
+        assert_eq!(packed, want, "in EdgeGlyphs::all() order");
+        // Again: placed once, edges shared by the font's ramps
+        let len = ramps.steps.len();
+        assert_eq!(
+            ramps.place_with_edges(1, &set, "classic"),
+            Some((ramp, edges))
+        );
+        let (_, again) = ramps.place_with_edges(1, &set, "blocks").unwrap();
+        assert_eq!(again, edges);
+        assert!(ramps.steps.len() > len);
+        // Room for the ramp but not its edges: neither is packed
+        let blocks = set.ramp("minimal").unwrap().len();
+        ramps.steps.resize(MAX_RAMP - blocks - 3, (0, 0));
+        let before = ramps.steps.len();
+        assert_eq!(ramps.place_with_edges(2, &set, "minimal"), None);
+        assert_eq!(ramps.steps.len(), before);
+    }
+
+    #[test]
+    fn fonts_in_use_are_counted_once_and_capped() {
+        let base = GlyphSet::builtin();
+        let mut in_use = FontsInUse::new(base.clone());
+        assert_eq!(in_use.index(&base), Some(0));
+        let other =
+            |n: &str| Arc::new(GlyphSet::from_toml(n, "", Path::new(".")).expect("built-in cells"));
+        let a = other("a");
+        assert_eq!(in_use.index(&a), Some(1));
+        assert_eq!(in_use.index(&a), Some(1), "the same set once");
+        for i in 2..MAX_FONTS {
+            assert_eq!(in_use.index(&other(&format!("f{i}"))), Some(i as u32));
+        }
+        assert_eq!(in_use.index(&other("one too many")), None);
+        assert_eq!(in_use.sets.len(), MAX_FONTS);
     }
 
     #[test]

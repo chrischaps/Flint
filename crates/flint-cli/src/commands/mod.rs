@@ -12,6 +12,7 @@ pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod gen_refine;
 pub mod gen_store;
+pub mod golden_sheet;
 pub mod init;
 pub mod look;
 pub mod particle_edit;

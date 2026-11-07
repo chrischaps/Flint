@@ -101,7 +101,7 @@ pub use sprite2d_pipeline::{
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
-pub use texture_cache::{open_image, TextureCache};
+pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
 
 #[cfg(test)]
 mod tests {

@@ -94,8 +94,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let theta = 0.5 * atan2(v.y, v.x);
 
-    // Bins from the base angle, so screen hatching is exactly the angle
-    let t = fract((theta - base) / PI) * BINS;
+    // Bins from the base angle, so screen hatching is exactly the angle.
+    // Screen mode takes bin 0 outright: through atan2 its theta is base
+    // give or take a rounding, and fract(-epsilon) is bin 11 at a blend of
+    // nearly 1, the strokes drawn the other way round with every hash
+    // moved. Vulkan and DX12 rounded to opposite sides (#314)
+    var t = fract((theta - base) / PI) * BINS;
+    if direction == 1u {
+        t = 0.0;
+    }
     let k = floor(t);
     let blend = smoothstep(0.25, 0.75, t - k);
     let a0 = base + k * PI / BINS;

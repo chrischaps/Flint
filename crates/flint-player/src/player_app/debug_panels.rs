@@ -45,6 +45,15 @@ impl PlayerApp {
             .unwrap_or_default()
     }
 
+    /// The scene's folder, where the style editor finds its own palettes
+    /// and glyph sets to offer (#322).
+    #[cfg(feature = "debug-hud")]
+    fn styles_scene_dir(&self) -> Option<std::path::PathBuf> {
+        std::path::Path::new(&self.scene_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+    }
+
     /// Create the Rendering & Effects panel (ADR 0053), or point the one
     /// that survived a scene transition at the new scene's authored styles.
     /// Every scene has a renderer to tune, so it is unconditional;
@@ -53,6 +62,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_render_debug_panel(&mut self) {
         let authored = self.authored_styles();
+        let scene_dir = self.styles_scene_dir();
         let existing = self
             .debug_panels
             .iter_mut()
@@ -62,10 +72,14 @@ impl PlayerApp {
                     .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
             });
         match existing {
-            Some(panel) => panel.set_authored_styles(Some(authored)),
+            Some(panel) => {
+                panel.set_authored_styles(Some(authored));
+                panel.set_scene_dir(scene_dir);
+            }
             None => {
                 let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
                 panel.set_authored_styles(Some(authored));
+                panel.set_scene_dir(scene_dir);
                 self.debug_panels.push(Box::new(panel));
             }
         }
@@ -95,10 +109,9 @@ impl PlayerApp {
         if !has_table && !has_mask {
             return;
         }
-        self.debug_panels
-            .push(Box::new(flint_debug_ui::StylesDebugPanel::new(Some(
-                authored,
-            ))));
+        let panel = flint_debug_ui::StylesDebugPanel::new(Some(authored))
+            .with_scene_dir(self.styles_scene_dir());
+        self.debug_panels.push(Box::new(panel));
     }
 
     /// Create the ocean tuning panel if the scene has an `ocean` component.
