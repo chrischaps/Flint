@@ -44,7 +44,8 @@ impl StyleSpec {
         };
         if name == "help" {
             return Err(format!(
-                "the registered styles and their keys:\n{}",
+                "the registered styles and their keys (`flint render --list-styles` gives \
+                 ranges, stages and --json):\n{}",
                 style_spec_help()
             ));
         }

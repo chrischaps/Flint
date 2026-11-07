@@ -70,6 +70,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
    #                          direction surface|screen|tensor, seed, boil; demo/pencil_sketch)
    #   --style-time 1.5       (post time animated styles read; default 0)
+   #   --list-styles [--json] (#303: every registered style, its stage, table, and each
+   #                          param's default/range/help; with a scene, its user styles too)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor;
    #                          `--look help` lists them with their tune sweeps)
