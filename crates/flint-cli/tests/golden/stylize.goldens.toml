@@ -258,6 +258,19 @@ scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
+# Palette quantize (#324): a ladder dithered in 2-point blocks, and nearest
+# inks undithered. A colour on an ink boundary flips a whole block by a big
+# step, so these take the glyph styles' tolerance, not the smooth one
+[[case]]
+name = "palette-phosphor-dither"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "palette:palette=phosphor,dither=1,pixel=2"]
+
+[[case]]
+name = "palette-cga16"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "palette:palette=cga16"]
+
 # Watercolor (#272): the whole frame painted (the props' style_mask
 # "ascii" and "pencil" props drawn over the paint, since both follow it), over
 # Kuwahara, and per entity. Its paper and glaze edges are fine detail

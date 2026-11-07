@@ -132,24 +132,10 @@ fn glyph_coverage(origin: vec2<u32>, local: vec2<f32>, cell_size: vec2<f32>) -> 
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// The palette ink for a cell of full-value `hue` and tone `t`, from the
-// inks at `start`
-fn palette_ink(start: u32, len: u32, matching: u32, hue: vec3<f32>, t: f32) -> vec3<f32> {
-    let n = max(len, 1u);
-    if matching == 1u {
-        return u.palette[start + min(u32(t * f32(n)), n - 1u)].rgb;
-    }
-    var best = u.palette[start].rgb;
-    var best_d = 1e9;
-    for (var i = 0u; i < n; i++) {
-        let c = u.palette[start + i].rgb;
-        let d = dot(c - hue, c - hue);
-        if d < best_d {
-            best_d = d;
-            best = c;
-        }
-    }
-    return best;
+// Ink `i` of the packed palettes, for the shared matcher (palette.wgsl,
+// concatenated after this file: `pal_pick`)
+fn palette_ink(i: u32) -> vec3<f32> {
+    return u.palette[i].rgb;
 }
 
 // How much of the glyph lies within a couple of pixels of `local`, less
@@ -251,7 +237,7 @@ fn cell_inks(v: Variant, col: vec3<f32>, t: f32) -> Inks {
             ground = vec3<f32>(lum * v.background);
         }
         case 4u: {
-            ink = palette_ink(v.palette_start, v.palette_len, v.palette_match, hue, t);
+            ink = pal_pick(v.palette_start, v.palette_len, v.palette_match, hue, t, 0.0, 0.5);
             ground = v.palette_bg;
         }
         default: {

@@ -33,7 +33,9 @@ pub const MAX_COLORS: usize = 32;
 pub const PALETTE_SUFFIX: &str = ".palette.toml";
 
 /// The palettes built into the engine, by name.
-pub const BUILTIN_PALETTES: &[&str] = &["cga", "cga-warm", "cga16", "phosphor", "amber", "mono"];
+pub const BUILTIN_PALETTES: &[&str] = &[
+    "cga", "cga-warm", "cga16", "phosphor", "amber", "mono", "paper",
+];
 
 /// How a palette's ink is chosen for a colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Deserialize)]
@@ -190,32 +192,53 @@ impl Palette {
 
     /// The ink nearest `color` (display values; plain RGB distance).
     pub fn nearest(&self, color: [f32; 3]) -> [f32; 3] {
-        let d = |c: &[f32; 3]| {
-            (0..3)
-                .map(|i| (c[i] - color[i]) * (c[i] - color[i]))
-                .sum::<f32>()
-        };
-        *self
-            .colors
-            .iter()
-            .min_by(|a, b| d(a).total_cmp(&d(b)))
-            .expect("a palette has a colour")
+        pick(&self.colors, PaletteMatch::Nearest, color, 0.0, 0.0, 0.5)
     }
 
     /// The rung of a luminance ladder for tone `t` (0-1).
     pub fn rung(&self, t: f32) -> [f32; 3] {
-        let n = self.colors.len();
-        let i = ((t.clamp(0.0, 1.0) * n as f32) as usize).min(n - 1);
-        self.colors[i]
+        pick(&self.colors, PaletteMatch::Luminance, [0.0; 3], t, 0.0, 0.5)
     }
 
-    /// The ink for a cell of full-value `hue` and tone `t`, as the shader
-    /// picks it.
+    /// The ink for a cell of full-value `hue` and tone `t`, as the ASCII
+    /// style picks it: glyph density carries the brightness, so the ground
+    /// is never an ink.
     pub fn ink(&self, hue: [f32; 3], t: f32) -> [f32; 3] {
+        pick(&self.colors, self.matching, hue, t, 0.0, 0.5)
+    }
+
+    /// The table the palette style (#324) quantizes to: the ground is a
+    /// colour like any other there, so a dark pixel can fall to CGA's black
+    /// or a light one to paper. Nearest puts the ground first; a ladder
+    /// takes it in at its own lightness, so paper's ground is the top rung
+    /// and phosphor's the bottom one.
+    pub fn table(&self) -> Vec<[f32; 3]> {
+        let mut table = self.colors.clone();
         match self.matching {
-            PaletteMatch::Nearest => self.nearest(hue),
-            PaletteMatch::Luminance => self.rung(t),
+            PaletteMatch::Nearest => table.insert(0, self.background),
+            PaletteMatch::Luminance => {
+                let at = table
+                    .iter()
+                    .position(|c| luma(*c) > luma(self.background))
+                    .unwrap_or(table.len());
+                table.insert(at, self.background);
+            }
         }
+        table
+    }
+
+    /// The colour the palette style draws for `color` (display values),
+    /// undithered: [`pick`] over [`table`](Self::table) at the colour's
+    /// own luminance.
+    pub fn quantize(&self, color: [f32; 3]) -> [f32; 3] {
+        pick(
+            &self.table(),
+            self.matching,
+            color,
+            luma(color).clamp(0.0, 1.0),
+            0.0,
+            0.5,
+        )
     }
 
     /// The inks as uniform slots (rgb + 0), padded to [`MAX_COLORS`].
@@ -226,6 +249,61 @@ impl Palette {
         }
         out
     }
+}
+
+/// The shared WGSL matcher (`pal_pick`, `pal_bayer`): every style that reads
+/// a palette concatenates it after its own code and defines
+/// `fn palette_ink(i: u32) -> vec3<f32>`, so they all pick alike (#324).
+pub const PALETTE_WGSL: &str = include_str!("palette.wgsl");
+
+/// Rec. 709 luminance of a display colour, as the shaders weigh it.
+pub fn luma(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// `pal_bayer`: the 4x4 ordered-dither threshold of `cell`, in (0, 1).
+pub fn bayer(cell: [i32; 2]) -> f32 {
+    const M: [u32; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    let (x, y) = ((cell[0] & 3) as usize, (cell[1] & 3) as usize);
+    (M[y * 4 + x] as f32 + 0.5) / 16.0
+}
+
+/// `pal_pick` on the CPU: the ink of `inks` for `color` (display values)
+/// and tone `t`, by `matching`, with ordered dither `dither` (0-1) at
+/// `threshold` ([`bayer`]). Ties go to the earlier ink, as on the GPU.
+pub fn pick(
+    inks: &[[f32; 3]],
+    matching: PaletteMatch,
+    color: [f32; 3],
+    t: f32,
+    dither: f32,
+    threshold: f32,
+) -> [f32; 3] {
+    let n = inks.len().max(1);
+    if matching == PaletteMatch::Luminance {
+        let td = (t + (threshold - 0.5) * dither / n as f32).clamp(0.0, 1.0);
+        return inks[((td * n as f32) as usize).min(n - 1)];
+    }
+    let d = |c: &[f32; 3]| (0..3).map(|i| (c[i] - color[i]).powi(2)).sum::<f32>();
+    let (mut best, mut second) = (0, 0);
+    let (mut best_d, mut second_d) = (1e9_f32, 1e9_f32);
+    for (i, c) in inks.iter().enumerate() {
+        let di = d(c);
+        if di < best_d {
+            (second, second_d) = (best, best_d);
+            (best, best_d) = (i, di);
+        } else if di < second_d {
+            (second, second_d) = (i, di);
+        }
+    }
+    if dither > 0.0 && n > 1 {
+        let d1 = best_d.sqrt();
+        let share = d1 / (d1 + second_d.sqrt()).max(1e-6);
+        if threshold < share * dither {
+            return inks[second];
+        }
+    }
+    inks[best]
 }
 
 /// `#rrggbb`, `rrggbb`, `#rgb` or `rgb` as display values 0-1.
@@ -283,6 +361,14 @@ background = "#120800""##
             r##"match = "luminance"
 colors = ["#5a5a5a", "#999999", "#d0d0d0", "#ffffff"]
 background = "#000000""##
+        }
+        // Dark inks on a light ground (#324): ink, wash and pencil on
+        // cream paper. The palette style takes the paper in as the top
+        // rung; ASCII draws it with `ground = "inverse"` (see the book)
+        "paper" => {
+            r##"match = "luminance"
+colors = ["#1b1a22", "#4b4654", "#8c8479", "#c9bfae"]
+background = "#f3ecdc""##
         }
         _ => return None,
     })

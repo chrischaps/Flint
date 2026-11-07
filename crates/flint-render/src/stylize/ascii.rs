@@ -902,9 +902,10 @@ const CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii_cells.wgsl")
 );
-const GLYPH_SHADER: &str = concat!(
+pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
-    include_str!("ascii.wgsl")
+    include_str!("ascii.wgsl"),
+    include_str!("../palette.wgsl")
 );
 const VARIANT_CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),

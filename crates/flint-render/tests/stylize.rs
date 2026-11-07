@@ -1254,3 +1254,274 @@ fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
     assert!(covered.len() > n / 8, "the boxes cover too little to tell");
     assert_eq!(missed, 0, "{missed} box pixels were not masked");
 }
+
+/// The compute harness for the shared matcher: `palette_ink` reads a
+/// storage table, and each colour (rgb, tone in w) gets `pal_pick` at the
+/// Bayer threshold of cell (i % 4, i / 4 % 4).
+const MATCHER_HARNESS: &str = r#"
+struct Params { len: u32, matching: u32, dither: f32, _p: f32 }
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read> inks: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> colors: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> picked: array<vec4<f32>>;
+fn palette_ink(i: u32) -> vec3<f32> { return inks[i].rgb; }
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let i = id.x;
+    if i >= arrayLength(&colors) { return; }
+    let c = colors[i];
+    let cell = vec2<i32>(i32(i % 4u), i32((i / 4u) % 4u));
+    let ink = pal_pick(0u, params.len, params.matching, c.rgb, c.w, params.dither, pal_bayer(cell));
+    picked[i] = vec4<f32>(ink, 0.0);
+}
+"#;
+
+/// `pal_pick` for every colour of `colors` over `inks` on the GPU.
+fn gpu_pick(
+    gpu: &Gpu,
+    pipeline: &wgpu::ComputePipeline,
+    inks: &[[f32; 3]],
+    matching: u32,
+    dither: f32,
+    colors: &[[f32; 4]],
+) -> Vec<[f32; 3]> {
+    use wgpu::util::DeviceExt;
+    let d = &gpu.device;
+    let storage = |data: &[u8], usage| {
+        d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: data,
+            usage,
+        })
+    };
+    let params: [u32; 4] = [inks.len() as u32, matching, dither.to_bits(), 0];
+    let inks4: Vec<[f32; 4]> = inks.iter().map(|c| [c[0], c[1], c[2], 0.0]).collect();
+    let params = storage(bytemuck::cast_slice(&params), wgpu::BufferUsages::UNIFORM);
+    let inks_buf = storage(bytemuck::cast_slice(&inks4), wgpu::BufferUsages::STORAGE);
+    let colors_buf = storage(bytemuck::cast_slice(colors), wgpu::BufferUsages::STORAGE);
+    let size = (colors.len() * 16) as u64;
+    let out = d.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let read = d.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: inks_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: colors_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: out.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = d.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups((colors.len() as u32).div_ceil(64), 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&out, 0, &read, 0, size);
+    gpu.queue.submit([encoder.finish()]);
+    read.slice(..)
+        .map_async(wgpu::MapMode::Read, |r| r.unwrap());
+    d.poll(wgpu::Maintain::Wait);
+    let data = read.slice(..).get_mapped_range();
+    bytemuck::cast_slice::<u8, [f32; 4]>(&data)
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect()
+}
+
+/// #324's done-when: ASCII and the palette style pick identical inks for
+/// the same input. Both shaders end with the one matcher
+/// (`palette::PALETTE_WGSL`, a unit test checks the concatenation); here
+/// that matcher runs on the GPU for 4096 colours under every built-in
+/// palette, over the table each style hands it (ASCII's inks, the palette
+/// style's inks plus ground), plain and dithered, and must agree with
+/// `palette::pick` on the CPU. A disagreement is allowed only at a tie the
+/// two sides' float rounding can split.
+#[test]
+fn the_shared_palette_matcher_picks_on_the_gpu_what_the_cpu_does() {
+    use flint_render::palette::{bayer, luma, pick, Palette, BUILTIN_PALETTES, PALETTE_WGSL};
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let source = format!("{MATCHER_HARNESS}\n{PALETTE_WGSL}");
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("matcher harness"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    let pipeline = gpu
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let mut colors = Vec::new();
+    for r in 0..16 {
+        for g in 0..16 {
+            for b in 0..16 {
+                let c = [r as f32 / 15.0, g as f32 / 15.0, b as f32 / 15.0];
+                colors.push([c[0], c[1], c[2], luma(c)]);
+            }
+        }
+    }
+    let dist = |a: [f32; 3], c: [f32; 4]| (0..3).map(|i| (a[i] - c[i]).powi(2)).sum::<f32>();
+    let mut checked = 0;
+    for name in BUILTIN_PALETTES {
+        let palette = Palette::builtin(name).unwrap();
+        for (table, who) in [
+            (palette.colors().to_vec(), "ascii"),
+            (palette.table(), "palette"),
+        ] {
+            for dither in [0.0, 0.6, 1.0] {
+                let got = gpu_pick(
+                    &gpu,
+                    &pipeline,
+                    &table,
+                    palette.matching().index(),
+                    dither,
+                    &colors,
+                );
+                for (i, (c, g)) in colors.iter().zip(&got).enumerate() {
+                    let threshold = bayer([(i % 4) as i32, ((i / 4) % 4) as i32]);
+                    let want = pick(
+                        &table,
+                        palette.matching(),
+                        [c[0], c[1], c[2]],
+                        c[3],
+                        dither,
+                        threshold,
+                    );
+                    let same = (0..3).all(|k| (want[k] - g[k]).abs() < 1e-6);
+                    // A tie: both inks equally near, or (dithered) the
+                    // threshold right on the colour's share
+                    let tie = (dist(want, *c) - dist(*g, *c)).abs() < 1e-5
+                        || dither > 0.0 && {
+                            let mut d: Vec<f32> =
+                                table.iter().map(|t| dist(*t, *c).sqrt()).collect();
+                            d.sort_by(f32::total_cmp);
+                            let share = d[0] / (d[0] + d.get(1).copied().unwrap_or(0.0)).max(1e-6);
+                            (threshold - share * dither).abs() < 1e-5
+                        };
+                    assert!(
+                        same || tie,
+                        "{name} ({who} table, dither {dither}): colour {c:?} -> GPU {g:?}, CPU {want:?}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{checked} picks agree");
+}
+
+/// #324: the palette style draws every pixel in its table's colours, the
+/// colour `Palette::quantize` gives for what was there, and `pixel` makes
+/// blocks of one colour.
+#[test]
+fn the_palette_style_quantizes_the_frame_to_its_table() {
+    use flint_render::palette::Palette;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = box_world();
+    let plain = gpu.frame(&mut renderer, &world);
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("palette", true);
+    for name in ["cga", "cga16", "phosphor", "paper"] {
+        let palette = Palette::builtin(name).unwrap();
+        config.styles.set_option("palette", "palette", name);
+        config.styles.set_param("palette", "pixel", 1.0);
+        config.styles.set_param("palette", "dither", 0.0);
+        renderer.set_post_process_config(config.clone());
+        renderer.ensure_style_resources(&gpu.device);
+        let styled = gpu.frame(&mut renderer, &world);
+        let table: Vec<[u8; 3]> = palette
+            .table()
+            .iter()
+            .map(|c| c.map(|v| (v * 255.0).round() as u8))
+            .collect();
+        let seen = colours(&styled);
+        assert!(seen.len() >= 2, "{name}: one flat colour");
+        let mut off = 0;
+        for (p, s) in plain.chunks(4).zip(styled.chunks(4)) {
+            let s = [s[0], s[1], s[2]];
+            assert!(
+                table
+                    .iter()
+                    .any(|t| (0..3).all(|i| t[i].abs_diff(s[i]) <= 1)),
+                "{name}: {s:?} is not in {table:?}"
+            );
+            // The CPU's pick for the plain pixel; its 8-bit rounding can
+            // tip a colour on a boundary, so a few may differ
+            let want = palette
+                .quantize([p[0], p[1], p[2]].map(|v| v as f32 / 255.0))
+                .map(|v| (v * 255.0).round() as u8);
+            if (0..3).any(|i| want[i].abs_diff(s[i]) > 1) {
+                off += 1;
+            }
+        }
+        let n = (SIZE * SIZE) as usize;
+        eprintln!(
+            "{name}: {} colours, {off} of {n} pixels off the CPU's pick",
+            seen.len()
+        );
+        assert!(
+            off * 100 <= n,
+            "{name}: {off} pixels disagree with Palette::quantize"
+        );
+    }
+
+    // Four-point blocks: every 4x4 block is one colour
+    config.styles.set_option("palette", "palette", "cga16");
+    config.styles.set_param("palette", "pixel", 4.0);
+    config.styles.set_param("palette", "dither", 1.0);
+    renderer.set_post_process_config(config);
+    let chunky = gpu.frame(&mut renderer, &world);
+    let n = SIZE as usize / 4;
+    for i in 0..n * n {
+        let b = block(&chunky, 4, i % n, i / n);
+        assert!(
+            b.chunks(4).all(|p| p == &b[..4]),
+            "block {i} is not one colour"
+        );
+    }
+}
