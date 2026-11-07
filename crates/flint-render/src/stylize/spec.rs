@@ -9,6 +9,7 @@
 //! --style kuwahara:radius=6
 //! --style ascii:off                      turn off a style the scene has on
 //! --style invert:order=0                 run first in its stage (#299)
+//! --style kuwahara:feeds_bloom=1         bloom reads the painted image (#300)
 //! --style ascii:color=tint,tint=#4dff73  a colour (#315): #rrggbb, or r/g/b
 //! --style ascii:tint=0.3/1/0.4
 //! ```
@@ -32,6 +33,9 @@ pub struct StyleSpec {
     pub enabled: bool,
     /// `key=value` pairs in the order given.
     pub settings: Vec<(String, String)>,
+    /// `feeds_bloom=true|false` (#300): whether bloom reads the style's
+    /// result; `None` leaves the scene's choice.
+    pub feeds_bloom: Option<bool>,
 }
 
 impl StyleSpec {
@@ -60,6 +64,7 @@ impl StyleSpec {
             name: name.to_string(),
             enabled: true,
             settings: Vec::new(),
+            feeds_bloom: None,
         };
         for pair in rest.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             if pair == "off" {
@@ -85,6 +90,19 @@ impl StyleSpec {
                 };
                 continue;
             }
+            if key == "feeds_bloom" {
+                if descriptor.stage != super::StyleStage::Hdr {
+                    return Err(format!(
+                        "{name}: feeds_bloom is for hdr styles; {name} draws after bloom"
+                    ));
+                }
+                parsed.feeds_bloom = Some(match value {
+                    "true" | "1" | "on" => true,
+                    "false" | "0" | "off" => false,
+                    _ => return Err(format!("{name}: feeds_bloom must be true or false")),
+                });
+                continue;
+            }
             if key == "order" {
                 number(name, key, value)?;
             } else {
@@ -98,11 +116,15 @@ impl StyleSpec {
     /// Write this spec into `config`: the style on (or off) with its
     /// settings, over whatever the scene said.
     pub fn apply(&self, config: &mut PostProcessConfig) {
-        // Any style's place in its stage (#299)
+        // Any style's place in its stage (#299) and whether it feeds bloom
+        // (#300)
         for (key, value) in &self.settings {
             if key == "order" {
                 config.styles.set_order(&self.name, value.parse().ok());
             }
+        }
+        if let Some(feeds) = self.feeds_bloom {
+            config.styles.set_feeds_bloom(&self.name, Some(feeds));
         }
         let descriptor = find(&self.name).expect("checked by parse");
         config.styles.set_enabled(&self.name, self.enabled);
@@ -201,6 +223,9 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
             .collect()
     };
     keys.push("order=<n>".to_string());
+    if descriptor.stage == super::StyleStage::Hdr {
+        keys.push(format!("feeds_bloom={}", descriptor.feeds_bloom));
+    }
     keys.push("off".to_string());
     keys.join(", ")
 }
@@ -278,6 +303,22 @@ mod tests {
         assert!(config.styles.is_enabled("kuwahara"));
         assert!(StyleSpec::parse("ascii:order=soon").is_err());
         assert!(style_spec_help().contains("order=<n>"));
+    }
+
+    #[test]
+    fn feeds_bloom_is_for_hdr_styles() {
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(&mut config, "kuwahara:feeds_bloom=1,radius=6").unwrap();
+        assert!(config.styles.is_enabled("kuwahara"));
+        assert_eq!(config.styles.feeds_bloom("kuwahara"), Some(true));
+        assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
+        assert!(find("kuwahara").unwrap().feeds_bloom_in(&config));
+        // Not a parameter: it never lands in the params
+        assert_eq!(config.styles.param("kuwahara", "feeds_bloom"), None);
+        let display = StyleSpec::parse("ascii:feeds_bloom=1").unwrap_err();
+        assert!(display.contains("hdr"), "{display}");
+        assert!(StyleSpec::parse("kuwahara:feeds_bloom=maybe").is_err());
+        assert!(style_spec_help().contains("feeds_bloom=false"));
     }
 
     #[test]

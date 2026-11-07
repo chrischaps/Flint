@@ -565,13 +565,13 @@ Each style belongs to one of two stages:
 scene (HDR, render scale)
   -> style mask (Rg16Uint: id + blend, only while a style reads it)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
-  -> SSAO, volumetric, bloom
+  -> SSAO, volumetric (depth), bloom (the original HDR, or the HDR styles' result: feeds_bloom)
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
   -> Display styles (watercolor, ASCII, pencil, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```
 
-- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. SSAO and bloom read the unstylized scene.
+- **HDR stage.** Linear light at the scene's render scale. Everything after it shades the style: fog fades it, bloom haloes its bright strokes, the grade tints it. Bloom reads the unstylized scene unless a style feeds it (below). SSAO and volumetrics read depth and shadows, never colour, so no style changes them; the composite lays them over the stylized image.
 - **Display stage.** The finished, tonemapped picture at output resolution, after the render-scale upscale and before FXAA and the HUD. This is where glyphs and lines stay crisp under `--render-scale` (the ASCII spike's finding).
 
 Styles of one stage run one after another, each reading the one before it. The framework ping-pongs between two targets it owns, so any number of styles chain without a style knowing its neighbours.
@@ -599,6 +599,28 @@ order = 9
 
 `order` is a key of every style's own table, not a `style_order = [...]` list on `[post_process]`, because everything else about a style lives in its table: a [look](#looks-and-sweeps) or a `--style` word that adds one style can place it without restating every other style, Copy TOML stays one block, and a list naming a style the scene doesn't use would need its own warnings. The cost is that the whole order isn't written in one place, which is what the F4 chain line shows instead. No style may name a parameter or option `order` or `enabled`.
 
+### Bloom from a style
+
+By default bloom's threshold reads the scene *under* the HDR styles: light comes from the world, not the brush, so a painted surface keeps the halo its original bright pixels had. A style whose own bright shapes should glow (ink brighter than white, a bleeding highlight) **feeds bloom** instead: bloom then reads the HDR stage's result (#300).
+
+- A style says so in its descriptor (`feeds_bloom: true`) or, for a user style, in its `.shader.toml` (`feeds_bloom = true`, `stage = "hdr"` only).
+- A scene overrides it in the style's table, Kuwahara's included:
+
+  ```toml
+  [post_process.styles.kuwahara]
+  feeds_bloom = true
+  ```
+- On the command line: `--style kuwahara:feeds_bloom=1`, `--sweep neon.feeds_bloom=0,1`. In F4 it is the **Feeds bloom** checkbox under each HDR style in Styles, Kuwahara's included, and Copy TOML writes it when it differs from the style's default.
+- When any HDR style that ran this frame feeds bloom, bloom reads the stage's final result, every style in it included. A display style can't feed bloom: it runs after it (`feeds_bloom` on one is a warning). ASCII's phosphor halo is its own `glow` for that reason.
+
+Kuwahara's default is unchanged: off.
+
+| ![neon isolines, bloom reading the original scene: the lines are flat, the lamp's halo glows where the style dimmed it](../images/bloom-follows-style-neon-off.png) | ![neon isolines feeding bloom: each line glows](../images/bloom-follows-style-neon-on.png) |
+|---|---|
+| `demo/neon_bloom.scene.toml --style neon:feeds_bloom=0`: bloom reads the scene under the style. The lines are flat, and the lamp, which the style dimmed to a fifth, still haloes at full strength | The scene as written (`neon` says `feeds_bloom = true`): bloom reads the styled picture, so each line glows and the lamp's halo shrinks with it |
+| ![Kuwahara, bloom from the original scene](../images/bloom-follows-style-kuwahara-off.png) | ![Kuwahara feeding bloom](../images/bloom-follows-style-kuwahara-on.png) |
+| Kuwahara at its default (`neon_bloom` with `--style neon:off --style kuwahara:radius=8 --exposure 2.2`, a crop at 2x): the lamp's halo keeps the original, unpainted rim | The same with `kuwahara:feeds_bloom=1`: the halo follows the painted strokes, so the rim breaks where the filter broke it. Subtle at Kuwahara's sizes, which is why it stays off by default |
+
 ## Writing a style
 
 A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`:
@@ -615,6 +637,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
     hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
     component: None,               // Some("ascii_style"): entities take the style per entity (#266)
+    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
 };
 ```
@@ -693,6 +716,7 @@ name = "greyscale"         # the file stem; lowercase, digits and _
 stage = "display"          # or "hdr"
 shader = "greyscale.wgsl"
 inputs = []                # any of "depth", "mask", "edges"; colour is always there
+# feeds_bloom = true       # hdr only: bloom reads this style's result (#300)
 
 [params.amount]
 default = 1.0
@@ -743,7 +767,7 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
 
 ## Goldens
 

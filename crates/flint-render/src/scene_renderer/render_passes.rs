@@ -1443,10 +1443,22 @@ impl SceneRenderer {
             }
         }
 
-        // Run bloom if post-processing effects are enabled
+        // Run bloom if post-processing effects are enabled. It reads the
+        // unstylized scene, unless an HDR style that ran says it feeds
+        // bloom (#300): then the stage's result, so the style's own bright
+        // shapes glow.
         if config.enabled && config.bloom_enabled && resources.bloom_mip_count > 0 {
+            let source = match hdr_scene {
+                Some((view, id)) if hdr_styles.iter().any(|(d, _)| d.feeds_bloom_in(config)) => {
+                    crate::stylize::StyleInput { view, id }
+                }
+                _ => crate::stylize::StyleInput {
+                    view: &resources.hdr_view,
+                    id: crate::stylize::input_id::HDR,
+                },
+            };
             scoped("Bloom", encoder, &mut |encoder| {
-                pp.run_bloom(queue, encoder, device, resources, config)
+                pp.run_bloom(queue, encoder, device, resources, config, &source)
             });
         }
 

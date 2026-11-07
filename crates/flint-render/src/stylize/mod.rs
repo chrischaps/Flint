@@ -44,7 +44,8 @@
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> shared edges (Rgba16Float, depth's size, while a style needs them; #301)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
-//!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
+//!   -> SSAO, volumetric (scene depth), bloom (original HDR, or the
+//!      Hdr styles' result when one feeds bloom, #300)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
 //!   -> Display styles (ASCII, pencil, invert) surface format, output resolution
 //!   -> FXAA
@@ -78,8 +79,14 @@
 //! that). A `Display` style sees the finished picture at output
 //! resolution, after the render-scale upscale, which is where the ASCII
 //! spike found glyphs have to be drawn to stay crisp (#261, finding 7).
-//! SSAO and bloom read the unstylized HDR; that is deliberate for now (the
-//! light comes from the scene, not the brush strokes).
+//! Bloom reads the unstylized HDR by default (the light comes from the
+//! scene, not the brush strokes), and a style that wants its own bright
+//! shapes to glow says [`StyleDescriptor::feeds_bloom`], which a scene
+//! overrides with `feeds_bloom` in the style's table (#300): when any HDR
+//! style that ran feeds bloom, the threshold pass reads the stage's
+//! result. SSAO and volumetrics read depth and shadows only, never colour,
+//! so no style changes what they see; the composite lays both over the
+//! stylized image.
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
@@ -323,6 +330,15 @@ pub struct StyleDescriptor {
     /// with no `[post_process.styles]` table, and the style reads each
     /// pixel's settings from [`StyleFrame::variants`] by its mask id.
     pub component: Option<&'static str>,
+    /// Whether bloom reads this style's result by default (#300). Off, the
+    /// bloom threshold reads the unstylized scene, so a halo sits where
+    /// the original bright pixels were (Kuwahara's look: light from the
+    /// scene, not the brush). On, bloom reads the HDR stage's result, so a
+    /// style's own bright shapes glow. Only an [`Hdr`](StyleStage::Hdr)
+    /// style can feed bloom, which runs before the display stage. A scene
+    /// overrides it with `feeds_bloom` in the style's table
+    /// ([`StyleDescriptor::feeds_bloom_in`]).
+    pub feeds_bloom: bool,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -352,6 +368,17 @@ impl StyleDescriptor {
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
     pub fn needs_edges(&self) -> bool {
         self.needs.contains(&StyleNeed::Edges)
+    }
+
+    /// Whether bloom reads this style's result under `config` (#300): the
+    /// scene's `feeds_bloom`, or the descriptor's default. Always false
+    /// for a display style.
+    pub fn feeds_bloom_in(&self, config: &PostProcessConfig) -> bool {
+        self.stage == StyleStage::Hdr
+            && config
+                .styles
+                .feeds_bloom(self.name)
+                .unwrap_or(self.feeds_bloom)
     }
 
     /// Parameter `name`'s value in `config`, or its default.
@@ -489,6 +516,10 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
         } else {
             out.push_str(&format!("order = {}\n", toml_float(order)));
         }
+    }
+    let feeds = descriptor.feeds_bloom_in(config);
+    if descriptor.stage == StyleStage::Hdr && feeds != descriptor.feeds_bloom {
+        out.push_str(&format!("feeds_bloom = {feeds}\n"));
     }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
@@ -908,11 +939,14 @@ pub struct StyleSetting {
     /// Where the style stands in its stage's chain (#299): lower runs
     /// first. `None` is its registration index ([`chain_order`]).
     pub order: Option<f32>,
+    /// The scene's `feeds_bloom` (#300), when it sets one; `None` keeps
+    /// the descriptor's default.
+    pub feeds_bloom: Option<bool>,
 }
 
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one.
-pub const RESERVED_KEYS: [&str; 2] = ["enabled", "order"];
+pub const RESERVED_KEYS: [&str; 3] = ["enabled", "order", "feeds_bloom"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -965,6 +999,18 @@ impl StyleSettings {
             .insert(option.to_string(), value.to_string());
     }
 
+    /// Whether the scene says bloom reads style `name` (#300); `None` when
+    /// it doesn't say.
+    pub fn feeds_bloom(&self, name: &str) -> Option<bool> {
+        self.styles.get(name)?.feeds_bloom
+    }
+
+    /// Say whether bloom reads style `name`; `None` goes back to the
+    /// style's default. Leaves the style on or off as it was.
+    pub fn set_feeds_bloom(&mut self, name: &str, feeds: Option<bool>) {
+        self.styles.entry(name.to_string()).or_default().feeds_bloom = feeds;
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -994,6 +1040,7 @@ impl StyleSettings {
             setting.params.clear();
             setting.options.clear();
             setting.order = None;
+            setting.feeds_bloom = None;
         }
     }
 
@@ -1025,9 +1072,10 @@ impl StyleSettings {
 
     /// Read a scene's `[post_process.styles]` tables. A table switches its
     /// style on unless it says `enabled = false`; an option is a string, a
-    /// parameter a number, and a colour (#315) an array of three numbers
-    /// or a `#rrggbb` string (its channels may still be set one by one). Returns the settings and a warning for each name, key or
-    /// value the registry doesn't know.
+    /// parameter a number, a colour (#315) an array of three numbers or a
+    /// `#rrggbb` string (its channels may still be set one by one), and
+    /// `feeds_bloom` (#300) true or false. Returns the settings and a
+    /// warning for each name, key or value the registry doesn't know.
     pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
         let mut settings = Self::default();
         let mut warnings = Vec::new();
@@ -1061,6 +1109,18 @@ impl StyleSettings {
                     match number {
                         Some(n) => setting.order = Some(n as f32),
                         None => warnings.push(format!("styles.{name}.order must be a number")),
+                    }
+                    continue;
+                }
+                if key == "feeds_bloom" {
+                    match value.as_bool() {
+                        Some(_) if descriptor.stage != StyleStage::Hdr => warnings.push(format!(
+                            "styles.{name}.feeds_bloom: {name} is a display style, after bloom; \
+                             only an hdr style can feed bloom"
+                        )),
+                        Some(feeds) => setting.feeds_bloom = Some(feeds),
+                        None => warnings
+                            .push(format!("styles.{name}.feeds_bloom must be true or false")),
                     }
                     continue;
                 }
@@ -1971,6 +2031,44 @@ mod tests {
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn feeds_bloom_reads_from_the_table_for_hdr_styles_only() {
+        let kuwahara = find("kuwahara").unwrap();
+        // Kuwahara's default is unchanged: bloom reads the original scene
+        assert!(!kuwahara.feeds_bloom);
+        assert!(!kuwahara.feeds_bloom_in(&PostProcessConfig::default()));
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            "[kuwahara]\nfeeds_bloom = true\n[ascii]\nfeeds_bloom = true\n[invert]\nfeeds_bloom = 1\n",
+        )
+        .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let config = PostProcessConfig {
+            styles: settings.clone(),
+            ..Default::default()
+        };
+        assert!(kuwahara.feeds_bloom_in(&config));
+        // A table switches its style on, Kuwahara's too since #298
+        assert!(kuwahara.is_enabled(&config));
+        assert!(
+            warnings.iter().all(|w| !w.contains("kuwahara")),
+            "{warnings:?}"
+        );
+        // ASCII draws after bloom: warned, ignored
+        assert_eq!(settings.feeds_bloom("ascii"), None);
+        assert!(!find("ascii").unwrap().feeds_bloom_in(&config));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("ascii") && w.contains("display")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("invert.feeds_bloom must be true or false")));
+        // Copy TOML writes it back, and Defaults clears it
+        assert!(style_toml(kuwahara, &config).contains("feeds_bloom = true"));
+        let mut reset = settings;
+        reset.reset("kuwahara");
+        assert_eq!(reset.feeds_bloom("kuwahara"), None);
     }
 
     #[test]

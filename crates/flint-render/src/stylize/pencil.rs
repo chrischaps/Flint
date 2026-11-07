@@ -159,6 +159,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
     ],
     component: Some("pencil_style"),
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");

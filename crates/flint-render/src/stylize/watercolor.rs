@@ -131,6 +131,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("paper", "Paper", "The paper's colour"),
     ],
     component: Some("watercolor_style"),
+    feeds_bloom: false,
     create: |d| Box::new(Watercolor::new(d)),
 };
 
