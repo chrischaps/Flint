@@ -1363,6 +1363,20 @@ impl StyleSet {
     }
 }
 
+/// Keep only style `name` of a stage's [`StyleSet::active`] list when
+/// `name` is given (the `style` debug view's `mask_view`, #334), so it
+/// reads the stage's original input rather than another style's output;
+/// without a name, the list as it is.
+pub fn solo<T: Copy>(
+    styles: Vec<(&'static StyleDescriptor, T)>,
+    name: Option<&str>,
+) -> Vec<(&'static StyleDescriptor, T)> {
+    match name {
+        Some(name) => styles.into_iter().filter(|(d, _)| d.name == name).collect(),
+        None => styles,
+    }
+}
+
 /// Where the style at registry index `index` stands in its stage's chain
 /// (#299): its table's `order`, else the index itself, so a scene that
 /// orders nothing runs in registration order. Lower runs first.
@@ -1847,6 +1861,29 @@ mod tests {
         live.restore("invert", &authored);
         assert!(!live.is_enabled("invert"));
         assert!(live.same_style("invert", &StyleSettings::default()));
+    }
+
+    #[test]
+    fn solo_keeps_only_the_named_style() {
+        // The display stage as a scene with ASCII and the mask view has it
+        let display = |names: &[&str]| -> Vec<(&'static StyleDescriptor, ())> {
+            registry()
+                .iter()
+                .filter(|d| names.contains(&d.name))
+                .map(|d| (*d, ()))
+                .collect()
+        };
+        let names = |styles: Vec<(&'static StyleDescriptor, ())>| -> Vec<&str> {
+            styles.iter().map(|(d, _)| d.name).collect()
+        };
+        let on = ["ascii", "mask_view"];
+        // The style debug view (#334): the mask view alone, reading the
+        // stage's input, not ASCII's glyphs
+        assert_eq!(names(solo(display(&on), Some("mask_view"))), ["mask_view"]);
+        // An HDR stage without it runs nothing
+        assert!(solo(display(&["kuwahara"]), Some("mask_view")).is_empty());
+        // Otherwise the chain as it was
+        assert_eq!(names(solo(display(&on), None)), ["ascii", "mask_view"]);
     }
 
     #[test]
