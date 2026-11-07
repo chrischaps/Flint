@@ -99,7 +99,9 @@ mod targets;
 pub mod text;
 
 pub use edges::EDGE_FORMAT;
-pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
+pub use spec::{
+    apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
+};
 pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 pub use text::{GlyphCell, GlyphText};
 

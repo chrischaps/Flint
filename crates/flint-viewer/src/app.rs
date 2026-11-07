@@ -49,6 +49,15 @@ struct ViewerState {
     scene_camera: Option<CameraDef>,
 }
 
+/// `flint edit scene.toml --style ... --style-time ...` (#328): style words
+/// written over the scene's post-processing at load and at every hot
+/// reload, and the post time styles see.
+#[derive(Debug, Clone, Default)]
+pub struct ViewerStyle {
+    pub specs: Vec<String>,
+    pub time: Option<f32>,
+}
+
 /// Run the viewer application (standard viewer mode)
 pub fn run(
     scene_path: &str,
@@ -56,6 +65,7 @@ pub fn run(
     schemas_path: &str,
     inspector: bool,
     auto_orbit: bool,
+    style: ViewerStyle,
 ) -> Result<()> {
     let registry = if Path::new(schemas_path).exists() {
         SchemaRegistry::load_from_directory(schemas_path)?
@@ -68,6 +78,8 @@ pub fn run(
         ConstraintRegistry::load_from_directory(schemas_path).unwrap_or_default();
 
     load_user_styles(scene_path);
+    // A word may name one of the scene's styles, registered just now
+    flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
     let (world, scene_file) = load_scene(scene_path, &registry)?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
@@ -135,6 +147,8 @@ pub fn run(
 
     let mut app = ViewerApp::new(state, inspector);
     app.auto_orbit = auto_orbit;
+    app.style_specs = style.specs;
+    app.style_time = style.time;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -355,6 +369,13 @@ pub struct ViewerApp {
     auto_orbit: bool,
     auto_orbit_speed: f32,
 
+    /// `--style name[:key=value,...]` words (#328), written over the
+    /// config at load, at each hot reload and at the authored/default
+    /// swap, so the command line keeps winning over the scene file.
+    style_specs: Vec<String>,
+    /// `--style-time`: the post time animated styles see.
+    style_time: Option<f32>,
+
     // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
     // player uses, so inspector edits to particle_emitter / particle_effect
     // components show immediately. Controls live in the F4 menu.
@@ -382,6 +403,14 @@ fn load_user_styles(scene_path: &str) {
     for message in flint_render::stylize::custom::load_dir(scene_dir_of(scene_path)) {
         eprintln!("Warning: {message}");
     }
+}
+
+/// `config` with the `--style` words written over it (#328).
+fn with_styles(mut config: PostProcessConfig, specs: &[String]) -> PostProcessConfig {
+    for e in flint_render::stylize::apply_style_specs(&mut config, specs) {
+        eprintln!("Warning: {e}");
+    }
+    config
 }
 
 fn authored_styles(def: Option<&PostProcessDef>) -> flint_render::stylize::StyleSettings {
@@ -448,6 +477,8 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            style_specs: Vec::new(),
+            style_time: None,
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -502,6 +533,8 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            style_specs: Vec::new(),
+            style_time: None,
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -665,8 +698,20 @@ impl ViewerApp {
         {
             let state = self.state.lock().unwrap();
             if let Some(def) = &state.scene_post {
-                scene_renderer.set_post_process_config(post_process_config_from_def(def));
+                scene_renderer.set_post_process_config(with_styles(
+                    post_process_config_from_def(def),
+                    &self.style_specs,
+                ));
                 println!("Scene [post_process] applied (F11 toggles scene/default)");
+            } else if !self.style_specs.is_empty() {
+                let config = scene_renderer.post_process_config().clone();
+                scene_renderer.set_post_process_config(with_styles(config, &self.style_specs));
+            }
+            if !self.style_specs.is_empty() {
+                println!("--style applied: {}", self.style_specs.join(" "));
+            }
+            if let Some(t) = self.style_time {
+                scene_renderer.ocean_time = t as f64;
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel
@@ -930,13 +975,17 @@ impl ViewerApp {
         match scene_post {
             None => println!("Scene has no [post_process] block — nothing to toggle"),
             Some(def) if !self.scene_post_enabled => {
-                renderer.set_post_process_config(post_process_config_from_def(&def));
+                renderer.set_post_process_config(with_styles(
+                    post_process_config_from_def(&def),
+                    &self.style_specs,
+                ));
                 self.scene_post_enabled = true;
                 println!("Scene post-process: ON (authored)");
             }
             Some(_) => {
                 if let Some(default) = &self.default_post_config {
-                    renderer.set_post_process_config(default.clone());
+                    renderer
+                        .set_post_process_config(with_styles(default.clone(), &self.style_specs));
                 }
                 self.scene_post_enabled = false;
                 println!("Scene post-process: OFF (viewer default)");
@@ -1987,8 +2036,12 @@ impl ViewerApp {
                         // Re-derive the authored post-process so [post_process]
                         // edits hot-reload like the rest of the scene.
                         if self.scene_post_enabled {
+                            // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
-                                renderer.set_post_process_config(post_process_config_from_def(def));
+                                renderer.set_post_process_config(with_styles(
+                                    post_process_config_from_def(def),
+                                    &self.style_specs,
+                                ));
                             }
                         }
                         self.render_panel

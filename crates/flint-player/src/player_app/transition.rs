@@ -396,6 +396,8 @@ impl PlayerApp {
     fn bring_up_scene(&mut self) {
         // Apply camera config before borrowing renderer
         self.apply_camera_def();
+        // The new scene's [post_process] with --style over it (#328)
+        let scene_post_config = self.scene_post_config();
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -488,10 +490,8 @@ impl PlayerApp {
             }
 
             // Apply post-process config
-            if let Some(pp_def) = &self.scene_post_process {
-                renderer.set_post_process_config(
-                    super::scene_loading::post_process_config_from_def(pp_def),
-                );
+            if let Some(config) = scene_post_config {
+                renderer.set_post_process_config(config);
                 renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
             }

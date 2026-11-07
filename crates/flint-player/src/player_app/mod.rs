@@ -303,6 +303,14 @@ pub struct PlayerApp {
 
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
+    /// `--style name[:key=value,...]` words (#328), written over every
+    /// scene's `[post_process]` at load, after each transition and after a
+    /// user style's hot reload, so they keep winning. See
+    /// [`PlayerApp::scene_post_config`].
+    pub style_specs: Vec<String>,
+    /// `--style-time`: hold the post time styles (and the ocean, grain and
+    /// render modes, which share it) see at this many seconds.
+    pub style_time: Option<f32>,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,
