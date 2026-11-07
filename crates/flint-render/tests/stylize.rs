@@ -230,6 +230,53 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     }
 }
 
+/// #302: invert + FXAA holds two full-size surface-format textures (the
+/// stage's input and FXAA's intermediate), and so does every longer chain
+/// with FXAA, which draws through the intermediate instead of pings. The
+/// frame is the one the chain drew before it reused them (sky inverted).
+#[test]
+fn display_styles_with_fxaa_hold_two_full_size_textures() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let world = FlintWorld::new();
+    for styles in [
+        &["invert"][..],
+        &["ascii", "invert"],
+        &["ascii", "pencil", "invert"],
+    ] {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let plain = gpu.frame(&mut renderer, &world);
+        let mut config = renderer.post_process_config().clone();
+        for style in styles {
+            config.styles.set_enabled(style, true);
+        }
+        config.fxaa_enabled = true;
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        renderer.ensure_fxaa_resources(&gpu.device);
+        gpu.frame(&mut renderer, &world);
+        let drawn = gpu.frame(&mut renderer, &world);
+        let stats = renderer.collect_stats();
+        assert_eq!(stats.full_size_targets, 2, "{styles:?}: {stats:?}");
+        if styles.len() == 1 {
+            for (i, (a, b)) in plain.iter().zip(&drawn).enumerate() {
+                if i % 4 != 3 {
+                    assert!((255 - *a).abs_diff(*b) <= 2, "byte {i}: {a} then {b}");
+                }
+            }
+        }
+    }
+}
+
 /// #299: two styles of one stage in the two orders draw two pictures, and
 /// a scene that orders nothing draws what registration order always drew.
 #[test]
@@ -735,4 +782,91 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     }
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
+}
+
+/// A transparent pane in front of a styled entity takes back the share of
+/// each pixel it covers (#290): nearly opaque glass gives the unstyled
+/// pixels back exactly, half-clear glass leaves the style showing through
+/// faintly, and glass that is itself styled stays out of the veil.
+#[test]
+fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::{clear_entity_style, set_entity_style, set_style_param};
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let boxed = |world: &mut FlintWorld, name: &str, at: [f64; 3], half: f64| {
+        let e = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-half; 3]));
+        bounds.insert("max".into(), vec3([half; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        e
+    };
+    let mut world = FlintWorld::new();
+    let cube = boxed(&mut world, "cube", [0.0; 3], 2.5);
+    // A box of glass between the default camera (10, 10, 10) and the
+    // cube, wide enough to cover all of it
+    let glass = boxed(&mut world, "glass", [5.0; 3], 3.0);
+    let set_opacity = |world: &mut FlintWorld, opacity: f64| {
+        let mut material = toml::Table::new();
+        material.insert("color".into(), vec3([0.4, 0.8, 0.7]));
+        material.insert("opacity".into(), opacity.into());
+        world
+            .set_component(glass, "material", material.into())
+            .unwrap();
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let styled = |renderer: &mut SceneRenderer, world: &mut FlintWorld, on: bool| {
+        if on {
+            set_entity_style(world, cube, "ascii").unwrap();
+            set_style_param(world, cube, "cell", 4.0.into()).unwrap();
+        } else {
+            clear_entity_style(world, cube);
+        }
+        gpu.frame(renderer, world)
+    };
+    let weight =
+        |a: &[u8], b: &[u8]| -> u32 { a.iter().zip(b).map(|(x, y)| x.abs_diff(*y) as u32).sum() };
+
+    // Nearly opaque glass: its two faces cover all but a millionth, so the
+    // cube's blend rounds to 0 and the frame is the unstyled one
+    set_opacity(&mut world, 0.999);
+    let plain = styled(&mut renderer, &mut world, false);
+    let veiled = styled(&mut renderer, &mut world, true);
+    assert_eq!(
+        veiled, plain,
+        "glass in front still drew the cube in glyphs"
+    );
+
+    // Half-clear glass covers 75% (two faces): the glyphs show, faintly
+    set_opacity(&mut world, 0.5);
+    let plain = styled(&mut renderer, &mut world, false);
+    let through = styled(&mut renderer, &mut world, true);
+    let weak = weight(&plain, &through);
+    assert!(weak > 0, "half-clear glass hid the style entirely");
+
+    // Styled glass is no veil: the cube is wholly glyphs behind it
+    set_entity_style(&mut world, glass, "ascii").unwrap();
+    let plain = styled(&mut renderer, &mut world, false);
+    let full = styled(&mut renderer, &mut world, true);
+    let strong = weight(&plain, &full);
+    eprintln!("half-clear glass: style weight {weak}; styled glass: {strong}");
+    assert!(
+        strong > weak * 2,
+        "the veil didn't weaken the style ({weak} vs {strong})"
+    );
 }

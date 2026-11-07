@@ -7,6 +7,10 @@
 // render scale), with a tolerance of its own depth slope. The vertex
 // stages repeat shader.wgsl's and skinned_shader.wgsl's products in the
 // same order, so the depths match wherever the rasterisers agree.
+//
+// A transparent or a particle in front of a styled entity (glass, fire)
+// unmasks it by its coverage (#290): the veil pass drew that coverage just
+// before, and the blend written here is the entity's times what's left.
 
 struct TransformUniforms {
     view_proj: mat4x4<f32>,
@@ -27,6 +31,10 @@ struct MaskDraw {
 @group(0) @binding(0) var<uniform> transform: TransformUniforms;
 @group(1) @binding(0) var<uniform> draw: MaskDraw;
 @group(1) @binding(1) var scene_depth: texture_depth_2d;
+// The style veil (#290): how much of each pixel transparents and particles
+// in front of the scene cover, 0..1. That share of the pixel is theirs, not
+// the styled entity's, so the entity's blend is scaled down by it.
+@group(1) @binding(2) var veil: texture_2d<f32>;
 // Only the skinned entry point reads it; the static layout leaves it out
 @group(2) @binding(0) var<storage, read> bone_matrices: array<mat4x4<f32>>;
 
@@ -71,5 +79,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec2<u32> {
     if frag.z > scene + slope * draw.slope_tolerance + 1e-6 {
         discard;
     }
-    return vec2<u32>(draw.id, draw.blend);
+    let covered = clamp(textureLoad(veil, vec2<i32>(frag.xy), 0).r, 0.0, 1.0);
+    let blend = u32(round(f32(draw.blend) * (1.0 - covered)));
+    return vec2<u32>(draw.id, blend);
 }
