@@ -611,6 +611,8 @@ impl PlayerApp {
                     self.capture.perf_draws += stats.draw_calls as u64;
                     self.capture.perf_entity_draws += stats.entity_draws as u64;
                     self.capture.perf_culled += stats.culled_draws as u64;
+                    self.capture.perf_lod_culled += stats.lod_culled_draws as u64;
+                    self.capture.perf_shadow_triangles += stats.shadow_triangles as u64;
                     self.capture.perf_triangles += stats.triangles as u64;
                     if stats.gpu_frame_ms > 0.0 {
                         self.capture.perf_gpu_ms += stats.gpu_frame_ms as f64;
@@ -642,11 +644,13 @@ impl PlayerApp {
                     // can compare draw counts and culling headlessly (H9).
                     let avg = |sum: u64| sum as f64 / frames as f64;
                     eprintln!(
-                        "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled), {:.0} triangles",
+                        "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
                         avg(self.capture.perf_draws),
                         avg(self.capture.perf_entity_draws),
                         avg(self.capture.perf_culled),
-                        avg(self.capture.perf_triangles)
+                        avg(self.capture.perf_lod_culled),
+                        avg(self.capture.perf_triangles),
+                        avg(self.capture.perf_shadow_triangles)
                     );
                     // GPU time, when the frames were timed (--stats, ADR 0108).
                     let gpu_frames = self.capture.perf_gpu_frames;
@@ -946,6 +950,20 @@ impl PlayerApp {
         // A menu put the touch controls away, or play brought them back.
         if let Some(enabled) = self.script.take_touch_controls_override() {
             self.input.touch_controls_mut().set_enabled(enabled);
+        }
+
+        // A quality setting moved the distance levers (#56).
+        if let Some(renderer) = &mut self.scene_renderer {
+            let (lod, draw) = self.script.take_lod_requests();
+            let mut s = renderer.lod_settings();
+            if lod.is_some() || draw.is_some() {
+                s.lod_scale = lod.unwrap_or(s.lod_scale);
+                s.draw_distance_scale = draw.unwrap_or(s.draw_distance_scale);
+                renderer.set_lod_settings(s);
+                s = renderer.lod_settings();
+            }
+            self.script
+                .set_lod_state(s.lod_scale, s.draw_distance_scale);
         }
 
         // Apply cursor capture request from scripts (skipped while a debug

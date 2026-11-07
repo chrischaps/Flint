@@ -463,6 +463,8 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_desaturation(amount)` | Desaturate toward ash grey (0 = full colour, 1 = grey; ADR 0021) |
 | `set_dof(strength)` | Depth-of-field defocus strength (0 = sharp, 1 = full blur) |
 | `set_dof_focus(distance, range)` | Focus plane distance and half-width, in view metres |
+| `set_lod_scale(scale)` / `lod_scale()` | Multiply every level-of-detail switch distance (1 = as authored, 0.5 = simpler levels at half the distance; kept across scenes; see Rendering) |
+| `set_draw_distance_scale(scale)` / `draw_distance_scale()` | Multiply every model's draw distance |
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
 

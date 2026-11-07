@@ -19,6 +19,9 @@ pub struct GpuMesh {
     /// Local-space bounds of the vertices, for frustum culling.
     pub aabb_min: [f32; 3],
     pub aabb_max: [f32; 3],
+    /// The camera distances this mesh draws at (its glTF `extras.flint_lod`);
+    /// `None` draws at every distance.
+    pub lod: Option<flint_import::LodBand>,
     // Keep raw data for creating per-entity copies
     vertex_data: Vec<u8>,
     index_data: Vec<u8>,
@@ -182,6 +185,7 @@ impl MeshCache {
                     material,
                     aabb_min,
                     aabb_max,
+                    lod: mesh.lod,
                     vertex_data,
                     index_data,
                 }
@@ -329,6 +333,7 @@ impl MeshCache {
                     material,
                     aabb_min,
                     aabb_max,
+                    lod: mesh.lod,
                     vertex_data,
                     index_data,
                 }
@@ -533,6 +538,7 @@ impl MeshCache {
             material,
             aabb_min,
             aabb_max,
+            lod: None,
             vertex_data,
             index_data,
         };

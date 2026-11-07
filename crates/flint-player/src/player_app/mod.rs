@@ -136,7 +136,10 @@ pub struct CaptureConfig {
     pub(crate) perf_draws: u64,
     pub(crate) perf_entity_draws: u64,
     pub(crate) perf_culled: u64,
+    /// Of those, set aside by level of detail / draw distance (#56)
+    pub(crate) perf_lod_culled: u64,
     pub(crate) perf_triangles: u64,
+    pub(crate) perf_shadow_triangles: u64,
     /// GPU frame times summed over frames that had one (ADR 0108)
     pub(crate) perf_gpu_ms: f64,
     pub(crate) perf_gpu_frames: u64,

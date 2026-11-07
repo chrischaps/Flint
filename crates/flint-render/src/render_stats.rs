@@ -18,6 +18,9 @@ pub struct RenderStats {
     /// Opaque and transparent mesh draws skipped because their bounds were
     /// outside the camera frustum. Not counted in `draw_calls`.
     pub culled_draws: u32,
+    /// Of `culled_draws`, those set aside for their level of detail or past
+    /// their draw distance (#56), not by the frustum.
+    pub lod_culled_draws: u32,
     pub skinned_draws: u32,
     pub terrain_draws: u32,
     pub terrain_total_chunks: u32,

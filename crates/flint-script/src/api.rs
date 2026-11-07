@@ -1399,6 +1399,41 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // set_lod_scale(scale) / set_draw_distance_scale(scale) (#56)
+    // The renderer's distance levers, for quality settings: the LOD scale
+    // multiplies every level-of-detail switch distance (0.5 drops models to
+    // their simpler levels at half the distance), the draw-distance scale
+    // every draw distance. 1.0 is as authored; clamped to 0.05 and up.
+    // Applied after this frame's scripts and kept across scene changes.
+    // lod_scale() / draw_distance_scale() read the values in force.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_lod_scale", move |scale: f64| {
+            crate::lock_or_recover(&ctx).lod_scale_request = Some(scale as f32);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_draw_distance_scale", move |scale: f64| {
+            crate::lock_or_recover(&ctx).draw_distance_scale_request = Some(scale as f32);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("lod_scale", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.lod_scale_request.unwrap_or(c.lod_scale) as f64
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_distance_scale", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.draw_distance_scale_request
+                .unwrap_or(c.draw_distance_scale) as f64
+        });
+    }
+
     // set_touch_controls(enabled: bool)
     // Put the on-screen controls away (false) while a menu wants every tap,
     // and bring them back (true) for play (#134). Applied after this frame's

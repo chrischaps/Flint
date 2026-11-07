@@ -93,6 +93,83 @@ pub(super) struct DrawCall {
     sort_depth: f32,
     /// World-space bounds for frustum culling. `None` draws are never culled.
     world_aabb: Option<([f32; 3], [f32; 3])>,
+    /// The camera distances this draw is drawn at: its mesh's level of detail
+    /// and the entity's `lod.draw_distance`. `None` draws at every distance.
+    lod: Option<DrawLod>,
+}
+
+/// A draw's level of detail in world space: the band of camera distances it
+/// draws in, measured to the closest point of `ref_min..ref_max` (the box
+/// every level of its group shares, so the levels hand over cleanly).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DrawLod {
+    pub band: flint_import::LodBand,
+    pub ref_min: [f32; 3],
+    pub ref_max: [f32; 3],
+}
+
+impl DrawLod {
+    /// Whether a camera at `eye` draws it, under the renderer's scales.
+    pub fn visible_from(&self, eye: [f32; 3], lod_scale: f32, draw_scale: f32) -> bool {
+        let d = distance_to_box(eye, self.ref_min, self.ref_max);
+        self.band.visible_at(d, lod_scale, draw_scale)
+    }
+}
+
+/// Distance from `p` to the closest point of the box (0 inside it).
+pub(super) fn distance_to_box(p: [f32; 3], min: [f32; 3], max: [f32; 3]) -> f32 {
+    let mut d2 = 0.0;
+    for i in 0..3 {
+        let v = (min[i] - p[i]).max(0.0).max(p[i] - max[i]);
+        d2 += v * v;
+    }
+    d2.sqrt()
+}
+
+/// The renderer's distance levers (#56). `lod_scale` multiplies every level
+/// switch distance (below 1 a model drops to its simpler levels sooner);
+/// `draw_distance_scale` multiplies every draw distance (below 1 far things
+/// stop drawing sooner). Both start at 1, or at `FLINT_LOD_SCALE` /
+/// `FLINT_DRAW_DISTANCE_SCALE`, and quality settings change them at runtime.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodSettings {
+    pub lod_scale: f32,
+    pub draw_distance_scale: f32,
+}
+
+impl Default for LodSettings {
+    fn default() -> Self {
+        Self {
+            lod_scale: 1.0,
+            draw_distance_scale: 1.0,
+        }
+    }
+}
+
+impl LodSettings {
+    /// The smallest scale accepted: zero would draw only the last level and
+    /// nothing with a draw distance.
+    pub const MIN_SCALE: f32 = 0.05;
+
+    /// The defaults, overridden by `FLINT_LOD_SCALE` and
+    /// `FLINT_DRAW_DISTANCE_SCALE` when they hold a number.
+    pub fn from_env() -> Self {
+        let read = |key: &str| {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .filter(|v| v.is_finite())
+                .map(|v| v.max(Self::MIN_SCALE))
+        };
+        let mut s = Self::default();
+        if let Some(v) = read("FLINT_LOD_SCALE") {
+            s.lod_scale = v;
+        }
+        if let Some(v) = read("FLINT_DRAW_DISTANCE_SCALE") {
+            s.draw_distance_scale = v;
+        }
+        s
+    }
 }
 
 /// Transform + material GPU resources of one draw of one entity, kept
@@ -338,6 +415,10 @@ pub struct SceneRenderer {
     terrain_total_chunks: u32,
     terrain_visible_chunks: u32,
     camera_frustum: Option<crate::frustum::Frustum>,
+    /// Level-of-detail and draw-distance scales (#56)
+    lod_settings: LodSettings,
+    /// Draws the last `render_to` set aside by level of detail
+    lod_culled: u32,
     // Grass
     grass_pipeline: Option<GrassPipeline>,
     grass_instance_buffer: Option<wgpu::Buffer>,
@@ -635,6 +716,8 @@ impl SceneRenderer {
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
             camera_frustum: None,
+            lod_settings: LodSettings::from_env(),
+            lod_culled: 0,
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
@@ -2113,6 +2196,8 @@ impl SceneRenderer {
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
             camera_frustum: None,
+            lod_settings: LodSettings::from_env(),
+            lod_culled: 0,
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
@@ -2581,6 +2666,7 @@ impl SceneRenderer {
             entity_draws,
             culled_draws: (self.culled_entity_draws.len() + self.culled_transparent_draws.len())
                 as u32,
+            lod_culled_draws: self.lod_culled,
             skinned_draws,
             terrain_draws,
             terrain_total_chunks: self.terrain_total_chunks,
@@ -3254,7 +3340,69 @@ impl SceneRenderer {
             blend_mode,
             sort_depth: 0.0,
             world_aabb: None,
+            lod: None,
         }
+    }
+
+    /// The distance levers in force (#56).
+    pub fn lod_settings(&self) -> LodSettings {
+        self.lod_settings
+    }
+
+    /// Change the distance levers (#56): takes effect at the next
+    /// `render_to`, no reload. Scales are clamped to
+    /// [`LodSettings::MIN_SCALE`] and non-finite values are ignored.
+    pub fn set_lod_settings(&mut self, settings: LodSettings) {
+        let clamp = |v: f32, old: f32| {
+            if v.is_finite() {
+                v.max(LodSettings::MIN_SCALE)
+            } else {
+                old
+            }
+        };
+        self.lod_settings = LodSettings {
+            lod_scale: clamp(settings.lod_scale, self.lod_settings.lod_scale),
+            draw_distance_scale: clamp(
+                settings.draw_distance_scale,
+                self.lod_settings.draw_distance_scale,
+            ),
+        };
+    }
+
+    /// Draws set aside by the last `render_to` for their level of detail or
+    /// draw distance (they are also in `culled_draws`).
+    pub fn lod_culled_draws(&self) -> u32 {
+        self.lod_culled
+    }
+
+    /// Move draws whose level of detail isn't the one for a camera at `eye`,
+    /// or which are past their draw distance, into the culled lists, before
+    /// the shadow pass: a far chunk's shadow comes from its simple level too.
+    fn cull_draws_to_lod(&mut self, eye: [f32; 3]) {
+        let LodSettings {
+            lod_scale,
+            draw_distance_scale,
+        } = self.lod_settings;
+        let mut culled = 0u32;
+        let mut split = |draws: &mut Vec<DrawCall>, out: &mut Vec<DrawCall>| {
+            if !draws.iter().any(|d| d.lod.is_some()) {
+                return;
+            }
+            let (keep, cull): (Vec<_>, Vec<_>) = draws.drain(..).partition(|d| {
+                d.lod.map_or(true, |l| {
+                    l.visible_from(eye, lod_scale, draw_distance_scale)
+                })
+            });
+            *draws = keep;
+            culled += cull.len() as u32;
+            out.extend(cull);
+        };
+        split(&mut self.entity_draws, &mut self.culled_entity_draws);
+        split(
+            &mut self.transparent_draws,
+            &mut self.culled_transparent_draws,
+        );
+        self.lod_culled = culled;
     }
 
     /// Move opaque and transparent draws whose world bounds miss the camera
@@ -3322,6 +3470,7 @@ impl SceneRenderer {
             blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
             world_aabb: None,
+            lod: None,
         }
     }
 
@@ -4542,6 +4691,10 @@ impl SceneRenderer {
         self.entity_draws.append(&mut self.culled_entity_draws);
         self.transparent_draws
             .append(&mut self.culled_transparent_draws);
+
+        // Pick each model's level of detail for this camera and drop what is
+        // past its draw distance (#56), before the shadow pass sees them.
+        self.cull_draws_to_lod(camera.position_array());
 
         // Count visible terrain chunks for stats
         self.terrain_visible_chunks = if let Some(ref frustum) = self.camera_frustum {

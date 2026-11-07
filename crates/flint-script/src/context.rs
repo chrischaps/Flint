@@ -540,6 +540,14 @@ pub struct ScriptCallContext {
     pub cursor_captured_override: Option<bool>,
     /// `set_touch_controls(enabled)` this frame (#134).
     pub touch_controls_override: Option<bool>,
+    /// `set_lod_scale(scale)` / `set_draw_distance_scale(scale)` this frame
+    /// (#56); the host hands them to the renderer.
+    pub lod_scale_request: Option<f32>,
+    pub draw_distance_scale_request: Option<f32>,
+    /// The renderer's scales now, for `lod_scale()` and
+    /// `draw_distance_scale()`. The host sets them each frame.
+    pub lod_scale: f32,
+    pub draw_distance_scale: f32,
     /// The quality settings as scripts see them (FlintKart#55): what the
     /// host applied, with any `set_quality` this frame merged in.
     pub quality: flint_core::quality::QualitySettings,
@@ -650,6 +658,10 @@ impl ScriptCallContext {
             time_scale_request: None,
             cursor_captured_override: None,
             touch_controls_override: None,
+            lod_scale_request: None,
+            draw_distance_scale_request: None,
+            lod_scale: 1.0,
+            draw_distance_scale: 1.0,
             quality: Default::default(),
             quality_requested: false,
             gpu_info: Default::default(),

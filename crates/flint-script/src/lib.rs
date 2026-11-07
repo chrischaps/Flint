@@ -429,6 +429,24 @@ impl ScriptSystem {
             .take()
     }
 
+    /// Take the `set_lod_scale` / `set_draw_distance_scale` requests made by
+    /// scripts this frame (clears them), as (lod scale, draw-distance scale).
+    pub fn take_lod_requests(&mut self) -> (Option<f32>, Option<f32>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        (
+            c.lod_scale_request.take(),
+            c.draw_distance_scale_request.take(),
+        )
+    }
+
+    /// Tell scripts the renderer's distance scales in force (#56), for
+    /// `lod_scale()` and `draw_distance_scale()`.
+    pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.lod_scale = lod_scale;
+        c.draw_distance_scale = draw_distance_scale;
+    }
+
     /// Take the cursor capture request set by scripts this frame (clears it)
     pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
         let mut c = self.engine.ctx.lock().unwrap();
