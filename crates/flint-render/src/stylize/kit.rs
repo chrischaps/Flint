@@ -46,6 +46,25 @@ pub fn sampled_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayo
     })
 }
 
+/// A float texture at binding 0 with no sampler, read with `textureLoad`:
+/// the shared edges (bind them with
+/// [`StyleFrame::edges_bind`](super::StyleFrame::edges_bind), #301).
+pub fn texture_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    })
+}
+
 /// The entity style mask at binding 0: a `texture_2d<u32>` read with
 /// `textureLoad` (bind it with [`StyleFrame::mask_bind`](super::StyleFrame::mask_bind)).
 pub fn mask_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {

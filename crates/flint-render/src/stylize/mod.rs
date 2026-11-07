@@ -41,6 +41,7 @@
 //! ```text
 //! scene (HDR, render scale)
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
+//!   -> shared edges (Rgba16Float, depth's size, while a style needs them; #301)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
@@ -62,6 +63,15 @@
 //! distinct set an id of its own, read with [`StyleFrame::variants`]. ASCII
 //! is the example.
 //!
+//! ## Shared inputs
+//!
+//! Some inputs cost enough that two styles computing their own would
+//! double the bill. A style lists them in [`StyleDescriptor::needs`] and
+//! the framework makes each once a frame, for every style on that asks:
+//! [`StyleNeed::Edges`] is the geometry edge texture ([`edges`], #301),
+//! handed over as [`StyleFrame::edges`]. `edges_view` draws it, and
+//! user styles get it with `inputs = ["edges"]`.
+//!
 //! An `Hdr` style is shaded by what follows it: fog fades it, bloom haloes
 //! its bright parts, the grade tints it (Kuwahara's painterly look wants
 //! that). A `Display` style sees the finished picture at output
@@ -74,10 +84,12 @@
 
 pub mod catalog;
 pub mod custom;
+pub mod edges;
 pub mod kit;
 mod spec;
 mod targets;
 
+pub use edges::EDGE_FORMAT;
 pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
 pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 
@@ -135,7 +147,7 @@ pub struct StyleOption {
 /// A colour is three parameters named `<base>_r`, `<base>_g`, `<base>_b`
 /// (each 0..1, display values: what the eye sees, sRGB-encoded): the
 /// menu folds them into one colour picker, and its hint is the base's
-/// (`tint`).
+/// (`tint`). See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
 pub struct StyleHint {
     /// The parameter, option or colour base the hint is for.
@@ -192,6 +204,71 @@ impl StyleControl {
     }
 }
 
+/// One colour setting of a style (#315): the parameters `<base>_r`,
+/// `<base>_g` and `<base>_b`, each 0..1 in display values, that a scene
+/// writes as one key, `tint = [1.0, 0.7, 0.25]` (or `tint = "#ffb340"`),
+/// a style reads with [`StyleFrame::color`], F4 shows as one picker and
+/// Copy TOML writes back as one array. The channels stay parameters
+/// underneath, so a per-entity variant row, a uniform and `--style
+/// ascii:tint_g=0.5` see three numbers as they always did.
+#[derive(Clone, Copy, Debug)]
+pub struct StyleColor {
+    /// The key a scene writes (`tint`).
+    pub base: &'static str,
+    pub channels: [&'static StyleParam; 3],
+}
+
+impl StyleColor {
+    /// The colour the channels' defaults make.
+    pub fn default_rgb(&self) -> [f32; 3] {
+        self.channels.map(|c| c.default)
+    }
+}
+
+/// A colour from a TOML value: an array of three numbers (`[1.0, 0.7,
+/// 0.25]`, integers allowed) or a `#rrggbb` string (`"#ffb340"`), both in
+/// display values, 0..1 per channel.
+pub fn color_from_toml(value: &toml::Value) -> Option<[f32; 3]> {
+    if let Some(text) = value.as_str() {
+        return color_from_hex(text);
+    }
+    let number = |v: &toml::Value| {
+        v.as_float()
+            .or_else(|| v.as_integer().map(|i| i as f64))
+            .filter(|n| n.is_finite())
+            .map(|n| n as f32)
+    };
+    match value.as_array()?.as_slice() {
+        [r, g, b] => Some([number(r)?, number(g)?, number(b)?]),
+        _ => None,
+    }
+}
+
+/// `#rrggbb` (or `rrggbb`) as 0..1 channels.
+pub fn color_from_hex(text: &str) -> Option<[f32; 3]> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?].map(|c| c as f32 / 255.0))
+}
+
+/// A colour as command-line text (#315): `#rrggbb`, or `r/g/b` with each
+/// channel a number (`0.3/1/0.4`). `--style` keys are split on commas, so
+/// a colour there can't be `r,g,b`.
+pub fn color_from_text(text: &str) -> Option<[f32; 3]> {
+    let text = text.trim();
+    if text.starts_with('#') {
+        return color_from_hex(text);
+    }
+    let parts: Vec<f32> = text
+        .split('/')
+        .map(|p| p.trim().parse::<f32>().ok().filter(|n| n.is_finite()))
+        .collect::<Option<_>>()?;
+    <[f32; 3]>::try_from(parts).ok()
+}
+
 /// What the framework needs to build a style.
 #[derive(Clone, Copy)]
 pub struct StyleDevice<'a> {
@@ -203,6 +280,16 @@ pub struct StyleDevice<'a> {
     /// [`Hdr`](StyleStage::Hdr) style, the surface's for a
     /// [`Display`](StyleStage::Display) one.
     pub format: wgpu::TextureFormat,
+}
+
+/// An input the framework computes for the styles that ask for it
+/// ([`StyleDescriptor::needs`]), once a frame however many do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StyleNeed {
+    /// The shared geometry edges ([`edges`]): silhouette and crease
+    /// strength and the direction across them, from the depth alone, read
+    /// as [`StyleFrame::edges`].
+    Edges,
 }
 
 /// A registered style: what it is called, where it runs and how to make it.
@@ -224,6 +311,10 @@ pub struct StyleDescriptor {
     /// such style is on, the renderer draws the mask each frame and hands
     /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
     pub uses_mask: bool,
+    /// Framework-made inputs the style reads (#301). While any style that
+    /// asks for one is on, the framework makes it once a frame for all of
+    /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
+    pub needs: &'static [StyleNeed],
     /// How the F4 menu labels its settings ([`StyleHint`]); `&[]` is fine.
     pub hints: &'static [StyleHint],
     /// The component an entity takes this style with, its fields being the
@@ -260,6 +351,11 @@ impl StyleDescriptor {
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
             && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
+    }
+
+    /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
+    pub fn needs_edges(&self) -> bool {
+        self.needs.contains(&StyleNeed::Edges)
     }
 
     /// Whether the style's parameters live in the generic table (and so
@@ -303,29 +399,75 @@ impl StyleDescriptor {
         }
     }
 
+    /// The colour whose key is `base` (`tint`), if the style has its three
+    /// channels.
+    pub fn color_setting(&self, base: &str) -> Option<StyleColor> {
+        let params: &'static [StyleParam] = self.params;
+        let find = |c: &str| {
+            let name = format!("{base}_{c}");
+            params.iter().find(|p| p.name == name)
+        };
+        let (r, g, b) = (find("r")?, find("g")?, find("b")?);
+        // The red channel's name, less `_r`, is the 'static base
+        let base = &r.name[..r.name.len() - 2];
+        Some(StyleColor {
+            base,
+            channels: [r, g, b],
+        })
+    }
+
+    /// The style's colours (#315), in the order their red channels stand.
+    pub fn colors(&self) -> Vec<StyleColor> {
+        self.params
+            .iter()
+            .filter_map(|p| p.name.strip_suffix("_r"))
+            .filter_map(|base| self.color_setting(base))
+            .collect()
+    }
+
+    /// The colour a parameter is a channel of, if it is one.
+    pub fn color_of(&self, param: &str) -> Option<StyleColor> {
+        ["_r", "_g", "_b"]
+            .iter()
+            .find_map(|c| param.strip_suffix(c))
+            .and_then(|base| self.color_setting(base))
+    }
+
+    /// Colour `base` in `config`, each channel as set or its default. A
+    /// name that is no colour of this style reads black.
+    pub fn color(&self, config: &PostProcessConfig, base: &str) -> [f32; 3] {
+        match self.color_setting(base) {
+            Some(c) => c.channels.map(|p| self.param(config, p.name)),
+            None => [0.0; 3],
+        }
+    }
+
+    /// The keys a scene's table for this style takes besides `enabled` and
+    /// `order`: options, then parameters with each colour's channels folded
+    /// into its one key (`tint`), for error messages.
+    pub fn setting_keys(&self) -> Vec<&'static str> {
+        let mut keys: Vec<&'static str> = self.options.iter().map(|o| o.name).collect();
+        for p in self.params {
+            match self.color_of(p.name) {
+                Some(c) if !keys.contains(&c.base) => keys.push(c.base),
+                Some(_) => {}
+                None => keys.push(p.name),
+            }
+        }
+        keys
+    }
+
     /// The rows of this style's F4 section, in drawing order.
     pub fn controls(&self) -> Vec<StyleControl> {
         let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
-        let find = |name: String| self.params.iter().find(|p| p.name == name);
         for p in self.params {
-            if let Some(base) = p.name.strip_suffix("_r") {
-                if let (Some(g), Some(b)) = (find(format!("{base}_g")), find(format!("{base}_b"))) {
-                    rows.push(StyleControl::Color {
-                        base,
-                        channels: [p, g, b],
-                    });
-                    continue;
-                }
-            }
-            let folded = ["_g", "_b"].iter().any(|suffix| {
-                p.name.strip_suffix(suffix).is_some_and(|base| {
-                    ["_r", "_g", "_b"]
-                        .iter()
-                        .all(|c| find(format!("{base}{c}")).is_some())
-                })
-            });
-            if !folded {
-                rows.push(StyleControl::Param(p));
+            match self.color_of(p.name) {
+                Some(c) if std::ptr::eq(c.channels[0], p) => rows.push(StyleControl::Color {
+                    base: c.base,
+                    channels: c.channels,
+                }),
+                Some(_) => {}
+                None => rows.push(StyleControl::Param(p)),
             }
         }
         rows
@@ -365,6 +507,15 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
         }
     }
     for p in descriptor.params {
+        // A colour is one array key, where its red channel stands (#315)
+        if let Some(c) = descriptor.color_of(p.name) {
+            let value = descriptor.color(config, c.base);
+            if std::ptr::eq(c.channels[0], p) && value != c.default_rgb() {
+                let [r, g, b] = value.map(toml_float);
+                out.push_str(&format!("{} = [{r}, {g}, {b}]\n", c.base));
+            }
+            continue;
+        }
         let value = descriptor.param(config, p.name);
         if value != p.default {
             let integer =
@@ -457,6 +608,13 @@ pub struct StyleFrame<'a> {
     pub mask: Option<&'a wgpu::TextureView>,
     /// Which id each style name has in [`mask`](Self::mask).
     pub style_ids: &'a crate::style_mask::StyleIds,
+    /// The shared geometry edges (#301, [`edges`] says what the channels
+    /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
+    /// `textureLoad`. `Some` whenever a style that
+    /// [`needs`](StyleDescriptor::needs) them is on; the framework draws
+    /// them once, before the first stage, for every style that reads them.
+    /// Bind it with [`edges_bind`](Self::edges_bind).
+    pub edges: Option<Arc<StyleTexture>>,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
@@ -501,6 +659,12 @@ impl StyleFrame<'_> {
     /// This style's option `name`, from the config or its default.
     pub fn option(&self, name: &str) -> &str {
         self.descriptor.option(self.config, name)
+    }
+
+    /// This style's colour `name` (`tint`, #315): its `_r`/`_g`/`_b`
+    /// channels from the config or their defaults, in display values.
+    pub fn color(&self, name: &str) -> [f32; 3] {
+        self.descriptor.color(self.config, name)
     }
 
     /// A texture of the style's own, `width` x `height` in `format`, made
@@ -597,6 +761,36 @@ impl StyleFrame<'_> {
         }))
     }
 
+    /// A kept bind group of the shared edges at binding 0, for a layout
+    /// made with [`kit::texture_layout`]; `None` while no style needs them.
+    pub fn edges_bind(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Option<Arc<wgpu::BindGroup>> {
+        let edges = self.edges.as_ref()?;
+        Some(self.bind(name, self.edges_key(), || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&edges.view),
+                }],
+            })
+        }))
+    }
+
+    /// A key for bind groups over [`edges`](Self::edges): its size, which
+    /// is what a render-scale step changes (the edge target is made again
+    /// at the depth's new size while the chain's bind groups stay). 0
+    /// while there are none.
+    pub fn edges_key(&self) -> u64 {
+        self.edges
+            .as_ref()
+            .map_or(0, |e| (u64::from(e.width) << 32) | u64::from(e.height))
+    }
+
     /// The style mask id of style `name` this frame, if an entity asks
     /// for it.
     pub fn style_id(&self, name: &str) -> Option<u16> {
@@ -615,6 +809,15 @@ impl StyleFrame<'_> {
     /// the style's default.
     pub fn variant_param(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> f32 {
         variant.param(self.descriptor, self.config, name)
+    }
+
+    /// Colour `name` of `variant` (#315), channel by channel: the entity's,
+    /// else the scene's, else the style's default.
+    pub fn variant_color(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> [f32; 3] {
+        match self.descriptor.color_setting(name) {
+            Some(c) => c.channels.map(|p| self.variant_param(variant, p.name)),
+            None => [0.0; 3],
+        }
     }
 
     /// Option `name` of `variant`: the entity's, else the scene's, else the
@@ -737,6 +940,14 @@ impl StyleSettings {
             .insert(param.to_string(), value);
     }
 
+    /// Set colour `base` (`tint`, #315) of style `name`: its `_r`, `_g`
+    /// and `_b` channels.
+    pub fn set_color(&mut self, name: &str, base: &str, rgb: [f32; 3]) {
+        for (c, v) in ["r", "g", "b"].iter().zip(rgb) {
+            self.set_param(name, &format!("{base}_{c}"), v);
+        }
+    }
+
     pub fn option(&self, name: &str, option: &str) -> Option<&str> {
         self.styles
             .get(name)?
@@ -812,8 +1023,9 @@ impl StyleSettings {
     }
 
     /// Read a scene's `[post_process.styles]` tables. A table switches its
-    /// style on unless it says `enabled = false`; every other key is a
-    /// number. Returns the settings and a warning for each name, key or
+    /// style on unless it says `enabled = false`; an option is a string, a
+    /// parameter a number, and a colour (#315) an array of three numbers
+    /// or a `#rrggbb` string (its channels may still be set one by one). Returns the settings and a warning for each name, key or
     /// value the registry doesn't know.
     pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
         let mut settings = Self::default();
@@ -860,13 +1072,21 @@ impl StyleSettings {
                     }
                     continue;
                 }
+                if let Some(color) = descriptor.color_setting(key) {
+                    match color_from_toml(value) {
+                        Some(rgb) => {
+                            for (p, v) in color.channels.iter().zip(rgb) {
+                                setting.params.insert(p.name.to_string(), v);
+                            }
+                        }
+                        None => warnings.push(format!(
+                            "styles.{name}.{key} must be a colour: [r, g, b] (0-1) or \"#rrggbb\""
+                        )),
+                    }
+                    continue;
+                }
                 if !descriptor.params.iter().any(|p| p.name == key) {
-                    let known: Vec<&str> = descriptor
-                        .params
-                        .iter()
-                        .map(|p| p.name)
-                        .chain(descriptor.options.iter().map(|o| o.name))
-                        .collect();
+                    let known = descriptor.setting_keys();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
                         if known.is_empty() {
@@ -909,6 +1129,14 @@ pub struct StyleSet {
     /// the same registry index ([`custom::reload_changed`], #275): a
     /// different address here throws the old pass away and builds again.
     from: Vec<usize>,
+    /// The shared edge pass (#301), built the first time a style needs it.
+    edges: Option<edges::EdgePass>,
+    /// The edge pass's creation panicked; the styles that need it draw
+    /// without (their [`StyleFrame::edges`] is `None`).
+    edges_failed: bool,
+    /// How many times the edge pass has been drawn, for the test that a
+    /// frame draws it once however many styles read it.
+    edge_runs: std::sync::atomic::AtomicU64,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -962,7 +1190,54 @@ impl StyleSet {
                 }
             }
         }
+        if self.edges.is_none()
+            && !self.edges_failed
+            && registry
+                .iter()
+                .any(|d| d.needs_edges() && d.is_on(config, ids))
+        {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                edges::EdgePass::new(device)
+            })) {
+                Ok(pass) => self.edges = Some(pass),
+                Err(_) => {
+                    tracing::warn!(
+                        "shared style edges unavailable: the edge shader failed to build"
+                    );
+                    self.edges_failed = true;
+                }
+            }
+        }
         failed
+    }
+
+    /// Draw the shared edges (#301) if any of `styles` (this frame's
+    /// active ones, both stages) needs them, inside a GPU-timer scope of
+    /// their own. Returns the texture for [`StyleFrame::edges`].
+    pub(crate) fn encode_edges(
+        &self,
+        styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        scope: &mut Scope<'_>,
+    ) -> Option<Arc<StyleTexture>> {
+        let pass = self.edges.as_ref()?;
+        if !styles.iter().any(|(d, _)| d.needs_edges()) {
+            return None;
+        }
+        let mut made = None;
+        scope(edges::EDGE_LABEL, encoder, &mut |encoder| {
+            made = Some(pass.encode(frame, encoder));
+        });
+        self.edge_runs
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        made
+    }
+
+    /// How many times the shared edge pass has been drawn since the
+    /// renderer was made.
+    pub fn edge_runs(&self) -> u64 {
+        self.edge_runs.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether style `name` is built.
@@ -1205,7 +1480,7 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view);
+register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view, edges_view);
 
 /// The built-ins followed by user styles registered at run time
 /// ([`custom`], #274). Append-only, so a style's index in it (which
@@ -1349,6 +1624,63 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_is_one_key_in_a_scene() {
+        let ascii = find("ascii").unwrap();
+        let colors = ascii.colors();
+        assert_eq!(colors.len(), 1);
+        assert_eq!(colors[0].base, "tint");
+        assert_eq!(colors[0].default_rgb(), [0.35, 1.0, 0.45]);
+        assert_eq!(ascii.color_of("tint_g").unwrap().base, "tint");
+        assert!(ascii.color_of("glow").is_none());
+        assert!(ascii.color_setting("glow").is_none());
+        let keys = ascii.setting_keys();
+        assert!(keys.contains(&"tint") && !keys.iter().any(|k| k.starts_with("tint_")));
+
+        let read = |text: &str| {
+            let tables: BTreeMap<String, toml::Table> = toml::from_str(text).unwrap();
+            let (styles, warnings) = StyleSettings::from_tables(&tables);
+            let config = PostProcessConfig {
+                styles,
+                ..Default::default()
+            };
+            (ascii.color(&config, "tint"), warnings)
+        };
+        // An array, integers allowed
+        assert_eq!(
+            read("[ascii]\ntint = [1.0, 0.7, 0]\n"),
+            ([1.0, 0.7, 0.0], vec![])
+        );
+        // A hex string, in display values
+        let (hex, warnings) = read("[ascii]\ntint = \"#ff8000\"\n");
+        assert!(warnings.is_empty());
+        assert_eq!(hex, [1.0, 128.0 / 255.0, 0.0]);
+        // A channel on its own still works, the rest default
+        assert_eq!(read("[ascii]\ntint_g = 0.2\n").0, [0.35, 0.2, 0.45]);
+        // Not a colour: a warning that says what is, and the default holds
+        for bad in ["tint = [1.0, 0.5]", "tint = \"green\"", "tint = 3"] {
+            let (rgb, warnings) = read(&format!("[ascii]\n{bad}\n"));
+            assert_eq!(rgb, [0.35, 1.0, 0.45], "{bad}");
+            assert!(warnings[0].contains("[r, g, b]"), "{bad}: {warnings:?}");
+        }
+        // An unknown key lists the colour once, by its key
+        let (_, warnings) = read("[ascii]\nhue = 1\n");
+        assert!(
+            warnings[0].contains("tint") && !warnings[0].contains("tint_r"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn colour_text_is_hex_or_slashes() {
+        assert_eq!(color_from_text("#00ff00"), Some([0.0, 1.0, 0.0]));
+        assert_eq!(color_from_text("0.3/1/0.4"), Some([0.3, 1.0, 0.4]));
+        assert_eq!(color_from_text(" 1 / 0 / 0 "), Some([1.0, 0.0, 0.0]));
+        for bad in ["", "#0f0", "#gg0000", "1/2", "1/2/3/4", "red", "nan/0/0"] {
+            assert_eq!(color_from_text(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn labels_come_from_hints_or_the_name() {
         let ascii = find("ascii").unwrap();
         assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
@@ -1371,7 +1703,7 @@ mod tests {
         let text = style_toml(ascii, &config);
         assert_eq!(
             text,
-            "[post_process.styles.ascii]\ncolor = \"palette\"\ncell = 12\ntint_r = 1.0\nglow = 0.35\n"
+            "[post_process.styles.ascii]\ncolor = \"palette\"\ncell = 12\ntint = [1.0, 1.0, 0.45]\nglow = 0.35\n"
         );
         // It is the scene's syntax: parse it the way a scene is read
         let doc: toml::Table = text.parse().unwrap();

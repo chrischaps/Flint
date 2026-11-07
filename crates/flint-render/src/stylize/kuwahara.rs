@@ -18,6 +18,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],
     enabled: Some(|c: &PostProcessConfig| c.kuwahara_enabled),
     uses_mask: false,
+    needs: &[],
     hints: &[],
     component: None,
     create: |d| Box::new(Kuwahara::new(d)),

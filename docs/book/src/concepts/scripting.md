@@ -450,7 +450,7 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 | Function | Description |
 |----------|-------------|
 | `set_entity_style(entity_id, style)` | Draw the entity and its descendants in `style` (`"ascii"`). Settings it had before are kept, and any other style or `style_mask` on it comes off |
-| `set_style_param(entity_id, param, value)` | Change one setting: a number (`cell`, `glow`, `brightness`, `levels`, ...; clamped to the style's range), a string (`ramp`, `color`, `palette`, `grid`, `transition`, ...), `enabled` (`true`/`false`), `blend` (0--1, how much of the style shows; [Blending in and out](stylize-passes.md#blending-in-and-out)) or a three-number array (`tint`). Integers count as numbers, so web scripts (i64 only) work unchanged |
+| `set_style_param(entity_id, param, value)` | Change one setting: a number (`cell`, `glow`, `brightness`, `levels`, ...; clamped to the style's range), a string (`ramp`, `color`, `palette`, `grid`, `transition`, ...), `enabled` (`true`/`false`), `blend` (0--1, how much of the style shows; [Blending in and out](stylize-passes.md#blending-in-and-out)) or a [colour](stylize-passes.md#colours) (`tint`: a three-number array or a `"#rrggbb"` string). Integers count as numbers, so web scripts (i64 only) work unchanged |
 | `clear_entity_style(entity_id)` | Take the entity's own style off |
 
 Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.

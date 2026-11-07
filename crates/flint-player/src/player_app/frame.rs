@@ -290,6 +290,7 @@ impl PlayerApp {
                     self.camera.fov,
                 );
             }
+            rp.set_style_ids(renderer.style_ids());
         }
 
         // F3 Styles panel (#268): the same write-through as F4, for the

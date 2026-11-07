@@ -83,3 +83,44 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec2<u32> {
     let blend = u32(round(f32(draw.blend) * (1.0 - covered)));
     return vec2<u32>(draw.id, blend);
 }
+
+// Under MSAA (#306) the mask is drawn 4x, into a target with the scene's
+// sample pattern, and each covered sample tests itself against that
+// sample of the scene's own multisampled depth. One invocation a pixel:
+// the rasteriser's coverage (`covered`) says which samples the triangle
+// reaches, and the output mask keeps the ones that pass. `frag.z` is the
+// pixel centre's depth, at most half a slope from any sample's, which
+// the tolerance absorbs. style_mask_resolve.wgsl then folds the samples
+// into the single-sample mask the styles read. The veil (binding 2) stays
+// single-sample: every sample of a pixel is scaled by the same coverage.
+@group(1) @binding(3) var scene_depth_ms: texture_depth_multisampled_2d;
+
+struct MsaaOut {
+    @location(0) value: vec2<u32>,
+    @builtin(sample_mask) samples: u32,
+};
+
+@fragment
+fn fs_msaa(
+    @builtin(position) frag: vec4<f32>,
+    @builtin(sample_mask) covered: u32,
+) -> MsaaOut {
+    let slope = fwidth(frag.z);
+    let px = vec2<i32>(frag.xy);
+    let limit = frag.z - slope * draw.slope_tolerance - 1e-6;
+    var keep = 0u;
+    for (var i = 0u; i < 4u; i++) {
+        let bit = 1u << i;
+        if (covered & bit) != 0u && textureLoad(scene_depth_ms, px, i32(i)) >= limit {
+            keep |= bit;
+        }
+    }
+    if keep == 0u {
+        discard;
+    }
+    let veiled = clamp(textureLoad(veil, px, 0).r, 0.0, 1.0);
+    var out: MsaaOut;
+    out.value = vec2<u32>(draw.id, u32(round(f32(draw.blend) * (1.0 - veiled))));
+    out.samples = keep;
+    return out;
+}
