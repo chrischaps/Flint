@@ -1690,6 +1690,7 @@ register_styles!(
     watercolor,
     ascii,
     pencil,
+    palette,
     display_bloom,
     invert,
     mask_view,

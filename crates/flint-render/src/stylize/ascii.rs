@@ -140,7 +140,7 @@ fn font_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
 
 /// The palettes to offer (#322): the built-ins, then every
 /// `palettes/*.palette.toml` beside the scene or in its parent.
-fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+pub(super) fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
     choices_with(BUILTIN_PALETTES, scope.files("palettes", PALETTE_SUFFIX))
 }
 
@@ -992,7 +992,7 @@ const CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii_cells.wgsl")
 );
-const GLYPH_SHADER: &str = concat!(
+pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
     include_str!("ascii.wgsl")

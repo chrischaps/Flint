@@ -1539,3 +1539,113 @@ fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
     assert!(covered.len() > n / 8, "the boxes cover too little to tell");
     assert_eq!(missed, 0, "{missed} box pixels were not masked");
 }
+
+/// #324: the palette style draws every pixel in its table's colours, the
+/// colour `Palette::quantize` gives for what was there (flat, and with
+/// chroma and dither), and `pixel` makes blocks of one colour. Its nearest
+/// pick is `pal_pick`, the matcher ASCII draws with, which
+/// `the_palette_matcher_agrees_with_its_cpu_reference` holds to
+/// `Palette::pick`; the style's ladder is its own and is checked here.
+#[test]
+fn the_palette_style_quantizes_the_frame_to_its_table() {
+    use flint_render::palette::Palette;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = box_world();
+    let plain = gpu.frame(&mut renderer, &world);
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("palette", true);
+    for (name, chroma, dither) in [
+        ("cga", 1.0, 0.0),
+        ("cga16", 1.0, 0.0),
+        ("phosphor", 1.0, 0.0),
+        ("paper", 1.0, 0.0),
+        ("cga16", 2.0, 1.0),
+        ("paper", 1.0, 1.0),
+    ] {
+        let palette = Palette::builtin(name).unwrap();
+        config.styles.set_option("palette", "palette", name);
+        config.styles.set_param("palette", "pixel", 1.0);
+        config.styles.set_param("palette", "dither", dither);
+        config.styles.set_param("palette", "chroma", chroma);
+        renderer.set_post_process_config(config.clone());
+        renderer.ensure_style_resources(&gpu.device);
+        let styled = gpu.frame(&mut renderer, &world);
+        let table: Vec<[u8; 3]> = palette
+            .table()
+            .iter()
+            .map(|c| c.map(|v| (v * 255.0).round() as u8))
+            .collect();
+        let seen = colours(&styled);
+        assert!(seen.len() >= 2, "{name}: one flat colour");
+        let mut off = 0;
+        let mut ties = 0;
+        for (i, (p, s)) in plain.chunks(4).zip(styled.chunks(4)).enumerate() {
+            let s = [s[0], s[1], s[2]];
+            let cell = [(i % SIZE as usize) as i32, (i / SIZE as usize) as i32];
+            assert!(
+                table
+                    .iter()
+                    .any(|t| (0..3).all(|i| t[i].abs_diff(s[i]) <= 1)),
+                "{name}: {s:?} is not in {table:?}"
+            );
+            // The CPU reads the plain frame's 8-bit bytes and the GPU its
+            // input's floats: a colour within a rounding step of a tie
+            // between two colours may go either way, and is left out (as
+            // the matcher test leaves out float ties)
+            let colour = [p[0], p[1], p[2]].map(|v| v as f32 / 255.0);
+            if palette.matching() == flint_render::palette::PaletteMatch::Nearest {
+                let ([_, _], [d1, d2]) =
+                    flint_render::palette::nearest_two_in(&palette.table(), colour, chroma);
+                if d2 - d1 < 1e-4 {
+                    ties += 1;
+                    continue;
+                }
+            }
+            let want = palette
+                .quantize(colour, chroma, dither, cell)
+                .map(|v| (v * 255.0).round() as u8);
+            if (0..3).any(|i| want[i].abs_diff(s[i]) > 1) {
+                off += 1;
+            }
+        }
+        let n = (SIZE * SIZE) as usize;
+        eprintln!(
+            "{name} chroma {chroma} dither {dither}: {} colours, {off} of {n} pixels off the CPU's pick, {ties} near ties left out",
+            seen.len()
+        );
+        assert!(
+            ties * 20 <= n,
+            "{name}: {ties} near ties is most of the frame"
+        );
+        assert!(
+            off * 200 <= n,
+            "{name} chroma {chroma} dither {dither}: {off} pixels disagree with Palette::quantize"
+        );
+    }
+
+    // Four-point blocks: every 4x4 block is one colour
+    config.styles.set_option("palette", "palette", "cga16");
+    config.styles.set_param("palette", "pixel", 4.0);
+    config.styles.set_param("palette", "dither", 1.0);
+    renderer.set_post_process_config(config);
+    let chunky = gpu.frame(&mut renderer, &world);
+    let n = SIZE as usize / 4;
+    for i in 0..n * n {
+        let b = block(&chunky, 4, i % n, i / n);
+        assert!(
+            b.chunks(4).all(|p| p == &b[..4]),
+            "block {i} is not one colour"
+        );
+    }
+}
