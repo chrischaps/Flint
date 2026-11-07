@@ -61,7 +61,7 @@ Two engine additions made that possible: `set_scene_style` /
 | 12 | Tuning by hand | 12 | the F4 Styles editor (#268) | the input script opens F4 → Styles, drags the ASCII cell size coarse then fine, picks palette, amber, then CGA | near-still, menu on the right | new, input script |
 | 13 | Many hands | 12 | per-entity ASCII, pencil, watercolor and a user style on one screen | every prop a different hand at once; the camera rises and pulls back until the sky takes the frame, room left for the title | long rise and pull back | new |
 
-About 2 min 45 s of footage before the edit; a cut uses a few seconds of
+About 2 min 38 s of footage before the edit (158 s, the five looks takes counted); a cut uses a few seconds of
 most beats.
 
 Every beat is a new scene on the shared set rather than an existing demo:
