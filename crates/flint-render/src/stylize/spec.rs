@@ -171,7 +171,10 @@ fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), Str
         return number(name, key, value);
     }
     if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
-        if !option.choices.is_empty() && !option.choices.contains(&value) {
+        // An option whose choices are found at run time (a palette file,
+        // a font's ramps) is open: the style resolves the name, and warns
+        let closed = option.discover.is_none() && !option.choices.is_empty();
+        if closed && !option.choices.contains(&value) {
             return Err(format!(
                 "{name}: {key} must be one of {}",
                 option.choices.join(", ")
@@ -221,7 +224,10 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
         params
             .into_iter()
             .chain(descriptor.options.iter().map(|o| {
-                if o.choices.is_empty() {
+                if o.discover.is_some() {
+                    let found = o.choices_in(&super::ChoiceScope::defaults(None));
+                    format!("{}={}|<name>", o.name, found.join("|"))
+                } else if o.choices.is_empty() {
                     format!("{}=<text>", o.name)
                 } else {
                     format!("{}={}", o.name, o.choices.join("|"))

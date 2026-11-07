@@ -137,6 +137,112 @@ pub struct StyleOption {
     /// name). A style still gets whatever the scene says and decides what
     /// a value outside the list means.
     pub choices: &'static [&'static str],
+    /// Choices found at run time (#322): the scene's own palettes or glyph
+    /// sets, or the ramps of the font chosen. When set, its list replaces
+    /// `choices` wherever a scene is known ([`Self::choices_in`]), and the
+    /// option is open: a value outside either list (a file path) is the
+    /// style's to resolve, so `--style` doesn't refuse it.
+    pub discover: Option<fn(&ChoiceScope<'_>) -> Vec<String>>,
+}
+
+impl StyleOption {
+    /// A closed or suggested list with nothing found at run time.
+    pub const fn new(
+        name: &'static str,
+        default: &'static str,
+        choices: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            default,
+            choices,
+            discover: None,
+        }
+    }
+
+    /// The same option, with its choices found at run time.
+    pub const fn discovered(mut self, discover: fn(&ChoiceScope<'_>) -> Vec<String>) -> Self {
+        self.discover = Some(discover);
+        self
+    }
+
+    /// The values to offer for this option in `scope`: what `discover`
+    /// finds when the option has it, else its fixed `choices`. The F4 menu
+    /// and the unknown-value check (#318) read this one list.
+    pub fn choices_in(&self, scope: &ChoiceScope<'_>) -> Vec<String> {
+        match self.discover {
+            Some(discover) => discover(scope),
+            None => self.choices.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+}
+
+/// What an option's run-time choices may depend on (#322): the scene's
+/// folder, and the style's other options as the menu shows them (the ramps
+/// a font has depend on the font).
+pub struct ChoiceScope<'a> {
+    pub scene_dir: Option<&'a std::path::Path>,
+    /// Another option's current value (its default when unset).
+    pub option: &'a dyn Fn(&str) -> String,
+}
+
+impl<'a> ChoiceScope<'a> {
+    /// A scope for `scene_dir` with every other option at its default.
+    pub fn defaults(scene_dir: Option<&'a std::path::Path>) -> Self {
+        Self {
+            scene_dir,
+            option: &|_| String::new(),
+        }
+    }
+
+    /// The directories a scene's assets are found in, in order: the scene's
+    /// folder, its parent (as the player finds `fonts/`), then `.`.
+    pub fn search(&self) -> Vec<std::path::PathBuf> {
+        let mut search = Vec::new();
+        if let Some(dir) = self.scene_dir {
+            search.push(dir.to_path_buf());
+            if let Some(parent) = dir.parent() {
+                search.push(parent.to_path_buf());
+            }
+        }
+        search.push(std::path::PathBuf::from("."));
+        search
+    }
+
+    /// The names of the files `<dir>/<folder>/<name><suffix>` in every
+    /// search directory, sorted, each once. Read through the vfs, so a
+    /// bundle on the web lists the same files.
+    pub fn files(&self, folder: &str, suffix: &str) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for dir in self.search() {
+            let Ok(entries) = flint_core::vfs::read_dir(dir.join(folder)) else {
+                continue;
+            };
+            for path in entries {
+                let Some(file) = path.file_name().and_then(|f| f.to_str()) else {
+                    continue;
+                };
+                if let Some(stem) = file.strip_suffix(suffix) {
+                    if !stem.is_empty() && !names.iter().any(|n| n == stem) {
+                        names.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        names.sort();
+        names
+    }
+}
+
+/// `fixed`, then each of `found` not already in it.
+pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = fixed.iter().map(|c| c.to_string()).collect();
+    for name in found {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
 }
 
 /// How the F4 menu presents one parameter or option (#268): a readable

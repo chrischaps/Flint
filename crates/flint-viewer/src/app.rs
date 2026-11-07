@@ -671,6 +671,9 @@ impl ViewerApp {
             // The F4 style editor marks edits against these (#268)
             self.render_panel
                 .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+            // ...and offers the scene's own palettes and glyph sets (#322)
+            self.render_panel
+                .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
         }
 
         // Run initial constraint evaluation
@@ -1993,6 +1996,8 @@ impl ViewerApp {
                         }
                         self.render_panel
                             .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+                        self.render_panel
+                            .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
                     }
 
                     {

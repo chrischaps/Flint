@@ -110,6 +110,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         name: "scope",
         default: "screen",
         choices: SCOPES,
+        discover: None,
     }],
     enabled: None,
     uses_mask: false,

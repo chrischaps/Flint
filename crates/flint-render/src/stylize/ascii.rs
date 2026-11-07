@@ -92,11 +92,11 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage, StyleTexture,
+    choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
+    StyleParam, StylePass, StyleStage, StyleTexture,
 };
-use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
-use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
+use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas, BUILTIN_SET, GLYPHS_SUFFIX};
+use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -112,6 +112,37 @@ pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
 
 /// The palette `color = "palette"` uses when the scene names none.
 pub const DEFAULT_PALETTE: &str = "phosphor";
+
+/// The built-in glyph set's ramps, in the order the menu offers them.
+pub const RAMPS: &[&str] = &["classic", "blocks", "minimal", "detailed"];
+
+/// The fonts to offer (#322): the built-in set, then every
+/// `fonts/*.glyphs.toml` beside the scene or in its parent.
+fn font_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(&[BUILTIN_SET], scope.files("fonts", GLYPHS_SUFFIX))
+}
+
+/// The palettes to offer (#322): the built-ins, then every
+/// `palettes/*.palette.toml` beside the scene or in its parent.
+fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(BUILTIN_PALETTES, scope.files("palettes", PALETTE_SUFFIX))
+}
+
+/// The ramps the chosen font has (#322): a project's set names its own,
+/// which needn't be the built-in four. A font that doesn't load draws with
+/// the built-in set, so that set's ramps are offered then.
+fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    // The built-in set's four, in the descriptor's order
+    let builtin = || RAMPS.iter().map(|r| r.to_string()).collect();
+    let font = (scope.option)("font");
+    if font.is_empty() || font == BUILTIN_SET {
+        return builtin();
+    }
+    match GlyphSetCache::new(scope.search()).get(&font) {
+        Ok(set) => set.ramps().map(|r| r.name().to_string()).collect(),
+        Err(_) => builtin(),
+    }
+}
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     name: "ascii",
@@ -262,46 +293,55 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "font",
             default: "builtin",
             choices: &[],
+            discover: Some(font_choices),
         },
         StyleOption {
             name: "ramp",
             default: "",
-            choices: &["classic", "blocks", "minimal", "detailed"],
+            choices: RAMPS,
+            discover: Some(ramp_choices),
         },
         StyleOption {
             name: "color",
             default: "source",
             choices: COLOR_MODES,
+            discover: None,
         },
         StyleOption {
             name: "palette",
             default: DEFAULT_PALETTE,
             choices: BUILTIN_PALETTES,
+            discover: Some(palette_choices),
         },
         StyleOption {
             name: "ground",
             default: "dim",
             choices: GROUND_MODES,
+            discover: None,
         },
         StyleOption {
             name: "temporal",
             default: "on",
             choices: TEMPORAL_MODES,
+            discover: None,
         },
         StyleOption {
             name: "scope",
             default: "screen",
             choices: SCOPES,
+            discover: None,
         },
         StyleOption {
             name: "grid",
             default: "screen",
             choices: GRIDS,
+            discover: None,
         },
         StyleOption {
             name: "transition",
             default: "fade",
             choices: TRANSITIONS,
+            discover: None,
         },
     ],
     enabled: None,
@@ -1988,6 +2028,97 @@ mod tests {
         for choice in palette.choices {
             assert!(Palette::builtin(choice).is_some(), "{choice}");
         }
+    }
+
+    /// A game folder in memory, as a bundle gives it on the web: a level
+    /// beside its own palette, and a palette and two fonts one folder up.
+    fn game_files() -> flint_core::vfs::MemorySource {
+        let mut src = flint_core::vfs::MemorySource::new();
+        src.insert("game/levels/a.scene.toml", "[scene]\nname = \"a\"\n");
+        src.insert(
+            "game/levels/palettes/tidepool.palette.toml",
+            "colors = [\"#0a3d62\", \"#3c6382\"]\n",
+        );
+        src.insert(
+            "game/palettes/dusk.palette.toml",
+            "colors = [\"#2d1b3d\", \"#f2a65a\"]\n",
+        );
+        // Not a palette: a stray file in the folder is not offered
+        src.insert("game/palettes/readme.txt", "notes");
+        src.insert(
+            "game/fonts/plain.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n\n[ramps.bars]\nglyphs = \" -=#\"\n",
+        );
+        src.insert(
+            "game/fonts/terminal.glyphs.toml",
+            "[ramps.x]\nglyphs = \" x\"\n",
+        );
+        src
+    }
+
+    fn option(name: &str) -> &'static StyleOption {
+        STYLE.options.iter().find(|o| o.name == name).unwrap()
+    }
+
+    #[test]
+    fn palettes_and_fonts_beside_the_scene_are_offered() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let scope = ChoiceScope::defaults(Some(dir));
+            let palettes = option("palette").choices_in(&scope);
+            let mut want: Vec<String> = BUILTIN_PALETTES.iter().map(|s| s.to_string()).collect();
+            want.extend(["dusk".to_string(), "tidepool".to_string()]);
+            assert_eq!(palettes, want);
+            assert_eq!(
+                option("font").choices_in(&scope),
+                ["builtin", "plain", "terminal"]
+            );
+            // With no scene, the built-ins alone
+            let none = ChoiceScope::defaults(None);
+            assert_eq!(option("palette").choices_in(&none), BUILTIN_PALETTES);
+            assert_eq!(option("font").choices_in(&none), ["builtin"]);
+        });
+    }
+
+    #[test]
+    fn the_ramp_list_follows_the_chosen_font() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let font = |name: &'static str| {
+                move |o: &str| match o {
+                    "font" => name.to_string(),
+                    _ => String::new(),
+                }
+            };
+            let plain = font("plain");
+            let scope = ChoiceScope {
+                scene_dir: Some(dir),
+                option: &plain,
+            };
+            let mut ramps = option("ramp").choices_in(&scope);
+            ramps.sort();
+            assert_eq!(ramps, ["bars", "dots"]);
+            // The built-in font (or one that won't load) has the built-in four
+            let missing = font("nonesuch");
+            for f in [&font("builtin") as &dyn Fn(&str) -> String, &missing] {
+                let scope = ChoiceScope {
+                    scene_dir: Some(dir),
+                    option: f,
+                };
+                let ramps = option("ramp").choices_in(&scope);
+                for r in option("ramp").choices {
+                    assert!(ramps.iter().any(|x| x == r), "{r} in {ramps:?}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn found_options_stay_open_to_the_command_line() {
+        // `--style ascii:palette=tidepool` names a file the style resolves
+        let mut config = crate::PostProcessConfig::default();
+        assert!(super::super::apply_style_spec(&mut config, "ascii:palette=tidepool").is_ok());
+        assert!(super::super::apply_style_spec(&mut config, "ascii:color=plaid").is_err());
     }
 
     #[test]

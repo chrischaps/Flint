@@ -64,6 +64,13 @@ impl StylesDebugPanel {
         self.entities = entities;
     }
 
+    /// The scene's folder, where the editor finds the scene's own palettes
+    /// and glyph sets to offer (#322).
+    pub fn with_scene_dir(mut self, scene_dir: Option<std::path::PathBuf>) -> Self {
+        self.editor.set_scene_dir(scene_dir);
+        self
+    }
+
     /// What the last edit asks of the host.
     pub fn take_edit(&mut self) -> StylesEdit {
         std::mem::take(&mut self.edit)
