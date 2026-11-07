@@ -444,6 +444,18 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
     }
+    // User-authored styles (#274): registered before anything reads a
+    // `[post_process.styles]` table, a look or a --style that names one
+    let scene_dir = Path::new(&args.scene)
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    for message in flint_render::stylize::custom::load_dir(&scene_dir) {
+        eprintln!("warning: {message}");
+    }
+    args.style
+        .check()
+        .map_err(|e| anyhow::anyhow!("--style: {e}"))?;
     let look = args
         .look
         .as_deref()

@@ -385,8 +385,13 @@ impl Sweep {
             }
         } else if let Some((style, k)) = key.split_once('.') {
             for value in &values {
-                flint_render::stylize::StyleSpec::parse(&format!("{style}:{k}={value}"))
-                    .map_err(|e| format!("--sweep {key}={value}: {e}"))?;
+                match flint_render::stylize::StyleSpec::parse(&format!("{style}:{k}={value}")) {
+                    Ok(_) => {}
+                    // Maybe a user style (#274), registered only once the
+                    // scene's folder is read; the column's apply checks it
+                    Err(e) if e.starts_with("unknown style") => {}
+                    Err(e) => return Err(format!("--sweep {key}={value}: {e}")),
+                }
                 // A style clamps a param to its range, so a value past it
                 // would draw the same column twice; say so instead.
                 let param = flint_render::stylize::find(style)

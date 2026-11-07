@@ -1,0 +1,1578 @@
+//! User-authored styles (#274, ADR 0112): a game describes a style in
+//! `styles/<name>.shader.toml` and writes one WGSL function beside it.
+//!
+//! ```toml
+//! # styles/duotone.shader.toml
+//! version = 1
+//! name = "duotone"
+//! label = "Duotone"
+//! stage = "display"          # or "hdr"
+//! shader = "duotone.wgsl"
+//! inputs = ["depth"]         # colour is always there; also "mask"
+//!
+//! [params.mix]
+//! default = 1.0
+//! min = 0.0
+//! max = 1.0
+//! help = "How far to the two inks"
+//! ```
+//!
+//! ```wgsl
+//! // styles/duotone.wgsl
+//! fn style(p: StylePixel) -> vec4<f32> {
+//!     let l = flint_luma(p.color.rgb);
+//!     return vec4<f32>(mix(p.color.rgb, vec3<f32>(l), params.mix), 1.0);
+//! }
+//! ```
+//!
+//! The framework writes everything else: a prelude with the bindings, the
+//! `params` struct (one `f32` per declared parameter), helpers
+//! (`flint_sample`, `flint_view_depth`, `flint_style_blend`, ...) and the
+//! entry points. At the display stage `p.color` and the returned colour
+//! are display values (what the eye sees) on any target format: the
+//! prelude decodes and encodes an sRGB target, so a user never meets the
+//! gotcha the built-ins work around by hand.
+//!
+//! The composed module is parsed and validated with naga before wgpu sees
+//! it (natively), and an error comes back as `file:line:col` in the user's
+//! file. A style that fails draws its input unchanged (a passthrough) and
+//! its error is kept for the host to show ([`errors`]). The WGSL is polled
+//! for changes (natively, a few times a second) and rebuilt in place; an
+//! edit that fails keeps the last good build drawing.
+//!
+//! The registry is append-only ([`super::register_runtime`]): a loaded
+//! style keeps its parameters for the run. Editing the `.shader.toml`
+//! needs a restart in this prototype; #275 builds that.
+
+use super::kit;
+use super::{
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleStage,
+};
+use bytemuck::{Pod, Zeroable};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, RwLock};
+
+/// The file suffix of a style description.
+pub const SUFFIX: &str = ".shader.toml";
+
+/// The only `version` this loader reads.
+pub const VERSION: i64 = 1;
+
+/// One `[params.<name>]` table.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParamDef {
+    pub default: f32,
+    pub min: f32,
+    pub max: f32,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub integer: bool,
+}
+
+/// A parsed `*.shader.toml`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShaderStyleDef {
+    pub version: i64,
+    pub name: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default = "default_stage")]
+    pub stage: String,
+    pub shader: String,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub params: BTreeMap<String, ParamDef>,
+}
+
+fn default_stage() -> String {
+    "display".into()
+}
+
+/// Which optional buffers a style reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Inputs {
+    pub depth: bool,
+    pub mask: bool,
+}
+
+impl Inputs {
+    fn any(self) -> bool {
+        self.depth || self.mask
+    }
+}
+
+/// A style description, checked: what [`compose`] and the pass need.
+#[derive(Debug, Clone)]
+pub struct StyleSource {
+    pub name: String,
+    pub label: String,
+    pub stage: StyleStage,
+    pub inputs: Inputs,
+    /// Parameters in uniform order (by name).
+    pub params: Vec<(String, ParamDef)>,
+    /// The `.shader.toml`.
+    pub toml_path: PathBuf,
+    /// The WGSL file it names, beside it.
+    pub wgsl_path: PathBuf,
+}
+
+impl ShaderStyleDef {
+    /// Check the description and resolve its shader beside `toml_path`.
+    pub fn check(self, toml_path: &Path) -> Result<StyleSource, String> {
+        let at = toml_path.display();
+        if self.version != VERSION {
+            return Err(format!(
+                "{at}: version = {} is not one this engine reads (it reads {VERSION})",
+                self.version
+            ));
+        }
+        let stem = toml_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .and_then(|f| f.strip_suffix(SUFFIX))
+            .unwrap_or("");
+        if self.name != stem {
+            return Err(format!(
+                "{at}: name = \"{}\" must match the file name (\"{stem}\")",
+                self.name
+            ));
+        }
+        if !is_identifier(&self.name) {
+            return Err(format!(
+                "{at}: name \"{}\" must be lowercase letters, digits and _",
+                self.name
+            ));
+        }
+        if super::is_builtin(&self.name) {
+            return Err(format!(
+                "{at}: \"{}\" is a built-in style; pick another name",
+                self.name
+            ));
+        }
+        let stage = match self.stage.as_str() {
+            "display" => StyleStage::Display,
+            "hdr" => StyleStage::Hdr,
+            other => {
+                return Err(format!(
+                    "{at}: stage = \"{other}\"; it is \"display\" or \"hdr\""
+                ))
+            }
+        };
+        let mut inputs = Inputs::default();
+        for input in &self.inputs {
+            match input.as_str() {
+                "color" => {}
+                "depth" => inputs.depth = true,
+                "mask" => inputs.mask = true,
+                other => {
+                    return Err(format!(
+                        "{at}: unknown input \"{other}\"; inputs are color, depth, mask"
+                    ))
+                }
+            }
+        }
+        for (name, p) in &self.params {
+            if !is_identifier(name) || name.starts_with("flint") || name.starts_with('_') {
+                return Err(format!(
+                    "{at}: parameter \"{name}\" must be lowercase letters, digits and _, \
+                     and not start with flint or _"
+                ));
+            }
+            if !(p.min <= p.default && p.default <= p.max) {
+                return Err(format!(
+                    "{at}: params.{name}: default {} is outside {}..{}",
+                    p.default, p.min, p.max
+                ));
+            }
+        }
+        if self.params.len() > MAX_PARAMS {
+            return Err(format!("{at}: at most {MAX_PARAMS} parameters"));
+        }
+        let shader = Path::new(&self.shader);
+        if shader.is_absolute() || shader.components().any(|c| c.as_os_str() == "..") {
+            return Err(format!(
+                "{at}: shader = \"{}\" must be a file beside it",
+                self.shader
+            ));
+        }
+        let dir = toml_path.parent().unwrap_or(Path::new("."));
+        Ok(StyleSource {
+            label: self.label.unwrap_or_else(|| super::humanize(&self.name)),
+            name: self.name,
+            stage,
+            inputs,
+            params: self.params.into_iter().collect(),
+            toml_path: toml_path.to_path_buf(),
+            wgsl_path: dir.join(shader),
+        })
+    }
+}
+
+/// How many parameters a style may declare: 64 floats is a 272-byte
+/// uniform, well inside every backend's limit.
+pub const MAX_PARAMS: usize = 64;
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+// ---------------------------------------------------------------------------
+// The prelude and the composed module
+// ---------------------------------------------------------------------------
+
+/// The module wgpu compiles: the generated prelude, the user's source, the
+/// entry points, and where the user's lines start.
+#[derive(Debug, Clone)]
+pub struct Composed {
+    pub text: String,
+    /// The number of lines before the user's first.
+    pub prelude_lines: usize,
+    pub user_lines: usize,
+}
+
+impl Composed {
+    /// Where composed line `line` (1-based) is in the user's file, if it is
+    /// one of theirs.
+    pub fn user_line(&self, line: usize) -> Option<usize> {
+        let first = self.prelude_lines + 1;
+        (line >= first && line < first + self.user_lines).then(|| line - self.prelude_lines)
+    }
+}
+
+const PRELUDE_FRAME: &str = r#"// ---- Flint style prelude (generated; ADR 0112) ----
+struct FlintFrame {
+    inv_view_proj: mat4x4<f32>,
+    resolution: vec2<f32>,
+    texel: vec2<f32>,
+    depth_size: vec2<f32>,
+    time: f32,
+    frame: u32,
+    near: f32,
+    far: f32,
+    srgb: f32,
+    pixels_per_point: f32,
+    camera_pos: vec3<f32>,
+    mask_id: u32,
+};
+
+struct StylePixel {
+    // 0..1 across the picture, top left at 0,0
+    uv: vec2<f32>,
+    // pixel position (centres at .5)
+    pos: vec2<f32>,
+    // the input at uv: display values at the display stage, linear HDR at hdr
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> flint: FlintFrame;
+@group(0) @binding(1) var<uniform> params: Params;
+@group(1) @binding(0) var flint_input: texture_2d<f32>;
+@group(1) @binding(1) var flint_sampler: sampler;
+
+fn flint_to_display(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+fn flint_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+fn flint_luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// A cheap, stable hash of a cell: 0..1
+fn flint_hash(p: vec2<f32>) -> f32 {
+    let q = fract(p * vec2<f32>(123.34, 456.21));
+    let r = q + dot(q, q + 45.32);
+    return fract(r.x * r.y);
+}
+"#;
+
+fn prelude_sample(stage: StyleStage) -> String {
+    let display = stage == StyleStage::Display;
+    format!(
+        r#"
+// The input at `uv`, in the stage's space (display values at the display stage)
+fn flint_sample(uv: vec2<f32>) -> vec4<f32> {{
+    let c = textureSampleLevel(flint_input, flint_sampler, uv, 0.0);
+    {}
+}}
+"#,
+        if display {
+            "let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
+             return vec4<f32>(select(rgb, flint_to_display(rgb), flint.srgb > 0.5), c.a);"
+        } else {
+            "return c;"
+        }
+    )
+}
+
+const PRELUDE_DEPTH: &str = r#"
+@group(2) @binding(0) var flint_depth_texture: texture_depth_2d;
+
+fn flint_depth_texel(uv: vec2<f32>) -> vec2<i32> {
+    let dims = vec2<i32>(flint.depth_size);
+    return clamp(vec2<i32>(uv * flint.depth_size), vec2<i32>(0), dims - 1);
+}
+
+// The scene's depth buffer at uv, 0 (near) .. 1 (far)
+fn flint_depth(uv: vec2<f32>) -> f32 {
+    return textureLoad(flint_depth_texture, flint_depth_texel(uv), 0);
+}
+
+// Distance along the view axis at uv, in metres
+fn flint_view_depth(uv: vec2<f32>) -> f32 {
+    let d = flint_depth(uv);
+    return flint.near * flint.far / (flint.far - d * (flint.far - flint.near));
+}
+
+// The world position the pixel at uv shows
+fn flint_world_pos(uv: vec2<f32>) -> vec3<f32> {
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, flint_depth(uv), 1.0);
+    let w = flint.inv_view_proj * ndc;
+    return w.xyz / w.w;
+}
+"#;
+
+const PRELUDE_MASK: &str = r#"
+@group(2) @binding(1) var flint_mask_texture: texture_2d<u32>;
+
+fn flint_mask_texel(uv: vec2<f32>) -> vec2<i32> {
+    let dims = vec2<i32>(textureDimensions(flint_mask_texture));
+    return clamp(vec2<i32>(uv * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
+}
+
+// The style mask id at uv (0 = no style; #263)
+fn flint_mask_id(uv: vec2<f32>) -> u32 {
+    return textureLoad(flint_mask_texture, flint_mask_texel(uv), 0).r;
+}
+
+// How much of this style the entity at uv asks for: 0 where it isn't this
+// style's (a `style_mask` naming it), else its blend 0..1 (#278)
+fn flint_style_blend(uv: vec2<f32>) -> f32 {
+    let m = textureLoad(flint_mask_texture, flint_mask_texel(uv), 0);
+    if (flint.mask_id == 0u || m.r != flint.mask_id) {
+        return 0.0;
+    }
+    return f32(m.g) / 65535.0;
+}
+"#;
+
+fn epilogue(stage: StyleStage) -> String {
+    let out = if stage == StyleStage::Display {
+        "let c = style(p);\n    \
+         let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
+         return vec4<f32>(select(rgb, flint_to_linear(rgb), flint.srgb > 0.5), c.a);"
+    } else {
+        "return style(p);"
+    };
+    format!(
+        r#"
+// ---- Flint style entry points (generated) ----
+struct FlintVertexOut {{
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> FlintVertexOut {{
+    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+    var out: FlintVertexOut;
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}}
+
+@fragment
+fn fs_main(in: FlintVertexOut) -> @location(0) vec4<f32> {{
+    var p: StylePixel;
+    p.uv = in.uv;
+    p.pos = in.position.xy;
+    p.color = flint_sample(in.uv);
+    {out}
+}}
+"#
+    )
+}
+
+/// The prelude for `source`: everything before the user's first line.
+pub fn prelude(source: &StyleSource) -> String {
+    let mut text = String::from(PRELUDE_FRAME);
+    text.push_str("\nstruct Params {\n");
+    for (name, _) in &source.params {
+        text.push_str(&format!("    {name}: f32,\n"));
+    }
+    // Never empty, and the f32s above round up to 16 bytes before it
+    text.push_str("    _flint_pad: vec4<f32>,\n};\n");
+    text.push_str(&prelude_sample(source.stage));
+    if source.inputs.depth {
+        text.push_str(PRELUDE_DEPTH);
+    }
+    if source.inputs.mask {
+        text.push_str(PRELUDE_MASK);
+    }
+    text.push_str("\n// ---- user style ----\n");
+    text
+}
+
+/// `user` (the style's WGSL) inside its prelude and entry points.
+pub fn compose(source: &StyleSource, user: &str) -> Composed {
+    let prelude = prelude(source);
+    let prelude_lines = prelude.matches('\n').count();
+    let mut user = user.to_string();
+    if !user.ends_with('\n') {
+        user.push('\n');
+    }
+    let user_lines = user.matches('\n').count();
+    let text = format!("{prelude}{user}{}", epilogue(source.stage));
+    Composed {
+        text,
+        prelude_lines,
+        user_lines,
+    }
+}
+
+/// What the user writes when they have nothing yet: the input, unchanged.
+pub const PASSTHROUGH: &str = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color;\n}\n";
+
+/// The size in bytes of a style's `Params` uniform.
+pub fn params_size(count: usize) -> usize {
+    count.div_ceil(4) * 16 + 16
+}
+
+// ---------------------------------------------------------------------------
+// Checking with naga (native)
+// ---------------------------------------------------------------------------
+
+/// What a check found: warnings about a shader that compiles.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Report {
+    /// Loops in the user's code: each can hang the GPU if it never ends.
+    pub loops: usize,
+    /// Texture reads in the user's code (the helpers' own not counted).
+    pub texture_reads: usize,
+    pub warnings: Vec<String>,
+}
+
+/// Texture reads a pixel may make before the check warns (a 9x9 blur is
+/// 81): past it, a full-screen pass gets expensive fast.
+pub const TEXTURE_READ_WARN: usize = 32;
+
+/// Parse and validate `user` as `source`'s shader, the way it will be
+/// built. `Err` is the message to show, lines in the user's file.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
+    let composed = compose(source, user);
+    let file = source.wgsl_path.display().to_string();
+    let module = naga::front::wgsl::parse_str(&composed.text).map_err(|e| {
+        locate(
+            &composed,
+            &file,
+            e.location(&composed.text),
+            e.message(),
+            source,
+        )
+    })?;
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::default(),
+    );
+    validator.validate(&module).map_err(|e| {
+        let mut message = e.as_inner().to_string();
+        let mut source_err: Option<&dyn std::error::Error> =
+            std::error::Error::source(e.as_inner());
+        while let Some(inner) = source_err {
+            message.push_str(&format!(": {inner}"));
+            source_err = inner.source();
+        }
+        locate(
+            &composed,
+            &file,
+            e.location(&composed.text),
+            &message,
+            source,
+        )
+    })?;
+    inspect(&module, &composed, &file)
+}
+
+/// `file:line:col: message`, with the line remapped into the user's file
+/// and the offending line quoted; a hint when the user called a helper of
+/// an input they didn't declare.
+#[cfg(not(target_arch = "wasm32"))]
+fn locate(
+    composed: &Composed,
+    file: &str,
+    at: Option<naga::SourceLocation>,
+    message: &str,
+    source: &StyleSource,
+) -> String {
+    let mut out = match at {
+        Some(loc) => match composed.user_line(loc.line_number as usize) {
+            Some(line) => {
+                let text = composed
+                    .text
+                    .lines()
+                    .nth(loc.line_number as usize - 1)
+                    .unwrap_or("");
+                format!(
+                    "{file}:{line}:{}: {message}\n    {line} | {}",
+                    loc.line_position,
+                    text.trim_end()
+                )
+            }
+            None if message.contains("'style'") => format!(
+                "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
+            ),
+            None => format!(
+                "{file}: {message} (in the generated code, line {}; check the parameter names)",
+                loc.line_number
+            ),
+        },
+        None => format!("{file}: {message}"),
+    };
+    let missing = |helpers: &[&str]| helpers.iter().any(|h| message.contains(h));
+    if !source.inputs.depth && missing(&["flint_depth", "flint_view_depth", "flint_world_pos"]) {
+        out.push_str("\n    hint: add \"depth\" to inputs in the .shader.toml");
+    }
+    if !source.inputs.mask && missing(&["flint_mask_id", "flint_style_blend"]) {
+        out.push_str("\n    hint: add \"mask\" to inputs in the .shader.toml");
+    }
+    out
+}
+
+/// The checks a parse doesn't make: the user defined `style`, declared no
+/// bindings or entry points of their own, and how many loops and texture
+/// reads their code has.
+#[cfg(not(target_arch = "wasm32"))]
+fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Report, String> {
+    let prelude_end = composed
+        .text
+        .match_indices('\n')
+        .nth(composed.prelude_lines.saturating_sub(1))
+        .map_or(0, |(i, _)| i + 1);
+    let user_end = composed
+        .text
+        .match_indices('\n')
+        .nth(composed.prelude_lines + composed.user_lines - 1)
+        .map_or(composed.text.len(), |(i, _)| i + 1);
+    let in_user = |span: naga::Span| {
+        span.to_range()
+            .is_some_and(|r| r.start >= prelude_end && r.start < user_end)
+    };
+    let line_of = |span: naga::Span| {
+        let at = span.location(&composed.text);
+        composed
+            .user_line(at.line_number as usize)
+            .map_or(String::new(), |l| format!(":{l}"))
+    };
+
+    let style = module
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.as_deref() == Some("style"));
+    let Some((handle, _)) = style else {
+        return Err(format!(
+            "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
+        ));
+    };
+    let _ = handle;
+    for (h, var) in module.global_variables.iter() {
+        if var.binding.is_some() && in_user(module.global_variables.get_span(h)) {
+            return Err(format!(
+                "{file}{}: `{}` declares a binding; a style reads only the prelude's \
+                 (flint_input, params, depth, mask)",
+                line_of(module.global_variables.get_span(h)),
+                var.name.as_deref().unwrap_or("?")
+            ));
+        }
+    }
+    if module.entry_points.len() != 2 {
+        return Err(format!(
+            "{file}: declares an entry point; the framework writes vs_main and fs_main"
+        ));
+    }
+
+    let mut report = Report::default();
+    for (h, f) in module.functions.iter() {
+        if !in_user(module.functions.get_span(h)) {
+            continue;
+        }
+        report.loops += count_loops(&f.body);
+        report.texture_reads += f
+            .expressions
+            .iter()
+            .filter(|(_, e)| {
+                matches!(
+                    e,
+                    naga::Expression::ImageSample { .. } | naga::Expression::ImageLoad { .. }
+                )
+            })
+            .count();
+        // Calls to the sampling helpers count as reads too
+        report.texture_reads += f
+            .body
+            .iter()
+            .map(|s| count_helper_calls(s, module))
+            .sum::<usize>();
+    }
+    if report.loops > 0 {
+        report.warnings.push(format!(
+            "{file}: {} loop{}: a loop that never ends hangs the GPU until the driver resets it \
+             (TDR); keep its bound a constant or a clamped parameter",
+            report.loops,
+            if report.loops == 1 { "" } else { "s" }
+        ));
+    }
+    if report.texture_reads > TEXTURE_READ_WARN {
+        report.warnings.push(format!(
+            "{file}: {} texture reads written out; each runs once a pixel",
+            report.texture_reads
+        ));
+    }
+    Ok(report)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn count_loops(block: &naga::Block) -> usize {
+    use naga::Statement as S;
+    block
+        .iter()
+        .map(|s| match s {
+            S::Loop {
+                body, continuing, ..
+            } => 1 + count_loops(body) + count_loops(continuing),
+            S::Block(b) => count_loops(b),
+            S::If { accept, reject, .. } => count_loops(accept) + count_loops(reject),
+            S::Switch { cases, .. } => cases.iter().map(|c| count_loops(&c.body)).sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usize {
+    use naga::Statement as S;
+    let block = |b: &naga::Block| {
+        b.iter()
+            .map(|s| count_helper_calls(s, module))
+            .sum::<usize>()
+    };
+    match statement {
+        S::Call { function, .. } => {
+            let name = module.functions[*function].name.as_deref().unwrap_or("");
+            usize::from(matches!(
+                name,
+                "flint_sample"
+                    | "flint_depth"
+                    | "flint_view_depth"
+                    | "flint_world_pos"
+                    | "flint_mask_id"
+                    | "flint_style_blend"
+            ))
+        }
+        S::Loop {
+            body, continuing, ..
+        } => block(body) + block(continuing),
+        S::Block(b) => block(b),
+        S::If { accept, reject, .. } => block(accept) + block(reject),
+        S::Switch { cases, .. } => cases.iter().map(|c| block(&c.body)).sum(),
+        _ => 0,
+    }
+}
+
+/// On the web there is no naga in the player: the browser's own WGSL
+/// compiler reports, through wgpu's error scope.
+#[cfg(target_arch = "wasm32")]
+pub fn check(_source: &StyleSource, _user: &str) -> Result<Report, String> {
+    Ok(Report::default())
+}
+
+// ---------------------------------------------------------------------------
+// Loading: styles/*.shader.toml
+// ---------------------------------------------------------------------------
+
+struct Loaded {
+    source: StyleSource,
+    /// Bind cache names, leaked once with the descriptor.
+    names: BindNames,
+    /// The last error (load, check or build), for hosts to show.
+    error: Mutex<Option<String>>,
+}
+
+#[derive(Clone, Copy)]
+struct BindNames {
+    frame: &'static str,
+    input: &'static str,
+    extra: &'static str,
+    pass: &'static str,
+}
+
+static LOADED: RwLock<Vec<Arc<Loaded>>> = RwLock::new(Vec::new());
+
+fn loaded(name: &str) -> Option<Arc<Loaded>> {
+    LOADED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|l| l.source.name == name)
+        .cloned()
+}
+
+/// The folders a scene in `scene_dir` finds styles in: its own `styles/`,
+/// then its parent's (a game's `levels/` beside `styles/`), as models are.
+pub fn style_dirs(scene_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![scene_dir.join("styles")];
+    if let Some(parent) = scene_dir.parent() {
+        dirs.push(parent.join("styles"));
+    }
+    dirs
+}
+
+/// Register every `*.shader.toml` in `scene_dir`'s style folders that
+/// isn't registered yet. Call it before the scene's `[post_process]` is
+/// read, or its tables name an unknown style. Returns one message for each
+/// file that couldn't be loaded (and each warning a check raised); a
+/// style whose shader fails still registers, drawing a passthrough.
+pub fn load_dir(scene_dir: &Path) -> Vec<String> {
+    let mut messages = Vec::new();
+    for dir in style_dirs(scene_dir) {
+        let Ok(mut entries) = flint_core::vfs::read_dir(&dir) else {
+            continue;
+        };
+        entries.sort();
+        for path in entries {
+            let is_style = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .is_some_and(|f| f.ends_with(SUFFIX));
+            if is_style {
+                if let Err(e) = load_file(&path, &mut messages) {
+                    messages.push(e);
+                }
+            }
+        }
+    }
+    messages
+}
+
+/// Register the style `path` describes (see [`load_dir`]).
+pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> {
+    let text =
+        flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let def: ShaderStyleDef =
+        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let source = def.check(path)?;
+    if let Some(existing) = loaded(&source.name) {
+        if existing.source.toml_path != source.toml_path {
+            messages.push(format!(
+                "{}: style \"{}\" is already loaded from {}; this one is skipped",
+                path.display(),
+                source.name,
+                existing.source.toml_path.display()
+            ));
+        }
+        return Ok(());
+    }
+    // A shader that fails registers anyway: it draws a passthrough and its
+    // error waits for the host, so a typo never takes a style's settings away
+    let error = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+        Err(e) => Some(format!("{}: {e}", source.wgsl_path.display())),
+        Ok(user) => match check(&source, &user) {
+            Ok(report) => {
+                messages.extend(report.warnings);
+                None
+            }
+            Err(e) => Some(e),
+        },
+    };
+    if let Some(e) = &error {
+        messages.push(e.clone());
+    }
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let params: Vec<StyleParam> = source
+        .params
+        .iter()
+        .map(|(name, p)| StyleParam {
+            name: leak(name.clone()),
+            default: p.default,
+            min: p.min,
+            max: p.max,
+        })
+        .collect();
+    let hints: Vec<StyleHint> = source
+        .params
+        .iter()
+        .zip(&params)
+        .filter(|((_, p), _)| p.label.is_some() || p.help.is_some() || p.integer)
+        .map(|((name, p), sp)| {
+            let hint = StyleHint::new(
+                sp.name,
+                leak(p.label.clone().unwrap_or_else(|| super::humanize(name))),
+                leak(p.help.clone().unwrap_or_default()),
+            );
+            if p.integer {
+                hint.integer()
+            } else {
+                hint
+            }
+        })
+        .collect();
+    let name = leak(source.name.clone());
+    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(StyleDescriptor {
+        name,
+        label: leak(source.label.clone()),
+        stage: source.stage,
+        params: Box::leak(params.into_boxed_slice()),
+        options: &[],
+        enabled: None,
+        uses_mask: source.inputs.mask,
+        hints: Box::leak(hints.into_boxed_slice()),
+        component: None,
+        create,
+    }));
+    let names = BindNames {
+        frame: leak(format!("{name} style frame BG")),
+        input: leak(format!("{name} style input BG")),
+        extra: leak(format!("{name} style depth/mask BG")),
+        pass: leak(format!("{name} style pass")),
+    };
+    LOADED
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(Arc::new(Loaded {
+            source,
+            names,
+            error: Mutex::new(error),
+        }));
+    super::register_runtime(descriptor);
+    Ok(())
+}
+
+/// Every loaded user style with its current error, for a host to show
+/// (a console line, an overlay). Empty when all of them compile.
+pub fn errors() -> Vec<(String, String)> {
+    LOADED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter_map(|l| {
+            let error = l.error.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+            Some((l.source.name.clone(), error))
+        })
+        .collect()
+}
+
+/// The source a loaded user style was read from.
+pub fn source(name: &str) -> Option<StyleSource> {
+    loaded(name).map(|l| l.source.clone())
+}
+
+// ---------------------------------------------------------------------------
+// The pass
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct FlintFrameUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    resolution: [f32; 2],
+    texel: [f32; 2],
+    depth_size: [f32; 2],
+    time: f32,
+    frame: u32,
+    near: f32,
+    far: f32,
+    srgb: f32,
+    pixels_per_point: f32,
+    camera_pos: [f32; 3],
+    mask_id: u32,
+}
+
+struct Build {
+    /// The user's pipeline, or `None` while it has never compiled.
+    pipeline: Option<wgpu::RenderPipeline>,
+    /// The WGSL file's modified time when last read.
+    #[cfg(not(target_arch = "wasm32"))]
+    modified: Option<std::time::SystemTime>,
+    /// Frames since the file was last looked at.
+    #[cfg(not(target_arch = "wasm32"))]
+    since_poll: u32,
+}
+
+struct CustomPass {
+    loaded: Arc<Loaded>,
+    format: wgpu::TextureFormat,
+    frame_bgl: wgpu::BindGroupLayout,
+    input_bgl: wgpu::BindGroupLayout,
+    extra_bgl: Option<wgpu::BindGroupLayout>,
+    layout: wgpu::PipelineLayout,
+    frame_buffer: wgpu::Buffer,
+    params_buffer: wgpu::Buffer,
+    /// Draws the input unchanged, while the user's shader can't.
+    passthrough: wgpu::RenderPipeline,
+    build: Mutex<Build>,
+}
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    Box::new(build(d))
+}
+
+fn build(d: &StyleDevice) -> CustomPass {
+    let loaded = loaded(d.descriptor.name).expect("a user style is loaded before it is built");
+    let device = d.device;
+    let source = &loaded.source;
+    let frame_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("User Style Frame BGL"),
+        entries: &[uniform_entry(0), uniform_entry(1)],
+    });
+    let input_bgl = kit::sampled_layout(device, "User Style Input BGL");
+    let extra_bgl = source.inputs.any().then(|| {
+        let mut entries = Vec::new();
+        if source.inputs.depth {
+            entries.push(texture_entry(0, wgpu::TextureSampleType::Depth));
+        }
+        if source.inputs.mask {
+            entries.push(texture_entry(1, wgpu::TextureSampleType::Uint));
+        }
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("User Style Depth/Mask BGL"),
+            entries: &entries,
+        })
+    });
+    let mut layouts = vec![&frame_bgl, &input_bgl];
+    if let Some(extra) = &extra_bgl {
+        layouts.push(extra);
+    }
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("User Style Layout"),
+        bind_group_layouts: &layouts,
+        push_constant_ranges: &[],
+    });
+    // The passthrough is the same prelude with no inputs: always compiles
+    let bare = StyleSource {
+        inputs: Inputs::default(),
+        ..source.clone()
+    };
+    let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("User Style Passthrough Layout"),
+        bind_group_layouts: &[&frame_bgl, &input_bgl],
+        push_constant_ranges: &[],
+    });
+    let passthrough = pipeline(
+        device,
+        &passthrough_layout,
+        &compose(&bare, PASSTHROUGH).text,
+        d.format,
+    );
+    let pass = CustomPass {
+        format: d.format,
+        frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
+        params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("User Style Params"),
+            size: params_size(source.params.len()) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+        frame_bgl,
+        input_bgl,
+        extra_bgl,
+        layout,
+        passthrough,
+        build: Mutex::new(Build {
+            pipeline: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            modified: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            since_poll: 0,
+        }),
+        loaded,
+    };
+    pass.rebuild(device);
+    pass
+}
+
+fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    text: &str,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("User Style Shader"),
+        source: wgpu::ShaderSource::Wgsl(text.into()),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("User Style Pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// How many frames pass between looks at the WGSL file's modified time:
+/// about four times a second at 60 fps, and one `stat` each.
+#[cfg(not(target_arch = "wasm32"))]
+const POLL_FRAMES: u32 = 15;
+
+impl CustomPass {
+    fn set_error(&self, error: Option<String>) {
+        let mut slot = self.loaded.error.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = &error {
+            if slot.as_ref() != Some(e) {
+                tracing::warn!("style '{}': {e}", self.loaded.source.name);
+            }
+        } else if slot.is_some() {
+            tracing::info!("style '{}' compiles again", self.loaded.source.name);
+        }
+        *slot = error;
+    }
+
+    /// Read, check and build the user's shader; on failure keep what was
+    /// drawing (the last good build, or the passthrough).
+    fn rebuild(&self, device: &wgpu::Device) {
+        let source = &self.loaded.source;
+        #[cfg(not(target_arch = "wasm32"))]
+        let modified = std::fs::metadata(&source.wgsl_path)
+            .and_then(|m| m.modified())
+            .ok();
+        let user = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+            Ok(user) => user,
+            Err(e) => {
+                self.set_error(Some(format!("{}: {e}", source.wgsl_path.display())));
+                return;
+            }
+        };
+        let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            build.modified = modified;
+        }
+        if let Err(e) = check(source, &user) {
+            self.set_error(Some(e));
+            return;
+        }
+        // naga has passed it; the error scope catches what the backend's own
+        // compiler still refuses (and, on the web, everything)
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let made = pipeline(
+            device,
+            &self.layout,
+            &compose(source, &user).text,
+            self.format,
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let refused = pollster::block_on(device.pop_error_scope());
+        #[cfg(target_arch = "wasm32")]
+        let refused: Option<wgpu::Error> = {
+            // No blocking on the web: the browser logs it, and the frame
+            // after shows what it drew
+            drop(device.pop_error_scope());
+            None
+        };
+        match refused {
+            Some(e) => self.set_error(Some(format!(
+                "{}: the GPU refused it: {e}",
+                source.wgsl_path.display()
+            ))),
+            None => {
+                build.pipeline = Some(made);
+                self.set_error(None);
+            }
+        }
+    }
+
+    /// Rebuild when the WGSL file changed on disk (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll(&self, device: &wgpu::Device) {
+        let changed = {
+            let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+            build.since_poll += 1;
+            if build.since_poll < POLL_FRAMES {
+                return;
+            }
+            build.since_poll = 0;
+            let now = std::fs::metadata(&self.loaded.source.wgsl_path)
+                .and_then(|m| m.modified())
+                .ok();
+            now.is_some() && now != build.modified
+        };
+        if changed {
+            self.rebuild(device);
+        }
+    }
+}
+
+impl StylePass for CustomPass {
+    fn encode(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
+        output: &wgpu::TextureView,
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll(frame.device);
+
+        let source = &self.loaded.source;
+        let names = self.loaded.names;
+        let camera = frame.camera;
+        let uniforms = FlintFrameUniforms {
+            inv_view_proj: camera.inv_view_proj,
+            resolution: [frame.width as f32, frame.height as f32],
+            texel: frame.texel_size(),
+            depth_size: [frame.depth_size[0] as f32, frame.depth_size[1] as f32],
+            time: frame.time,
+            frame: frame.frame as u32,
+            near: camera.near,
+            far: camera.far,
+            srgb: if frame.srgb() { 1.0 } else { 0.0 },
+            pixels_per_point: frame.pixels_per_point,
+            camera_pos: camera.position,
+            mask_id: u32::from(frame.style_id(source.name.as_str()).unwrap_or(0)),
+        };
+        frame
+            .queue
+            .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        let mut values = vec![0.0f32; params_size(source.params.len()) / 4];
+        for (slot, (name, p)) in values.iter_mut().zip(&source.params) {
+            *slot = frame.param(name).clamp(p.min, p.max);
+        }
+        frame
+            .queue
+            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&values));
+
+        let frame_bg = frame.bind(names.frame, 0, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(names.frame),
+                layout: &self.frame_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.frame_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        });
+        let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
+
+        let build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        // The mask is there whenever this style is on and reads it; if a
+        // host ever draws without it, the passthrough keeps the frame whole
+        let extra_bg = match &self.extra_bgl {
+            None => None,
+            Some(bgl) if !source.inputs.mask || frame.mask.is_some() => {
+                Some(frame.depth_bind(names.extra, 0, || {
+                    let mut entries = Vec::new();
+                    if source.inputs.depth {
+                        entries.push(wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(frame.depth),
+                        });
+                    }
+                    if let Some(mask) = frame.mask.filter(|_| source.inputs.mask) {
+                        entries.push(wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(mask),
+                        });
+                    }
+                    frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(names.extra),
+                        layout: bgl,
+                        entries: &entries,
+                    })
+                }))
+            }
+            Some(_) => {
+                kit::fullscreen_pass(
+                    encoder,
+                    names.pass,
+                    output,
+                    &self.passthrough,
+                    &[&frame_bg, &input_bg],
+                );
+                return;
+            }
+        };
+        match (&build.pipeline, extra_bg) {
+            (Some(p), Some(extra)) => kit::fullscreen_pass(
+                encoder,
+                names.pass,
+                output,
+                p,
+                &[&frame_bg, &input_bg, &extra],
+            ),
+            (Some(p), None) => {
+                kit::fullscreen_pass(encoder, names.pass, output, p, &[&frame_bg, &input_bg])
+            }
+            (None, _) => kit::fullscreen_pass(
+                encoder,
+                names.pass,
+                output,
+                &self.passthrough,
+                &[&frame_bg, &input_bg],
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(toml_text: &str, file: &str) -> Result<StyleSource, String> {
+        let def: ShaderStyleDef = toml::from_str(toml_text).map_err(|e| e.to_string())?;
+        def.check(Path::new(file))
+    }
+
+    fn duotone() -> StyleSource {
+        source(
+            r#"
+            version = 1
+            name = "duotone"
+            shader = "duotone.wgsl"
+            inputs = ["depth"]
+            [params.mix]
+            default = 1.0
+            min = 0.0
+            max = 1.0
+            [params.ink_r]
+            default = 0.1
+            min = 0.0
+            max = 1.0
+            "#,
+            "styles/duotone.shader.toml",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn descriptions_are_checked() {
+        let ok = duotone();
+        assert_eq!(ok.stage, StyleStage::Display);
+        assert!(ok.inputs.depth && !ok.inputs.mask);
+        assert_eq!(ok.label, "Duotone");
+        assert_eq!(ok.wgsl_path, Path::new("styles").join("duotone.wgsl"));
+        let names: Vec<&str> = ok.params.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["ink_r", "mix"], "uniform order is by name");
+
+        let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+        let file = "styles/x.shader.toml";
+        let err = |extra: &str| source(&format!("{base}{extra}"), file).unwrap_err();
+        assert!(source(base, "styles/y.shader.toml")
+            .unwrap_err()
+            .contains("must match"));
+        assert!(err("stage = \"late\"\n").contains("\"display\" or \"hdr\""));
+        assert!(err("inputs = [\"normals\"]\n").contains("unknown input"));
+        assert!(err("[params.flint_x]\ndefault = 0\nmin = 0\nmax = 1\n").contains("flint"));
+        assert!(err("[params.a]\ndefault = 2\nmin = 0\nmax = 1\n").contains("outside"));
+        assert!(err("wobble = 1\n").contains("unknown field"));
+        let up = "version = 1\nname = \"x\"\nshader = \"../x.wgsl\"\n";
+        assert!(source(up, file).unwrap_err().contains("beside it"));
+        let v2 = "version = 2\nname = \"x\"\nshader = \"x.wgsl\"\n";
+        assert!(source(v2, file).unwrap_err().contains("version"));
+        let builtin = "version = 1\nname = \"ascii\"\nshader = \"x.wgsl\"\n";
+        assert!(source(builtin, "styles/ascii.shader.toml")
+            .unwrap_err()
+            .contains("built-in"));
+    }
+
+    #[test]
+    fn params_round_up_to_vec4s_and_a_pad() {
+        assert_eq!(params_size(0), 16);
+        assert_eq!(params_size(1), 32);
+        assert_eq!(params_size(4), 32);
+        assert_eq!(params_size(5), 48);
+        assert_eq!(std::mem::size_of::<FlintFrameUniforms>(), 128);
+    }
+
+    #[test]
+    fn passthrough_and_prelude_validate_for_every_shape() {
+        for stage in ["display", "hdr"] {
+            for inputs in [
+                "[]",
+                "[\"depth\"]",
+                "[\"mask\"]",
+                "[\"color\", \"depth\", \"mask\"]",
+            ] {
+                let s = source(
+                    &format!(
+                        "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\nstage = \"{stage}\"\n\
+                         inputs = {inputs}\n[params.a]\ndefault = 0\nmin = 0\nmax = 1\n"
+                    ),
+                    "styles/x.shader.toml",
+                )
+                .unwrap();
+                let report =
+                    check(&s, PASSTHROUGH).unwrap_or_else(|e| panic!("{stage} {inputs}: {e}"));
+                assert_eq!(report.loops, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn errors_point_into_the_users_file() {
+        let s = duotone();
+        let user =
+            "fn style(p: StylePixel) -> vec4<f32> {\n    let x = 1.0\n    return p.color;\n}\n";
+        let e = check(&s, user).unwrap_err();
+        assert!(e.starts_with(&format!("{}:", s.wgsl_path.display())), "{e}");
+        // The missing `;` is reported at the line after it (line 3)
+        assert!(e.contains(":3:") || e.contains(":2:"), "{e}");
+        assert!(e.contains("return p.color") || e.contains("let x"), "{e}");
+
+        // A validation error (a type mismatch), not a parse error
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color.rgb;\n}\n";
+        let e = check(&s, user).unwrap_err();
+        assert!(e.contains(":2:") || e.contains("style"), "{e}");
+    }
+
+    #[test]
+    fn helpers_of_undeclared_inputs_get_a_hint() {
+        let s = duotone(); // depth, no mask
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    return p.color * flint_style_blend(p.uv);\n}\n";
+        let e = check(&s, user).unwrap_err();
+        assert!(e.contains("add \"mask\" to inputs"), "{e}");
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    return p.color * flint_view_depth(p.uv);\n}\n";
+        check(&s, user).unwrap();
+    }
+
+    #[test]
+    fn the_contract_is_enforced() {
+        let s = duotone();
+        let e = check(
+            &s,
+            "fn shade(p: StylePixel) -> vec4<f32> { return p.color; }\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("no `fn style"), "{e}");
+        let user = "@group(3) @binding(0) var extra: texture_2d<f32>;\n\
+                    fn style(p: StylePixel) -> vec4<f32> { return p.color; }\n";
+        let e = check(&s, user).unwrap_err();
+        assert!(e.contains("declares a binding") && e.contains(":1"), "{e}");
+    }
+
+    #[test]
+    fn loops_and_reads_are_counted() {
+        let s = duotone();
+        let user = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var acc = vec4<f32>(0.0);
+    for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 4; j++) {
+            acc += flint_sample(p.uv + vec2<f32>(f32(i), f32(j)) * flint.texel);
+        }
+    }
+    return acc / 16.0 * params.mix;
+}
+"#;
+        let report = check(&s, user).unwrap();
+        assert_eq!(report.loops, 2);
+        assert_eq!(report.texture_reads, 1, "one call site, written out once");
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("2 loops"));
+    }
+
+    #[test]
+    fn user_lines_map_back() {
+        let s = duotone();
+        let c = compose(&s, "a\nb\n");
+        assert_eq!(c.user_lines, 2);
+        assert_eq!(c.user_line(c.prelude_lines + 1), Some(1));
+        assert_eq!(c.user_line(c.prelude_lines + 2), Some(2));
+        assert_eq!(c.user_line(c.prelude_lines + 3), None);
+        assert_eq!(c.user_line(1), None);
+        assert_eq!(c.text.lines().nth(c.prelude_lines), Some("a"));
+    }
+
+    fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        pollster::block_on(async {
+            let instance = crate::gpu_select::instance();
+            let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
+            adapter
+                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .await
+                .ok()
+        })
+    }
+
+    /// Hot reload on a real device: a good build, a broken edit that keeps
+    /// the last good pipeline and reports, and a fix the poll picks up.
+    #[test]
+    fn hot_reload_keeps_the_last_good_build() {
+        let Some((device, _queue)) = device() else {
+            eprintln!("no GPU adapter; skipped");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("flint-user-reload-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        let wgsl = styles.join("reload.wgsl");
+        std::fs::write(
+            styles.join("utest_reload.shader.toml"),
+            "version = 1\nname = \"utest_reload\"\nshader = \"reload.wgsl\"\ninputs = [\"depth\", \"mask\"]\n",
+        )
+        .unwrap();
+        std::fs::write(&wgsl, PASSTHROUGH).unwrap();
+        assert!(load_dir(&dir).is_empty());
+        let descriptor = super::super::find("utest_reload").unwrap();
+        let pass = build(&StyleDevice {
+            device: &device,
+            descriptor,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        });
+        let error = || {
+            errors()
+                .into_iter()
+                .find(|(n, _)| n == "utest_reload")
+                .map(|(_, e)| e)
+        };
+        assert_eq!(error(), None);
+        assert!(pass.build.lock().unwrap().pipeline.is_some());
+
+        // Break it on disk; the poll notices within POLL_FRAMES frames
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            &wgsl,
+            "fn style(p: StylePixel) -> vec4<f32> {\n    return 1.0;\n}\n",
+        )
+        .unwrap();
+        for _ in 0..POLL_FRAMES {
+            pass.poll(&device);
+        }
+        let e = error().expect("the broken edit is reported");
+        assert!(e.contains("reload.wgsl:"), "{e}");
+        assert!(
+            pass.build.lock().unwrap().pipeline.is_some(),
+            "last good build kept"
+        );
+
+        // Fix it: the error clears
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            &wgsl,
+            "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * flint_style_blend(p.uv) + flint_depth(p.uv);\n}\n",
+        )
+        .unwrap();
+        for _ in 0..POLL_FRAMES {
+            pass.poll(&device);
+        }
+        assert_eq!(error(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_dir_registers_styles_and_keeps_broken_ones_as_passthroughs() {
+        let dir = std::env::temp_dir().join(format!("flint-user-styles-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(
+            styles.join("utest_good.shader.toml"),
+            "version = 1\nname = \"utest_good\"\nshader = \"good.wgsl\"\n\
+             [params.k]\ndefault = 0.5\nmin = 0\nmax = 1\nlabel = \"Kay\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("good.wgsl"), PASSTHROUGH).unwrap();
+        std::fs::write(
+            styles.join("utest_bad.shader.toml"),
+            "version = 1\nname = \"utest_bad\"\nshader = \"bad.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            styles.join("bad.wgsl"),
+            "fn style(p: StylePixel) -> f32 {\n  return 1.0;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("notes.toml"), "ignored = true\n").unwrap();
+
+        let messages = load_dir(&dir);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("bad.wgsl"), "{messages:?}");
+        let good = super::super::find("utest_good").expect("registered");
+        assert_eq!(good.param(&Default::default(), "k"), 0.5);
+        assert_eq!(good.label_for("k"), "Kay");
+        assert!(
+            super::super::find("utest_bad").is_some(),
+            "a broken shader still registers"
+        );
+        assert!(errors().iter().any(|(n, _)| n == "utest_bad"));
+        assert!(!errors().iter().any(|(n, _)| n == "utest_good"));
+        // A scene table naming it reads its params now
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_good]\nk = 0.25\n").unwrap();
+        let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.param("utest_good", "k"), Some(0.25));
+        // Loading again is a no-op
+        let before = super::super::registry().len();
+        assert!(load_dir(&dir).is_empty());
+        assert_eq!(super::super::registry().len(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
