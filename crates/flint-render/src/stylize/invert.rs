@@ -26,7 +26,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         max: 1.0,
     }],
     options: &[],
-    enabled: None,
     uses_mask: false,
     hints: &[StyleHint::new(
         "strength",

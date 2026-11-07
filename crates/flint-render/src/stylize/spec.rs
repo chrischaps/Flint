@@ -6,7 +6,7 @@
 //! --style ascii                          the style at its defaults
 //! --style ascii:cell=12,ramp=blocks      a parameter (number) and an option (text)
 //! --style invert:strength=0.5
-//! --style kuwahara:radius=6              Kuwahara's own kuwahara_* fields
+//! --style kuwahara:radius=6
 //! --style ascii:off                      turn off a style the scene has on
 //! ```
 //!
@@ -18,10 +18,6 @@
 
 use super::{find, names, registry, StyleDescriptor};
 use crate::postprocess::PostProcessConfig;
-
-/// Kuwahara keeps its settings in `kuwahara_*` fields, not the style
-/// table (it predates it); these are the keys `--style kuwahara:` takes.
-const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
 
 /// One parsed `--style` word.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,20 +87,6 @@ impl StyleSpec {
     /// Write this spec into `config`: the style on (or off) with its
     /// settings, over whatever the scene said.
     pub fn apply(&self, config: &mut PostProcessConfig) {
-        if self.name == "kuwahara" {
-            config.kuwahara_enabled = self.enabled;
-            for (key, value) in &self.settings {
-                let n: f32 = value.parse().unwrap_or_default();
-                match key.as_str() {
-                    "radius" => config.kuwahara_radius = n.round().max(1.0) as u32,
-                    "sharpness" => config.kuwahara_sharpness = n,
-                    "hardness" => config.kuwahara_hardness = n,
-                    "anisotropy" => config.kuwahara_anisotropy = n,
-                    _ => {}
-                }
-            }
-            return;
-        }
         let descriptor = find(&self.name).expect("checked by parse");
         config.styles.set_enabled(&self.name, self.enabled);
         for (key, value) in &self.settings {
@@ -135,15 +117,6 @@ pub fn style_spec_help() -> String {
 
 fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), String> {
     let name = descriptor.name;
-    if name == "kuwahara" {
-        if !KUWAHARA_KEYS.contains(&key) {
-            return Err(format!(
-                "kuwahara has no key '{key}'; it takes: {}",
-                known_keys(descriptor)
-            ));
-        }
-        return number(name, key, value);
-    }
     if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
         if !option.choices.is_empty() && !option.choices.contains(&value) {
             return Err(format!(
@@ -170,22 +143,18 @@ fn number(name: &str, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn known_keys(descriptor: &StyleDescriptor) -> String {
-    let mut keys: Vec<String> = if descriptor.name == "kuwahara" {
-        KUWAHARA_KEYS.iter().map(|k| k.to_string()).collect()
-    } else {
-        descriptor
-            .params
-            .iter()
-            .map(|p| format!("{}={}", p.name, p.default))
-            .chain(descriptor.options.iter().map(|o| {
-                if o.choices.is_empty() {
-                    format!("{}=<text>", o.name)
-                } else {
-                    format!("{}={}", o.name, o.choices.join("|"))
-                }
-            }))
-            .collect()
-    };
+    let mut keys: Vec<String> = descriptor
+        .params
+        .iter()
+        .map(|p| format!("{}={}", p.name, p.default))
+        .chain(descriptor.options.iter().map(|o| {
+            if o.choices.is_empty() {
+                format!("{}=<text>", o.name)
+            } else {
+                format!("{}={}", o.name, o.choices.join("|"))
+            }
+        }))
+        .collect();
     keys.push("off".to_string());
     keys.join(", ")
 }
@@ -223,13 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn kuwahara_writes_its_own_fields() {
+    fn kuwahara_writes_its_style_table() {
         let mut config = PostProcessConfig::default();
         apply_style_spec(&mut config, "kuwahara:radius=6,anisotropy=0.5").unwrap();
-        assert!(config.kuwahara_enabled);
-        assert_eq!(config.kuwahara_radius, 6);
-        assert_eq!(config.kuwahara_anisotropy, 0.5);
-        assert!(!config.styles.is_enabled("kuwahara"));
+        assert!(config.styles.is_enabled("kuwahara"));
+        assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
+        assert_eq!(config.styles.param("kuwahara", "anisotropy"), Some(0.5));
     }
 
     #[test]

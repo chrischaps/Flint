@@ -88,11 +88,6 @@ pub struct PostProcessConfig {
     pub volumetric_density: f32,
     pub volumetric_max_distance: f32,
     pub volumetric_decay: f32,
-    pub kuwahara_enabled: bool,
-    pub kuwahara_radius: u32,
-    pub kuwahara_sharpness: f32,
-    pub kuwahara_hardness: f32,
-    pub kuwahara_anisotropy: f32,
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the
@@ -121,8 +116,8 @@ pub struct PostProcessConfig {
     /// interim for tech-debt #13 until the MSAA workstream).
     pub fxaa_enabled: bool,
     /// Registered stylize passes' settings by style name (#262), from a
-    /// scene's `[post_process.styles.<name>]`. Kuwahara keeps the
-    /// `kuwahara_*` fields above instead.
+    /// scene's `[post_process.styles.<name>]` (Kuwahara's included, #298:
+    /// a scene's old `kuwahara_*` keys are folded in on the way).
     pub styles: crate::stylize::StyleSettings,
 }
 
@@ -173,11 +168,6 @@ impl Default for PostProcessConfig {
             volumetric_density: 1.0,
             volumetric_max_distance: 100.0,
             volumetric_decay: 0.98,
-            kuwahara_enabled: false,
-            kuwahara_radius: 4,
-            kuwahara_sharpness: 8.0,
-            kuwahara_hardness: 8.0,
-            kuwahara_anisotropy: 1.0,
             render_mode: 0,
             mode_mix: 0.0,
             mode_params: [0.0; 4],
@@ -246,17 +236,13 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.volumetric_density = pp_def.volumetric_density;
     config.volumetric_max_distance = pp_def.volumetric_max_distance;
     config.volumetric_decay = pp_def.volumetric_decay;
-    config.kuwahara_enabled = pp_def.kuwahara_enabled;
-    config.kuwahara_radius = pp_def.kuwahara_radius;
-    config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
-    config.kuwahara_hardness = pp_def.kuwahara_hardness;
-    config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;
     config.grade_gain = pp_def.grade_gain;
     config.fxaa_enabled = pp_def.fxaa;
-    let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.styles);
+    // The old `kuwahara_*` keys arrive folded into the kuwahara table (#298)
+    let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.style_tables());
     for warning in warnings {
         tracing::warn!("{warning}");
     }
@@ -2664,6 +2650,20 @@ fn generate_ssao_noise() -> [u8; 64] {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn old_kuwahara_keys_make_the_same_config_as_the_table() {
+        let old: flint_scene::PostProcessDef =
+            toml::from_str("kuwahara_enabled = true\nkuwahara_radius = 4").unwrap();
+        let table: flint_scene::PostProcessDef =
+            toml::from_str("[styles.kuwahara]\nradius = 4").unwrap();
+        let old = post_process_config_from_def(&old);
+        assert!(old.styles.is_enabled("kuwahara"));
+        assert_eq!(old.styles.param("kuwahara", "radius"), Some(4.0));
+        assert_eq!(old.styles, post_process_config_from_def(&table).styles);
+    }
+
     use super::*;
 
     /// The Rust uniform struct must byte-match the WGSL PostProcessUniforms

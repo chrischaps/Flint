@@ -1,27 +1,50 @@
 //! The anisotropic Kuwahara filter (Kyprianidis et al.), the first style on
 //! the framework: three passes, structure tensor -> tensor blur -> filter,
-//! in HDR before fog, bloom and tonemapping. Its settings are the
-//! `kuwahara_*` fields of [`PostProcessConfig`], which predate the style
-//! table. Ported unchanged from `postprocess.rs` (#262): same shaders, same
-//! targets, same clears, so its output is byte-identical.
+//! in HDR before fog, bloom and tonemapping. Ported unchanged from
+//! `postprocess.rs` (#262): same shaders, same targets, same clears, so its
+//! output is byte-identical. Its settings are `[post_process.styles.kuwahara]`
+//! like every other style's (#298); a scene's older `kuwahara_enabled`,
+//! `kuwahara_radius`... keys are folded into that table when it loads
+//! (`flint_scene::fold_legacy_style_keys`).
 
 use super::kit;
-use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StylePass, StyleStage};
-use crate::postprocess::{PostProcessConfig, HDR_FORMAT};
+use super::{
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleStage,
+};
+use crate::postprocess::HDR_FORMAT;
 use bytemuck::{Pod, Zeroable};
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     name: "kuwahara",
     label: "Kuwahara",
     stage: StyleStage::Hdr,
-    params: &[],
+    params: &[
+        param("radius", 4.0, 1.0, 8.0),
+        param("sharpness", 8.0, 1.0, 16.0),
+        param("hardness", 8.0, 1.0, 16.0),
+        param("anisotropy", 1.0, 0.0, 2.0),
+    ],
     options: &[],
-    enabled: Some(|c: &PostProcessConfig| c.kuwahara_enabled),
     uses_mask: false,
-    hints: &[],
+    hints: &[
+        StyleHint::new("radius", "Radius (px)", "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more").integer(),
+        StyleHint::new("sharpness", "Sharpness", "How strongly the least varied sector wins; lower blends sectors more softly"),
+        StyleHint::new("hardness", "Hardness", "How sharply sectors fall off; lower gives broader, smoother strokes"),
+        StyleHint::new("anisotropy", "Anisotropy", "How far strokes stretch along the image's edges; 0 is round"),
+    ],
     component: None,
     create: |d| Box::new(Kuwahara::new(d)),
 };
+
+const fn param(name: &'static str, default: f32, min: f32, max: f32) -> StyleParam {
+    StyleParam {
+        name,
+        default,
+        min,
+        max,
+    }
+}
 
 /// The tensor passes' uniforms.
 #[repr(C)]
@@ -167,13 +190,13 @@ impl StylePass for Kuwahara {
         );
 
         // Pass 3: the filter, oriented by the blurred tensor
-        let config = frame.config;
         let uniforms = KuwaharaUniforms {
             texel_size,
-            radius: config.kuwahara_radius as f32,
-            sharpness: config.kuwahara_sharpness,
-            hardness: config.kuwahara_hardness,
-            anisotropy: config.kuwahara_anisotropy,
+            // Whole pixels, as the old `kuwahara_radius: u32` was
+            radius: frame.param("radius").round().max(1.0),
+            sharpness: frame.param("sharpness"),
+            hardness: frame.param("hardness"),
+            anisotropy: frame.param("anisotropy"),
             _pad: [0.0; 2],
         };
         frame

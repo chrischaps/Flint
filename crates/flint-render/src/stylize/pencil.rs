@@ -130,7 +130,6 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             choices: GRIDS,
         },
     ],
-    enabled: None,
     uses_mask: false,
     hints: &[
         StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),

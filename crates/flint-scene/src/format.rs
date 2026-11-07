@@ -127,16 +127,20 @@ pub struct PostProcessDef {
     pub dof_focus_distance: f32,
     #[serde(default = "default_dof_focus_range")]
     pub dof_focus_range: f32,
-    #[serde(default)]
-    pub kuwahara_enabled: bool,
-    #[serde(default = "default_kuwahara_radius")]
-    pub kuwahara_radius: u32,
-    #[serde(default = "default_kuwahara_sharpness")]
-    pub kuwahara_sharpness: f32,
-    #[serde(default = "default_kuwahara_hardness")]
-    pub kuwahara_hardness: f32,
-    #[serde(default = "default_kuwahara_anisotropy")]
-    pub kuwahara_anisotropy: f32,
+    /// The old spellings of `[post_process.styles.kuwahara]` (#298), kept
+    /// so scenes written before the style table still load. Read them
+    /// through [`style_tables`](Self::style_tables), which folds them in;
+    /// a key the table also sets is the table's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_radius: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_sharpness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_hardness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_anisotropy: Option<f32>,
     /// Stylize passes by name (#262): `[post_process.styles.invert]` with
     /// `enabled` (default true) and the style's numeric parameters. The
     /// renderer checks names and parameters against its registry.
@@ -260,20 +264,103 @@ fn default_volumetric_decay() -> f32 {
     0.98
 }
 
-fn default_kuwahara_radius() -> u32 {
-    4
+/// The `[post_process]` keys that predate the style table, and the
+/// `[post_process.styles.<style>]` key each one is now (#298).
+pub const LEGACY_STYLE_KEYS: &[(&str, &str, &str)] = &[
+    ("kuwahara_enabled", "kuwahara", "enabled"),
+    ("kuwahara_radius", "kuwahara", "radius"),
+    ("kuwahara_sharpness", "kuwahara", "sharpness"),
+    ("kuwahara_hardness", "kuwahara", "hardness"),
+    ("kuwahara_anisotropy", "kuwahara", "anisotropy"),
+];
+
+/// Move a `[post_process]` table's old style keys (`kuwahara_radius = 4`)
+/// into its style tables (`[styles.kuwahara] radius = 4`), so the two
+/// spellings mean the same thing. A key the style table already sets is
+/// the table's, and the old key is dropped. A style table made here is on
+/// only if the old keys say so (`kuwahara_enabled = true`): before the
+/// table, `kuwahara_radius` alone left the filter off.
+pub fn fold_legacy_style_keys(post_process: &mut toml::Table) {
+    let mut made: Vec<&str> = Vec::new();
+    for &(old, style, key) in LEGACY_STYLE_KEYS {
+        let Some(value) = post_process.remove(old) else {
+            continue;
+        };
+        let styles = post_process
+            .entry("styles")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let Some(styles) = styles.as_table_mut() else {
+            continue;
+        };
+        if !styles.contains_key(style) {
+            let mut fresh = toml::Table::new();
+            fresh.insert("enabled".into(), toml::Value::Boolean(false));
+            styles.insert(style.into(), toml::Value::Table(fresh));
+            made.push(style);
+        }
+        let Some(table) = styles.get_mut(style).and_then(|t| t.as_table_mut()) else {
+            continue;
+        };
+        // `enabled` in a table made here is the old key's to set; in an
+        // authored one it is already the table's (absent means on)
+        if key == "enabled" {
+            if made.contains(&style) {
+                table.insert(key.into(), value);
+            }
+        } else {
+            table.entry(key).or_insert(value);
+        }
+    }
 }
 
-fn default_kuwahara_sharpness() -> f32 {
-    8.0
-}
-
-fn default_kuwahara_hardness() -> f32 {
-    8.0
-}
-
-fn default_kuwahara_anisotropy() -> f32 {
-    1.0
+impl PostProcessDef {
+    /// The style tables, with the old `kuwahara_*` keys folded in
+    /// ([`fold_legacy_style_keys`]). What the renderer reads.
+    pub fn style_tables(&self) -> std::collections::BTreeMap<String, toml::Table> {
+        let mut table = toml::Table::new();
+        let float = |v: Option<f32>| v.map(|v| toml::Value::Float(v as f64));
+        let legacy = [
+            (
+                "kuwahara_enabled",
+                self.kuwahara_enabled.map(toml::Value::Boolean),
+            ),
+            (
+                "kuwahara_radius",
+                self.kuwahara_radius.map(|r| toml::Value::Integer(r as i64)),
+            ),
+            ("kuwahara_sharpness", float(self.kuwahara_sharpness)),
+            ("kuwahara_hardness", float(self.kuwahara_hardness)),
+            ("kuwahara_anisotropy", float(self.kuwahara_anisotropy)),
+        ];
+        for (key, value) in legacy {
+            if let Some(value) = value {
+                table.insert(key.into(), value);
+            }
+        }
+        let mut styles: std::collections::BTreeMap<String, toml::Table> = self.styles.clone();
+        if table.is_empty() {
+            return styles;
+        }
+        table.insert(
+            "styles".into(),
+            toml::Value::Table(
+                styles
+                    .iter()
+                    .map(|(k, v)| (k.clone(), toml::Value::Table(v.clone())))
+                    .collect(),
+            ),
+        );
+        fold_legacy_style_keys(&mut table);
+        styles.clear();
+        if let Some(toml::Value::Table(folded)) = table.remove("styles") {
+            for (name, value) in folded {
+                if let toml::Value::Table(t) = value {
+                    styles.insert(name, t);
+                }
+            }
+        }
+        styles
+    }
 }
 
 /// Camera configuration for the scene
@@ -464,5 +551,50 @@ max = [10, 4, 8]
         let scene: SceneFile = toml::from_str(toml_str).unwrap();
         assert_eq!(scene.scene.name, "Test Scene");
         assert!(scene.entities.contains_key("room1"));
+    }
+}
+
+#[cfg(test)]
+mod legacy_style_key_tests {
+    use super::*;
+
+    fn def(text: &str) -> PostProcessDef {
+        toml::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn old_kuwahara_keys_fold_into_its_table() {
+        let old = def("kuwahara_enabled = true\nkuwahara_radius = 4\nkuwahara_sharpness = 6.0");
+        let tables = old.style_tables();
+        let k = &tables["kuwahara"];
+        assert_eq!(k["enabled"].as_bool(), Some(true));
+        assert_eq!(k["radius"].as_integer(), Some(4));
+        assert_eq!(k["sharpness"].as_float(), Some(6.0));
+    }
+
+    #[test]
+    fn old_keys_without_enabled_leave_it_off() {
+        let tables = def("kuwahara_radius = 6").style_tables();
+        assert_eq!(tables["kuwahara"]["enabled"].as_bool(), Some(false));
+        assert!(def("bloom_intensity = 0.1").style_tables().is_empty());
+    }
+
+    #[test]
+    fn the_table_wins_over_an_old_key() {
+        let both =
+            def("kuwahara_enabled = false\nkuwahara_radius = 2\n[styles.kuwahara]\nradius = 5");
+        let k = &both.style_tables()["kuwahara"];
+        assert_eq!(k["radius"].as_integer(), Some(5));
+        // An authored table is on unless it says otherwise
+        assert!(!k.contains_key("enabled"));
+    }
+
+    #[test]
+    fn folding_a_raw_table_drops_the_old_keys() {
+        let mut t: toml::Table = toml::from_str("kuwahara_enabled = true\nexposure = 2.0").unwrap();
+        fold_legacy_style_keys(&mut t);
+        assert!(!t.contains_key("kuwahara_enabled"));
+        assert_eq!(t["styles"]["kuwahara"]["enabled"].as_bool(), Some(true));
+        assert_eq!(t["exposure"].as_float(), Some(2.0));
     }
 }

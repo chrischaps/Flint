@@ -2,7 +2,7 @@
 //!
 //! One consolidated home for every render/post-effect debug control that
 //! used to live on scattered function keys (F1 debug-mode cycle, F4 shadows,
-//! F5-F10 per-effect toggles, F12 kuwahara / DoF-follow), plus the
+//! F5-F10 per-effect toggles, F12 kuwahara (now F4 -> Styles) / DoF-follow), plus the
 //! non-binary parameters those keys could never expose (SSAO radius/samples,
 //! DoF focus/range, grade lift/gamma/gain, render mode/mix/params, shadow
 //! resolution, lighting levers, FOV).
@@ -299,34 +299,7 @@ impl RenderDebugPanel {
             }
         });
 
-        section(ui, "Kuwahara", false, |ui| {
-            let was_off = !self.pp.kuwahara_enabled;
-            if ui
-                .checkbox(&mut self.pp.kuwahara_enabled, "Enabled")
-                .changed()
-            {
-                f.pp_changed = true;
-                if was_off && self.pp.kuwahara_enabled {
-                    f.style_needs_resources = true;
-                }
-            }
-            let r = ui.horizontal(|ui| {
-                ui.label("Radius");
-                ui.add(egui::Slider::new(&mut self.pp.kuwahara_radius, 1..=8))
-                    .changed()
-            });
-            f.pp_changed |= r.inner;
-            f.pp_changed |= slider(ui, "Sharpness", &mut self.pp.kuwahara_sharpness, 1.0..=16.0);
-            f.pp_changed |= slider(ui, "Hardness", &mut self.pp.kuwahara_hardness, 1.0..=16.0);
-            f.pp_changed |= slider(
-                ui,
-                "Anisotropy",
-                &mut self.pp.kuwahara_anisotropy,
-                0.0..=2.0,
-            );
-        });
-
-        // Registered styles with settings in the style table (#262), one
+        // Every registered style (#262; Kuwahara too since #298), one
         // section each, drawn from their descriptors (#268)
         section(ui, "Styles", false, |ui| {
             let edit = self

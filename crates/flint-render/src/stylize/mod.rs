@@ -26,8 +26,9 @@
 //! - **Config.** A style reads its parameters from
 //!   [`PostProcessConfig::styles`], which a scene sets with
 //!   `[post_process.styles.<name>]`; the F4 Rendering & Effects menu draws
-//!   its sliders from the descriptor. Kuwahara predates the table and keeps
-//!   its own `kuwahara_*` fields.
+//!   its sliders from the descriptor. Every style lives there, Kuwahara
+//!   included (#298; a scene's older `kuwahara_*` keys are folded into its
+//!   table on load, `flint_scene::fold_legacy_style_keys`).
 //!
 //! ## Order
 //!
@@ -212,10 +213,6 @@ pub struct StyleDescriptor {
     pub params: &'static [StyleParam],
     /// Named choices and their defaults, read with [`StyleFrame::option`].
     pub options: &'static [StyleOption],
-    /// When the style is on. `None` reads `enabled` from
-    /// [`PostProcessConfig::styles`]; a style with fields of its own on
-    /// [`PostProcessConfig`] (Kuwahara) reads those instead.
-    pub enabled: Option<fn(&PostProcessConfig) -> bool>,
     /// Whether the style reads the entity style mask (#263). While any
     /// such style is on, the renderer draws the mask each frame and hands
     /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
@@ -238,10 +235,7 @@ impl StyleDescriptor {
     /// Whether `config` switches this style on (post-processing as a whole
     /// aside).
     pub fn is_enabled(&self, config: &PostProcessConfig) -> bool {
-        match self.enabled {
-            Some(enabled) => enabled(config),
-            None => config.styles.is_enabled(self.name),
-        }
+        config.styles.is_enabled(self.name)
     }
 
     /// Whether this style runs this frame: `config` switches it on, or it
@@ -256,12 +250,6 @@ impl StyleDescriptor {
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
             && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
-    }
-
-    /// Whether the style's parameters live in the generic table (and so
-    /// the generic F4 section can draw them).
-    pub fn uses_style_table(&self) -> bool {
-        self.enabled.is_none()
     }
 
     /// Parameter `name`'s value in `config`, or its default.
@@ -1384,8 +1372,9 @@ mod tests {
         assert_eq!(invert.param(&config, "strength"), 0.25);
 
         let kuwahara = find("kuwahara").unwrap();
-        assert!(!kuwahara.uses_style_table());
-        config.kuwahara_enabled = true;
+        assert!(!kuwahara.is_enabled(&config));
+        assert_eq!(kuwahara.param(&config, "radius"), 4.0);
+        config.styles.set_enabled("kuwahara", true);
         assert!(kuwahara.is_enabled(&config));
     }
 }
