@@ -38,7 +38,6 @@
 //! scene (HDR, render scale)
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
-//!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
 //!   -> Display styles (ASCII, pencil, invert) surface format, output resolution

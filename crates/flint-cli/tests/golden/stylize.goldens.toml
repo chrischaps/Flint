@@ -11,8 +11,7 @@
 #
 # Per-entity ASCII (#266) has cases of its own below. The props scene's
 # barrel and YBot carry `style_mask { style = "ascii" }`, so since #266
-# they are glyphs in every props case, the Kuwahara one included. The
-# spike's masked modes (#261) stay until #293 removes them.
+# they are glyphs in every props case, the Kuwahara one included.
 #
 # The props cases use demo/stylize_props.scene.toml, which loads in a few
 # seconds in a debug build (style_mask.scene.toml's grass and 32 MB bench
@@ -100,18 +99,6 @@ scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii:dither=1"]
 
 # --- per-entity ASCII -----------------------------------------------------
-
-# The spike's screen-grid mode: only the named props are glyphs
-[[case]]
-name = "ascii-entity"
-scene = "demo/stylize_props.scene.toml"
-args = ["--no-grid", "--ascii=entity", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
-
-# The spike's object-anchored grid: each prop's cells start at its origin
-[[case]]
-name = "ascii-entity-object"
-scene = "demo/stylize_props.scene.toml"
-args = ["--no-grid", "--ascii=entity-object", "--ascii-entities", "barrel,cask,crate", "--ascii-scene-background"]
 
 # The entity style mask (#263) the per-entity styles read: one hue a style
 [[case]]

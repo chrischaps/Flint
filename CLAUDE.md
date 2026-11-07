@@ -77,10 +77,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;
    #                          cells 640x360 unless --width/--height. Cells are in points:
    #                          confirm a winner at the final size)
-   #   --ascii=full|entity|entity-object --ascii-entities "barrel,table_*"
-   #                          (#261 spike prototypes, `=` required; masked modes are static meshes only)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
-   #   --ascii-edge-normal 2.5 --ascii-scene-background   (tone bands, edges, masked-mode ground)
+   #   --ascii-edge-normal 2.5   (tone bands, tone footprint, edge sensitivity)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction
    # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
