@@ -82,4 +82,32 @@ impl StyleTargets {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// What it holds: how many textures, their bytes, and how many of them
+    /// are `width` x `height` in `format` (the display stage's full-size
+    /// textures, #302). Textures stay until a resize, so this is everything
+    /// any configuration since then has asked for.
+    pub fn summary(&self, format: wgpu::TextureFormat, width: u32, height: u32) -> TargetSummary {
+        let Ok(textures) = self.textures.lock() else {
+            return TargetSummary::default();
+        };
+        let mut summary = TargetSummary::default();
+        for ((_, f), t) in textures.iter() {
+            summary.count += 1;
+            let texel = f.block_copy_size(None).unwrap_or(4);
+            summary.bytes += u64::from(t.width) * u64::from(t.height) * u64::from(texel);
+            if (*f, t.width, t.height) == (format, width, height) {
+                summary.full_size += 1;
+            }
+        }
+        summary
+    }
+}
+
+/// [`StyleTargets::summary`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TargetSummary {
+    pub count: u32,
+    pub bytes: u64,
+    pub full_size: u32,
 }
