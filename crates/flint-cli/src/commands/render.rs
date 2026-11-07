@@ -840,8 +840,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
         );
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-        let img = image::RgbaImage::from_raw(width, height, pixels)
+        let mut img = image::RgbaImage::from_raw(width, height, pixels)
             .context("Failed to create image from pixel data")?;
+        // The style mask view says which hue is which style (#309): in the
+        // terminal once, and on every frame's corner
+        if renderer.debug_state().mode == DebugMode::StyleMask && !args.no_postprocess {
+            let ids = renderer.style_ids();
+            if i == 0 {
+                println!("{}", flint_render::style_mask::legend_line(ids));
+            }
+            super::style_sheet::draw_legend(&mut img, &flint_render::style_mask::legend(ids));
+        }
         if let Some(sweep) = &args.sweep {
             println!("  {} = {}", sweep.name(), sweep.values[i]);
         }

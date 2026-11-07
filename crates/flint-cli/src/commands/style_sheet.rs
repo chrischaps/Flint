@@ -149,6 +149,61 @@ pub fn draw_text(
     }
 }
 
+/// The style mask view's legend (#309), in the image's lower left: a
+/// swatch of each style id's hue, its id and its name, on a dark card.
+/// Nothing styled still gets a card saying so, so an empty mask reads as
+/// empty rather than broken.
+pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::LegendEntry]) {
+    let (w, h) = img.dimensions();
+    let scale = (w / 640).clamp(1, 3);
+    let line = GLYPH * scale;
+    let pad = 6 * scale;
+    let gap = 4 * scale;
+    let rows: Vec<(Option<[f32; 3]>, String)> = if entries.is_empty() {
+        vec![(None, "no styled entities".to_string())]
+    } else {
+        entries
+            .iter()
+            .map(|e| (Some(e.color), format!("{} {}", e.id, e.name)))
+            .collect()
+    };
+    let longest = rows
+        .iter()
+        .map(|(_, t)| t.chars().count())
+        .max()
+        .unwrap_or(0) as u32;
+    let swatch = line;
+    let card_w = (pad * 2 + swatch + gap * 2 + longest * line).min(w);
+    let header = line + gap;
+    let card_h = (pad * 2 + header + rows.len() as u32 * (line + gap) - gap).min(h);
+    let margin = 8 * scale;
+    let x0 = margin.min(w.saturating_sub(card_w));
+    let y0 = h.saturating_sub(card_h + margin);
+    for y in y0..(y0 + card_h).min(h) {
+        for x in x0..(x0 + card_w).min(w) {
+            let under = *img.get_pixel(x, y);
+            img.put_pixel(x, y, blend(under, PAPER, 215));
+        }
+    }
+    let font = GlyphAtlas::builtin();
+    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, "style mask");
+    for (i, (color, text)) in rows.iter().enumerate() {
+        let y = y0 + pad + header + i as u32 * (line + gap);
+        let mut tx = x0 + pad;
+        if let Some([r, g, b]) = color {
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let c = Rgba([byte(*r), byte(*g), byte(*b), 255]);
+            for sy in y..(y + swatch).min(h) {
+                for sx in tx..(tx + swatch).min(w) {
+                    img.put_pixel(sx, sy, c);
+                }
+            }
+            tx += swatch + gap * 2;
+        }
+        draw_text(img, &font, tx, y, scale, LABEL, text);
+    }
+}
+
 fn blend(under: Rgba<u8>, over: Rgba<u8>, alpha: u8) -> Rgba<u8> {
     let a = u32::from(alpha);
     let mix = |u: u8, o: u8| ((u32::from(u) * (255 - a) + u32::from(o) * a) / 255) as u8;
@@ -235,6 +290,31 @@ mod tests {
         let long = compose(&cells, &text(&["0.25", "0.75"]));
         let ink = |s: &RgbaImage| s.pixels().filter(|p| p[0] > 150 && p[2] > 150).count();
         assert!(ink(&long) > ink(&short));
+    }
+
+    #[test]
+    fn the_legend_paints_each_style_swatch_in_the_lower_left() {
+        use flint_render::style_mask::{debug_color, LegendEntry};
+        let entry = |id: u16, name: &str| LegendEntry {
+            id,
+            name: name.into(),
+            color: debug_color(id),
+            color_name: "",
+        };
+        let mut img = RgbaImage::from_pixel(640, 360, Rgba([90, 90, 90, 255]));
+        draw_legend(&mut img, &[entry(1, "ascii"), entry(2, "pencil")]);
+        for id in [1u16, 2] {
+            let c = debug_color(id).map(|v| (v * 255.0).round() as u8);
+            let at: Vec<(u32, u32)> = img
+                .enumerate_pixels()
+                .filter(|(_, _, p)| p.0[..3] == c)
+                .map(|(x, y, _)| (x, y))
+                .collect();
+            assert_eq!(at.len(), 64, "one 8x8 swatch for id {id}");
+            assert!(at.iter().all(|&(x, y)| x < 320 && y > 180));
+        }
+        // The top right is untouched
+        assert_eq!(*img.get_pixel(600, 20), Rgba([90, 90, 90, 255]));
     }
 
     #[test]
