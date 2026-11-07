@@ -202,6 +202,33 @@ scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
+# Watercolor (#272): the whole frame painted (the props' style_mask
+# "ascii" and "pencil" props drawn over the paint, since both follow it), over
+# Kuwahara, and per entity. Its paper and glaze edges are fine detail
+# everywhere, so it takes the smooth styles' tolerance with a little more
+# share
+[[case]]
+name = "watercolor"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "watercolor"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)
+[[case]]
+name = "watercolor-kuwahara"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "watercolor:layers=3"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# Per entity, as authored: a static mesh, a skinned one (by style_mask), two
+# variants of their own, an inherited one and an opt-out, the meadow and
+# grass left as they are
+[[case]]
+name = "watercolor-entities"
+scene = "demo/watercolor.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
 # --- looks (#279) -----------------------------------------------------------
 # Each shipped styles/<name>.look.toml over the props bench. A new look adds
 # a case here (look.rs checks).
@@ -227,6 +254,12 @@ tolerance = { level = 8, share = 0.003, mean = 0.25 }
 name = "look-graphite"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--look", "graphite"]
+
+[[case]]
+name = "look-watercolor"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "watercolor"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]

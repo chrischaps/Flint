@@ -1,6 +1,6 @@
 # Stylize Passes
 
-A stylize pass is a full-screen effect that changes how the picture looks rather than how the light behaves: the painterly Kuwahara filter, ASCII, the pencil sketch, and the watercolor style planned after them (epic #260). They share one framework in `flint-render` (`crates/flint-render/src/stylize/`), so a new style is mostly a shader and a parameter list.
+A stylize pass is a full-screen effect that changes how the picture looks rather than how the light behaves: the painterly Kuwahara filter, ASCII, the pencil sketch and watercolor (epic #260). They share one framework in `flint-render` (`crates/flint-render/src/stylize/`), so a new style is mostly a shader and a parameter list.
 
 This page is the reference. For choosing between a whole-frame and a per-entity style, which grid glyphs sit on and which stage a style runs at, with the captures the choice was made from, see the guide [Stylized Rendering](../guides/stylized-rendering.md) and [ADR 0111](https://github.com/chrischaps/flint/blob/main/docs/adr/0111-stylized-rendering.md).
 
@@ -19,7 +19,7 @@ strength = 1.0          # a parameter: a number
 A table switches its style on unless it says `enabled = false`. Every other key is one of the style's parameters (a number) or one of its options (a string, such as a font or a ramp). Unknown style names and keys are reported as warnings when the scene loads, with the names that do exist:
 
 ```text
-WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara, ascii, pencil, invert, mask_view
+WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara, watercolor, ascii, pencil, invert, mask_view
 WARN style 'invert' has no parameter 'wobble'; it takes: strength
 ```
 
@@ -62,6 +62,7 @@ The same editor is the player's **F3 Styles** panel, which appears with the othe
 | Style | Stage | Parameters |
 |-------|-------|------------|
 | `kuwahara` | HDR | the `kuwahara_*` fields |
+| `watercolor` | Display | see [Watercolor](#watercolor) |
 | `ascii` | Display | see [ASCII](#ascii) |
 | `pencil` | Display | see [Pencil](#pencil) |
 | `invert` | Display | `strength` 0--1 (default 1): how far toward the negative |
@@ -368,6 +369,61 @@ fn on_update() {
 
 Neither duplicates the other's job. Tears change how the *world* is seen, and a blend changes how one *thing* is drawn. They compose: an ASCII prop inside a matrix tear is glyphized from the tear's picture, since display styles read the composite's output. Mode 1's glyphs and the ASCII style do overlap as looks, and the `matrix` look (`--look matrix`) is the ASCII style's take on it. Letting a style's blend follow the tear mask, so props turn to text where reality tears, is left for later.
 
+## Watercolor
+
+The `watercolor` style (#272) paints the picture as transparent pigment on paper. Colour bleeds into soft washes, the washes are laid in a few glazes, their borders wander, pigment pools darker along edges and settles into the paper's grain:
+
+```toml
+[post_process.styles.watercolor]
+wash = 4.0          # how far pigment diffuses, in points (the wash's blur radius)
+bleed = 0.55        # how much of the colour is the diffused wash
+layers = 4          # glazes: tone steps, each edged darker on its darker side (0 = smooth)
+wobble = 2.0        # how far borders and silhouettes wander, in points
+wobble_scale = 40   # the wander's wavelength, in points
+edge = 1.0          # pigment pooling at colour edges and glaze borders
+edge_depth = 0.8    # pooling on the near side of silhouettes, from depth
+edge_width = 1.5    # how wide that rim is, in points
+turbulence = 0.35   # low-frequency blotches of thicker and thinner pigment
+granulation = 0.5   # pigment settling into the paper's valleys, strongest in dark washes
+grain = 0.35        # the paper's relief, shading even bare paper
+grain_scale = 1.0   # the paper's tooth (bigger = coarser)
+pigment = 1.0       # overall density: below 1 dilutes, above 1 deepens
+paper_r = 0.97      # the paper's colour (paper_g 0.94, paper_b 0.87)
+scope = "screen"    # or "entities": a preset for watercolor_style entities
+```
+
+![demo/mesh_meadow.scene.toml under --style watercolor: the grass laid in glazes with pooled dark rims, the path a granular wash, the sky bare cold-press paper](../images/watercolor-meadow.png)
+
+*`flint render demo/mesh_meadow.scene.toml --style watercolor`, 1280x720.*
+
+![demo/watercolor.scene.toml: only the YBot, the two barrels and the crate are painted; the meadow and the ground stay as rendered, and the tag on the crate stays unpainted](../images/watercolor-entities.png)
+
+*`flint render demo/watercolor.scene.toml --no-grid`, 1280x720: per entity, as authored.*
+
+![stylize_props with Kuwahara at radius 4 under watercolor at three glazes; the props' style_mask "ascii" glyphs and "pencil" hatching draw over the paint](../images/watercolor-kuwahara.png)
+
+*`--style kuwahara:radius=4 --style watercolor:layers=3`: the two chain.*
+
+![The watercolor look's layers swept 0, 3, 5, 8 on stylize_props](../images/watercolor-sweep-layers.png)
+
+It runs at the **display stage**, after tonemapping, because it paints *on* paper: the paper and its grain must not be fogged, bloomed or graded as if they were in the world. Three passes: a separable Gaussian makes the wash (two targets of the style's own), then the paint pass wobbles where it reads the picture, the wash and the mask, mixes the wash in, steps it into glazes, works out the pigment's density, and lays it on the paper.
+
+- **Density.** The colour is treated as the pigment layer's transmittance over white paper, and a layer `d` times as thick transmits `C^d` (Beer–Lambert). White stays the paper and black stays black; a mid-tone moves most. Edges, glaze borders, depth rims, turbulence and granulation all add to `d`.
+- **Paper** lives in screen space, in points, so its grain holds still as the camera moves and is the same size to the eye at any `--pixels-per-point`. The noise is integer-hashed, so a frame is the same on every run.
+- **Per entity.** A `watercolor_style` component (its fields are the keys above, `paper = [r, g, b]` for the paper's colour) or a `style_mask { style = "watercolor" }` paints an entity with no table, the rest of the frame passing through, exactly as [per-entity ASCII](#per-entity-ascii) works: the scene's table (with `scope = "entities"`) is the preset, entities with equal settings share an id, `enabled = false` opts out, descendants inherit. The mask is read at the wobbled position, so a painted prop's silhouette wanders a little over its surroundings, as a real wash's would. One frame holds 15 variants. `demo/watercolor.scene.toml` paints a static mesh, a skinned one, two props with settings of their own and an inherited one, and leaves one out.
+- **One wash radius a frame.** `wash` is the largest any variant (or the scene) asks for; every other key is per entity.
+- **With Kuwahara** they chain: Kuwahara (HDR stage) flattens the scene into brush pools, and watercolor then paints those pools on paper (`--style kuwahara:radius=4 --style watercolor:layers=3`). They share nothing, and neither needs the other.
+- **With ASCII and pencil**, watercolor runs first (registration order), so glyphs and hatching draw over the paint.
+- The `watercolor` look (`--look watercolor`) is the style with softened light (no bloom, lighter SSAO), `pigment = 0.85` and four glazes. `ink_wash` is still the Kuwahara-built monochrome look.
+
+```bash
+flint render demo/mesh_meadow.scene.toml --style watercolor -o meadow.png
+flint render demo/watercolor.scene.toml -o props.png                       # per entity, as authored
+flint render demo/stylize_props.scene.toml --look watercolor --sweep watercolor.layers=0,3,5,8 -o glazes.png
+```
+
+At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns off the scene's table, not entities that carry a `watercolor_style` of their own; set `enabled = false` on them, as with ASCII.
+
 ## Looks and sweeps
 
 A **look** (#279) is a named preset you can put over any scene. It lives in `styles/<name>.look.toml`, next to the `*.style.toml` generation guides, and has two tables. `[look]` says what the look is and which sweeps to try first. `[post_process]` is a block in exactly the scene format. The look's block is merged into the scene's own `[post_process]` key by key: tables merge and everything else replaces, so a look changes only the keys it names. A field or style the engine doesn't know is an error that names the closest real one, because otherwise a typo would quietly fall back to a default.
@@ -388,13 +444,14 @@ contrast = 1.4
 wobble = 1.8
 ```
 
-Four looks ship, compiled into the CLI so they work from a game repo as well. A `styles/<name>.look.toml` beside the scene, or in its parent folder, takes the place of a built-in with the same name.
+Five looks ship, compiled into the CLI so they work from a game repo as well. A `styles/<name>.look.toml` beside the scene, or in its parent folder, takes the place of a built-in with the same name.
 
 | Look | Built from |
 |------|------------|
 | `ascii_noir` | mono ASCII, black ground, hard contrast, heavy vignette |
 | `matrix` | phosphor-palette ASCII with glow, `detailed` ramp |
-| `ink_wash` | Kuwahara radius 6, desaturation, warm paper fog and grade, grain (stands in until watercolor, #272) |
+| `ink_wash` | Kuwahara radius 6, desaturation, warm paper fog and grade, grain: monochrome brush pools |
+| `watercolor` | the watercolor style in four glazes, pigment 0.85, no bloom, light SSAO |
 | `graphite` | the pencil style at a 5-point spacing, contrast 1.4, doubled outlines (inverted mono ASCII before #273) |
 
 ```bash
@@ -434,7 +491,7 @@ scene (HDR, render scale)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
   -> SSAO, volumetric, bloom
   -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
-  -> Display styles (ASCII, invert) surface format, output resolution
+  -> Display styles (watercolor, ASCII, pencil, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```
 

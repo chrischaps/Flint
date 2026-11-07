@@ -1035,7 +1035,7 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, ascii, pencil, invert, mask_view);
+register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view);
 
 /// Every registered style, in chain order.
 pub fn registry() -> &'static [&'static StyleDescriptor] {

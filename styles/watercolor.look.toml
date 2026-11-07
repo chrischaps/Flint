@@ -1,0 +1,37 @@
+# Watercolor: transparent washes laid in glazes on warm cold-press paper,
+# their borders wandering and pooled darker where the pigment dried.
+#
+#   flint render <scene> --look watercolor -o watercolor.png
+#   flint render <scene> --look watercolor --sweep watercolor.layers=0,3,5,8 -o glazes.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# Built on the watercolor style (#272); the scene's light is softened first
+# (less SSAO, no bloom halo) because a painter leaves that out.
+
+[look]
+name = "watercolor"
+description = "Watercolor glazes on cold-press paper, edges pooled and wandering"
+tune = [
+    "watercolor.layers=0,3,5,8",
+    "watercolor.pigment=0.6,0.8,1,1.3",
+    "watercolor.wobble=0,2,4,7",
+    "watercolor.edge=0,1,2,3",
+]
+notes = """
+Layers are the glazes: 0 is one smooth wash, 3-5 read as a painter's
+layering, 8 starts to look like posterization. Pigment below 1 airs the
+picture out (most watercolors are lighter than the scene they show).
+Wobble is the hand: 0 is a traced line, 4 is loose, 7 is wet-in-wet.
+"""
+
+[post_process]
+bloom_enabled = false
+exposure = 1.2
+ssao_enabled = true
+ssao_intensity = 0.6
+vignette_enabled = false
+
+[post_process.styles.watercolor]
+pigment = 0.85
+layers = 4.0

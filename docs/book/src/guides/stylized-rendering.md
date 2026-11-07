@@ -1,6 +1,6 @@
 # Stylized Rendering
 
-Flint can draw some or all of a scene in a style of its own: ASCII glyphs today, with watercolor (#272), pencil (#273) and user-written shaders (#274) built on the same framework. This guide is about choosing. Should a style cover the whole frame or only chosen entities? Which grid should glyphs sit on? Where in the frame does a style run? It shows the captures the decision was made from. The keys and flags are in the reference, [Stylize Passes](../concepts/stylize-passes.md). The decision record is [ADR 0111](https://github.com/chrischaps/flint/blob/main/docs/adr/0111-stylized-rendering.md).
+Flint can draw some or all of a scene in a style of its own: ASCII glyphs, the pencil sketch (#273) and watercolor (#272) today, with user-written shaders (#274) to come on the same framework. This guide is about choosing. Should a style cover the whole frame or only chosen entities? Which grid should glyphs sit on? Where in the frame does a style run? It shows the captures the decision was made from. The keys and flags are in the reference, [Stylize Passes](../concepts/stylize-passes.md). The decision record is [ADR 0111](https://github.com/chrischaps/flint/blob/main/docs/adr/0111-stylized-rendering.md).
 
 Every image here was made with `flint render` from the commands beside it, at 1280x720 on an RTX 4070, and cropped at 1:1 unless it says it was zoomed.
 
