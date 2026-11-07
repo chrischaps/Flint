@@ -96,6 +96,9 @@ pub struct ShadowPass {
     /// The uniforms on the GPU say "no shadows" (see `write_off_uniforms`).
     pub(crate) shadows_written_off: bool,
     shadow_uniforms: ShadowUniforms,
+    /// Its [`gpu_id`](crate::bind_cache::gpu_id): bind groups kept over its
+    /// views and buffers name it (#139). A new resolution is a new pass.
+    pub id: u64,
 }
 
 impl ShadowPass {
@@ -302,6 +305,7 @@ impl ShadowPass {
             distance: flint_core::quality::DEFAULT_SHADOW_DISTANCE,
             shadows_written_off: false,
             shadow_uniforms,
+            id: crate::bind_cache::gpu_id(),
         }
     }
 

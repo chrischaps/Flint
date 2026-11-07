@@ -13,6 +13,8 @@ flint-import = { workspace = true }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 toml = { workspace = true }
+serde = { workspace = true }
+ab_glyph = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
@@ -25,6 +27,7 @@ profiling = { workspace = true }
 [dev-dependencies]
 flint-asset = { workspace = true }
 naga = { version = "23", features = ["wgsl-in"] }
+epaint_default_fonts = "0.30"
 
 # Native builds decode every format image does by default (with rayon); the
 # web player keeps the workspace's PNG, JPEG and HDR (#123).

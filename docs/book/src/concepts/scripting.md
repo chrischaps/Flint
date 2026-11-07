@@ -115,8 +115,7 @@ Input bindings support keyboard, mouse, and gamepad devices. See [Physics and Ru
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `delta_time()` | `f64` | Seconds since last frame (scaled by `set_time_scale`) |
-| `set_time_scale(scale)` | --- | Game seconds per real second from the next frame (1.0 normal, 0.25 slow motion, clamped 0.05–4). Physics, particles and animation slow with it; audio does not. Held until changed; a scene load resets it to 1.0 |
+| `delta_time()` | `f64` | Seconds since last frame |
 | `total_time()` | `f64` | Total elapsed time since scene start |
 
 ### Audio API
@@ -443,6 +442,38 @@ The `t` parameter wraps for closed splines. The returned forward and right vecto
 | `set_effect_param(handle, param, value)` | Tune a detached effect: `emission_scale`, `scale`, `playing` (> 0.5), or `x` / `y` / `z` to move it |
 
 See [Particles](particles.md) for full component schema and recipes.
+
+### Style API
+
+Turn an entity into glyphs at a story beat and animate how it looks (#269). These change the entity's per-entity style component (`ascii_style`), which the renderer reads every frame. See [Stylize Passes](stylize-passes.md#per-entity-ascii) for every setting.
+
+| Function | Description |
+|----------|-------------|
+| `set_entity_style(entity_id, style)` | Draw the entity and its descendants in `style` (`"ascii"`). Settings it had before are kept, and any other style or `style_mask` on it comes off |
+| `set_style_param(entity_id, param, value)` | Change one setting: a number (`cell`, `glow`, `brightness`, `levels`, ...; clamped to the style's range), a string (`ramp`, `color`, `palette`, `grid`, `transition`, ...), `enabled` (`true`/`false`), `blend` (0--1, how much of the style shows; [Blending in and out](stylize-passes.md#blending-in-and-out)) or a three-number array (`tint`). Integers count as numbers, so web scripts (i64 only) work unchanged |
+| `clear_entity_style(entity_id)` | Take the entity's own style off |
+
+Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.
+
+Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity.
+
+A clear only removes the entity's own style. One it inherits from an ancestor, or the scene's whole-frame ASCII, still reaches it: to keep it smooth under those, use `set_style_param(id, "enabled", false)`.
+
+```rust
+// Coarse glyphs settling into a fine grid over 1.5 s
+fn on_update() {
+    let barrel = get_entity("barrel");
+    if !has_component(barrel, "ascii_style") { set_entity_style(barrel, "ascii"); }
+    let k = total_time() / 1.5;
+    if k > 1.0 { k = 1.0; }
+    set_style_param(barrel, "cell", 22.0 - 15.0 * k);
+}
+fn on_event(name, data) {
+    if name == "style_changed" { log(`${entity_name(data.entity)} -> ${data.style}`); }
+}
+```
+
+`demo/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `demo/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
 
 ### Post-Processing API
 

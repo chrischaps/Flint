@@ -1,0 +1,36 @@
+# Flint's built-in glyph set (#264): the hand-drawn 8x8 font in
+# builtin_8x8.txt and the ramps every ASCII style can name without a file.
+# A project's own `*.glyphs.toml` has the same shape (book: concepts/glyph-atlas.md).
+
+# The ramp a style gets when it names none. A top-level key, so it comes
+# before the first [table].
+default_ramp = "classic"
+
+[font]
+# No `file`: the built-in 8x8 cells.
+
+# A ramp runs from no ink to the most ink: a style maps a cell's luminance
+# onto it, dark to bright.
+[ramps.classic]
+glyphs = " .:-=+*#%@"
+
+[ramps.blocks]
+glyphs = " ░▒▓█"
+
+[ramps.minimal]
+glyphs = " .oO@"
+
+# Paul Bourke's long ramp. Its order was tuned for other fonts, so it is
+# re-sorted by the ink each glyph really has in this atlas.
+[ramps.detailed]
+glyphs = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+sort = "coverage"
+
+# Glyphs for silhouette edges, chosen from depth/normal gradients (#267).
+# The built-in set uses its box-drawing glyphs, which fill their cells so
+# an edge reads as one unbroken line; a set that names none gets - | / \.
+[edges]
+horizontal = "─"
+vertical = "│"
+diagonal = "╱"
+antidiagonal = "╲"

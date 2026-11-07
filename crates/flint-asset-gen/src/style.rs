@@ -69,6 +69,22 @@ struct StyleFile {
 }
 
 impl StyleGuide {
+    /// The style's constraints in the validator's terms, for both
+    /// `flint gen --validate` and `flint asset validate`: triangle ceiling,
+    /// roughness/metallic ranges, palette, and the UV/normal requirements.
+    /// Texture sizes come from a spec, not a style, and are left unset.
+    pub fn validation_constraints(&self) -> flint_procgen::ValidationConstraints {
+        flint_procgen::ValidationConstraints {
+            max_triangles: self.geometry.max_triangles,
+            roughness_range: self.materials.roughness_range,
+            metallic_range: self.materials.metallic_range,
+            palette: self.palette.clone(),
+            require_uvs: self.geometry.require_uvs.unwrap_or(false),
+            require_normals: self.geometry.require_normals.unwrap_or(false),
+            ..Default::default()
+        }
+    }
+
     /// Load a style guide from a TOML file
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -84,10 +100,22 @@ impl StyleGuide {
 
     /// Find and load a style guide by name, searching standard locations
     pub fn find(name: &str) -> Result<Self> {
-        let candidates = [
+        // The working directory first (as before), then the project root,
+        // so a style is found from any folder of the project (#179).
+        let root = flint_asset::Project::current().root;
+        let mut candidates = vec![
             format!("styles/{}.style.toml", name),
             format!(".flint/styles/{}.style.toml", name),
         ];
+        for rel in [
+            format!("styles/{}.style.toml", name),
+            format!(".flint/styles/{}.style.toml", name),
+        ] {
+            let p = root.join(rel).display().to_string();
+            if !candidates.contains(&p) {
+                candidates.push(p);
+            }
+        }
 
         for candidate in &candidates {
             let path = Path::new(candidate);

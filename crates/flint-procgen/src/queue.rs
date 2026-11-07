@@ -3,6 +3,8 @@
 //! The [`ProcGenQueue`] spreads generation work across frames within a
 //! configurable time budget, prioritizing assets closest to the camera.
 
+use std::sync::Arc;
+
 use web_time::Instant;
 
 use flint_core::ContentHash;
@@ -36,8 +38,18 @@ pub struct GenerationRequest {
 /// A completed asset ready for GPU upload.
 pub struct CompletedAsset {
     pub spec_name: String,
-    pub output: GeneratorOutput,
+    /// Shared with the cache: uploading it copies nothing.
+    pub output: Arc<GeneratorOutput>,
     pub asset_kind: AssetKind,
+}
+
+/// A queued asset whose generation failed, kept for the caller to act on
+/// (fall back to a file, keep a placeholder) rather than only logged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FailedAsset {
+    pub spec_name: String,
+    pub asset_kind: AssetKind,
+    pub error: String,
 }
 
 /// Statistics about the generation queue.
@@ -62,6 +74,8 @@ pub struct ProcGenQueue {
     reprioritize_threshold_sq: f32,
     total_completed: u64,
     last_stats: QueueStats,
+    /// Failures since the last [`take_failures`](Self::take_failures).
+    failures: Vec<FailedAsset>,
 }
 
 impl ProcGenQueue {
@@ -73,7 +87,13 @@ impl ProcGenQueue {
             reprioritize_threshold_sq: 4.0,
             total_completed: 0,
             last_stats: QueueStats::default(),
+            failures: Vec::new(),
         }
+    }
+
+    /// The requests that failed to generate since the last call, each once.
+    pub fn take_failures(&mut self) -> Vec<FailedAsset> {
+        std::mem::take(&mut self.failures)
     }
 
     pub fn set_budget_ms(&mut self, budget_ms: f64) {
@@ -146,16 +166,20 @@ impl ProcGenQueue {
         while !self.pending.is_empty() {
             let req = &self.pending[0];
 
-            // Check cache first (no budget cost)
+            // Check cache first. A memory hit costs nothing; one read from
+            // the disk tier costs a file read and a decode, so it counts.
             if let Some(cached) = cache.get(req.content_hash, &req.seed) {
                 let completed = CompletedAsset {
                     spec_name: req.spec_name.clone(),
-                    output: cached.clone(),
+                    output: cached,
                     asset_kind: req.asset_kind,
                 };
                 completions.push(completed);
                 self.pending.remove(0);
                 self.total_completed += 1;
+                if start.elapsed().as_secs_f64() * 1000.0 >= self.budget_ms {
+                    break;
+                }
                 continue;
             }
 
@@ -169,7 +193,7 @@ impl ProcGenQueue {
             let req = self.pending.remove(0);
             match registry.generate_from_spec(&req.spec) {
                 Ok(output) => {
-                    cache.insert(req.content_hash, &req.seed, output.clone());
+                    let output = cache.insert(req.content_hash, &req.seed, output);
                     completions.push(CompletedAsset {
                         spec_name: req.spec_name,
                         output,
@@ -178,10 +202,11 @@ impl ProcGenQueue {
                     self.total_completed += 1;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[procgen] Queued generation failed for '{}': {}",
-                        req.spec_name, e
-                    );
+                    self.failures.push(FailedAsset {
+                        spec_name: req.spec_name,
+                        asset_kind: req.asset_kind,
+                        error: e.to_string(),
+                    });
                 }
             }
 

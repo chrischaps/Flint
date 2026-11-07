@@ -132,6 +132,9 @@ pub(crate) struct PerfRecorder {
     pub gpu_wanted: bool,
     /// When the readout was last drawn, so it is drawn twice a second.
     pub shown_at: Option<Instant>,
+    /// Frames begun since recording started: the web readout divides the
+    /// page's WebGPU call counts by it (#139).
+    pub frames_begun: u64,
 }
 
 impl PerfRecorder {
@@ -146,6 +149,7 @@ impl PerfRecorder {
             scripts: Vec::new(),
             gpu_wanted,
             shown_at: None,
+            frames_begun: 0,
         }
     }
 
@@ -178,6 +182,7 @@ impl PerfRecorder {
     }
 
     fn begin_frame_at(&mut self, now: Instant) {
+        self.frames_begun += 1;
         if let Some(began) = self.frame_start {
             let ms = now.duration_since(began).as_secs_f32() * 1000.0;
             let frame = Frame {
@@ -284,13 +289,52 @@ pub(crate) struct PerfContext {
     pub triangles: u32,
     /// Game time, seconds.
     pub game_time: f64,
-    /// Late audio buffers of all buffers so far, and one buffer's length in
-    /// ms; `None` before the sound starts.
-    pub audio: Option<(u64, u64, f64)>,
+    /// Late audio buffers of all buffers so far, one buffer's length and
+    /// the mean time to mix one, ms; `None` before the sound starts, and on
+    /// the desktop, whose device stream isn't metered.
+    pub audio: Option<(u64, u64, f64, f64)>,
+    /// The voices and spatial tracks being mixed, and how many of each are
+    /// paused because nobody can hear them (#138); `None` without sound.
+    pub mix: Option<flint_audio::MixCounts>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
     /// The frame-rate pacing (#140), when the web player paces.
     pub pacing: Option<String>,
+    /// The WebGPU calls a frame made, on the web (#139).
+    pub webgpu: Option<WebGpuCalls>,
+}
+
+/// The mean frame's calls into WebGPU, counted by the page (`?perf`
+/// wraps them, index.html): each crosses from wasm into JS (#139).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct WebGpuCalls {
+    pub submits: f32,
+    pub writes: f32,
+    /// What the writes carried, bytes.
+    pub write_bytes: f32,
+    pub bind_groups: f32,
+    pub buffers: f32,
+    pub passes: f32,
+}
+
+impl WebGpuCalls {
+    /// The calls between two of the page's running totals, per frame.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn per_frame(now: &Self, then: &Self, frames: u64) -> Option<Self> {
+        if frames == 0 {
+            return None;
+        }
+        let n = frames as f32;
+        let d = |a: f32, b: f32| (a - b).max(0.0) / n;
+        Some(Self {
+            submits: d(now.submits, then.submits),
+            writes: d(now.writes, then.writes),
+            write_bytes: d(now.write_bytes, then.write_bytes),
+            bind_groups: d(now.bind_groups, then.bind_groups),
+            buffers: d(now.buffers, then.buffers),
+            passes: d(now.passes, then.passes),
+        })
+    }
 }
 
 /// Where the GPU's own times come from, said on the readout.
@@ -364,12 +408,39 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         c.draw_calls,
         count(c.triangles)
     ));
+    if let Some(w) = &c.webgpu {
+        line(format!(
+            "webgpu {:.1} submits, {:.1} passes, {:.1} bind groups a frame",
+            w.submits, w.passes, w.bind_groups
+        ));
+        line(format!(
+            "       {:.1} writes ({:.1} KB), {:.1} buffers",
+            w.writes,
+            w.write_bytes / 1024.0,
+            w.buffers
+        ));
+    }
     line(match c.audio {
-        Some((late, buffers, buffer_ms)) => {
-            format!("audio  {late} late of {buffers} ({buffer_ms:.0} ms buffers)")
-        }
+        Some((late, buffers, buffer_ms, mix_ms)) => format!(
+            "audio  {late} late of {buffers} ({buffer_ms:.0} ms buffers), mix {mix_ms:.2} ms"
+        ),
         None => "audio  not started".to_string(),
     });
+    if let Some(m) = c.mix {
+        line(format!(
+            "voices {} of {} mixed, {} of {} spatial tracks",
+            m.live_voices(),
+            m.voices,
+            m.live_tracks(),
+            m.tracks
+        ));
+        if m.skipped_oneshots + m.stolen_oneshots > 0 {
+            line(format!(
+                "       {} one-shots out of earshot, {} stolen",
+                m.skipped_oneshots, m.stolen_oneshots
+            ));
+        }
+    }
     line(String::new());
     line(format!("cpu ms   mean   max   ({:.2} a frame)", s.cpu_mean));
     for p in &s.phases {
@@ -463,8 +534,30 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
         c.draw_calls,
         count(c.triangles)
     ));
-    if let Some((late, buffers, _)) = c.audio {
-        parts.push(format!("audio {late}/{buffers} late"));
+    if let Some(w) = &c.webgpu {
+        parts.push(format!(
+            "webgpu/frame submit {:.1} pass {:.1} bindgroup {:.1} write {:.1} ({:.1} KB) buffer {:.1}",
+            w.submits,
+            w.passes,
+            w.bind_groups,
+            w.writes,
+            w.write_bytes / 1024.0,
+            w.buffers
+        ));
+    }
+    if let Some((late, buffers, _, mix_ms)) = c.audio {
+        parts.push(format!("audio {late}/{buffers} late mix {mix_ms:.2} ms"));
+    }
+    if let Some(m) = c.mix {
+        parts.push(format!(
+            "voices {}/{} tracks {}/{} one-shots {} unheard {} stolen",
+            m.live_voices(),
+            m.voices,
+            m.live_tracks(),
+            m.tracks,
+            m.skipped_oneshots,
+            m.stolen_oneshots
+        ));
     }
     parts.join(" | ")
 }
@@ -547,9 +640,11 @@ impl super::PlayerApp {
                     .audio
                     .engine
                     .buffer_stats()
-                    .map(|b| (b.late, b.buffers, b.buffer_ms)),
+                    .map(|b| (b.late, b.buffers, b.buffer_ms, b.mix_mean_ms)),
+                mix: self.audio.mix_counts(),
                 gpu,
                 pacing: self.frame_rate_line(),
+                webgpu: None,
             },
         ))
     }
@@ -776,12 +871,28 @@ mod tests {
             draw_calls: 212,
             triangles: 1_234_567,
             game_time: 812.4,
-            audio: Some((3, 1200, 46.4)),
+            audio: Some((3, 1200, 46.4, 2.5)),
+            mix: Some(flint_audio::MixCounts {
+                voices: 18,
+                paused_voices: 11,
+                tracks: 9,
+                paused_tracks: 5,
+                skipped_oneshots: 2,
+                stolen_oneshots: 1,
+            }),
             gpu: GpuSource::Timed {
                 passes: vec![("Scene", 3.1), ("SSAO", 0.8)],
                 frame_ms: 3.9,
             },
             pacing: Some("30 fps, 1 in 4 of 120 Hz (auto)".into()),
+            webgpu: Some(WebGpuCalls {
+                submits: 1.0,
+                writes: 12.5,
+                write_bytes: 4096.0,
+                bind_groups: 2.0,
+                buffers: 0.0,
+                passes: 14.0,
+            }),
         };
         (rec.summary().unwrap(), c)
     }
@@ -803,7 +914,9 @@ mod tests {
             "scripts 2.00/2.0",
             "Scene 3.10",
             "212 draws 1.2M tris",
-            "audio 3/1200 late",
+            "audio 3/1200 late mix 2.50 ms",
+            "voices 7/18 tracks 4/9 one-shots 2 unheard 1 stolen",
+            "webgpu/frame submit 1.0 pass 14.0 bindgroup 2.0 write 12.5 (4.0 KB)",
         ] {
             assert!(line.contains(part), "{part:?} missing from {line}");
         }
@@ -858,6 +971,38 @@ mod tests {
             "Safari 26"
         );
         assert_eq!(browser_name(""), "a browser");
+    }
+
+    #[test]
+    fn webgpu_calls_are_the_totals_moved_per_frame() {
+        let then = WebGpuCalls {
+            submits: 100.0,
+            writes: 1000.0,
+            write_bytes: 1e6,
+            bind_groups: 50.0,
+            buffers: 3.0,
+            passes: 400.0,
+        };
+        let now = WebGpuCalls {
+            submits: 130.0,
+            writes: 1300.0,
+            write_bytes: 1.3e6,
+            bind_groups: 50.0,
+            buffers: 3.0,
+            passes: 820.0,
+        };
+        let w = WebGpuCalls::per_frame(&now, &then, 30).unwrap();
+        assert_eq!(w.submits, 1.0);
+        assert_eq!(w.writes, 10.0);
+        assert_eq!(w.bind_groups, 0.0);
+        assert_eq!(w.passes, 14.0);
+        assert!(WebGpuCalls::per_frame(&now, &then, 0).is_none());
+        let (s, c) = sample();
+        assert!(
+            readout(&s, &c).contains("webgpu 1.0 submits, 14.0 passes, 2.0 bind groups a frame"),
+            "{}",
+            readout(&s, &c)
+        );
     }
 
     #[test]

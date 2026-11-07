@@ -28,6 +28,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_ui_api(engine, ctx.clone());
     register_data_ui_api(engine, ctx.clone());
     register_particle_api(engine, ctx.clone());
+    register_style_api(engine, ctx.clone());
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
@@ -2534,6 +2535,67 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
                     toml::Value::Float(rate),
                 );
             }
+        });
+    }
+}
+
+// ─── Per-entity styles (#269) ─────────────────────────────
+//
+// Queue changes to an entity's stylize style (`ascii`, #266). The player
+// applies them after the frame's scripts, before the renderer reads the
+// world, and fires `style_changed` to `on_event`. A param can change every
+// frame: that is a uniform write, never a GPU allocation.
+
+fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_entity_style(entity_id, style) — draw the entity and its
+    // descendants in `style`; settings it had before are kept
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_entity_style", move |entity_id: i64, style: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetEntityStyle {
+                entity_id,
+                style: style.to_string(),
+            });
+        });
+    }
+
+    // set_style_param(entity_id, param, value) — a number (`cell`, `glow`,
+    // ...), a string (`ramp`, `color`, ...), `enabled` true/false, `blend`
+    // 0..1 (how much of the style shows, #278), or a three-number array
+    // (`tint`)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_style_param",
+            move |entity_id: i64, param: &str, value: Dynamic| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let command = match dynamic_to_toml(&value) {
+                    Some(value) => ScriptCommand::SetStyleParam {
+                        entity_id,
+                        param: param.to_string(),
+                        value,
+                    },
+                    None => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "set_style_param: `{param}` can't take a {}",
+                            value.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            },
+        );
+    }
+
+    // clear_entity_style(entity_id) — take the entity's own style off
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_entity_style", move |entity_id: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands
+                .push(ScriptCommand::ClearEntityStyle { entity_id });
         });
     }
 }

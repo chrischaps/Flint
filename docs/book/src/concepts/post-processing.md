@@ -18,7 +18,7 @@ Scene render        Depth       Kuwahara     SSAO       Volumetric   Bloom chain
  HDR buffer        texture     HDR          texture    texture      texture        FXAA intermediate     surface
 ```
 
-All scene pipelines --- PBR, skinned mesh, billboard sprite, particle, skybox, sky, ocean, terrain and grass --- render to the HDR buffer when post-processing is active. The PBR shader's built-in tonemapping is automatically disabled so it outputs linear HDR values for the composite pass to process. Kuwahara and FXAA resources are only allocated when their effect is enabled.
+All scene pipelines --- PBR, skinned mesh, billboard sprite, particle, skybox, sky, ocean, terrain and grass --- render to the HDR buffer when post-processing is active. The PBR shader's built-in tonemapping is automatically disabled so it outputs linear HDR values for the composite pass to process. Kuwahara and FXAA resources are only allocated when their effect is enabled. Kuwahara is a [stylize pass](stylize-passes.md); stylize passes of the display stage (such as `invert`) run after the composite and before FXAA.
 
 ## Bloom
 
@@ -210,7 +210,7 @@ The anisotropic Kuwahara filter turns the HDR image into flat, brush-like patche
 | `kuwahara_hardness` | f32 | `8.0` | Edge hardness between sectors |
 | `kuwahara_anisotropy` | f32 | `1.0` | 0 = isotropic disc, 1 = sectors stretch fully along the local edge direction |
 
-The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing.
+The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing. Kuwahara is the first [stylize pass](stylize-passes.md): it runs through the same framework as every later style, in its HDR stage.
 
 ## Color Grade, Film Grain and FXAA
 

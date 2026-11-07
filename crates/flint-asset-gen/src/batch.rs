@@ -6,8 +6,9 @@
 use crate::config::FlintConfig;
 use crate::human_task::generate_task_file;
 use crate::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
-use crate::registration::register_generated_asset;
+use crate::registration::register_generated_asset_in;
 use crate::style::StyleGuide;
+use flint_asset::Project;
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -47,7 +48,10 @@ pub fn scan_scene_assets(scene_path: &str) -> Result<(usize, Vec<MissingAsset>)>
     let scene: toml::Value = toml::from_str(&content)
         .map_err(|e| FlintError::GenerationError(format!("Failed to parse scene: {}", e)))?;
 
-    let catalog = flint_asset::AssetCatalog::load_from_directory("assets").unwrap_or_default();
+    // The scene's own project, not the working directory's (#179).
+    let project = Project::for_path(Path::new(scene_path));
+    let catalog =
+        flint_asset::AssetCatalog::load_from_directory(project.catalog_dir()).unwrap_or_default();
 
     let mut total = 0;
     let mut missing = Vec::new();
@@ -149,6 +153,7 @@ pub fn resolve_scene(
 ) -> Result<BatchResult> {
     let (total, missing_assets) = scan_scene_assets(scene_path)?;
     let found = total - missing_assets.len();
+    let project = Project::for_path(Path::new(scene_path));
 
     println!("Scanning scene for asset references...");
     println!(
@@ -165,20 +170,22 @@ pub fn resolve_scene(
         print!("  {} ({})  -> ", asset.asset_name, asset.kind);
 
         match strategy {
-            BatchStrategy::AiGenerate => match generate_asset(asset, style, config, output_dir) {
-                Ok(secs) => {
-                    println!(
-                        "Generated via {} ({:.1}s)",
-                        config.default_provider(asset.kind),
-                        secs
-                    );
-                    generated += 1;
+            BatchStrategy::AiGenerate => {
+                match generate_asset(&project, asset, style, config, output_dir) {
+                    Ok(secs) => {
+                        println!(
+                            "Generated via {} ({:.1}s)",
+                            config.default_provider(asset.kind),
+                            secs
+                        );
+                        generated += 1;
+                    }
+                    Err(e) => {
+                        println!("FAILED: {}", e);
+                        failed += 1;
+                    }
                 }
-                Err(e) => {
-                    println!("FAILED: {}", e);
-                    failed += 1;
-                }
-            },
+            }
             BatchStrategy::HumanTask => match create_human_task(asset, style, output_dir) {
                 Ok(path) => {
                     println!("Task created: {}", path.display());
@@ -189,22 +196,24 @@ pub fn resolve_scene(
                     failed += 1;
                 }
             },
-            BatchStrategy::AiThenHuman => match generate_asset(asset, style, config, output_dir) {
-                Ok(secs) => {
-                    println!("Generated ({:.1}s)", secs);
-                    generated += 1;
+            BatchStrategy::AiThenHuman => {
+                match generate_asset(&project, asset, style, config, output_dir) {
+                    Ok(secs) => {
+                        println!("Generated ({:.1}s)", secs);
+                        generated += 1;
+                    }
+                    Err(_) => match create_human_task(asset, style, output_dir) {
+                        Ok(path) => {
+                            println!("AI failed, task created: {}", path.display());
+                            tasks_created += 1;
+                        }
+                        Err(e) => {
+                            println!("FAILED: {}", e);
+                            failed += 1;
+                        }
+                    },
                 }
-                Err(_) => match create_human_task(asset, style, output_dir) {
-                    Ok(path) => {
-                        println!("AI failed, task created: {}", path.display());
-                        tasks_created += 1;
-                    }
-                    Err(e) => {
-                        println!("FAILED: {}", e);
-                        failed += 1;
-                    }
-                },
-            },
+            }
         }
     }
 
@@ -227,6 +236,7 @@ pub fn resolve_scene(
 }
 
 fn generate_asset(
+    project: &Project,
     asset: &MissingAsset,
     style: Option<&StyleGuide>,
     config: &FlintConfig,
@@ -263,7 +273,7 @@ fn generate_asset(
     };
 
     let result = provider.generate(&request, style, Path::new(output_dir))?;
-    register_generated_asset(&request, &result)?;
+    register_generated_asset_in(project, &request, &result)?;
     Ok(result.duration_secs)
 }
 

@@ -69,6 +69,19 @@ pub fn render_param_field_full(
     render_param_field_inner(ui, field, params, strip_prefix)
 }
 
+/// A field's name label, showing the schema's `description` on hover.
+fn field_label(ui: &mut egui::Ui, display_name: &str, field: &ParamFieldSpec) {
+    with_help(ui.label(format!("{}:", display_name)), field);
+}
+
+/// Attach the field's schema `description` (if any) as hover text.
+fn with_help(response: egui::Response, field: &ParamFieldSpec) -> egui::Response {
+    match &field.description {
+        Some(text) => response.on_hover_text(text),
+        None => response,
+    }
+}
+
 fn render_param_field_inner(
     ui: &mut egui::Ui,
     field: &ParamFieldSpec,
@@ -91,7 +104,7 @@ fn render_param_field_inner(
             let mut val = current;
 
             ui.horizontal(|ui| {
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 let mut drag = egui::DragValue::new(&mut val).speed(0.01).max_decimals(4);
                 if let (Some(lo), Some(hi)) = (min, max) {
                     drag = drag.range(*lo..=*hi);
@@ -112,7 +125,7 @@ fn render_param_field_inner(
             let mut val = current;
 
             ui.horizontal(|ui| {
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 let mut drag = egui::DragValue::new(&mut val).speed(1);
                 if let (Some(lo), Some(hi)) = (min, max) {
                     drag = drag.range(*lo..=*hi);
@@ -132,7 +145,7 @@ fn render_param_field_inner(
             let current = get_param_bool(params, &field.name, &field.default);
             let mut val = current;
 
-            ui.checkbox(&mut val, display_name);
+            with_help(ui.checkbox(&mut val, display_name), field);
 
             if val != current {
                 params.insert(field.name.clone(), toml::Value::Boolean(val));
@@ -146,7 +159,7 @@ fn render_param_field_inner(
 
             let mut changed = false;
             ui.horizontal(|ui| {
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 changed = ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed();
                 ui.monospace(&current_hex);
             });
@@ -163,7 +176,7 @@ fn render_param_field_inner(
             let mut selected = current.clone();
 
             ui.horizontal(|ui| {
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 egui::ComboBox::from_id_salt(&field.name)
                     .selected_text(&selected)
                     .show_ui(ui, |ui| {
@@ -184,7 +197,7 @@ fn render_param_field_inner(
             let mut val = current.clone();
 
             ui.horizontal(|ui| {
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 ui.text_edit_singleline(&mut val);
             });
 
@@ -200,7 +213,7 @@ fn render_param_field_inner(
 
             if let Some(choices) = item_enum {
                 // Multi-checkbox
-                ui.label(format!("{}:", display_name));
+                field_label(ui, display_name, field);
                 let mut selected: Vec<String> = current_arr.clone();
                 for choice in choices {
                     let mut checked = selected.contains(choice);
@@ -223,7 +236,7 @@ fn render_param_field_inner(
             } else {
                 // Display as read-only for now
                 ui.horizontal(|ui| {
-                    ui.label(format!("{}:", display_name));
+                    field_label(ui, display_name, field);
                     ui.monospace(format!("{:?}", current_arr));
                 });
             }
@@ -266,8 +279,57 @@ fn render_param_field_inner(
                     });
             } else {
                 ui.horizontal(|ui| {
-                    ui.label(format!("{}:", display_name));
+                    field_label(ui, display_name, field);
                     ui.monospace("[]");
+                });
+            }
+        }
+
+        // A table of named entries (e.g. a creature's materials): one
+        // collapsible row per name, its keys and values read-only.
+        ParamFieldType::ObjectMap => {
+            if let Some(toml::Value::Table(map)) = params.get(&field.name) {
+                egui::CollapsingHeader::new(format!("{} ({})", display_name, map.len()))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        for (name, entry) in map {
+                            match entry.as_table() {
+                                Some(table) => {
+                                    egui::CollapsingHeader::new(name)
+                                        .id_salt(format!("{}_{}", field.name, name))
+                                        .default_open(false)
+                                        .show(ui, |ui| {
+                                            egui::Grid::new(format!(
+                                                "{}_{}_grid",
+                                                field.name, name
+                                            ))
+                                            .num_columns(2)
+                                            .spacing([8.0, 2.0])
+                                            .show(
+                                                ui,
+                                                |ui| {
+                                                    for (k, v) in table {
+                                                        ui.label(k);
+                                                        ui.monospace(format_toml_value_compact(v));
+                                                        ui.end_row();
+                                                    }
+                                                },
+                                            );
+                                        });
+                                }
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{name}:"));
+                                        ui.monospace(format_toml_value_compact(entry));
+                                    });
+                                }
+                            }
+                        }
+                    });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}:", display_name));
+                    ui.monospace("{}");
                 });
             }
         }

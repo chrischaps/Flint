@@ -34,7 +34,9 @@ mod quality;
 pub mod render_scale;
 mod touch_overlay;
 pub(crate) mod scene_loading;
+pub mod procgen_assets;
 mod script_commands;
+pub mod style_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
 mod transition;
@@ -262,10 +264,18 @@ pub struct PlayerApp {
     /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
     /// Set from the --msaa CLI flag before the window/renderer exist.
     pub msaa_sample_count: u32,
+    /// When scene procgen assets are made (#32): during load, or behind
+    /// placeholders on the frame-budgeted queue (`--procgen-defer`).
+    pub procgen_mode: procgen_assets::ProcGenMode,
     /// The scene's render scale: a ceiling (fixed, and capped by pixel
     /// ratio) and whether to step under it to hold the frame rate (#122).
     /// The desktop's default draws at the surface; a page's caps DPR 1.5.
     pub render_scale: render_scale::RenderScaleSetting,
+    /// Keep procgen outputs on disk between runs (#181), in the project's
+    /// `.flint/procgen-cache/` (or `FLINT_PROCGEN_CACHE=<dir>`; `=0` turns
+    /// it off). On by default natively; off for a bundle, whose files are
+    /// not on the disk, and always off on the web.
+    pub procgen_disk_cache: bool,
     dynamic_scale: render_scale::DynamicScale,
     /// `key=value,...` quality settings applied over `msaa_sample_count`,
     /// `render_scale` and the `FLINT_SHADOW*` switches at startup

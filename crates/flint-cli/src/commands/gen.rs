@@ -1,30 +1,162 @@
 //! `flint gen` — run a procedural generation spec and write the output.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
-use clap::Args;
-use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
+use anyhow::{anyhow, bail, Context, Result};
+use clap::{ArgGroup, Args, ValueEnum};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
-    export_glb, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig, SeedMode,
-    ValidationConstraints,
+    export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
+    SeedMode, ValidationConstraints, ValidationReport,
 };
+use serde::Serialize;
+
+use super::gen_ai;
+use super::gen_store::{self, WrittenFile};
+
+/// Human lines go to stdout, unless stdout is carrying something a program
+/// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
+static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
+
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
+macro_rules! say {
+    ($($t:tt)*) => {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
+            eprintln!($($t)*)
+        } else {
+            println!($($t)*)
+        }
+    };
+}
+
+/// How `--validate` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    /// One `[ PASS]` / `[ WARN]` / `[ FAIL]` line per check and a summary.
+    Human,
+    /// One JSON object per variant on stdout (JSON Lines); human output
+    /// moves to stderr.
+    Json,
+}
 
 #[derive(Args)]
+#[command(group(
+    ArgGroup::new("ai_step")
+        .args(["ai_assist", "ai_refine", "ai_create"])
+        .multiple(true)
+))]
 pub struct GenArgs {
-    /// Path to a .procgen.toml spec file
-    pub spec: String,
+    /// Path to a .procgen.toml spec file (not needed with --ai-create or
+    /// --cost-report)
+    #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
+    pub spec: Option<String>,
+
+    /// Ask the AI agent to review the spec (interpret) and then improve it
+    /// (refine) before generating; suggestions are printed to stderr
+    #[arg(long, help_heading = "AI assistance")]
+    pub ai_assist: bool,
+
+    /// Create a new spec from a description, then generate it
+    #[arg(
+        long,
+        value_name = "DESCRIPTION",
+        conflicts_with = "spec",
+        help_heading = "AI assistance"
+    )]
+    pub ai_create: Option<String>,
+
+    /// Refine the spec against the --reference image before generating
+    #[arg(long, requires = "reference", help_heading = "AI assistance")]
+    pub ai_refine: bool,
+
+    /// Reference image (PNG, JPEG, GIF or WebP) for the refine step
+    #[arg(
+        long,
+        value_name = "IMAGE",
+        requires = "ai_step",
+        help_heading = "AI assistance"
+    )]
+    pub reference: Option<String>,
+
+    /// With --ai-create: the generator to write for (tree_v1, texture_v1,
+    /// creature_v1). Guessed from the description when omitted
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "ai_create",
+        help_heading = "AI assistance"
+    )]
+    pub ai_generator: Option<String>,
+
+    /// AI provider: anthropic or mock [default: anthropic, or
+    /// .flint/procgen_ai.toml's provider]
+    #[arg(long, value_name = "PROVIDER", help_heading = "AI assistance")]
+    pub ai_provider: Option<String>,
+
+    /// Model to ask [default: .flint/procgen_ai.toml's model, else the
+    /// provider's default]
+    #[arg(long, value_name = "MODEL", help_heading = "AI assistance")]
+    pub ai_model: Option<String>,
+
+    /// Most rounds per AI step before the agent gives up [default: 3]
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=20),
+        help_heading = "AI assistance"
+    )]
+    pub ai_iterations: Option<u32>,
+
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+
+    /// Print the final spec (after any AI steps and --seed) to stdout as
+    /// TOML; the generation summary moves to stderr
+    #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
+    pub print_spec: bool,
+
+    /// Write the final spec to this file
+    #[arg(long, value_name = "PATH", help_heading = "AI assistance")]
+    pub save_spec: Option<String>,
+
+    /// Refuse any AI call that could take this run's spend past USD; checked
+    /// before every call, with a warning past 80%
+    #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
+    pub max_cost: Option<f64>,
+
+    /// Print what AI calls have cost, from .flint/procgen_costs.json: total,
+    /// per provider, per model, per spec
+    #[arg(long, help_heading = "Cost tracking")]
+    pub cost_report: bool,
+
+    /// With --cost-report: only calls on or after this date (YYYY-MM-DD)
+    #[arg(
+        long,
+        value_name = "DATE",
+        requires = "cost_report",
+        help_heading = "Cost tracking"
+    )]
+    pub since: Option<String>,
 
     /// Output path (file or directory). Derived from spec name if omitted.
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Override the spec's seed with a fixed value
-    #[arg(long)]
+    /// Override the spec's seed with a fixed value (a batch takes --seed-start)
+    #[arg(long, conflicts_with = "batch")]
     pub seed: Option<u64>,
 
     /// Print estimated cost without generating
@@ -35,20 +167,24 @@ pub struct GenArgs {
     #[arg(long, value_parser = parse_format)]
     pub format: Option<String>,
 
-    /// Number of variants to generate with sequential seeds
-    #[arg(long)]
+    /// Number of variants to generate, one after another, with sequential
+    /// seeds; each is written as `<stem>_<seed>.<ext>` (or fills `{seed}`)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub batch: Option<u32>,
 
-    /// Starting seed for batch generation (default: 0)
-    #[arg(long)]
+    /// First seed of a batch: seeds S, S+1, ..., S+N-1 (default: 0)
+    #[arg(long, requires = "batch")]
     pub seed_start: Option<u64>,
 
-    /// Register output(s) in the content store with provenance metadata
+    /// Store output(s) in the project's content store (<project>/.flint/assets,
+    /// the project found from the working directory or --project), write a
+    /// provenance sidecar beside each file, and reuse an earlier registered
+    /// result for the same spec + seed instead of generating
     #[arg(long)]
     pub register: bool,
 
-    /// Regenerate even if cached in content store
-    #[arg(long)]
+    /// With --register, generate even if this spec + seed is already stored
+    #[arg(long, requires = "register")]
     pub force: bool,
 
     /// Validate output after generation
@@ -59,190 +195,337 @@ pub struct GenArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Validation report format. `json` writes one object per variant to
+    /// stdout: spec, seed, output, verdict, counts and every check's name,
+    /// status, detail and, where it measured one, `actual` against `limit`
+    /// (a ceiling). Everything else goes to stderr.
+    #[arg(long, value_enum, requires = "validate")]
+    pub report: Option<ReportFormat>,
+
     /// Style guide TOML path for additional validation constraints
-    #[arg(long)]
+    /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
+    #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
 }
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
     match s {
-        "glb" | "png" => Ok(s.to_string()),
-        _ => Err(format!("unsupported format '{s}'; valid values: glb, png")),
+        "glb" | "png" | "wav" => Ok(s.to_string()),
+        _ => Err(format!(
+            "unsupported format '{s}'; valid values: glb, png, wav"
+        )),
     }
 }
 
+fn parse_usd(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .trim_start_matches('$')
+        .parse()
+        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
+    }
+    Ok(v)
+}
+
 pub fn run(args: GenArgs) -> Result<()> {
-    let spec_path = Path::new(&args.spec);
-    let mut spec = ProcGenSpec::from_file(spec_path)
-        .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
+    if args.cost_report {
+        return gen_ai::cost_report(
+            &flint_procgen_ai::CostLedger::open_default(),
+            args.since.as_deref(),
+        );
+    }
+    let json = args.report == Some(ReportFormat::Json);
+    HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
+
+    let steps = gen_ai::Steps::of(&args);
+    let loaded = match &args.spec {
+        Some(p) => {
+            let path = Path::new(p);
+            Some(
+                ProcGenSpec::from_file(path)
+                    .with_context(|| format!("failed to load spec from {}", path.display()))?,
+            )
+        }
+        None => None,
+    };
+
+    // The AI steps run first: they make the spec everything below checks.
+    // A dry run only says what they would do.
+    let mut spec = if steps.any() {
+        let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
+        if args.dry_run {
+            // With --print-spec a dry run has no spec to print, so the plan
+            // keeps stdout; only the JSON report needs it kept clear.
+            for line in gen_ai::plan_lines(&config, steps, &args) {
+                if json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
+            return Ok(());
+        }
+        let meter = gen_ai::build_meter(&config, &args);
+        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
+        gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
+    } else {
+        loaded.expect("clap requires a spec unless --ai-create or --cost-report")
+    };
+
+    // What messages call the spec, and the bytes its provenance hashes: the
+    // file as written, or the AI's spec as it will be saved.
+    let label = match (&args.spec, steps.any()) {
+        (Some(p), false) => p.clone(),
+        (Some(p), true) => format!("{p} (after AI)"),
+        (None, _) => format!("AI spec '{}'", spec.meta.name),
+    };
+    let ai_spec_text = steps
+        .any()
+        .then(|| toml::to_string(&spec))
+        .transpose()
+        .context("failed to serialize the AI's spec")?;
 
     // Build registry
     let mut registry = GeneratorRegistry::new();
     flint_procgen::register_built_in_generators(&mut registry);
 
+    // Everything that can be wrong with the request is checked here, before
+    // a (possibly seconds-long) generation runs: the generator must exist,
+    // the spec's params must be ones it reads, and the output path /
+    // --format must be able to hold what it makes.
+    let generator = resolve_generator(&registry, &spec, &label)?;
+
+    // Keys the generator won't read: a typo, or a knob for another pattern.
+    // Silently ignored params are the worst kind of spec bug, so say so.
+    let issues = flint_procgen::lint_params(&generator.param_schema(), &spec.params);
+    for issue in &issues {
+        eprintln!("warning: {label}: {issue}");
+    }
+    if args.strict && !issues.is_empty() {
+        bail!(
+            "{} spec parameter(s) would be ignored (--strict)",
+            issues.len()
+        );
+    }
+
+    let kind = generator.output_kind();
+    let revision = generator.revision();
+    let format = check_output_format(
+        &spec.generator,
+        kind,
+        args.output.as_deref(),
+        args.format.as_deref(),
+    )?;
+
+    if let Some(seed_val) = args.seed {
+        spec = spec_with_seed(&spec, seed_val);
+    }
+
+    if args.print_spec || args.save_spec.is_some() {
+        let text = toml::to_string(&spec).context("failed to serialize the spec")?;
+        if args.print_spec {
+            print!("{text}");
+        }
+        if let Some(path) = &args.save_spec {
+            std::fs::write(path, &text).with_context(|| format!("failed to write {path}"))?;
+            eprintln!("Saved spec: {path}");
+        }
+    } else if args.spec.is_none() {
+        eprintln!("hint: --save-spec <path> keeps the AI's spec for later runs");
+    }
+
     // Dry-run: print cost estimate and return
     if args.dry_run {
-        let generator = registry
-            .get(&spec.generator)
-            .with_context(|| format!("unknown generator '{}'", spec.generator))?;
         let cost = generator.estimate_cost(&spec);
-        println!("Spec:       {}", spec.meta.name);
-        println!("Generator:  {}", spec.generator);
-        println!("Seed:       {:?}", spec.seed.mode);
-        println!();
-        println!("Estimated cost:");
-        println!(
+        say!("Spec:       {}", spec.meta.name);
+        say!("Generator:  {}", spec.generator);
+        say!("Seed:       {}", describe_seed(&spec));
+        say!(
+            "Output:     {} ({})",
+            kind_noun(kind),
+            format.to_uppercase()
+        );
+        say!();
+        say!("Estimated cost:");
+        say!(
             "  Vertices:      {}",
             format_count(cost.estimated_vertices as u64)
         );
-        println!(
+        say!(
             "  Triangles:     {}",
             format_count(cost.estimated_triangles as u64)
         );
-        println!(
+        say!(
             "  Texture bytes: {}",
             format_bytes(cost.estimated_texture_bytes)
         );
-        println!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
+        say!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
         return Ok(());
     }
 
-    // Compute spec hash once if registration is enabled
-    let spec_hash = if args.register {
-        Some(
-            ContentHash::from_file(spec_path)
-                .with_context(|| format!("failed to hash spec file {}", spec_path.display()))?,
-        )
-    } else {
-        None
+    // Every variant this run makes, as (seed, output path): one for a plain
+    // run, N for `--batch N`. Seeds are resolved here, before generating, so
+    // a random or derived spec records the seed it really used (a plain
+    // `--register` used to record 0 whatever the spec said).
+    let variants: Vec<(u64, PathBuf)> = match args.batch {
+        Some(n) => {
+            let start = args.seed_start.unwrap_or(0);
+            (0..u64::from(n))
+                .map(|i| {
+                    let seed = start.checked_add(i).ok_or_else(|| {
+                        anyhow!("--seed-start {start} with --batch {n} runs past the largest seed")
+                    })?;
+                    Ok((
+                        seed,
+                        resolve_output_path_for_seed(&args, &spec, seed, format),
+                    ))
+                })
+                .collect::<Result<_>>()?
+        }
+        None => {
+            let seed = spec
+                .resolve_seed()
+                .with_context(|| format!("{label}: invalid [seed]"))?;
+            vec![(seed, single_output_path(&args, &spec, seed, format))]
+        }
+    };
+    let batch_total = args.batch;
+
+    // The project's store, wherever in the project this runs from (#179).
+    let store = args.register.then(|| {
+        let project = flint_asset::Project::current();
+        let store = gen_store::Store::open_project(&project);
+        say!(
+            "Store:      {} (project {}, by {})",
+            flint_asset::Project::display(store.store_root()),
+            flint_asset::Project::display(&project.root),
+            project.found.describe()
+        );
+        store
+    });
+    let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
+        (false, _, _) => None,
+        (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),
+        (true, None, Some(p)) => Some(
+            ContentHash::from_file(p).with_context(|| format!("failed to hash spec file {p}"))?,
+        ),
+        (true, None, None) => unreachable!("a run without AI steps has a spec file"),
     };
 
-    // Batch mode
-    if let Some(batch_count) = args.batch {
-        let seed_start = args.seed_start.unwrap_or(0);
-        let mut generated = 0u32;
-        let mut skipped = 0u32;
-        let mut validation_failed = false;
+    let (mut generated, mut cached) = (0u32, 0u32);
+    let mut validation_failed = false;
+    for (i, (seed, out_path)) in variants.iter().enumerate() {
+        let seed = *seed;
+        let tag = batch_total
+            .map(|n| format!("[{}/{}] ", i + 1, n))
+            .unwrap_or_default();
+        let seed_spec = spec_with_seed(&spec, seed);
 
-        for i in 0..batch_count {
-            let seed = seed_start + i as u64;
-            let batch_spec = spec_with_seed(&spec, seed);
-            let out_path = resolve_output_path_for_seed(&args, &batch_spec, seed)?;
-
-            // Check dedup cache
-            if args.register && !args.force {
-                if let Some(ref sh) = spec_hash {
-                    if check_cache_hit(&out_path, sh, seed)? {
-                        println!(
-                            "[{}/{}] Cached: {} (spec+seed unchanged)",
-                            i + 1,
-                            batch_count,
+        // The cache: this spec + seed was registered before, by the
+        // generator revision running now, and the store still holds every
+        // file it made.
+        if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
+            let fresh = store.lookup(sh, seed).filter(|prov| {
+                match prov.stale_for(&spec.generator, revision) {
+                    Some(why) => {
+                        say!(
+                            "{tag}Stale: {} (seed {seed}, {why}), regenerating",
                             out_path.display()
                         );
-                        skipped += 1;
-                        continue;
+                        false
                     }
+                    None => true,
                 }
-            }
-
-            println!("[{}/{}] Generating seed {}...", i + 1, batch_count, seed);
-
-            let output = generate_one(&batch_spec, &registry, &out_path, args.format.as_deref())?;
-            generated += 1;
-
-            // Register in content store
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    register_output(&out_path, &batch_spec, sh, seed)?;
-                }
-            }
-
-            // Validate
-            if args.validate {
-                let passed = run_validation(
-                    &output,
-                    &batch_spec,
-                    args.style_guide.as_deref(),
-                    args.strict,
-                )?;
-                if !passed {
-                    validation_failed = true;
-                }
-            }
-        }
-
-        println!();
-        println!(
-            "Batch complete: {} generated, {} cached",
-            generated, skipped
-        );
-
-        if validation_failed {
-            std::process::exit(1);
-        }
-    } else {
-        // Single generation
-        if let Some(seed_val) = args.seed {
-            spec.seed = SeedConfig {
-                mode: SeedMode::Fixed,
-                value: Some(seed_val),
-                derive_from: None,
-            };
-        }
-
-        let seed_val = args.seed;
-
-        // If output path is explicit, we can do dedup check before generating
-        if let Some(ref out) = args.output {
-            let out_path = PathBuf::from(out);
-            if args.register && !args.force {
-                if let Some(ref sh) = spec_hash {
-                    if let Some(s) = seed_val {
-                        if check_cache_hit(&out_path, sh, s)? {
-                            println!("Cached: {} (spec+seed unchanged)", out_path.display());
-                            return Ok(());
+            });
+            if let Some(prov) = fresh {
+                let targets = planned_files(out_path, &prov);
+                if let Some(reuse) = store.reuse(&prov, &targets)? {
+                    store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    let rev = format!("{} rev {revision}", spec.generator);
+                    match reuse {
+                        gen_store::Reuse::Present => say!(
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged)",
+                            out_path.display()
+                        ),
+                        gen_store::Reuse::Restored(k) => say!(
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged; restored {k} \
+                             missing or changed file{} from the content store)",
+                            out_path.display(),
+                            if k == 1 { "" } else { "s" }
+                        ),
+                    }
+                    if args.validate {
+                        say!("  validation skipped for a cached result (--force regenerates)");
+                        if json {
+                            emit_json(&VariantReport {
+                                spec: &spec.meta.name,
+                                seed,
+                                output: out_path.display().to_string(),
+                                verdict: Verdict::Skipped,
+                                reason: Some("cached result; --force regenerates"),
+                                passed: 0,
+                                warnings: 0,
+                                failed: 0,
+                                report: &ValidationReport { checks: Vec::new() },
+                            })?;
                         }
                     }
+                    cached += 1;
+                    continue;
                 }
             }
+        }
 
-            let output = generate_one(&spec, &registry, &out_path, args.format.as_deref())?;
-
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    let s = seed_val.unwrap_or(0);
-                    register_output(&out_path, &spec, sh, s)?;
-                }
-            }
-
-            if args.validate {
-                let passed =
-                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
-                if !passed {
-                    std::process::exit(1);
-                }
-            }
+        if batch_total.is_some() {
+            say!("{tag}Generating seed {seed}...");
         } else {
-            // No explicit output — generate, then determine path from output type
-            let (out_path, output) = generate_single_auto_path(&spec, &registry, &args)?;
+            say!("Seed:       {}", describe_resolved_seed(&spec, seed));
+        }
 
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    let s = seed_val.unwrap_or(0);
-                    register_output(&out_path, &spec, sh, s)?;
-                }
-            }
+        let (output, files) = generate_one(&seed_spec, &registry, out_path)?;
+        generated += 1;
 
-            if args.validate {
-                let passed =
-                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
-                if !passed {
-                    std::process::exit(1);
-                }
+        if let (Some(store), Some(sh)) = (&store, &spec_hash) {
+            let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
+            for (f, (_, hash)) in files.iter().zip(&prov.files) {
+                say!("Registered: {} -> {hash}", f.path.display());
             }
+        }
+
+        if args.validate {
+            let (report, passed) = run_validation(
+                &output,
+                &files,
+                &seed_spec,
+                args.style_guide.as_deref(),
+                args.strict,
+            )?;
+            if json {
+                emit_json(&VariantReport {
+                    spec: &spec.meta.name,
+                    seed,
+                    output: out_path.display().to_string(),
+                    verdict: if passed { Verdict::Pass } else { Verdict::Fail },
+                    reason: None,
+                    passed: report.count_passed(),
+                    warnings: report.count_warnings(),
+                    failed: report.count_failed(),
+                    report: &report,
+                })?;
+            }
+            validation_failed |= !passed;
         }
     }
 
+    if batch_total.is_some() {
+        say!();
+        say!("Batch complete: {generated} generated, {cached} cached");
+    }
+    if validation_failed {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -270,50 +553,191 @@ fn generate_and_get_output(
     Ok((output, gen_time))
 }
 
-/// Generate a single output from a spec and write it to disk at the given path.
+/// Look up the spec's generator, or explain which spec named an unknown one
+/// and what the choices are.
+fn resolve_generator<'a>(
+    registry: &'a GeneratorRegistry,
+    spec: &ProcGenSpec,
+    label: &str,
+) -> Result<&'a dyn Generator> {
+    registry.get(&spec.generator).ok_or_else(|| {
+        let mut names = registry.generator_names();
+        names.sort_unstable();
+        anyhow!(
+            "{label} names generator '{}', which isn't registered\n  known generators: {}",
+            spec.generator,
+            names.join(", ")
+        )
+    })
+}
+
+/// File formats `flint gen` recognises by extension. An output path ending in
+/// one of these must match what the generator makes; any other extension is
+/// taken as the caller's choice of name.
+const KNOWN_FORMATS: [&str; 4] = ["glb", "gltf", "png", "wav"];
+
+/// The one format each kind of output is written in.
+fn kind_format(kind: OutputKind) -> &'static str {
+    match kind {
+        OutputKind::Mesh => "glb",
+        OutputKind::Image => "png",
+        OutputKind::Sound => "wav",
+    }
+}
+
+fn kind_noun(kind: OutputKind) -> &'static str {
+    match kind {
+        OutputKind::Mesh => "a mesh",
+        OutputKind::Image => "images",
+        OutputKind::Sound => "a sound",
+    }
+}
+
+/// Check that `--format` and the output path's extension agree with what the
+/// generator produces, and return the format that will be written.
+///
+/// Without this a mesh asked for as `-o tree.png` was written as GLB bytes
+/// under a `.png` name, and `--format` was accepted and ignored.
+fn check_output_format(
+    generator: &str,
+    kind: OutputKind,
+    output: Option<&str>,
+    format: Option<&str>,
+) -> Result<&'static str> {
+    let native = kind_format(kind);
+    if let Some(f) = format {
+        if f != native {
+            bail!(
+                "generator '{generator}' makes {}, written as {}; --format {f} can't hold it",
+                kind_noun(kind),
+                native.to_uppercase()
+            );
+        }
+    }
+    if let Some(out) = output {
+        let path = Path::new(out);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if let Some(ext) = ext {
+            if KNOWN_FORMATS.contains(&ext.as_str()) && ext != native {
+                bail!(
+                    "output '{out}' asks for .{ext}, but generator '{generator}' makes {}, \
+                     written as {}\n  try: -o {}",
+                    kind_noun(kind),
+                    native.to_uppercase(),
+                    path.with_extension(native).display()
+                );
+            }
+        }
+    }
+    Ok(native)
+}
+
+/// The seed a run will use, as a person would want to read it.
+fn describe_seed(spec: &ProcGenSpec) -> String {
+    match spec.seed.mode {
+        SeedMode::Random => "random (a new seed each run; pass --seed to pin one)".to_string(),
+        SeedMode::Fixed => match spec.resolve_seed() {
+            Ok(s) => format!("{s} (fixed)"),
+            Err(e) => format!("invalid: {e}"),
+        },
+        SeedMode::Derived => match spec.resolve_seed() {
+            Ok(s) => format!(
+                "{s} (derived from '{}')",
+                spec.seed.derive_from.as_deref().unwrap_or("")
+            ),
+            Err(e) => format!("invalid: {e}"),
+        },
+    }
+}
+
+/// Generate a single output from a spec and write it to disk at the given
+/// path, returning the output and every file written.
 fn generate_one(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
     out_path: &Path,
-    _format: Option<&str>,
-) -> Result<GeneratorOutput> {
+) -> Result<(GeneratorOutput, Vec<WrittenFile>)> {
     let (output, gen_time) = generate_and_get_output(spec, registry)?;
-    write_output(&output, out_path, gen_time)?;
-    Ok(output)
+    let files = write_output(&output, out_path, gen_time)?;
+    Ok((output, files))
 }
 
-/// Generate a single output with auto-detected output path (no explicit -o given).
-/// Returns the path and the output.
-fn generate_single_auto_path(
-    spec: &ProcGenSpec,
-    registry: &GeneratorRegistry,
-    args: &GenArgs,
-) -> Result<(PathBuf, GeneratorOutput)> {
-    let (output, gen_time) = generate_and_get_output(spec, registry)?;
-
-    let default_ext = match output.kind() {
-        OutputKind::Mesh => "glb",
-        OutputKind::Image => "png",
-        OutputKind::Sound => "wav",
-    };
-    let ext = args.format.as_deref().unwrap_or(default_ext);
-    let name = spec
-        .meta
-        .name
-        .replace(' ', "_")
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
-    let out_path = PathBuf::from(format!("{name}.{ext}"));
-
-    write_output(&output, &out_path, gen_time)?;
-    Ok((out_path, output))
+/// Where a plain (non-batch) run writes: `-o` as given (with any `{seed}`
+/// filled in), or the spec's name in the generator's format.
+fn single_output_path(args: &GenArgs, spec: &ProcGenSpec, seed: u64, ext: &str) -> PathBuf {
+    match &args.output {
+        Some(out) => PathBuf::from(out.replace("{seed}", &seed.to_string())),
+        None => PathBuf::from(format!("{}.{ext}", gen_store::slug(&spec.meta.name))),
+    }
 }
 
-/// Write a GeneratorOutput to disk and print summary info.
+/// The seed a run is about to use, and where it came from.
+fn describe_resolved_seed(spec: &ProcGenSpec, seed: u64) -> String {
+    match spec.seed.mode {
+        SeedMode::Random => format!("{seed} (random; --seed {seed} makes this one again)"),
+        SeedMode::Fixed => format!("{seed} (fixed)"),
+        SeedMode::Derived => format!(
+            "{seed} (derived from '{}')",
+            spec.seed.derive_from.as_deref().unwrap_or("")
+        ),
+    }
+}
+
+/// An image set is written as `<stem>_<map>.png` files: inside `out_path`
+/// when it names a directory, else beside it with its stem.
+fn image_set_dir_and_stem(out_path: &Path) -> (PathBuf, String) {
+    let is_dir = out_path.is_dir()
+        || out_path
+            .to_str()
+            .is_some_and(|s| s.ends_with('/') || s.ends_with('\\'));
+    if is_dir {
+        (out_path.to_path_buf(), "output".to_string())
+    } else {
+        (
+            out_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            out_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("output")
+                .to_string(),
+        )
+    }
+}
+
+/// The file a run writes for one role: the output path itself, or one map of
+/// an image set.
+fn output_file_path(out_path: &Path, role: Option<&str>) -> PathBuf {
+    match role {
+        None => out_path.to_path_buf(),
+        Some(role) => {
+            let (dir, stem) = image_set_dir_and_stem(out_path);
+            dir.join(format!("{stem}_{role}.png"))
+        }
+    }
+}
+
+/// The files a registered run wrote, placed at this run's output path.
+fn planned_files(out_path: &Path, prov: &gen_store::Provenance) -> Vec<WrittenFile> {
+    prov.files
+        .iter()
+        .map(|(role, _)| WrittenFile {
+            role: role.clone(),
+            path: output_file_path(out_path, role.as_deref()),
+        })
+        .collect()
+}
+
+/// Write a GeneratorOutput to disk, print summary info, and return the files
+/// written (one, or one per map of an image set).
 fn write_output(
     output: &GeneratorOutput,
     out_path: &Path,
     gen_time: std::time::Duration,
-) -> Result<()> {
+) -> Result<Vec<WrittenFile>> {
+    let mut written = Vec::new();
     if let Some(parent) = out_path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
@@ -327,12 +751,12 @@ fn write_output(
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::MeshWithLods(lods) => {
             let glb = export_glb::mesh_lods_to_glb(lods).context("GLB export (LODs) failed")?;
@@ -341,240 +765,118 @@ fn write_output(
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
             let total_verts: usize = lods.iter().map(|m| m.vertex_count()).sum();
             let total_tris: usize = lods.iter().map(|m| m.triangle_count()).sum();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB ({} LOD levels)", lods.len());
-            println!("Vertices:   {} (total)", format_count(total_verts as u64));
-            println!("Triangles:  {} (total)", format_count(total_tris as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB ({} LOD levels)", lods.len());
+            say!("Vertices:   {} (total)", format_count(total_verts as u64));
+            say!("Triangles:  {} (total)", format_count(total_tris as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Image(img) => {
             img.save_png(out_path)
                 .with_context(|| format!("failed to save PNG to {}", out_path.display()))?;
             let file_size = std::fs::metadata(out_path)?.len();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     PNG");
-            println!("Dimensions: {}x{}", img.width, img.height);
-            println!("Channel:    {:?}", img.channel_semantics);
-            println!("File size:  {}", format_bytes(file_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     PNG");
+            say!("Dimensions: {}x{}", img.width, img.height);
+            say!("Channel:    {:?}", img.channel_semantics);
+            say!("File size:  {}", format_bytes(file_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::ImageSet(images) => {
-            // If out_path is a directory (exists as dir or ends with separator),
-            // write images directly inside it with stem "output".
-            let (parent, stem) = if out_path.is_dir()
-                || out_path
-                    .to_str()
-                    .map_or(false, |s| s.ends_with('/') || s.ends_with('\\'))
-            {
-                let dir = out_path;
-                std::fs::create_dir_all(dir)
-                    .with_context(|| format!("failed to create directory {}", dir.display()))?;
-                (dir as &Path, "output")
-            } else {
-                (
-                    out_path.parent().unwrap_or(Path::new(".")),
-                    out_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("output"),
-                )
-            };
+            let (dir, _) = image_set_dir_and_stem(out_path);
+            std::fs::create_dir_all(&dir)
+                .with_context(|| format!("failed to create directory {}", dir.display()))?;
             let mut total_size: u64 = 0;
             for img in images {
-                let suffix = format!("{:?}", img.channel_semantics).to_lowercase();
-                let file_name = format!("{stem}_{suffix}.png");
-                let img_path = parent.join(&file_name);
+                let role = format!("{:?}", img.channel_semantics).to_lowercase();
+                let img_path = output_file_path(out_path, Some(&role));
                 img.save_png(&img_path)
                     .with_context(|| format!("failed to save {}", img_path.display()))?;
                 let size = std::fs::metadata(&img_path)?.len();
                 total_size += size;
-                println!(
+                say!(
                     "  {} ({}x{}, {})",
                     img_path.display(),
                     img.width,
                     img.height,
                     format_bytes(size)
                 );
+                written.push(WrittenFile {
+                    role: Some(role),
+                    path: img_path,
+                });
             }
-            println!();
-            println!("Images:     {}", images.len());
-            println!("Total size: {}", format_bytes(total_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!();
+            say!("Images:     {}", images.len());
+            say!("Total size: {}", format_bytes(total_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::SkinnedMesh(mesh) => {
             let glb = export_glb::skinned_mesh_to_glb(mesh).context("Skinned GLB export failed")?;
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB (skinned)");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("Bones:      {}", mesh.bone_count());
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB (skinned)");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("Bones:      {}", mesh.bone_count());
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Sound(bytes) => {
             std::fs::write(out_path, bytes)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     WAV (raw)");
-            println!("File size:  {}", format_bytes(bytes.len() as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     WAV (raw)");
+            say!("File size:  {}", format_bytes(bytes.len() as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
     }
 
-    Ok(())
-}
-
-/// Register an output file in the content store and write a sidecar .asset.toml.
-fn register_output(
-    out_path: &Path,
-    spec: &ProcGenSpec,
-    spec_hash: &ContentHash,
-    seed: u64,
-) -> Result<()> {
-    let store = ContentStore::new(".flint/assets");
-    let content_hash = store
-        .store(out_path)
-        .map_err(|e| anyhow::anyhow!("{}", e))
-        .context("failed to register in content store")?;
-
-    let ext = out_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
-
-    let asset_type = match ext {
-        "glb" | "gltf" => AssetType::Mesh,
-        "png" | "jpg" | "jpeg" => AssetType::Texture,
-        "wav" | "ogg" | "mp3" => AssetType::Audio,
-        _ => AssetType::Mesh,
-    };
-
-    let name = format!(
-        "{}_{}",
-        spec.meta
-            .name
-            .replace(' ', "_")
-            .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', ""),
-        seed
-    );
-
-    let mut properties = HashMap::new();
-    properties.insert(
-        "generator".to_string(),
-        toml::Value::String(spec.generator.clone()),
-    );
-    properties.insert(
-        "spec_hash".to_string(),
-        toml::Value::String(spec_hash.to_prefixed_hex()),
-    );
-    properties.insert("seed".to_string(), toml::Value::Integer(seed as i64));
-    properties.insert(
-        "timestamp".to_string(),
-        toml::Value::String(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs().to_string())
-                .unwrap_or_default(),
-        ),
-    );
-    properties.insert(
-        "flint_version".to_string(),
-        toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
-    );
-
-    let meta = AssetMeta {
-        name,
-        asset_type,
-        hash: content_hash.to_prefixed_hex(),
-        source_path: Some(out_path.display().to_string()),
-        format: Some(ext.to_string()),
-        tags: spec.meta.tags.clone(),
-        properties,
-    };
-
-    let asset_file = AssetFile { asset: meta };
-    let sidecar_path = sidecar_path_for(out_path);
-    let toml_str =
-        toml::to_string_pretty(&asset_file).context("failed to serialize asset metadata")?;
-    std::fs::write(&sidecar_path, toml_str)
-        .with_context(|| format!("failed to write sidecar {}", sidecar_path.display()))?;
-
-    println!(
-        "Registered: {} -> {}",
-        out_path.display(),
-        content_hash.to_prefixed_hex()
-    );
-
-    Ok(())
-}
-
-/// Check if a cached sidecar exists with matching spec_hash and seed.
-fn check_cache_hit(out_path: &Path, spec_hash: &ContentHash, seed: u64) -> Result<bool> {
-    let sidecar = sidecar_path_for(out_path);
-    if !sidecar.exists() || !out_path.exists() {
-        return Ok(false);
+    if written.is_empty() {
+        written.push(WrittenFile {
+            role: None,
+            path: out_path.to_path_buf(),
+        });
     }
-
-    let content = std::fs::read_to_string(&sidecar)
-        .with_context(|| format!("failed to read sidecar {}", sidecar.display()))?;
-    let asset_file: AssetFile = toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", sidecar.display()))?;
-
-    let cached_spec_hash = asset_file
-        .asset
-        .properties
-        .get("spec_hash")
-        .and_then(|v| v.as_str());
-    let cached_seed = asset_file
-        .asset
-        .properties
-        .get("seed")
-        .and_then(|v| v.as_integer());
-
-    Ok(cached_spec_hash == Some(&spec_hash.to_prefixed_hex()) && cached_seed == Some(seed as i64))
-}
-
-/// Get the .asset.toml sidecar path for an output file.
-fn sidecar_path_for(out_path: &Path) -> PathBuf {
-    out_path.with_extension(format!(
-        "{}.asset.toml",
-        out_path.extension().and_then(|e| e.to_str()).unwrap_or("")
-    ))
+    Ok(written)
 }
 
 /// Resolve output path for batch mode, inserting the seed into the filename.
-fn resolve_output_path_for_seed(args: &GenArgs, spec: &ProcGenSpec, seed: u64) -> Result<PathBuf> {
-    if let Some(ref out) = args.output {
-        return Ok(resolve_batch_output_path(Path::new(out), seed));
+fn resolve_output_path_for_seed(
+    args: &GenArgs,
+    spec: &ProcGenSpec,
+    seed: u64,
+    ext: &str,
+) -> PathBuf {
+    // Named after the spec, in the generator's own format (a texture batch
+    // used to default to `.glb`).
+    let name = gen_store::slug(&spec.meta.name);
+    match &args.output {
+        Some(out) => resolve_batch_output_path(Path::new(out), seed, &name, ext),
+        None => PathBuf::from(format!("{name}_{seed}.{ext}")),
     }
-
-    // Derive from format or spec defaults
-    let ext = args.format.as_deref().unwrap_or("glb");
-    let name = spec
-        .meta
-        .name
-        .replace(' ', "_")
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
-    Ok(PathBuf::from(format!("{name}_{seed}.{ext}")))
 }
 
 /// Insert a seed into a file path: `tree.glb` → `tree_42.glb`.
-/// If the path contains `{seed}`, substitute it directly.
-fn resolve_batch_output_path(base: &Path, seed: u64) -> PathBuf {
+/// If the path contains `{seed}`, substitute it directly. A directory gets
+/// `<name>_<seed>.<ext>` inside it (it used to become a sibling `.glb`).
+fn resolve_batch_output_path(base: &Path, seed: u64, name: &str, ext: &str) -> PathBuf {
     let base_str = base.to_string_lossy();
     if base_str.contains("{seed}") {
         return PathBuf::from(base_str.replace("{seed}", &seed.to_string()));
+    }
+    if base.is_dir() || base_str.ends_with('/') || base_str.ends_with('\\') {
+        return base.join(format!("{name}_{seed}.{ext}"));
     }
 
     let stem = base
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or("glb");
+    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or(ext);
     let parent = base.parent().unwrap_or(Path::new("."));
     parent.join(format!("{stem}_{seed}.{ext}"))
 }
@@ -584,14 +886,12 @@ fn build_validation_constraints(
     spec: &ProcGenSpec,
     style_guide: Option<&StyleGuide>,
 ) -> ValidationConstraints {
-    let mut c = ValidationConstraints::default();
-
-    // Extract max_triangles from LOD level 0 target if present
-    if let Some(ref lods) = spec.lod {
-        if let Some(lod0) = lods.iter().find(|l| l.level == 0) {
-            c.max_triangles = Some(lod0.target_triangles);
-        }
-    }
+    // The spec's LOD targets are read from the spec by the validator, one
+    // per level; `max_triangles` is the style's ceiling on every mesh. The
+    // style's half is the one `flint asset validate` uses.
+    let mut c = style_guide
+        .map(StyleGuide::validation_constraints)
+        .unwrap_or_default();
 
     // Extract texture dimensions from spec params if present
     if let Some(table) = spec.params.as_table() {
@@ -603,26 +903,103 @@ fn build_validation_constraints(
         }
     }
 
-    // Overlay style guide constraints
-    if let Some(style) = style_guide {
-        if let Some(max_tris) = style.geometry.max_triangles {
-            c.max_triangles = Some(max_tris);
-        }
-        c.roughness_range = style.materials.roughness_range;
-        c.metallic_range = style.materials.metallic_range;
-        c.palette = style.palette.clone();
-    }
-
     c
 }
 
-/// Run validation on a generator output, printing results. Returns true if passed.
+/// Validate what a run wrote, as it lies on disk: a GLB is re-imported
+/// through `flint_import` (the importer the renderer uses) and a PNG is
+/// decoded again, so an exporter or encoder bug fails the same checks a
+/// generator bug would. The in-memory `output` says only what each file is
+/// (an image's channel semantics); sound has no file checks and is
+/// validated as made.
+fn validate_written(
+    output: &GeneratorOutput,
+    files: &[WrittenFile],
+    spec: &ProcGenSpec,
+    constraints: &ValidationConstraints,
+) -> Result<flint_procgen::ValidationReport> {
+    let file = |i: usize| {
+        files
+            .get(i)
+            .map(|f| f.path.as_path())
+            .ok_or_else(|| anyhow!("the run wrote no file #{i} to validate"))
+    };
+    let report = match output {
+        GeneratorOutput::Mesh(_)
+        | GeneratorOutput::MeshWithLods(_)
+        | GeneratorOutput::SkinnedMesh(_) => {
+            let path = file(0)?;
+            let model = flint_procgen::read_model(path)
+                .with_context(|| format!("failed to read back {}", path.display()))?;
+            flint_procgen::validate_model(&model, Some(spec), constraints)
+        }
+        GeneratorOutput::Image(img) => {
+            let path = file(0)?;
+            let read = flint_procgen::read_png(path, img.channel_semantics)
+                .with_context(|| format!("failed to read back {}", path.display()))?;
+            flint_procgen::validate_output(&GeneratorOutput::Image(read), spec, constraints)
+        }
+        GeneratorOutput::ImageSet(images) => {
+            let read = images
+                .iter()
+                .enumerate()
+                .map(|(i, img)| {
+                    let path = file(i)?;
+                    flint_procgen::read_png(path, img.channel_semantics)
+                        .with_context(|| format!("failed to read back {}", path.display()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            flint_procgen::validate_output(&GeneratorOutput::ImageSet(read), spec, constraints)
+        }
+        GeneratorOutput::Sound(_) => flint_procgen::validate_output(output, spec, constraints),
+    };
+    Ok(report)
+}
+
+/// One variant's line of `--report json`. Its `checks` key is the
+/// [`ValidationReport`]'s, so the line deserialises straight into one (the
+/// other keys are ignored).
+#[derive(Serialize)]
+struct VariantReport<'a> {
+    spec: &'a str,
+    seed: u64,
+    output: String,
+    verdict: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    passed: usize,
+    warnings: usize,
+    failed: usize,
+    #[serde(flatten)]
+    report: &'a ValidationReport,
+}
+
+/// The variant's outcome as the exit code sees it: `--strict` makes a
+/// warning a `fail`; a cached result is `skipped`, not checked.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Verdict {
+    Pass,
+    Fail,
+    Skipped,
+}
+
+/// Write one JSON line to stdout.
+fn emit_json(line: &VariantReport) -> Result<()> {
+    let json = serde_json::to_string(line).context("serialising the validation report")?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Validate the files a run wrote and print the human report (to stderr
+/// under `--report json`). Returns the report and whether it passed.
 fn run_validation(
     output: &GeneratorOutput,
+    files: &[WrittenFile],
     spec: &ProcGenSpec,
     style_guide_path: Option<&str>,
     strict: bool,
-) -> Result<bool> {
+) -> Result<(ValidationReport, bool)> {
     let style_guide = if let Some(path) = style_guide_path {
         Some(
             StyleGuide::load(Path::new(path))
@@ -634,21 +1011,26 @@ fn run_validation(
     };
 
     let constraints = build_validation_constraints(spec, style_guide.as_ref());
-    let report = flint_procgen::validate_output(output, spec, &constraints);
+    let report = validate_written(output, files, spec, &constraints)?;
 
-    println!();
-    report.print_checks();
-    println!();
-    report.print_summary();
-
-    if report.has_failures() {
-        Ok(false)
-    } else if strict && report.has_warnings() {
-        println!("Strict mode: warnings treated as failures");
-        Ok(false)
-    } else {
-        Ok(true)
+    say!();
+    let shown: Vec<String> = files.iter().map(|f| f.path.display().to_string()).collect();
+    say!("Validating {} (as written)", shown.join(", "));
+    for line in report.check_lines() {
+        say!("{line}");
     }
+    say!();
+    say!("{}", report.summary());
+
+    let passed = if report.has_failures() {
+        false
+    } else if strict && report.has_warnings() {
+        say!("Strict mode: warnings treated as failures");
+        false
+    } else {
+        true
+    };
+    Ok((report, passed))
 }
 
 /// Human-friendly byte size.
@@ -683,38 +1065,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn format_follows_the_generator_when_unspecified() {
+        assert_eq!(
+            check_output_format("t", OutputKind::Mesh, None, None).unwrap(),
+            "glb"
+        );
+        assert_eq!(
+            check_output_format("t", OutputKind::Image, None, None).unwrap(),
+            "png"
+        );
+        assert_eq!(
+            check_output_format("t", OutputKind::Sound, None, None).unwrap(),
+            "wav"
+        );
+    }
+
+    #[test]
+    fn matching_and_unrecognised_extensions_pass() {
+        let ok = |out| check_output_format("t", OutputKind::Mesh, Some(out), None);
+        assert!(ok("tree.glb").is_ok());
+        assert!(ok("TREE.GLB").is_ok());
+        assert!(ok("out/tree_{seed}.glb").is_ok());
+        assert!(ok("tree.bin").is_ok());
+        assert!(ok("tree").is_ok());
+        // ImageSet output may be a directory
+        assert!(check_output_format("t", OutputKind::Image, Some("out/"), None).is_ok());
+    }
+
+    #[test]
+    fn a_mismatched_extension_is_refused_with_a_suggestion() {
+        let err = check_output_format("tree_v1", OutputKind::Mesh, Some("out/tree.png"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("tree_v1"), "{err}");
+        assert!(err.contains("a mesh"), "{err}");
+        assert!(err.contains("tree.glb"), "{err}");
+        assert!(check_output_format("t", OutputKind::Mesh, Some("tree.gltf"), None).is_err());
+        assert!(check_output_format("t", OutputKind::Image, Some("wall.glb"), None).is_err());
+    }
+
+    #[test]
+    fn a_mismatched_format_flag_is_refused() {
+        assert!(check_output_format("t", OutputKind::Mesh, None, Some("png")).is_err());
+        assert!(check_output_format("t", OutputKind::Mesh, Some("x.bin"), Some("glb")).is_ok());
+    }
+
+    #[test]
     fn test_batch_output_path_default_insertion() {
         let base = Path::new("/tmp/tree.glb");
-        let result = resolve_batch_output_path(base, 42);
+        let result = resolve_batch_output_path(base, 42, "oak", "glb");
         assert_eq!(result, PathBuf::from("/tmp/tree_42.glb"));
     }
 
     #[test]
     fn test_batch_output_path_seed_template() {
         let base = Path::new("/tmp/tree_{seed}.glb");
-        let result = resolve_batch_output_path(base, 7);
+        let result = resolve_batch_output_path(base, 7, "oak", "glb");
         assert_eq!(result, PathBuf::from("/tmp/tree_7.glb"));
     }
 
     #[test]
     fn test_batch_output_path_no_parent() {
         let base = Path::new("tree.glb");
-        let result = resolve_batch_output_path(base, 0);
+        let result = resolve_batch_output_path(base, 0, "oak", "glb");
         assert_eq!(result, PathBuf::from("tree_0.glb"));
     }
 
     #[test]
-    fn test_sidecar_path() {
-        let out = Path::new("/tmp/tree_42.glb");
-        let sidecar = sidecar_path_for(out);
-        assert_eq!(sidecar, PathBuf::from("/tmp/tree_42.glb.asset.toml"));
+    fn a_batch_into_a_directory_lands_inside_it_in_the_native_format() {
+        let result = resolve_batch_output_path(Path::new("out/"), 3, "wall", "png");
+        assert_eq!(result, Path::new("out/").join("wall_3.png"));
+        // No extension: the generator's format, not always .glb.
+        let result = resolve_batch_output_path(Path::new("out/wall"), 3, "x", "png");
+        assert_eq!(result, Path::new("out").join("wall_3.png"));
     }
 
     #[test]
-    fn test_sidecar_path_png() {
-        let out = Path::new("wall.png");
-        let sidecar = sidecar_path_for(out);
-        assert_eq!(sidecar, PathBuf::from("wall.png.asset.toml"));
+    fn image_set_maps_sit_beside_the_stem_or_inside_a_directory() {
+        assert_eq!(
+            output_file_path(Path::new("tex/wall_3.png"), Some("normal")),
+            Path::new("tex").join("wall_3_normal.png")
+        );
+        assert_eq!(
+            output_file_path(Path::new("tex/"), Some("color")),
+            Path::new("tex/").join("output_color.png")
+        );
+        assert_eq!(
+            output_file_path(Path::new("tree.glb"), None),
+            PathBuf::from("tree.glb")
+        );
     }
 
     #[test]
@@ -751,8 +1190,10 @@ target_triangles = 1000
 "#,
         )
         .unwrap();
+        // LOD targets stay in the spec, where `validate_output` reads one
+        // per level; only a style guide sets the ceiling.
         let constraints = build_validation_constraints(&spec, None);
-        assert_eq!(constraints.max_triangles, Some(5000));
+        assert_eq!(constraints.max_triangles, None);
     }
 
     #[test]
@@ -786,7 +1227,7 @@ value = 42
             },
             geometry: GeometryConstraints {
                 max_triangles: Some(3000),
-                require_uvs: None,
+                require_uvs: Some(true),
                 require_normals: None,
             },
         };
@@ -796,6 +1237,7 @@ value = 42
         assert_eq!(constraints.roughness_range, Some([0.6, 0.95]));
         assert_eq!(constraints.metallic_range, Some([0.0, 0.15]));
         assert_eq!(constraints.palette, vec!["#FF0000".to_string()]);
+        assert!(constraints.require_uvs);
     }
 
     #[test]
@@ -818,5 +1260,118 @@ height = 512
         let constraints = build_validation_constraints(&spec, None);
         assert_eq!(constraints.expected_texture_width, Some(512));
         assert_eq!(constraints.expected_texture_height, Some(512));
+    }
+
+    fn quad() -> flint_procgen::MeshData {
+        let v = |x: f32, y: f32| flint_procgen::Vertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv: [x, y],
+        };
+        let mut mesh = flint_procgen::MeshData {
+            vertices: vec![v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            materials: vec![flint_procgen::MaterialData::default()],
+            submeshes: vec![],
+            bounding_box: flint_procgen::BoundingBox::from_positions(&[]),
+        };
+        mesh.recompute_bounds();
+        mesh
+    }
+
+    fn mock_spec() -> ProcGenSpec {
+        ProcGenSpec::parse(
+            "generator = \"mock\"\n[meta]\nname = \"quad\"\nversion = \"1.0.0\"\n\
+             [seed]\nmode = \"fixed\"\nvalue = 0\n",
+        )
+        .unwrap()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("flint_gen_validate_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("{name}.glb"))
+    }
+
+    /// `--validate` checks the bytes on disk: a mesh that is fine in
+    /// memory, written by an exporter that drops its normals to zero,
+    /// fails, though validating the in-memory output would have passed.
+    #[test]
+    fn validation_reads_what_a_broken_exporter_wrote() {
+        let mesh = quad();
+        let output = GeneratorOutput::Mesh(mesh.clone());
+        let spec = mock_spec();
+        let constraints = ValidationConstraints::default();
+
+        // A broken exporter: writes the mesh with every normal zeroed.
+        let broken_exporter = |m: &flint_procgen::MeshData| {
+            let mut m = m.clone();
+            for v in &mut m.vertices {
+                v.normal = [0.0; 3];
+            }
+            export_glb::mesh_to_glb(&m).unwrap()
+        };
+        let path = scratch("broken");
+        std::fs::write(&path, broken_exporter(&mesh)).unwrap();
+        let files = [WrittenFile {
+            role: None,
+            path: path.clone(),
+        }];
+
+        let in_memory = flint_procgen::validate_output(&output, &spec, &constraints);
+        assert!(!in_memory.has_failures(), "{:#?}", in_memory.checks);
+
+        let on_disk = validate_written(&output, &files, &spec, &constraints).unwrap();
+        let normals = on_disk.checks.iter().find(|c| c.name == "normals").unwrap();
+        assert_eq!(normals.status, flint_procgen::CheckStatus::Fail);
+        assert!(normals.detail.contains("4/4"), "{}", normals.detail);
+
+        // The working exporter's file passes, check for check.
+        std::fs::write(&path, export_glb::mesh_to_glb(&mesh).unwrap()).unwrap();
+        let fixed = validate_written(&output, &files, &spec, &constraints).unwrap();
+        assert!(!fixed.has_failures(), "{:#?}", fixed.checks);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A PNG is decoded again before its checks run.
+    #[test]
+    fn validation_reads_the_written_png() {
+        use flint_procgen::{ChannelSemantics, ImageData};
+        let img = ImageData::new(8, 8, ChannelSemantics::Color);
+        let path = scratch("tex").with_extension("png");
+        // On disk it is 4x4, whatever the in-memory image says.
+        ImageData::new(4, 4, ChannelSemantics::Color)
+            .save_png(&path)
+            .unwrap();
+        let constraints = ValidationConstraints {
+            expected_texture_width: Some(8),
+            expected_texture_height: Some(8),
+            ..Default::default()
+        };
+        let files = [WrittenFile {
+            role: None,
+            path: path.clone(),
+        }];
+        let report = validate_written(
+            &GeneratorOutput::Image(img),
+            &files,
+            &mock_spec(),
+            &constraints,
+        )
+        .unwrap();
+        let dims = report
+            .checks
+            .iter()
+            .find(|c| c.name == "texture dimensions")
+            .unwrap();
+        assert_eq!(
+            dims.status,
+            flint_procgen::CheckStatus::Fail,
+            "{}",
+            dims.detail
+        );
+        std::fs::remove_file(&path).ok();
     }
 }

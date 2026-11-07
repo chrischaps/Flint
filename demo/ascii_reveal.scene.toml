@@ -1,0 +1,150 @@
+# ASCII Reveal: the mesh meadow's clearing, where two props fade into
+# glyphs and back (#278). scripts/ascii_reveal.rhai gives each its look at
+# blend 0 and then moves only the blend:
+#
+#   cargo run --bin flint-player -- demo/ascii_reveal.scene.toml --schemas schemas
+#
+#   0 s    everything smooth
+#   1-4 s  barrel dissolves into green phosphor glyphs (transition = "dissolve")
+#   3-6 s  bench cross-fades into amber blocks (transition = "fade", the default)
+#   7.5 s  both go back, smooth again by 9.5 s; the loop is 10 s
+#
+# A blend is a field of the entity's style component (ascii_style.blend, or
+# style_mask.blend), 0 to 1. It rides in the style mask beside the id, so a
+# ramp keeps one variant a prop and makes no GPU allocation. How it differs
+# from the screen-wide render-mode tears: book, concepts/stylize-passes.md.
+
+[scene]
+name = "ASCII Reveal"
+version = "1.0"
+description = "Props fade and dissolve into ASCII and back, driven by a blend a script ramps (#278)"
+
+[camera]
+position = [4.2, 1.9, 11.5]
+target = [0.4, 0.7, 4.6]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+# The preset every styled prop starts from; scope = "entities" keeps it
+# off the rest of the frame
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.3
+brightness = 0.15
+
+[entities.director]
+[entities.director.script]
+source = "ascii_reveal.rhai"
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.75, -0.38, 0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.4, -0.8, -0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.meadow]
+[entities.meadow.transform]
+position = [-48, 0, -48]
+[entities.meadow.grass_ground]
+mask = "mesh_meadow/mask.png"
+width = 96.0
+depth = 96.0
+scale_by_mask = true
+"grass.density" = 40.0
+"grass.max_distance" = 70.0
+"grass.fade_start" = 50.0
+"grass.blade_width" = 0.2
+"grass.blade_height" = 0.45
+"grass.height_variation" = 0.4
+"grass.color_base" = [0.12, 0.38, 0.08]
+"grass.color_tip" = [0.42, 0.70, 0.20]
+"grass.color_dry" = [0.62, 0.54, 0.24]
+"grass.dry_amount" = 0.3
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_speed" = 0.6
+"grass.wind_strength" = 0.1
+"grass.density_threshold" = 0.05
+
+# --- The props the story styles ---
+
+[entities.bench]
+archetype = "furniture"
+[entities.bench.transform]
+position = [0.4, 0.22, 3.0]
+rotation = [0, 15, 0]
+scale = [0.01, 0.01, 0.01]
+[entities.bench.model]
+asset = "wooden_bench"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.4, 0.48, 5.4]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+
+# --- Always smooth, for contrast ---
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [2.1, 0.0, 2.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+[entities.lantern]
+archetype = "furniture"
+parent = "crate"
+[entities.lantern.transform]
+position = [0.0, 0.8, 0.0]
+scale = [0.035, 0.035, 0.035]
+[entities.lantern.model]
+asset = "Lantern"

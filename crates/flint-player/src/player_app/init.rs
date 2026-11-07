@@ -10,7 +10,7 @@ use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
     load_particle_textures_from_world, load_scripts_from_world, load_sequences_from_world,
     load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
-    register_skeletal_data, resolve_procgen_assets,
+    register_skeletal_data,
 };
 #[cfg(target_os = "android")]
 use super::AndroidGamepadTracker;
@@ -92,6 +92,8 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,
+            procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
+            procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
             quality_overrides: String::new(),
@@ -411,32 +413,40 @@ impl PlayerApp {
             self.content_store.as_ref(),
         );
 
-        // Discover procgen specs and resolve unresolved assets before model loading
-        {
+        // The procgen disk tier (#181), set up once, before the first scene's
+        // assets are resolved.
+        if self.procgen_resolver.disk_stats().is_none() {
             let scene_dir = Path::new(&self.scene_path)
                 .parent()
                 .unwrap_or(Path::new("."));
-            let mut spec_dirs = vec![scene_dir.join("specs")];
-            if let Some(parent) = scene_dir.parent() {
-                spec_dirs.push(parent.join("specs"));
+            if let Some(disk) = self
+                .procgen_disk_cache
+                .then(|| procgen_disk_config(scene_dir))
+                .flatten()
+            {
+                println!("[procgen] disk cache: {}", disk.dir.display());
+                self.procgen_resolver = flint_procgen::ProcGenResolver::with_config(
+                    flint_procgen::ProcGenCacheConfig {
+                        disk: Some(disk),
+                        ..Default::default()
+                    },
+                );
             }
-            spec_dirs.push(scene_dir.join("models"));
-            let dir_refs: Vec<&Path> = spec_dirs
-                .iter()
-                .filter(|d| vfs::is_dir(d))
-                .map(|d| d.as_path())
-                .collect();
-            self.procgen_resolver.discover_and_index(&dir_refs);
-
-            resolve_procgen_assets(
-                &self.world,
-                &mut self.procgen_resolver,
-                &mut scene_renderer,
-                &render_context.device,
-                &render_context.queue,
-                &config,
-            );
         }
+
+        // Procgen before the model loader: catalog > procgen > file (#32).
+        super::procgen_assets::resolve_scene(
+            &self.scene_path,
+            &self.world,
+            &mut self.procgen_resolver,
+            self.procgen_mode,
+            super::procgen_assets::GpuSink {
+                renderer: &mut scene_renderer,
+                device: &render_context.device,
+                queue: &render_context.queue,
+                config: &config,
+            },
+        );
 
         let load_result = model_loader::load_models_from_world(
             &mut self.world,
@@ -569,7 +579,7 @@ impl PlayerApp {
         if let Some(pp_def) = &self.scene_post_process {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
-            scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+            scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
     }
@@ -676,11 +686,9 @@ impl PlayerApp {
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
             self.create_particles_debug_panel();
-            // Rendering & Effects (ADR 0053): unconditional — every scene has
-            // a renderer to tune. Registered closed; F4 summons it. show_freeze
-            // is true here because player scripts drive post fields.
-            self.debug_panels
-                .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
+            self.create_styles_debug_panel();
+            // Rendering & Effects (ADR 0053): unconditional, F4 summons it
+            self.create_render_debug_panel();
             // The game's own (ADR 0107), after the engine's.
             self.create_extension_debug_panels();
         }
@@ -917,4 +925,24 @@ impl PlayerApp {
             self.load_ui_texture(&name);
         }
     }
+}
+
+/// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
+/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off` or empty: no disk tier),
+/// else `.flint/procgen-cache/` in the project, the scene folder's parent
+/// when that holds `schemas/` or `specs/` (a `levels/` layout, as in
+/// `showcase_game`), otherwise the scene folder itself. Until projects have
+/// a root marker and a config file (#179), that guess is the project.
+fn procgen_disk_config(scene_dir: &Path) -> Option<flint_procgen::DiskCacheConfig> {
+    if let Ok(value) = std::env::var("FLINT_PROCGEN_CACHE") {
+        return match value.trim() {
+            "" | "0" | "off" | "false" => None,
+            dir => Some(flint_procgen::DiskCacheConfig::new(dir)),
+        };
+    }
+    let project = scene_dir
+        .parent()
+        .filter(|p| vfs::is_dir(p.join("schemas")) || vfs::is_dir(p.join("specs")))
+        .unwrap_or(scene_dir);
+    Some(flint_procgen::DiskCacheConfig::in_project(project))
 }

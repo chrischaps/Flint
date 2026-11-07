@@ -17,18 +17,13 @@ value = 42
 
 [params]
 base_color = "#8A7D6B"
-cell_count = 205
 color_variation = 0.2
-columns = 1
 detail_scale = 50.0
 detail_strength = 0.06
 frequency = 0.85
-gap_width = 0.25
 height = 512
-height_variation = 0.35
 mortar_color = "#50483C"
 mortar_threshold = 0.06
-mortar_width = 0.03
 noise_type = "simplex"
 normal_strength = 1.2
 octaves = 1
@@ -38,10 +33,8 @@ output_maps = [
     "roughness",
 ]
 pattern = "perlin_organic"
-regularity = 0.15
 roughness_base = 0.82
 roughness_mortar = 0.55
 roughness_variation = 0.06
-rows = 1
 seamless = true
 width = 512

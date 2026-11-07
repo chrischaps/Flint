@@ -219,7 +219,7 @@ pub fn cylinder(params: &CylinderParams) -> MeshData {
 /// Generate a UV sphere.
 ///
 /// Vertices: `(segments + 1) * (rings + 1)`
-/// Triangles: `segments * rings * 2`
+/// Triangles: `segments * (rings - 1) * 2` (one per pole quad, see [`uv_sphere_indices`])
 pub fn sphere(params: &SphereParams) -> MeshData {
     let s = params.segments;
     let ri = params.rings;
@@ -253,25 +253,7 @@ pub fn sphere(params: &SphereParams) -> MeshData {
         }
     }
 
-    let row_width = s + 1;
-    for j in 0..ri {
-        for i in 0..s {
-            let a = j * row_width + i;
-            let b = a + 1;
-            let c = (j + 1) * row_width + i;
-            let d = c + 1;
-
-            // Rows run top-down (row j + 1 is below row j), the opposite of
-            // the cylinder, so the quad winds a-b-c to face outward.
-            indices.push(a);
-            indices.push(b);
-            indices.push(c);
-
-            indices.push(b);
-            indices.push(d);
-            indices.push(c);
-        }
-    }
+    uv_sphere_indices(s, ri, &mut indices);
 
     let bbox =
         BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
@@ -288,7 +270,7 @@ pub fn sphere(params: &SphereParams) -> MeshData {
 /// Generate an ellipsoid (UV sphere with per-axis radii).
 ///
 /// Vertices: `(segments + 1) * (rings + 1)`
-/// Triangles: `segments * rings * 2`
+/// Triangles: `segments * (rings - 1) * 2` (one per pole quad, see [`uv_sphere_indices`])
 pub fn ellipsoid(params: &EllipsoidParams) -> MeshData {
     let s = params.segments;
     let ri = params.rings;
@@ -340,25 +322,7 @@ pub fn ellipsoid(params: &EllipsoidParams) -> MeshData {
         }
     }
 
-    let row_width = s + 1;
-    for j in 0..ri {
-        for i in 0..s {
-            let a = j * row_width + i;
-            let b = a + 1;
-            let c = (j + 1) * row_width + i;
-            let d = c + 1;
-
-            // Rows run top-down (row j + 1 is below row j), the opposite of
-            // the cylinder, so the quad winds a-b-c to face outward.
-            indices.push(a);
-            indices.push(b);
-            indices.push(c);
-
-            indices.push(b);
-            indices.push(d);
-            indices.push(c);
-        }
-    }
+    uv_sphere_indices(s, ri, &mut indices);
 
     let bbox =
         BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
@@ -369,6 +333,36 @@ pub fn ellipsoid(params: &EllipsoidParams) -> MeshData {
         materials: vec![MaterialData::default()],
         submeshes: vec![],
         bounding_box: bbox,
+    }
+}
+
+/// Index a `(segments + 1) x (rings + 1)` latitude/longitude grid.
+///
+/// Every vertex of the top row sits on the north pole and every vertex of the
+/// bottom row on the south pole, so a pole quad has only three distinct
+/// corners: its other triangle has zero area. Emitting it leaves
+/// `segments` slivers at each pole that skinning and tangent generation
+/// choke on, and that `flint gen --validate` reports (#30), so it is skipped.
+fn uv_sphere_indices(s: u32, ri: u32, indices: &mut Vec<u32>) {
+    let row_width = s + 1;
+    for j in 0..ri {
+        for i in 0..s {
+            let a = j * row_width + i;
+            let b = a + 1;
+            let c = (j + 1) * row_width + i;
+            let d = c + 1;
+
+            // Rows run top-down (row j + 1 is below row j), the opposite of
+            // the cylinder, so the quad winds a-b-c to face outward.
+            // a and b are both the north pole on the top row...
+            if j != 0 {
+                indices.extend_from_slice(&[a, b, c]);
+            }
+            // ...and c and d both the south pole on the bottom row.
+            if j + 1 != ri {
+                indices.extend_from_slice(&[b, d, c]);
+            }
+        }
     }
 }
 
@@ -602,7 +596,7 @@ mod tests {
         let expected_verts = (s + 1) * (ri + 1);
         assert_eq!(mesh.vertex_count(), expected_verts as usize);
 
-        let expected_tris = s * ri * 2;
+        let expected_tris = s * (ri - 1) * 2;
         assert_eq!(mesh.triangle_count(), expected_tris as usize);
     }
 
@@ -675,7 +669,7 @@ mod tests {
         let expected_verts = (s + 1) * (ri + 1);
         assert_eq!(mesh.vertex_count(), expected_verts as usize);
 
-        let expected_tris = s * ri * 2;
+        let expected_tris = s * (ri - 1) * 2;
         assert_eq!(mesh.triangle_count(), expected_tris as usize);
     }
 

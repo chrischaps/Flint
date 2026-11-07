@@ -30,7 +30,8 @@ Flint uses an **edit -> validate -> play** loop:
    flint render levels/demo.scene.toml --output test.png --schemas schemas \
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
    # Debug/post-processing flags:
-   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough
+   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style
+   #                          (style = the entity style mask, #263: needs post-processing)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
@@ -49,6 +50,37 @@ Flint uses an **edit -> validate -> play** loop:
    #                           capture; default none = no particles. ADR 0068)
    #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
    #                           Also on flint-player. ADR 0058)
+   #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
+   #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
+   #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
+   #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
+   #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
+   #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
+   #   --ascii-scope screen|entities --ascii-grid screen|object
+   #                          (#266; a scene's ascii_style entities need no flag)
+   #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1 --ascii-dither 0 (#277)
+   #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
+   #                          (#267 line glyphs on depth/crease/mask edges; capture with --no-grid,
+   #                           the editor grid writes depth and gets traced)
+   #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
+   #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
+   #                          against its descriptor; repeatable; `--style help`;
+   #                          also on `flint edit <model|effect> --render`)
+   #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
+   #                          direction surface|screen|tensor, seed, boil; demo/pencil_sketch)
+   #   --style-time 1.5       (post time animated styles read; default 0)
+   #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
+   #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite;
+   #                          `--look help` lists them with their tune sweeps)
+   #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
+   #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;
+   #                          cells 640x360 unless --width/--height. Cells are in points:
+   #                          confirm a winner at the final size)
+   #   --ascii=full|entity|entity-object --ascii-entities "barrel,table_*"
+   #                          (#261 spike prototypes, `=` required; masked modes are static meshes only)
+   #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
+   #   --ascii-edge-normal 2.5 --ascii-scene-background   (tone bands, edges, masked-mode ground)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction
    # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
@@ -86,7 +118,23 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
+   flint gen --ai-create "twisted dead tree" -o tree.glb     # agent writes the spec (ANTHROPIC_API_KEY;
+                                                             #   --ai-provider mock is offline and free)
+   flint gen specs/oak_tree.procgen.toml --ai-assist --max-cost 0.50 -o tree.glb
+   flint gen specs/oak_tree.procgen.toml --ai-refine --reference ref.png -o tree.glb
+   #   Claude sees a headless render of what the spec builds each round and the refine
+   #   loops while the measured distance falls (--refine-rounds N; #183)
+   flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
+   # --ai-model, --ai-iterations, --ai-generator,
+   # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
+   # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
+   # refused before sending if its worst case could pass --max-cost.
    ```
+
+   **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
+   renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
+   `--out-dir` gets renders + `<case>.diff.png` + `report.json`); `cargo test -p flint-cli
+   --test render_goldens` runs it. A new style adds a case. A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 
@@ -141,6 +189,11 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
 - **Physics joints** (ADR 0069) -- `joint` component (hinge/prismatic/spherical/fixed) on a dynamic entity, attached to `joint.parent` or the transform parent. Bodies are placed from `get_world_matrix` and dynamic poses write back as local `position` + `rotation_quat`; unit scale is assumed on the physics chain. TOML units are degrees/metres, converted to Rapier radians at sync. Scripts drive `motor_target` via `set_joint_target` and pose rest-quaternion nodes with `rotate_local` / `set_rotation_quat` (`set_rotation` still deletes the quaternion). Bench: `demo/joint_test.scene.toml`
 - **Two-bone IK** (ADR 0070) -- `ik_two_bone` component on the second bone of a transform chain names `target`, `pole` and `tip` entities; `IkPass` (flint-animation) solves after scripts/physics/animation each frame and before the renderer reads world matrices, writing only the two bones' `rotation_quat` from their captured rest. Lengths come from the model's rest offsets. `flint render` runs it once
+- **Glyph atlas** (#264) -- `flint_render::glyph_atlas`: `GlyphSet` = a coverage atlas (`R8Unorm` via `GpuGlyphAtlas`) + named luminance ramps + edge glyphs, from `fonts/<name>.glyphs.toml` (TTF via ab_glyph, PNG grid, or the hand-drawn built-in 8x8 set in `builtin_8x8.txt`); `GlyphSetCache::get("builtin"|"<name>")`. Top-level keys like `default_ramp` go before the first `[table]`. Look at one with `cargo run -p flint-render --example glyph_atlas -- out/ [set]`. Book: concepts/glyph-atlas.md
+- **Stylize passes** (#262, ADR 0111) -- `flint_render::stylize`: a style is a module exporting `STYLE: StyleDescriptor` (name, `StyleStage::Hdr` before fog/bloom/tonemap at scene resolution or `Display` after the composite at output resolution, params with ranges, `create`) plus its name in `register_styles!`; its `StylePass::encode` reads a `StyleFrame` (params, depth, camera, `target()` scratch textures, kept bind groups). Styles of a stage chain in registration order through framework ping-pong targets that live in `PostProcessResources` (rebuilt on resize). Scenes: `[post_process.styles.<name>]` (Kuwahara keeps its `kuwahara_*` fields; numbers are `params`, strings are `options`, e.g. a font or ramp); F4 → Styles (and the player's F3 Styles panel, made when a scene uses a style) is one `flint_debug_ui::StylesEditor` drawn from descriptors (#268): optional `hints: &[StyleHint]` give labels/help/`.integer()`, `<base>_r/_g/_b` params fold into one colour picker (display values), and each style gets Defaults / Authored / Copy TOML (`stylize::style_toml`); `ascii` (#265) is the display-stage glyph style, cells in points times `SceneRenderer::pixels_per_point` (hosts set it from the window), fonts found via `scene_dir`; its edges (#267) are two more passes (`ascii_edges.wgsl`: edge pixels at `StyleFrame::depth_size`; `ascii_edge_cells.wgsl`: one texel a glyph cell summing structure tensors) that the glyph pass draws as line glyphs, and a mask boundary where either side is one of the style's ids (plain or per-entity variant) is always an outline; `encode_to` builds newly enabled styles itself. `invert` is the template. A style with frame-to-frame state (ASCII's per-cell history, #277: a cell pass into a ping-ponged `Rgba16Uint` texture via `target_sized`, then the glyph pass) trusts it only when `StyleFrame::frame` follows its last frame and `history_epoch` is unchanged; hosts call `SceneRenderer::reset_style_history()` on a scene change or camera cut. Book: concepts/stylize-passes.md (reference) and guides/stylized-rendering.md (choosing whole-frame vs per-entity, with the decision's captures). The decision: per-entity *selection* on one screen grid, with full screen its "everything" case and `grid = "object"` opt-in only; glyph-like styles at the Display stage (`docs/adr/0111-stylized-rendering.md`)
+- **Entity style mask** (#263) -- `flint_render::style_mask`: a `style_mask { style, enabled }` component (descendants inherit; nearest wins) gives each styled entity an id (`StyleIds`, 1.. in name order). After the scene pass (and MSAA depth resolve) its opaque static/box/skinned draws are redrawn with their cached transform (+ bone) bind groups into an `Rg16Uint` target in `StyleTargets` (id in `.r`, blend in `.g`, #278), depth-tested in the shader against the single-sample depth with a slope tolerance; ids ride one dynamic-offset uniform buffer. Drawn only while a `StyleDescriptor { uses_mask: true }` style is on; styles read `StyleFrame::mask` / `mask_bind` / `style_id`. `--debug-mode style` (`DebugMode::StyleMask`) turns on the `mask_view` display style. Demo: `demo/style_mask.scene.toml`
+- **Per-entity styles** (#266) -- a descriptor's `component: Some("ascii_style")` makes a style per-entity: an entity with that component (or a `style_mask` naming the style) switches it on for its own pixels with no `[post_process.styles]` table (`is_on(config, &StyleIds)`; `ensure`/`active`/`any_uses_mask` take the ids). Its fields are the descriptor's params/options, falling back on the scene's table then defaults (`StyleVariant::param`; a 3-array `tint` fills `tint_r/g/b`); each distinct set is a `StyleVariant` with its own id, named for its settings (`ascii{ramp=blocks}`, `ascii@barrel` for `grid = "object"`, `ascii{off}` for `enabled = false`). Styles read `frame.variants()` / `variant_param` / `whole_frame()` / `project`. The schema gives `ascii_style` fields no defaults on purpose (the loader fills defaults in). ASCII: `scope = "screen"|"entities"`, `grid = "screen"|"object"`, `--ascii-scope`/`--ascii-grid`. Demo: `demo/ascii_entities.scene.toml`. Scripts (#269): `set_entity_style` / `set_style_param` / `clear_entity_style` queue `ScriptCommand`s that `flint_player::apply_style_command` turns into `flint_render::entity_style` component edits (set/clear fire `style_changed`); a per-frame param is a variant-table row in the existing uniform, no GPU allocation (`SceneRenderer::kept_post_binds` + hub report test in `tests/stylize.rs`). Demo: `demo/ascii_story.scene.toml`. Blend (#278): `blend` 0..1 on the style component (or `style_mask`) is the root's, inherited, and rides in the mask's `.g` (`resolve_blended`), never in the variant name, so a ramp keeps one id; ASCII mixes per pixel (`transition = "fade"`) or turns whole cells by a fixed patch-noise order (`"dissolve"`). A new mask-reading style should honour `.g`. Demo: `demo/ascii_reveal.scene.toml`; book: stylize-passes.md "Blending in and out" (and how it differs from `--render-mode` tears)
+- **Pencil sketch** (#273) -- `stylize/pencil.rs`, a display style in two passes: a prep pass writes tone, contour (depth steps on the near side, creases from depth-rebuilt normals, mask edges, luma edges by `detail`) and a double-angle stroke direction into `pencil.prep`; the draw pass blurs the direction, hatches up to 4 layers in 15° bins (surface = across grad(1/z), so planes hatch straight), wobbles/doubles contours and lays paper grain. All randomness is integer hashes of row/dash/layer/`seed` (byte-identical runs); `boil` steps the seed by post time. Per-entity via `pencil_style` (same variant table as ASCII, `grid = "object"` anchors the hatching); a mask id another registered style owns gets the `FOREIGN` slot and passes through. The `graphite` look uses it
 - **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F4 opens the Rendering & Effects debug menu in the player and viewer (all toggles + parameters, ADR 0053); when active, PBR shaders output linear HDR
 - **Quality settings** (FlintKart#55) -- `flint_core::quality::QualitySettings` (render_scale, render_scale_auto, msaa, shadows, shadow_resolution, shadow_cascades, shadow_distance, and post caps post_process/bloom/ssao/ssao_samples/fog/volumetric) reaches `SceneRenderer::set_quality` from `--quality k=v,...` (flint-player and `flint render`), the page's `?quality=`, Android's `dev_profile.toml` `[quality]`, and scripts' `set_quality(map)` / `get_quality()` / `gpu_info()`, applied between frames (`PlayerApp::apply_quality`). Post keys are caps over the authored config: the renderer keeps `post_process_config()` (authored) apart from `effective_post_process_config()` (drawn), so a scene load keeps the tier. An MSAA change rebuilds every scene pipeline against equal bind group layouts (wgpu dedupes them), so cached bind groups stay valid; a new scene pipeline must be added to `set_msaa`. Shadow cascades map split depths through the camera's own near/far (they assumed 0.1/200 before, stretching the last cascade to the 1000 m far plane). Book: concepts/quality-settings.md
 - **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
@@ -172,7 +225,8 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
 - `flint_core::toml_util` -- use `toml_f64`/`toml_f32`/`toml_vec3`/etc. instead of inline coercion patterns
 - Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes
-- Per-frame GPU allocations are the renderer's CPU cliff: `update_from_world` rebuilds the draw lists every frame, so anything it needs per entity must come from a cache (`draw_bind_cache` for transform/material binds keyed by entity + sub-mesh with a material hash, `box_mesh_cache` for procedural boxes, `GpuMesh` buffers shared via `Arc`, one dynamic-offset uniform buffer for all shadow draws). Never `create_buffer`/`create_bind_group` inside a per-entity loop; a 270-entity scene went from ~17 ms to ~4 ms when those were removed. Skinned draws use the same cache (`SKINNED_DRAW_KEY`, bone binds in `skinned_bone_binds`, #121). On the web every `create_*` is also a JS object: Float's skinned path made 386 buffers and 327 bind groups a frame, and Firefox stalled ~250 ms at each GC. Count WebGPU calls per frame in the browser before trusting a desktop timing
+- Per-frame GPU allocations are the renderer's CPU cliff: `update_from_world` rebuilds the draw lists every frame, so anything it needs per entity must come from a cache (`draw_bind_cache` for transform/material binds keyed by entity + sub-mesh with a material hash, `box_mesh_cache` for procedural boxes, `GpuMesh` buffers shared via `Arc`, one dynamic-offset uniform buffer for all shadow draws). Never `create_buffer`/`create_bind_group` inside a per-entity loop; a 270-entity scene went from ~17 ms to ~4 ms when those were removed. Skinned draws use the same cache (`SKINNED_DRAW_KEY`, bone binds in `skinned_bone_binds`, #121). On the web every `create_*` is also a JS object: Float's skinned path made 386 buffers and 327 bind groups a frame, and Firefox stalled ~250 ms at each GC. Count WebGPU calls per frame in the browser before trusting a desktop timing (`?perf=1` shows them: the page wraps `submit`/`writeBuffer`/`createBindGroup`/`createBuffer`/`beginRenderPass`, #139)
+- One submission a frame (#139): `SceneRenderer::encode_to` records the whole frame (grass, shadows, scene, post-process, depth upscale, world lines) into the caller's encoder, the player adds its HUD and the GPU timer's resolve (`encode_gpu_timings`), submits once, then calls `frame_submitted` (grass and timer read-backs). `render_to` is that with its own submit. Every `queue.write_buffer` lands before the submission, so a uniform buffer may hold one value per frame: steps that differ get slots of their own (bloom's per-step slots), and encoding two cameras into one submission would show the second camera's uniforms to both. Cached draws' transforms live in `TransformArena` pages (`bind_cache.rs`, a 256-byte slot each, one write per page); post-process bind groups live in `PostProcessResources::binds` (dropped on resize); ones over the caller's depth view are made per frame unless the scene draws at a render scale, since wgpu 23 gives a view no identity to key on
 - Offline capture: `flint-player --frame-step S` advances the clock exactly S seconds per frame (wall time ignored), and with `--screenshot-every S` every frame is written; `--input-script FILE` plays timed `down`/`up`/`tap` keys, `axis` values and gamepad `press`/`release` (on pad slot 9) at game times (format in `player_app/input_script.rs`); a scripted key also goes through the debug keys (`handle_debug_key`), so `tap F2` opens the stats overlay, and `--stats` opens it from the first frame. Together they make deterministic, smooth gameplay footage and scripted regression runs
 - Perf switches: `flint-player --exit-after N` prints `[perf] avg ms/frame`, the spread of dt and of present-to-present times (p50/p90/p99/max and frames over 1.5x p50), and the average draw calls, entity draws, culled draws and triangles on exit; `FLINT_VSYNC=0|mailbox` picks the present mode (Fifo can pace at a virtual display's rate, e.g. 7 Hz with Virtual Desktop attached); `FLINT_FRAME_LATENCY=1..3` sets the swapchain's frame latency (default 2); `FLINT_PACING=0` turns off vsync pacing; `FLINT_SHADOWS=0` disables the shadow pass at start; `FLINT_LOD_SCALE` / `FLINT_DRAW_DISTANCE_SCALE` start the distance levers (#56: glTF `extras.flint_lod` bands per primitive, `lod.draw_distance` per entity, Rhai `set_lod_scale` / `set_draw_distance_scale`; `FLINT_LOD_SCALE=1000` holds every model at full detail; book: Rendering); `--render-scale 0.25..1|auto` draws the 3D scene at that fraction of the window on each side (HDR chain + its own depth, upscaled by the composite, depth copied back so world text/lines still test against it) under a full-resolution HUD, `auto` stepping down to hold 60 fps; the web caps the scene at DPR 1.5 by default and takes `?scale=` (#122, `SceneRenderer::set_render_scale`); `--perf` prints a line every 10 s with each frame phase's CPU time, the worst scripts and each pass's GPU time, and the web page's `?perf=1` (`?perf=cpu` without GPU timing) shows the same in a corner with a Copy line button (#120, docs/design/web.md)
 - Vsync pacing: under Fifo the player gives `GameClock` the monitor's refresh period (`set_vsync_period`, re-read when the window moves), and `delta_time` comes in whole refresh periods that keep game time on the wall clock. On a hybrid-GPU laptop Fifo lets frames through in bursts (6, 6, 6, then 45 ms at a 60 Hz mean); paced, every frame steps 16.7 ms. Stalls over 250 ms pass through, and frames faster than the refresh on average fall back to raw time. `raw_delta_time` is the unpaced wall time. See the book's Profiling guide
@@ -181,24 +235,24 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - Web player (#102): draw the swapchain through `RenderContext::frame_view` (sRGB view of a plain WebGPU canvas), never a default view. Sound and pointer lock need a gesture: the page's Begin calls `flint_player::web_begin()`, and on wasm `set_cursor_captured(true)` is a wish that `sync_pointer_lock` turns into a lock while the page has activation; mouse look flows only while the lock is held. Headless Chrome never grants pointer lock, and headed Chrome only with the window focused (`Page.bringToFront`). Touch (#132): winit's web backend sends `pointerType == "touch"` as `WindowEvent::Touch` scaled by `devicePixelRatio`, and `touch_to_surface` rescales to canvas pixels (they differ under Chrome's device emulation on a scaled desktop). A `(pointer: coarse)` page asks for no pointer lock. Test with CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`
 - Web audio (#136): the browser mixes in an `AudioWorklet`, on the audio thread, running a second wasm (`crates/flint-audio-worklet`: kira only, no imports, `[profile.worklet]` opt-level 3, built by Trunk.toml's `pre_build` hook and copied beside the page). The pages share no memory with it (no COOP/COEP on Pages), so `AudioEngine` calls become `flint_audio::remote` commands posted once a frame and each sound crosses once as samples; handles are `engine::SoundHandle` / `SpatialTrack`. A new engine call that plays or changes sound needs a `protocol::Command` too. `?mixer=main` (or a scene with a `music_session`, which needs `manager_mut`) keeps the old main-thread cpal stream, which is also the fallback when the worklet fails
 - play.chaps.dev (#103): `.github/workflows/play.yml` builds the player with trunk, packs every game in `tools/play-site/games.toml` (each pinned to a commit) with `flint bundle`, and deploys this repo's Pages from Actions. `?game=<id>` plays `games/<id>/<id>.flintpack`; `?embed=1` is the iframe view. `index.html`'s doorway shows the chooser, or the game's film when WebGPU is missing, before any wasm loads: `Trunk.toml`'s loader awaits `window.flintDoorway` and preloads only the JS glue. Keep the two together, or a browser that can't play downloads 7 MB of wasm (docs/design/web.md)
-- Web size (#123): the site builds with `trunk build --release --cargo-profile web-release` (workspace `[profile.web-release]`: opt-level z, fat LTO, 1 codegen unit, panic = abort; 3.1 MB gzipped, down from 5.1). The workspace `image` dep is PNG/JPEG/HDR only and `flint-render` restores image's defaults natively, so add a format for desktop there, not in the workspace. rhai's `no_optimize`/`no_custom_syntax`/`only_i64` are on for wasm only (flint-script's Cargo.toml): web scripts see `i64` integers and nothing else. Measure a size change with trunk and record it in web.md's Size table
+- Web size (#123): the site builds with `trunk build --release --cargo-profile web-release` (workspace `[profile.web-release]`: opt-level z, fat LTO, 1 codegen unit, panic = abort, with `opt-level = 3` package overrides for the hot crates and `+simd128` in `.cargo/config.toml` (#137); 3.6 MB gzipped, down from 5.1). Speed-build a crate only when the phone shows it hot: each override costs bytes, and the 4 MB gzip line holds. The workspace `image` dep is PNG/JPEG/HDR only and `flint-render` restores image's defaults natively, so add a format for desktop there, not in the workspace. rhai's `no_optimize`/`no_custom_syntax`/`only_i64` are on for wasm only (flint-script's Cargo.toml): web scripts see `i64` integers and nothing else. Measure a size change with trunk and record it in web.md's Size table
 - `FlintWorld::spawn` ids come from a process-wide counter and scenes load from a `HashMap`, so entity ids differ run to run -- derive anything reproducible (seeds) from entity **names**, never ids
 
 ## Documentation Pipeline
 
-The book is `docs/book` (mdBook), published to docs.chaps.dev. It is kept in sync by a deterministic checker plus an agent playbook; do not sweep it by hand from memory.
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 
 ```bash
-python tools/docs-check/check.py              # drift report; exit 0 clean, 1 drift
-python tools/docs-check/check.py --report md  # same, as a PR-body block
-mdbook build docs/book                        # must be clean before any docs commit
+mdbook build docs/book                                   # must be clean before any docs commit; output in docs/book/book/ (gitignored)
+powershell -ExecutionPolicy Bypass -File docs/build.ps1 -SkipRustdoc -Serve  # preview at http://localhost:3000 (drop -SkipRustdoc for the API docs)
+powershell -ExecutionPolicy Bypass -File docs/build.ps1 -Publish            # mdBook + rustdoc into ~/dev/docs.chaps.dev/flint, committed and pushed
+bash docs/publish.sh --publish                           # the same in bash (--skip-rustdoc, --serve, --docs-repo <dir>)
 ```
 
-- `docs/book/.synced-to` holds the engine SHA the book was last verified against. Update it in every `docs:` commit.
-- `docs/DOCS_SYNC.md` is the playbook (ownership map, rules against inventing keys, commit style). The `docs-sync` skill and `.github/workflows/docs-sync.yml` both follow it: a push to `main` touching `crates/`, `schemas/`, `CLAUDE.md` or `Cargo.toml` runs the checker, and on drift Claude Code opens or refreshes a `docs-sync` PR.
-- `.github/workflows/docs-publish.yml` rebuilds mdBook + rustdoc and pushes docs.chaps.dev when `docs/book/**` lands on `main`. `docs/build.ps1` remains for local `-Serve` previews.
-- Renders for the book are produced locally (no GPU in CI) via the `flint-render` skill and land in `docs/book/src/images/` in kebab-case; `renders/` is scratch and gitignored.
-- When a keybinding is retired, add it to `DEAD_PATTERNS` in the checker so it cannot creep back.
+Without `-Publish` / `--publish` the scripts build and copy into the docs repo but don't commit. `docs/publish.bat` is `build.ps1 -Publish`. Windows PowerShell 5.1 (`powershell`) runs `build.ps1`; `pwsh` may not be installed.
+
+- Publishing pushes to the separate `docs.chaps.dev` repo (default `~/dev/docs.chaps.dev`; `-DocsRepo` / `--docs-repo` to change it). It is outward-facing: only on request.
+- Renders for the book are made locally with `flint render` (no GPU in CI) and land in `docs/book/src/images/` in kebab-case.
 
 ## Project Structure
 
@@ -207,10 +261,12 @@ mdbook build docs/book                        # must be clean before any docs co
 - `styles/` -- Style guide TOML definitions for AI generation
 - `demo/` -- Showcase scenes, scripts, audio, animations, `particles/` effect assets
 - `testGame/` -- Test project (levels/, schemas/)
-- `docs/book/` -- mdBook source; `docs/DOCS_SYNC.md` -- docs playbook; `tools/docs-check/` -- drift checker
+- `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it
 - `docs/design/flint-design-doc.md` -- Full design document for remaining phases
+- `docs/adr/` -- Architecture decision records from ADR 0111 on (earlier numbers live only in commit messages); `README.md` says how to take a number
 
 <!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
+
 ## Claiming issues
 
 Agents on several machines work this repo, all as the same GitHub user, so an issue is claimed before anyone works on it. A claim is the branch `claim/issue-<n>` on origin, holding one empty commit that names the agent and host. Git accepts only the first push of a new branch, so exactly one claimant wins. `scripts/issue.sh` does the whole cycle (bash; on Windows it runs under Git Bash):
@@ -219,13 +275,19 @@ Agents on several machines work this repo, all as the same GitHub user, so an is
 scripts/issue.sh list                  # who holds what, on every machine, and for how long
 scripts/issue.sh claim <n>             # claim and make the worktree ../Flint-<n>; exit 2: taken, pick another
 scripts/issue.sh claim <n> --here      # claim for the worktree you're already in (a desktop-app worktree)
+scripts/issue.sh claim <n> --base <b>  # branch from, and land on, the feature branch <b>; adds to either form above
 scripts/issue.sh renew <n>             # at the start of each session on long work
-scripts/issue.sh land <n>              # verify, push the branch and open a PR to main; release <n> once it merges
+scripts/issue.sh land <n>              # verify, push the branch and open a PR to main; the merge closes the issue and that releases the claim
 scripts/issue.sh release <n>           # giving up: push your branch and comment where it stands first
+scripts/issue.sh reap [--dry-run]      # delete the claims whose issue is closed; the SessionStart hook runs it
 ```
 
-- **A hook enforces it.** `.claude/settings.json` runs `scripts/issue-guard.sh` before every `git commit` and `git push`. It refuses issue work (a branch named `issue-<n>`, or a commit saying `Closes #<n>`) unless this session holds the claim, from the worktree it was claimed for. A chore with no issue (a typo, a dependency bump) needs no claim: keep it off `issue-<n>` branches and out of `Closes` lines. A SessionStart hook lists the current claims.
-- **Only the session that claimed an issue renews, releases or lands it,** and only from its worktree. An existing worktree for an issue you didn't claim is another session's: leave it alone. Never delete another agent's `claim/*` branch.
+A claim ends when its issue closes: `.github/workflows/release-claim.yml` reaps it within a minute of the merge (or of any close), whichever machine held it, so nobody runs `release` after a merge.
+
+- **A hook enforces it.** `.claude/settings.json` runs `scripts/issue-guard.sh` before every `git commit` and `git push`. It refuses issue work (a branch named `issue-<n>`, or a commit saying `Closes #<n>`) unless this session holds the claim, from the worktree it was claimed for. A chore with no issue (a typo, a dependency bump) needs no claim: keep it off `issue-<n>` branches and out of `Closes` lines. A branch built on a sibling's carries the sibling's `Closes` line; once that issue is closed (the sibling merged), the push passes without its claim. A SessionStart hook reaps the claims on closed issues, then lists the rest.
+- **Only the session that claimed an issue renews, releases or lands it,** and only from its worktree. An existing worktree for an issue you didn't claim is another session's: leave it alone. Never delete another agent's `claim/*` branch, with one exception: a claim on a closed issue guards nothing, and `scripts/issue.sh reap` is the one way to clear it.
+- **Work on a feature branch is claimed with `--base <branch>`,** never by changing `scripts/issue.conf`, which would ride into the default branch with the merge. The claim commit records the base, and `renew`, `--steal`, `land` and the hook all follow it. GitHub closes issues only for merges to the default branch, so merging the PR into the claim's base closes the issue, with a comment naming the PR and the branch, and releases the claim. Cut the feature branch from a default branch that already holds the release-claim workflow.
 - **Claims go stale after 24 hours.** `claim <n> --steal` takes over a stale one; check the issue's comments and `origin/issue-<n>` for work in progress first, and continue from it. Taking a younger claim is Chris's call only: `claim <n> --steal --override "<his reason>"`.
 - Settings for this repo are in `scripts/issue.conf`. The tool is vendored from `skills/setup-claims` in chrischaps/Dashboard: change it there, not here. `bash scripts/issue-test.sh` tests it against a throwaway remote.
+
 <!-- claims:end -->

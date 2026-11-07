@@ -38,7 +38,11 @@ pub struct MaterialData {
     pub roughness: f32,
     /// Tangent-space normal map, embedded as the material's `normalTexture`
     /// on GLB export (named `<material>_normal`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// Always serialized, `None` too: the disk cache (#181) is a binary
+    /// format with no field names, where a skipped field shifts every byte
+    /// after it. `default` still reads text written without the field.
+    #[serde(default)]
     pub normal_map: Option<ImageData>,
 }
 

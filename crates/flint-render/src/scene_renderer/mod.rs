@@ -11,6 +11,7 @@ use render_passes::RenderPhase;
 use helpers::{identity_matrix, mat4_inv_transpose};
 
 use crate::billboard_pipeline::BillboardPipeline;
+use crate::bind_cache::{ArenaSlot, TransformArena};
 use crate::bitmap_font::BitmapFont;
 use crate::camera::Camera;
 use crate::context::RenderContext;
@@ -82,9 +83,9 @@ pub(super) struct DrawCall {
     /// Whether the draw goes into the shadow cascades: the entity's
     /// `material.cast_shadows`, true unless it says otherwise (ADR 0100).
     casts_shadow: bool,
-    transform_buffer: Arc<wgpu::Buffer>,
+    transform: TransformTarget,
     transform_bind_group: Arc<wgpu::BindGroup>,
-    material_buffer: Arc<wgpu::Buffer>, // kept alive for bind group
+    material_buffer: Arc<MaterialBuffer>, // kept alive for bind group
     material_bind_group: Arc<wgpu::BindGroup>,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
@@ -180,9 +181,10 @@ impl LodSettings {
 /// by `update_per_frame_uniforms` anyway; the material side is rebuilt only
 /// when `material_key` (uniforms + texture identity) changes.
 pub(super) struct CachedDrawBinds {
-    pub transform_buffer: Arc<wgpu::Buffer>,
+    /// Its slot in the cache's transform arena (#139).
+    pub transform: TransformTarget,
     pub transform_bind_group: Arc<wgpu::BindGroup>,
-    pub material_buffer: Arc<wgpu::Buffer>,
+    pub material_buffer: Arc<MaterialBuffer>,
     pub material_bind_group: Arc<wgpu::BindGroup>,
     pub material_key: u64,
     /// `extract_frame` of the last frame that used this entry; stale entries
@@ -201,7 +203,7 @@ pub(super) struct CachedDrawBinds {
 /// per-frame fields (debug mode, tonemapping) are the same for every draw,
 /// so sharing it is safe.
 pub(super) struct SharedMaterial {
-    pub buffer: Arc<wgpu::Buffer>,
+    pub buffer: Arc<MaterialBuffer>,
     pub bind_group: Arc<wgpu::BindGroup>,
     pub touched: u64,
 }
@@ -211,18 +213,101 @@ pub(super) struct SharedMaterial {
 pub(super) struct DrawBindCache {
     pub draws: HashMap<(flint_core::EntityId, u32), CachedDrawBinds>,
     pub materials: HashMap<u64, SharedMaterial>,
+    /// The draws' transform uniforms, a slot each (#139).
+    pub arena: TransformArena,
 }
 
 impl DrawBindCache {
     pub fn clear(&mut self) {
-        self.draws.clear();
+        for (_, entry) in self.draws.drain() {
+            entry.transform.free_in(&mut self.arena);
+        }
         self.materials.clear();
     }
 
     /// Drop the entries and materials no draw used in `frame`.
     pub fn retain_frame(&mut self, frame: u64) {
-        self.draws.retain(|_, c| c.touched == frame);
+        let arena = &mut self.arena;
+        self.draws.retain(|_, c| {
+            let keep = c.touched == frame;
+            if !keep {
+                c.transform.free_in(arena);
+            }
+            keep
+        });
         self.materials.retain(|_, m| m.touched == frame);
+    }
+}
+
+/// Where a draw's transform uniforms are written each frame.
+#[derive(Clone)]
+pub(super) enum TransformTarget {
+    /// A buffer of the draw's own: draws made fresh each frame (the grid,
+    /// debug overlays).
+    Own(Arc<wgpu::Buffer>),
+    /// A slot in the draw bind cache's arena, uploaded a page at a time
+    /// instead of a write per draw (#139).
+    Slot(ArenaSlot),
+}
+
+impl TransformTarget {
+    /// Write `uniforms` for this frame: at once into a buffer of the draw's
+    /// own, or staged in `arena` for its page's one upload.
+    fn write(&self, queue: &wgpu::Queue, arena: &mut TransformArena, uniforms: &TransformUniforms) {
+        match self {
+            TransformTarget::Own(buffer) => {
+                queue.write_buffer(buffer, 0, bytemuck::bytes_of(uniforms));
+            }
+            TransformTarget::Slot(slot) => arena.stage(*slot, bytemuck::bytes_of(uniforms)),
+        }
+    }
+
+    fn free_in(&self, arena: &mut TransformArena) {
+        if let TransformTarget::Slot(slot) = self {
+            arena.free(*slot);
+        }
+    }
+}
+
+/// A material's uniform buffer, and the per-frame flags (debug mode,
+/// tonemapping) last written into it. They change only when a debug view
+/// or the HDR chain does, so they're written then and not every frame
+/// (#139).
+pub(super) struct MaterialBuffer {
+    buffer: wgpu::Buffer,
+    /// `debug_mode << 32 | enable_tonemapping` as last written; `u64::MAX`
+    /// before the first frame.
+    flags: std::sync::atomic::AtomicU64,
+}
+
+impl MaterialBuffer {
+    fn new(buffer: wgpu::Buffer) -> Self {
+        Self {
+            buffer,
+            flags: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Write `debug_mode` and `enable_tonemapping` (byte offsets 28 and 32:
+    /// base_color(16) + metallic(4) + roughness(4) + use_vertex_color(4))
+    /// when they differ from what's there.
+    fn write_flags(&self, queue: &wgpu::Queue, debug_mode: u32, tonemapping: u32) {
+        let want = (debug_mode as u64) << 32 | tonemapping as u64;
+        if self.flags.swap(want, std::sync::atomic::Ordering::Relaxed) != want {
+            queue.write_buffer(
+                &self.buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode, tonemapping]),
+            );
+        }
+    }
+}
+
+impl std::ops::Deref for MaterialBuffer {
+    type Target = wgpu::Buffer;
+
+    fn deref(&self) -> &wgpu::Buffer {
+        &self.buffer
     }
 }
 
@@ -297,9 +382,9 @@ struct SkinnedDrawCall {
     vertex_buffer: Arc<wgpu::Buffer>,
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,
-    transform_buffer: Arc<wgpu::Buffer>,
+    transform: TransformTarget,
     transform_bind_group: Arc<wgpu::BindGroup>,
-    material_buffer: Arc<wgpu::Buffer>,
+    material_buffer: Arc<MaterialBuffer>,
     material_bind_group: Arc<wgpu::BindGroup>,
     bone_bind_group: Arc<wgpu::BindGroup>,
     /// Unique-edge index buffer for wireframe debug modes (shares the
@@ -430,8 +515,30 @@ pub struct SceneRenderer {
     grass_max_instances: u32,
     grass_draw_args_buffer: Option<wgpu::Buffer>,
     grass_count_readback: Option<GrassCountReadback>,
+    /// The frame being encoded dispatched the grass: read its count back
+    /// once it is submitted (`frame_submitted`).
+    grass_readback_due: bool,
+    /// The grass's view of each shadow cascade it casts into: a buffer and
+    /// its bind group, kept across frames (#139).
+    grass_shadow_binds: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
+    /// The ASCII spike's settings and passes (#261); `None` until a mode is set.
+    ascii_config: crate::ascii_spike::AsciiSpikeConfig,
+    ascii_spike: Option<crate::ascii_spike::AsciiSpike>,
+    /// Masked entities -> (style id, world origin of the matched root).
+    ascii_targets: HashMap<flint_core::EntityId, (f32, [f32; 3])>,
+    /// The entity style mask's pass (#263); `None` until a frame needs it.
+    style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
+    /// Style names entities ask for, numbered for the mask.
+    style_ids: crate::style_mask::StyleIds,
+    /// Styled entities -> their mask id, rebuilt each `update_from_world`
+    /// while the mask is wanted (empty otherwise).
+    style_by_entity: HashMap<flint_core::EntityId, u16>,
+    /// The blend of each styled entity drawn at less than 1 (#278).
+    style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
+    /// The `style` debug view switched `mask_view` on, so it switches it off.
+    mask_view_forced: bool,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
@@ -562,6 +669,15 @@ pub struct SceneRenderer {
     bitmap_font_cache: HashMap<String, BitmapFont>,
     /// Scene directory for resolving relative font/texture paths
     pub scene_dir: Option<std::path::PathBuf>,
+    /// Physical pixels per logical point of the window it draws into: the
+    /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
+    /// it. Hosts with a window set it; 1 headless.
+    pub pixels_per_point: f32,
+    /// Frames drawn through the post chain, handed to styles as
+    /// [`StyleFrame::frame`](crate::stylize::StyleFrame::frame) (#277).
+    style_frame_serial: std::sync::atomic::AtomicU64,
+    /// Bumped by [`reset_style_history`](Self::reset_style_history).
+    style_history_epoch: u64,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
@@ -656,17 +772,12 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(
-            &context.device,
-            &context.queue,
-            surface_format,
-            postprocess_config.kuwahara_enabled,
-        );
+        let postprocess_pipeline =
+            PostProcessPipeline::new(&context.device, &context.queue, surface_format);
         let postprocess_resources = PostProcessResources::new(
             &context.device,
             context.config.width,
             context.config.height,
-            postprocess_config.kuwahara_enabled,
         );
 
         Self {
@@ -725,7 +836,17 @@ impl SceneRenderer {
             grass_max_instances: 0,
             grass_draw_args_buffer: None,
             grass_count_readback: None,
+            grass_readback_due: false,
+            grass_shadow_binds: Vec::new(),
             gpu_timer: None,
+            ascii_config: Default::default(),
+            ascii_spike: None,
+            ascii_targets: HashMap::new(),
+            style_mask_pass: None,
+            style_ids: Default::default(),
+            style_by_entity: HashMap::new(),
+            style_blend_by_entity: HashMap::new(),
+            mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -808,6 +929,9 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -2140,14 +2264,8 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(
-            device,
-            queue,
-            surface_format,
-            postprocess_config.kuwahara_enabled,
-        );
-        let postprocess_resources =
-            PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
+        let postprocess_resources = PostProcessResources::new(device, width, height);
 
         Self {
             pipeline,
@@ -2205,7 +2323,17 @@ impl SceneRenderer {
             grass_max_instances: 0,
             grass_draw_args_buffer: None,
             grass_count_readback: None,
+            grass_readback_due: false,
+            grass_shadow_binds: Vec::new(),
             gpu_timer: None,
+            ascii_config: Default::default(),
+            ascii_spike: None,
+            ascii_targets: HashMap::new(),
+            style_mask_pass: None,
+            style_ids: Default::default(),
+            style_by_entity: HashMap::new(),
+            style_blend_by_entity: HashMap::new(),
+            mask_view_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2290,6 +2418,9 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            pixels_per_point: 1.0,
+            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
+            style_history_epoch: 0,
             grass_time: 0.0,
             device_lost: false,
         }
@@ -2436,10 +2567,13 @@ impl SceneRenderer {
                 })
             });
         queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
-        if let Some(skinned_meshes) = self.mesh_cache.get_skinned_mut(asset_name) {
-            for mesh in skinned_meshes.iter_mut() {
-                queue.write_buffer(&mesh.bone_buffer, 0, bytes);
-            }
+        // Its sub-meshes share one buffer
+        if let Some(mesh) = self
+            .mesh_cache
+            .get_skinned(asset_name)
+            .and_then(|meshes| meshes.first())
+        {
+            queue.write_buffer(&mesh.bone_buffer, 0, bytes);
         }
     }
 
@@ -2519,6 +2653,56 @@ impl SceneRenderer {
         self.ray_meshes.remove(name);
         self.mesh_cache
             .upload_procedural(device, name, vertices, indices, material);
+    }
+
+    /// [`load_procedural_mesh`](Self::load_procedural_mesh) for a mesh of
+    /// several parts, each with its own material, all drawn under `name`.
+    pub fn load_procedural_mesh_parts(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        parts: Vec<(
+            Vec<crate::primitives::Vertex>,
+            Vec<u32>,
+            flint_import::ImportedMaterial,
+        )>,
+    ) {
+        self.ray_meshes.remove(name);
+        self.mesh_cache.upload_procedural_parts(device, name, parts);
+    }
+
+    /// Upload raw RGBA8 pixels as the texture `name`, replacing one already
+    /// there. Cached material binds name their textures, so they are dropped
+    /// and remade on the next `update_from_world` to pick up the new one:
+    /// fine for a swap (a placeholder giving way), costly every frame.
+    #[allow(clippy::too_many_arguments)]
+    pub fn replace_texture_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        is_normal_map: bool,
+    ) -> Result<(), String> {
+        self.remove_texture(name);
+        self.load_texture_rgba(device, queue, name, width, height, data, is_normal_map)
+            .map(|_| ())
+    }
+
+    /// Remove the texture `name`, if loaded, and drop the cached material
+    /// binds that may hold it. Returns whether it was there.
+    pub fn remove_texture(&mut self, name: &str) -> bool {
+        let Some(cache) = &mut self.texture_cache else {
+            return false;
+        };
+        if !cache.contains(name) {
+            return false;
+        }
+        cache.remove_texture(name);
+        self.draw_bind_cache.clear();
+        true
     }
 
     /// Make the mesh `name` a ray target (ADR 0105): from the next
@@ -2736,6 +2920,20 @@ impl SceneRenderer {
     pub fn finish_gpu_timings(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if let Some(timer) = &mut self.gpu_timer {
             timer.finish_frame(device, queue);
+        }
+    }
+
+    /// [`finish_gpu_timings`](Self::finish_gpu_timings) in the frame's own
+    /// encoder, after its last timed scope: the resolve rides the frame's
+    /// one submission, and [`frame_submitted`](Self::frame_submitted)
+    /// starts the read-back (#139).
+    pub fn encode_gpu_timings(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.resolve_into(device, encoder);
         }
     }
 
@@ -3068,6 +3266,24 @@ impl SceneRenderer {
         self.normal_arrow_draws.clear();
         self.extract_frame = self.extract_frame.wrapping_add(1);
 
+        self.resolve_ascii_targets(world);
+        self.sync_debug_styles();
+        // Ids for every styled entity: they say which styles are on for
+        // entities alone (#266) as well as what the mask holds (#263)
+        if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
+            crate::style_mask::resolve_blended(
+                world,
+                &self.postprocess_config,
+                &mut self.style_ids,
+                &mut self.style_by_entity,
+                &mut self.style_blend_by_entity,
+            );
+        } else {
+            self.style_ids.set(Vec::new());
+            self.style_by_entity.clear();
+            self.style_blend_by_entity.clear();
+        }
+
         // Extract lights from scene entities
         self.extract_lights_from_world(world);
 
@@ -3257,17 +3473,34 @@ impl SceneRenderer {
                 emissive,
             );
             SharedMaterial {
-                buffer: Arc::new(b),
+                buffer: Arc::new(MaterialBuffer::new(b)),
                 bind_group: Arc::new(bg),
                 touched: frame,
             }
         });
         shared.touched = frame;
         let (mb, mbg) = (shared.buffer.clone(), shared.bind_group.clone());
+        let arena = &mut cache.arena;
         let entry = cache.draws.entry(key).or_insert_with(|| {
-            let (tb, tbg) = Self::create_transform_bind(device, pipeline, transform_uniforms);
+            let (slot, page) = arena.alloc(device);
+            arena.stage(slot, bytemuck::bytes_of(transform_uniforms));
+            let tbg =
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &pipeline.transform_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &page,
+                            offset: slot.offset(),
+                            size: wgpu::BufferSize::new(
+                                std::mem::size_of::<TransformUniforms>() as u64
+                            ),
+                        }),
+                    }],
+                    label: Some("Transform Bind Group (arena)"),
+                });
             CachedDrawBinds {
-                transform_buffer: Arc::new(tb),
+                transform: TransformTarget::Slot(slot),
                 transform_bind_group: Arc::new(tbg),
                 material_buffer: mb.clone(),
                 material_bind_group: mbg.clone(),
@@ -3330,7 +3563,7 @@ impl SceneRenderer {
             index_count,
             is_wireframe,
             casts_shadow: true,
-            transform_buffer: binds.transform_buffer.clone(),
+            transform: binds.transform.clone(),
             transform_bind_group: binds.transform_bind_group.clone(),
             material_buffer: binds.material_buffer.clone(),
             material_bind_group: binds.material_bind_group.clone(),
@@ -3460,9 +3693,9 @@ impl SceneRenderer {
             index_count: mesh.indices.len() as u32,
             is_wireframe,
             casts_shadow: true,
-            transform_buffer: Arc::new(transform_buffer),
+            transform: TransformTarget::Own(Arc::new(transform_buffer)),
             transform_bind_group: Arc::new(transform_bind_group),
-            material_buffer: Arc::new(material_buffer),
+            material_buffer: Arc::new(MaterialBuffer::new(material_buffer)),
             material_bind_group: Arc::new(material_bind_group),
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
@@ -3917,6 +4150,14 @@ impl SceneRenderer {
         self.apply_ambient_override();
     }
 
+    /// Forget what styles remember of earlier frames (ASCII's temporal
+    /// stability, #277): call it when the picture stops following on from
+    /// the last one, on a scene change or a camera cut. The next frame is
+    /// drawn as if it were the first.
+    pub fn reset_style_history(&mut self) {
+        self.style_history_epoch = self.style_history_epoch.wrapping_add(1);
+    }
+
     /// Clear any scene-authored ambient override, restoring the built-in
     /// default (needed on scene transitions so an old scene's ambient never
     /// leaks into a scene that doesn't author one).
@@ -4193,14 +4434,25 @@ impl SceneRenderer {
         if width == 0 || height == 0 {
             return;
         }
+        let same_surface = self.surface_size == (width, height);
         self.surface_size = (width, height);
         let (w, h) = crate::render_scale::scaled_size(width, height, self.render_scale);
-        self.postprocess_resources = Some(PostProcessResources::new(
-            device,
-            w,
-            h,
-            self.postprocess_config.kuwahara_enabled,
-        ));
+        // Stylize targets live in the resources, so they (and every bind
+        // group over one) go with the old size (#262). Every bind group
+        // does; but when only the render scale moved (`--render-scale
+        // auto` stepping, #270) the surface is the same size, so the
+        // display-stage targets are too, and they hold ASCII's per-cell
+        // history (#277): keep them, and a step doesn't reset it. HDR-stage
+        // targets in the set are remade at the new size on their next use.
+        let kept = same_surface
+            .then(|| self.postprocess_resources.take())
+            .flatten()
+            .map(|old| old.styles);
+        let mut resources = PostProcessResources::new(device, w, h);
+        if let Some(styles) = kept {
+            resources.styles = styles;
+        }
+        self.postprocess_resources = Some(resources);
         // Below the surface's size the scene keeps a depth buffer of its own
         // (#122); at scale 1 it draws into the caller's, as it always has.
         if (w, h) == (width, height) {
@@ -4234,6 +4486,236 @@ impl SceneRenderer {
         self.render_scale = scale;
         if crate::render_scale::scaled_size(width, height, scale) != before {
             self.resize_postprocess(device, width, height);
+        }
+    }
+
+    /// Turn on one of the ASCII spike's prototypes (#261), or off with
+    /// [`AsciiSpikeMode::Off`](crate::AsciiSpikeMode::Off). The masked modes
+    /// pick their entities by name at the next
+    /// [`update_from_world`](Self::update_from_world).
+    pub fn set_ascii_spike(
+        &mut self,
+        device: &wgpu::Device,
+        config: crate::ascii_spike::AsciiSpikeConfig,
+    ) {
+        if config.mode != crate::AsciiSpikeMode::Off && self.ascii_spike.is_none() {
+            self.ascii_spike = Some(crate::ascii_spike::AsciiSpike::new(
+                device,
+                &self.pipeline.transform_bind_group_layout,
+            ));
+        }
+        self.ascii_config = config;
+    }
+
+    /// Find the entities the ASCII spike masks: each match and its
+    /// descendants, numbered by the matched root's name order.
+    fn resolve_ascii_targets(&mut self, world: &FlintWorld) {
+        self.ascii_targets.clear();
+        if !self.ascii_config.mode.is_masked() {
+            return;
+        }
+        let mut roots: Vec<(String, flint_core::EntityId)> = world
+            .all_entities()
+            .into_iter()
+            .filter(|e| self.ascii_config.matches(&e.name))
+            .map(|e| (e.name, e.id))
+            .collect();
+        roots.sort();
+        for (i, (_, root)) in roots.iter().enumerate() {
+            let origin = world
+                .get_world_matrix(*root)
+                .map_or([0.0; 3], |m| [m[3][0], m[3][1], m[3][2]]);
+            let id = (i + 1) as f32;
+            let mut stack = vec![*root];
+            while let Some(e) = stack.pop() {
+                // A nested match keeps the outer root's id and anchor
+                self.ascii_targets.entry(e).or_insert((id, origin));
+                stack.extend(world.get_children(e));
+            }
+        }
+    }
+
+    /// Record the ASCII spike's mask pass over this frame's visible opaque
+    /// draws of the masked entities.
+    fn encode_ascii_mask(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+    ) {
+        let Some(spike) = &self.ascii_spike else {
+            return;
+        };
+        let (w, h) = self.scene_size();
+        let m = camera.view_projection_matrix();
+        let project = |p: [f32; 3]| -> [f32; 2] {
+            let x = m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0];
+            let y = m[0][1] * p[0] + m[1][1] * p[1] + m[2][1] * p[2] + m[3][1];
+            let wc = m[0][3] * p[0] + m[1][3] * p[1] + m[2][3] * p[2] + m[3][3];
+            let wc = if wc.abs() < 1e-6 { 1e-6 } else { wc };
+            [
+                (x / wc * 0.5 + 0.5) * w as f32,
+                (0.5 - y / wc * 0.5) * h as f32,
+            ]
+        };
+        let draws: Vec<_> = self
+            .entity_draws
+            .iter()
+            .filter(|d| !d.is_wireframe)
+            .filter_map(|d| {
+                let (id, origin) = *self.ascii_targets.get(d.entity_id.as_ref()?)?;
+                Some(crate::ascii_spike::MaskDrawRef {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    id,
+                    anchor: project(origin),
+                })
+            })
+            .collect();
+        spike.encode_mask(
+            device,
+            queue,
+            encoder,
+            depth_view,
+            &self.ascii_config,
+            &draws,
+        );
+    }
+
+    /// Whether this frame draws the entity style mask: post-processing is
+    /// up and a style that reads it is on (#263).
+    fn style_mask_wanted(&self) -> bool {
+        self.postprocess_resources.is_some()
+            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_ids)
+    }
+
+    /// Keep the `style` debug view's style (`mask_view`) on while that
+    /// mode is set, whatever config was set since, and off once it isn't
+    /// unless the config asked for it itself.
+    fn sync_debug_styles(&mut self) {
+        let styles = &mut self.postprocess_config.styles;
+        if self.debug_state.mode == DebugMode::StyleMask {
+            if !styles.is_enabled("mask_view") {
+                styles.set_enabled("mask_view", true);
+                self.mask_view_forced = true;
+            }
+        } else if std::mem::take(&mut self.mask_view_forced) {
+            styles.set_enabled("mask_view", false);
+        }
+    }
+
+    /// Bind groups the post chain keeps (its styles' among them). Steady
+    /// from frame to frame while nothing new is switched on, so tests can
+    /// show a per-frame change makes none (#269).
+    pub fn kept_post_binds(&self) -> usize {
+        self.postprocess_resources
+            .as_ref()
+            .map_or(0, |r| r.binds.len())
+    }
+
+    /// The style ids the mask uses: which number each `style_mask` style
+    /// name has this frame.
+    pub fn style_ids(&self) -> &crate::style_mask::StyleIds {
+        &self.style_ids
+    }
+
+    /// The style mask id of each styled entity, as of the last
+    /// [`update_from_world`](Self::update_from_world) (empty while no
+    /// style reads the mask).
+    pub fn styled_entities(&self) -> &HashMap<flint_core::EntityId, u16> {
+        &self.style_by_entity
+    }
+
+    /// How much of its style each styled entity drawn at less than 1 is
+    /// drawn with (#278); an entity missing here is fully styled.
+    pub fn styled_blends(&self) -> &HashMap<flint_core::EntityId, f32> {
+        &self.style_blend_by_entity
+    }
+
+    /// Record the style mask pass over this frame's visible opaque draws
+    /// (static, procedural and skinned) of styled entities. The mask is
+    /// cleared even with none, so a style never reads a stale frame.
+    fn encode_style_mask(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        depth_owned: bool,
+    ) {
+        let Some(resources) = &self.postprocess_resources else {
+            return;
+        };
+        if self.style_mask_pass.is_none() {
+            let Some(skinned) = &self.skinned_pipeline else {
+                return;
+            };
+            self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
+                device,
+                &self.pipeline.transform_bind_group_layout,
+                &skinned.bone_bind_group_layout,
+            ));
+        }
+        let mask = resources.styles.get(
+            device,
+            crate::style_mask::MASK_TARGET,
+            crate::style_mask::STYLE_MASK_FORMAT,
+            resources.width,
+            resources.height,
+        );
+        let ids = &self.style_by_entity;
+        let blends = &self.style_blend_by_entity;
+        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
+        let blend_of = |e: &Option<flint_core::EntityId>| {
+            e.as_ref()
+                .and_then(|e| blends.get(e).copied())
+                .unwrap_or(1.0)
+        };
+        let mut draws = Vec::new();
+        if !ids.is_empty() {
+            draws.extend(
+                self.entity_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe)
+                    .filter_map(|d| {
+                        Some(crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id: id_of(&d.entity_id)?,
+                            blend: blend_of(&d.entity_id),
+                        })
+                    }),
+            );
+            draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
+                Some(crate::style_mask::MaskDraw {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                    id: id_of(&d.entity_id)?,
+                    blend: blend_of(&d.entity_id),
+                })
+            }));
+        }
+        if let Some(pass) = &mut self.style_mask_pass {
+            pass.encode(
+                device,
+                queue,
+                encoder,
+                &resources.binds,
+                &mask.view,
+                depth_view,
+                depth_owned,
+                &draws,
+            );
         }
     }
 
@@ -4451,48 +4933,44 @@ impl SceneRenderer {
         samples
     }
 
-    /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
-    /// Creates pipelines and textures on demand if they haven't been allocated yet.
-    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
-        if !self.postprocess_config.kuwahara_enabled {
+    /// Build the pipelines of every stylize pass the config switches on
+    /// that isn't built yet (#262). Every frame does this itself; calling
+    /// it after setting a config moves the shader compile off the first
+    /// frame that draws the style. A style's textures are made on that
+    /// frame.
+    ///
+    /// Building runs under `catch_unwind` because some GPU drivers (Intel
+    /// Skylake) crash with unrecoverable device loss compiling these
+    /// shaders; a style that fails stays off and marks the device lost.
+    pub fn ensure_style_resources(&mut self, device: &wgpu::Device) {
+        let Some(pp) = &mut self.postprocess_pipeline else {
             return;
-        }
-
-        // Create only the Kuwahara pipelines (not the entire PostProcessPipeline).
-        // Uses catch_unwind because some GPU drivers (Intel Skylake) crash with
-        // unrecoverable device loss when compiling these shaders.
-        if let Some(pp) = &mut self.postprocess_pipeline {
-            if pp.kuwahara.is_none() {
-                use std::panic::{catch_unwind, AssertUnwindSafe};
-                let device_ptr = device as *const wgpu::Device;
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    // SAFETY: device_ptr is valid for the duration of this closure
-                    let dev = unsafe { &*device_ptr };
-                    crate::postprocess::KuwaharaPipelines::new(dev)
-                }));
-                match result {
-                    Ok(pipelines) => pp.kuwahara = Some(pipelines),
-                    Err(_) => {
-                        tracing::warn!(
-                            "Kuwahara filter unavailable: GPU driver crashed during \
-                             shader compilation. Try updating your graphics drivers."
-                        );
-                        self.postprocess_config.kuwahara_enabled = false;
-                        self.authored_postprocess.kuwahara_enabled = false;
-                        self.device_lost = true;
-                        return;
-                    }
-                }
+        };
+        let surface_format = pp.surface_format;
+        for failed in pp
+            .styles
+            .ensure(device, surface_format, &self.postprocess_config, &self.style_ids)
+        {
+            tracing::warn!(
+                "{} style unavailable: GPU driver crashed during shader compilation. \
+                 Try updating your graphics drivers.",
+                failed.label
+            );
+            if failed.uses_style_table() {
+                self.postprocess_config.styles.set_enabled(failed.name, false);
+                self.authored_postprocess.styles.set_enabled(failed.name, false);
+            } else if failed.name == "kuwahara" {
+                self.postprocess_config.kuwahara_enabled = false;
+                self.authored_postprocess.kuwahara_enabled = false;
             }
+            self.device_lost = true;
         }
+    }
 
-        // Create only the Kuwahara textures (not the entire PostProcessResources)
-        if let Some(resources) = &mut self.postprocess_resources {
-            if resources.kuwahara.is_none() {
-                let (w, h) = (resources.width, resources.height);
-                resources.kuwahara = Some(crate::postprocess::KuwaharaTextures::new(device, w, h));
-            }
-        }
+    /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),
+    /// from when Kuwahara was the only style.
+    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
+        self.ensure_style_resources(device);
     }
 
     /// Validate the configured MSAA sample count (ADR 0058): 1 or 4;
@@ -4656,7 +5134,6 @@ impl SceneRenderer {
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
-    #[profiling::function]
     pub fn render_to(
         &mut self,
         device: &wgpu::Device,
@@ -4665,6 +5142,43 @@ impl SceneRenderer {
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
+        if self.device_lost {
+            return;
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Frame Encoder"),
+        });
+        self.encode_to(device, queue, &mut encoder, depth_view, camera, target_view);
+        queue.submit(std::iter::once(encoder.finish()));
+        self.frame_submitted();
+    }
+
+    /// [`render_to`](Self::render_to) into `encoder`, for a host that
+    /// draws more into the frame (its HUD) and submits once (#139). On the
+    /// web each submission crosses into JS; the frame used to make twenty.
+    ///
+    /// The frame's uniforms are written to `queue` now and reach the GPU
+    /// with the next submission, so encode one camera per submission: a
+    /// second camera's uniforms would overwrite this one's. After
+    /// submitting, call [`frame_submitted`](Self::frame_submitted).
+    #[profiling::function]
+    pub fn encode_to(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+        target_view: &wgpu::TextureView,
+    ) {
+        if self.device_lost {
+            return;
+        }
+        // A style switched on by any route (scene load, F4, a script's
+        // config) is built before the frame that first needs it (#262).
+        // When nothing new is on this is a walk over the registry.
+        self.sync_debug_styles();
+        self.ensure_style_resources(device);
         if self.device_lost {
             return;
         }
@@ -4729,22 +5243,14 @@ impl SceneRenderer {
             }
         }
         if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
-            let mut compute_encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Grass Compute Encoder"),
-                });
             let grass_time = self.grass_time;
-            let scope = gpu_timer
-                .as_mut()
-                .map(|t| t.begin(&mut compute_encoder, "Grass"));
-            self.dispatch_grass_compute(device, queue, &mut compute_encoder, camera, grass_time);
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Grass"));
+            self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(&mut compute_encoder, scope);
+                timer.end(encoder, scope);
             }
-            queue.submit(std::iter::once(compute_encoder.finish()));
-            if let Some(readback) = &mut self.grass_count_readback {
-                readback.start_map();
-            }
+            // Its count is read back once the frame is submitted
+            self.grass_readback_due = true;
         } else {
             self.grass_instance_count = 0;
         }
@@ -4752,12 +5258,10 @@ impl SceneRenderer {
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
-        let scope = gpu_timer
-            .as_mut()
-            .map(|t| t.begin_submit(device, queue, "Shadows"));
-        self.render_shadow_pass(device, queue, camera, camera_pos);
+        let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Shadows"));
+        self.render_shadow_pass(device, queue, encoder, camera, camera_pos);
         if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-            timer.end_submit(device, queue, scope);
+            timer.end(encoder, scope);
         }
 
         // Set aside draws outside the camera frustum for the rest of the frame.
@@ -4839,10 +5343,7 @@ impl SceneRenderer {
             (scene_target_view, None, depth_view)
         };
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-        let scene_scope = gpu_timer.as_mut().map(|t| t.begin(&mut encoder, "Scene"));
+        let scene_scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Scene"));
 
         if !self.ocean_grab_this_frame {
             // Single-pass path (unchanged for scenes without an ocean).
@@ -4876,7 +5377,7 @@ impl SceneRenderer {
             );
             drop(render_pass);
             if msaa_active {
-                self.resolve_depth_into(device, &mut encoder, depth_view);
+                self.resolve_depth_into(device, encoder, depth_view);
             }
         } else {
             // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
@@ -4915,26 +5416,36 @@ impl SceneRenderer {
             // With MSAA, the grab blit below reads the caller's single-sample
             // depth view — resolve the opaque depth into it first (ADR 0058).
             if msaa_active {
-                self.resolve_depth_into(device, &mut encoder, depth_view);
+                self.resolve_depth_into(device, encoder, depth_view);
             }
 
             // Blit: snapshot opaque color + depth into sampleable copies.
             {
                 let op = self.ocean_pipeline.as_ref().unwrap();
-                let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &op.blit_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(scene_target_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(depth_view),
-                        },
-                    ],
-                    label: Some("Grab Blit Bind Group"),
-                });
+                // The grab runs only into the HDR chain, so the bind group
+                // is the chain's to keep while the depth is its too (#139).
+                let resources = self.postprocess_resources.as_ref().unwrap();
+                let blit_bind_group =
+                    resources
+                        .binds
+                        .get_if(scaled_depth.is_some(), "ocean grab blit", 0, || {
+                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &op.blit_bind_group_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            scene_target_view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(depth_view),
+                                    },
+                                ],
+                                label: Some("Grab Blit Bind Group"),
+                            })
+                        });
                 let grab_color_view = &self.ocean_grab_color.as_ref().unwrap().1;
                 let grab_depth_view = &self.ocean_grab_depth.as_ref().unwrap().1;
                 let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4962,7 +5473,7 @@ impl SceneRenderer {
                     occlusion_query_set: None,
                 });
                 blit_pass.set_pipeline(&op.blit_pipeline);
-                blit_pass.set_bind_group(0, &blit_bind_group, &[]);
+                blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
                 blit_pass.draw(0..3, 0..1);
             }
 
@@ -5001,21 +5512,51 @@ impl SceneRenderer {
             // Final depth resolve so postprocess (SSAO/DoF/fog/volumetric)
             // sees the complete frame's depth (ADR 0058).
             if msaa_active {
-                self.resolve_depth_into(device, &mut encoder, depth_view);
+                self.resolve_depth_into(device, encoder, depth_view);
             }
         }
 
         if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scene_scope) {
-            timer.end(&mut encoder, scope);
+            timer.end(encoder, scope);
         }
-        queue.submit(std::iter::once(encoder.finish()));
+
+        // ASCII spike (#261): size its targets to the HDR chain, then mask
+        // the chosen entities against the frame's single-sample depth.
+        let ascii_active = has_postprocess
+            && self.postprocess_config.enabled
+            && self.ascii_config.mode != crate::AsciiSpikeMode::Off;
+        if ascii_active {
+            let size = self.scene_size();
+            if let Some(spike) = &mut self.ascii_spike {
+                spike.ensure_targets(device, size);
+            }
+            if self.ascii_config.mode.is_masked() {
+                let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "ASCII mask"));
+                self.encode_ascii_mask(device, queue, encoder, depth_view, camera);
+                if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                    timer.end(encoder, scope);
+                }
+            }
+        }
+
+        // The entity style mask (#263): the styled entities' ids, drawn
+        // against the frame's single-sample depth, while a style reads it.
+        if has_postprocess && self.style_mask_wanted() {
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
+            self.encode_style_mask(device, queue, encoder, depth_view, scaled_depth.is_some());
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(encoder, scope);
+            }
+        }
 
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
             self.render_postprocess(
                 device,
                 queue,
+                encoder,
                 depth_view,
+                scaled_depth.is_some(),
                 target_view,
                 camera,
                 gpu_timer.as_mut(),
@@ -5025,32 +5566,49 @@ impl SceneRenderer {
         // The scaled scene's depth, into the surface-sized view the overlays
         // below and the caller's own (world text, gizmos) test against.
         if let (Some(_), Some(upscale)) = (&scaled_depth, &self.depth_upscale) {
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Depth Upscale Encoder"),
-            });
-            upscale.record(&mut encoder, surface_depth_view);
-            queue.submit(std::iter::once(encoder.finish()));
+            upscale.record(encoder, surface_depth_view);
         }
 
         // World lines (ADR 0083) go over the finished image, tested against
         // the frame's single-sample depth. Without the HDR chain an MSAA depth
         // is never resolved, so they're skipped there.
         if !self.world_lines.is_empty() && (has_postprocess || self.sample_count == 1) {
-            let scope = gpu_timer
-                .as_mut()
-                .map(|t| t.begin_submit(device, queue, "World lines"));
-            self.render_world_lines(device, queue, surface_depth_view, target_view, camera);
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "World lines"));
+            self.render_world_lines(
+                device,
+                queue,
+                encoder,
+                surface_depth_view,
+                target_view,
+                camera,
+            );
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end_submit(device, queue, scope);
+                timer.end(encoder, scope);
             }
         }
         self.gpu_timer = gpu_timer;
+    }
+
+    /// Start what waits on the frame [`encode_to`](Self::encode_to)
+    /// recorded: the grass count's read-back and, once
+    /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
+    /// GPU timer's. Call once that frame is submitted.
+    pub fn frame_submitted(&mut self) {
+        if std::mem::take(&mut self.grass_readback_due) {
+            if let Some(readback) = &mut self.grass_count_readback {
+                readback.start_map();
+            }
+        }
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.start_readback();
+        }
     }
 
     fn render_world_lines(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
         target_view: &wgpu::TextureView,
         camera: &Camera,
@@ -5071,19 +5629,15 @@ impl SceneRenderer {
             px_per_point: self.world_line_px_per_point,
             linear_output: format.is_srgb(),
         };
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("World Line Encoder"),
-        });
         pipeline.draw(
             device,
             queue,
-            &mut encoder,
+            encoder,
             target_view,
             depth_view,
             &self.world_lines,
             &view,
         );
-        queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
@@ -5155,6 +5709,44 @@ mod tests {
         for (got, want) in max.iter().zip([r, 1.0, r]) {
             assert!((got - want).abs() < 1e-5, "{max:?}");
         }
+    }
+
+    /// A render-scale step keeps the surface's size, so it keeps the
+    /// display-stage style targets (ASCII's cell history, #277) and the
+    /// history in them (#270); a real resize still drops them.
+    #[test]
+    fn a_render_scale_step_keeps_the_style_targets() {
+        let Ok(ctx) = pollster::block_on(crate::HeadlessContext::new(64, 64)) else {
+            return; // no adapter here
+        };
+        let mut renderer = super::SceneRenderer::new_headless(
+            &ctx.device,
+            &ctx.queue,
+            ctx.format,
+            64,
+            64,
+            super::RendererConfig {
+                show_grid: false,
+                sample_count: 1,
+            },
+        );
+        let probe = |r: &super::SceneRenderer| {
+            r.postprocess_resources.as_ref().unwrap().styles.get(
+                &ctx.device,
+                "probe",
+                wgpu::TextureFormat::Rgba16Uint,
+                8,
+                8,
+            )
+        };
+        let before = probe(&renderer);
+        renderer.set_render_scale(&ctx.device, 0.5);
+        assert_eq!(renderer.scene_size(), (32, 32));
+        assert!(std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
+        renderer.set_render_scale(&ctx.device, 1.0);
+        assert!(std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
+        renderer.resize_postprocess(&ctx.device, 128, 64);
+        assert!(!std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
     }
 }
 

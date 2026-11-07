@@ -54,6 +54,7 @@ the query string instead of clap:
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
+| `mix=old` | | the mix as before #138, to compare: placed sounds on kira spatial tracks, and every sound mixed whether anyone can hear it or not ([A cheaper mix](#a-cheaper-mix-138)) |
 | `fps=30\|60\|auto\|native` | | which refreshes are drawn ([Frame rate on phones](#frame-rate-on-phones-140)). A rate is a whole number of refreshes (30 is every other at 60 Hz, every fourth at 120); `auto` draws every refresh while the frames hold it and drops to a rate they hold when they don't; `native` is every refresh, unpaced. Default `auto` where the primary pointer is a finger (`pointer: coarse`), `native` elsewhere |
 | `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
@@ -508,8 +509,12 @@ the page's `#perf` panel):
   browser's, not ours.
 - canvas pixels and DPR, the adapter as the browser names it (wgpu 23's
   WebGPU backend leaves `AdapterInfo` empty, so the page asks
-  `navigator.gpu` itself), draw calls and triangles, and late audio buffers
-  (`AudioEngine::buffer_stats`).
+  `navigator.gpu` itself), draw calls and triangles, late audio buffers and
+  the mean time to mix one (`AudioEngine::buffer_stats`).
+- **voices**: the sounds and spatial tracks kira holds, and how many of
+  each it really mixes; the rest are paused because nobody can hear them
+  (`AudioSystem::mix_counts`, #138). One-shots skipped out of earshot and
+  stolen over the per-sound cap are counted beneath.
 - **cpu ms**, mean and max per phase of the frame: input, scripts,
   physics, script ui, anim/fx, sync (procgen, renderer sync, late audio),
   render (draw lists, encoding, submission), hud, present.
@@ -521,6 +526,14 @@ the page's `#perf` panel):
   `Volumetric`, `Kuwahara`), not one `Post-process`. Without timestamps the
   panel says so and the CPU phases are all it has. `?perf=cpu` leaves GPU
   timing off; on Chrome it made no difference to the frame times.
+- **webgpu**: the calls the mean frame made into WebGPU, which on the web
+  each cross from wasm into JS: submits, render passes, bind groups,
+  `writeBuffer`s and the bytes they carried, and buffers made (#139). With
+  `?perf` the page wraps `GPUQueue.submit`/`writeBuffer`,
+  `GPUDevice.createBindGroup`/`createBuffer` and
+  `GPUCommandEncoder.beginRenderPass` before the wasm loads and keeps
+  running totals in `window.flintGpuCalls`; each readout divides what moved
+  by the frames since the last.
 
 **Copy line** puts the whole readout on one line for an issue:
 
@@ -574,6 +587,59 @@ skinned draws were rebuilt every frame, and sync is now ~0.3 ms.
 80 ms every few seconds, once 1.5 s, and the readout named `[hot reload]`,
 the check of each script's modified time every frame. Windows file stats
 stall now and then. The web has no disk to check, so it never pays it.
+
+## A cheaper mix (#138)
+
+On the Pixel 8 Pro, kira mixed Float for 15 to 17 ms of every 46 ms
+buffer, on the main thread. `?perf=1` now counts what it mixes: a
+`voices` line with the sounds and spatial tracks kira holds, how many it
+really mixes, and the one-shots it skipped or stole; the `audio` line
+gains the mean time to mix one buffer.
+
+**Where the time goes.** `examples/mix_bench.rs` builds Float's mixer on
+kira's mock backend and times one 2048-frame buffer natively. Pausing the
+six loops Float keeps at volume 0 (four songs, rain, storm) saved only
+7%: a paused-or-not plain voice costs about 0.013 ms. A kira **spatial
+track** costs about 0.18 ms, 14 times as much, because it works out the
+falloff and each ear's share for every sample, with a `powf` and a
+quaternion per frame. Float's five wash and foam loops were 80% of its mix.
+
+**What changed** (all in `flint-audio`):
+
+- Placed sounds are plain voices, panned. `pan.rs` works out the gains
+  kira's spatial track would (its `-60·r^rolloff` dB falloff, each ear's
+  `0.25 + 0.75·(cos + 1)/2` with the ears turned π/8 forward) once a frame,
+  and hands them to the voice as a volume and a constant-power pan
+  (`AudioSync::pan_sources`, `AudioEngine::pan_oneshots`), tweened over a
+  frame. A test renders both through kira and matches them to 1e-4 at five
+  places around the listener. A stereo file keeps its stereo instead of
+  being folded to mono; Float's are all mono.
+- Loops nobody can hear are paused, and resumed with a 100 ms fade where
+  they stopped: any loop at volume 0, and a placed loop past 1.1x its
+  `max_distance` (back inside 1.05x) (`AudioSync::cull_inaudible`).
+- A placed one-shot out of earshot isn't started, and a fifth one of the
+  same sound fades out its oldest over 50 ms (`MAX_ONESHOTS_PER_SOUND`).
+- `?mix=old` brings the old mix back, to compare by ear or by number.
+- In the browser's worklet (#136) it is the same mix: a panned voice is a
+  `Play` with a pan, steered by `VoicePanning`, and a culled loop gets
+  `VoicePause` / `VoiceResume`. The worklet says nothing back, so a panned
+  one-shot's end is worked out from its length, and the voice count is what
+  the engine holds.
+
+**Natively** (median of 9 runs of 300 buffers, interleaved, RTX 4070
+laptop, Float's loops on a calm day):
+
+| | ms per buffer | loops mixed |
+|---|---|---|
+| old | 1.13 to 1.21 | 13 of 13 |
+| lean | 0.29 to 0.31 (73 to 76% less) | 7 of 13 |
+| lean, the sea still (wash at 0) | 0.11 to 0.14 (88 to 91% less) | 2 of 13 |
+
+**On the phone** the readout showed 4 to 11 voices and 5 to 9 spatial
+tracks over Float's first two and a half minutes (old mix). The phone
+A/B of the lean mix against `?mix=old` is still to run: four sessions
+were profiling the phone at once, and they now share it through
+`C:/Users/chris/dev/.pixel-lock`.
 
 ## Render scale (#122)
 
@@ -634,6 +700,78 @@ against desktop). The HUD's text ("SET + DRIFT", "PRESS ANY KEY") is the
 same pixels give or take the scene showing through behind it. Float's
 halftone dots are a world-space grid, so they stay where they are; their
 antialiased edges are a scene pixel wide, so they're a little softer.
+
+## Stylize passes (#270)
+
+The ASCII style (#265, per entity since #266, temporal since #277) adds
+two things to a frame: the entity style mask (`Style mask`, a redraw of
+the styled entities' ids after the scene pass) and the glyph style itself
+(`ASCII`, a cell pass and a glyph pass at the display stage). Measured on
+`demo/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
+RTX 4070 laptop, release build, 1920x1080 output, `flint render
+--gpu-time 240`, best of five processes since other jobs shared the GPU:
+
+| | Style mask | ASCII | together |
+|---|---|---|---|
+| per entity, Vulkan | 0.023 | 0.047 | 0.070 ms |
+| per entity, DX12 | 0.013 | 0.044 | 0.057 ms |
+| full screen over the same props, Vulkan | 0.023 | 0.063 | 0.086 ms |
+| full screen over the same props, DX12 | 0.013 | 0.061 | 0.074 ms |
+| full screen, no styled entities (no mask), Vulkan / DX12 | | 0.044 / 0.042 | |
+| per entity at `--render-scale 0.75`, Vulkan / DX12 | 0.020 / 0.012 | 0.048 / 0.043 | |
+| per entity at `--render-scale 0.5`, Vulkan / DX12 | 0.018 / 0.012 | 0.047 / 0.043 | |
+| full screen at `--pixels-per-point 2` (16 px cells) | | 0.043 / 0.040 | |
+
+That is under 0.1 ms of a 16.7 ms frame: SSAO (0.9 ms) costs ten times
+as much. The browser, Chrome 156 over CDP on the same machine, read from
+`?perf=1` with the canvas fixed at 1920x1080 device pixels, the bundle
+of that scene and two variants (`ascii_none`, `ascii_full`):
+
+| page | scene | Style mask | ASCII | bind groups a frame | passes |
+|---|---|---|---|---|---|
+| DPR 1, no style | 1920x1080 | | | 2 | 17 |
+| DPR 1, per entity | 1920x1080 | 0.02--0.03 | 0.09--0.12 | 3 | 20 |
+| DPR 1, full screen | 1920x1080 | 0.02--0.03 | 0.12--0.20 | 3 | 20 |
+| DPR 2 (cap 1.5), no style | 1440x810 | | | 0 | 18 |
+| DPR 2, per entity | 1440x810 | 0.02--0.03 | 0.08--0.10 | 0 | 21 |
+| DPR 2, full screen | 1440x810 | 0.02 | 0.11--0.16 | 0 | 21 |
+
+The browser's ASCII is about twice the desktop's, still a tenth of a
+millisecond. Every page held 16.7 ms rAF frames. One DPR 2 full-screen
+window read `Style mask` 0.54--0.76 ms (and Bloom, SSAO up with it) and
+didn't come back on a second load (0.02 ms); it was the GPU's clock or
+another job, not the mask. The style adds three render passes (mask,
+cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
+group a frame: the mask's draw group over the caller's depth view, which
+wgpu 23 can't key (the same reason the base chain makes two there). Under
+a render scale the chain owns its depth and all of them are kept.
+
+**Cells are output pixels.** ASCII runs at the display stage, after the
+upscale, so a render scale or the web's DPR cap changes only the scene
+under the glyphs, never the grid: 8 pt cells are 16 device pixels at DPR
+2 whether the scene draws at 1, 0.75 or 0.5. Its cost follows the output
+size, not the scene's (0.047 ms at every scale above), and the mask, at
+the scene's size, gets cheaper with it. A scale step under `auto` used
+to rebuild every style target and drop ASCII's per-cell history with
+them, a frame of shimmer each step; now `resize_postprocess` keeps the
+style targets when only the scale moved (the surface is the same size,
+so the display-stage ones are too), and HDR-stage ones are remade at the
+new size on next use (`a_render_scale_step_keeps_the_style_targets`).
+
+**DX12.** The ASCII and mask passes read every texture with
+`textureLoad` and bind no sampler of their own (the chain's one linear
+sampler is in the input group bound once a pass), so they add nothing to
+the 2048-slot sampler heap. `flint-player` on `WGPU_BACKEND=dx12` played
+the per-entity scene 23 s at 1080p, and the full-screen one under
+`--render-scale auto`, with no errors. Under Fifo the player's GPU
+timings read 2--4x high (ASCII 0.29--0.37 ms, SSAO 4.4 ms) because the
+GPU clocks down at 60 fps; `FLINT_VSYNC=0` gave ASCII 0.06--0.07 ms and
+the mask 0.01 ms. Compare passes with vsync off, or with `flint render
+--gpu-time`.
+
+**Not done:** a phone. The Pixel 8 Pro (the shared phone, behind
+`C:/Users/chris/dev/.pixel-lock`) wasn't measured; a tile GPU's
+bandwidth is where a full-screen pass would show first.
 
 ## Touch (#132)
 
@@ -1428,6 +1566,40 @@ with a 99%-busy main thread beside it. A cheaper mix (#138) helps here
 directly. `?audiostall=N` is the knob for testing the meter, and `?mixer=main`
 is the one for comparisons.
 
+### A hidden page sleeps (#162)
+
+A browser keeps a page the player has left running: another app on
+Android, another tab on a desktop. The worklet mixed on as if someone were
+listening, and the main-thread stream, its thread throttled, stuttered.
+Now `flint_audio::page` listens for `visibilitychange`, `pagehide` and
+`pageshow`. Hidden, it suspends every `AudioContext` Flint plays through
+that is running (`worklet.js` lists them); shown, it resumes those and no
+others, so a context still waiting for its first gesture still waits for it.
+Each worklet is told a sleep is coming, so its meter doesn't count the gap
+as a late buffer, and the main-thread stream's meter forgets its wait
+across one. A suspended context's clock stops, and kira's clocks and the
+rhythm sessions timed against them stop with it.
+
+A hidden page gets no `requestAnimationFrame` (Chrome desktop gave the
+hidden tab 1 callback in 6 s), so no frame runs. `web_frame_begin` skips
+one if a frame comes anyway, and the first frame back calls
+`GameClock::resync`, as the page's hold does. Without that resync it
+would step `MAX_DELTA` (250 ms). The pure decision, `PageSleep`, is
+unit-tested natively.
+
+**Chrome desktop, headed, Float, 10 s after Begin, then 6 s behind another
+tab** (`Target.createTarget` over CDP), then back:
+
+| | main | this change |
+|---|---|---|
+| Worklet buffers mixed while hidden | 135 (5.4 s of sound) | 0 |
+| Context state while hidden | running | suspended within 2 ms of `visibilitychange` |
+| Audio clock across the 6 s | kept running | 10.06 → 10.08 s |
+| Late-buffer lines on return (worklet / main thread) | 0 / 0 | 0 / 0 |
+| Main-thread meter's longest wait after return | n/a, never stopped | 73 ms |
+
+Android was not measured here; the phone check is in the PR.
+
 ## Size
 
 Release profile, wasm-bindgen 0.2.108, binaryen `wasm-opt` version 123 `-Oz`,
@@ -1527,3 +1699,62 @@ Not trimmed:
 
 3.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
 data, most of it music, now costs three times what the engine does.
+
+### Built for speed (#137)
+
+#123 built the whole wasm for size. On a phone, that slows exactly the loops
+a CPU-bound frame spends its time in. Two levers buy some of the speed back:
+
+- **wasm SIMD**: `-C target-feature=+simd128` for `wasm32-unknown-unknown` in
+  `.cargo/config.toml`. Every WebGPU browser runs it. glam's `Vec4`, `Quat`
+  and `Mat4` switch to `v128` lanes under it. It also reaches the
+  AudioWorklet's wasm, which the same target builds.
+- **`opt-level = 3` for the hot crates**: `[profile.web-release.package.*]`
+  for rhai, flint-script, flint-render, wgpu, glam, kira, cpal,
+  symphonia-core, symphonia-codec-vorbis and flint-audio. The rest of the
+  wasm stays at `z`. The overrides survive fat LTO, because LLVM keeps each
+  function's `optsize`/`minsize` attributes when the modules merge.
+
+Sizes (trunk 0.21.14, its `wasm-opt`, gzip -9 of the page's `.wasm`; the
+worklet's wasm adds 0.07 MB either way):
+
+| Build | `.wasm` | gzip -9 | |
+|---|---|---|---|
+| main before #137 (opt `z`, no SIMD) | 7.48 MB | 3.19 MB | |
+| + SIMD | | 3.11 MB (measured before #136, against 3.13) | smaller |
+| + SIMD, hot crates at `s` | | 3.30 MB (before #136) | not measured on the phone |
+| **+ SIMD, hot crates at `3`** (what ships) | 9.10 MB | **3.64 MB** | |
+| + flint-player, the ECS, runtime, animation, particles, core at `3` | 10.94 MB | 4.12 MB | over the 4 MB line |
+| everything at `3` | | 4.38 MB (before #136) | over the line |
+| what ships, with `wasm-opt -O3` instead of `-Oz` | 9.32 MB | 3.64 MB | no faster (below) |
+
+**On the phone.** Pixel 8 Pro, Chrome 156, Float, `?perf=1`, served from
+`trunk build` output over `adb reverse`. Each run lasts 90 s from Begin, and
+the perf windows are averaged from 40 s on. Builds alternate, with a cooldown
+before each run until the skin temperature stops falling. On USB power the
+phone rests at 39 °C skin, thermal status 1, and no lower. The phone is shared
+through `.pixel-lock` with the other sessions profiling it, so no other game
+tab was open during a run.
+
+| ms a frame (mean of runs) | main | SIMD + hot crates at 3 | Change |
+|---|---|---|---|
+| CPU | 17.66 (17.14, 18.17) | 15.94 (16.06, 15.54, 16.23) | **−10%** |
+| scripts | 6.84 | 5.46 | **−20%** |
+| render | 4.81 | 4.79 | 0 |
+| sync | 2.86 | 2.69 | −6% |
+| anim/fx | 1.48 | 1.38 | −7% |
+| frame p50 | 33.3 | 33.3 | held at 30 fps (#140) |
+
+- **Scripts are where it pays.** rhai's interpreter loop is the hottest code
+  the main thread runs, and `z` had made it a fifth slower.
+- **Render doesn't move.** After #139 its 4.8 ms is mostly WebGPU calls across
+  the JS boundary, not Rust.
+- **The frame target (20% less CPU) wasn't reached.** When #137 was written,
+  the mix ran on the main thread, and the audio target counted on it. #136
+  moved the mix into an AudioWorklet that is already built at `opt-level = 3`,
+  and #138 made it cheaper, so the main thread no longer pays for it. What's
+  left is about a third scripts. 10% of the frame and 20% of the scripts is
+  what the build alone can give.
+- **Widening the list costs too much.** Adding the player and ECS crates goes
+  past 4 MB. `wasm-opt -O3` instead of `-Oz` changed neither the size nor the
+  speed: 16.26 ms CPU over two runs against 15.94, so the page keeps `-Oz`.

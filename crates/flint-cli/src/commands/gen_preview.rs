@@ -122,6 +122,7 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         spec_path,
         registry,
         field_specs,
+        param_schema: schema,
         output_kind,
         reload_flag,
         _watcher,
@@ -193,6 +194,8 @@ struct GenPreviewApp {
     spec_path: PathBuf,
     registry: GeneratorRegistry,
     field_specs: Vec<ParamFieldSpec>,
+    /// The generator's param schema; decides which fields apply (`x-when`).
+    param_schema: serde_json::Value,
     #[allow(dead_code)]
     output_kind: flint_procgen::OutputKind,
     reload_flag: Arc<Mutex<bool>>,
@@ -638,8 +641,22 @@ impl GenPreviewApp {
 
     // ─── Save spec ──────────────────────────────────────────────────────
 
+    /// The edited params minus any the generator would ignore under the
+    /// current settings (a knob set while another pattern was selected).
+    /// Unknown keys stay: the editor didn't write them.
+    fn params_to_save(&self) -> toml::map::Map<String, toml::Value> {
+        let mut params = self.params.clone();
+        let table = toml::Value::Table(params.clone());
+        for issue in flint_procgen::lint_params(&self.param_schema, &table) {
+            if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
+                params.remove(&key);
+            }
+        }
+        params
+    }
+
     fn save_spec(&mut self) {
-        self.spec.params = toml::Value::Table(self.params.clone());
+        self.spec.params = toml::Value::Table(self.params_to_save());
         self.spec.seed = SeedConfig {
             mode: SeedMode::Fixed,
             value: Some(self.current_seed),
@@ -813,7 +830,7 @@ impl GenPreviewApp {
         };
 
         if let Some(path) = dialog.save_file() {
-            self.spec.params = toml::Value::Table(self.params.clone());
+            self.spec.params = toml::Value::Table(self.params_to_save());
             self.spec.seed = SeedConfig {
                 mode: SeedMode::Fixed,
                 value: Some(self.current_seed),
@@ -863,6 +880,7 @@ impl GenPreviewApp {
         // Snapshot state for the closure
         let mut params = self.params.clone();
         let field_specs = self.field_specs.clone();
+        let param_schema = &self.param_schema;
         let mut current_seed = self.current_seed;
         let gen_time_ms = self.gen_time_ms;
         let last_mesh = self.last_mesh.as_ref();
@@ -983,7 +1001,14 @@ impl GenPreviewApp {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            let groups = group_fields(&field_specs);
+                            // Only the knobs the generator reads for the
+                            // current settings (e.g. the texture's pattern).
+                            let shown: Vec<ParamFieldSpec> = field_specs
+                                .iter()
+                                .filter(|f| f.applies(param_schema, &params))
+                                .cloned()
+                                .collect();
+                            let groups = group_fields(&shown);
                             for (group_name, fields) in &groups {
                                 egui::CollapsingHeader::new(group_name)
                                     .default_open(true)

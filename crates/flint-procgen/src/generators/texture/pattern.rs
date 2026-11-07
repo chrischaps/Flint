@@ -72,6 +72,68 @@ impl PatternField {
         &mut self.cells[idx]
     }
 
+    /// Sample the field at normalised coordinates, treating it as a tile.
+    ///
+    /// `(u, v)` wrap into `[0, 1)`, and pixel centres sit at `(i + 0.5) / n`,
+    /// so `get_normalized(0.0, v)` is halfway between the last column and the
+    /// first: the same value whichever way round the tile you approach it.
+    /// `height` and `distance_to_edge` are bilinear; `cell_id` (a label, not a
+    /// quantity) comes from the nearest pixel.
+    pub fn get_normalized(&self, u: f32, v: f32) -> PatternCell {
+        let (w, h) = (self.width as i64, self.height as i64);
+        let fx = u.rem_euclid(1.0) * w as f32 - 0.5;
+        let fy = v.rem_euclid(1.0) * h as f32 - 0.5;
+        let (x0, y0) = (fx.floor() as i64, fy.floor() as i64);
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let at = |x: i64, y: i64| self.get(x.rem_euclid(w) as u32, y.rem_euclid(h) as u32);
+        let (c00, c10, c01, c11) = (
+            at(x0, y0),
+            at(x0 + 1, y0),
+            at(x0, y0 + 1),
+            at(x0 + 1, y0 + 1),
+        );
+        let bi = |f: fn(&PatternCell) -> f32| {
+            let top = f(c00) + (f(c10) - f(c00)) * tx;
+            let bottom = f(c01) + (f(c11) - f(c01)) * tx;
+            top + (bottom - top) * ty
+        };
+        let nearest = at((fx + 0.5).floor() as i64, (fy + 0.5).floor() as i64);
+        PatternCell {
+            cell_id: nearest.cell_id,
+            height: bi(|c| c.height),
+            distance_to_edge: bi(|c| c.distance_to_edge),
+        }
+    }
+
+    /// How visible the tile's seams are, measured on `height`.
+    ///
+    /// The last column and the first are neighbours once the tile repeats, so
+    /// in a seamless field the step across the wrap looks like a step between
+    /// any other pair of neighbouring columns; they are not equal values.
+    /// For every pair of adjacent columns (and rows) this takes the mean
+    /// absolute height step down the pair. The seam's pair is compared with
+    /// the roughest interior pair, not the average one, because a pattern
+    /// may put an edge on the seam on purpose (a grid's grooves sit on its
+    /// tile boundaries, and so on the wrap).
+    pub fn seam_steps(&self) -> SeamSteps {
+        let (w, h) = (self.width, self.height);
+        let hgt = |x: u32, y: u32| self.get(x, y).height;
+        let col_pair =
+            |a: u32, b: u32| (0..h).map(|y| (hgt(a, y) - hgt(b, y)).abs()).sum::<f32>() / h as f32;
+        let row_pair =
+            |a: u32, b: u32| (0..w).map(|x| (hgt(x, a) - hgt(x, b)).abs()).sum::<f32>() / w as f32;
+        let cols: Vec<f32> = (1..w).map(|x| col_pair(x - 1, x)).collect();
+        let rows: Vec<f32> = (1..h).map(|y| row_pair(y - 1, y)).collect();
+        let max = |v: &[f32]| v.iter().copied().fold(0.0f32, f32::max);
+        SeamSteps {
+            across_x: col_pair(w - 1, 0),
+            across_y: row_pair(h - 1, 0),
+            interior_x: max(&cols),
+            interior_y: max(&rows),
+            interior: cols.iter().sum::<f32>() / cols.len().max(1) as f32,
+        }
+    }
+
     /// Convert the height channel to a grayscale RGBA8 [`ImageData`] for
     /// debugging and visual inspection.
     pub fn to_height_image(&self) -> ImageData {
@@ -114,6 +176,32 @@ impl PatternField {
             img.pixels[offset + 3] = 255;
         }
         img
+    }
+}
+
+/// Mean absolute height steps across a field's seams and inside it; see
+/// [`PatternField::seam_steps`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeamSteps {
+    /// Across the left/right seam (last column to first).
+    pub across_x: f32,
+    /// Across the top/bottom seam (last row to first).
+    pub across_y: f32,
+    /// The roughest pair of adjacent interior columns.
+    pub interior_x: f32,
+    /// The roughest pair of adjacent interior rows.
+    pub interior_y: f32,
+    /// Mean over all pairs of adjacent interior columns.
+    pub interior: f32,
+}
+
+impl SeamSteps {
+    /// The worse seam as a multiple of the roughest interior pair on its
+    /// axis: at most about 1 for a seamless field, well above it for a seam.
+    pub fn ratio(&self) -> f32 {
+        let x = self.across_x / self.interior_x.max(1e-6);
+        let y = self.across_y / self.interior_y.max(1e-6);
+        x.max(y)
     }
 }
 
@@ -163,9 +251,102 @@ fn id_to_color(id: u32) -> (u8, u8, u8) {
 // Tests
 // ===========================================================================
 
+/// Where pattern tests write their debug PNGs: `<target>/test-output/`,
+/// honouring `CARGO_TARGET_DIR`.
+#[cfg(test)]
+pub(crate) fn debug_output_dir() -> std::path::PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+    let dir = target.join("test-output");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Write an [`ImageData`] as a PNG into [`debug_output_dir`].
+#[cfg(test)]
+pub(crate) fn write_debug_png(name: &str, img: &ImageData) {
+    let path = debug_output_dir().join(format!("{name}.png"));
+    image::save_buffer(
+        &path,
+        &img.pixels,
+        img.width,
+        img.height,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+    println!("wrote {}", path.display());
+}
+
+/// Shared acceptance checks for any pattern's output: dimensions, no NaN,
+/// height and edge distance in \[0, 1\].
+#[cfg(test)]
+pub(crate) fn assert_valid(field: &PatternField, width: u32, height: u32) {
+    assert_eq!((field.width, field.height), (width, height));
+    assert_eq!(field.cells.len(), (width * height) as usize);
+    for c in &field.cells {
+        assert!(
+            c.height.is_finite() && (0.0..=1.0).contains(&c.height),
+            "height {}",
+            c.height
+        );
+        assert!(
+            c.distance_to_edge.is_finite() && (0.0..=1.0).contains(&c.distance_to_edge),
+            "distance_to_edge {}",
+            c.distance_to_edge
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ramp_field() -> PatternField {
+        let mut f = PatternField::new(4, 2);
+        for y in 0..2 {
+            for x in 0..4 {
+                let c = f.get_mut(x, y);
+                c.height = x as f32 / 4.0;
+                c.cell_id = x;
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn get_normalized_hits_pixel_centres() {
+        let f = ramp_field();
+        for x in 0..4u32 {
+            let u = (x as f32 + 0.5) / 4.0;
+            let c = f.get_normalized(u, 0.25);
+            assert!((c.height - x as f32 / 4.0).abs() < 1e-6);
+            assert_eq!(c.cell_id, x);
+        }
+    }
+
+    #[test]
+    fn get_normalized_interpolates_and_wraps() {
+        let f = ramp_field();
+        // Halfway between columns 1 (0.25) and 2 (0.5).
+        assert!((f.get_normalized(0.5, 0.25).height - 0.375).abs() < 1e-6);
+        // u = 0 sits between the last column (0.75) and the first (0.0).
+        assert!((f.get_normalized(0.0, 0.25).height - 0.375).abs() < 1e-6);
+        // Whole tiles away is the same place (to float rounding of u).
+        let (a, b) = (f.get_normalized(0.3, 0.6), f.get_normalized(2.3, -0.4));
+        assert_eq!(a.cell_id, b.cell_id);
+        assert!((a.height - b.height).abs() < 1e-5);
+    }
+
+    #[test]
+    fn seam_steps_see_a_seam() {
+        // A ramp has a step of 0.25 between neighbours and 0.75 across the wrap.
+        let s = ramp_field().seam_steps();
+        assert!((s.interior - 0.25).abs() < 1e-6);
+        assert!((s.interior_x - 0.25).abs() < 1e-6);
+        assert!((s.across_x - 0.75).abs() < 1e-6);
+        assert!((s.ratio() - 3.0).abs() < 1e-5);
+    }
 
     #[test]
     fn pattern_field_new() {

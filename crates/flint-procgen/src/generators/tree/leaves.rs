@@ -25,6 +25,24 @@ use flint_core::Vec3;
 use super::LeafParams;
 use super::LeafStyle;
 
+/// Vertices and triangles one leaf card takes, front and back together.
+pub fn card_size(style: LeafStyle) -> (u64, u64) {
+    match style {
+        // 4 corners a side
+        LeafStyle::BillboardCluster => (8, 4),
+        // a centre and 4 tips a side
+        LeafStyle::MeshCluster => (10, 8),
+        LeafStyle::None => (0, 0),
+    }
+}
+
+/// How many leaf clusters sit along a branch segment `seg_len` long when it
+/// carries leaves along its length: longer segments get several.
+pub fn along_branch_clusters(seg_len: f32, params: &LeafParams) -> usize {
+    let spacing = (params.leaf_spread_radius * 2.0).max(0.2);
+    ((seg_len / spacing).ceil() as usize).max(1)
+}
+
 /// Indices one leaf card takes in a leaf mesh, front and back faces together.
 pub fn card_index_count(style: LeafStyle) -> usize {
     match style {
@@ -211,10 +229,7 @@ fn sample_along_branch_positions(
         }
 
         let dir = seg.direction();
-
-        // For longer segments, place multiple leaf clusters along the length
-        let spacing = (params.leaf_spread_radius * 2.0).max(0.2);
-        let num_points = ((seg_len / spacing).ceil() as usize).max(1);
+        let num_points = along_branch_clusters(seg_len, params);
 
         for j in 0..num_points {
             let t = if num_points == 1 {

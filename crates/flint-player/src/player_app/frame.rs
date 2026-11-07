@@ -7,7 +7,6 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
-use super::scene_loading;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -252,8 +251,8 @@ impl PlayerApp {
                 let flags = rp.take_flags();
                 if flags.pp_changed {
                     renderer.set_post_process_config(rp.pp.clone());
-                    if flags.kuwahara_needs_resources {
-                        renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                    if flags.style_needs_resources {
+                        renderer.ensure_style_resources(&context.device);
                     }
                     if flags.fxaa_needs_resources {
                         renderer.ensure_fxaa_resources(&context.device);
@@ -290,6 +289,45 @@ impl PlayerApp {
                     renderer.lighting_levers(),
                     self.camera.fov,
                 );
+            }
+        }
+
+        // F3 Styles panel (#268): the same write-through as F4, for the
+        // style table alone. Entity rows only while it is open.
+        #[cfg(feature = "debug-hud")]
+        {
+            let rows = self
+                .debug_panels
+                .iter()
+                .any(|p| p.name() == flint_debug_ui::STYLES_DEBUG_PANEL && p.is_open())
+                .then(|| {
+                    super::debug_panels::styled_entity_rows(&self.world, renderer.style_ids())
+                });
+            for panel in &mut self.debug_panels {
+                if panel.name() != flint_debug_ui::STYLES_DEBUG_PANEL {
+                    continue;
+                }
+                let Some(sp) = panel
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::StylesDebugPanel>()
+                else {
+                    continue;
+                };
+                if flint_debug_ui::DebugPanel::is_dirty(sp) {
+                    let edit = sp.take_edit();
+                    if edit.changed {
+                        let mut config = renderer.post_process_config().clone();
+                        config.styles = sp.pp.styles.clone();
+                        renderer.set_post_process_config(config);
+                        if edit.needs_resources {
+                            renderer.ensure_style_resources(&context.device);
+                        }
+                    }
+                    flint_debug_ui::DebugPanel::clear_dirty(sp);
+                } else {
+                    let entities = rows.clone().unwrap_or_else(|| sp.entities().to_vec());
+                    sp.refresh(renderer.post_process_config(), entities);
+                }
             }
         }
 
@@ -565,9 +603,27 @@ impl PlayerApp {
             self.stats_gpu_timing = false;
         }
 
-        if let Err(e) = renderer.render(context, &self.camera, &view) {
-            tracing::warn!("Render error: {:?}", e);
+        // The whole frame (scene, HUD, the GPU timer's resolve) goes into
+        // one encoder and one submission (#139): on the web each submission
+        // crosses into JS.
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Frame Encoder"),
+            });
+        // Styles sized in points (ASCII cells, #265) follow the window's
+        // scale factor, which changes when it moves to another monitor
+        if let Some(window) = &self.window {
+            renderer.pixels_per_point = window.scale_factor() as f32;
         }
+        renderer.encode_to(
+            &context.device,
+            &context.queue,
+            &mut encoder,
+            &context.depth_view,
+            &self.camera,
+            &view,
+        );
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.perf {
             perf.mark(super::perf::Phase::Render);
@@ -580,9 +636,11 @@ impl PlayerApp {
             format: Some(context.hud_format),
             ..Default::default()
         });
-        self.render_hud(&hud_view);
+        self.render_hud(&hud_view, &mut encoder);
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer.finish_gpu_timings(&context.device, &context.queue);
+            renderer.encode_gpu_timings(&context.device, &mut encoder);
+            context.queue.submit(std::iter::once(encoder.finish()));
+            renderer.frame_submitted();
         }
         self.perf_mark(super::perf::Phase::Hud);
 
@@ -1381,16 +1439,25 @@ impl PlayerApp {
         {
             let camera_pos = self.camera.position_array();
             let completed = self.procgen_resolver.process_frame(camera_pos);
-            if !completed.is_empty() {
+            let failures = self.procgen_resolver.take_failures();
+            if !completed.is_empty() || !failures.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)
                 {
-                    scene_loading::upload_completed_procgen_assets(
-                        &completed,
+                    // Catalog names never reach the queue, so the file
+                    // fallback needs only the scene's own search paths.
+                    let config =
+                        flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                            &self.scene_path,
+                        );
+                    let mut sink = super::procgen_assets::GpuSink {
                         renderer,
-                        &ctx.device,
-                        &ctx.queue,
-                    );
+                        device: &ctx.device,
+                        queue: &ctx.queue,
+                        config: &config,
+                    };
+                    super::procgen_assets::apply_completed(&completed, &mut sink);
+                    super::procgen_assets::apply_failures(&failures, &mut sink);
                 }
             }
         }
@@ -1490,7 +1557,11 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn render_hud(&mut self, target_view: &wgpu::TextureView) {
+    fn render_hud(
+        &mut self,
+        target_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -1621,17 +1692,12 @@ impl PlayerApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("HUD Encoder"),
-            });
         // The HUD's GPU time, with the renderer's phases (ADR 0108).
         let ui_scope = self
             .scene_renderer
             .as_mut()
             .and_then(|r| r.gpu_timer_mut())
-            .map(|t| t.begin(&mut encoder, "UI"));
+            .map(|t| t.begin(encoder, "UI"));
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -1640,7 +1706,7 @@ impl PlayerApp {
         egui_renderer.update_buffers(
             &context.device,
             &context.queue,
-            &mut encoder,
+            encoder,
             &paint_jobs,
             &screen_descriptor,
         );
@@ -1653,7 +1719,7 @@ impl PlayerApp {
             pipeline.draw(
                 &context.device,
                 &context.queue,
-                &mut encoder,
+                encoder,
                 target_view,
                 &context.depth_view,
                 &glyphs,
@@ -1685,9 +1751,8 @@ impl PlayerApp {
             self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
             ui_scope,
         ) {
-            timer.end(&mut encoder, scope);
+            timer.end(encoder, scope);
         }
-        context.queue.submit(std::iter::once(encoder.finish()));
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);

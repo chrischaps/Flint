@@ -45,6 +45,16 @@ pub trait Generator: Send + Sync {
     /// The unique type name used to look up this generator in the registry.
     fn type_name(&self) -> &str;
 
+    /// The revision of what this generator makes. Bump it in any change after
+    /// which the same spec and seed produce different output: `flint gen
+    /// --register` keys its cache on the spec's bytes and the seed, and
+    /// treats an entry recorded under another revision as stale. Changes
+    /// that leave every output byte-identical (a refactor, a faster path)
+    /// keep the number.
+    ///
+    /// There's no default: a generator says which revision it is.
+    fn revision(&self) -> u32;
+
     /// What kind of output this generator produces.
     fn output_kind(&self) -> OutputKind;
 

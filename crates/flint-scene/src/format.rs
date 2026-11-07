@@ -137,6 +137,11 @@ pub struct PostProcessDef {
     pub kuwahara_hardness: f32,
     #[serde(default = "default_kuwahara_anisotropy")]
     pub kuwahara_anisotropy: f32,
+    /// Stylize passes by name (#262): `[post_process.styles.invert]` with
+    /// `enabled` (default true) and the style's numeric parameters. The
+    /// renderer checks names and parameters against its registry.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub styles: std::collections::BTreeMap<String, toml::Table>,
     /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
     #[serde(default)]
     pub film_grain: f32,

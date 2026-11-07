@@ -56,12 +56,15 @@ pub enum Command {
     TrackDrop {
         track: u32,
     },
+    /// `pan` is kira's `Panning`: -1 left, 1 right, at constant power. A
+    /// placed sound plays on a bus this way, steered once a frame (#138).
     Play {
         voice: u32,
         sound: u32,
         target: Target,
         db: f32,
         rate: f32,
+        pan: f32,
         looping: bool,
     },
     /// A placed one-shot. The worklet keeps its track until it ends.
@@ -89,6 +92,20 @@ pub enum Command {
         voice: u32,
         tween: f32,
     },
+    VoicePanning {
+        voice: u32,
+        pan: f32,
+        tween: f32,
+    },
+    /// Paused because nobody can hear it (#138); resumed where it stopped.
+    VoicePause {
+        voice: u32,
+        tween: f32,
+    },
+    VoiceResume {
+        voice: u32,
+        tween: f32,
+    },
     /// The voice's handle was dropped; the sound plays on to its end.
     VoiceDrop {
         voice: u32,
@@ -111,6 +128,9 @@ mod op {
     pub const VOICE_STOP: u8 = 12;
     pub const VOICE_DROP: u8 = 13;
     pub const CLEAR_ONE_SHOTS: u8 = 14;
+    pub const VOICE_PANNING: u8 = 15;
+    pub const VOICE_PAUSE: u8 = 16;
+    pub const VOICE_RESUME: u8 = 17;
 }
 
 struct Writer<'a>(&'a mut Vec<u8>);
@@ -178,13 +198,19 @@ impl Command {
                 target,
                 db,
                 rate,
+                pan,
                 looping,
             } => {
                 match target {
                     Target::Bus(bus) => w.u8(op::PLAY_ON_BUS).u8(bus),
                     Target::Track(track) => w.u8(op::PLAY_ON_TRACK).u32(track),
                 };
-                w.u32(voice).u32(sound).f32(db).f32(rate).u8(looping as u8);
+                w.u32(voice)
+                    .u32(sound)
+                    .f32(db)
+                    .f32(rate)
+                    .f32(pan)
+                    .u8(looping as u8);
             }
             Command::OneShot {
                 sound,
@@ -217,6 +243,15 @@ impl Command {
             }
             Command::VoiceDrop { voice } => {
                 w.u8(op::VOICE_DROP).u32(voice);
+            }
+            Command::VoicePanning { voice, pan, tween } => {
+                w.u8(op::VOICE_PANNING).u32(voice).f32(pan).f32(tween);
+            }
+            Command::VoicePause { voice, tween } => {
+                w.u8(op::VOICE_PAUSE).u32(voice).f32(tween);
+            }
+            Command::VoiceResume { voice, tween } => {
+                w.u8(op::VOICE_RESUME).u32(voice).f32(tween);
             }
             Command::ClearOneShots => {
                 w.u8(op::CLEAR_ONE_SHOTS);
@@ -302,6 +337,7 @@ impl<'a> Reader<'a> {
                     target,
                     db: self.f32()?,
                     rate: self.f32()?,
+                    pan: self.f32()?,
                     looping: self.u8()? != 0,
                 }
             }
@@ -330,6 +366,19 @@ impl<'a> Reader<'a> {
                 tween: self.f32()?,
             },
             op::VOICE_DROP => Command::VoiceDrop { voice: self.u32()? },
+            op::VOICE_PANNING => Command::VoicePanning {
+                voice: self.u32()?,
+                pan: self.f32()?,
+                tween: self.f32()?,
+            },
+            op::VOICE_PAUSE => Command::VoicePause {
+                voice: self.u32()?,
+                tween: self.f32()?,
+            },
+            op::VOICE_RESUME => Command::VoiceResume {
+                voice: self.u32()?,
+                tween: self.f32()?,
+            },
             op::CLEAR_ONE_SHOTS => Command::ClearOneShots,
             _ => return None,
         })
@@ -389,6 +438,7 @@ mod tests {
                 target: Target::Track(7),
                 db: -1.5,
                 rate: 1.25,
+                pan: 0.0,
                 looping: true,
             },
             Command::Play {
@@ -397,7 +447,21 @@ mod tests {
                 target: Target::Bus(BUS_MUSIC),
                 db: 0.0,
                 rate: 1.0,
+                pan: -0.4,
                 looping: false,
+            },
+            Command::VoicePanning {
+                voice: 4,
+                pan: 0.7,
+                tween: 0.016,
+            },
+            Command::VoicePause {
+                voice: 3,
+                tween: 0.1,
+            },
+            Command::VoiceResume {
+                voice: 3,
+                tween: 0.1,
             },
             Command::OneShot {
                 sound: 2,

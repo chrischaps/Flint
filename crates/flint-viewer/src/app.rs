@@ -362,6 +362,13 @@ pub struct ViewerApp {
     last_particle_tick: Instant,
 }
 
+/// The style settings a scene authors: its `[post_process.styles]`, or
+/// none (every style off) when it has no `[post_process]` block.
+fn authored_styles(def: Option<&PostProcessDef>) -> flint_render::stylize::StyleSettings {
+    def.map(|d| post_process_config_from_def(d).styles)
+        .unwrap_or_default()
+}
+
 /// Rendering & Effects menu interactions that need `&mut self` side effects
 /// (authored-post swap, DoF follow enable/disable), collected inside the egui
 /// closure and handled after the frame.
@@ -599,6 +606,10 @@ impl ViewerApp {
         // Load models and update meshes from world
         {
             let mut state = self.state.lock().unwrap();
+            // Fonts and glyph sets (ASCII's `font`, #265) resolve beside the scene
+            scene_renderer.scene_dir = Path::new(&state.scene_path)
+                .parent()
+                .map(|p| p.to_path_buf());
             let config = ModelLoadConfig::from_scene_path(&state.scene_path);
             model_loader::load_models_from_world(
                 &mut state.world,
@@ -635,6 +646,9 @@ impl ViewerApp {
                 scene_renderer.set_post_process_config(post_process_config_from_def(def));
                 println!("Scene [post_process] applied (F11 toggles scene/default)");
             }
+            // The F4 style editor marks edits against these (#268)
+            self.render_panel
+                .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
         }
 
         // Run initial constraint evaluation
@@ -717,6 +731,10 @@ impl ViewerApp {
             let context = self.render_context.as_ref().unwrap();
             let renderer = self.scene_renderer.as_mut().unwrap();
             renderer.set_selected_entity(self.scene_tree.selected_entity());
+            // Styles sized in points (ASCII cells, #265) follow the window
+            if let Some(window) = &self.window {
+                renderer.pixels_per_point = window.scale_factor() as f32;
+            }
             renderer.render(context, &self.camera, &view).ok();
         }
 
@@ -946,8 +964,8 @@ impl ViewerApp {
             let flags = rp.take_flags();
             if flags.pp_changed {
                 renderer.set_post_process_config(rp.pp.clone());
-                if flags.kuwahara_needs_resources {
-                    renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                if flags.style_needs_resources {
+                    renderer.ensure_style_resources(&context.device);
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
@@ -1933,6 +1951,8 @@ impl ViewerApp {
                                 renderer.set_post_process_config(post_process_config_from_def(def));
                             }
                         }
+                        self.render_panel
+                            .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
                     }
 
                     {

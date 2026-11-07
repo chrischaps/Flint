@@ -5,6 +5,7 @@
 //! physically-based Cook-Torrance shading. Supports GPU vertex skinning
 //! for skeletal animation.
 
+pub mod ascii_spike;
 pub mod atlas;
 pub mod billboard_pipeline;
 pub mod bitmap_font;
@@ -13,7 +14,9 @@ mod context;
 mod debug;
 pub mod frustum;
 pub mod gpu_select;
+pub mod bind_cache;
 pub mod gpu_timer;
+pub mod glyph_atlas;
 mod gpu_mesh;
 pub mod grass_pipeline;
 pub mod ground_fog;
@@ -21,6 +24,7 @@ mod headless;
 pub mod model_loader;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
+pub mod palette;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;
@@ -30,6 +34,9 @@ pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
+pub mod entity_style;
+pub mod style_mask;
+pub mod stylize;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;
@@ -39,7 +46,12 @@ pub mod water_body;
 mod texture_cache;
 pub mod world_line_pipeline;
 
+pub use ascii_spike::{AsciiSpikeConfig, AsciiSpikeMode};
+pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use atlas::{AtlasRegistry, TextureAtlas};
+pub use glyph_atlas::{
+    EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas,
+};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};

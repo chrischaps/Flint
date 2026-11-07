@@ -182,6 +182,9 @@ impl Backend for WebAudioBackend {
         let channels = config.channels;
         let meter = self.meter.clone();
         let mut last_request: Option<f64> = None;
+        // A hidden page's suspended context asks for nothing (#162): the
+        // gap after it is a sleep, not a wait for the main thread.
+        let mut sleeps_seen = crate::page::sleeps();
         let stream = device
             .build_output_stream(
                 &config,
@@ -192,6 +195,11 @@ impl Backend for WebAudioBackend {
                     let mix = now_ms() - t0;
                     let ts = info.timestamp();
                     let slack = signed_ms(ts.playback, ts.callback);
+                    let sleeps = crate::page::sleeps();
+                    if sleeps != sleeps_seen {
+                        sleeps_seen = sleeps;
+                        last_request = None;
+                    }
                     let wait = last_request.map_or(0.0, |l| t0 - l);
                     last_request = Some(t0);
                     let Ok(mut m) = meter.lock() else { return };

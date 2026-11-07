@@ -31,5 +31,7 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::frame_rate::FrameRateSetting;
+pub use player_app::procgen_assets::ProcGenMode;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
+pub use player_app::style_commands::{apply_style_command, StyleApplied, STYLE_CHANGED};
 pub use player_app::{CaptureConfig, PlayerApp};

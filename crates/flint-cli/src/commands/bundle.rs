@@ -13,7 +13,7 @@
 //! play sound before the first click anyway. Then it checks the bundle
 //! against itself before writing anything: every scene must load with its
 //! prefabs, every archetype must be in the bundled schemas, and every file a
-//! scene, prefab, particle effect or script names must be packed. A missing
+//! scene, prefab, particle effect, glyph set or script names must be packed. A missing
 //! file fails here rather than as a pink texture deep in play.
 //!
 //! `bundle.toml` in the game root (every key optional):
@@ -384,6 +384,7 @@ fn check_references(files: &BTreeMap<String, Vec<u8>>) -> Vec<Missing> {
         let refs = if path.ends_with(".scene.toml")
             || path.ends_with(".prefab.toml")
             || path.ends_with(".particles.toml")
+            || path.ends_with(".glyphs.toml")
             || path.ends_with(".chunk.toml")
         {
             let Ok(text) = std::str::from_utf8(bytes) else {
@@ -781,6 +782,28 @@ mod tests {
                     what: "logo.png".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_glyph_set_must_pack_its_font() {
+        let files = pack(&[
+            (
+                "fonts/terminal.glyphs.toml",
+                "[font]\nfile = \"Mono.ttf\"\n[ramps.a]\nglyphs = \" .\"\n",
+            ),
+            (
+                "fonts/crt.glyphs.toml",
+                "[font]\nfile = \"crt.png\"\ncell = [8, 8]\n",
+            ),
+            ("fonts/Mono.ttf", ""),
+        ]);
+        assert_eq!(
+            check_references(&files),
+            [Missing {
+                from: "fonts/crt.glyphs.toml".into(),
+                what: "crt.png".into()
+            }]
         );
     }
 

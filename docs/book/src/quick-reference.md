@@ -28,6 +28,8 @@ A scannable cheat sheet for daily Flint development.
 | `flint play-chart <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
 | `flint replay-chart <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
 | `flint render-suite <manifest> -o out.wav` | Render a scripted suite session to WAV |
+| `flint render-suite <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
+| `flint render <scene> --style ascii:cell=12` | Preview any registered style over a scene |
 | `flint spike-rumble` | Time the gamepad rumble paths |
 
 Music commands are detailed in [Music Commands](cli-reference/music.md).
@@ -309,7 +311,6 @@ position = [0, 0, 0]
 | `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | `()` | World-space line in the 3D frame, hidden behind nearer geometry (unlike `draw_line_3d`, which is HUD) |
 | `draw_world_text(x, y, z, text, size, opts)` | `()` | Text at a world point, hidden behind nearer geometry: a billboard in points, or painted on a plane (`facing`) in world units |
 | `delta_time()` | `f64` | Seconds since last frame |
-| `set_time_scale(scale)` | --- | Game seconds per real second from the next frame (0.25 = slow motion); held until changed, reset on scene load |
 | `play_sound(name)` | --- | Play a sound effect |
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |
 | `set_desaturation(amount)` | --- | Drain colour toward ash-grey (0–1) |

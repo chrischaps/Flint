@@ -805,7 +805,7 @@ mod tests {
         let mesh = sphere(&SphereParams {
             radius: 1.0,
             segments: 25,
-            rings: 20,
+            rings: 21,
         });
         assert_eq!(mesh.triangle_count(), 1000);
 

@@ -9,6 +9,7 @@ use crate::generators::util::{toml_f32, toml_u32};
 use crate::{ProcGenError, Result, SeededRng};
 
 use super::pattern::{Pattern, PatternField};
+use super::voronoi_util::SpatialGrid;
 
 // ---------------------------------------------------------------------------
 // Params
@@ -27,6 +28,8 @@ pub struct TilingGridParams {
     pub height_variation: f32,
     /// Jitter: 0 = perfect grid, up to 0.5 = moderate randomness.
     pub jitter: f32,
+    /// Amplitude of the fine surface noise on each tile's height (0.03 default).
+    pub noise_strength: f32,
 }
 
 impl Default for TilingGridParams {
@@ -37,6 +40,7 @@ impl Default for TilingGridParams {
             gap_width: 0.05,
             height_variation: 0.2,
             jitter: 0.0,
+            noise_strength: 0.03,
         }
     }
 }
@@ -101,6 +105,16 @@ impl TilingGridParams {
             }
         }
 
+        if let Some(v) = table.get("noise_strength") {
+            p.noise_strength = toml_f32(v, "noise_strength")?;
+            if !(0.0..=1.0).contains(&p.noise_strength) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "noise_strength".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
         Ok(p)
     }
 }
@@ -135,17 +149,25 @@ impl Pattern for TilingGridPattern {
         let p = &self.params;
         let cols = p.columns.max(1);
         let rows = p.rows.max(1);
+        let cell_w = 1.0 / cols as f32;
+        let cell_h = 1.0 / rows as f32;
 
-        // --- Per-cell jitter offsets (deterministic hash of cell coords) ---
-        let jitter_offsets = if p.jitter > 0.0 {
+        // --- Jittered tile centres: one Voronoi site per tile, found exactly
+        // by the shared grid search. Offsets stay within the tile (|j| ≤ 0.5),
+        // so the site's index is still its tile's row * cols + col. ---
+        let jitter_grid = if p.jitter > 0.0 {
             let mut jitter_rng = rng.fork("grid_jitter");
-            let mut offsets = Vec::with_capacity((cols * rows) as usize);
-            for _ in 0..(cols * rows) {
-                let jx = (jitter_rng.next_f32() - 0.5) * 2.0 * p.jitter;
-                let jy = (jitter_rng.next_f32() - 0.5) * 2.0 * p.jitter;
-                offsets.push((jx, jy));
+            let mut centres = Vec::with_capacity((cols * rows) as usize);
+            for r in 0..rows {
+                for c in 0..cols {
+                    let jx = (jitter_rng.next_f32() - 0.5) * 2.0 * p.jitter;
+                    let jy = (jitter_rng.next_f32() - 0.5) * 2.0 * p.jitter;
+                    let x = (c as f32 + 0.5 + jx) * cell_w;
+                    let y = (r as f32 + 0.5 + jy) * cell_h;
+                    centres.push((x.rem_euclid(1.0), y.rem_euclid(1.0)));
+                }
             }
-            Some(offsets)
+            Some(SpatialGrid::new(&centres, seamless))
         } else {
             None
         };
@@ -159,16 +181,25 @@ impl Pattern for TilingGridPattern {
             })
             .collect();
 
-        // --- Surface variation noise ---
+        // --- Surface variation noise: 192 lattice cells per tile at the base
+        // octave, periodic when the texture must tile. ---
         let noise_rng = rng.fork("grid_surface");
-        let surface_noise = Fbm::new(PerlinNoise::new(noise_rng.seed()))
+        let perlin = PerlinNoise::new(noise_rng.seed());
+        let surface_noise = Fbm::new(perlin.clone())
             .with_octaves(3)
             .with_frequency(12.0)
             .with_persistence(0.3);
+        let surface = |u: f32, v: f32| -> f32 {
+            if seamless {
+                perlin.fbm_2d_periodic(u as f64, v as f64, 192.0, 3, 2.0, 0.3) as f32
+            } else {
+                surface_noise.sample_2d(u as f64 * 16.0, v as f64 * 16.0) as f32
+            }
+        };
 
-        let cell_w = 1.0 / cols as f32;
-        let cell_h = 1.0 / rows as f32;
-
+        // Gap half-width in UV: gap_width of the smaller cell side on each side
+        // of every edge.
+        let gap_w = p.gap_width.max(1e-6) * cell_w.min(cell_h);
         let mut field = PatternField::new(width, height);
 
         for y in 0..height {
@@ -176,174 +207,47 @@ impl Pattern for TilingGridPattern {
                 let u = (x as f32 + 0.5) / width as f32;
                 let v = (y as f32 + 0.5) / height as f32;
 
-                if p.jitter > 0.0 {
-                    // With jitter, find the nearest cell center
-                    let geom = GridGeom {
-                        cols,
-                        rows,
-                        cell_w,
-                        cell_h,
-                        gap_width: p.gap_width,
-                        jitter_offsets: jitter_offsets.as_deref().unwrap(),
-                        seamless,
-                    };
-                    let (cell_id, dist_to_edge) = find_nearest_jittered_cell(u, v, &geom);
+                let (cell_id, raw_edge_dist) = match &jitter_grid {
+                    Some(grid) => {
+                        let near = grid.nearest(u, v);
+                        (near.id as u32, near.edge)
+                    }
+                    None => {
+                        let col = ((u / cell_w).floor() as u32).min(cols - 1);
+                        let row = ((v / cell_h).floor() as u32).min(rows - 1);
+                        // Distance to the tile's nearest side, in UV.
+                        let lu = u - col as f32 * cell_w;
+                        let lv = v - row as f32 * cell_h;
+                        let dist_u = lu.min(cell_w - lu);
+                        let dist_v = lv.min(cell_h - lv);
+                        (row * cols + col, dist_u.min(dist_v))
+                    }
+                };
+                let edge_normalized = (raw_edge_dist / gap_w).min(1.0);
 
-                    let base_h = cell_heights[cell_id as usize];
-                    let noise_val =
-                        surface_noise.sample_2d(u as f64 * 16.0, v as f64 * 16.0) as f32;
-                    let surface_h = base_h + noise_val * 0.03;
+                let base_h = cell_heights[cell_id as usize];
+                let surface_h = base_h + surface(u, v) * p.noise_strength;
 
-                    let gap_w = p.gap_width.max(1e-6);
-                    let edge_normalized = (dist_to_edge / gap_w).min(1.0);
-
-                    // In gap regions, lower the height
-                    let final_height = if edge_normalized < 1.0 {
-                        let gap_depth = 0.12;
-                        let t = edge_normalized;
-                        let s = t * t * (3.0 - 2.0 * t); // smoothstep
-                        let gap_h = (surface_h - gap_depth).max(0.0);
-                        lerp(gap_h, surface_h, s)
-                    } else {
-                        surface_h
-                    };
-
-                    let cell = field.get_mut(x, y);
-                    cell.cell_id = cell_id;
-                    cell.height = final_height.clamp(0.0, 1.0);
-                    cell.distance_to_edge = edge_normalized;
+                // Gap groove
+                let final_height = if edge_normalized < 1.0 {
+                    let gap_depth = 0.12;
+                    let t = edge_normalized;
+                    let s = t * t * (3.0 - 2.0 * t); // smoothstep
+                    let gap_h = (surface_h - gap_depth).max(0.0);
+                    lerp(gap_h, surface_h, s)
                 } else {
-                    // No jitter: simple grid lookup
-                    let col = ((u / cell_w).floor() as u32).min(cols - 1);
-                    let row = ((v / cell_h).floor() as u32).min(rows - 1);
-                    let cell_id = if seamless {
-                        (row % rows) * cols + (col % cols)
-                    } else {
-                        row * cols + col
-                    };
+                    surface_h
+                };
 
-                    // Position within the cell [0, 1]
-                    let local_u = (u - col as f32 * cell_w) / cell_w;
-                    let local_v = (v - row as f32 * cell_h) / cell_h;
-
-                    // Distance to nearest cell edge
-                    let dist_u = local_u.min(1.0 - local_u);
-                    let dist_v = local_v.min(1.0 - local_v);
-                    let raw_edge_dist = dist_u.min(dist_v) * cell_w.min(cell_h);
-
-                    let gap_w = p.gap_width.max(1e-6) * cell_w.min(cell_h);
-                    let edge_normalized = (raw_edge_dist / gap_w).min(1.0);
-
-                    let base_h = cell_heights[cell_id as usize];
-                    let noise_val =
-                        surface_noise.sample_2d(u as f64 * 16.0, v as f64 * 16.0) as f32;
-                    let surface_h = base_h + noise_val * 0.03;
-
-                    // Gap groove
-                    let final_height = if edge_normalized < 1.0 {
-                        let gap_depth = 0.12;
-                        let t = edge_normalized;
-                        let s = t * t * (3.0 - 2.0 * t);
-                        let gap_h = (surface_h - gap_depth).max(0.0);
-                        lerp(gap_h, surface_h, s)
-                    } else {
-                        surface_h
-                    };
-
-                    let cell = field.get_mut(x, y);
-                    cell.cell_id = cell_id;
-                    cell.height = final_height.clamp(0.0, 1.0);
-                    cell.distance_to_edge = edge_normalized;
-                }
+                let cell = field.get_mut(x, y);
+                cell.cell_id = cell_id;
+                cell.height = final_height.clamp(0.0, 1.0);
+                cell.distance_to_edge = edge_normalized;
             }
         }
 
         field
     }
-}
-
-// ---------------------------------------------------------------------------
-// Jittered cell lookup
-// ---------------------------------------------------------------------------
-
-/// Grid geometry passed to jittered cell lookup.
-struct GridGeom<'a> {
-    cols: u32,
-    rows: u32,
-    cell_w: f32,
-    cell_h: f32,
-    gap_width: f32,
-    jitter_offsets: &'a [(f32, f32)],
-    seamless: bool,
-}
-
-/// Find the nearest cell center for a jittered grid, returning (cell_id, distance_to_edge).
-fn find_nearest_jittered_cell(u: f32, v: f32, g: &GridGeom<'_>) -> (u32, f32) {
-    let cols = g.cols;
-    let rows = g.rows;
-    let cell_w = g.cell_w;
-    let cell_h = g.cell_h;
-    let gap_width = g.gap_width;
-    let jitter_offsets = g.jitter_offsets;
-    let seamless = g.seamless;
-    // Approximate which grid cell this pixel is in
-    let approx_col = (u / cell_w).floor() as i32;
-    let approx_row = (v / cell_h).floor() as i32;
-
-    let mut best_id = 0u32;
-    let mut best_dist = f32::INFINITY;
-    let mut second_dist = f32::INFINITY;
-
-    // Search the 3x3 neighborhood
-    for dy in -1i32..=1 {
-        for dx in -1i32..=1 {
-            let nc = approx_col + dx;
-            let nr = approx_row + dy;
-
-            // Wrap for seamless tiling
-            let wc = if seamless {
-                nc.rem_euclid(cols as i32) as u32
-            } else if nc < 0 || nc >= cols as i32 {
-                continue;
-            } else {
-                nc as u32
-            };
-
-            let wr = if seamless {
-                nr.rem_euclid(rows as i32) as u32
-            } else if nr < 0 || nr >= rows as i32 {
-                continue;
-            } else {
-                nr as u32
-            };
-
-            let cell_id = wr * cols + wc;
-            let (jx, jy) = jitter_offsets[cell_id as usize];
-
-            // Cell center with jitter (in UV space)
-            let cx = (nc as f32 + 0.5) * cell_w + jx * cell_w;
-            let cy = (nr as f32 + 0.5) * cell_h + jy * cell_h;
-
-            let dx_uv = u - cx;
-            let dy_uv = v - cy;
-            let dist = (dx_uv * dx_uv + dy_uv * dy_uv).sqrt();
-
-            if dist < best_dist {
-                second_dist = best_dist;
-                best_dist = dist;
-                best_id = cell_id;
-            } else if dist < second_dist {
-                second_dist = dist;
-            }
-        }
-    }
-
-    // Edge distance from Voronoi-style nearest/second-nearest
-    let raw_edge = second_dist - best_dist;
-    let gap_w = gap_width.max(1e-6) * cell_w.min(cell_h);
-    let edge_normalized = (raw_edge / gap_w).min(1.0);
-
-    (best_id, edge_normalized)
 }
 
 // ---------------------------------------------------------------------------
@@ -472,57 +376,95 @@ mod tests {
     }
 
     #[test]
-    fn grid_seamless_continuity() {
-        let pattern = default_pattern();
-        let mut rng = SeededRng::new(42);
-        let field = pattern.generate(64, 64, true, &mut rng);
-
-        // For a 4x4 grid, seamless means the grid structure wraps correctly.
-        // Column assignment should be consistent across top/bottom rows.
-        for x in 0..field.width {
-            let top = field.get(x, 0);
-            let bottom = field.get(x, field.height - 1);
-            // Same column: cell_id % cols should match
-            assert_eq!(
-                top.cell_id % 4,
-                bottom.cell_id % 4,
-                "seamless column mismatch at x={}",
-                x
-            );
+    fn grid_seamless_has_no_seam() {
+        for jitter in [0.0f32, 0.3] {
+            let pattern = TilingGridPattern::new(TilingGridParams {
+                jitter,
+                ..Default::default()
+            });
+            let field = pattern.generate(128, 128, true, &mut SeededRng::new(42));
+            let s = field.seam_steps();
+            assert!(s.ratio() < 1.6, "jitter {jitter}: {s:?}");
         }
+    }
 
-        // Left column and right column should be in the same row
-        for y in 0..field.height {
-            let left = field.get(0, y);
-            let right = field.get(field.width - 1, y);
-            // Same row: cell_id / cols should match
-            assert_eq!(
-                left.cell_id / 4,
-                right.cell_id / 4,
-                "seamless row mismatch at y={}",
-                y
-            );
+    #[test]
+    fn grid_tiles_continue_across_the_wrap() {
+        // With jitter a tile can spill over the texture's edge; it must come
+        // back on the far side as the same tile.
+        let pattern = TilingGridPattern::new(TilingGridParams {
+            jitter: 0.4,
+            ..Default::default()
+        });
+        let field = pattern.generate(128, 128, true, &mut SeededRng::new(7));
+        let (w, h) = (field.width, field.height);
+        for y in 0..h {
+            let (a, b) = (field.get(w - 1, y), field.get(0, y));
+            if a.distance_to_edge >= 1.0 && b.distance_to_edge >= 1.0 {
+                assert_eq!(a.cell_id, b.cell_id, "row {y}");
+            }
         }
+        for x in 0..w {
+            let (a, b) = (field.get(x, h - 1), field.get(x, 0));
+            if a.distance_to_edge >= 1.0 && b.distance_to_edge >= 1.0 {
+                assert_eq!(a.cell_id, b.cell_id, "column {x}");
+            }
+        }
+    }
 
-        // Edge distance structure should be symmetric at boundaries:
-        // pixels near the top edge and bottom edge of the texture should
-        // both be near a cell edge (low distance_to_edge), forming the
-        // gap/mortar that makes the tile join seamless.
-        let top_avg_edge: f32 = (0..field.width)
-            .map(|x| field.get(x, 0).distance_to_edge)
-            .sum::<f32>()
-            / field.width as f32;
-        let bottom_avg_edge: f32 = (0..field.width)
-            .map(|x| field.get(x, field.height - 1).distance_to_edge)
-            .sum::<f32>()
-            / field.width as f32;
-        // Both boundary rows should have similar edge-distance profiles
+    #[test]
+    fn grid_gap_is_as_wide_with_jitter_as_without() {
+        // A jittered grid used d2 - d1 (about twice the edge distance), so
+        // its grooves were half as wide as a plain grid's at the same
+        // gap_width. Both now measure the true distance to the edge.
+        let gap_fraction = |jitter: f32| {
+            let pattern = TilingGridPattern::new(TilingGridParams {
+                jitter,
+                gap_width: 0.08,
+                ..Default::default()
+            });
+            let f = pattern.generate(256, 256, true, &mut SeededRng::new(42));
+            f.cells.iter().filter(|c| c.distance_to_edge < 1.0).count() as f32
+                / f.cells.len() as f32
+        };
+        let (plain, nudged) = (gap_fraction(0.0), gap_fraction(0.001));
         assert!(
-            (top_avg_edge - bottom_avg_edge).abs() < 0.3,
-            "boundary edge distance asymmetry: top_avg={:.3} bottom_avg={:.3}",
-            top_avg_edge,
-            bottom_avg_edge
+            (plain - nudged).abs() < 0.02,
+            "plain {plain} vs barely jittered {nudged}"
         );
+    }
+
+    #[test]
+    fn grid_gap_is_even_on_wide_tiles() {
+        // 2 x 8 tiles are four times wider than tall; the vertical and
+        // horizontal grooves should both be gap_width of the short side.
+        let pattern = TilingGridPattern::new(TilingGridParams {
+            columns: 2,
+            rows: 8,
+            gap_width: 0.1,
+            ..Default::default()
+        });
+        let f = pattern.generate(256, 256, true, &mut SeededRng::new(1));
+        let row: usize = (0..256)
+            .filter(|&x| f.get(x, 48).distance_to_edge < 1.0)
+            .count();
+        let col: usize = (0..256)
+            .filter(|&y| f.get(64, y).distance_to_edge < 1.0)
+            .count();
+        // Short side = 32 px, gap 3.2 px each side of an edge.
+        assert_eq!(
+            row / 2,
+            col / 8,
+            "vertical groove {row} px over 2 edges, horizontal {col} over 8"
+        );
+    }
+
+    #[test]
+    fn grid_noise_strength_from_toml() {
+        let v: toml::Value = toml::toml! { noise_strength = 0.0 }.into();
+        assert_eq!(TilingGridParams::from_toml(&v).unwrap().noise_strength, 0.0);
+        let bad: toml::Value = toml::toml! { noise_strength = 2.0 }.into();
+        assert!(TilingGridParams::from_toml(&bad).is_err());
     }
 
     #[test]
@@ -594,37 +536,19 @@ mod tests {
     #[test]
     #[ignore]
     fn grid_visual_debug_pngs() {
-        use std::path::PathBuf;
-
-        let dir = PathBuf::from(std::env::temp_dir()).join("flint_pattern_debug");
-        std::fs::create_dir_all(&dir).unwrap();
-
+        use crate::generators::texture::pattern::write_debug_png;
         let pattern = TilingGridPattern::new(TilingGridParams {
             columns: 5,
             rows: 4,
             gap_width: 0.06,
             height_variation: 0.3,
             jitter: 0.15,
+            ..Default::default()
         });
         let mut rng = SeededRng::new(42);
         let field = pattern.generate(256, 256, true, &mut rng);
-
-        for (name, img) in [
-            ("grid_height", field.to_height_image()),
-            ("grid_cells", field.to_cell_id_image()),
-            ("grid_edges", field.to_edge_distance_image()),
-        ] {
-            let path = dir.join(format!("{name}.png"));
-            image::save_buffer(
-                &path,
-                &img.pixels,
-                img.width,
-                img.height,
-                image::ColorType::Rgba8,
-            )
-            .unwrap();
-            println!("wrote {}", path.display());
-        }
-        println!("\nGrid debug PNGs written to: {}", dir.display());
+        write_debug_png("grid_height", &field.to_height_image());
+        write_debug_png("grid_cells", &field.to_cell_id_image());
+        write_debug_png("grid_edges", &field.to_edge_distance_image());
     }
 }

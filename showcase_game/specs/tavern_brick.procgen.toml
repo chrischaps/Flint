@@ -19,7 +19,6 @@ output_maps = [
     "roughness",
 ]
 pattern = "pipeline"
-seamless = true
 width = 1024
 
 [[params.ops]]

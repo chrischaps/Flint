@@ -97,6 +97,9 @@ mod web {
         perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
+        /// `mix=old`: placed sounds on kira spatial tracks and every sound
+        /// mixed, heard or not, for comparison (#138).
+        old_mix: bool,
         /// `touch=always|never`: the on-screen touch controls (#133).
         touch: flint_runtime::TouchControlsMode,
         /// `fps=`: which refreshes are drawn (#140).
@@ -135,6 +138,7 @@ mod web {
                     _ => Some(true),
                 }),
                 poll: get("loop").as_deref() == Some("poll"),
+                old_mix: get("mix").as_deref() == Some("old"),
                 touch: get("touch")
                     .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
                     .unwrap_or_default(),
@@ -243,6 +247,7 @@ mod web {
         if let Some(gpu) = args.perf {
             app.enable_perf(gpu);
         }
+        app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);
         app.set_schema_paths(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());

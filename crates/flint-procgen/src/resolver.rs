@@ -5,13 +5,15 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::cache::{ProcGenCache, ProcGenCacheConfig};
+use crate::disk_cache::DiskStats;
 use crate::output::GeneratorOutput;
 use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 use crate::registry::GeneratorRegistry;
 use crate::spec::ProcGenSpec;
-use crate::{register_built_in_generators, CacheStats, ProcGenError, Result};
+use crate::{register_built_in_generators, CacheStats, ProcGenError, Result, Seed};
 use flint_core::ContentHash;
 
 /// Discovers procgen specs by name and generates assets with caching.
@@ -29,7 +31,11 @@ pub struct ProcGenResolver {
 impl ProcGenResolver {
     /// Create a new resolver with default cache config and built-in generators.
     pub fn new() -> Self {
-        let config = ProcGenCacheConfig::default();
+        Self::with_config(ProcGenCacheConfig::default())
+    }
+
+    /// Create a resolver whose cache and queue use `config`.
+    pub fn with_config(config: ProcGenCacheConfig) -> Self {
         let budget_ms = config.runtime_max_generation_ms_per_frame;
         let mut registry = GeneratorRegistry::new();
         register_built_in_generators(&mut registry);
@@ -66,34 +72,82 @@ impl ProcGenResolver {
         self.specs.len()
     }
 
-    /// Generate (or retrieve from cache) the output for the named spec.
-    pub fn generate(&mut self, name: &str) -> Result<GeneratorOutput> {
+    /// Whether the named spec could be generated at all: it is indexed and
+    /// its generator is registered. `Err` says why not, without generating.
+    pub fn check_generator(&self, name: &str) -> std::result::Result<(), String> {
         let spec = self
             .specs
             .get(name)
-            .ok_or_else(|| ProcGenError::UnknownGenerator(format!("no spec named '{name}'")))?
-            .clone();
+            .ok_or_else(|| format!("no spec named '{name}'"))?;
+        if self.registry.get(&spec.generator).is_none() {
+            let mut known = self.registry.generator_names();
+            known.sort_unstable();
+            return Err(format!(
+                "its generator '{}' is not registered (known: {})",
+                spec.generator,
+                known.join(", ")
+            ));
+        }
+        Ok(())
+    }
 
+    /// Register another generator alongside the built-ins (a game's own, or
+    /// a test's). One with a built-in's type name replaces it.
+    pub fn register_generator(&mut self, generator: Box<dyn crate::Generator>) {
+        self.registry.register(generator);
+    }
+
+    /// Queued requests that failed to generate since the last call. Each is
+    /// reported once; the caller decides what stands in for it.
+    pub fn take_failures(&mut self) -> Vec<crate::FailedAsset> {
+        self.queue.take_failures()
+    }
+
+    /// The cache key for a spec: a hash of its (normalised) TOML and of the
+    /// generator that builds it, name and [revision](crate::Generator::revision),
+    /// with its seed. The revision is what lets the disk tier survive a
+    /// generator change: bump it and every spec that generator builds misses.
+    ///
+    /// A spec whose generator isn't registered still gets a key (its
+    /// generator's name, no revision) so it can be queued and its failure
+    /// reported through [`take_failures`](Self::take_failures); nothing is
+    /// ever stored under it, since generating it fails.
+    fn cache_key(registry: &GeneratorRegistry, spec: &ProcGenSpec) -> Result<(ContentHash, Seed)> {
         let seed = spec.seed.to_seed()?;
-        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
+        let generator = match registry.get(&spec.generator) {
+            Some(g) => format!("{}@{}", g.type_name(), g.revision()),
+            None => format!("{}@unregistered", spec.generator),
+        };
+        let keyed = format!("{generator}\n{}", toml::to_string(spec).unwrap_or_default());
+        Ok((ContentHash::from_str(&keyed), seed))
+    }
 
-        // Check cache first
+    /// Generate (or retrieve from cache) the output for the named spec.
+    ///
+    /// A hit returns the cached output itself, shared: no copy is made.
+    pub fn generate(&mut self, name: &str) -> Result<Arc<GeneratorOutput>> {
+        let spec = self
+            .specs
+            .get(name)
+            .ok_or_else(|| ProcGenError::UnknownGenerator(format!("no spec named '{name}'")))?;
+        let (content_hash, seed) = Self::cache_key(&self.registry, spec)?;
+
         if let Some(cached) = self.cache.get(content_hash, &seed) {
-            return Ok(cached.clone());
+            return Ok(cached);
         }
 
-        // Generate
-        let output = self.registry.generate_from_spec(&spec)?;
-
-        // Cache the result
-        self.cache.insert(content_hash, &seed, output.clone());
-
-        Ok(output)
+        let output = self.registry.generate_from_spec(spec)?;
+        Ok(self.cache.insert(content_hash, &seed, output))
     }
 
     /// Current cache statistics.
     pub fn cache_stats(&self) -> CacheStats {
         self.cache.stats()
+    }
+
+    /// What the cache's disk tier has done, if it has one.
+    pub fn disk_stats(&self) -> Option<DiskStats> {
+        self.cache.disk_stats()
     }
 
     /// Enqueue a named spec for frame-budgeted generation.
@@ -112,14 +166,13 @@ impl ProcGenResolver {
             None => return false,
         };
 
-        let seed = match spec.seed.to_seed() {
-            Ok(s) => s,
-            Err(_) => return false,
+        let Ok((content_hash, seed)) = Self::cache_key(&self.registry, &spec) else {
+            return false;
         };
-        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
 
-        // Already cached — no need to queue
-        if self.cache.get(content_hash, &seed).is_some() {
+        // Already cached — no need to queue. A probe, not a use: the queue's
+        // own lookup counts the hit when it hands the asset out.
+        if self.cache.contains(content_hash, &seed) {
             return false;
         }
 
@@ -156,18 +209,13 @@ impl ProcGenResolver {
         self.queue.is_pending(name)
     }
 
-    /// Check if a spec name has a cached output.
-    pub fn is_cached(&mut self, name: &str) -> bool {
-        let spec = match self.specs.get(name) {
-            Some(s) => s,
-            None => return false,
-        };
-        let seed = match spec.seed.to_seed() {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        let content_hash = ContentHash::from_str(&toml::to_string(spec).unwrap_or_default());
-        self.cache.get(content_hash, &seed).is_some()
+    /// Check if a spec name has a cached output. Does not count as a hit or
+    /// a miss, or change what the cache evicts next.
+    pub fn is_cached(&self, name: &str) -> bool {
+        self.specs
+            .get(name)
+            .and_then(|spec| Self::cache_key(&self.registry, spec).ok())
+            .is_some_and(|(hash, seed)| self.cache.contains(hash, &seed))
     }
 
     /// Current queue statistics.
@@ -250,6 +298,178 @@ value = 42
         let output2 = resolver.generate("test_cube").unwrap();
         assert_eq!(resolver.cache_stats().hits, 1);
         assert_eq!(output1, output2);
+        // The hit is the cached output itself, not a copy of it.
+        assert!(Arc::ptr_eq(&output1, &output2));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probes_do_not_count_as_uses() {
+        let dir = temp_dir("probes");
+        fs::write(dir.join("cube.procgen.toml"), MOCK_SPEC).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+
+        assert!(!resolver.is_cached("test_cube"));
+        resolver.generate("test_cube").unwrap(); // the one miss
+        assert!(resolver.is_cached("test_cube"));
+        assert!(!resolver.is_cached("nonexistent"));
+        // Already cached: enqueue declines, and checking that counts nothing.
+        assert!(!resolver.enqueue("test_cube", [0.0; 3], AssetKind::Model));
+
+        let stats = resolver.cache_stats();
+        assert_eq!((stats.hits, stats.misses), (0, 1));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_config_reaches_the_cache() {
+        let resolver = ProcGenResolver::with_config(ProcGenCacheConfig {
+            max_memory_bytes: 4096,
+            ..Default::default()
+        });
+        assert_eq!(resolver.cache_stats().max_memory_bytes, 4096);
+    }
+
+    /// The mock, at whatever revision a test says.
+    struct MockAt(u32);
+
+    impl crate::Generator for MockAt {
+        fn type_name(&self) -> &str {
+            "mock"
+        }
+        fn revision(&self) -> u32 {
+            self.0
+        }
+        fn output_kind(&self) -> crate::OutputKind {
+            crate::OutputKind::Mesh
+        }
+        fn generate(
+            &self,
+            spec: &ProcGenSpec,
+            rng: &mut crate::SeededRng,
+        ) -> Result<GeneratorOutput> {
+            crate::mock::MockGenerator.generate(spec, rng)
+        }
+        fn param_schema(&self) -> serde_json::Value {
+            crate::mock::MockGenerator.param_schema()
+        }
+    }
+
+    /// A player launch: a fresh resolver over `spec_dir`, its disk tier in
+    /// `cache_dir`, the mock at `revision`.
+    fn launch(spec_dir: &Path, cache_dir: &Path, revision: u32) -> ProcGenResolver {
+        let mut resolver = ProcGenResolver::with_config(ProcGenCacheConfig {
+            disk: Some(crate::DiskCacheConfig::new(cache_dir)),
+            ..Default::default()
+        });
+        resolver.register_generator(Box::new(MockAt(revision)));
+        resolver.discover_and_index(&[spec_dir]);
+        resolver
+    }
+
+    #[test]
+    fn the_second_launch_reads_the_disk_and_a_new_revision_regenerates() {
+        let dir = temp_dir("disk_launches");
+        fs::write(dir.join("cube.procgen.toml"), MOCK_SPEC).unwrap();
+        let cache_dir = dir.join(".flint").join("procgen-cache");
+
+        // First launch: generated, and kept.
+        let mut first = launch(&dir, &cache_dir, 1);
+        let made = first.generate("test_cube").unwrap();
+        assert_eq!(first.cache_stats().misses, 1);
+        assert_eq!(first.disk_stats().unwrap().writes, 1);
+
+        // Second launch, same revision: read back, not generated.
+        let mut second = launch(&dir, &cache_dir, 1);
+        let read = second.generate("test_cube").unwrap();
+        assert_eq!(*read, *made);
+        let stats = second.cache_stats();
+        assert_eq!((stats.misses, stats.disk_hits), (0, 1));
+        // And then it's in memory: the next use is a plain hit.
+        second.generate("test_cube").unwrap();
+        assert_eq!(second.cache_stats().hits, 1);
+
+        // The generator's revision moves: that launch misses and regenerates.
+        let mut third = launch(&dir, &cache_dir, 2);
+        third.generate("test_cube").unwrap();
+        let stats = third.cache_stats();
+        assert_eq!((stats.misses, stats.disk_hits), (1, 0));
+        assert_eq!(third.disk_stats().unwrap().writes, 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_random_spec_is_regenerated_each_launch() {
+        let dir = temp_dir("disk_random");
+        let spec = MOCK_SPEC.replace(
+            "mode = \"fixed\"
+value = 42",
+            "mode = \"random\"",
+        );
+        assert!(spec.contains("random"));
+        fs::write(dir.join("cube.procgen.toml"), spec).unwrap();
+        let cache_dir = dir.join("cache");
+
+        for _ in 0..2 {
+            let mut resolver = launch(&dir, &cache_dir, 1);
+            resolver.generate("test_cube").unwrap();
+            assert_eq!(resolver.cache_stats().misses, 1);
+            assert_eq!(resolver.disk_stats().unwrap().writes, 0);
+        }
+        assert!(!cache_dir.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_generator_names_what_is_missing() {
+        let dir = temp_dir("check_generator");
+        fs::write(dir.join("cube.procgen.toml"), MOCK_SPEC).unwrap();
+        let rock = MOCK_SPEC
+            .replace("test_cube", "rock")
+            .replace("\"mock\"", "\"boulder_v9\"");
+        fs::write(dir.join("rock.procgen.toml"), rock).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+
+        assert_eq!(resolver.check_generator("test_cube"), Ok(()));
+        let err = resolver.check_generator("rock").unwrap_err();
+        assert!(err.contains("'boulder_v9' is not registered"), "{err}");
+        assert!(err.contains("mock, texture_v1"), "sorted known list: {err}");
+        assert!(resolver.check_generator("nonexistent").is_err());
+        // Checking generates nothing.
+        assert_eq!(resolver.cache_stats().misses, 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn queued_failures_are_reported_once() {
+        let dir = temp_dir("queued_failures");
+        let bad = MOCK_SPEC.replace("\"mock\"", "\"boulder_v9\"");
+        fs::write(dir.join("cube.procgen.toml"), bad).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+        assert!(resolver.enqueue("test_cube", [0.0; 3], AssetKind::Texture));
+        assert!(resolver.process_frame([0.0; 3]).is_empty());
+
+        let failures = resolver.take_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].spec_name, "test_cube");
+        assert_eq!(failures[0].asset_kind, AssetKind::Texture);
+        assert!(
+            failures[0].error.contains("boulder_v9"),
+            "{}",
+            failures[0].error
+        );
+        assert!(resolver.take_failures().is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

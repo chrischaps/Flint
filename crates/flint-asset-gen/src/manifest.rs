@@ -46,7 +46,7 @@ impl BuildManifest {
     /// Create a new empty manifest
     pub fn new() -> Self {
         Self {
-            generated_at: now_iso8601(),
+            generated_at: crate::time::now_iso8601(),
             style: None,
             entries: Vec::new(),
         }
@@ -124,66 +124,6 @@ impl Default for BuildManifest {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn now_iso8601() -> String {
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = dur.as_secs();
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let mins = (time_secs % 3600) / 60;
-    let s = time_secs % 60;
-
-    let mut y = 1970i64;
-    let mut remaining_days = days as i64;
-    loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0usize;
-    for (i, &md) in month_days.iter().enumerate() {
-        if remaining_days < md as i64 {
-            m = i;
-            break;
-        }
-        remaining_days -= md as i64;
-    }
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y,
-        m + 1,
-        remaining_days + 1,
-        hours,
-        mins,
-        s
-    )
 }
 
 #[cfg(test)]

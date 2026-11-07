@@ -86,8 +86,9 @@ pub fn is_runtime_model(model: &toml::Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve the file path for a model asset name.
-fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<PathBuf> {
+/// Resolve the file path for a model asset name: the catalog override, then
+/// `<name>.glb`/`.gltf` in `models/` beside the scene or one directory up.
+pub fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<PathBuf> {
     if let Some(path) = config.overrides.get(asset_name) {
         if vfs::exists(path) {
             return Some(path.clone());
@@ -117,7 +118,7 @@ fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<Path
 }
 
 /// Resolve the file path for a texture name.
-fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<PathBuf> {
+pub fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<PathBuf> {
     if let Some(path) = config.overrides.get(tex_name) {
         if vfs::exists(path) {
             return Some(path.clone());
@@ -388,7 +389,14 @@ pub fn load_models_from_world(
 
             // Mesh cached from a previous scene/load — re-import to check
             // if this is a multi-node model that needs per-entity expansion.
-            if let Some(model_path) = resolve_model_path(config, asset_name) {
+            // Not for a mesh made at runtime (procgen): a file of the same
+            // name must not replace it (catalog > procgen > file, #32).
+            let file = if renderer.mesh_cache().is_procedural(asset_name) {
+                None
+            } else {
+                resolve_model_path(config, asset_name)
+            };
+            if let Some(model_path) = file {
                 if let Ok(import_result) = import_gltf(&model_path) {
                     if import_result.needs_expansion() {
                         let nmap = expand_nodes_animated(
@@ -596,6 +604,15 @@ pub fn load_textures_from_world(
                 continue;
             }
             loaded.insert(tex_name.clone());
+
+            // Already uploaded (procgen made it, or an earlier load did):
+            // nothing to find on disk, and nothing missing to warn about.
+            if renderer
+                .texture_cache()
+                .is_some_and(|tc| tc.contains(&tex_name))
+            {
+                continue;
+            }
 
             let tex_path = match resolve_texture_path(config, &tex_name) {
                 Some(p) => p,

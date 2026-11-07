@@ -81,6 +81,9 @@ pub struct GpuTimer {
     period_ns: f32,
     scopes: Vec<Scope>,
     timings: GpuTimings,
+    /// The read-back [`resolve_into`](Self::resolve_into) filled, to map
+    /// once its submission is made.
+    resolved: Option<usize>,
 }
 
 impl GpuTimer {
@@ -129,6 +132,7 @@ impl GpuTimer {
             period_ns: queue.get_timestamp_period(),
             scopes: Vec::new(),
             timings: GpuTimings::default(),
+            resolved: None,
         })
     }
 
@@ -193,21 +197,37 @@ impl GpuTimer {
     /// send this frame's timestamps back. Call once a frame, after its last
     /// scope's submission. A scope left open ends here.
     pub fn finish_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("GPU Timer Resolve"),
+        });
+        if self.resolve_into(device, &mut encoder) {
+            queue.submit(std::iter::once(encoder.finish()));
+            self.start_readback();
+        }
+    }
+
+    /// [`finish_frame`](Self::finish_frame) in the frame's own encoder, so
+    /// timing adds no submission (#139): record the resolve after the
+    /// frame's last scope, submit, then call
+    /// [`start_readback`](Self::start_readback). False when this frame goes
+    /// untimed and there is nothing to read back.
+    pub fn resolve_into(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> bool {
         self.poll(device);
         if self.scopes.is_empty() {
-            return;
+            return false;
         }
         let scopes = std::mem::take(&mut self.scopes);
         let Some(slot) = self.readbacks.iter().position(|r| !r.in_flight) else {
             // All three still on their way: this frame goes untimed.
-            return;
+            return false;
         };
         let count = scopes.len() as u32 * 2;
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("GPU Timer Resolve"),
-        });
         for scope in scopes.iter().filter(|s| !s.ended) {
-            self.write(&mut encoder, scope.first + 1);
+            self.write(encoder, scope.first + 1);
         }
         let readback = &mut self.readbacks[slot];
         encoder.resolve_query_set(&self.query_set, 0..count, &self.resolve, 0);
@@ -218,16 +238,25 @@ impl GpuTimer {
             0,
             count as u64 * wgpu::QUERY_SIZE as u64,
         );
-        queue.submit(std::iter::once(encoder.finish()));
-
         readback.labels = scopes.into_iter().map(|s| s.label).collect();
         readback.count = count;
         readback.in_flight = true;
         readback.state.store(0, Ordering::Release);
+        self.resolved = Some(slot);
+        true
+    }
+
+    /// Map the read-back [`resolve_into`](Self::resolve_into) recorded, now
+    /// that its submission is made.
+    pub fn start_readback(&mut self) {
+        let Some(slot) = self.resolved.take() else {
+            return;
+        };
+        let readback = &self.readbacks[slot];
         let state = readback.state.clone();
         readback
             .buffer
-            .slice(..count as u64 * wgpu::QUERY_SIZE as u64)
+            .slice(..readback.count as u64 * wgpu::QUERY_SIZE as u64)
             .map_async(wgpu::MapMode::Read, move |result| {
                 state.store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
             });

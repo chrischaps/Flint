@@ -159,6 +159,9 @@ pub struct GroundFogGpu {
     pub(crate) mip_count: u32,
     pub(crate) floor_base: f32,
     pub(crate) floor_top: f32,
+    /// Its [`gpu_id`](crate::bind_cache::gpu_id), for the composite's kept
+    /// bind group (#139).
+    pub(crate) id: u64,
 }
 
 /// The texture format: two half floats, filterable on every backend.
@@ -223,6 +226,7 @@ impl GroundFogGpu {
             mip_count: mips.levels.len() as u32,
             floor_base: mips.floor_base,
             floor_top: mips.floor_top,
+            id: crate::bind_cache::gpu_id(),
         }))
     }
 }

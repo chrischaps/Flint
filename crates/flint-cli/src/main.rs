@@ -5,9 +5,9 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
-    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
-    spline_edit, terrain_edit, tex_edit, validate, validate_suite,
+    asset, bundle, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart,
+    play_suite, prefab, preview, query, render, render_suite, replay_chart, scene, schema,
+    spike_rumble, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -15,6 +15,11 @@ use commands::{
 #[command(about = "CLI-first game engine for AI-assisted development", long_about = None)]
 #[command(version)]
 struct Cli {
+    /// Project root holding the content store (.flint/) and asset catalog
+    /// (assets/). Found by walking up from the working directory if omitted
+    #[arg(long, global = true, value_name = "DIR")]
+    project: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -110,7 +115,8 @@ enum Commands {
     /// Replay a recorded or synthetic session through judgment, fully headless
     ReplayChart(replay_chart::ReplayChartArgs),
 
-    /// Render a scripted suite session to WAV, offline and deterministic
+    /// Render a suite offline and deterministically: a music `.suite.toml`
+    /// to WAV, or a `.goldens.toml` of scenes gated against golden PNGs
     RenderSuite(render_suite::RenderSuiteArgs),
 
     /// Prefab operations
@@ -156,6 +162,13 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if let Some(dir) = &cli.project {
+        if !dir.is_dir() {
+            anyhow::bail!("--project {}: not a directory", dir.display());
+        }
+        let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.clone());
+        flint_asset::project::set_override(dir);
+    }
 
     match cli.command {
         Commands::Init { name } => init::run(&name),
