@@ -146,7 +146,8 @@ with the same settings share an id.
 - A per-entity variant is drawn per pixel on its own grid and keeps no
   temporal history yet, so a styled prop can still shimmer in motion
   (#277 covers the whole frame only).
-- Limits as shipped: one glyph set a frame (#335), and 63 variants among
+- Limits as shipped: one glyph set a frame (since #335: up to 8, stacked
+  in one atlas, each variant its own), and 63 variants among
   mask ids below 256 (#336). A whole-frame ASCII pass costs 2-3x once any
   entity has an `ascii_style` (#337).
 - Kuwahara keeps its legacy `kuwahara_*` fields beside the style table

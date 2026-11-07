@@ -89,6 +89,20 @@ struct Args {
     #[arg(long, value_name = "auto|always|never", default_value = "auto")]
     touch_controls: String,
 
+    /// Turn on a registered style over the scene's post-processing, as
+    /// `flint render --style` does (#328): `name[:key=value,...]`, e.g.
+    /// `ascii`, `ascii:cell=12,ramp=blocks`, `pencil:spacing=5`,
+    /// `ascii:off`. Repeatable; a later word wins. Written over every
+    /// scene's `[post_process]` again after each transition, so it survives
+    /// them. `--style help` lists every style and its keys
+    #[arg(long = "style", value_name = "NAME[:KEY=VALUE,...]")]
+    styles: Vec<String>,
+
+    /// Hold the post time animated styles see (and the ocean, grain and
+    /// render modes, which share it) at this many seconds
+    #[arg(long, value_name = "SECONDS")]
+    style_time: Option<f32>,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -194,6 +208,13 @@ fn main() -> Result<()> {
         SchemaRegistry::new()
     };
 
+    // --style words, checked once the scene's own styles are registered
+    // (a user style is known only then, #274) so a typo stops here
+    if !args.styles.is_empty() {
+        flint_player::load_user_styles(&args.scene);
+        flint_render::stylize::check_style_specs(&args.styles).map_err(anyhow::Error::msg)?;
+    }
+
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
 
@@ -251,6 +272,8 @@ fn main() -> Result<()> {
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
     app.input.touch_controls_mut().set_mode(touch_mode);
+    app.style_specs = args.styles.clone();
+    app.style_time = args.style_time;
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
     app.window_size = (args.width, args.height);

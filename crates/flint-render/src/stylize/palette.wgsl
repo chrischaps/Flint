@@ -1,8 +1,10 @@
 // Palette quantize (#324): the finished picture in a palette's colours and
 // nothing else. No glyphs: each block of `block` pixels takes the average
-// of its pixels, matched by the shared matcher (palette.wgsl, concatenated
-// after this file) against the palette's table, ground included. The
-// ordered dither is fixed to the block grid, so a still camera gives a
+// of its pixels and is matched against the palette's table, ground
+// included. A nearest palette goes through the shared matcher
+// (src/palette.wgsl, concatenated before this file: `pal_pick` in OKLab,
+// as ASCII matches); a ladder is climbed here by the block's luminance.
+// The ordered dither is fixed to the block grid, so a still camera gives a
 // still pattern.
 
 struct PaletteUniforms {
@@ -11,11 +13,13 @@ struct PaletteUniforms {
     srgb: u32,
     block: u32,
     dither: f32,
+    chroma: f32,
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
-    // The table: the inks with the ground in its place, display values
+    // The table: the inks with the ground in its place, display values,
+    // and the same colours in OKLab
     inks: array<vec4<f32>, 33>,
+    lab: array<vec4<f32>, 33>,
 };
 
 @group(0) @binding(0) var<uniform> u: PaletteUniforms;
@@ -42,6 +46,10 @@ fn to_linear(c: vec3<f32>) -> vec3<f32> {
 
 fn palette_ink(i: u32) -> vec3<f32> {
     return u.inks[i].rgb;
+}
+
+fn palette_ink_lab(i: u32) -> vec3<f32> {
+    return u.lab[i].rgb;
 }
 
 // The block's average display colour. One pixel is read as it is; a
@@ -79,7 +87,16 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let b = i32(max(u.block, 1u));
     let cell = vec2<i32>(floor(pos.xy)) / b;
     let col = block_color(cell);
-    let t = clamp(dot(col, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
-    let ink = pal_pick(0u, u.len, u.matching, col, t, u.dither, pal_bayer(cell));
+    let n = max(u.len, 1u);
+    var ink: vec3<f32>;
+    if u.matching == 1u {
+        // A ladder: the luminance's rung, moved up to half a rung either
+        // way by the dither (Palette::quantize)
+        let t = clamp(dot(col, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+        let td = clamp(t + (pal_bayer(cell) - 0.5) * u.dither / f32(n), 0.0, 1.0);
+        ink = palette_ink(min(u32(td * f32(n)), n - 1u));
+    } else {
+        ink = pal_pick(0u, n, col, u.chroma, u.dither, cell);
+    }
     return vec4<f32>(select(ink, to_linear(ink), u.srgb == 1u), 1.0);
 }

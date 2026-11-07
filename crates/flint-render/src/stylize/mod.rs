@@ -44,7 +44,8 @@
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> shared edges (Rgba16Float, depth's size, while a style needs them; #301)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
-//!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
+//!   -> SSAO, volumetric (scene depth), bloom (original HDR, or the
+//!      Hdr styles' result when one feeds bloom, #300)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
 //!   -> Display styles (ASCII, pencil, invert) surface format, output resolution
 //!   -> FXAA
@@ -78,8 +79,14 @@
 //! that). A `Display` style sees the finished picture at output
 //! resolution, after the render-scale upscale, which is where the ASCII
 //! spike found glyphs have to be drawn to stay crisp (#261, finding 7).
-//! SSAO and bloom read the unstylized HDR; that is deliberate for now (the
-//! light comes from the scene, not the brush strokes).
+//! Bloom reads the unstylized HDR by default (the light comes from the
+//! scene, not the brush strokes), and a style that wants its own bright
+//! shapes to glow says [`StyleDescriptor::feeds_bloom`], which a scene
+//! overrides with `feeds_bloom` in the style's table (#300): when any HDR
+//! style that ran feeds bloom, the threshold pass reads the stage's
+//! result. SSAO and volumetrics read depth and shadows only, never colour,
+//! so no style changes what they see; the composite lays both over the
+//! stylized image.
 //!
 //! [`BindCache`]: crate::bind_cache::BindCache
 
@@ -92,7 +99,9 @@ mod targets;
 pub mod text;
 
 pub use edges::EDGE_FORMAT;
-pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
+pub use spec::{
+    apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
+};
 pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 pub use text::{GlyphCell, GlyphText};
 
@@ -140,6 +149,112 @@ pub struct StyleOption {
     /// name). A style still gets whatever the scene says and decides what
     /// a value outside the list means.
     pub choices: &'static [&'static str],
+    /// Choices found at run time (#322): the scene's own palettes or glyph
+    /// sets, or the ramps of the font chosen. When set, its list replaces
+    /// `choices` wherever a scene is known ([`Self::choices_in`]), and the
+    /// option is open: a value outside either list (a file path) is the
+    /// style's to resolve, so `--style` doesn't refuse it.
+    pub discover: Option<fn(&ChoiceScope<'_>) -> Vec<String>>,
+}
+
+impl StyleOption {
+    /// A closed or suggested list with nothing found at run time.
+    pub const fn new(
+        name: &'static str,
+        default: &'static str,
+        choices: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            default,
+            choices,
+            discover: None,
+        }
+    }
+
+    /// The same option, with its choices found at run time.
+    pub const fn discovered(mut self, discover: fn(&ChoiceScope<'_>) -> Vec<String>) -> Self {
+        self.discover = Some(discover);
+        self
+    }
+
+    /// The values to offer for this option in `scope`: what `discover`
+    /// finds when the option has it, else its fixed `choices`. The F4 menu
+    /// and the unknown-value check (#318) read this one list.
+    pub fn choices_in(&self, scope: &ChoiceScope<'_>) -> Vec<String> {
+        match self.discover {
+            Some(discover) => discover(scope),
+            None => self.choices.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+}
+
+/// What an option's run-time choices may depend on (#322): the scene's
+/// folder, and the style's other options as the menu shows them (the ramps
+/// a font has depend on the font).
+pub struct ChoiceScope<'a> {
+    pub scene_dir: Option<&'a std::path::Path>,
+    /// Another option's current value (its default when unset).
+    pub option: &'a dyn Fn(&str) -> String,
+}
+
+impl<'a> ChoiceScope<'a> {
+    /// A scope for `scene_dir` with every other option at its default.
+    pub fn defaults(scene_dir: Option<&'a std::path::Path>) -> Self {
+        Self {
+            scene_dir,
+            option: &|_| String::new(),
+        }
+    }
+
+    /// The directories a scene's assets are found in, in order: the scene's
+    /// folder, its parent (as the player finds `fonts/`), then `.`.
+    pub fn search(&self) -> Vec<std::path::PathBuf> {
+        let mut search = Vec::new();
+        if let Some(dir) = self.scene_dir {
+            search.push(dir.to_path_buf());
+            if let Some(parent) = dir.parent() {
+                search.push(parent.to_path_buf());
+            }
+        }
+        search.push(std::path::PathBuf::from("."));
+        search
+    }
+
+    /// The names of the files `<dir>/<folder>/<name><suffix>` in every
+    /// search directory, sorted, each once. Read through the vfs, so a
+    /// bundle on the web lists the same files.
+    pub fn files(&self, folder: &str, suffix: &str) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for dir in self.search() {
+            let Ok(entries) = flint_core::vfs::read_dir(dir.join(folder)) else {
+                continue;
+            };
+            for path in entries {
+                let Some(file) = path.file_name().and_then(|f| f.to_str()) else {
+                    continue;
+                };
+                if let Some(stem) = file.strip_suffix(suffix) {
+                    if !stem.is_empty() && !names.iter().any(|n| n == stem) {
+                        names.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        names.sort();
+        names
+    }
+}
+
+/// `fixed`, then each of `found` not already in it.
+pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = fixed.iter().map(|c| c.to_string()).collect();
+    for name in found {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
 }
 
 /// How the F4 menu presents one parameter or option (#268): a readable
@@ -323,6 +438,15 @@ pub struct StyleDescriptor {
     /// with no `[post_process.styles]` table, and the style reads each
     /// pixel's settings from [`StyleFrame::variants`] by its mask id.
     pub component: Option<&'static str>,
+    /// Whether bloom reads this style's result by default (#300). Off, the
+    /// bloom threshold reads the unstylized scene, so a halo sits where
+    /// the original bright pixels were (Kuwahara's look: light from the
+    /// scene, not the brush). On, bloom reads the HDR stage's result, so a
+    /// style's own bright shapes glow. Only an [`Hdr`](StyleStage::Hdr)
+    /// style can feed bloom, which runs before the display stage. A scene
+    /// overrides it with `feeds_bloom` in the style's table
+    /// ([`StyleDescriptor::feeds_bloom_in`]).
+    pub feeds_bloom: bool,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -352,6 +476,17 @@ impl StyleDescriptor {
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
     pub fn needs_edges(&self) -> bool {
         self.needs.contains(&StyleNeed::Edges)
+    }
+
+    /// Whether bloom reads this style's result under `config` (#300): the
+    /// scene's `feeds_bloom`, or the descriptor's default. Always false
+    /// for a display style.
+    pub fn feeds_bloom_in(&self, config: &PostProcessConfig) -> bool {
+        self.stage == StyleStage::Hdr
+            && config
+                .styles
+                .feeds_bloom(self.name)
+                .unwrap_or(self.feeds_bloom)
     }
 
     /// Parameter `name`'s value in `config`, or its default.
@@ -489,6 +624,10 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
         } else {
             out.push_str(&format!("order = {}\n", toml_float(order)));
         }
+    }
+    let feeds = descriptor.feeds_bloom_in(config);
+    if descriptor.stage == StyleStage::Hdr && feeds != descriptor.feeds_bloom {
+        out.push_str(&format!("feeds_bloom = {feeds}\n"));
     }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
@@ -908,11 +1047,14 @@ pub struct StyleSetting {
     /// Where the style stands in its stage's chain (#299): lower runs
     /// first. `None` is its registration index ([`chain_order`]).
     pub order: Option<f32>,
+    /// The scene's `feeds_bloom` (#300), when it sets one; `None` keeps
+    /// the descriptor's default.
+    pub feeds_bloom: Option<bool>,
 }
 
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one.
-pub const RESERVED_KEYS: [&str; 2] = ["enabled", "order"];
+pub const RESERVED_KEYS: [&str; 3] = ["enabled", "order", "feeds_bloom"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -965,6 +1107,18 @@ impl StyleSettings {
             .insert(option.to_string(), value.to_string());
     }
 
+    /// Whether the scene says bloom reads style `name` (#300); `None` when
+    /// it doesn't say.
+    pub fn feeds_bloom(&self, name: &str) -> Option<bool> {
+        self.styles.get(name)?.feeds_bloom
+    }
+
+    /// Say whether bloom reads style `name`; `None` goes back to the
+    /// style's default. Leaves the style on or off as it was.
+    pub fn set_feeds_bloom(&mut self, name: &str, feeds: Option<bool>) {
+        self.styles.entry(name.to_string()).or_default().feeds_bloom = feeds;
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -994,6 +1148,7 @@ impl StyleSettings {
             setting.params.clear();
             setting.options.clear();
             setting.order = None;
+            setting.feeds_bloom = None;
         }
     }
 
@@ -1025,9 +1180,10 @@ impl StyleSettings {
 
     /// Read a scene's `[post_process.styles]` tables. A table switches its
     /// style on unless it says `enabled = false`; an option is a string, a
-    /// parameter a number, and a colour (#315) an array of three numbers
-    /// or a `#rrggbb` string (its channels may still be set one by one). Returns the settings and a warning for each name, key or
-    /// value the registry doesn't know.
+    /// parameter a number, a colour (#315) an array of three numbers or a
+    /// `#rrggbb` string (its channels may still be set one by one), and
+    /// `feeds_bloom` (#300) true or false. Returns the settings and a
+    /// warning for each name, key or value the registry doesn't know.
     pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
         let mut settings = Self::default();
         let mut warnings = Vec::new();
@@ -1061,6 +1217,18 @@ impl StyleSettings {
                     match number {
                         Some(n) => setting.order = Some(n as f32),
                         None => warnings.push(format!("styles.{name}.order must be a number")),
+                    }
+                    continue;
+                }
+                if key == "feeds_bloom" {
+                    match value.as_bool() {
+                        Some(_) if descriptor.stage != StyleStage::Hdr => warnings.push(format!(
+                            "styles.{name}.feeds_bloom: {name} is a display style, after bloom; \
+                             only an hdr style can feed bloom"
+                        )),
+                        Some(feeds) => setting.feeds_bloom = Some(feeds),
+                        None => warnings
+                            .push(format!("styles.{name}.feeds_bloom must be true or false")),
                     }
                     continue;
                 }
@@ -1303,6 +1471,20 @@ impl StyleSet {
     }
 }
 
+/// Keep only style `name` of a stage's [`StyleSet::active`] list when
+/// `name` is given (the `style` debug view's `mask_view`, #334), so it
+/// reads the stage's original input rather than another style's output;
+/// without a name, the list as it is.
+pub fn solo<T: Copy>(
+    styles: Vec<(&'static StyleDescriptor, T)>,
+    name: Option<&str>,
+) -> Vec<(&'static StyleDescriptor, T)> {
+    match name {
+        Some(name) => styles.into_iter().filter(|(d, _)| d.name == name).collect(),
+        None => styles,
+    }
+}
+
 /// Where the style at registry index `index` stands in its stage's chain
 /// (#299): its table's `order`, else the index itself, so a scene that
 /// orders nothing runs in registration order. Lower runs first.
@@ -1503,7 +1685,17 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, watercolor, ascii, pencil, palette, invert, mask_view, edges_view);
+register_styles!(
+    kuwahara,
+    watercolor,
+    ascii,
+    pencil,
+    palette,
+    display_bloom,
+    invert,
+    mask_view,
+    edges_view
+);
 
 /// The built-ins followed by user styles registered at run time
 /// ([`custom`], #274). Append-only, so a style's index in it (which
@@ -1790,6 +1982,29 @@ mod tests {
     }
 
     #[test]
+    fn solo_keeps_only_the_named_style() {
+        // The display stage as a scene with ASCII and the mask view has it
+        let display = |names: &[&str]| -> Vec<(&'static StyleDescriptor, ())> {
+            registry()
+                .iter()
+                .filter(|d| names.contains(&d.name))
+                .map(|d| (*d, ()))
+                .collect()
+        };
+        let names = |styles: Vec<(&'static StyleDescriptor, ())>| -> Vec<&str> {
+            styles.iter().map(|(d, _)| d.name).collect()
+        };
+        let on = ["ascii", "mask_view"];
+        // The style debug view (#334): the mask view alone, reading the
+        // stage's input, not ASCII's glyphs
+        assert_eq!(names(solo(display(&on), Some("mask_view"))), ["mask_view"]);
+        // An HDR stage without it runs nothing
+        assert!(solo(display(&["kuwahara"]), Some("mask_view")).is_empty());
+        // Otherwise the chain as it was
+        assert_eq!(names(solo(display(&on), None)), ["ascii", "mask_view"]);
+    }
+
+    #[test]
     fn order_keys_rearrange_a_stage_and_default_to_registration() {
         let names = |config: &PostProcessConfig| -> Vec<&str> {
             stage_chain(StyleStage::Display, config)
@@ -1971,6 +2186,44 @@ mod tests {
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn feeds_bloom_reads_from_the_table_for_hdr_styles_only() {
+        let kuwahara = find("kuwahara").unwrap();
+        // Kuwahara's default is unchanged: bloom reads the original scene
+        assert!(!kuwahara.feeds_bloom);
+        assert!(!kuwahara.feeds_bloom_in(&PostProcessConfig::default()));
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            "[kuwahara]\nfeeds_bloom = true\n[ascii]\nfeeds_bloom = true\n[invert]\nfeeds_bloom = 1\n",
+        )
+        .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let config = PostProcessConfig {
+            styles: settings.clone(),
+            ..Default::default()
+        };
+        assert!(kuwahara.feeds_bloom_in(&config));
+        // A table switches its style on, Kuwahara's too since #298
+        assert!(kuwahara.is_enabled(&config));
+        assert!(
+            warnings.iter().all(|w| !w.contains("kuwahara")),
+            "{warnings:?}"
+        );
+        // ASCII draws after bloom: warned, ignored
+        assert_eq!(settings.feeds_bloom("ascii"), None);
+        assert!(!find("ascii").unwrap().feeds_bloom_in(&config));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("ascii") && w.contains("display")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("invert.feeds_bloom must be true or false")));
+        // Copy TOML writes it back, and Defaults clears it
+        assert!(style_toml(kuwahara, &config).contains("feeds_bloom = true"));
+        let mut reset = settings;
+        reset.reset("kuwahara");
+        assert_eq!(reset.feeds_bloom("kuwahara"), None);
     }
 
     #[test]

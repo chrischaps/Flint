@@ -118,16 +118,19 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "direction",
             default: "surface",
             choices: DIRECTIONS,
+            discover: None,
         },
         StyleOption {
             name: "scope",
             default: "screen",
             choices: SCOPES,
+            discover: None,
         },
         StyleOption {
             name: "grid",
             default: "screen",
             choices: GRIDS,
+            discover: None,
         },
     ],
     uses_mask: false,
@@ -159,6 +162,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
     ],
     component: Some("pencil_style"),
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");

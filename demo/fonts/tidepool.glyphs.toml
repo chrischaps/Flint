@@ -1,0 +1,19 @@
+# A glyph set to tune against (#323): the built-in 8x8 cells with ramps of
+# its own. `demo/ascii_tidepool.scene.toml` names it as `font = "tidepool"`.
+#
+# Edit a ramp here with `flint edit` or `flint play` open on that scene and
+# the frame redraws with it within a second; no restart. Same for
+# `demo/palettes/tidepool.palette.toml`.
+
+default_ramp = "swell"
+
+[font]
+# No `file`: the built-in 8x8 cells.
+
+# Dark water to foam: dots for the deep, waves for the lit faces.
+[ramps.swell]
+glyphs = " .,~=*#%@"
+
+# Sparser, for when the frame reads too busy.
+[ramps.still]
+glyphs = " .~*@"

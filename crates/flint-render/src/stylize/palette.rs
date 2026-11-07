@@ -23,7 +23,7 @@ use super::{
     StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
     StyleStage,
 };
-use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
+use crate::palette::{oklab, Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -51,11 +51,19 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 1.0,
             max: 32.0,
         },
+        StyleParam {
+            name: "chroma",
+            default: 1.0,
+            min: 0.0,
+            max: 4.0,
+        },
     ],
     options: &[StyleOption {
         name: "palette",
         default: DEFAULT_PALETTE,
         choices: BUILTIN_PALETTES,
+        // The scene's own palettes too, as ASCII offers them (#322)
+        discover: Some(super::ascii::palette_choices),
     }],
     uses_mask: false,
     needs: &[],
@@ -76,8 +84,14 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "Block size in points: 1 = every pixel its own colour, more = a chunky low-resolution screen",
         )
         .integer(),
+        StyleHint::new(
+            "chroma",
+            "Chroma",
+            "For a nearest palette: scales each block's saturation (OKLab a/b) before matching, so a muted scene reaches the palette's colours; 1 = as it is",
+        ),
     ],
     component: None,
+    feeds_bloom: false,
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Palette Uniform BGL");
@@ -114,31 +128,47 @@ struct PaletteUniforms {
     /// Block size in pixels
     block: u32,
     dither: f32,
-    _pad: [f32; 3],
+    /// OKLab a/b scale before a nearest match, as ASCII's `chroma`
+    chroma: f32,
+    _pad: [f32; 2],
     /// The table's first [`MAX_COLORS`] slots, then its last: one
     /// `array<vec4<f32>, 33>` in the shader (bytemuck has no 33-arrays)
     inks: [[f32; 4]; MAX_COLORS],
     last: [f32; 4],
+    /// The same table in OKLab, for `palette_ink_lab`
+    lab: [[f32; 4]; MAX_COLORS],
+    lab_last: [f32; 4],
+}
+
+/// `colors` as 33 uniform slots: the first 32, then the last.
+fn slots(colors: &[[f32; 3]]) -> ([[f32; 4]; MAX_COLORS], [f32; 4]) {
+    let mut all = [[0.0; 4]; TABLE_SLOTS];
+    for (slot, c) in all.iter_mut().zip(colors) {
+        *slot = [c[0], c[1], c[2], 0.0];
+    }
+    let mut first = [[0.0; 4]; MAX_COLORS];
+    first.copy_from_slice(&all[..MAX_COLORS]);
+    (first, all[MAX_COLORS])
 }
 
 impl PaletteUniforms {
-    fn new(palette: &Palette, srgb: bool, block: u32, dither: f32) -> Self {
+    fn new(palette: &Palette, srgb: bool, block: u32, dither: f32, chroma: f32) -> Self {
         let table = palette.table();
-        let mut slots = [[0.0; 4]; TABLE_SLOTS];
-        for (slot, c) in slots.iter_mut().zip(&table) {
-            *slot = [c[0], c[1], c[2], 0.0];
-        }
-        let mut inks = [[0.0; 4]; MAX_COLORS];
-        inks.copy_from_slice(&slots[..MAX_COLORS]);
+        let lab: Vec<[f32; 3]> = table.iter().map(|c| oklab(*c)).collect();
+        let (inks, last) = slots(&table);
+        let (lab, lab_last) = slots(&lab);
         Self {
             len: table.len() as u32,
             matching: palette.matching().index(),
             srgb: srgb as u32,
             block: block.max(1),
             dither: dither.clamp(0.0, 1.0),
-            _pad: [0.0; 3],
+            chroma: chroma.clamp(0.0, 4.0),
+            _pad: [0.0; 2],
             inks,
-            last: slots[MAX_COLORS],
+            last,
+            lab,
+            lab_last,
         }
     }
 }
@@ -180,6 +210,11 @@ impl PaletteStyle {
         if guard.0 != search {
             *guard = (search.clone(), PaletteCache::new(search));
         }
+        // An edited palette file shows while the viewer is open (#323),
+        // checked as often as the ASCII style checks its own
+        if frame.frame.is_multiple_of(15) {
+            guard.1.poll();
+        }
         let name = match frame.option("palette") {
             "" => DEFAULT_PALETTE,
             n => n,
@@ -205,6 +240,7 @@ impl StylePass for PaletteStyle {
             frame.srgb(),
             block_pixels(frame.param("pixel"), frame.pixels_per_point),
             frame.param("dither"),
+            frame.param("chroma"),
         );
         frame
             .queue
@@ -249,10 +285,28 @@ mod tests {
     }
 
     #[test]
+    fn a_ladder_takes_its_ground_at_its_lightness() {
+        let paper = Palette::builtin("paper").unwrap();
+        let table = paper.table();
+        assert_eq!(*table.last().unwrap(), paper.background(), "cream on top");
+        let phosphor = Palette::builtin("phosphor").unwrap();
+        assert_eq!(
+            phosphor.table()[0],
+            phosphor.background(),
+            "near-black below"
+        );
+        let cga = Palette::builtin("cga").unwrap();
+        assert_eq!(cga.table()[0], [0.0; 3]);
+        // Black quantizes to CGA's black ground, white to its white ink
+        assert_eq!(cga.quantize([0.02; 3], 1.0, 0.0, [0, 0]), [0.0; 3]);
+        assert_eq!(cga.quantize([1.0; 3], 1.0, 0.0, [0, 0]), [1.0; 3]);
+    }
+
+    #[test]
     fn ascii_and_palette_compile_one_matcher() {
-        // Not a copy: both shaders end with the same file
-        assert!(SHADER.ends_with(PALETTE_WGSL));
-        assert!(super::super::ascii::GLYPH_SHADER.ends_with(PALETTE_WGSL));
+        // Not a copy: both shaders hold the same file
+        assert!(SHADER.contains(PALETTE_WGSL));
+        assert!(super::super::ascii::GLYPH_SHADER.contains(PALETTE_WGSL));
     }
 
     #[test]

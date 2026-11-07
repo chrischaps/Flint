@@ -5,10 +5,13 @@
 //! and compared with its checked-in PNG; the tolerance is the manifest's
 //! (#265's: 2% of pixels past 48 levels, or a mean past 3).
 //!
-//! Without a GPU adapter the suite skips every case and passes, as CI has
-//! none (#314). `FLINT_BLESS=1 cargo test -p flint-cli --test
-//! render_goldens` rewrites the goldens after a deliberate change; look
-//! at them before committing.
+//! Without a GPU adapter the suite skips every case and passes, unless
+//! `FLINT_REQUIRE_GPU=1`, which CI's WARP job sets (#314), so there a
+//! skip is a failure. A golden may have a variant per adapter beside it
+//! (`<stem>.warp.png`, ...); a case compares with its adapter's when there
+//! is one. `FLINT_BLESS=1 cargo test -p flint-cli --test render_goldens`
+//! rewrites the goldens after a deliberate change; look at them before
+//! committing.
 
 use std::path::Path;
 use std::process::Command;

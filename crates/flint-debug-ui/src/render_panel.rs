@@ -139,6 +139,13 @@ impl RenderDebugPanel {
         self.authored_styles = authored;
     }
 
+    /// The scene's folder, where the style editor finds the scene's own
+    /// palettes and glyph sets to offer (#322); set by the host on scene
+    /// load (and reload, to find new files).
+    pub fn set_scene_dir(&mut self, scene_dir: Option<std::path::PathBuf>) {
+        self.styles_editor.set_scene_dir(scene_dir);
+    }
+
     /// Mirror the renderer's style ids into the Style Mask legend. Cheap
     /// every frame: it rebuilds only when the ids changed.
     pub fn set_style_ids(&mut self, ids: &StyleIds) {

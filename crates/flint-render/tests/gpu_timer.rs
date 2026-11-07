@@ -53,7 +53,7 @@ fn target(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::TextureVi
 #[test]
 fn a_renderer_times_its_phases_once_asked() {
     let Some((device, queue)) = timing_device() else {
-        eprintln!("no GPU adapter with timestamp queries; skipping");
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter with timestamp queries");
         return;
     };
     let mut renderer = SceneRenderer::new_headless(

@@ -93,6 +93,9 @@ pub struct ShaderStyleDef {
     pub inputs: Vec<String>,
     #[serde(default)]
     pub params: BTreeMap<String, ParamDef>,
+    /// Bloom reads this style's result (#300); hdr styles only.
+    #[serde(default)]
+    pub feeds_bloom: bool,
 }
 
 fn default_stage() -> String {
@@ -121,6 +124,8 @@ pub struct StyleSource {
     pub label: String,
     pub stage: StyleStage,
     pub inputs: Inputs,
+    /// Bloom reads the style's result by default (#300).
+    pub feeds_bloom: bool,
     /// Parameters in uniform order (by name).
     pub params: Vec<(String, ParamDef)>,
     /// The `.shader.toml`.
@@ -171,6 +176,11 @@ impl ShaderStyleDef {
                 ))
             }
         };
+        if self.feeds_bloom && stage != StyleStage::Hdr {
+            return Err(format!(
+                "{at}: feeds_bloom = true needs stage = \"hdr\"; a display style draws after bloom"
+            ));
+        }
         let mut inputs = Inputs::default();
         for input in &self.inputs {
             match input.as_str() {
@@ -195,7 +205,7 @@ impl ShaderStyleDef {
             if super::RESERVED_KEYS.contains(&name.as_str()) {
                 return Err(format!(
                     "{at}: parameter \"{name}\" is taken: every style's table reads {}",
-                    super::RESERVED_KEYS.join(" and ")
+                    super::RESERVED_KEYS.join(", ")
                 ));
             }
             if !(p.min <= p.default && p.default <= p.max) {
@@ -221,6 +231,7 @@ impl ShaderStyleDef {
             name: self.name,
             stage,
             inputs,
+            feeds_bloom: self.feeds_bloom,
             params: self.params.into_iter().collect(),
             toml_path: toml_path.to_path_buf(),
             wgsl_path: dir.join(shader),
@@ -911,6 +922,7 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         },
         hints: Box::leak(hints.into_boxed_slice()),
         component: None,
+        feeds_bloom: source.feeds_bloom,
         create,
     }));
     // The chain's bind cache keys on these names, so each install gets its
@@ -1586,6 +1598,17 @@ mod tests {
         assert!(err("[params.order]\ndefault = 0\nmin = 0\nmax = 1\n").contains("taken"));
         assert!(err("[params.a]\ndefault = 2\nmin = 0\nmax = 1\n").contains("outside"));
         assert!(err("wobble = 1\n").contains("unknown field"));
+        // feeds_bloom (#300): hdr styles only, off by default
+        assert!(err("feeds_bloom = true\n").contains("stage = \"hdr\""));
+        assert!(!source(base, file).unwrap().feeds_bloom);
+        assert!(
+            source(
+                &format!("{base}stage = \"hdr\"\nfeeds_bloom = true\n"),
+                file
+            )
+            .unwrap()
+            .feeds_bloom
+        );
         let up = "version = 1\nname = \"x\"\nshader = \"../x.wgsl\"\n";
         assert!(source(up, file).unwrap_err().contains("beside it"));
         let v2 = "version = 2\nname = \"x\"\nshader = \"x.wgsl\"\n";
@@ -1724,7 +1747,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     #[test]
     fn hot_reload_keeps_the_last_good_build() {
         let Some((device, _queue)) = device() else {
-            eprintln!("no GPU adapter; skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let dir = std::env::temp_dir().join(format!("flint-user-reload-{}", std::process::id()));
@@ -1936,7 +1959,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     #[test]
     fn a_replaced_descriptor_is_built_again() {
         let Some((device, _queue)) = device() else {
-            eprintln!("no GPU adapter; skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let dir = std::env::temp_dir().join(format!("flint-user-set-{}", std::process::id()));

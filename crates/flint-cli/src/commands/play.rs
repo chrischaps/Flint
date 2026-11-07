@@ -41,6 +41,11 @@ pub struct PlayArgs {
     /// List available GPU adapters and exit
     #[arg(long)]
     pub list_gpus: bool,
+
+    /// `--style name[:key=value,...]` over every scene's post-processing,
+    /// kept through transitions, and `--style-time` (#328)
+    #[command(flatten)]
+    pub style: crate::commands::common_args::StyleArgs,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -72,6 +77,13 @@ pub fn run(args: PlayArgs) -> Result<()> {
         println!("Warning: No schemas directories found");
         SchemaRegistry::new()
     };
+
+    // A --style word may name one of the scene's own styles (#274): check
+    // the words once those are registered
+    if !args.style.styles.is_empty() {
+        flint_player::load_user_styles(&args.scene);
+        args.style.check().map_err(anyhow::Error::msg)?;
+    }
 
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
@@ -120,6 +132,8 @@ pub fn run(args: PlayArgs) -> Result<()> {
 
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
+    app.style_specs = args.style.styles.clone();
+    app.style_time = args.style.style_time;
 
     // Preserve schema paths for scene transitions (includes auto-discovered)
     app.set_schema_paths(all_schemas);
