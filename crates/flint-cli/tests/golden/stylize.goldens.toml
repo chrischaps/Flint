@@ -19,7 +19,7 @@
 # a frame most likely to shade differently on another GPU.
 
 # Across adapters (#314): goldens are blessed on an RTX 4070 under Vulkan,
-# and CI compares on WARP. The glyph tolerance below held for 30 of the 32
+# and CI compares on WARP. The glyph tolerance below held for 29 of the 31
 # glyph cases on WARP (worst: edges-view at 1.25% / mean 2.80). The two
 # misses were by their mean: ascii-full-msaa4 (3.77; 3.47 on the same RTX
 # under DX12: MSAA resolves differ by backend) and style-terrain (3.36,
