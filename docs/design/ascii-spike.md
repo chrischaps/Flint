@@ -18,9 +18,14 @@ code, so the choice could be made by eye:
 
 Since #265 the `=` is required: bare `--ascii` is the shipped full-screen style.
 
-The code is `crates/flint-render/src/ascii_spike.rs` and its two shaders.
-It is off by default and adds nothing to a frame unless `--ascii` is set.
-`flint render` also gained `--render-scale` and `--gpu-time <frames>`.
+The code was `crates/flint-render/src/ascii_spike.rs` and its shaders.
+#293 removed it, with the `--ascii=<mode>`, `--ascii-entities` and
+`--ascii-scene-background` flags, once the shipped style (#265, #266,
+#267) covered every variant: `--ascii` is full screen, an `ascii_style`
+or `style_mask` component is per entity, and `grid = "object"` is the
+object grid. The flags below are kept for the record; they no longer run.
+`flint render` also gained `--render-scale` and `--gpu-time <frames>`,
+which stay.
 
 ## How the prototypes work
 
