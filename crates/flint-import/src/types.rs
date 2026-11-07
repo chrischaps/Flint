@@ -163,6 +163,80 @@ pub struct ImportedMesh {
     pub joint_weights: Option<Vec<[f32; 4]>>,
     /// Index into ImportResult.skeletons
     pub skin_index: Option<usize>,
+    /// The distances this mesh draws at, from its glTF mesh's
+    /// `extras.flint_lod` (see [`LodBand`]). `None` draws at every distance.
+    pub lod: Option<LodBand>,
+}
+
+/// One level of detail of a model: the band of camera distances a mesh draws
+/// in, authored per glTF primitive (or per mesh, for all its primitives) as
+/// `extras = { flint_lod = { near, far, draw_distance, ref_min, ref_max } }`
+/// (every key optional). Keep a model's levels as primitives of one mesh on
+/// one node: several mesh nodes are expanded into a child entity each.
+///
+/// The distance is measured from the camera to the closest point of the
+/// reference box `ref_min..ref_max` (model space; the mesh's own bounds when
+/// absent). Every level of one group names the same box, so exactly one of
+/// them draws at any distance: a merged chunk of props and its simplified
+/// copy switch together instead of overlapping. `near..far` is a switch
+/// between levels and scales with the renderer's LOD scale; `draw_distance`
+/// is where the mesh stops drawing at all and scales with the draw-distance
+/// scale. A missing `far` or `draw_distance` is unbounded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LodBand {
+    pub near: f32,
+    pub far: f32,
+    pub draw_distance: f32,
+    pub ref_box: Option<([f32; 3], [f32; 3])>,
+}
+
+impl Default for LodBand {
+    fn default() -> Self {
+        Self {
+            near: 0.0,
+            far: f32::INFINITY,
+            draw_distance: f32::INFINITY,
+            ref_box: None,
+        }
+    }
+}
+
+impl LodBand {
+    /// The band in a glTF `extras` object, if it has a `flint_lod` table.
+    /// Malformed numbers fall back to the defaults rather than failing the
+    /// import: a model with a bad band still draws.
+    pub fn from_extras(extras: &serde_json::Value) -> Option<Self> {
+        let lod = extras.get("flint_lod")?.as_object()?;
+        let num = |k: &str| lod.get(k).and_then(|v| v.as_f64()).map(|v| v as f32);
+        let vec3 = |k: &str| -> Option<[f32; 3]> {
+            let a = lod.get(k)?.as_array()?;
+            if a.len() != 3 {
+                return None;
+            }
+            Some([
+                a[0].as_f64()? as f32,
+                a[1].as_f64()? as f32,
+                a[2].as_f64()? as f32,
+            ])
+        };
+        let positive = |v: Option<f32>| v.filter(|d| *d > 0.0).unwrap_or(f32::INFINITY);
+        Some(Self {
+            near: num("near").unwrap_or(0.0).max(0.0),
+            far: positive(num("far")),
+            draw_distance: positive(num("draw_distance")),
+            ref_box: vec3("ref_min").zip(vec3("ref_max")),
+        })
+    }
+
+    /// Whether a camera `distance` metres from the reference box draws this
+    /// band, with switch distances times `lod_scale` and the draw distance
+    /// times `draw_scale`. `near` is inclusive and `far` exclusive, so two
+    /// levels that meet at one distance never both draw.
+    pub fn visible_at(&self, distance: f32, lod_scale: f32, draw_scale: f32) -> bool {
+        distance >= self.near * lod_scale
+            && distance < self.far * lod_scale
+            && distance < self.draw_distance * draw_scale
+    }
 }
 
 impl ImportedMesh {
@@ -361,5 +435,71 @@ impl ImportedMaterial {
             use_vertex_color: true,
             ..Self::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod lod_tests {
+    use super::LodBand;
+
+    #[test]
+    fn reads_a_band_from_extras() {
+        let extras = serde_json::json!({
+            "flint_lod": { "near": 80, "far": 200.5, "draw_distance": 400,
+                           "ref_min": [-1, 0, -1], "ref_max": [1, 2, 1] }
+        });
+        let band = LodBand::from_extras(&extras).unwrap();
+        assert_eq!(band.near, 80.0);
+        assert_eq!(band.far, 200.5);
+        assert_eq!(band.draw_distance, 400.0);
+        assert_eq!(band.ref_box, Some(([-1.0, 0.0, -1.0], [1.0, 2.0, 1.0])));
+    }
+
+    #[test]
+    fn missing_keys_are_unbounded_and_other_extras_are_ignored() {
+        let band = LodBand::from_extras(&serde_json::json!({ "flint_lod": {} })).unwrap();
+        assert_eq!(band, LodBand::default());
+        assert!(LodBand::from_extras(&serde_json::json!({ "units": "m" })).is_none());
+        // a zero far means "no far", not "never draws"
+        let band = LodBand::from_extras(&serde_json::json!({ "flint_lod": { "far": 0 } })).unwrap();
+        assert!(band.far.is_infinite());
+    }
+
+    #[test]
+    fn adjacent_levels_hand_over_with_no_gap_and_no_overlap() {
+        let lod0 = LodBand {
+            far: 90.0,
+            ..LodBand::default()
+        };
+        let lod1 = LodBand {
+            near: 90.0,
+            far: 220.0,
+            ..LodBand::default()
+        };
+        let lod2 = LodBand {
+            near: 220.0,
+            ..LodBand::default()
+        };
+        for scale in [0.5_f32, 1.0, 1.7] {
+            for d in (0..600).map(|i| i as f32 * 0.5) {
+                let n = [lod0, lod1, lod2]
+                    .iter()
+                    .filter(|b| b.visible_at(d, scale, 1.0))
+                    .count();
+                assert_eq!(n, 1, "distance {d} at scale {scale}");
+            }
+        }
+    }
+
+    #[test]
+    fn draw_distance_scales_on_its_own() {
+        let band = LodBand {
+            draw_distance: 150.0,
+            ..LodBand::default()
+        };
+        assert!(band.visible_at(140.0, 0.5, 1.0));
+        assert!(!band.visible_at(160.0, 1.0, 1.0));
+        assert!(band.visible_at(160.0, 1.0, 1.2));
+        assert!(!band.visible_at(100.0, 1.0, 0.6));
     }
 }

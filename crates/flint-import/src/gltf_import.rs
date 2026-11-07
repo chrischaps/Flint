@@ -3,7 +3,7 @@
 use crate::types::{
     AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
     ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeletalClip,
-    ImportedSkeleton, ImportedTexture, JointProperty,
+    ImportedSkeleton, ImportedTexture, JointProperty, LodBand,
 };
 use flint_asset::{AssetMeta, AssetType};
 use flint_core::{vfs, ContentHash, FlintError, Result};
@@ -88,7 +88,20 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
                 .map(String::from)
                 .unwrap_or_else(|| node_name.clone());
 
+            // A level of detail authored as `extras.flint_lod`, on a primitive
+            // or on its mesh. Primitives let one mesh (one node, one entity)
+            // carry every level of a model, so the levels cost no extra
+            // entities: a node per level would be expanded into a child each.
+            let band_in = |extras: &gltf::json::Extras| {
+                extras
+                    .as_ref()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw.get()).ok())
+                    .and_then(|extras| LodBand::from_extras(&extras))
+            };
+            let mesh_lod = band_in(mesh.extras());
+
             for primitive in mesh.primitives() {
+                let lod = band_in(primitive.extras()).or(mesh_lod);
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
                 let positions: Vec<[f32; 3]> = reader
@@ -132,6 +145,7 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
                     joint_indices,
                     joint_weights,
                     skin_index,
+                    lod,
                 });
                 mesh_primitive_indices.push(prim_index);
             }

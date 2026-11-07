@@ -17,6 +17,7 @@ pub use flint_render::{
     river_points, GrassGround, GrassHeight, GroundFog, RiverPoint, WaterBodyLook, WaterBodyMesh,
     WaterVertex,
 };
+pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_core::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};

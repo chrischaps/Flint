@@ -20,12 +20,12 @@ pub mod ui;
 pub use context::StateScope;
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 pub use context::{DrawCommand, DrawItem};
-pub use projector::{GroundField, Projector, ScreenPoint, View};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
+pub use projector::{GroundField, Projector, ScreenPoint, View};
 use sync::ScriptSync;
 
 /// Post-processing overrides set by scripts this frame; each field is `Some`
@@ -218,6 +218,25 @@ impl ScriptSystem {
         self.engine.drain_commands()
     }
 
+    /// Take the quality settings a script asked for with `set_quality`
+    /// since the last call, if any (FlintKart#55). The host applies them
+    /// between frames and hands back what it applied with
+    /// [`set_quality_state`](Self::set_quality_state).
+    pub fn take_quality_request(&mut self) -> Option<flint_core::quality::QualitySettings> {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        std::mem::take(&mut c.quality_requested).then_some(c.quality)
+    }
+
+    /// The quality settings in force, for `get_quality()`.
+    pub fn set_quality_state(&mut self, quality: flint_core::quality::QualitySettings) {
+        crate::lock_or_recover(&self.engine.ctx).quality = quality;
+    }
+
+    /// What the GPU is, for `gpu_info()`.
+    pub fn set_gpu_info(&mut self, info: flint_core::quality::GpuInfo) {
+        crate::lock_or_recover(&self.engine.ctx).gpu_info = info;
+    }
+
     /// Set screen dimensions for UI draw functions
     pub fn set_screen_size(&mut self, w: f32, h: f32) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
@@ -408,6 +427,24 @@ impl ScriptSystem {
         crate::lock_or_recover(&self.engine.ctx)
             .touch_controls_override
             .take()
+    }
+
+    /// Take the `set_lod_scale` / `set_draw_distance_scale` requests made by
+    /// scripts this frame (clears them), as (lod scale, draw-distance scale).
+    pub fn take_lod_requests(&mut self) -> (Option<f32>, Option<f32>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        (
+            c.lod_scale_request.take(),
+            c.draw_distance_scale_request.take(),
+        )
+    }
+
+    /// Tell scripts the renderer's distance scales in force (#56), for
+    /// `lod_scale()` and `draw_distance_scale()`.
+    pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.lod_scale = lod_scale;
+        c.draw_distance_scale = draw_distance_scale;
     }
 
     /// Take the cursor capture request set by scripts this frame (clears it)
@@ -626,7 +663,8 @@ mod tests {
             rhai.register_fn("delta_time", || 7.0_f64);
         }
 
-        let source = "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
+        let source =
+            "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
         let mut world = FlintWorld::new();
         let id = world.spawn("host").unwrap();
         let ast = system.engine.compile(source).unwrap();

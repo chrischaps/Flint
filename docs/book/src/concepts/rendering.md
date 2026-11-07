@@ -90,6 +90,23 @@ The scene is made while the frame's draws are gathered, before culling, so a tar
 
 **Culling.** Every static mesh has a local bounding box, which the renderer computes from its vertices at upload. Each frame, opaque and transparent mesh draws whose world box is outside the camera frustum are skipped. Each shadow cascade skips the draws outside its own frustum as well. The F2 stats overlay shows the main-view count as `Entities: N (M culled)`, and `RenderStats::culled_draws` holds the same number. Skinned meshes, wireframes and `bounds` boxes are never culled. Large meshes are hard to cull, so split a sprawling mesh into sectors if most of it is usually off screen.
 
+### Levels of detail and draw distance
+
+A model can carry simpler copies of itself for distance: each glTF primitive (or mesh, for all its primitives) may hold a band in its `extras`:
+
+```json
+"extras": { "flint_lod": { "near": 70, "far": 160, "draw_distance": 400,
+                           "ref_min": [-90, -2, -90], "ref_max": [90, 30, 90] } }
+```
+
+Every key is optional. The primitive draws while the camera's distance to the box `ref_min..ref_max` (model space; the primitive's own bounds when absent) is in `near..far` and under `draw_distance`. Give every level of a group the same box and bands that meet (`0..70`, `70..160`, `160..`): the distance is then the same number for all of them, so exactly one level draws at any distance and the levels hand over together. Measured to the nearest point of a region's box, a level switches only once every part of the region is that far away. The choice is made per camera, before the shadow pass, so a far region's shadow is cast by its simple level too.
+
+Keep a model's levels as primitives of **one mesh on one node**. A GLB with several mesh nodes is expanded into a child entity per node, and each entity costs extraction work every frame, drawn or not.
+
+An entity's `lod` component caps a whole model: `draw_distance = 300` stops drawing it (and its shadow) when the camera is 300 m from its bounds. It applies to a multi-node model's nodes too.
+
+Two runtime scales serve quality settings: the **LOD scale** multiplies every `near`/`far`, so 0.5 drops models to their simpler levels at half the distance, and the **draw-distance scale** multiplies every `draw_distance`. Scripts call `set_lod_scale(s)` and `set_draw_distance_scale(s)` (applied after the frame's scripts, kept across scenes) and read them with `lod_scale()` and `draw_distance_scale()`; Rust calls `SceneRenderer::set_lod_settings`. They start at 1, or at `FLINT_LOD_SCALE` and `FLINT_DRAW_DISTANCE_SCALE`, and are clamped to 0.05 and up. `FLINT_LOD_SCALE=1000` holds every model at its first level, for comparisons. `RenderStats::lod_culled_draws` counts the draws set aside by level or distance (they're also in `culled_draws`), and `--exit-after` prints it.
+
 ## Skinned Mesh Pipeline
 
 For skeletal animation, the renderer provides a separate GPU pipeline that applies bone matrix skinning in the vertex shader. This avoids the 32-byte overhead of bone data on static geometry.

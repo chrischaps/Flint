@@ -106,6 +106,12 @@ pub struct RenderArgs {
     #[arg(long, default_value = "1")]
     pub msaa: u32,
 
+    /// Quality settings as `key=value,...`, as flint-player's --quality
+    /// (FlintKart#55), applied after every other flag: e.g.
+    /// `render_scale=0.6,shadow_cascades=1,ssao=0,bloom=0` renders a tier
+    #[arg(long, value_name = "KEY=VALUE,...")]
+    pub quality: Option<String>,
+
     /// ASCII: bare `--ascii` turns on the full-screen ASCII style (#265,
     /// `[post_process.styles.ascii]`). The spike's prototypes (#261) are
     /// `--ascii=full` (whole screen), `--ascii=entity` (only
@@ -670,6 +676,23 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
     if let Some(scale) = args.render_scale {
         renderer.set_render_scale(&ctx.device, scale);
+    }
+
+    // Quality settings over the flags above: the renderer's own state is the
+    // starting point, so `--quality` names only what it changes.
+    if let Some(quality) = &args.quality {
+        let mut q = flint_render::QualitySettings {
+            render_scale: renderer.render_scale(),
+            msaa: renderer.msaa(),
+            shadows: renderer.shadows_enabled(),
+            shadow_resolution: renderer.shadow_resolution(),
+            ..Default::default()
+        };
+        if let Some(e) = q.apply_str(quality).first() {
+            anyhow::bail!("--quality: {e}");
+        }
+        let applied = renderer.set_quality(&ctx.device, &q);
+        println!("Quality: {}", applied.to_query());
     }
     if let Some(px) = args.pixels_per_point {
         renderer.pixels_per_point = px;

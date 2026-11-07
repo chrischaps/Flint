@@ -494,6 +494,8 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_desaturation(amount)` | Desaturate toward ash grey (0 = full colour, 1 = grey; ADR 0021) |
 | `set_dof(strength)` | Depth-of-field defocus strength (0 = sharp, 1 = full blur) |
 | `set_dof_focus(distance, range)` | Focus plane distance and half-width, in view metres |
+| `set_lod_scale(scale)` / `lod_scale()` | Multiply every level-of-detail switch distance (1 = as authored, 0.5 = simpler levels at half the distance; kept across scenes; see Rendering) |
+| `set_draw_distance_scale(scale)` / `draw_distance_scale()` | Multiply every model's draw distance |
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
 
@@ -503,6 +505,24 @@ it is cleared the frame your script stops calling it, so a crashed or
 hot-reloaded script cannot strand the world inside an effect. Call it every
 frame the effect is active. See
 [Post-Processing: Render Modes](post-processing.md#render-modes).
+
+### Quality Settings API
+
+Change the renderer's load levers while the game runs: a graphics menu, or
+stepping down on a slow device. See [Quality Settings](quality-settings.md)
+for every key and what a change rebuilds.
+
+| Function | Description |
+|----------|-------------|
+| `set_quality(map)` | Merge `#{ render_scale: 0.75, msaa: 4, shadow_cascades: 2, ssao: false, ... }` into the settings in force, from the end of this frame. Returns `true` when every key was taken; a bad key is warned about and skipped |
+| `set_quality(key, value)` | One key |
+| `get_quality()` | Map of every setting, clamped (a request reads back at once) |
+| `get_quality(key)` | One setting, or `()` for an unknown key |
+| `gpu_info()` | `#{ name, vendor, device_type, backend, driver, class, platform }`; `class` is `"desktop"`, `"integrated"`, `"mobile"`, `"software"` or `"unknown"` |
+
+The post-process keys (`post_process`, `bloom`, `ssao`, `ssao_samples`,
+`fog`, `volumetric`) are caps: off turns the scene's effect off, on leaves it
+as the scene set it. They hold across scene loads.
 
 ### Conducted Parameters API
 

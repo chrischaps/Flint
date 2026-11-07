@@ -30,6 +30,10 @@ use winit::window::CursorGrabMode;
 use winit::window::WindowId;
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
+#[cfg(target_os = "android")]
+use std::sync::Arc;
+#[cfg(target_os = "android")]
+use winit::window::Window;
 
 /// Tracks Android device IDs that produce gamepad button keycodes,
 /// assigning each a stable u32 slot for InputState's gamepad API.
@@ -444,6 +448,10 @@ impl ApplicationHandler for PlayerApp {
                             self.input
                                 .set_screen_size(size.width as f64, size.height as f64);
                         }
+                        // The renderer kept its quality settings through the
+                        // suspend; apply them over the resized chain
+                        // (FlintKart#55).
+                        self.reapply_quality();
                         self.cursor_captured = true;
                     }
                     Err(e) => {
