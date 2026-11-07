@@ -150,8 +150,8 @@ with the same settings share an id.
   mask ids below 256 (#336). A whole-frame ASCII pass costs 2-3x once any
   entity has an `ascii_style` (#337).
 - Kuwahara keeps its legacy `kuwahara_*` fields beside the style table
-  (#298). Styles run in registration order within a stage, not in an
-  authored order (#299).
+  (#298). Styles run in registration order within a stage unless a
+  table's `order` key places them (#299).
 - The spike's code (`ascii_spike.rs`, `--ascii=full|entity|entity-object`)
   stays only until #293 removes it. The goldens `ascii-entity` and
   `ascii-entity-object` still pin it.
