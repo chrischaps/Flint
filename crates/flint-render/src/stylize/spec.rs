@@ -8,6 +8,7 @@
 //! --style invert:strength=0.5
 //! --style kuwahara:radius=6
 //! --style ascii:off                      turn off a style the scene has on
+//! --style invert:order=0                 run first in its stage (#299)
 //! ```
 //!
 //! Keys are checked against the style's descriptor: a number for each of
@@ -78,7 +79,11 @@ impl StyleSpec {
                 };
                 continue;
             }
-            check(descriptor, key, value)?;
+            if key == "order" {
+                number(name, key, value)?;
+            } else {
+                check(descriptor, key, value)?;
+            }
             parsed.settings.push((key.to_string(), value.to_string()));
         }
         Ok(parsed)
@@ -87,9 +92,18 @@ impl StyleSpec {
     /// Write this spec into `config`: the style on (or off) with its
     /// settings, over whatever the scene said.
     pub fn apply(&self, config: &mut PostProcessConfig) {
+        // Any style's place in its stage (#299)
+        for (key, value) in &self.settings {
+            if key == "order" {
+                config.styles.set_order(&self.name, value.parse().ok());
+            }
+        }
         let descriptor = find(&self.name).expect("checked by parse");
         config.styles.set_enabled(&self.name, self.enabled);
         for (key, value) in &self.settings {
+            if key == "order" {
+                continue;
+            }
             if descriptor.options.iter().any(|o| o.name == key) {
                 config.styles.set_option(&self.name, key, value);
             } else if let Ok(n) = value.parse::<f32>() {
@@ -155,6 +169,7 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
             }
         }))
         .collect();
+    keys.push("order=<n>".to_string());
     keys.push("off".to_string());
     keys.join(", ")
 }
@@ -198,6 +213,19 @@ mod tests {
         assert!(config.styles.is_enabled("kuwahara"));
         assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
         assert_eq!(config.styles.param("kuwahara", "anisotropy"), Some(0.5));
+    }
+
+    #[test]
+    fn order_is_a_key_of_every_style() {
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(&mut config, "invert:order=0,strength=0.5").unwrap();
+        assert_eq!(config.styles.order("invert"), Some(0.0));
+        assert_eq!(config.styles.param("invert", "strength"), Some(0.5));
+        apply_style_spec(&mut config, "kuwahara:order=-1").unwrap();
+        assert_eq!(config.styles.order("kuwahara"), Some(-1.0));
+        assert!(config.styles.is_enabled("kuwahara"));
+        assert!(StyleSpec::parse("ascii:order=soon").is_err());
+        assert!(style_spec_help().contains("order=<n>"));
     }
 
     #[test]

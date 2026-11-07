@@ -1,7 +1,7 @@
 //! The stylize goldens (#271): `flint render-suite
 //! tests/golden/stylize.goldens.toml`, through the real binary. Every
-//! registered style (full-screen ASCII at 1x, 2x and MSAA 4, the spike's
-//! per-entity modes, the entity style mask, invert, Kuwahara) is rendered
+//! registered style (full-screen ASCII at 1x, 2x and MSAA 4, per-entity
+//! ASCII, the entity style mask, invert, Kuwahara) is rendered
 //! and compared with its checked-in PNG; the tolerance is the manifest's
 //! (#265's: 2% of pixels past 48 levels, or a mean past 3).
 //!

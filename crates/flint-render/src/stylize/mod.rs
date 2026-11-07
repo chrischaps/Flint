@@ -32,14 +32,17 @@
 //!
 //! ## Order
 //!
-//! Styles of one stage run in registration order, each reading the one
-//! before it. The stages sit at two fixed places in the post chain:
+//! Styles of one stage run one after another, each reading the one before
+//! it, in the order their tables give (`order = <n>` in
+//! `[post_process.styles.<name>]`, #299; [`chain_order`]). A style without
+//! one stands at its registration index, so a scene that says nothing
+//! runs in registration order; ties keep registration order too. The
+//! stages sit at two fixed places in the post chain:
 //!
 //! ```text
 //! scene (HDR, render scale)
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
-//!   -> [ASCII spike, #261]
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
 //!   -> Display styles (ASCII, pencil, invert) surface format, output resolution
@@ -334,6 +337,13 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     let mut out = format!("[post_process.styles.{}]\n", descriptor.name);
     if !descriptor.is_enabled(config) {
         out.push_str("enabled = false\n");
+    }
+    if let Some(order) = config.styles.order(descriptor.name) {
+        if order.fract() == 0.0 {
+            out.push_str(&format!("order = {}\n", order as i64));
+        } else {
+            out.push_str(&format!("order = {}\n", toml_float(order)));
+        }
     }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
@@ -678,7 +688,14 @@ pub struct StyleSetting {
     pub enabled: bool,
     pub params: BTreeMap<String, f32>,
     pub options: BTreeMap<String, String>,
+    /// Where the style stands in its stage's chain (#299): lower runs
+    /// first. `None` is its registration index ([`chain_order`]).
+    pub order: Option<f32>,
 }
+
+/// Keys every style's table reads besides its own parameters and options;
+/// no style may name a parameter or option after one.
+pub const RESERVED_KEYS: [&str; 2] = ["enabled", "order"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -728,12 +745,30 @@ impl StyleSettings {
         self.styles.get(name)
     }
 
-    /// Put style `name`'s parameters and options back to their defaults,
-    /// leaving it on or off as it was.
+    /// Style `name`'s authored place in its stage, if it has one (#299).
+    pub fn order(&self, name: &str) -> Option<f32> {
+        self.styles.get(name)?.order
+    }
+
+    /// Give style `name` a place in its stage, or (`None`) put it back at
+    /// its registration index.
+    pub fn set_order(&mut self, name: &str, order: Option<f32>) {
+        match self.styles.get_mut(name) {
+            Some(setting) => setting.order = order,
+            None if order.is_some() => {
+                self.styles.entry(name.to_string()).or_default().order = order;
+            }
+            None => {}
+        }
+    }
+
+    /// Put style `name`'s parameters, options and place in the chain back
+    /// to their defaults, leaving it on or off as it was.
     pub fn reset(&mut self, name: &str) {
         if let Some(setting) = self.styles.get_mut(name) {
             setting.params.clear();
             setting.options.clear();
+            setting.order = None;
         }
     }
 
@@ -789,6 +824,17 @@ impl StyleSettings {
                         None => {
                             warnings.push(format!("styles.{name}.enabled must be true or false"))
                         }
+                    }
+                    continue;
+                }
+                if key == "order" {
+                    let number = value
+                        .as_float()
+                        .or_else(|| value.as_integer().map(|i| i as f64))
+                        .filter(|n| n.is_finite());
+                    match number {
+                        Some(n) => setting.order = Some(n as f32),
+                        None => warnings.push(format!("styles.{name}.order must be a number")),
                     }
                     continue;
                 }
@@ -926,16 +972,48 @@ impl StyleSet {
         if !config.enabled {
             return Vec::new();
         }
-        registry()
+        let mut on: Vec<(f32, (&'static StyleDescriptor, &dyn StylePass))> = registry()
             .iter()
+            .enumerate()
             .zip(&self.built)
             .zip(&self.from)
             // A pass built from a descriptor since replaced waits for ensure
-            .filter(|((d, _), from)| **from == descriptor_id(d))
-            .filter(|((d, _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter_map(|((d, built), _)| built.as_deref().map(|p| (*d, p)))
-            .collect()
+            .filter(|(((_, d), _), from)| **from == descriptor_id(d))
+            .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
+            .filter_map(|(((i, d), built), _)| {
+                built
+                    .as_deref()
+                    .map(|p| (chain_order(i, d, config), (*d, p)))
+            })
+            .collect();
+        // Stable: equal orders keep registration order
+        on.sort_by(|a, b| a.0.total_cmp(&b.0));
+        on.into_iter().map(|(_, style)| style).collect()
     }
+}
+
+/// Where the style at registry index `index` stands in its stage's chain
+/// (#299): its table's `order`, else the index itself, so a scene that
+/// orders nothing runs in registration order. Lower runs first.
+pub fn chain_order(index: usize, descriptor: &StyleDescriptor, config: &PostProcessConfig) -> f32 {
+    config.styles.order(descriptor.name).unwrap_or(index as f32)
+}
+
+/// Every registered style of `stage`, in the order its chain would run
+/// them under `config` (on or not), with each one's [`chain_order`]. What
+/// the F4 menu lists; [`StyleSet::active`] keeps the ones that are on.
+pub fn stage_chain(
+    stage: StyleStage,
+    config: &PostProcessConfig,
+) -> Vec<(&'static StyleDescriptor, f32)> {
+    let mut chain: Vec<(&'static StyleDescriptor, f32)> = registry()
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.stage == stage)
+        .map(|(i, d)| (*d, chain_order(i, d, config)))
+        .collect();
+    chain.sort_by(|a, b| a.1.total_cmp(&b.1));
+    chain
 }
 
 /// Which view each style of a stage reads and writes: `Input` is what the
@@ -1044,7 +1122,8 @@ pub(crate) fn run_stage(
 // ---------------------------------------------------------------------------
 
 /// Declare the style modules and the registry in one list: adding a style
-/// is its module plus its name here. Order is chain order within a stage.
+/// is its module plus its name here. Order is a stage's default chain
+/// order; a scene's `order` keys can rearrange it ([`chain_order`]).
 macro_rules! register_styles {
     ($($module:ident),* $(,)?) => {
         $(mod $module;)*
@@ -1279,6 +1358,88 @@ mod tests {
         live.restore("invert", &authored);
         assert!(!live.is_enabled("invert"));
         assert!(live.same_style("invert", &StyleSettings::default()));
+    }
+
+    #[test]
+    fn order_keys_rearrange_a_stage_and_default_to_registration() {
+        let names = |config: &PostProcessConfig| -> Vec<&str> {
+            stage_chain(StyleStage::Display, config)
+                .iter()
+                .map(|(d, _)| d.name)
+                .filter(|n| ["watercolor", "ascii", "pencil", "invert"].contains(n))
+                .collect()
+        };
+        // Nothing said: registration order, which is today's
+        let mut config = PostProcessConfig::default();
+        assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
+        let registered: Vec<&str> = registry()
+            .iter()
+            .filter(|d| d.stage == StyleStage::Display)
+            .map(|d| d.name)
+            .collect();
+        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+            .iter()
+            .map(|(d, _)| d.name)
+            .collect();
+        assert_eq!(chain, registered);
+
+        // Watercolor over ASCII, from the scene's syntax
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            r#"
+            [watercolor]
+            order = 10
+            [ascii]
+            order = 2.5
+            [invert]
+            enabled = false
+            order = "first"
+            "#,
+        )
+        .unwrap();
+        let (styles, warnings) = StyleSettings::from_tables(&tables);
+        assert_eq!(warnings, vec!["styles.invert.order must be a number"]);
+        assert_eq!(styles.order("watercolor"), Some(10.0));
+        config.styles = styles;
+        assert_eq!(names(&config), ["ascii", "pencil", "invert", "watercolor"]);
+        // A tie keeps registration order: pencil (3) and ascii at 3
+        config.styles.set_order("ascii", Some(3.0));
+        assert_eq!(names(&config), ["ascii", "pencil", "invert", "watercolor"]);
+        // Defaults puts it back
+        config.styles.reset("watercolor");
+        config.styles.set_order("ascii", None);
+        assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
+        // Ordering a style it has no table for doesn't switch it on
+        config.styles.set_order("pencil", Some(0.0));
+        assert!(!config.styles.is_enabled("pencil"));
+        assert_eq!(names(&config)[0], "pencil");
+    }
+
+    #[test]
+    fn style_toml_keeps_the_order() {
+        let watercolor = find("watercolor").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("watercolor", true);
+        config.styles.set_order("watercolor", Some(5.0));
+        assert_eq!(
+            style_toml(watercolor, &config),
+            "[post_process.styles.watercolor]\norder = 5\n"
+        );
+        config.styles.set_order("watercolor", Some(0.5));
+        assert!(style_toml(watercolor, &config).contains("order = 0.5\n"));
+    }
+
+    #[test]
+    fn no_style_names_a_setting_after_a_reserved_key() {
+        for d in registry() {
+            for key in RESERVED_KEYS {
+                assert!(
+                    d.params.iter().all(|p| p.name != key)
+                        && d.options.iter().all(|o| o.name != key),
+                    "{}.{key}",
+                    d.name
+                );
+            }
+        }
     }
 
     #[test]

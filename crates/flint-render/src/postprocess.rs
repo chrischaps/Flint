@@ -2151,7 +2151,6 @@ impl PostProcessPipeline {
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
         scene: &crate::stylize::StyleInput<'_>,
-        scene_kept: bool,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
@@ -2319,28 +2318,24 @@ impl PostProcessPipeline {
             })
         });
 
-        // The scene: the HDR buffer, or the HDR styles' result (#262). One
-        // that isn't the chain's (the ASCII spike's output, #261) gets a
-        // bind group for this frame only.
+        // The scene: the HDR buffer, or the HDR styles' result (#262)
         let scene_view = scene.view;
-        let scene_bg = resources
-            .binds
-            .get_if(scene_kept, "composite scene", scene.id, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Composite Scene BG"),
-                    layout: &self.composite_scene_bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(scene_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
-                        },
-                    ],
-                })
-            });
+        let scene_bg = resources.binds.get("composite scene", scene.id, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Composite Scene BG"),
+                layout: &self.composite_scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(scene_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            })
+        });
 
         // Use bloom mip[0] if available and bloom enabled, otherwise use black texture
         let bloom_on = config.bloom_enabled && !resources.bloom_mips.is_empty();

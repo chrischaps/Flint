@@ -189,6 +189,12 @@ impl ShaderStyleDef {
                      and not start with flint or _"
                 ));
             }
+            if super::RESERVED_KEYS.contains(&name.as_str()) {
+                return Err(format!(
+                    "{at}: parameter \"{name}\" is taken: every style's table reads {}",
+                    super::RESERVED_KEYS.join(" and ")
+                ));
+            }
             if !(p.min <= p.default && p.default <= p.max) {
                 return Err(format!(
                     "{at}: params.{name}: default {} is outside {}..{}",
@@ -1525,6 +1531,8 @@ mod tests {
         assert!(err("stage = \"late\"\n").contains("\"display\" or \"hdr\""));
         assert!(err("inputs = [\"normals\"]\n").contains("unknown input"));
         assert!(err("[params.flint_x]\ndefault = 0\nmin = 0\nmax = 1\n").contains("flint"));
+        // Every table's own keys (#299)
+        assert!(err("[params.order]\ndefault = 0\nmin = 0\nmax = 1\n").contains("taken"));
         assert!(err("[params.a]\ndefault = 2\nmin = 0\nmax = 1\n").contains("outside"));
         assert!(err("wobble = 1\n").contains("unknown field"));
         let up = "version = 1\nname = \"x\"\nshader = \"../x.wgsl\"\n";

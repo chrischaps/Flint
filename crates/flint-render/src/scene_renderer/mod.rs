@@ -523,11 +523,6 @@ pub struct SceneRenderer {
     grass_shadow_binds: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
-    /// The ASCII spike's settings and passes (#261); `None` until a mode is set.
-    ascii_config: crate::ascii_spike::AsciiSpikeConfig,
-    ascii_spike: Option<crate::ascii_spike::AsciiSpike>,
-    /// Masked entities -> (style id, world origin of the matched root).
-    ascii_targets: HashMap<flint_core::EntityId, (f32, [f32; 3])>,
     /// The entity style mask's pass (#263); `None` until a frame needs it.
     style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
     /// Style names entities ask for, numbered for the mask.
@@ -839,9 +834,6 @@ impl SceneRenderer {
             grass_readback_due: false,
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
-            ascii_config: Default::default(),
-            ascii_spike: None,
-            ascii_targets: HashMap::new(),
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
@@ -2326,9 +2318,6 @@ impl SceneRenderer {
             grass_readback_due: false,
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
-            ascii_config: Default::default(),
-            ascii_spike: None,
-            ascii_targets: HashMap::new(),
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
@@ -3266,7 +3255,6 @@ impl SceneRenderer {
         self.normal_arrow_draws.clear();
         self.extract_frame = self.extract_frame.wrapping_add(1);
 
-        self.resolve_ascii_targets(world);
         self.sync_debug_styles();
         // Ids for every styled entity: they say which styles are on for
         // entities alone (#266) as well as what the mask holds (#263)
@@ -4489,103 +4477,6 @@ impl SceneRenderer {
         }
     }
 
-    /// Turn on one of the ASCII spike's prototypes (#261), or off with
-    /// [`AsciiSpikeMode::Off`](crate::AsciiSpikeMode::Off). The masked modes
-    /// pick their entities by name at the next
-    /// [`update_from_world`](Self::update_from_world).
-    pub fn set_ascii_spike(
-        &mut self,
-        device: &wgpu::Device,
-        config: crate::ascii_spike::AsciiSpikeConfig,
-    ) {
-        if config.mode != crate::AsciiSpikeMode::Off && self.ascii_spike.is_none() {
-            self.ascii_spike = Some(crate::ascii_spike::AsciiSpike::new(
-                device,
-                &self.pipeline.transform_bind_group_layout,
-            ));
-        }
-        self.ascii_config = config;
-    }
-
-    /// Find the entities the ASCII spike masks: each match and its
-    /// descendants, numbered by the matched root's name order.
-    fn resolve_ascii_targets(&mut self, world: &FlintWorld) {
-        self.ascii_targets.clear();
-        if !self.ascii_config.mode.is_masked() {
-            return;
-        }
-        let mut roots: Vec<(String, flint_core::EntityId)> = world
-            .all_entities()
-            .into_iter()
-            .filter(|e| self.ascii_config.matches(&e.name))
-            .map(|e| (e.name, e.id))
-            .collect();
-        roots.sort();
-        for (i, (_, root)) in roots.iter().enumerate() {
-            let origin = world
-                .get_world_matrix(*root)
-                .map_or([0.0; 3], |m| [m[3][0], m[3][1], m[3][2]]);
-            let id = (i + 1) as f32;
-            let mut stack = vec![*root];
-            while let Some(e) = stack.pop() {
-                // A nested match keeps the outer root's id and anchor
-                self.ascii_targets.entry(e).or_insert((id, origin));
-                stack.extend(world.get_children(e));
-            }
-        }
-    }
-
-    /// Record the ASCII spike's mask pass over this frame's visible opaque
-    /// draws of the masked entities.
-    fn encode_ascii_mask(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
-        camera: &Camera,
-    ) {
-        let Some(spike) = &self.ascii_spike else {
-            return;
-        };
-        let (w, h) = self.scene_size();
-        let m = camera.view_projection_matrix();
-        let project = |p: [f32; 3]| -> [f32; 2] {
-            let x = m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0];
-            let y = m[0][1] * p[0] + m[1][1] * p[1] + m[2][1] * p[2] + m[3][1];
-            let wc = m[0][3] * p[0] + m[1][3] * p[1] + m[2][3] * p[2] + m[3][3];
-            let wc = if wc.abs() < 1e-6 { 1e-6 } else { wc };
-            [
-                (x / wc * 0.5 + 0.5) * w as f32,
-                (0.5 - y / wc * 0.5) * h as f32,
-            ]
-        };
-        let draws: Vec<_> = self
-            .entity_draws
-            .iter()
-            .filter(|d| !d.is_wireframe)
-            .filter_map(|d| {
-                let (id, origin) = *self.ascii_targets.get(d.entity_id.as_ref()?)?;
-                Some(crate::ascii_spike::MaskDrawRef {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    id,
-                    anchor: project(origin),
-                })
-            })
-            .collect();
-        spike.encode_mask(
-            device,
-            queue,
-            encoder,
-            depth_view,
-            &self.ascii_config,
-            &draws,
-        );
-    }
-
     /// Whether this frame draws the entity style mask: post-processing is
     /// up and a style that reads it is on (#263).
     fn style_mask_wanted(&self) -> bool {
@@ -5520,25 +5411,6 @@ impl SceneRenderer {
 
         if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scene_scope) {
             timer.end(encoder, scope);
-        }
-
-        // ASCII spike (#261): size its targets to the HDR chain, then mask
-        // the chosen entities against the frame's single-sample depth.
-        let ascii_active = has_postprocess
-            && self.postprocess_config.enabled
-            && self.ascii_config.mode != crate::AsciiSpikeMode::Off;
-        if ascii_active {
-            let size = self.scene_size();
-            if let Some(spike) = &mut self.ascii_spike {
-                spike.ensure_targets(device, size);
-            }
-            if self.ascii_config.mode.is_masked() {
-                let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "ASCII mask"));
-                self.encode_ascii_mask(device, queue, encoder, depth_view, camera);
-                if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                    timer.end(encoder, scope);
-                }
-            }
         }
 
         // The entity style mask (#263): the styled entities' ids, drawn

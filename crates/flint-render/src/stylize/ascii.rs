@@ -161,6 +161,18 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             max: 1.0,
         },
         StyleParam {
+            name: "exposure",
+            default: 0.0,
+            min: -4.0,
+            max: 4.0,
+        },
+        StyleParam {
+            name: "normalize",
+            default: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
             name: "tint_r",
             default: 0.35,
             min: 0.0,
@@ -276,6 +288,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
         StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)"),
         StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
+        StyleHint::new(
+            "exposure",
+            "Exposure (stops)",
+            "Brightens (or darkens) the cell's colour before its glyph is picked: +1 doubles it in linear light",
+        ),
+        StyleHint::new(
+            "normalize",
+            "Normalize",
+            "Stretches this style's own tone range (the whole frame's, or each styled entity's) over the glyph ramp, so a dark prop draws its full ramp; 0 off, 1 full",
+        ),
         StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
         StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
         StyleHint::new(
@@ -397,6 +419,43 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                     },
                     count: None,
                 },
+                // Each slot's tone range (#289), likewise
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        // The tone statistics' inputs (#289): the picture and the mask
+        let stats_in_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Stats In BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
@@ -438,6 +497,28 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                 resource: wgpu::BindingResource::TextureView(&no_mask_view),
             }],
         });
+        let cells_pipeline = kit::fullscreen_pipeline(
+            device,
+            "ASCII Cells Pipeline",
+            &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
+            &[&uniform_bgl, &input_bgl, &cells_bgl, &edges_in_bgl],
+            CELL_FORMAT,
+        );
+        // Tone statistics (#289): per lattice row, then per slot
+        let stats_pipeline = kit::fullscreen_pipeline(
+            device,
+            "ASCII Stats Pipeline",
+            &kit::shader(device, "ASCII Stats Shader", STATS_SHADER),
+            &[&uniform_bgl, &stats_in_bgl],
+            STATS_FORMAT,
+        );
+        let stats_resolve_pipeline = kit::fullscreen_pipeline(
+            device,
+            "ASCII Stats Resolve Pipeline",
+            &kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER),
+            &[&uniform_bgl, &edges_in_bgl],
+            STATS_FORMAT,
+        );
         Box::new(Ascii {
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
@@ -472,13 +553,12 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             no_mask_bind,
             edges: Mutex::new(None),
             edge_cells: Mutex::new(None),
-            cells_pipeline: kit::fullscreen_pipeline(
-                device,
-                "ASCII Cells Pipeline",
-                &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
-                &[&uniform_bgl, &input_bgl, &cells_bgl],
-                CELL_FORMAT,
-            ),
+            cells_pipeline,
+            stats_pipeline,
+            stats_resolve_pipeline,
+            stats_in_bgl,
+            stats_rows: Mutex::new(None),
+            stats: Mutex::new(None),
             pipeline: kit::fullscreen_pipeline(
                 device,
                 "ASCII Pipeline",
@@ -531,7 +611,9 @@ struct AsciiUniforms {
     edges: f32,
     /// Whether the edge passes ran this frame.
     edge_on: u32,
-    _pad_edges: [u32; 2],
+    /// The whole frame's exposure in stops and tone stretch (#289).
+    exposure: f32,
+    stretch: f32,
     /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
     /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
@@ -573,7 +655,10 @@ struct VariantUniform {
     palette_bg: [f32; 3],
     palette_len: u32,
     palette_match: u32,
-    _pad: [u32; 3],
+    /// Exposure in stops and tone stretch, 0..1 (#289).
+    exposure: f32,
+    stretch: f32,
+    _pad: u32,
 }
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
@@ -717,6 +802,21 @@ const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii.wgsl")
 );
+const STATS_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_stats.wgsl")
+);
+const STATS_RESOLVE_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_stats_resolve.wgsl")
+);
+
+/// The tone statistics (#289): a texel per (slot, lattice row) of count,
+/// sum and sum of squares, then a texel per slot of its range.
+const STATS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
+/// The tone statistics lattice's rows; `STATS_ROWS` in ascii_common.wgsl.
+pub const STATS_ROWS: u32 = 180;
 
 /// The `temporal` option's spellings: `off` draws every frame as if it
 /// were the first.
@@ -900,6 +1000,12 @@ impl Fonts {
 
 struct Ascii {
     cells_pipeline: wgpu::RenderPipeline,
+    stats_pipeline: wgpu::RenderPipeline,
+    stats_resolve_pipeline: wgpu::RenderPipeline,
+    stats_in_bgl: wgpu::BindGroupLayout,
+    /// Tone statistics (#289): per (slot, lattice row), then per slot.
+    stats_rows: Mutex<Option<Owned>>,
+    stats: Mutex<Option<Owned>>,
     pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
@@ -954,7 +1060,9 @@ fn variant_uniform(
         palette_bg: palette.background,
         palette_len: palette.len,
         palette_match: palette.matching,
-        _pad: [0; 3],
+        exposure: param("exposure").clamp(-8.0, 8.0),
+        stretch: param("normalize").clamp(0.0, 1.0),
+        _pad: 0,
     }
 }
 
@@ -1063,6 +1171,7 @@ impl Ascii {
         input: &StyleInput<'_>,
         with_mask: bool,
         edge_cells: &Owned,
+        stats: &Owned,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let make = |mask: &wgpu::TextureView| {
@@ -1082,12 +1191,18 @@ impl Ascii {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(&edge_cells.view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&stats.view),
+                    },
                 ],
             })
         };
         // The edge cells are remade when the grid changes size: their
         // generation is part of the key
-        let key = (edge_cells.generation << 33) ^ (input.id * 2 + mask.is_some() as u64);
+        let key = (edge_cells.generation << 40)
+            ^ (stats.generation << 33)
+            ^ (input.id * 2 + mask.is_some() as u64);
         frame.bind("ASCII Entity BG", key, || {
             make(mask.unwrap_or(&self.no_mask_view))
         })
@@ -1297,6 +1412,62 @@ impl Ascii {
         );
     }
 
+    /// Each slot's tone range into `stats` (#289): per lattice row, then
+    /// summed per slot, both from this frame's picture.
+    fn encode_stats(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
+        uniform: &wgpu::BindGroup,
+        with_mask: bool,
+        stats: &Owned,
+    ) {
+        let mut rows_slot = self.stats_rows.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = Owned::ensure(
+            &mut rows_slot,
+            frame.device,
+            "ASCII Tone Stat Rows",
+            STATS_FORMAT,
+            [MAX_VARIANTS as u32, STATS_ROWS],
+            &self.edges_in_bgl,
+        );
+        let mask = frame.mask.filter(|_| with_mask);
+        let key = input.id * 2 + mask.is_some() as u64;
+        let input_bind = frame.bind("ASCII Stats In BG", key, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Stats In BG"),
+                layout: &self.stats_in_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(
+                            mask.unwrap_or(&self.no_mask_view),
+                        ),
+                    },
+                ],
+            })
+        });
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Tone Stat Rows",
+            &rows.view,
+            &self.stats_pipeline,
+            &[uniform, &input_bind],
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Tone Stats",
+            &stats.view,
+            &self.stats_resolve_pipeline,
+            &[uniform, &rows.bind],
+        );
+    }
+
     /// The font the config names, uploaded; the built-in set when it can't
     /// be loaded (the cache has warned).
     fn font<'f>(&self, frame: &StyleFrame<'_>, fonts: &'f mut Fonts) -> &'f LoadedFont {
@@ -1481,7 +1652,8 @@ impl StylePass for Ascii {
             history: past as u32,
             edges,
             edge_on: u32::from(edges > 0.0),
-            _pad_edges: [0; 2],
+            exposure: frame.param("exposure").clamp(-8.0, 8.0),
+            stretch: frame.param("normalize").clamp(0.0, 1.0),
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],
@@ -1512,6 +1684,21 @@ impl StylePass for Ascii {
         let uniform = frame.uniform("ASCII Uniform BG", &self.uniform_bgl, &self.uniforms);
         let variant = |i: usize| generation * 2 + i as u64;
 
+        // Tone statistics (#289): each slot's luminance range, from this
+        // frame's picture, for the slots that normalise
+        let mut stats_slot = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        let stats = Owned::ensure(
+            &mut stats_slot,
+            frame.device,
+            "ASCII Tone Stats",
+            STATS_FORMAT,
+            [MAX_VARIANTS as u32, 1],
+            &self.edges_in_bgl,
+        );
+        if uniforms.stretch > 0.0 || variants.iter().any(|v| v.stretch > 0.0) {
+            self.encode_stats(frame, encoder, input, &uniform, variants.len() > 1, stats);
+        }
+
         // Cell pass: each cell's colour and glyph, from the picture and
         // (when it follows on) last frame's cells
         kit::fullscreen_pass(
@@ -1529,6 +1716,7 @@ impl StylePass for Ascii {
                     &pair[read],
                     variant(read),
                 ),
+                &stats.bind,
             ],
         );
 
@@ -1549,7 +1737,7 @@ impl StylePass for Ascii {
                     variant(write),
                 ),
                 &font.bind,
-                &self.entity_bind(frame, input, variants.len() > 1, edge_cells),
+                &self.entity_bind(frame, input, variants.len() > 1, edge_cells, stats),
             ],
         );
     }
@@ -1770,6 +1958,38 @@ mod tests {
             .expect("uniform u");
         let size = module.types[u.ty].inner.size(module.to_ctx());
         assert_eq!(size as usize, std::mem::size_of::<AsciiUniforms>());
+    }
+
+    #[test]
+    fn the_cell_and_tone_stat_shaders_validate() {
+        for (name, src) in [
+            ("ascii_cells.wgsl", CELLS_SHADER),
+            ("ascii_stats.wgsl", STATS_SHADER),
+            ("ascii_stats_resolve.wgsl", STATS_RESOLVE_SHADER),
+        ] {
+            let module = naga::front::wgsl::parse_str(src).expect(name);
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect(name);
+        }
+        // The lattice's rows are one constant in two languages
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const STATS_ROWS: u32 = {STATS_ROWS}u;")));
+    }
+
+    #[test]
+    fn exposure_and_normalize_are_off_by_default_and_in_range() {
+        for (name, lo, hi) in [("exposure", -4.0, 4.0), ("normalize", 0.0, 1.0)] {
+            let p = STYLE.params.iter().find(|p| p.name == name).expect(name);
+            assert_eq!(p.default, 0.0, "{name} must leave existing scenes alone");
+            assert_eq!((p.min, p.max), (lo, hi), "{name}");
+        }
+        // They sit where the shader's Variant and AsciiUniforms put them
+        assert_eq!(std::mem::offset_of!(VariantUniform, exposure), 100);
+        assert_eq!(std::mem::offset_of!(AsciiUniforms, exposure), 136);
     }
 
     #[test]
