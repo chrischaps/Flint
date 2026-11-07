@@ -66,7 +66,7 @@ Flint uses an **edit -> validate -> play** loop:
    #                          also on `flint edit <model|effect> --render`)
    #   --style-time 1.5       (post time animated styles read; default 0)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
-   #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite;
+   #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor;
    #                          `--look help` lists them with their tune sweeps)
    #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
    #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;

@@ -198,17 +198,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // darker side, where the upper layer's pigment dried
     var glaze_edge = 0.0;
     if (r.layers >= 1.0) {
+        // Steps are even in the square root of the tone, so the darks get
+        // as many glazes as the lights instead of one hard jump, and no
+        // step moves a colour by more than a glaze's worth
         let lw = max(luma(wash), 1e-3);
-        let q = lw * r.layers;
-        let stepped = (floor(q) + smoothstep(0.3, 0.7, fract(q))) / r.layers;
-        base = clamp(base * (stepped / lw), vec3<f32>(0.0), vec3<f32>(1.0));
+        let sw = sqrt(lw);
+        let q = sw * r.layers;
+        let ss = (floor(q) + smoothstep(0.2, 0.8, fract(q))) / r.layers;
+        let ratio = clamp(ss * ss / lw, 0.8, 1.2);
+        base = clamp(base * ratio, vec3<f32>(0.0), vec3<f32>(1.0));
         let o = 1.5 * to_uv;
         let qx = luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(o.x, 0.0)).rgb)
             - luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(o.x, 0.0)).rgb);
         let qy = luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(0.0, o.y)).rgb)
             - luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(0.0, o.y)).rgb);
-        // q per point, so the distance to the step is in points
-        let slope = length(vec2<f32>(qx, qy)) * r.layers / 3.0;
+        // q per point (d sqrt(l) = dl / 2 sqrt(l)), so the distance to the
+        // step is in points
+        let slope = length(vec2<f32>(qx, qy)) * r.layers / (6.0 * sw);
         let below = 0.5 - fract(q);
         let dist = below / max(slope, 1e-4);
         glaze_edge = select(0.0, 1.0 - smoothstep(0.0, 2.5, dist), below >= 0.0);
@@ -230,7 +236,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let h = paper_height(pt, r.grain_scale);
     let load = 1.0 - luma(base);
     var d = r.pigment;
-    d += r.edge * max(colour_edge * 0.6, glaze_edge * 0.5);
+    // Pooling deepens a dark colour fastest under C^d, so it fades with the
+    // load: a pale wash gets a crisp rim, a near-black one no inky outline
+    d += r.edge * max(colour_edge * 0.6, glaze_edge * 0.45) * (1.0 - 0.6 * load);
     d += r.edge_depth * depth_edge * 0.8;
     d += r.turbulence * (turbulence(pt) - 0.5) * 1.6;
     d += r.granulation * (0.5 - h) * (0.25 + load) * 1.2;

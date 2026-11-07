@@ -223,7 +223,19 @@ paper_r = 0.97      # the paper's colour (paper_g 0.94, paper_b 0.87)
 scope = "screen"    # or "entities": a preset for watercolor_style entities
 ```
 
-WATERCOLOR_IMAGES
+![demo/mesh_meadow.scene.toml under --style watercolor: the grass laid in glazes with pooled dark rims, the path a granular wash, the sky bare cold-press paper](../images/watercolor-meadow.png)
+
+*`flint render demo/mesh_meadow.scene.toml --style watercolor`, 1280x720.*
+
+![demo/watercolor.scene.toml: only the YBot, the two barrels and the crate are painted; the meadow and the ground stay as rendered, and the tag on the crate stays unpainted](../images/watercolor-entities.png)
+
+*`flint render demo/watercolor.scene.toml --no-grid`, 1280x720: per entity, as authored.*
+
+![stylize_props with Kuwahara at radius 4 under watercolor at three glazes; the props' style_mask "ascii" glyphs draw over the paint](../images/watercolor-kuwahara.png)
+
+*`--style kuwahara:radius=4 --style watercolor:layers=3`: the two chain.*
+
+![The watercolor look's layers swept 0, 3, 5, 8 on stylize_props](../images/watercolor-sweep-layers.png)
 
 It runs at the **display stage**, after tonemapping, because it paints *on* paper: the paper and its grain must not be fogged, bloomed or graded as if they were in the world. Three passes: a separable Gaussian makes the wash (two targets of the style's own), then the paint pass wobbles where it reads the picture, the wash and the mask, mixes the wash in, steps it into glazes, works out the pigment's density, and lays it on the paper.
 
@@ -241,7 +253,7 @@ flint render demo/watercolor.scene.toml -o props.png                       # per
 flint render demo/stylize_props.scene.toml --look watercolor --sweep watercolor.layers=0,3,5,8 -o glazes.png
 ```
 
-WATERCOLOR_COST
+At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns off the scene's table, not entities that carry a `watercolor_style` of their own; set `enabled = false` on them, as with ASCII.
 
 ## Looks and sweeps
 

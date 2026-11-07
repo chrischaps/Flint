@@ -17,4 +17,5 @@ granulation = { type = "f32", min = 0.0, max = 2.0, description = "Pigment settl
 grain = { type = "f32", min = 0.0, max = 1.0, description = "The paper's relief, shading even bare paper" }
 grain_scale = { type = "f32", min = 0.25, max = 4.0, description = "The paper's tooth: bigger is coarser" }
 pigment = { type = "f32", min = 0.2, max = 2.0, description = "Overall pigment density: below 1 dilutes, above 1 deepens" }
+layers = { type = "f32", min = 0.0, max = 12.0, description = "Glazes: the wash's tone in this many steps, each edged darker on its darker side (0 = one smooth wash)" }
 paper = { type = "vec3", description = "The paper's colour, RGB 0-1; sets the style's paper_r, paper_g and paper_b" }

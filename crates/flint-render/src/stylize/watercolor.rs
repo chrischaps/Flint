@@ -348,9 +348,7 @@ impl StylePass for Watercolor {
                 radius,
                 _pad: [0.0; 3],
             };
-            frame
-                .queue
-                .write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+            frame.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
         }
         let half = frame.target("watercolor.wash.h", frame.format);
         let washed = frame.target("watercolor.wash", frame.format);
@@ -371,7 +369,11 @@ impl StylePass for Watercolor {
             &self.wash_pipeline,
             &[
                 &frame.uniform("Watercolor Wash V BG", &self.uniform_bgl, &self.wash_v),
-                &frame.sampled("Watercolor Wash H Texture BG", &self.sampled_bgl, &half.view),
+                &frame.sampled(
+                    "Watercolor Wash H Texture BG",
+                    &self.sampled_bgl,
+                    &half.view,
+                ),
             ],
         );
 
@@ -402,7 +404,11 @@ impl StylePass for Watercolor {
             &[
                 &frame.uniform("Watercolor Uniform BG", &self.uniform_bgl, &self.uniforms),
                 &frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input),
-                &frame.sampled("Watercolor Wash Texture BG", &self.sampled_bgl, &washed.view),
+                &frame.sampled(
+                    "Watercolor Wash Texture BG",
+                    &self.sampled_bgl,
+                    &washed.view,
+                ),
                 &self.entity_bind(frame, with_mask),
             ],
         );

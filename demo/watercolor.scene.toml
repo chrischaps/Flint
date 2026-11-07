@@ -25,8 +25,8 @@ version = "1.0"
 description = "Some props painted in watercolor, the meadow left as it is (#272)"
 
 [camera]
-position = [4.2, 1.9, 11.5]
-target = [0.4, 0.7, 4.6]
+position = [3.6, 1.5, 8.8]
+target = [0.9, 0.6, 4.0]
 fov = 50.0
 
 [post_process]
