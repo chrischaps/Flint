@@ -31,6 +31,10 @@
 # (radius 4 against 5 is 0.39). Where a case misses on WARP it has a
 # `<golden>.warp.png` variant, taken from CI's stylize-goldens-warp
 # artifact; a deliberate change re-blesses those from the next run's.
+# The exact text goldens (#317) moved on WARP too: 55 cells of ascii-full
+# and 2 of ascii-style-entities, each a neighbour on the ramp (`=` for
+# `+`), never a shifted grid. They have `.warp.txt` variants, so each
+# adapter stays exact rather than every adapter getting an allowance.
 
 [suite]
 name = "stylize"
