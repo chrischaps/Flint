@@ -22,7 +22,7 @@ use crate::postprocess::PostProcessConfig;
 
 /// Kuwahara keeps its settings in `kuwahara_*` fields, not the style
 /// table (it predates it); these are the keys `--style kuwahara:` takes.
-pub(super) const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
+const KUWAHARA_KEYS: [&str; 4] = ["radius", "sharpness", "hardness", "anisotropy"];
 
 /// One parsed `--style` word.
 #[derive(Debug, Clone, PartialEq)]

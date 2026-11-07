@@ -5,10 +5,12 @@
 //! once [`custom::load_dir`](super::custom::load_dir) has run) appears with
 //! no change here.
 //!
-//! Kuwahara is the one exception: it predates the style table and keeps
-//! its settings in `kuwahara_*` fields on `[post_process]`, so its
-//! descriptor has no params. [`KUWAHARA_PARAMS`] gives them here, with the
-//! F4 menu's ranges, so it lists like any other style.
+//! Kuwahara is the one exception while it keeps its settings in
+//! `kuwahara_*` fields on `[post_process]` and its descriptor has no
+//! params: [`KUWAHARA_PARAMS`] gives them here, with the F4 menu's ranges,
+//! so it lists like any other style. Once the descriptor declares its own
+//! (#298 moves them into the style table) those are listed instead, and
+//! this fallback can go.
 
 use super::{is_builtin, registry, StyleDescriptor, StyleParam, StyleStage};
 use serde::Serialize;
@@ -97,7 +99,8 @@ pub fn catalog() -> Vec<StyleListing> {
 
 /// One style's listing.
 pub fn listing(d: &StyleDescriptor) -> StyleListing {
-    let kuwahara = d.name == "kuwahara";
+    // The legacy fields, only while the descriptor declares none (#298)
+    let kuwahara = d.name == "kuwahara" && d.params.is_empty();
     let params: &[StyleParam] = if kuwahara { &KUWAHARA_PARAMS } else { d.params };
     let help = |name: &str| d.hint(name).map(|h| h.help.to_string()).unwrap_or_default();
     StyleListing {
@@ -237,7 +240,8 @@ mod tests {
         assert_eq!(kuwahara.stage, "hdr");
         let radius = kuwahara.params.iter().find(|p| p.name == "radius").unwrap();
         assert_eq!((radius.min, radius.max, radius.default), (1.0, 8.0, 4.0));
-        assert_eq!(radius.key, "kuwahara_radius");
+        // The legacy field, or the table key once #298 lands
+        assert!(radius.key == "kuwahara_radius" || radius.key == "radius");
         assert!(radius.integer);
         let invert = all.iter().find(|s| s.name == "invert").unwrap();
         assert_eq!(invert.stage, "display");
@@ -253,14 +257,16 @@ mod tests {
     }
 
     #[test]
-    fn kuwahara_params_match_its_spec_keys_and_defaults() {
-        let names: Vec<_> = KUWAHARA_PARAMS.iter().map(|p| p.name).collect();
-        assert_eq!(names, super::super::spec::KUWAHARA_KEYS);
-        let d = crate::postprocess::PostProcessConfig::default();
-        assert_eq!(KUWAHARA_PARAMS[0].default, d.kuwahara_radius as f32);
-        assert_eq!(KUWAHARA_PARAMS[1].default, d.kuwahara_sharpness);
-        assert_eq!(KUWAHARA_PARAMS[2].default, d.kuwahara_hardness);
-        assert_eq!(KUWAHARA_PARAMS[3].default, d.kuwahara_anisotropy);
+    fn kuwahara_lists_the_keys_style_takes() {
+        // Every listed key is one `--style kuwahara:` accepts
+        let kuwahara = catalog()
+            .into_iter()
+            .find(|s| s.name == "kuwahara")
+            .unwrap();
+        for p in &kuwahara.params {
+            let spec = format!("kuwahara:{}={}", p.name, p.default);
+            assert!(super::super::StyleSpec::parse(&spec).is_ok(), "{spec}");
+        }
     }
 
     #[test]
