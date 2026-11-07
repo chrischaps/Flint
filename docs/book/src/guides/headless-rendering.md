@@ -81,6 +81,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy, 0--1 |
+| `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | Shared geometry edges' thresholds (`--style edges_view` shows what they find) |
 | `--render-mode <0-5>` | `0` | Stylized render mode |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |

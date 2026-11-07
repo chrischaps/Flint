@@ -336,6 +336,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
+| `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | The [shared geometry edges](../concepts/stylize-passes.md#shared-edges)' silhouette and crease thresholds, for every style that reads them |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |

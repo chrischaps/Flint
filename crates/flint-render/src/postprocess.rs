@@ -93,6 +93,14 @@ pub struct PostProcessConfig {
     pub kuwahara_sharpness: f32,
     pub kuwahara_hardness: f32,
     pub kuwahara_anisotropy: f32,
+    /// The shared geometry edges' thresholds (#301): the relative
+    /// view-distance step that is a silhouette, and the rebuilt-normal
+    /// Sobel that is a crease. One pair for every style that reads
+    /// [`StyleFrame::edges`](crate::stylize::StyleFrame::edges), since the
+    /// pass runs once a frame; a style wanting more or fewer lines scales
+    /// the strengths it reads.
+    pub edge_depth: f32,
+    pub edge_normal: f32,
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the
@@ -178,6 +186,8 @@ impl Default for PostProcessConfig {
             kuwahara_sharpness: 8.0,
             kuwahara_hardness: 8.0,
             kuwahara_anisotropy: 1.0,
+            edge_depth: 0.6,
+            edge_normal: 2.5,
             render_mode: 0,
             mode_mix: 0.0,
             mode_params: [0.0; 4],
@@ -251,6 +261,8 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
     config.kuwahara_hardness = pp_def.kuwahara_hardness;
     config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
+    config.edge_depth = pp_def.edge_depth;
+    config.edge_normal = pp_def.edge_normal;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;

@@ -602,6 +602,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     options: &[],                  // named strings: StyleOption { name, default, choices }
     enabled: None,                 // None: read `enabled` from the style table
     uses_mask: false,              // true: the renderer draws the entity style mask for it
+    needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
     hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
     component: None,               // Some("ascii_style"): entities take the style per entity (#266)
     create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
@@ -635,6 +636,7 @@ What a style gets from `StyleFrame`:
 | `scene_dir` | the scene's folder when the host knows it, for styles that load files (ASCII's glyph sets) |
 | `depth`, `camera` | the scene's depth (sample by UV) and the inverse view-projection, position, near and far |
 | `mask`, `mask_bind(...)`, `style_id(name)` | the [entity style mask](#the-entity-style-mask), while a `uses_mask` style is on |
+| `edges`, `edges_bind(...)` | the [shared geometry edges](#shared-edges), while a style that `needs` them is on |
 | `target(name, format)` | a texture of the style's own at the stage's size, kept until the next resize |
 | `sampled(...)`, `sampled_input(...)`, `uniform(...)`, `bind(...)`, `depth_bind(...)` | bind groups kept with the post chain |
 | `first_write(name)` | true once per chain, for uniforms that only change on resize |
@@ -647,6 +649,7 @@ What the framework does so a style doesn't have to:
 - **Formats.** HDR-stage styles draw in `Rgba16Float`; display-stage styles in the surface format. On an sRGB surface a display style samples linear values and its writes are encoded, so a style that works in display values decodes and encodes itself (`frame.srgb()`; `invert.wgsl` shows how).
 - **Samplers.** Styles bind the chain's one linear sampler, so their bind groups add nothing to DX12's 2048-slot sampler heap.
 - **The mask.** A `uses_mask` style gets the entity style mask drawn for it each frame, and no style pays for it otherwise.
+- **Shared inputs.** A style that lists `StyleNeed::Edges` in `needs` gets the [geometry edge texture](#shared-edges), drawn once a frame however many styles read it.
 - **Timing.** Each style is a GPU-timer scope under its `label`, so `flint render --gpu-time` and the player's `--perf` name it.
 - **The command line.** `flint render --style <name>` reaches a new style from its descriptor alone.
 
@@ -662,7 +665,7 @@ version = 1
 name = "greyscale"         # the file stem; lowercase, digits and _
 stage = "display"          # or "hdr"
 shader = "greyscale.wgsl"
-inputs = []                # "depth" and/or "mask"; colour is always there
+inputs = []                # any of "depth", "mask", "edges"; colour is always there
 
 [params.amount]
 default = 1.0
@@ -691,6 +694,7 @@ Flint writes everything around the function: the bindings, a `params` struct wit
 | `flint_luma(c)`, `flint_hash(v)`, `flint_to_display(c)`, `flint_to_linear(c)` | small helpers |
 | `flint_depth(uv)`, `flint_view_depth(uv)`, `flint_world_pos(uv)` | with `inputs = ["depth"]`: raw depth, metres from the eye, the world position |
 | `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` names this style (their `blend`) |
+| `flint_edges(uv)`, `flint_edge(uv)` | with `inputs = ["edges"]`: the [shared edges](#shared-edges) (silhouette, crease, direction), and the stronger of the two strengths; 1 is an edge |
 
 **When it goes wrong.** Flint checks the composed shader with naga before the GPU sees it. An error names your file, line and column, quotes the line, and gives a hint if you called a depth or mask helper without declaring the input. A style that doesn't compile still loads and draws its input unchanged, so the scene keeps its other styles. Loops are allowed, but each one is warned about: a loop that never ends hangs the GPU until the driver resets it.
 
@@ -734,9 +738,38 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 | `ascii-edges`, `ascii-edges-msaa4`, `ascii-edges-scale05` | the styled sphere and box of `demo/ascii_edges.scene.toml` outlined, at 1x, under MSAA 4 and at `--render-scale 0.5` |
 | `ascii-entity`, `ascii-entity-object` | the spike's per-entity modes (#261), screen and object grids |
 | `style-mask` | the entity style mask the per-entity styles read (`--debug-mode style`) |
+| `edges-view`, `edges-inkline-scale05` | the [shared edges](#shared-edges) on the props scene, and a user style reading them beside `edges_view` at `--render-scale 0.5` |
 | `invert`, `kuwahara` | the other styles, with a tighter tolerance |
 
 Cases render single-sample with the post clock at 0 unless they say otherwise. The props cases use `demo/stylize_props.scene.toml`, which loads in a few seconds in a debug build, with the grid off. Glyph styles share #265's tolerance (fail when more than 2% of pixels differ by more than 48 levels, or the mean passes 3), since a cell on a ramp step's border can flip glyph on another GPU; smooth styles take `level = 8, share = 0.003, mean = 0.25`, because Kuwahara at radius 4 against a radius-5 golden is a 0.39 mean the glyph limits would pass. On one machine, every case is byte-identical run to run. **A new style adds a case here.** The manifest format is in [Headless Rendering](../guides/headless-rendering.md#golden-suites).
+
+## Shared edges
+
+Line styles are defined by their edges, and the edges that read best come from the geometry, not the picture's colour: a wood texture makes none, while a table's outline and the creases where its faces meet do (the ASCII spike's round 2, #261). Finding them costs a 5x5 patch of positions unprojected from the depth for every pixel, so the framework does it once a frame (#301) and hands the result to every style that asks. A style asks in its descriptor, `needs: &[StyleNeed::Edges]`, and reads `frame.edges` (bind it with `frame.edges_bind(...)` over a `kit::texture_layout`); a [user style](#user-authored-styles) adds `"edges"` to its `inputs` and calls `flint_edges(uv)`.
+
+The texture is `Rgba16Float` at the depth's size (the scene's, so under `--render-scale` a display style reads it by UV, like the depth and the mask):
+
+| channel | holds |
+|---|---|
+| `r` | silhouette strength: a 3x3 Sobel of the view distance relative to the centre pixel's (so a far edge counts as much as a near one), kept on the near side only, over `edge_depth` |
+| `g` | crease strength: the Sobel of normals rebuilt from the depth, counted only where the 5x5 patch is one surface (across a depth step rebuilt normals mark a band on both sides), over `edge_normal` |
+| `ba` | the unit direction across the edge in screen space (x right, y down): the silhouette's where `r >= 1`, else the crease's, picked from both axes of the normal Sobel |
+
+A strength of 1 is an edge at the scene's thresholds. The two pixels at each border are always 0, where the patch clamps and makes a degenerate normal.
+
+```toml
+[post_process]
+edge_depth = 0.6     # the relative view-distance step that is a silhouette
+edge_normal = 2.5    # the normal change that is a crease
+```
+
+The thresholds are shared because the pass is: every style reading the edges sees the same strengths. A style that wants more or fewer lines compares them against a level of its own (`demo/styles/inkline.wgsl` multiplies them by its `reach`). `flint render --edge-depth` / `--edge-normal` set them for one render, and F4's Styles section has them under **Shared edges**.
+
+| ![edges_view on the props scene: the scene in grey, every edge pixel a hue for its direction](../images/shared-edges-view.png) | ![inkline, a user style with inputs = ["edges"], over the same scene](../images/shared-edges-inkline.png) |
+|---|---|
+| `--style edges_view`: the texture itself. Hue is the direction (opposite sides of a line agree), silhouettes are solid, creases softer; `ghost` shows strengths just under the threshold while tuning | `--style inkline` (`demo/styles/inkline.*`): flat paper tones under ink from `flint_edges`, about 40 lines of WGSL. Here it runs after the scene's own ASCII and pencil props |
+
+At 1920x1080 on an RTX 4070 the pass costs about 0.16 ms, once, with one or two styles reading it (`--gpu-time` names it **Style edges**); `edges_view` and `inkline` add 0.04 ms each. While no style that needs the edges is on, the pipeline isn't built and nothing is drawn. The ASCII and pencil styles still find their own edges (ASCII's also outlines its own mask ids, pencil's adds luma edges); moving them onto the shared texture is still to do.
 
 ## The entity style mask
 

@@ -1356,6 +1356,7 @@ impl SceneRenderer {
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
                 style_ids: &self.style_ids,
+                edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
                 frame: self
@@ -1368,6 +1369,17 @@ impl SceneRenderer {
                 targets: &resources.styles,
             }
         });
+
+        // Shared geometry edges (#301): once, before either stage, for every
+        // style on this frame that needs them
+        if let Some(frame) = &mut style_frame {
+            let both: Vec<_> = hdr_styles.iter().chain(&display_styles).copied().collect();
+            frame.edges =
+                pp.styles
+                    .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
+                        scoped(label, encoder, run)
+                    });
+        }
 
         // HDR stage: Kuwahara and friends, in linear HDR at scene resolution
         let hdr_result = match &mut style_frame {

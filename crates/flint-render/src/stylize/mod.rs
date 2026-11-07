@@ -41,6 +41,7 @@
 //! ```text
 //! scene (HDR, render scale)
 //!   -> style mask (Rg16Uint: id + blend, while a style reads it; #263, #278)
+//!   -> shared edges (Rgba16Float, depth's size, while a style needs them; #301)
 //!   -> Hdr styles (Kuwahara)                 linear Rgba16Float, scene resolution
 //!   -> SSAO, volumetric, bloom (read the scene depth / original HDR)
 //!   -> composite: fog, DoF, bloom add, tonemap, grade, vignette, grain, render modes
@@ -62,6 +63,15 @@
 //! distinct set an id of its own, read with [`StyleFrame::variants`]. ASCII
 //! is the example.
 //!
+//! ## Shared inputs
+//!
+//! Some inputs cost enough that two styles computing their own would
+//! double the bill. A style lists them in [`StyleDescriptor::needs`] and
+//! the framework makes each once a frame, for every style on that asks:
+//! [`StyleNeed::Edges`] is the geometry edge texture ([`edges`], #301),
+//! handed over as [`StyleFrame::edges`]. `edges_view` draws it, and
+//! user styles get it with `inputs = ["edges"]`.
+//!
 //! An `Hdr` style is shaded by what follows it: fog fades it, bloom haloes
 //! its bright parts, the grade tints it (Kuwahara's painterly look wants
 //! that). A `Display` style sees the finished picture at output
@@ -74,10 +84,12 @@
 
 pub mod catalog;
 pub mod custom;
+pub mod edges;
 pub mod kit;
 mod spec;
 mod targets;
 
+pub use edges::EDGE_FORMAT;
 pub use spec::{apply_style_spec, style_spec_help, StyleSpec};
 pub use targets::{StyleTargets, StyleTexture, TargetSummary};
 
@@ -205,6 +217,16 @@ pub struct StyleDevice<'a> {
     pub format: wgpu::TextureFormat,
 }
 
+/// An input the framework computes for the styles that ask for it
+/// ([`StyleDescriptor::needs`]), once a frame however many do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StyleNeed {
+    /// The shared geometry edges ([`edges`]): silhouette and crease
+    /// strength and the direction across them, from the depth alone, read
+    /// as [`StyleFrame::edges`].
+    Edges,
+}
+
 /// A registered style: what it is called, where it runs and how to make it.
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
@@ -224,6 +246,10 @@ pub struct StyleDescriptor {
     /// such style is on, the renderer draws the mask each frame and hands
     /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
     pub uses_mask: bool,
+    /// Framework-made inputs the style reads (#301). While any style that
+    /// asks for one is on, the framework makes it once a frame for all of
+    /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
+    pub needs: &'static [StyleNeed],
     /// How the F4 menu labels its settings ([`StyleHint`]); `&[]` is fine.
     pub hints: &'static [StyleHint],
     /// The component an entity takes this style with, its fields being the
@@ -260,6 +286,11 @@ impl StyleDescriptor {
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
             && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
+    }
+
+    /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
+    pub fn needs_edges(&self) -> bool {
+        self.needs.contains(&StyleNeed::Edges)
     }
 
     /// Whether the style's parameters live in the generic table (and so
@@ -457,6 +488,13 @@ pub struct StyleFrame<'a> {
     pub mask: Option<&'a wgpu::TextureView>,
     /// Which id each style name has in [`mask`](Self::mask).
     pub style_ids: &'a crate::style_mask::StyleIds,
+    /// The shared geometry edges (#301, [`edges`] says what the channels
+    /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
+    /// `textureLoad`. `Some` whenever a style that
+    /// [`needs`](StyleDescriptor::needs) them is on; the framework draws
+    /// them once, before the first stage, for every style that reads them.
+    /// Bind it with [`edges_bind`](Self::edges_bind).
+    pub edges: Option<Arc<StyleTexture>>,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
@@ -595,6 +633,36 @@ impl StyleFrame<'_> {
                 }],
             })
         }))
+    }
+
+    /// A kept bind group of the shared edges at binding 0, for a layout
+    /// made with [`kit::texture_layout`]; `None` while no style needs them.
+    pub fn edges_bind(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Option<Arc<wgpu::BindGroup>> {
+        let edges = self.edges.as_ref()?;
+        Some(self.bind(name, self.edges_key(), || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&edges.view),
+                }],
+            })
+        }))
+    }
+
+    /// A key for bind groups over [`edges`](Self::edges): its size, which
+    /// is what a render-scale step changes (the edge target is made again
+    /// at the depth's new size while the chain's bind groups stay). 0
+    /// while there are none.
+    pub fn edges_key(&self) -> u64 {
+        self.edges
+            .as_ref()
+            .map_or(0, |e| (u64::from(e.width) << 32) | u64::from(e.height))
     }
 
     /// The style mask id of style `name` this frame, if an entity asks
@@ -909,6 +977,14 @@ pub struct StyleSet {
     /// the same registry index ([`custom::reload_changed`], #275): a
     /// different address here throws the old pass away and builds again.
     from: Vec<usize>,
+    /// The shared edge pass (#301), built the first time a style needs it.
+    edges: Option<edges::EdgePass>,
+    /// The edge pass's creation panicked; the styles that need it draw
+    /// without (their [`StyleFrame::edges`] is `None`).
+    edges_failed: bool,
+    /// How many times the edge pass has been drawn, for the test that a
+    /// frame draws it once however many styles read it.
+    edge_runs: std::sync::atomic::AtomicU64,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -962,7 +1038,54 @@ impl StyleSet {
                 }
             }
         }
+        if self.edges.is_none()
+            && !self.edges_failed
+            && registry
+                .iter()
+                .any(|d| d.needs_edges() && d.is_on(config, ids))
+        {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                edges::EdgePass::new(device)
+            })) {
+                Ok(pass) => self.edges = Some(pass),
+                Err(_) => {
+                    tracing::warn!(
+                        "shared style edges unavailable: the edge shader failed to build"
+                    );
+                    self.edges_failed = true;
+                }
+            }
+        }
         failed
+    }
+
+    /// Draw the shared edges (#301) if any of `styles` (this frame's
+    /// active ones, both stages) needs them, inside a GPU-timer scope of
+    /// their own. Returns the texture for [`StyleFrame::edges`].
+    pub(crate) fn encode_edges(
+        &self,
+        styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        scope: &mut Scope<'_>,
+    ) -> Option<Arc<StyleTexture>> {
+        let pass = self.edges.as_ref()?;
+        if !styles.iter().any(|(d, _)| d.needs_edges()) {
+            return None;
+        }
+        let mut made = None;
+        scope(edges::EDGE_LABEL, encoder, &mut |encoder| {
+            made = Some(pass.encode(frame, encoder));
+        });
+        self.edge_runs
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        made
+    }
+
+    /// How many times the shared edge pass has been drawn since the
+    /// renderer was made.
+    pub fn edge_runs(&self) -> u64 {
+        self.edge_runs.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether style `name` is built.
@@ -1205,7 +1328,7 @@ macro_rules! register_styles {
     };
 }
 
-register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view);
+register_styles!(kuwahara, watercolor, ascii, pencil, invert, mask_view, edges_view);
 
 /// The built-ins followed by user styles registered at run time
 /// ([`custom`], #274). Append-only, so a style's index in it (which

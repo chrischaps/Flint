@@ -4944,6 +4944,15 @@ impl SceneRenderer {
         }
     }
 
+    /// How many times the shared style edge pass (#301) has been drawn
+    /// since this renderer was made: one a frame while any style that
+    /// needs the edges is on, however many do.
+    pub fn style_edge_runs(&self) -> u64 {
+        self.postprocess_pipeline
+            .as_ref()
+            .map_or(0, |pp| pp.styles.edge_runs())
+    }
+
     /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),
     /// from when Kuwahara was the only style.
     pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {

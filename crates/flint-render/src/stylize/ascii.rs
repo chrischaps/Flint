@@ -307,6 +307,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     // The mask gives styled entities their outlines (#267); with no entity
     // asking for a style it is one cleared target and an empty pass
     uses_mask: true,
+    needs: &[],
     hints: &[
         StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
         StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
