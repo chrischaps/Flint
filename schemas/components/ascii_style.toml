@@ -22,4 +22,6 @@ background = { type = "f32", min = 0.0, max = 1.0, description = "How much of th
 ink = { type = "f32", min = 0.0, max = 2.0, description = "Ink brightness multiplier" }
 levels = { type = "f32", min = 0.0, max = 16.0, description = "Tone bands (0 = smooth); a few bands give the drawn look" }
 footprint = { type = "f32", min = 1.0, max = 4.0, description = "How many cells wide the colour average for one cell reaches" }
+outline = { type = "f32", min = 0.0, max = 4.0, description = "Points of this entity's own pixels, along its silhouette, drawn in full ink (default 1; 0 = off), so legs, rails and wires thinner than a cell keep their shape (#288)" }
+min_coverage = { type = "f32", min = 0.0, max = 1.0, description = "The least ink of this entity's pixels in a cell it only grazes, 0..1 (default 0.5)" }
 grid = { type = "enum", values = ["screen", "object"], description = "screen: one grid centred on the frame, shared by every styled entity. object: this entity's cells are pinned to its projected origin, so its glyphs hold still while it moves across the screen (they still swim when it turns or comes closer)" }

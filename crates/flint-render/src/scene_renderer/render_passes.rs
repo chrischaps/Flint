@@ -1356,6 +1356,7 @@ impl SceneRenderer {
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
                 style_ids: &self.style_ids,
+                edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
                 frame: self
@@ -1369,10 +1370,22 @@ impl SceneRenderer {
             }
         });
 
+        // Shared geometry edges (#301): once, before either stage, for every
+        // style on this frame that needs them
+        if let Some(frame) = &mut style_frame {
+            let both: Vec<_> = hdr_styles.iter().chain(&display_styles).copied().collect();
+            frame.edges =
+                pp.styles
+                    .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
+                        scoped(label, encoder, run)
+                    });
+        }
+
         // HDR stage: Kuwahara and friends, in linear HDR at scene resolution
         let hdr_result = match &mut style_frame {
             Some(frame) if !hdr_styles.is_empty() => crate::stylize::run_stage(
                 &hdr_styles,
+                &crate::stylize::plan(hdr_styles.len(), false),
                 frame,
                 crate::stylize::StyleStage::Hdr,
                 encoder,
@@ -1452,8 +1465,13 @@ impl SceneRenderer {
         };
         // Display stage (#262): with display styles on, the composite draws
         // into the stage's input at output resolution, and the last style
-        // writes what the composite would have.
+        // writes what the composite would have. The plan (#302) reuses the
+        // input as a ping, and with FXAA on its intermediate as the other
+        // texture, so the stage adds at most one full-size texture to
+        // FXAA's (two without FXAA, from three styles on: in + one ping).
         let display_size = self.surface_size;
+        let (composite_slot, display_steps) =
+            crate::stylize::display_plan(display_styles.len(), fxaa_active);
         let display_in = (!display_styles.is_empty()).then(|| {
             resources.styles.get(
                 device,
@@ -1463,7 +1481,10 @@ impl SceneRenderer {
                 display_size.1,
             )
         });
-        let composite_target = display_in.as_ref().map_or(final_target, |t| &t.view);
+        let composite_target = match (&display_in, composite_slot) {
+            (Some(input), crate::stylize::Slot::Input) => &input.view,
+            _ => final_target,
+        };
         // The scene the composite reads: the HDR styles' result, or the
         // HDR buffer
         let scene = match hdr_scene {
@@ -1503,6 +1524,7 @@ impl SceneRenderer {
             frame.format = pp.surface_format;
             crate::stylize::run_stage(
                 &display_styles,
+                &display_steps,
                 frame,
                 crate::stylize::StyleStage::Display,
                 encoder,
@@ -1510,7 +1532,11 @@ impl SceneRenderer {
                     view: &input.view,
                     id: crate::stylize::input_id::DISPLAY_IN,
                 },
-                Some(final_target),
+                // Read back only when it's FXAA's intermediate
+                Some(crate::stylize::StyleInput {
+                    view: final_target,
+                    id: crate::stylize::input_id::FXAA_IN,
+                }),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);

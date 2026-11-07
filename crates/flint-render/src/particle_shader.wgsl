@@ -141,3 +141,22 @@ fn fs_particle(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(particle_texture, particle_sampler, in.uv);
     return tex_color * in.color;
 }
+
+// The style veil (#290): how much of the pixel this particle covers, for
+// the entity style mask, so fire in front of a styled entity takes that
+// share of the pixel back from the style. Drawn single-sample into an
+// R8Unorm target with "over" blending, depth-tested against the scene.
+@fragment
+fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = textureSample(particle_texture, particle_sampler, in.uv) * in.color;
+    return vec4<f32>(clamp(c.a, 0.0, 1.0));
+}
+
+// An additive particle covers by the light it adds: its alpha times its
+// brightest channel (clamped), so a faint ember veils faintly.
+@fragment
+fn fs_veil_additive(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = textureSample(particle_texture, particle_sampler, in.uv) * in.color;
+    let light = max(c.r, max(c.g, c.b));
+    return vec4<f32>(clamp(c.a * min(light, 1.0), 0.0, 1.0));
+}

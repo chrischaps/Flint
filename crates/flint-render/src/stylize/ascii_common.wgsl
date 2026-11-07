@@ -35,6 +35,12 @@ struct Variant {
     exposure: f32,
     stretch: f32,
     _p2: u32,
+    // #288: silhouette outline width in output pixels (0 = off), and the
+    // ink floor for a cell this variant only grazes
+    outline: f32,
+    min_coverage: f32,
+    _p3: u32,
+    _p4: u32,
 };
 
 struct AsciiUniforms {

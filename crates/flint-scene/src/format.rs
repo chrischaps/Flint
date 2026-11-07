@@ -137,6 +137,13 @@ pub struct PostProcessDef {
     pub kuwahara_hardness: f32,
     #[serde(default = "default_kuwahara_anisotropy")]
     pub kuwahara_anisotropy: f32,
+    /// The shared geometry edges' thresholds (#301), which every style that
+    /// reads them sees: the relative view-distance step that is a
+    /// silhouette, and the normal change (Sobel) that is a crease.
+    #[serde(default = "default_edge_depth")]
+    pub edge_depth: f32,
+    #[serde(default = "default_edge_normal")]
+    pub edge_normal: f32,
     /// Stylize passes by name (#262): `[post_process.styles.invert]` with
     /// `enabled` (default true) and the style's numeric parameters. The
     /// renderer checks names and parameters against its registry.
@@ -258,6 +265,14 @@ fn default_volumetric_max_distance() -> f32 {
 
 fn default_volumetric_decay() -> f32 {
     0.98
+}
+
+fn default_edge_depth() -> f32 {
+    0.6
+}
+
+fn default_edge_normal() -> f32 {
+    2.5
 }
 
 fn default_kuwahara_radius() -> u32 {

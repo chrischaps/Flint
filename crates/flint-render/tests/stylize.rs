@@ -230,6 +230,53 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     }
 }
 
+/// #302: invert + FXAA holds two full-size surface-format textures (the
+/// stage's input and FXAA's intermediate), and so does every longer chain
+/// with FXAA, which draws through the intermediate instead of pings. The
+/// frame is the one the chain drew before it reused them (sky inverted).
+#[test]
+fn display_styles_with_fxaa_hold_two_full_size_textures() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let world = FlintWorld::new();
+    for styles in [
+        &["invert"][..],
+        &["ascii", "invert"],
+        &["ascii", "pencil", "invert"],
+    ] {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let plain = gpu.frame(&mut renderer, &world);
+        let mut config = renderer.post_process_config().clone();
+        for style in styles {
+            config.styles.set_enabled(style, true);
+        }
+        config.fxaa_enabled = true;
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        renderer.ensure_fxaa_resources(&gpu.device);
+        gpu.frame(&mut renderer, &world);
+        let drawn = gpu.frame(&mut renderer, &world);
+        let stats = renderer.collect_stats();
+        assert_eq!(stats.full_size_targets, 2, "{styles:?}: {stats:?}");
+        if styles.len() == 1 {
+            for (i, (a, b)) in plain.iter().zip(&drawn).enumerate() {
+                if i % 4 != 3 {
+                    assert!((255 - *a).abs_diff(*b) <= 2, "byte {i}: {a} then {b}");
+                }
+            }
+        }
+    }
+}
+
 /// #299: two styles of one stage in the two orders draw two pictures, and
 /// a scene that orders nothing draws what registration order always drew.
 #[test]
@@ -735,4 +782,240 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     }
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
+}
+
+/// A tilted box filling the middle of the frame: silhouettes against the
+/// sky and creases where its faces meet.
+fn box_world() -> FlintWorld {
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, 0.0, 0.0]));
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-3.0, -3.0, -3.0]));
+    bounds.insert("max".into(), vec3([3.0, 3.0, 3.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    world
+}
+
+/// The pixels whose red, green and blue differ: `edges_view` paints edges
+/// in hues and everything else in grey.
+fn coloured(pixels: &[u8]) -> Vec<bool> {
+    pixels
+        .chunks(4)
+        .map(|p| p[0].abs_diff(p[1]) > 8 || p[1].abs_diff(p[2]) > 8 || p[0].abs_diff(p[2]) > 8)
+        .collect()
+}
+
+/// #301: the shared geometry edges. `edges_view` draws them; a user style
+/// asking for them (`inputs = ["edges"]`) in the same frame reads the very
+/// same texture; and however many styles ask, a frame draws the edge pass
+/// once, and a frame where none asks draws it not at all.
+#[test]
+fn two_styles_share_one_edge_pass_a_frame() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    // A user style that paints white where the shared edges say edge
+    let dir = std::env::temp_dir().join(format!("flint-edges-301-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::write(
+        styles.join("utest_edge_ink.shader.toml"),
+        "version = 1\nname = \"utest_edge_ink\"\nshader = \"utest_edge_ink.wgsl\"\ninputs = [\"edges\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_edge_ink.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         return vec4<f32>(vec3<f32>(select(0.0, 1.0, flint_edge(p.uv) >= 1.0)), 1.0);\n}\n",
+    )
+    .unwrap();
+    let messages = flint_render::stylize::custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let ink = flint_render::stylize::find("utest_edge_ink").expect("the user style registered");
+    assert!(ink.needs_edges());
+
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let set = |renderer: &mut SceneRenderer, f: &dyn Fn(&mut flint_render::PostProcessConfig)| {
+        let mut config = renderer.post_process_config().clone();
+        f(&mut config);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+    };
+
+    // No style asks: no pass
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(renderer.style_edge_runs(), 0, "drawn with no style asking");
+    set(&mut renderer, &|c| c.styles.set_enabled("invert", true));
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(renderer.style_edge_runs(), 0, "invert doesn't need edges");
+
+    // edges_view alone: one pass a frame, and the box's outline in hues
+    set(&mut renderer, &|c| {
+        c.styles.set_enabled("invert", false);
+        c.styles.set_enabled("edges_view", true);
+        c.styles.set_param("edges_view", "ghost", 0.0);
+    });
+    let viewed = gpu.frame(&mut renderer, &world);
+    assert_eq!(renderer.style_edge_runs(), 1);
+    let edges = coloured(&viewed);
+    let count = edges.iter().filter(|&&e| e).count();
+    eprintln!("edge pixels: {count} of {}", SIZE * SIZE);
+    assert!(count > 30, "only {count} edge pixels around a box");
+    assert!(
+        count < (SIZE * SIZE / 3) as usize,
+        "{count} edge pixels: the box's faces are lit up, not outlined"
+    );
+    // The two pixels at each border are never edges (degenerate normals)
+    let size = SIZE as usize;
+    for (i, &e) in edges.iter().enumerate() {
+        let (x, y) = (i % size, i / size);
+        if x < 2 || y < 2 || x >= size - 2 || y >= size - 2 {
+            assert!(!e, "border pixel {x},{y} is an edge");
+        }
+    }
+    // Several directions: a box's outline isn't one hue
+    let hues: std::collections::BTreeSet<[u8; 3]> = viewed
+        .chunks(4)
+        .zip(&edges)
+        .filter(|(_, &e)| e)
+        .map(|(p, _)| [p[0] / 64, p[1] / 64, p[2] / 64])
+        .collect();
+    assert!(hues.len() >= 2, "every edge has one direction: {hues:?}");
+
+    // Both styles on: still one pass a frame, over several frames
+    set(&mut renderer, &|c| {
+        c.styles.set_enabled("utest_edge_ink", true)
+    });
+    let before = renderer.style_edge_runs();
+    let mut both = Vec::new();
+    for _ in 0..3 {
+        both = gpu.frame(&mut renderer, &world);
+    }
+    assert_eq!(
+        renderer.style_edge_runs() - before,
+        3,
+        "two styles reading the edges drew the pass more than once a frame"
+    );
+    // The user style ran after edges_view and saw the same texture: its
+    // white is exactly edges_view's hues
+    let inked: Vec<bool> = both.chunks(4).map(|p| p[0] > 127).collect();
+    let disagree = inked.iter().zip(&edges).filter(|(a, b)| a != b).count();
+    assert_eq!(disagree, 0, "the two styles read different edges");
+
+    // Both off: the pass stops
+    set(&mut renderer, &|c| {
+        c.styles.set_enabled("utest_edge_ink", false);
+        c.styles.set_enabled("edges_view", false);
+    });
+    let after = renderer.style_edge_runs();
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(
+        renderer.style_edge_runs(),
+        after,
+        "drawn after every style let go"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A transparent pane in front of a styled entity takes back the share of
+/// each pixel it covers (#290): nearly opaque glass gives the unstyled
+/// pixels back exactly, half-clear glass leaves the style showing through
+/// faintly, and glass that is itself styled stays out of the veil.
+#[test]
+fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::{clear_entity_style, set_entity_style, set_style_param};
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let boxed = |world: &mut FlintWorld, name: &str, at: [f64; 3], half: f64| {
+        let e = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-half; 3]));
+        bounds.insert("max".into(), vec3([half; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        e
+    };
+    let mut world = FlintWorld::new();
+    let cube = boxed(&mut world, "cube", [0.0; 3], 2.5);
+    // A box of glass between the default camera (10, 10, 10) and the
+    // cube, wide enough to cover all of it
+    let glass = boxed(&mut world, "glass", [5.0; 3], 3.0);
+    let set_opacity = |world: &mut FlintWorld, opacity: f64| {
+        let mut material = toml::Table::new();
+        material.insert("color".into(), vec3([0.4, 0.8, 0.7]));
+        material.insert("opacity".into(), opacity.into());
+        world
+            .set_component(glass, "material", material.into())
+            .unwrap();
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let styled = |renderer: &mut SceneRenderer, world: &mut FlintWorld, on: bool| {
+        if on {
+            set_entity_style(world, cube, "ascii").unwrap();
+            set_style_param(world, cube, "cell", 4.0.into()).unwrap();
+        } else {
+            clear_entity_style(world, cube);
+        }
+        gpu.frame(renderer, world)
+    };
+    let weight =
+        |a: &[u8], b: &[u8]| -> u32 { a.iter().zip(b).map(|(x, y)| x.abs_diff(*y) as u32).sum() };
+
+    // Nearly opaque glass: its two faces cover all but a millionth, so the
+    // cube's blend rounds to 0 and the frame is the unstyled one
+    set_opacity(&mut world, 0.999);
+    let plain = styled(&mut renderer, &mut world, false);
+    let veiled = styled(&mut renderer, &mut world, true);
+    assert_eq!(
+        veiled, plain,
+        "glass in front still drew the cube in glyphs"
+    );
+
+    // Half-clear glass covers 75% (two faces): the glyphs show, faintly
+    set_opacity(&mut world, 0.5);
+    let plain = styled(&mut renderer, &mut world, false);
+    let through = styled(&mut renderer, &mut world, true);
+    let weak = weight(&plain, &through);
+    assert!(weak > 0, "half-clear glass hid the style entirely");
+
+    // Styled glass is no veil: the cube is wholly glyphs behind it
+    set_entity_style(&mut world, glass, "ascii").unwrap();
+    let plain = styled(&mut renderer, &mut world, false);
+    let full = styled(&mut renderer, &mut world, true);
+    let strong = weight(&plain, &full);
+    eprintln!("half-clear glass: style weight {weak}; styled glass: {strong}");
+    assert!(
+        strong > weak * 2,
+        "the veil didn't weaken the style ({weak} vs {strong})"
+    );
 }

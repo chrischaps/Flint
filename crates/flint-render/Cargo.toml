@@ -28,6 +28,7 @@ profiling = { workspace = true }
 flint-asset = { workspace = true }
 naga = { version = "23", features = ["wgsl-in"] }
 epaint_default_fonts = "0.30"
+serde_json = { workspace = true }
 
 # Native builds decode every format image does by default (with rayon); the
 # web player keeps the workspace's PNG, JPEG and HDR (#123).

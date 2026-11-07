@@ -6,6 +6,7 @@
 #
 # A look is a [post_process] block in the scene format, merged over the
 # scene's own key by key (#279). `flint render --look help` lists them all.
+# `flint render --list-styles` lists every style, its keys and their ranges.
 
 [look]
 name = "matrix"
