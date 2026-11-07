@@ -31,6 +31,7 @@ From the command line, `--style name[:key=value,...]` turns any registered style
 flint render demo/pbr_test.scene.toml --style ascii
 flint render demo/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
 flint render demo/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
+flint render demo/stylize_props.scene.toml --style ascii:color=tint,tint=#ffb340   # a colour: #rrggbb or r/g/b
 flint render levels/tavern.scene.toml --style ascii:off       # the scene's table off (entities' ascii_style stay on, #376)
 flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render demo/pbr_test.scene.toml --style help            # every style and its keys
@@ -55,9 +56,9 @@ invert (Invert) [display, builtin]
   strength  1  [0 .. 1]  — How far toward the negative: 0 = none, 1 = full
 ```
 
-Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `label`, `help`) and `options` (`name`, `default`, `choices`, `label`, `help`; empty choices take any text). A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
+Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `label`, `help`; empty choices take any text) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
-The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
+The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when it lists them), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `kuwahara:` takes `radius`, `sharpness`, `hardness` and `anisotropy`, its `kuwahara_*` fields. `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
@@ -120,7 +121,8 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `cell` | `8` | Cell width in points (4--32). Times the window's scale factor, so cells look the same size on a high-DPI display; rounded to whole pixels |
 | `font` | `builtin` | The glyph set: `builtin`, a set name (`fonts/<name>.glyphs.toml` in the scene's folder or its parent) or a `.glyphs.toml` path. One that fails to load falls back to the built-in set, with a warning |
 | `ramp` | the set's default | A ramp of the set. The built-in set has `classic`, `blocks`, `minimal` and `detailed`. An unknown name warns once and uses the default |
-| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint_r`, `tint_g`, `tint_b`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark. `mono`: white glyphs on grey. `palette`: the inks of `palette` (see [Colour modes](#colour-modes)) |
+| `color` | `source` | `source`: the cell's hue at full value. `tint`: one colour (`tint`, default phosphor green). `raw`: the cell's colour as it is, dark cells dark. `mono`: white glyphs on grey. `palette`: the inks of `palette` (see [Colour modes](#colour-modes)) |
+| `tint` | `[0.35, 1.0, 0.45]` | With `color = "tint"`: the ink, a [colour](#colours) (`[r, g, b]` 0--1 in display values, or `"#59ff73"`). `--ascii-tint r,g,b` sets it |
 | `palette` | `phosphor` | With `color = "palette"`: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, or a palette file. One that can't be found warns once and uses `phosphor` |
 | `ground` | `dim` | Behind the glyph: `dim` (the mode's own: the cell's colour times `background`, or the palette's background), `black`, or `inverse` (the ink fills the cell and the glyph is cut out of it; the ramp runs backwards so bright cells stay bright) |
 | `glow` | `0` | A halo around each glyph, stronger on bright cells (0--2; 0.6 reads as a phosphor tube). It's drawn in the pass, since a display-stage style runs after bloom |
@@ -269,7 +271,7 @@ background = 0.3
 [entities.bench.ascii_style]  # only what differs from the preset
 ramp = "blocks"
 color = "tint"
-tint = [1.0, 0.70, 0.30]      # a 3-array sets tint_r, tint_g, tint_b
+tint = [1.0, 0.70, 0.30]      # a colour, as in the scene's table (or "#ffb34d")
 levels = 4
 
 [entities.ybot.ascii_style]   # empty: the preset as it is (skinned meshes work too)
@@ -609,7 +611,23 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
 };
 ```
 
-`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`tint_r` becomes "Tint r") on a plain slider. A hint gives a setting (or a colour triple, by its base name) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size). Name a colour's channels `<base>_r`, `<base>_g` and `<base>_b`, each 0--1 in display values, and F4 folds them into one colour picker.
+`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`edge_max` becomes "Edge max") on a plain slider. A hint gives a setting (or a colour, by its key) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size).
+
+### Colours
+
+A colour is three parameters named `<base>_r`, `<base>_g` and `<base>_b`, each 0--1 in display values (what the eye sees, sRGB-encoded), and the framework makes them one setting (`StyleColor`, #315) everywhere a person or an agent meets it:
+
+| Where | What it looks like |
+|---|---|
+| Scene table, `ascii_style`-type components | `tint = [1.0, 0.7, 0.25]` (integers allowed) or `tint = "#ffb340"`; a channel on its own (`tint_g = 0.5`) still works |
+| `--style` | `ascii:tint=#ffb340` or `ascii:tint=1/0.7/0.25` |
+| F4 → Styles | one colour picker |
+| Copy TOML (`stylize::style_toml`) | `tint = [1.0, 0.7, 0.25]`, only when it differs from the default |
+| `--list-styles` | one row, `tint  [0.35, 1, 0.45]  colour`; `colors` in the JSON |
+| Scripts' `set_style_param` | `set_style_param(id, "tint", [1.0, 0.7, 0.25])` or `"#ffb340"`, clamped to the channels' ranges |
+| The style, in `encode` | `frame.color("tint")` → `[f32; 3]`; per entity, `frame.variant_color(v, "tint")` |
+
+Underneath they stay three parameters, so a per-entity variant row or a uniform reads three numbers as before and a style declares nothing new. A user-authored style gets the same by naming three `[params]` that way. `StyleDescriptor::colors()`, `color_setting(base)` and `color_of(param)` find them; `stylize::color_from_toml` / `color_from_text` parse the two spellings.
 
 and the `StylePass` that `create` returns records the style's draws for one frame:
 
@@ -632,6 +650,7 @@ What a style gets from `StyleFrame`:
 | `width`, `height`, `format`, `texel_size()`, `srgb()` | the stage's size and format |
 | `param(name)` | the style's parameter from the config, or its default |
 | `option(name)` | the style's option (a string) from the config, or its default |
+| `color(name)` | the style's [colour](#colours) `name` (`tint`) as `[r, g, b]` in display values, each channel from the config or its default (#315) |
 | `pixels_per_point` | the window's scale factor (1 headless, or `flint render --pixels-per-point`), for styles sized in points |
 | `scene_dir` | the scene's folder when the host knows it, for styles that load files (ASCII's glyph sets) |
 | `depth`, `camera` | the scene's depth (sample by UV) and the inverse view-projection, position, near and far |
@@ -806,8 +825,9 @@ Ids follow name order, so they shift when a scene adds a style: read the legend 
 How it's drawn:
 
 - **A redraw, not a new attachment.** After the scene pass, each visible opaque draw of a styled entity is drawn again into the mask with its cached transform bind group (and bone bind group for skinned meshes). The scene pipelines don't change and the per-entity loop makes no buffers or bind groups; the ids go up in one write a frame.
-- **Depth without a depth buffer.** A mask fragment tests itself against the scene's single-sample depth with a tolerance of twice its own depth slope, so grass or a wall in front of a styled prop cuts its mask. Under MSAA it tests the sample-0 resolve, so a feature a pixel thin can lose the odd pixel; under `--render-scale` the mask is at the scaled size, and a display-stage style reads it by UV.
-- **Only when wanted.** The mask target and its pipelines exist only once a style with `uses_mask` (or the debug view) is on. At 1080p on an RTX 4070 the pass costs about 0.02 ms (0.03 ms under MSAA 4) for the demo scene's six styled entities.
+- **Depth without a depth buffer.** A mask fragment tests itself against the scene's single-sample depth with a tolerance of twice its own depth slope, so grass or a wall in front of a styled prop cuts its mask. Under `--render-scale` the mask is at the scaled size, and a display-stage style reads it by UV.
+- **MSAA: drawn 4x, resolved "any sample wins"** (#306). Under `--msaa 4` the mask is drawn into a 4x target of its own, and each sample the triangle covers is tested against that sample of the scene's multisampled depth. A resolve then folds the four samples into the single-sample mask the styles read: a pixel takes the id that covers the most samples, and is empty only if no sample was styled. Drawn single-sample at pixel centres, a feature about a pixel thin (the bench's seat edge at a grazing angle) lost the pixels the scene's samples gave it, and an outline style drew the gaps as white dashes. The 4x target costs 33 MB at 1080p, and only while MSAA and a mask-reading style are both on.
+- **Only when wanted.** The mask target and its pipelines exist only once a style with `uses_mask` (or the debug view) is on. At 1080p on an RTX 4070 the pass (with the veil) costs about 0.022 ms for `demo/style_mask.scene.toml`'s styled entities, or about 0.05 ms under MSAA 4 with the 4x draw and its resolve, some 0.025 ms more than the single-sample mask cost there before #306.
 - **What's masked.** Static glTF meshes, procedural boxes, skinned meshes, terrain (#310) and styled transparents (#310, below). Particles, sprites, grass and water never are: grass is instanced, and the rest write no depth to test against.
 
 ### Terrain and transparents
@@ -859,4 +879,4 @@ A style that takes settings per entity names its component in its descriptor: `c
 - the component's fields are read as the descriptor's params and options (a 3-array `x` fills `x_r`, `x_g`, `x_b`), and each distinct set is a `StyleVariant` with its own mask id, named for its settings (`ascii{cell=12,ramp=blocks}`, `ascii@barrel`, `ascii{off}` for `enabled = false`);
 - a style whose `grid` option is `object` gets one variant per styled root, with `anchor` set to the root's world origin each frame (`frame.project(anchor)` puts it on screen).
 
-In `encode`, `frame.variants()` lists this style's `(id, variant)` pairs, `frame.variant_param(v, "cell")` and `frame.variant_option(v, "ramp")` read a variant's settings with the scene's as fallback, and `frame.whole_frame()` says whether the scene's table covers everything. `stylize/ascii.rs` and `stylize/pencil.rs` pack them into a table indexed by mask id; watercolor (#272) can do the same.
+In `encode`, `frame.variants()` lists this style's `(id, variant)` pairs, `frame.variant_param(v, "cell")`, `frame.variant_option(v, "ramp")` and `frame.variant_color(v, "tint")` read a variant's settings with the scene's as fallback, and `frame.whole_frame()` says whether the scene's table covers everything. `stylize/ascii.rs` and `stylize/pencil.rs` pack them into a table indexed by mask id; watercolor (#272) can do the same.

@@ -634,6 +634,9 @@ pub struct SceneRenderer {
     sample_count: u32,
     msaa_color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     msaa_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// A new id each time `msaa_depth` is made, so the style mask can keep
+    /// a bind group over it (#306).
+    msaa_depth_id: u64,
     depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
     depth_resolve_layout: Option<wgpu::BindGroupLayout>,
     // Post-processing
@@ -904,6 +907,7 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -2401,6 +2405,7 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -4580,11 +4585,11 @@ impl SceneRenderer {
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
-        if self.style_mask_pass.is_none() {
-            let Some(skinned) = &self.skinned_pipeline else {
-                return;
-            };
-            self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
+        let Some(skinned) = &self.skinned_pipeline else {
+            return;
+        };
+        let pass = self.style_mask_pass.get_or_insert_with(|| {
+            crate::style_mask::StyleMaskPass::new(
                 device,
                 &crate::style_mask::MaskLayouts {
                     transform: &self.pipeline.transform_bind_group_layout,
@@ -4592,8 +4597,29 @@ impl SceneRenderer {
                     light: &self.pipeline.light_bind_group_layout,
                     bones: &skinned.bone_bind_group_layout,
                 },
-            ));
-        }
+            )
+        });
+        // Under MSAA the mask is drawn 4x against the scene's own samples
+        // and resolved, so a feature thinner than a pixel keeps the pixels
+        // the scene's samples gave it (#306).
+        let msaa_depth = match &self.msaa_depth {
+            Some((texture, view))
+                if self.sample_count == crate::style_mask::MSAA_SAMPLES
+                    && texture.size().width == resources.width
+                    && texture.size().height == resources.height =>
+            {
+                pass.ensure_msaa(
+                    device,
+                    &self.pipeline.transform_bind_group_layout,
+                    &skinned.bone_bind_group_layout,
+                );
+                Some(crate::style_mask::MsaaDepth {
+                    view,
+                    id: self.msaa_depth_id,
+                })
+            }
+            _ => None,
+        };
         let veil_target = resources.styles.get(
             device,
             crate::style_mask::VEIL_TARGET,
@@ -4751,10 +4777,11 @@ impl SceneRenderer {
                 queue,
                 encoder,
                 &resources.binds,
-                &mask.view,
+                &mask,
                 &veil_target.view,
                 depth_view,
                 depth_owned,
+                msaa_depth,
                 &draws,
                 &veil,
             );
@@ -5085,6 +5112,7 @@ impl SceneRenderer {
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         self.msaa_color = Some((color, color_view, width, height));
         self.msaa_depth = Some((depth, depth_view));
+        self.msaa_depth_id = crate::bind_cache::gpu_id();
     }
 
     /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).
