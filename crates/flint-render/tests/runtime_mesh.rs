@@ -736,6 +736,7 @@ fn model_data_maps_are_linear() {
         joint_indices: None,
         joint_weights: None,
         skin_index: None,
+        lod: None,
     };
     let texel = |name: &str, rgba: [u8; 4]| ImportedTexture {
         name: name.into(),

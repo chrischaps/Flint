@@ -149,6 +149,7 @@ tasks.register<Copy>("copyGameAssets") {
         include("audio/**")
         include("animations/**")
         include("terrain/**")
+        include("fonts/**")
         // Exclude engine internals and build artifacts
         exclude("engine/**")
         exclude("target/**")

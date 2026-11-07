@@ -54,7 +54,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage,
+    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
+    StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
@@ -112,6 +113,23 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     }],
     enabled: None,
     uses_mask: false,
+    hints: &[
+        StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
+        StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
+        StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
+        StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
+        StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
+        StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
+        StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
+        StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
+        StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
+        StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
+        StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
+        StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
+        StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
+        StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
+        StyleHint::new("paper", "Paper", "The paper's colour"),
+    ],
     component: Some("watercolor_style"),
     create: |d| Box::new(Watercolor::new(d)),
 };

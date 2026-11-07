@@ -28,6 +28,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_ui_api(engine, ctx.clone());
     register_data_ui_api(engine, ctx.clone());
     register_particle_api(engine, ctx.clone());
+    register_style_api(engine, ctx.clone());
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
@@ -41,7 +42,129 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_screen_ui_api(engine, ctx.clone());
     register_conducted_api(engine, ctx.clone());
     register_ocean_api(engine, ctx.clone());
+    register_quality_api(engine, ctx.clone());
     register_log_api(engine, ctx);
+}
+
+// ─── Quality settings API (FlintKart#55) ──────────────────
+//
+// `set_quality(#{ msaa: 4, shadow_cascades: 2 })` changes the renderer's
+// load levers from the next frame; `get_quality()` reads them back;
+// `gpu_info()` says what the GPU is. Keys and ranges are
+// `flint_core::quality::QualitySettings`'.
+
+/// A script value as a quality value: bools, integers and floats.
+fn quality_value(v: &Dynamic) -> Option<flint_core::quality::QualityValue> {
+    use flint_core::quality::QualityValue;
+    if let Ok(b) = v.as_bool() {
+        Some(QualityValue::Bool(b))
+    } else if let Ok(i) = v.as_int() {
+        Some(QualityValue::Int(i))
+    } else if let Ok(f) = v.as_float() {
+        Some(QualityValue::Float(f))
+    } else {
+        None
+    }
+}
+
+/// A quality value as a script value.
+fn quality_dynamic(v: flint_core::quality::QualityValue) -> Dynamic {
+    use flint_core::quality::QualityValue;
+    match v {
+        QualityValue::Bool(b) => b.into(),
+        QualityValue::Int(i) => i.into(),
+        QualityValue::Float(f) => f.into(),
+    }
+}
+
+/// Merge `settings`' keys into `c.quality` and ask for it to be applied.
+/// True when every key was taken; a bad key is warned about and skipped.
+pub(crate) fn request_quality(c: &mut ScriptCallContext, settings: &Map) -> bool {
+    let mut all_taken = true;
+    let mut quality = c.quality;
+    for (key, value) in settings {
+        let result = match quality_value(value) {
+            Some(v) => quality.set(key.as_str(), v),
+            None => Err(flint_core::quality::QualityError::Malformed(format!(
+                "{key}={value}"
+            ))),
+        };
+        if let Err(e) = result {
+            tracing::warn!("set_quality: {e}");
+            all_taken = false;
+        }
+    }
+    if quality != c.quality {
+        c.quality = quality;
+        c.quality_requested = true;
+    }
+    all_taken
+}
+
+fn register_quality_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_quality(map) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_quality", move |settings: Map| -> bool {
+            let mut c = crate::lock_or_recover(&ctx);
+            request_quality(&mut c, &settings)
+        });
+    }
+
+    // set_quality(key, value) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_quality", move |key: &str, value: Dynamic| -> bool {
+            let mut c = crate::lock_or_recover(&ctx);
+            let mut settings = Map::new();
+            settings.insert(key.into(), value);
+            request_quality(&mut c, &settings)
+        });
+    }
+
+    // get_quality() -> map of every setting
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_quality", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            c.quality
+                .entries()
+                .into_iter()
+                .map(|(k, v)| (k.into(), quality_dynamic(v)))
+                .collect()
+        });
+    }
+
+    // get_quality(key) -> the value, or () for an unknown key
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_quality", move |key: &str| -> Dynamic {
+            let c = crate::lock_or_recover(&ctx);
+            c.quality.get(key).map_or(Dynamic::UNIT, quality_dynamic)
+        });
+    }
+
+    // gpu_info() -> #{ name, vendor, device_type, backend, driver, class, platform }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("gpu_info", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let g = &c.gpu_info;
+            let mut map = Map::new();
+            for (k, v) in [
+                ("name", &g.name),
+                ("vendor", &g.vendor),
+                ("device_type", &g.device_type),
+                ("backend", &g.backend),
+                ("driver", &g.driver),
+                ("class", &g.class),
+                ("platform", &g.platform),
+            ] {
+                map.insert(k.into(), v.clone().into());
+            }
+            map
+        });
+    }
 }
 
 // ─── Conducted-parameters API (ADR 0020) ──────────────────
@@ -1277,6 +1400,41 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // set_lod_scale(scale) / set_draw_distance_scale(scale) (#56)
+    // The renderer's distance levers, for quality settings: the LOD scale
+    // multiplies every level-of-detail switch distance (0.5 drops models to
+    // their simpler levels at half the distance), the draw-distance scale
+    // every draw distance. 1.0 is as authored; clamped to 0.05 and up.
+    // Applied after this frame's scripts and kept across scene changes.
+    // lod_scale() / draw_distance_scale() read the values in force.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_lod_scale", move |scale: f64| {
+            crate::lock_or_recover(&ctx).lod_scale_request = Some(scale as f32);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_draw_distance_scale", move |scale: f64| {
+            crate::lock_or_recover(&ctx).draw_distance_scale_request = Some(scale as f32);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("lod_scale", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.lod_scale_request.unwrap_or(c.lod_scale) as f64
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_distance_scale", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.draw_distance_scale_request
+                .unwrap_or(c.draw_distance_scale) as f64
+        });
+    }
+
     // set_touch_controls(enabled: bool)
     // Put the on-screen controls away (false) while a menu wants every tap,
     // and bring them back (true) for play (#134). Applied after this frame's
@@ -1757,8 +1915,14 @@ fn ray_hit_dynamic(hit: Option<flint_core::ray_mesh::RayHit>) -> Dynamic {
     map.insert("entity".into(), Dynamic::from(hit.entity.raw() as i64));
     map.insert("distance".into(), Dynamic::from(hit.distance as f64));
     for (k, axis) in ["x", "y", "z"].iter().enumerate() {
-        map.insert(format!("point_{axis}").into(), Dynamic::from(hit.point[k] as f64));
-        map.insert(format!("normal_{axis}").into(), Dynamic::from(hit.normal[k] as f64));
+        map.insert(
+            format!("point_{axis}").into(),
+            Dynamic::from(hit.point[k] as f64),
+        );
+        map.insert(
+            format!("normal_{axis}").into(),
+            Dynamic::from(hit.normal[k] as f64),
+        );
     }
     Dynamic::from(map)
 }
@@ -2371,6 +2535,67 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
                     toml::Value::Float(rate),
                 );
             }
+        });
+    }
+}
+
+// ─── Per-entity styles (#269) ─────────────────────────────
+//
+// Queue changes to an entity's stylize style (`ascii`, #266). The player
+// applies them after the frame's scripts, before the renderer reads the
+// world, and fires `style_changed` to `on_event`. A param can change every
+// frame: that is a uniform write, never a GPU allocation.
+
+fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_entity_style(entity_id, style) — draw the entity and its
+    // descendants in `style`; settings it had before are kept
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_entity_style", move |entity_id: i64, style: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetEntityStyle {
+                entity_id,
+                style: style.to_string(),
+            });
+        });
+    }
+
+    // set_style_param(entity_id, param, value) — a number (`cell`, `glow`,
+    // ...), a string (`ramp`, `color`, ...), `enabled` true/false, `blend`
+    // 0..1 (how much of the style shows, #278), or a three-number array
+    // (`tint`)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_style_param",
+            move |entity_id: i64, param: &str, value: Dynamic| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let command = match dynamic_to_toml(&value) {
+                    Some(value) => ScriptCommand::SetStyleParam {
+                        entity_id,
+                        param: param.to_string(),
+                        value,
+                    },
+                    None => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "set_style_param: `{param}` can't take a {}",
+                            value.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            },
+        );
+    }
+
+    // clear_entity_style(entity_id) — take the entity's own style off
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_entity_style", move |entity_id: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands
+                .push(ScriptCommand::ClearEntityStyle { entity_id });
         });
     }
 }
@@ -5103,7 +5328,11 @@ pub(crate) fn world_text_from(
     opts: &Map,
 ) -> flint_core::world_text::WorldText {
     let o = TextOpts::from_map(opts);
-    let align = if opts.contains_key("align") { o.align } else { 1 };
+    let align = if opts.contains_key("align") {
+        o.align
+    } else {
+        1
+    };
     let valign = match opts.get("valign") {
         Some(v) => match v.clone().try_cast::<ImmutableString>() {
             Some(s) => match s.as_str() {
@@ -5255,7 +5484,11 @@ mod text_opts_tests {
         m.insert("valign".into(), Dynamic::from("bottom"));
         m.insert(
             "facing".into(),
-            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(-1.0_f64)]),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(-1.0_f64),
+            ]),
         );
         let t = world_text_from([0.0; 3], "x", 0.2, &m);
         assert_eq!(t.font.as_deref(), Some("display"));
@@ -5266,9 +5499,16 @@ mod text_opts_tests {
 
         m.insert(
             "up".into(),
-            arr(&[Dynamic::from(1_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+            ]),
         );
-        assert_eq!(world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up, [1.0, 0.0, 0.0]);
+        assert_eq!(
+            world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up,
+            [1.0, 0.0, 0.0]
+        );
     }
 
     #[test]
@@ -5276,7 +5516,11 @@ mod text_opts_tests {
         let mut m = Map::new();
         m.insert(
             "facing".into(),
-            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+            ]),
         );
         assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
         m.insert("facing".into(), arr(&[Dynamic::from(1_i64)]));
@@ -5323,6 +5567,84 @@ mod text_opts_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn quality_engine() -> (Engine, Arc<Mutex<ScriptCallContext>>) {
+        let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
+        let mut engine = Engine::new();
+        register_quality_api(&mut engine, ctx.clone());
+        (engine, ctx)
+    }
+
+    #[test]
+    fn a_script_sets_and_reads_quality() {
+        let (engine, ctx) = quality_engine();
+        let ok: bool = engine
+            .eval(
+                "set_quality(#{ msaa: 4, shadow_cascades: 2, ssao: false, render_scale: 0.75, \
+                 shadow_distance: 90 })",
+            )
+            .unwrap();
+        assert!(ok);
+        {
+            let c = ctx.lock().unwrap();
+            assert!(c.quality_requested);
+            assert_eq!(c.quality.msaa, 4);
+            assert_eq!(c.quality.shadow_cascades, 2);
+            assert!(!c.quality.ssao);
+            assert_eq!(c.quality.render_scale, 0.75);
+            // An integer is fine where a float is wanted.
+            assert_eq!(c.quality.shadow_distance, 90.0);
+        }
+        // Read back at once, clamped.
+        let msaa: i64 = engine.eval("get_quality().msaa").unwrap();
+        assert_eq!(msaa, 4);
+        let scale: f64 = engine.eval("get_quality(\"render_scale\")").unwrap();
+        assert_eq!(scale, 0.75);
+        let keys: i64 = engine.eval("get_quality().len()").unwrap();
+        assert_eq!(
+            keys as usize,
+            flint_core::quality::QualitySettings::KEYS.len()
+        );
+        let unknown: bool = engine.eval("get_quality(\"sharpness\") == ()").unwrap();
+        assert!(unknown);
+    }
+
+    #[test]
+    fn a_bad_key_is_skipped_and_the_rest_applied() {
+        let (engine, ctx) = quality_engine();
+        let ok: bool = engine
+            .eval("set_quality(#{ bloom: false, sharpness: 3, msaa: \"lots\" })")
+            .unwrap();
+        assert!(!ok);
+        let c = ctx.lock().unwrap();
+        assert!(!c.quality.bloom);
+        assert_eq!(c.quality.msaa, 1);
+    }
+
+    #[test]
+    fn setting_what_is_already_set_asks_for_nothing() {
+        let (engine, ctx) = quality_engine();
+        let ok: bool = engine.eval("set_quality(\"msaa\", 1)").unwrap();
+        assert!(ok);
+        assert!(!ctx.lock().unwrap().quality_requested);
+        let _: bool = engine.eval("set_quality(\"shadows\", false)").unwrap();
+        assert!(ctx.lock().unwrap().quality_requested);
+    }
+
+    #[test]
+    fn a_script_reads_the_gpu() {
+        let (engine, ctx) = quality_engine();
+        ctx.lock().unwrap().gpu_info = flint_core::quality::GpuInfo {
+            name: "Mali-G715".into(),
+            class: "mobile".into(),
+            platform: "android".into(),
+            ..Default::default()
+        };
+        let class: String = engine.eval("gpu_info().class").unwrap();
+        assert_eq!(class, "mobile");
+        let name: String = engine.eval("gpu_info().name").unwrap();
+        assert_eq!(name, "Mali-G715");
+    }
 
     #[test]
     fn test_project_root_for() {
@@ -5380,10 +5702,13 @@ mod tests {
         // Missing file: unit, and a warning queued for the game log
         let d4 = load_data_impl(&mut c, "data/missing.toml", false);
         assert!(d4.is_unit());
-        assert!(c
-            .commands
-            .iter()
-            .any(|cmd| matches!(cmd, ScriptCommand::Log { level: LogLevel::Warn, .. })));
+        assert!(c.commands.iter().any(|cmd| matches!(
+            cmd,
+            ScriptCommand::Log {
+                level: LogLevel::Warn,
+                ..
+            }
+        )));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5518,4 +5843,3 @@ fn push_line_3d(
         layer,
     });
 }
-

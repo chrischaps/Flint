@@ -106,6 +106,12 @@ pub struct RenderArgs {
     #[arg(long, default_value = "1")]
     pub msaa: u32,
 
+    /// Quality settings as `key=value,...`, as flint-player's --quality
+    /// (FlintKart#55), applied after every other flag: e.g.
+    /// `render_scale=0.6,shadow_cascades=1,ssao=0,bloom=0` renders a tier
+    #[arg(long, value_name = "KEY=VALUE,...")]
+    pub quality: Option<String>,
+
     /// ASCII: bare `--ascii` turns on the full-screen ASCII style (#265,
     /// `[post_process.styles.ascii]`). The spike's prototypes (#261) are
     /// `--ascii=full` (whole screen), `--ascii=entity` (only
@@ -220,9 +226,25 @@ pub struct RenderArgs {
     pub ascii_footprint: Option<f32>,
 
     /// Turn off the ASCII edge glyphs (| / - \ on depth, normal and
-    /// silhouette edges)
+    /// silhouette edges); the style's `edges = 0`
     #[arg(long)]
     pub ascii_no_edges: bool,
+
+    /// ASCII style: edge glyph strength over the tone glyph (0 off .. 1,
+    /// default 1; #267)
+    #[arg(long)]
+    pub ascii_edges: Option<f32>,
+
+    /// ASCII style: how much edge, in cell widths, a cell needs to draw a
+    /// line glyph (default 0.5; lower finds more)
+    #[arg(long)]
+    pub ascii_edge_threshold: Option<f32>,
+
+    /// ASCII style: more edge than this, in cell widths, is texture-like
+    /// geometry (grass) and keeps its tone glyph (default 3); a styled
+    /// entity's outline ignores it
+    #[arg(long)]
+    pub ascii_edge_max: Option<f32>,
 
     /// ASCII edge sensitivity to depth: the relative view-distance step that
     /// counts as an edge (default 0.6; lower finds more)
@@ -655,6 +677,23 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if let Some(scale) = args.render_scale {
         renderer.set_render_scale(&ctx.device, scale);
     }
+
+    // Quality settings over the flags above: the renderer's own state is the
+    // starting point, so `--quality` names only what it changes.
+    if let Some(quality) = &args.quality {
+        let mut q = flint_render::QualitySettings {
+            render_scale: renderer.render_scale(),
+            msaa: renderer.msaa(),
+            shadows: renderer.shadows_enabled(),
+            shadow_resolution: renderer.shadow_resolution(),
+            ..Default::default()
+        };
+        if let Some(e) = q.apply_str(quality).first() {
+            anyhow::bail!("--quality: {e}");
+        }
+        let applied = renderer.set_quality(&ctx.device, &q);
+        println!("Quality: {}", applied.to_query());
+    }
     if let Some(px) = args.pixels_per_point {
         renderer.pixels_per_point = px;
     }
@@ -960,7 +999,8 @@ const ASCII_STYLE: &str = "style";
 /// The ASCII style's flags (#265) onto `[post_process.styles.ascii]`.
 /// Bare `--ascii`, or any flag only the style reads, turns the style on;
 /// the flags the spike shares (`--ascii-cell`, `--ascii-levels`,
-/// `--ascii-footprint`) go to whichever of the two is on.
+/// `--ascii-footprint`, `--ascii-no-edges`, `--ascii-edge-depth`,
+/// `--ascii-edge-normal`) go to whichever of the two is on.
 fn apply_ascii_style_flags(
     args: &RenderArgs,
     pp: &mut flint_render::PostProcessConfig,
@@ -980,6 +1020,9 @@ fn apply_ascii_style_flags(
         || args.ascii_palette.is_some()
         || args.ascii_ground.is_some()
         || args.ascii_glow.is_some()
+        || args.ascii_edges.is_some()
+        || args.ascii_edge_threshold.is_some()
+        || args.ascii_edge_max.is_some()
         || args.ascii_dither.is_some()
         || args.ascii_scope.is_some()
         || args.ascii_grid.is_some();
@@ -1052,11 +1095,19 @@ fn apply_ascii_style_flags(
         ("contrast", args.ascii_contrast),
         ("ink", args.ascii_ink),
         ("glow", args.ascii_glow),
+        ("edges", args.ascii_edges),
+        ("edge_threshold", args.ascii_edge_threshold),
+        ("edge_max", args.ascii_edge_max),
+        ("edge_depth", args.ascii_edge_depth),
+        ("edge_normal", args.ascii_edge_normal),
         ("dither", args.ascii_dither),
     ] {
         if let Some(value) = value {
             styles.set_param(NAME, param, value);
         }
+    }
+    if args.ascii_no_edges {
+        styles.set_param(NAME, "edges", 0.0);
     }
     Ok(())
 }

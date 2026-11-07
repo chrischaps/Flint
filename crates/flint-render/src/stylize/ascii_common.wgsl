@@ -71,6 +71,15 @@ struct AsciiUniforms {
     hysteresis: f32,
     dither: f32,
     history: u32,
+    // Line glyphs' strength over the tone glyph (#267), and whether the
+    // edge passes ran
+    edges: f32,
+    edge_on: u32,
+    _pad_edges0: u32,
+    _pad_edges1: u32,
+    // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
+    // antidiagonal, two per vec4 like the ramp
+    edge_glyphs: array<vec4<u32>, 2>,
     // Each ramp step's atlas cell origin, two steps per vec4: (x0, y0, x1, y1).
     ramp: array<vec4<u32>, 64>,
     // Every variant's palette inks, display values (rgb, unused w); the

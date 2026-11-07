@@ -12,12 +12,15 @@ use super::scene_loading::{
     load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
     register_skeletal_data,
 };
+#[cfg(target_os = "android")]
+use super::AndroidGamepadTracker;
 use super::TransitionPhase;
 use super::{CaptureConfig, PlayerApp};
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_core::vfs;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
@@ -29,7 +32,6 @@ use flint_runtime::{
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
-use flint_core::vfs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -94,6 +96,8 @@ impl PlayerApp {
             procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
+            quality_overrides: String::new(),
+            quality: Default::default(),
             frame_pacer: None,
             hold_at: None,
             scene_diffuse_wrap: None,
@@ -321,6 +325,9 @@ impl PlayerApp {
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
         self.update_vsync_pacing();
+        // Quality settings (FlintKart#55) before any script's on_init, so
+        // get_quality() and gpu_info() answer from the first frame.
+        self.init_quality();
 
         // Saved persistent store (save/persist.toml) before any script's
         // on_init runs, so persist_get sees last session's values.
@@ -387,14 +394,8 @@ impl PlayerApp {
                 ..Default::default()
             },
         );
-        // FLINT_SHADOWS=0 starts with the shadow pass off (the debug panel
-        // toggle) so a perf run can A/B shadow cost headlessly.
-        if std::env::var("FLINT_SHADOWS")
-            .map(|v| v == "0")
-            .unwrap_or(false)
-        {
-            scene_renderer.set_shadows(false);
-        }
+        // FLINT_SHADOWS / FLINT_SHADOW_RES and the rest of the quality
+        // settings are applied by init_quality once the renderer is stored.
 
         // Rebuild component index as a safety net after scene loading
         self.world.rebuild_component_index();
@@ -685,11 +686,9 @@ impl PlayerApp {
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
             self.create_particles_debug_panel();
-            // Rendering & Effects (ADR 0053): unconditional — every scene has
-            // a renderer to tune. Registered closed; F4 summons it. show_freeze
-            // is true here because player scripts drive post fields.
-            self.debug_panels
-                .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
+            self.create_styles_debug_panel();
+            // Rendering & Effects (ADR 0053): unconditional, F4 summons it
+            self.create_render_debug_panel();
             // The game's own (ADR 0107), after the engine's.
             self.create_extension_debug_panels();
         }

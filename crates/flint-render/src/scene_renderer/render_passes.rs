@@ -13,7 +13,7 @@ use crate::grass_pipeline::{
 };
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
-use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT, SHADOW_DRAW_STRIDE};
+use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
 use crate::skybox_pipeline::SkyboxUniforms;
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 
@@ -56,8 +56,13 @@ impl SceneRenderer {
         };
 
         if !shadow_pass.enabled || self.light_uniforms.directional_count == 0 {
+            // The shaders sample the maps whatever this pass does, so a pass
+            // turned off at runtime would leave the last frame's shadows
+            // standing (FlintKart#55). Zero splits read as "no shadows".
+            shadow_pass.write_off_uniforms(queue);
             return;
         }
+        shadow_pass.shadows_written_off = false;
 
         // Use the first directional light for shadows
         let light = &self.light_uniforms.directional_lights[0];
@@ -66,12 +71,16 @@ impl SceneRenderer {
         // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
         let camera_inv = camera.inverse_view_projection_matrix();
         let sun_tan_angular = light.angular_size.tan().max(0.0);
+        // Quality settings (FlintKart#55): how far shadows reach and how many
+        // cascades cover it, 200 m and 3 unless a tier says otherwise. The
+        // camera's own planes map the split depths to its frustum.
+        let cascades = shadow_pass.cascades();
         shadow_pass.update_cascades(
             light.direction,
             camera_pos,
             camera_inv,
-            0.1,
-            200.0,
+            camera.near,
+            camera.far,
             100.0,
             sun_tan_angular,
         );
@@ -90,7 +99,7 @@ impl SceneRenderer {
         // ~800 allocations a frame in a 270-entity scene and dominated the
         // CPU frame time).
         let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
-        for cascade in 0..CASCADE_COUNT {
+        for cascade in 0..cascades {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             let slot = |model| ShadowDrawUniforms {
@@ -166,7 +175,7 @@ impl SceneRenderer {
         };
 
         // Render each cascade
-        for cascade in 0..CASCADE_COUNT {
+        for cascade in 0..cascades {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
 
             {
@@ -1336,6 +1345,7 @@ impl SceneRenderer {
                 height: resources.height,
                 format: crate::postprocess::HDR_FORMAT,
                 depth: depth_view,
+                depth_size: [resources.width, resources.height],
                 depth_owned,
                 camera: crate::stylize::StyleCamera {
                     view_proj: camera.view_projection_matrix(),
