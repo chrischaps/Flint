@@ -25,6 +25,11 @@
 @group(3) @binding(2) var edge_cells: texture_2d<f32>;
 // Each slot's tone range (#289, ascii_stats_resolve.wgsl)
 @group(3) @binding(3) var tone_stats: texture_2d<f32>;
+// Each per-entity variant cell's colour sum and sample count (#313,
+// ascii_variant_cells.wgsl): the first two of its band's variants met in
+// the cell, one texture each
+@group(3) @binding(4) var variant_cells_a: texture_2d<u32>;
+@group(3) @binding(5) var variant_cells_b: texture_2d<u32>;
 
 // The tone luminance of a colour in `slot`: stretched over the slot's range
 fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
@@ -364,23 +369,47 @@ struct Drawn {
 }
 
 // A per-entity variant's cell at `p`: on its own grid, coloured by the
-// lattice samples of its own variant only
+// lattice samples of its own variant only. The variant cell pass (#313)
+// summed them once for the cell; a variant without a band, or a cell
+// holding more of its band's variants than the pass keeps, sums here.
 fn variant_cell(slot: u32, p: vec2<f32>) -> Drawn {
     let v = u.variants[slot];
     let rel = p - v.origin;
     let cell = floor(rel / v.cell);
     let cell_min = cell * v.cell + v.origin;
     let local = rel - cell * v.cell;
-    let foot = v.cell * max(v.footprint, 1.0);
-    let centre = cell_min + 0.5 * v.cell;
     var sum = vec3<f32>(0.0);
     var count = 0.0;
-    for (var j = 0; j < 4; j++) {
-        for (var i = 0; i < 4; i++) {
-            let q = floor(centre + ((vec2<f32>(f32(i), f32(j)) + 0.5) / 4.0 - 0.5) * foot);
-            let w = select(0.0, 1.0, slot_at(q) == slot);
-            sum += shown_entity(vec2<i32>(q)) * w;
-            count += w;
+    var summed = false;
+    if v.cell_row > 0u {
+        let at = vec2<i32>(
+            i32(cell.x) + CELL_OFFSET,
+            i32(v.cell_row - 1u) + i32(cell.y) + CELL_OFFSET,
+        );
+        let first = textureLoad(variant_cells_a, at, 0);
+        var entry = first;
+        if (first.w & 255u) != slot {
+            entry = textureLoad(variant_cells_b, at, 0);
+        }
+        if (entry.w & 255u) == slot {
+            sum = bitcast<vec3<f32>>(entry.xyz);
+            count = f32((entry.w >> 8u) & 255u);
+            summed = true;
+        } else if ((first.w >> 16u) & 1u) == 0u {
+            // None of this variant's samples fell in the cell
+            summed = true;
+        }
+    }
+    if !summed {
+        let foot = v.cell * max(v.footprint, 1.0);
+        let centre = cell_min + 0.5 * v.cell;
+        for (var j = 0; j < 4; j++) {
+            for (var i = 0; i < 4; i++) {
+                let q = floor(centre + ((vec2<f32>(f32(i), f32(j)) + 0.5) / 4.0 - 0.5) * foot);
+                let w = select(0.0, 1.0, slot_at(q) == slot);
+                sum += shown_entity(vec2<i32>(q)) * w;
+                count += w;
+            }
         }
     }
     let raw = select(shown_entity(vec2<i32>(floor(p))), sum / max(count, 1.0), count > 0.0);
