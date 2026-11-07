@@ -98,6 +98,19 @@ pub fn fullscreen_pipeline(
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
+    fullscreen_pipeline_entry(device, label, module, "fs_main", layouts, format)
+}
+
+/// [`fullscreen_pipeline`] with the fragment entry point `fragment`, for a
+/// module that has more than one.
+pub fn fullscreen_pipeline_entry(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: layouts,
@@ -114,7 +127,7 @@ pub fn fullscreen_pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module,
-            entry_point: Some("fs_main"),
+            entry_point: Some(fragment),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: None,

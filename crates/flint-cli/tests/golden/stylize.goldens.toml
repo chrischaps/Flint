@@ -40,6 +40,10 @@ name = "ascii-full"
 scene = "demo/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"
 args = ["--style", "ascii:edges=0"]
+# The structural golden (#317): the same frame's 80x45 character grid,
+# which must match cell for cell. A tone glyph that moved shows as a caret
+# in <out>/ascii-full.text.diff, readable without opening an image
+text = "ascii_pbr_test.txt"
 
 [[case]]
 name = "ascii-full-detailed-tint"
@@ -148,6 +152,9 @@ args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 name = "ascii-style-entities"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid"]
+# Per entity (#317): the barrel and YBot are glyphs, every other cell is a
+# space (the picture passes through, and the pencil props draw over theirs)
+text = "ascii-style-entities.txt"
 
 [[case]]
 name = "ascii-style-screen"

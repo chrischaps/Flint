@@ -756,7 +756,7 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 
 | Case | What it pins |
 |------|--------------|
-| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off |
+| `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off, and its character grid exactly (`ascii_pbr_test.txt`, #317) |
 | `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props`, with edges |
 | `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points (edges off: the editor grid would be traced) |
 | `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid (edges off) |

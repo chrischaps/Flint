@@ -91,6 +91,7 @@
 //! fills the cell with ink and ignores them.
 
 use super::kit;
+use super::text::{self, GlyphCell, GlyphText};
 use super::{
     StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
     StyleStage, StyleTexture,
@@ -99,6 +100,7 @@ use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphAtlas};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Ramp steps the uniform holds; a longer ramp is resampled to this many.
@@ -561,6 +563,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             &[&uniform_bgl, &edges_in_bgl],
             STATS_FORMAT,
         );
+        let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
         Box::new(Ascii {
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
@@ -604,10 +607,20 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             pipeline: kit::fullscreen_pipeline(
                 device,
                 "ASCII Pipeline",
-                &kit::shader(device, "ASCII Shader", GLYPH_SHADER),
+                &glyph_module,
                 &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
                 d.format,
             ),
+            text_pipeline: kit::fullscreen_pipeline_entry(
+                device,
+                "ASCII Text Pipeline",
+                &glyph_module,
+                "fs_text",
+                &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+                TEXT_FORMAT,
+            ),
+            capture: AtomicBool::new(false),
+            text: Mutex::new(None),
             entity_bgl,
             _no_mask: no_mask,
             no_mask_view,
@@ -1074,6 +1087,124 @@ struct Ascii {
     no_mask_bind: wgpu::BindGroup,
     edges: Mutex<Option<Owned>>,
     edge_cells: Mutex<Option<Owned>>,
+    /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
+    /// while `capture` is on, into `text` and copied to its read-back.
+    text_pipeline: wgpu::RenderPipeline,
+    capture: AtomicBool,
+    text: Mutex<Option<TextCapture>>,
+}
+
+/// The text pass's texel per cell: glyph code, ink, ground, styled.
+const TEXT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+const TEXT_TEXEL_BYTES: u32 = 16;
+
+/// The text pass's target and read-back for one grid size, and what the
+/// last frame copied into it needs to become text.
+struct TextCapture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+    grid: [u32; 2],
+    /// Bytes a row of the read-back, padded to wgpu's copy alignment.
+    row_bytes: u32,
+    /// The grid's first visible column and row: the offset texel is off
+    /// screen when the grid starts at the frame's edge.
+    first: [u32; 2],
+    /// Each glyph's atlas origin (packed `x | y << 16`) to its character.
+    glyphs: Vec<(u32, char)>,
+    /// Mask ids a display style after ASCII draws over: their cells show
+    /// that style in the finished frame, so they're written as passed.
+    overdrawn: Vec<u32>,
+    /// Whether a frame has been copied in since the last read.
+    copied: bool,
+}
+
+impl TextCapture {
+    fn new(device: &wgpu::Device, grid: [u32; 2]) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ASCII Text"),
+            size: wgpu::Extent3d {
+                width: grid[0].max(1),
+                height: grid[1].max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TEXT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let row_bytes = (grid[0].max(1) * TEXT_TEXEL_BYTES).div_ceil(align) * align;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ASCII Text Read-back"),
+            size: (row_bytes * grid[1].max(1)) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            texture,
+            view,
+            buffer,
+            grid,
+            row_bytes,
+            first: [0, 0],
+            glyphs: Vec::new(),
+            overdrawn: Vec::new(),
+            copied: false,
+        }
+    }
+
+    /// The copied frame as text; waits on the device for the copy.
+    fn read(&mut self, device: &wgpu::Device) -> Option<GlyphText> {
+        if !self.copied {
+            return None;
+        }
+        let slice = self.buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range();
+        let words = |x: u32, y: u32| -> [u32; 4] {
+            let at = (y * self.row_bytes + x * TEXT_TEXEL_BYTES) as usize;
+            let w: &[u8] = &data[at..at + TEXT_TEXEL_BYTES as usize];
+            std::array::from_fn(|i| u32::from_le_bytes(w[i * 4..i * 4 + 4].try_into().unwrap()))
+        };
+        let [cols, rows] = [
+            self.grid[0].saturating_sub(self.first[0]),
+            self.grid[1].saturating_sub(self.first[1]),
+        ];
+        let mut cells = Vec::with_capacity((cols * rows) as usize);
+        for y in 0..rows {
+            for x in 0..cols {
+                let [code, ink, ground, id] = words(x + self.first[0], y + self.first[1]);
+                let ours = code != text::TEXT_NONE && !self.overdrawn.contains(&id);
+                let glyph = ours.then(|| {
+                    self.glyphs
+                        .iter()
+                        .find(|(o, _)| *o == code)
+                        .map_or('?', |(_, c)| *c)
+                });
+                // Over a cell another style draws, the ground alone
+                let ground = text::unpack_rgb(ground);
+                let ink = if code != text::TEXT_NONE && !ours {
+                    ground
+                } else {
+                    text::unpack_rgb(ink)
+                };
+                cells.push(GlyphCell { glyph, ink, ground });
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+        self.copied = false;
+        Some(GlyphText { cols, rows, cells })
+    }
 }
 
 /// A variant's settings, read through the getters of the whole frame or of
@@ -1787,25 +1918,117 @@ impl StylePass for Ascii {
 
         // Glyph pass: draw the cells
         let font = fonts.loaded.as_ref().expect("loaded by font()");
-        kit::fullscreen_pass(
-            encoder,
-            "ASCII Pass",
-            output,
-            &self.pipeline,
-            &[
-                &uniform,
-                &cells_bind(
-                    frame,
-                    "ASCII Cells BG",
-                    &self.cells_bgl,
-                    &pair[write],
-                    variant(write),
-                ),
-                &font.bind,
-                &self.entity_bind(frame, input, variants.len() > 1, edge_cells, stats),
-            ],
+        let cells = cells_bind(
+            frame,
+            "ASCII Cells BG",
+            &self.cells_bgl,
+            &pair[write],
+            variant(write),
         );
+        // A cell whose entity a later display style draws over isn't ours
+        // in the finished frame (#317): the text pass reads the mask for it
+        let capturing = self.capture.load(Ordering::Relaxed);
+        let overdrawn = if capturing {
+            overdrawn_ids(frame)
+        } else {
+            Vec::new()
+        };
+        let with_mask = variants.len() > 1 || !overdrawn.is_empty();
+        let entity = self.entity_bind(frame, input, with_mask, edge_cells, stats);
+        let groups = [&*uniform, &*cells, &font.bind, &*entity];
+        kit::fullscreen_pass(encoder, "ASCII Pass", output, &self.pipeline, &groups);
+
+        // The same cells as text (#317), when asked
+        if capturing {
+            let mut slot = self.text.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.as_ref().is_none_or(|t| t.grid != grid) {
+                *slot = Some(TextCapture::new(frame.device, grid));
+            }
+            let capture = slot.as_mut().expect("made above");
+            kit::fullscreen_pass(
+                encoder,
+                "ASCII Text",
+                &capture.view,
+                &self.text_pipeline,
+                &groups,
+            );
+            encoder.copy_texture_to_buffer(
+                capture.texture.as_image_copy(),
+                wgpu::ImageCopyBuffer {
+                    buffer: &capture.buffer,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(capture.row_bytes),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width: grid[0],
+                    height: grid[1],
+                    depth_or_array_layers: 1,
+                },
+            );
+            capture.first = text_first(origin);
+            capture.glyphs = atlas
+                .glyphs()
+                .iter()
+                .enumerate()
+                .map(|(i, ch)| {
+                    let [x, y] = atlas.cell_origin(i as u32);
+                    (x | (y << 16), *ch)
+                })
+                .collect();
+            capture.overdrawn = overdrawn;
+            capture.copied = true;
+        }
     }
+
+    fn set_text_capture(&self, on: bool) {
+        self.capture.store(on, Ordering::Relaxed);
+        if !on {
+            *self.text.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+
+    fn read_text(&self, device: &wgpu::Device) -> Option<GlyphText> {
+        self.text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()?
+            .read(device)
+    }
+}
+
+/// The style mask ids whose pixels a display style that runs after ASCII
+/// draws over (#317): an entity of another style that's on this frame.
+fn overdrawn_ids(frame: &StyleFrame<'_>) -> Vec<u32> {
+    let chain = super::stage_chain(StyleStage::Display, frame.config);
+    let Some(ours) = chain.iter().position(|(d, _)| d.name == STYLE.name) else {
+        return Vec::new();
+    };
+    let later: Vec<&str> = chain[ours + 1..]
+        .iter()
+        .filter(|(d, _)| d.is_on(frame.config, frame.style_ids))
+        .map(|(d, _)| d.name)
+        .collect();
+    frame
+        .style_ids
+        .iter()
+        .filter(|(id, _)| {
+            frame
+                .style_ids
+                .variant(*id)
+                .is_some_and(|v| !v.off && later.contains(&v.style.as_str()))
+        })
+        .map(|(id, _)| u32::from(id))
+        .collect()
+}
+
+/// The text grid's first visible texel (#317): the cell state's texel 0
+/// holds the part cell left of (above) the origin, which is off screen
+/// when the grid starts at the frame's edge.
+fn text_first(origin: [f32; 2]) -> [u32; 2] {
+    origin.map(|o| u32::from(o <= 0.0))
 }
 
 #[cfg(test)]
