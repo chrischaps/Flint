@@ -9,12 +9,17 @@
 //! which the pass uploads into the uniform buffer it already has: no
 //! buffer, texture or bind group is made for it.
 //!
+//! `blend` (#278) is a setting every per-entity style takes: how much of
+//! the style the entity is drawn with, 0 to 1. It rides in the style mask
+//! beside the entity's id, not in its variant, so ramping it every frame
+//! keeps one id and makes no new variant row.
+//!
 //! Only styles with a component of their own can be set on an entity.
 //! Whole-frame styles (Kuwahara, invert) live in the scene's
 //! `[post_process.styles]` table and refuse with a message naming the ones
 //! that can.
 
-use crate::style_mask::STYLE_MASK_COMPONENT;
+use crate::style_mask::{BLEND_FIELD, STYLE_MASK_COMPONENT};
 use crate::stylize::{self, StyleDescriptor};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -80,8 +85,9 @@ pub fn set_entity_style(world: &mut FlintWorld, id: EntityId, style: &str) -> Re
 }
 
 /// Set one setting of `id`'s style: a parameter (a number, clamped to the
-/// style's range), an option (a string), `enabled` (a bool), or a 3-array
-/// for a parameter split into `_r`/`_g`/`_b` (`tint`). Returns the style.
+/// style's range), an option (a string), `enabled` (a bool), `blend` (a
+/// number, clamped to 0..1; #278), or a 3-array for a parameter split into
+/// `_r`/`_g`/`_b` (`tint`). Returns the style.
 pub fn set_style_param(
     world: &mut FlintWorld,
     id: EntityId,
@@ -107,6 +113,11 @@ pub fn set_style_param(
         match value.as_bool() {
             Some(b) => b.into(),
             None => return wrong("true or false"),
+        }
+    } else if param == BLEND_FIELD {
+        match number(&value) {
+            Some(n) => toml::Value::Float(n.clamp(0.0, 1.0)),
+            None => return wrong("a number from 0 to 1"),
         }
     } else if let Some(p) = d.params.iter().find(|p| p.name == param) {
         match number(&value) {
@@ -135,7 +146,7 @@ pub fn set_style_param(
         let mut known: Vec<&str> = d.params.iter().map(|p| p.name).collect();
         known.extend(d.options.iter().map(|o| o.name));
         return Err(format!(
-            "`{style}` has no setting `{param}`; it takes enabled, {}",
+            "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
             known.join(", ")
         ));
     };
@@ -257,6 +268,64 @@ mod tests {
             world.get_component(barrel, "ascii_style"),
             Some(&toml::Value::Table(toml::Table::new()))
         );
+    }
+
+    #[test]
+    fn blend_rides_beside_the_id_not_in_the_variant() {
+        use crate::style_mask::resolve_blended;
+        let mut world = FlintWorld::new();
+        let barrel = world.spawn("barrel").unwrap();
+        let hoop = world.spawn("hoop").unwrap();
+        world.set_parent(hoop, barrel).unwrap();
+        let bench = world.spawn("bench").unwrap();
+        set_entity_style(&mut world, barrel, "ascii").unwrap();
+        set_entity_style(&mut world, bench, "ascii").unwrap();
+        let blended = |world: &FlintWorld| {
+            let (mut ids, mut out, mut blends) =
+                (StyleIds::default(), HashMap::new(), HashMap::new());
+            resolve_blended(
+                world,
+                &PostProcessConfig::default(),
+                &mut ids,
+                &mut out,
+                &mut blends,
+            );
+            (ids, out, blends)
+        };
+        let (table, out, blends) = blended(&world);
+        assert!(blends.is_empty(), "fully styled entities carry no blend");
+        let id = out[&barrel];
+
+        // A ramp: every step keeps the one shared variant
+        for step in 0..=4 {
+            let b = step as f64 / 4.0;
+            set_style_param(&mut world, barrel, "blend", b.into()).unwrap();
+            let (now, out, blends) = blended(&world);
+            assert_eq!(now, table, "blend {b} made a new variant");
+            assert_eq!(out[&barrel], id);
+            assert_eq!(out[&bench], id, "the bench shares the barrel's id");
+            if b < 1.0 {
+                assert_eq!(blends[&barrel], b as f32);
+                assert_eq!(blends[&hoop], b as f32, "a child fades with its root");
+            } else {
+                assert!(blends.is_empty());
+            }
+            assert!(!blends.contains_key(&bench));
+        }
+        // Clamped, and it must be a number
+        set_style_param(&mut world, barrel, "blend", 3_i64.into()).unwrap();
+        assert!(blended(&world).2.is_empty());
+        let e = set_style_param(&mut world, barrel, "blend", "half".into()).unwrap_err();
+        assert!(e.contains("0 to 1"), "{e}");
+        // A style_mask's blend counts too
+        let mut mask = toml::Table::new();
+        mask.insert("style".into(), "ascii".into());
+        mask.insert("blend".into(), 0.25.into());
+        world
+            .set_component(bench, STYLE_MASK_COMPONENT, mask.into())
+            .unwrap();
+        world.remove_component(bench, "ascii_style").unwrap();
+        assert_eq!(blended(&world).2[&bench], 0.25);
     }
 
     #[test]

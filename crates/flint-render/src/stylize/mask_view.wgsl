@@ -83,9 +83,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if id == 0u {
         out = vec3<f32>(luma * params.dim);
     } else {
-        // The hue, shaded by the scene so form still reads
+        // The hue, shaded by the scene so form still reads, and as strong
+        // as the entity's blend (#278): a half-faded prop is half its hue
         let shade = mix(1.0, 0.35 + 0.9 * luma, params.shading);
-        out = id_color(id) * shade;
+        let blend = f32(textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).g) / 65535.0;
+        out = mix(vec3<f32>(luma * params.dim), id_color(id) * shade, blend);
     }
 
     // A silhouette wherever a neighbour within `outline` mask pixels has

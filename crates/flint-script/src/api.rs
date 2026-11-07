@@ -2398,8 +2398,9 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     }
 
     // set_style_param(entity_id, param, value) — a number (`cell`, `glow`,
-    // ...), a string (`ramp`, `color`, ...), `enabled` true/false, or a
-    // three-number array (`tint`)
+    // ...), a string (`ramp`, `color`, ...), `enabled` true/false, `blend`
+    // 0..1 (how much of the style shows, #278), or a three-number array
+    // (`tint`)
     {
         let ctx = ctx.clone();
         engine.register_fn(

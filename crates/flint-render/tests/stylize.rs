@@ -591,3 +591,103 @@ fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
     ));
     assert_eq!(gpu.frame(&mut renderer, &world), plain);
 }
+
+#[test]
+fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-2.5, -2.5, -2.5]));
+    bounds.insert("max".into(), vec3([2.5, 2.5, 2.5]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    set_entity_style(&mut world, cube, "ascii").unwrap();
+    // Small cells, so a 64-pixel cube holds enough of them to dissolve
+    set_style_param(&mut world, cube, "cell", 4.0.into()).unwrap();
+    let full = gpu.frame(&mut renderer, &world);
+    assert_ne!(full, plain);
+
+    let at = |renderer: &mut SceneRenderer, world: &mut FlintWorld, b: f64| {
+        set_style_param(world, cube, "blend", b.into()).unwrap();
+        gpu.frame(renderer, world)
+    };
+    assert_eq!(
+        at(&mut renderer, &mut world, 0.0),
+        plain,
+        "blend 0 is the entity's own shading"
+    );
+    assert_eq!(
+        at(&mut renderer, &mut world, 1.0),
+        full,
+        "blend 1 is the full style"
+    );
+
+    // Fade: every pixel that differs lies between the two, none outside
+    let half = at(&mut renderer, &mut world, 0.5);
+    let styled_px = plain
+        .chunks(4)
+        .zip(full.chunks(4))
+        .filter(|(p, f)| p != f)
+        .count();
+    let mut between = 0;
+    for ((p, f), h) in plain.chunks(4).zip(full.chunks(4)).zip(half.chunks(4)) {
+        if p == f {
+            assert_eq!(h, p, "a pixel the style never touches changed");
+            continue;
+        }
+        let inside = (0..3).all(|c| {
+            let (lo, hi) = (p[c].min(f[c]), p[c].max(f[c]));
+            h[c].saturating_add(1) >= lo && h[c] <= hi.saturating_add(1)
+        });
+        assert!(inside, "a faded pixel {h:?} left the span {p:?}..{f:?}");
+        between += (h != p && h != f) as usize;
+    }
+    eprintln!("fade 0.5: {between} of {styled_px} styled pixels between the two");
+    assert!(between * 2 > styled_px, "the fade mixed too few pixels");
+
+    // Dissolve: each pixel is wholly one or the other, and more cells
+    // turn as the blend rises
+    set_style_param(&mut world, cube, "transition", "dissolve".into()).unwrap();
+    let mut turned = Vec::new();
+    for b in [0.25, 0.5, 0.75] {
+        let frame = at(&mut renderer, &mut world, b);
+        let mut glyph = 0;
+        for ((p, f), d) in plain.chunks(4).zip(full.chunks(4)).zip(frame.chunks(4)) {
+            assert!(d == p || d == f, "dissolve drew a mixed pixel");
+            glyph += (p != f && d == f) as usize;
+        }
+        turned.push(glyph);
+    }
+    eprintln!("dissolve 0.25/0.5/0.75 of {styled_px}: {turned:?}");
+    assert!(turned[0] < turned[1] && turned[1] < turned[2], "{turned:?}");
+    assert!(turned[0] > 0 && turned[2] < styled_px, "{turned:?}");
+
+    // A ramp allocates nothing: the blend is a mask channel, not a variant
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    let ids = renderer.style_ids().clone();
+    for i in 0..=12 {
+        at(&mut renderer, &mut world, i as f64 / 12.0);
+        assert_eq!(renderer.style_ids(), &ids, "a blend step made a variant");
+    }
+    assert_eq!(renderer.kept_post_binds(), binds);
+    assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
+}

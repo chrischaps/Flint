@@ -39,7 +39,7 @@
 //! The ASCII spike (#261) measured the two ways to write it and chose a
 //! redraw over a new attachment on every scene pipeline. After the scene
 //! pass (and the MSAA depth resolve), each visible opaque draw of a styled
-//! entity is drawn again into one `R16Uint` target at scene resolution,
+//! entity is drawn again into one `Rg16Uint` target at scene resolution,
 //! with its cached transform bind group (and, for skinned meshes, its bone
 //! bind group), so the per-entity loop makes no buffer and no bind group.
 //! There's no depth attachment: each fragment tests itself against the
@@ -54,6 +54,15 @@
 //! style that reads it is on ([`StyleDescriptor::uses_mask`]) or the
 //! `style` debug view is showing.
 //!
+//! ## Blending in and out (#278)
+//!
+//! A `blend` field on the style component (or the `style_mask`) draws the
+//! entity with that much of the style, 0 to 1. It rides in the mask beside
+//! the id (the `.g` channel), not in the variant, so a script ramping it
+//! every frame keeps the entity's id and makes no new variant. A style
+//! mixes its own pixel with what it was given by that amount; ASCII can
+//! also dissolve, turning that share of its cells.
+//!
 //! Particles, sprites, grass, terrain and water stay unmasked: they write
 //! no mask (and, but for terrain, no depth either).
 //!
@@ -67,8 +76,25 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// The mask's format: one style id a pixel, 0 where no style drew.
-pub const STYLE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+/// The mask's format: one style id a pixel in `.r`, 0 where no style
+/// drew, and the entity's blend in `.g` (#278), `0..=BLEND_ONE` for 0..1.
+/// A reader that only wants the id reads `.r`, as it did when the mask
+/// was `R16Uint`.
+pub const STYLE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Uint;
+
+/// The mask's `.g` for a blend of 1: the style fully on.
+pub const BLEND_ONE: u32 = u16::MAX as u32;
+
+/// The field of a style component (or `style_mask`) that says how much of
+/// the style an entity is drawn with (#278): 0 is its own shading, 1 the
+/// style's, anything between a mix (a cross-fade, or for ASCII's
+/// `transition = "dissolve"` the share of cells that have turned).
+pub const BLEND_FIELD: &str = "blend";
+
+/// A blend in the mask's `.g` encoding.
+pub fn encode_blend(blend: f32) -> u32 {
+    (blend.clamp(0.0, 1.0) * BLEND_ONE as f32).round() as u32
+}
 
 /// The id of a pixel no style drew.
 pub const NO_STYLE: u16 = 0;
@@ -251,6 +277,23 @@ impl StyleIds {
     }
 }
 
+/// The blend a styled root asks for (#278): its style component's `blend`,
+/// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
+fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+    let from = |c: &str| {
+        world
+            .get_component(root, c)?
+            .get(BLEND_FIELD)
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+    };
+    crate::stylize::registry()
+        .iter()
+        .filter_map(|d| d.component)
+        .chain([STYLE_MASK_COMPONENT])
+        .find_map(from)
+        .map_or(1.0, |b| (b as f32).clamp(0.0, 1.0))
+}
+
 /// What one entity's `style_mask` component asks for: `Some(name)` for a
 /// style, `None` to opt out (`enabled = false`, or an empty name).
 fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
@@ -385,13 +428,30 @@ pub(crate) fn any_styled(world: &FlintWorld) -> bool {
 /// winning. Fills `out` (cleared first) with the non-zero ids only and sets
 /// `ids` to the variants used. `config` supplies the scene's settings a
 /// variant falls back on (its grid).
+#[cfg(test)]
 pub(crate) fn resolve(
     world: &FlintWorld,
     config: &PostProcessConfig,
     ids: &mut StyleIds,
     out: &mut HashMap<EntityId, u16>,
 ) {
+    resolve_blended(world, config, ids, out, &mut HashMap::new());
+}
+
+/// [`resolve`], and the blend of every styled entity drawn at less than 1
+/// into `blends` (cleared first; #278). The blend is the root's, carried
+/// down its subtree with its id. It isn't part of the variant: entities
+/// fading at different rates still share one id, so a ramp makes no new
+/// variant a frame.
+pub(crate) fn resolve_blended(
+    world: &FlintWorld,
+    config: &PostProcessConfig,
+    ids: &mut StyleIds,
+    out: &mut HashMap<EntityId, u16>,
+    blends: &mut HashMap<EntityId, f32>,
+) {
     out.clear();
+    blends.clear();
     if !any_styled(world) {
         ids.set(Vec::new());
         return;
@@ -414,10 +474,14 @@ pub(crate) fn resolve(
         let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
+        let blend = requested_blend(world, root);
         stack.clear();
         stack.push(root);
         while let Some(e) = stack.pop() {
             out.insert(e, id);
+            if blend < 1.0 {
+                blends.insert(e, blend);
+            }
             // A descendant with a style_mask of its own is a root itself
             stack.extend(
                 world
@@ -458,7 +522,9 @@ pub fn debug_color(id: u16) -> [f32; 3] {
 struct MaskDrawUniform {
     id: u32,
     slope_tolerance: f32,
-    _pad: [f32; 2],
+    /// The draw's blend in the mask's `.g` encoding (#278).
+    blend: u32,
+    _pad: f32,
 }
 
 /// One masked static (or procedural box) draw.
@@ -470,6 +536,8 @@ pub(crate) struct MaskDraw<'a> {
     /// The bone matrices, for a skinned draw.
     pub bones: Option<&'a wgpu::BindGroup>,
     pub id: u16,
+    /// How much of the style the entity is drawn with, 0..1 (#278).
+    pub blend: f32,
 }
 
 /// The mask's pipelines and its per-draw uniform buffer, made the first
@@ -651,7 +719,8 @@ impl StyleMaskPass {
             let uniform = MaskDrawUniform {
                 id: u32::from(d.id),
                 slope_tolerance: SLOPE_TOLERANCE,
-                _pad: [0.0; 2],
+                blend: encode_blend(d.blend),
+                _pad: 0.0,
             };
             self.scratch[at..at + std::mem::size_of::<MaskDrawUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));

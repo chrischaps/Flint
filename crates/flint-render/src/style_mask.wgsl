@@ -1,5 +1,6 @@
 // The entity style mask (#263): redraws styled entities after the scene
-// pass, writing each one's style id into an R16Uint target.
+// pass, writing each one's style id (.r) and blend (.g, #278: 65535 = the
+// style fully on) into an Rg16Uint target.
 //
 // No depth attachment: a fragment tests itself against the scene's
 // single-sample depth (the resolve under MSAA, the scaled depth under a
@@ -19,7 +20,8 @@ struct MaskDraw {
     id: u32,
     // How far behind the scene's depth a fragment may be, in depth slopes
     slope_tolerance: f32,
-    _pad: vec2<f32>,
+    blend: u32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> transform: TransformUniforms;
@@ -63,11 +65,11 @@ fn vs_skinned(in: SkinnedVertex) -> @builtin(position) vec4<f32> {
 }
 
 @fragment
-fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) u32 {
+fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec2<u32> {
     let slope = fwidth(frag.z);
     let scene = textureLoad(scene_depth, vec2<i32>(frag.xy), 0);
     if frag.z > scene + slope * draw.slope_tolerance + 1e-6 {
         discard;
     }
-    return draw.id;
+    return vec2<u32>(draw.id, draw.blend);
 }
