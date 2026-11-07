@@ -857,6 +857,16 @@ pub struct StyleSet {
     built: Vec<Option<Box<dyn StylePass>>>,
     /// Styles whose creation panicked; never retried.
     failed: Vec<bool>,
+    /// The address of the descriptor each slot was built (or failed) from.
+    /// A user style whose `.shader.toml` is edited gets a new descriptor at
+    /// the same registry index ([`custom::reload_changed`], #275): a
+    /// different address here throws the old pass away and builds again.
+    from: Vec<usize>,
+}
+
+/// A descriptor's identity, for [`StyleSet::from`].
+fn descriptor_id(d: &'static StyleDescriptor) -> usize {
+    d as *const StyleDescriptor as usize
 }
 
 impl StyleSet {
@@ -873,8 +883,16 @@ impl StyleSet {
         let registry = registry();
         self.built.resize_with(registry.len(), || None);
         self.failed.resize(registry.len(), false);
+        self.from.resize(registry.len(), 0);
         let mut failed = Vec::new();
         for (i, descriptor) in registry.iter().enumerate() {
+            let id = descriptor_id(descriptor);
+            if self.from[i] != id {
+                // Replaced since it was built (or never built): start over
+                self.built[i] = None;
+                self.failed[i] = false;
+                self.from[i] = id;
+            }
             if self.built[i].is_some() || self.failed[i] || !descriptor.is_on(config, ids) {
                 continue;
             }
@@ -923,8 +941,11 @@ impl StyleSet {
         registry()
             .iter()
             .zip(&self.built)
-            .filter(|(d, _)| d.stage == stage && d.is_on(config, ids))
-            .filter_map(|(d, built)| built.as_deref().map(|p| (*d, p)))
+            .zip(&self.from)
+            // A pass built from a descriptor since replaced waits for ensure
+            .filter(|((d, _), from)| **from == descriptor_id(d))
+            .filter(|((d, _), _)| d.stage == stage && d.is_on(config, ids))
+            .filter_map(|((d, built), _)| built.as_deref().map(|p| (*d, p)))
             .collect()
     }
 }
@@ -1059,6 +1080,24 @@ pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
     let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
     all.push(descriptor);
     *snapshot = Box::leak(all.into_boxed_slice());
+}
+
+/// Put `new` where the runtime style named `new.name` stands (an edited
+/// `.shader.toml`, #275), keeping its index; [`StyleSet`] sees a new
+/// descriptor there and builds it again. Returns false when no runtime
+/// style has that name (built-ins can't be replaced).
+pub(crate) fn replace_runtime(new: &'static StyleDescriptor) -> bool {
+    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
+    let Some(i) = snapshot
+        .iter()
+        .position(|d| d.name == new.name && !is_builtin(d.name))
+    else {
+        return false;
+    };
+    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
+    all[i] = new;
+    *snapshot = Box::leak(all.into_boxed_slice());
+    true
 }
 
 /// Every registered style, in chain order: the built-ins, then user

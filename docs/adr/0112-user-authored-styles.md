@@ -198,7 +198,7 @@ it re-reads through the vfs, re-checks and rebuilds the pipeline. Bind
 groups are unchanged, because the layout is fixed by the description.
 The `.shader.toml` is not reloaded in the prototype: params are part of
 the leaked descriptor. #275 replaces the descriptor and re-parses the
-scene's `[post_process]`.
+scene's `[post_process]` (see "Built in #275" below).
 
 ### 6. Web and bundles
 
@@ -285,6 +285,48 @@ scene's `[post_process]`.
   minute rebuild a built-in style costs (#272).
 - naga's check time wasn't measured separately: it runs once a load or
   edit, not once a frame.
+
+## Built in #275
+
+#275 turned the prototype into the production loader. It kept the format
+and contract above and changed five things:
+
+- **Hosts.** `flint-player` (scene load and every transition) and
+  `flint edit` call `load_dir` before the scene's `[post_process]` is
+  read. Both draw `custom::errors()` as a card in the bottom-left corner
+  (`flint_debug_ui::paint_style_errors`). F4 tags a user style's header
+  `user` (hover: both files) and `error` (hover: the message).
+- **`.shader.toml` reload.** `custom::reload_changed(scene_dir)` polls each
+  description's modified time natively. Hosts call it about every 15
+  frames. A changed file is read again and its new descriptor goes in at
+  the old one's registry index (`replace_runtime`). `StyleSet` remembers
+  the descriptor each slot was built from and builds again when it
+  differs, and `active()` never pairs a new descriptor with a stale pass.
+  The host then re-reads the scene's tables for that style
+  (`refresh_settings`). The player re-parses its `PostProcessDef`, and the
+  viewer reloads the scene. A new file in a style folder is picked up the
+  same way. A file that fails is retried only once its modified time moves
+  again.
+- **Bind names carry a generation.** Found running the player, not by the
+  unit tests: the chain's bind cache keys groups by name, so a replaced
+  style bound the *old* pass's uniform buffers. They were frozen at the
+  old values, and a new param count would have bound a buffer of the
+  wrong size. Each install now names its groups `<style> ... #<n>`.
+- **A user style that panics building is not a lost device.** The
+  renderer switches it off and records the panic as its error. Only a
+  built-in's panic still marks the device lost (ADR 0111).
+- **`flint bundle`** loads every user style each scene sees from the
+  packed files, through the bundle's vfs, as the web player will. It
+  refuses the bundle if a description doesn't read, a shader isn't packed
+  or a shader doesn't compile. `.shader.toml` files are also scanned for
+  file references, like scenes and glyph sets. Check warnings start
+  `<file>: warning:` and don't refuse a bundle.
+
+A game folder outside the engine (`levels/garden.scene.toml`,
+`styles/cyanotype.*`, the engine's schemas only) rendered in `flint
+render`, played in `flint-player`, hot-reloaded both files mid-run, and
+bundled and played from the bundle with `flint-player --bundle`, the same
+`MemorySource` path the browser takes. The browser itself wasn't run.
 
 ## Follow-ups
 
