@@ -1,7 +1,10 @@
 //! Textures the stylize chain draws into: each stage's ping-pong pair and
 //! the styles' own intermediates. They live in the post chain's resources,
 //! which a resize rebuilds, so every one of them (and every bind group
-//! cached over one) goes with the old size.
+//! cached over one) goes with the old size. A render-scale step keeps the
+//! surface's size, so it keeps the set (#270): display-stage targets, and
+//! the history in them, carry on, and HDR-stage ones are remade at the
+//! scene's new size the next time they're asked for.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,9 +25,10 @@ pub struct StyleTargets {
 
 impl StyleTargets {
     /// The texture `name` in `format`, `width` x `height`. A name asked
-    /// for at a second size is made again; that only happens if a caller
-    /// draws one chain at two sizes, which nothing does (bind groups over
-    /// the old one would then be stale, so it's logged).
+    /// for at a second size is made again: an HDR-stage target after a
+    /// render-scale step (the bind groups over the old one went with the
+    /// resources it was kept from), or a caller drawing one chain at two
+    /// sizes, which nothing does (so it's logged).
     pub fn get(
         &self,
         device: &wgpu::Device,

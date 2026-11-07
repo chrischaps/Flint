@@ -4256,11 +4256,25 @@ impl SceneRenderer {
         if width == 0 || height == 0 {
             return;
         }
+        let same_surface = self.surface_size == (width, height);
         self.surface_size = (width, height);
         let (w, h) = crate::render_scale::scaled_size(width, height, self.render_scale);
         // Stylize targets live in the resources, so they (and every bind
-        // group over one) go with the old size (#262).
-        self.postprocess_resources = Some(PostProcessResources::new(device, w, h));
+        // group over one) go with the old size (#262). Every bind group
+        // does; but when only the render scale moved (`--render-scale
+        // auto` stepping, #270) the surface is the same size, so the
+        // display-stage targets are too, and they hold ASCII's per-cell
+        // history (#277): keep them, and a step doesn't reset it. HDR-stage
+        // targets in the set are remade at the new size on their next use.
+        let kept = same_surface
+            .then(|| self.postprocess_resources.take())
+            .flatten()
+            .map(|old| old.styles);
+        let mut resources = PostProcessResources::new(device, w, h);
+        if let Some(styles) = kept {
+            resources.styles = styles;
+        }
+        self.postprocess_resources = Some(resources);
         // Below the surface's size the scene keeps a depth buffer of its own
         // (#122); at scale 1 it draws into the caller's, as it always has.
         if (w, h) == (width, height) {
@@ -5321,6 +5335,44 @@ mod tests {
         for (got, want) in max.iter().zip([r, 1.0, r]) {
             assert!((got - want).abs() < 1e-5, "{max:?}");
         }
+    }
+
+    /// A render-scale step keeps the surface's size, so it keeps the
+    /// display-stage style targets (ASCII's cell history, #277) and the
+    /// history in them (#270); a real resize still drops them.
+    #[test]
+    fn a_render_scale_step_keeps_the_style_targets() {
+        let Ok(ctx) = pollster::block_on(crate::HeadlessContext::new(64, 64)) else {
+            return; // no adapter here
+        };
+        let mut renderer = super::SceneRenderer::new_headless(
+            &ctx.device,
+            &ctx.queue,
+            ctx.format,
+            64,
+            64,
+            super::RendererConfig {
+                show_grid: false,
+                sample_count: 1,
+            },
+        );
+        let probe = |r: &super::SceneRenderer| {
+            r.postprocess_resources.as_ref().unwrap().styles.get(
+                &ctx.device,
+                "probe",
+                wgpu::TextureFormat::Rgba16Uint,
+                8,
+                8,
+            )
+        };
+        let before = probe(&renderer);
+        renderer.set_render_scale(&ctx.device, 0.5);
+        assert_eq!(renderer.scene_size(), (32, 32));
+        assert!(std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
+        renderer.set_render_scale(&ctx.device, 1.0);
+        assert!(std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
+        renderer.resize_postprocess(&ctx.device, 128, 64);
+        assert!(!std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
     }
 }
 
