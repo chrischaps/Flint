@@ -50,7 +50,9 @@ struct Variant {
     // origins sit in the ramp table (NO_EDGE_START: the uniform's own)
     glyph: vec2<f32>,
     edge_start: u32,
-    _p5: u32,
+    // #338: for a variant with the SNAP flag, the least share of a cell's
+    // 16 samples it must cover to draw the cell whole
+    cell_share: f32,
 };
 
 // A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
@@ -117,13 +119,16 @@ struct AsciiUniforms {
     // whole frame alone); y: 1 when the whole frame passes through (only
     // entities asked). Row 0 is unused: the whole frame draws from the
     // fields above and the cell state. z: bands in the variant cell state
-    // (#313).
+    // (#313). w: grids in `snap_grids` (#338).
     variant_meta: vec4<u32>,
     // The variant cell state's bands (#313), `variant_meta.z` of them: each
     // grid's cell and origin, and (first row, rows, columns, footprint as
     // f32 bits)
     bands: array<vec4<f32>, 8>,
     band_rows: array<vec4<u32>, 8>,
+    // The grids of the variants whose silhouettes snap to whole cells
+    // (#338), `variant_meta.w` of them: (cell, origin)
+    snap_grids: array<vec4<f32>, 8>,
     // Reprojected history (#344): this frame's clip to world, last frame's
     // world to clip, and x = 1 when the cell pass reads each cell's past
     // where its surface was last frame rather than in the same cell
@@ -134,6 +139,8 @@ struct AsciiUniforms {
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
 const MAX_BANDS: u32 = 8u;
+// Grids a pixel checks for a snapped cell (#338); `MAX_SNAP_GRIDS` in ascii.rs.
+const MAX_SNAP_GRIDS: u32 = 8u;
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
 // The variant table (#336), sized to the frame: every per-entity variant's
