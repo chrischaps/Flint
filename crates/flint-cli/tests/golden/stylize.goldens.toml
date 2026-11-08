@@ -185,6 +185,18 @@ name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
+# Whole-cell silhouettes (#338): every edge cell of the glyph props is drawn
+# whole or shows the scene, on the screen grid and on object grids
+[[case]]
+name = "ascii-silhouette-cell"
+scene = "demo/ascii_entities.scene.toml"
+args = ["--no-grid", "--style", "ascii:silhouette=cell"]
+
+[[case]]
+name = "ascii-silhouette-cell-object"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:silhouette=cell,edges=0"]
+
 # The variant cell pre-pass (#313) sums a variant's cells once, but only at
 # a footprint of 2 or more: these pin it on both grids. Blessed with main's
 # binary from before #313, so they say the pre-pass draws the same pixels
