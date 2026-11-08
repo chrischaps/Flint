@@ -475,23 +475,10 @@ impl PlayerApp {
     /// `species` name, one species' own values in the shape of a scene's
     /// `[living.species.<spec>]` (#246).
     pub(super) fn tune_living_from_script(&mut self, knobs: toml::Value) -> Result<(), String> {
-        let mut table = match knobs {
-            toml::Value::Table(table) => table,
-            other => return Err(format!("{other} must be a map")),
+        let problems = match ScriptTune::of(knobs)? {
+            ScriptTune::Grove(tune) => return self.tune_living(&tune),
+            ScriptTune::Species(name, def) => self.tune_species(&name, &def),
         };
-        let Some(species) = table.remove("species") else {
-            let tune = toml::Value::Table(table)
-                .try_into::<WoozePreset>()
-                .map_err(|e| e.to_string())?;
-            return self.tune_living(&tune);
-        };
-        let name = species
-            .as_str()
-            .ok_or_else(|| format!("species = {species} must be a spec's name"))?;
-        let def = toml::Value::Table(table)
-            .try_into::<LivingSpeciesDef>()
-            .map_err(|e| format!("species '{name}': {e}"))?;
-        let problems = self.tune_species(name, &def);
         if problems.is_empty() {
             Ok(())
         } else {
@@ -500,83 +487,29 @@ impl PlayerApp {
     }
 
     fn tune_wooze(&mut self, knobs: &WoozeKnobs) -> Vec<String> {
-        let wanted = [
-            ("amplitude", knobs.amplitude),
-            ("step", knobs.step),
-            ("glide", knobs.glide),
-            ("jitter", knobs.jitter),
-        ];
-        if wanted.iter().all(|(_, value)| value.is_none()) {
-            return Vec::new();
-        }
-        // A scene with no [wooze] table has its specs' clocks: turning one of
-        // these is what gives it a field, starting from where it stands, under
-        // any species' own clock.
-        let time = self.wooze_time;
         let start = self
             .procgen_resolver
             .living_props()
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
-        let field = self.wooze.get_or_insert_with(|| WoozeField::new(start));
-        let now = field.global(time);
-        let current = [now.amplitude, now.step, now.glide, now.jitter];
-        // Only what's moved, so that the rest of a full set of knobs doesn't cut
-        // short a ramp a script has going, and one at a time, so that one bad knob
-        // leaves the others standing.
-        let mut problems = Vec::new();
-        for ((name, value), current) in wanted.into_iter().zip(current) {
-            if let Some(value) = value.filter(|value| *value != current) {
-                let mut table = toml::Table::new();
-                table.insert(name.to_string(), toml::Value::Float(f64::from(value)));
-                if let Err(problem) = field.set_global(&table, time, 0.0) {
-                    problems.push(problem);
-                }
-            }
-        }
-        problems
+        tune_field(&mut self.wooze, start, self.wooze_time, knobs)
     }
 
     /// Stagger, echoes and variance. A field that's set goes to every prop, and
     /// one that isn't stays as each prop has it: moving echo `count` in a grove
     /// of several species leaves each its own `spread` and `alpha`.
     fn tune_props(&mut self, living: &LivingDef) -> Vec<String> {
-        let mut problems = Vec::new();
-        let mut say = |problem: String| problems.push(problem);
-        // The global layer, a field at a time (#246): a species' own value still
-        // beats whatever this sets.
-        let stagger = living.stagger.as_deref().and_then(|name| {
-            let stagger = stagger_of(name);
-            if stagger.is_none() {
-                say(format!(
-                    "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
-                ));
-            }
-            stagger
-        });
-        let echoes = echoes_of(living.echoes.as_ref(), &mut say);
-        let variance = variance_of(living.variance.as_ref(), &mut say);
-        let props = self.procgen_resolver.living_props_mut();
-        if let Some(stagger) = stagger {
-            props.tune_stagger(LivingScope::All, stagger);
-        }
-        props.tune_echoes(LivingScope::All, echoes);
-        props.tune_variance(LivingScope::All, variance);
-        problems
+        tune_props(self.procgen_resolver.living_props_mut(), living)
     }
 
     /// One species' own values (#246), over whatever it has already: they beat
     /// the global ones, the field and its zones. A species no prop grows from
     /// keeps them, and is named, since it's most likely a misspelling.
     pub(super) fn tune_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
-        let mut problems = Vec::new();
-        let over = species_of(def, &mut |problem| {
-            problems.push(format!("species '{name}': {problem}"));
-        });
-        let props = self.procgen_resolver.living_props_mut();
-        let now = props.species_override(name).unwrap_or_default();
-        if !props.set_species(name, over.merged(now)) {
+        let (mut problems, grown) =
+            tune_species(self.procgen_resolver.living_props_mut(), name, def);
+        if !grown {
             problems.push(self.no_such_species(name));
         }
         problems
@@ -919,6 +852,122 @@ impl PlayerApp {
         }
         names
     }
+}
+
+/// What a script's `tune_living` table asks for: the whole grove's knobs in a
+/// `.wooze.toml`'s shape, or with a `species` name, one species' own values in
+/// the shape of a scene's `[living.species.<spec>]` (#246). The player and
+/// `flint render --scripts` (#8) read it the same way.
+#[derive(Debug, Clone)]
+pub(crate) enum ScriptTune {
+    Grove(WoozePreset),
+    Species(String, LivingSpeciesDef),
+}
+
+impl ScriptTune {
+    pub(crate) fn of(knobs: toml::Value) -> Result<Self, String> {
+        let mut table = match knobs {
+            toml::Value::Table(table) => table,
+            other => return Err(format!("{other} must be a map")),
+        };
+        let Some(species) = table.remove("species") else {
+            let tune = toml::Value::Table(table)
+                .try_into::<WoozePreset>()
+                .map_err(|e| e.to_string())?;
+            return Ok(Self::Grove(tune));
+        };
+        let name = species
+            .as_str()
+            .ok_or_else(|| format!("species = {species} must be a spec's name"))?;
+        let def = toml::Value::Table(table)
+            .try_into::<LivingSpeciesDef>()
+            .map_err(|e| format!("species '{name}': {e}"))?;
+        Ok(Self::Species(name.to_string(), def))
+    }
+}
+
+/// Turn the field's global knobs to `knobs` at `time`. A scene with no `[wooze]`
+/// table has its specs' clocks: turning one of these is what gives it a field,
+/// starting from `start` (where the first prop stands), under any species' own
+/// clock. Returns what couldn't be used.
+pub(crate) fn tune_field(
+    field: &mut Option<WoozeField>,
+    start: WoozeSample,
+    time: f64,
+    knobs: &WoozeKnobs,
+) -> Vec<String> {
+    let wanted = [
+        ("amplitude", knobs.amplitude),
+        ("step", knobs.step),
+        ("glide", knobs.glide),
+        ("jitter", knobs.jitter),
+    ];
+    if wanted.iter().all(|(_, value)| value.is_none()) {
+        return Vec::new();
+    }
+    let field = field.get_or_insert_with(|| WoozeField::new(start));
+    let now = field.global(time);
+    let current = [now.amplitude, now.step, now.glide, now.jitter];
+    // Only what's moved, so that the rest of a full set of knobs doesn't cut
+    // short a ramp a script has going, and one at a time, so that one bad knob
+    // leaves the others standing.
+    let mut problems = Vec::new();
+    for ((name, value), current) in wanted.into_iter().zip(current) {
+        if let Some(value) = value.filter(|value| *value != current) {
+            let mut table = toml::Table::new();
+            table.insert(name.to_string(), toml::Value::Float(f64::from(value)));
+            if let Err(problem) = field.set_global(&table, time, 0.0) {
+                problems.push(problem);
+            }
+        }
+    }
+    problems
+}
+
+/// Stagger, echoes and variance. A field that's set goes to every prop, and one
+/// that isn't stays as each prop has it: moving echo `count` in a grove of
+/// several species leaves each its own `spread` and `alpha`.
+pub(crate) fn tune_props(
+    props: &mut flint_procgen::LivingProps,
+    living: &LivingDef,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut say = |problem: String| problems.push(problem);
+    // The global layer, a field at a time (#246): a species' own value still
+    // beats whatever this sets.
+    let stagger = living.stagger.as_deref().and_then(|name| {
+        let stagger = stagger_of(name);
+        if stagger.is_none() {
+            say(format!(
+                "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
+            ));
+        }
+        stagger
+    });
+    let echoes = echoes_of(living.echoes.as_ref(), &mut say);
+    let variance = variance_of(living.variance.as_ref(), &mut say);
+    if let Some(stagger) = stagger {
+        props.tune_stagger(LivingScope::All, stagger);
+    }
+    props.tune_echoes(LivingScope::All, echoes);
+    props.tune_variance(LivingScope::All, variance);
+    problems
+}
+
+/// One species' own values (#246), over whatever it has already. Returns what
+/// couldn't be used, and whether any prop grows from the species.
+pub(crate) fn tune_species(
+    props: &mut flint_procgen::LivingProps,
+    name: &str,
+    def: &LivingSpeciesDef,
+) -> (Vec<String>, bool) {
+    let mut problems = Vec::new();
+    let over = species_of(def, &mut |problem| {
+        problems.push(format!("species '{name}': {problem}"));
+    });
+    let now = props.species_override(name).unwrap_or_default();
+    let grown = props.set_species(name, over.merged(now));
+    (problems, grown)
 }
 
 /// The knobs a scene sets itself, which a preset it names can't change: its

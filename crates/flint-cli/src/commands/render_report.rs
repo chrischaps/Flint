@@ -37,6 +37,9 @@ pub struct CaptureReport {
     /// The value this column gave the swept knob.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<String>,
+    /// With `--scripts`: the `state` of the expression scripts saw then (#8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
     pub props: Vec<PropReport>,
 }
 
@@ -266,6 +269,7 @@ mod tests {
             captures: vec![CaptureReport {
                 time: 3.5,
                 column: None,
+                expression: None,
                 props: vec![],
             }],
             still_props: vec![],

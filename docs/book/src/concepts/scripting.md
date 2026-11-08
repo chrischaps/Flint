@@ -189,8 +189,8 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
-| `random()` | `f64` | Random value in `[0, 1)` |
-| `random_range(min, max)` | `f64` | Random value in `[min, max)` |
+| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, a seeded sequence that's the same every run |
+| `random_range(min, max)` | `f64` | Random value in `[min, max)`, seeded the same way |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |
 | `abs(x)` | `f64` | Absolute value |
@@ -302,7 +302,8 @@ flint play scenes/stage.scene.toml --expression-listen 127.0.0.1:7777
 | `expression()` | The latest state as a map; `#{}` before the first arrives |
 
 Every script that defines `on_expression(state)` hears each new state, once,
-in arrival order and entity-id order, before that frame's `on_update`. During
+in arrival order and in the order of the entities' names, before that frame's
+`on_update`. During
 the call `expression()` already returns that state, so a frame that takes two
 calls `on_expression` twice and leaves the second in place. The state holds
 until another arrives, and outlives scene changes: it describes the world
@@ -326,8 +327,11 @@ owns their vocabulary and how strictly to check it.
 
 - **`--expression-timeline <file>`** plays `{"events": [{..., "t": secs}, ...]}`
   on the game clock, so `--frame-step` and `set_time_scale` apply to it. An
-  event is delivered on the first frame whose game time reaches its `t`; one
-  long frame delivers all that came due, in file order. `t` must be 0 or later
+  event is delivered on the first frame whose game time reaches its `t` (to
+  within a microsecond, so summed frame steps don't put a whole-second cue a
+  frame late); one long frame delivers all that came due, in file order.
+  `flint render --expression-timeline` plays the same file headless and
+  deterministically ([Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline)). `t` must be 0 or later
   and never decrease. Other top-level fields are ignored.
 - **`--expression-listen <ip:port>`** takes newline-delimited JSON objects over
   TCP. It binds loopback only (`127.0.0.1` or `::1`; anything else is refused)

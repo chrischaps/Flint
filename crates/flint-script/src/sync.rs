@@ -108,7 +108,9 @@ impl ScriptSync {
             let entity_name = world.get_name(entity_id).unwrap_or("?");
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
-                    println!("[script] Loaded: {} → {}", entity_name, source);
+                    // stderr, so a caller's stdout stays its own (`flint render
+                    // --report json` with `--scripts`, #8)
+                    eprintln!("[script] Loaded: {} → {}", entity_name, source);
                     // Record file timestamp (hot reload watches the disk)
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {
@@ -116,6 +118,7 @@ impl ScriptSync {
                         }
                     }
                     engine.add_script(entity_id, ast, source.to_string());
+                    engine.name_script(entity_id, entity_name);
                 }
                 Err(e) => {
                     tracing::warn!("Compile error in {}: {}", source, e);

@@ -55,7 +55,11 @@ Flint uses an **edit -> validate -> play** loop:
    #                           Also on flint-player. ADR 0058)
    #   --time 3.5             (living props, wooze field and other clocks at that game time;
    #                           byte-identical, and the same pixels as flint-player --frame-step
-   #                           at that time. No scripts or physics. --frame-step S names the step)
+   #                           at that time. No physics. --frame-step S names the step)
+   #   --scripts              (run the scene's scripts headless, a tick a step in the player's frame order:
+   #                           seeded random(), no timestamp(), name-ordered; what can't be drawn is
+   #                           warned. flint_player::HeadlessScripts, #8)
+   #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers)
    #   --sweep wooze.glide=0,0.25,0.5,1  (labelled columns; also .step .amplitude .jitter .preset;
    #                           a preset is a wooze/<name>.wooze.toml first, species tables and all, #249)

@@ -69,6 +69,11 @@ pub fn json_to_map(object: &serde_json::Map<String, Value>) -> Map {
         .collect()
 }
 
+/// How far short of an event's `t` a clock can be and still have reached it: a
+/// microsecond, far over what summing frame steps loses in an hour and far under
+/// any frame.
+pub const DUE_TOLERANCE: f64 = 1e-6;
+
 /// One timeline event: when, and the whole state as written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimedState {
@@ -135,9 +140,13 @@ impl ExpressionTimeline {
 
     /// Every event whose time has come by `now` and hasn't been played yet,
     /// in order. Several can come due in one long frame; none is skipped.
+    ///
+    /// "Come" is to within [`DUE_TOLERANCE`]: a clock that sums fixed steps
+    /// lands a hair short of whole times (120 steps of 1/60 make 1.99999...), and
+    /// a cue written for 2 s belongs to the frame at 2 s, not the one after (#8).
     pub fn due(&mut self, now: f64) -> &[TimedState] {
         let start = self.next;
-        while self.next < self.events.len() && self.events[self.next].t <= now {
+        while self.next < self.events.len() && self.events[self.next].t <= now + DUE_TOLERANCE {
             self.next += 1;
         }
         &self.events[start..self.next]
@@ -633,6 +642,22 @@ mod tests {
         assert_eq!(states(t.due(30.0)), ["thinking", "speaking"]);
         assert!(t.is_finished());
         assert!(t.due(60.0).is_empty());
+    }
+
+    #[test]
+    fn a_clock_of_summed_steps_reaches_a_whole_time_on_its_frame() {
+        let mut t = ExpressionTimeline::parse(ONE_TURN).unwrap();
+        t.due(0.0);
+        let mut clock = 0.0_f64;
+        for _ in 0..120 {
+            clock += 1.0 / 60.0;
+        }
+        assert!(clock < 2.0, "the sum this guards against: {clock}");
+        assert_eq!(states(t.due(clock)), ["listening"]);
+        // A frame short is still short.
+        let mut t = ExpressionTimeline::parse(ONE_TURN).unwrap();
+        t.due(0.0);
+        assert!(t.due(2.0 - 1.0 / 240.0).is_empty());
     }
 
     #[test]
