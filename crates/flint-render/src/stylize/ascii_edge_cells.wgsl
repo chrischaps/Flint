@@ -15,10 +15,20 @@
 //     not an outline, and keeps its tone glyph;
 //   - a styled entity's outline needs only `threshold` and ignores
 //     `max_len`, so it is always drawn.
-// Output: x = the edge glyph's slot + 1 (0 = no edge; slots in
+// Output: x = the edge glyph's slot + 1 (0 or below = no edge; slots in
 // `EdgeGlyphs::all()` order: horizontal, vertical, diagonal,
-// antidiagonal), y = the edge length in cell widths that decided it (the
-// outline's, for an outline), z = 1 for an outline.
+// antidiagonal) plus the line's direction as a fraction of a half turn
+// halved, [0, 0.5) (a cell with edge pixels but no line glyph writes -0.25
+// minus it), y = the edge length in cell widths that decided it (the
+// outline's, for an outline), z = 1 for an outline, plus 2 when the line is
+// nearer vertical (its cross axis is x, not y), w = where the line crosses
+// the cell's centre on that cross axis, in cells from the centre (#352):
+// the edge pixels' centroid is on the line, and running it along the line
+// to the centre row or column finds the line's offset there. A line
+// belongs to the cell it passes within half a cell of; the glyph pass
+// (ascii_edge_thin.wgsl) keeps it only there. z and w are written for a
+// cell holding any edge pixels, so a sliver of a line its neighbour holds
+// most of still says where it is.
 
 struct CellUniforms {
     cell: vec2<f32>,
@@ -80,8 +90,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var all_j = vec3<f32>(0.0);
     var all_n = 0.0;
+    // Position moments of each tensor component: the centroid is weighted
+    // by how much each pixel's gradient agrees with the cell's line, which
+    // is linear in its tensor, so it can be summed before the line is known
+    var all_cx = vec2<f32>(0.0);
+    var all_cy = vec2<f32>(0.0);
+    var all_cz = vec2<f32>(0.0);
     var out_j = vec3<f32>(0.0);
     var out_n = 0.0;
+    var out_cx = vec2<f32>(0.0);
+    var out_cy = vec2<f32>(0.0);
+    var out_cz = vec2<f32>(0.0);
     for (var y = 0.5 * stride; y < u.cell.y; y += stride) {
         for (var x = 0.5 * stride; x < u.cell.x; x += stride) {
             let p = vec2<i32>(floor(cell_min + vec2<f32>(x, y)));
@@ -94,12 +113,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let q = min(vec2<i32>((vec2<f32>(p) + 0.5) * to_edge), edge_max_px);
             let e = textureLoad(edges, q, 0);
             if e.w > 0.5 {
+                // The sample's place in the cell, in cells from its centre
+                let at = vec2<f32>(x, y) / u.cell - 0.5;
                 all_j += e.xyz;
                 all_n += weight;
+                all_cx += e.x * at;
+                all_cy += e.y * at;
+                all_cz += e.z * at;
                 // w: 1 crease, 2 depth, 3 outline (ascii_edges.wgsl)
                 if e.w > 2.5 {
                     out_j += e.xyz;
                     out_n += weight;
+                    out_cx += e.x * at;
+                    out_cy += e.y * at;
+                    out_cz += e.z * at;
                 }
             }
         }
@@ -108,21 +135,54 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let all_len = all_n * stride / width;
     let out_len = out_n * stride / width;
 
-    var j = vec3<f32>(0.0);
+    var j = all_j;
+    var cx = all_cx;
+    var cy = all_cy;
+    var cz = all_cz;
     var outline = 0.0;
+    var slot_plus = 0.0;
+    var len = all_len;
     if out_len >= u.threshold {
         j = out_j;
+        cx = out_cx;
+        cy = out_cy;
+        cz = out_cz;
         outline = 1.0;
-    } else if all_len >= u.threshold && all_len <= u.max_len {
-        j = all_j;
-    } else {
-        return vec4<f32>(0.0, all_len, 0.0, 0.0);
+        len = out_len;
+    } else if all_len < u.threshold || all_len > u.max_len {
+        // No line glyph, but where its pixels are, for a neighbour that
+        // holds the rest of the line (ascii_edge_thin.wgsl)
+        slot_plus = -1.0;
+    }
+    if all_n <= 0.0 {
+        return vec4<f32>(0.0);
     }
     // The gradient's dominant angle (screen space, y down); the line runs
     // across it. In y-up terms the gradient's angle is the negation.
     let grad = 0.5 * atan2(2.0 * j.y, j.x - j.z);
-    let slot = slot_for(PI * 0.5 - grad);
-    // y = the length that decided it, which the glyph pass compares with
-    // its neighbours' to thin a line that splits between two cells
-    return vec4<f32>(f32(slot) + 1.0, select(all_len, out_len, outline > 0.5), outline, 0.0);
+    let dir = PI * 0.5 - grad;
+    let slot = slot_for(dir);
+    // The direction itself, in [0, 0.5) for the fraction of x, so the
+    // glyph pass can tell two lines that converge from one band
+    let turn = 0.5 * fract(dir / PI);
+    // The line's normal in cell units (a normal scales by the cell's size,
+    // so it stays across the line in a cell that isn't square)
+    // The line's pixels' centroid, each weighted by (gradient . normal)^2:
+    // at a corner, the pixels of the other arm (or of a crease crossing)
+    // weigh nothing, so the centroid stays on this cell's line
+    let g = vec2<f32>(cos(grad), sin(grad));
+    let along = vec3<f32>(g.x * g.x, 2.0 * g.x * g.y, g.y * g.y);
+    let centroid = (along.x * cx + along.y * cy + along.z * cz) / max(dot(along, j), 1e-6);
+    let n = g * u.cell;
+    let cross_x = abs(n.x) > abs(n.y);
+    // Where the line meets the centre column (cross axis x) or row (y)
+    let across = select(n.y, n.x, cross_x);
+    let offset = dot(centroid, n) / select(across, 1e-6, abs(across) < 1e-6);
+    // y = the length that decided it
+    return vec4<f32>(
+        select(f32(slot) + 1.0 + turn, -0.25 - turn, slot_plus < 0.0),
+        len,
+        outline + select(0.0, 2.0, cross_x),
+        offset,
+    );
 }
