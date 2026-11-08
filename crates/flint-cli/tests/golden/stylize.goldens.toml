@@ -287,6 +287,13 @@ name = "pencil-tensor"
 scene = "demo/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
 
+# Strokes laid on the surfaces (#389): triplanar stripes in octaves of
+# metres, each picked by its on-screen spacing; the sky keeps the screen's
+[[case]]
+name = "pencil-world"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
+
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them
 [[case]]
