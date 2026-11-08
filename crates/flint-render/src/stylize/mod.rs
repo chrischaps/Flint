@@ -133,6 +133,7 @@ impl StyleStage {
 
 /// One numeric parameter a style takes, with the range the F4 menu offers.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleParam {
     pub name: &'static str,
     pub default: f32,
@@ -140,9 +141,29 @@ pub struct StyleParam {
     pub max: f32,
 }
 
+impl StyleParam {
+    /// A parameter with its default and the range the menu offers:
+    /// `StyleParam::new("cell", 8.0, 4.0..=32.0)`. Build every parameter
+    /// through this (#366): a field added later gets its default here, so
+    /// no style has to change.
+    pub const fn new(
+        name: &'static str,
+        default: f32,
+        range: std::ops::RangeInclusive<f32>,
+    ) -> Self {
+        Self {
+            name,
+            default,
+            min: *range.start(),
+            max: *range.end(),
+        }
+    }
+}
+
 /// One named choice a style takes (a font, a ramp, a colour mode): a
 /// string in `[post_process.styles.<name>]`, where a parameter is a number.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleOption {
     pub name: &'static str,
     pub default: &'static str,
@@ -282,6 +303,7 @@ pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
 /// menu folds them into one colour picker, and its hint is the base's
 /// (`tint`). See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleHint {
     /// The parameter, option or colour base the hint is for.
     pub name: &'static str,
@@ -466,6 +488,9 @@ impl std::fmt::Debug for MaskUse {
 }
 
 /// A registered style: what it is called, where it runs and how to make it.
+/// Built with [`StyleDescriptor::new`] and its setters, never as a literal
+/// (#366); `non_exhaustive` holds other crates to that.
+#[non_exhaustive]
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
     pub name: &'static str,
@@ -506,6 +531,85 @@ pub struct StyleDescriptor {
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
+}
+
+/// Building a descriptor (#366): `StyleDescriptor::new` with what every
+/// style has, then a setter for each thing it differs in, all `const` so
+/// the result is a `static`:
+///
+/// ```ignore
+/// pub(super) static STYLE: StyleDescriptor =
+///     StyleDescriptor::new("invert", "Invert", StyleStage::Hdr, create)
+///         .params(&[StyleParam::new("amount", 1.0, 0.0..=1.0)]);
+/// ```
+///
+/// A field added to the descriptor gets its default in `new`, so no style
+/// module has to change; build descriptors only this way.
+impl StyleDescriptor {
+    /// A style with no parameters, options, mask, needs or hints, not
+    /// per-entity, not feeding bloom.
+    pub const fn new(
+        name: &'static str,
+        label: &'static str,
+        stage: StyleStage,
+        create: fn(&StyleDevice) -> Box<dyn StylePass>,
+    ) -> Self {
+        Self {
+            name,
+            label,
+            stage,
+            params: &[],
+            options: &[],
+            uses_mask: MaskUse::Never,
+            needs: &[],
+            hints: &[],
+            component: None,
+            feeds_bloom: false,
+            create,
+        }
+    }
+
+    /// Its parameters ([`StyleParam::new`]).
+    pub const fn params(mut self, params: &'static [StyleParam]) -> Self {
+        self.params = params;
+        self
+    }
+
+    /// Its named choices ([`StyleOption::new`]).
+    pub const fn options(mut self, options: &'static [StyleOption]) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Whether and when it reads the style mask.
+    pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
+        self.uses_mask = uses_mask;
+        self
+    }
+
+    /// The framework-made inputs it reads.
+    pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
+        self.needs = needs;
+        self
+    }
+
+    /// How the F4 menu labels its settings.
+    pub const fn hints(mut self, hints: &'static [StyleHint]) -> Self {
+        self.hints = hints;
+        self
+    }
+
+    /// Per-entity, through `component` (`ascii_style`).
+    pub const fn component(mut self, component: &'static str) -> Self {
+        self.component = Some(component);
+        self
+    }
+
+    /// Whether bloom reads its result by default.
+    pub const fn feeds_bloom(mut self, feeds_bloom: bool) -> Self {
+        self.feeds_bloom = feeds_bloom;
+        self
+    }
 }
 
 impl StyleDescriptor {

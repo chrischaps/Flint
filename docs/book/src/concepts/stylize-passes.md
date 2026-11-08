@@ -801,24 +801,25 @@ Kuwahara's default is unchanged: off.
 
 ## Writing a style
 
-A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`:
+A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
 
 ```rust
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "invert",                // the [post_process.styles.<name>] key
-    label: "Invert",               // F4 and --gpu-time
-    stage: StyleStage::Display,
-    params: &[StyleParam { name: "strength", default: 1.0, min: 0.0, max: 1.0 }],
-    options: &[],                  // named strings: StyleOption::new(name, default, choices),
-                                   //   .discovered(fn) to find choices beside the scene (#322)
-    uses_mask: MaskUse::Never,     // Always: the renderer draws the entity style mask for it;
-                                   //   When(fn(&config, &ids) -> bool): only while it says so (#350)
-    needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
-    hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
-    component: None,               // Some("ascii_style"): entities take the style per entity (#266)
-    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
-    create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
-};
+pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
+    "invert",                      // the [post_process.styles.<name>] key
+    "Invert",                      // F4 and --gpu-time
+    StyleStage::Display,
+    create,                        // fn(&StyleDevice) -> Box<dyn StylePass>: pipelines in d.format
+)
+.params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
+.hints(&[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")]);
+// Everything else has a default, and a setter for a style that differs:
+//   .options(&[StyleOption::new(name, default, choices)])   named strings;
+//       .discovered(fn) finds choices beside the scene (#322)
+//   .uses_mask(MaskUse::Always)    the renderer draws the entity style mask for it;
+//       MaskUse::When(fn(&config, &ids) -> bool): only while it says so (#350)
+//   .needs(&[StyleNeed::Edges])    the shared geometry edges (#301)
+//   .component("ascii_style")      entities take the style per entity (#266)
+//   .feeds_bloom(true)             bloom reads this (hdr) style's result (#300)
 ```
 
 An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files("palettes", ".palette.toml")` (names in the scene's folder, its parent and `.`, through the vfs) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.
