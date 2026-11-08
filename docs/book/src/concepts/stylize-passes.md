@@ -620,6 +620,7 @@ A tween is the engine easing the blend for you ([Scripting → Tweens](scripting
 *Frames from `flint-player demo/ascii_reveal.scene.toml --frame-step 0.05 --screenshot-every 0.05`, cropped and doubled.*
 
 - **`fade`** mixes every pixel of the entity with its glyph pixel by `blend`, in display space.
+- **Every other mask-reading style fades too.** Pencil, watercolor and user styles get `blend` from the framework's [cross-fade](#blend-for-free) (#396): `pencil_style { blend = 0.5 }` is half sketch, half the prop's own shading, in linear light. Only ASCII has a `transition` of its own.
 - **`dissolve`** turns whole cells: a cell is a glyph once `blend` passes its place in a dissolve order, half patch noise a few cells across and half per-cell hash, so glyphs arrive in ragged patches that spread. The order is fixed per cell, so a ramp never shimmers, and on `grid = "object"` it travels with the prop. On average the share of turned cells equals `blend`. A small prop holds few cells, so its share varies more: for a 6x5-cell prop at blend 0.5, the middle 80% of placings turn 30--73% of its cells; for 24x18 cells, 42--58%.
 - **It rides in the mask, not the variant.** The [style mask](#the-entity-style-mask) carries each pixel's blend in its `.g` channel beside the id in `.r`. Two props fading at different rates still share one id, and a ramp makes no new variant, row or GPU object (a GPU test in `tests/stylize.rs` ramps it and counts). Like the id, the blend is the styled root's, inherited by its subtree.
 - **`style_mask { blend = ... }`** works too, for a style with no component of its own. A style component's `blend` wins over the `style_mask`'s on the same entity.
@@ -1046,6 +1047,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
 //   .needs(&[StyleNeed::Edges])    the shared geometry edges (#301)
 //   .component("ascii_style")      entities take the style per entity (#266)
 //   .feeds_bloom(true)             bloom reads this (hdr) style's result (#300)
+//   .blends_itself()               it draws its entities' blend itself, so the
+//       framework's cross-fade leaves it alone (ASCII's dissolve, #396)
 ```
 
 An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files("palettes", ".palette.toml")` (names in the scene's folder, its parent and `.`, through the vfs) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.
@@ -1117,6 +1120,7 @@ What the framework does so a style doesn't have to:
 - **Samplers.** Styles bind the chain's one linear sampler, so their bind groups add nothing to DX12's 2048-slot sampler heap.
 - **The mask.** A `uses_mask` style gets the entity style mask drawn for it each frame, and no style pays for it otherwise. `MaskUse::When` asks per frame from the config and the ids (#350): ASCII reads it only while `edges > 0` and something is styled, or another style's entity passes through it, so `--ascii-no-edges` in a scene with no `style_mask` makes no mask target and `--gpu-time` shows no "Style mask" line.
 - **Shared inputs.** A style that lists `StyleNeed::Edges` in `needs` gets the [geometry edge texture](#shared-edges), drawn once a frame however many styles read it.
+- <a id="blend-for-free"></a>**Blend.** A style that reads the mask (`uses_mask`, or a per-entity `component`) fades with its entities' [`blend`](#blending-in-and-out) and the [veil](#whats-in-front-the-veil) in front of them without a line of blend code (#396). Right after its pass the framework draws a cross-fade into its output: one full-screen triangle, alpha-blended, that brings the style's input back by `1 - blend` wherever the mask's id belongs to this style and `.g` is below 1, and is discarded everywhere else. It needs no target (the chain's ping-pong already holds input and output), costs one mask read and, on fading pixels, one input read and a blend, and is drawn only while some entity's blend is below 1 or a veil covers a styled one, so a fully styled scene draws it not at all (`SceneRenderer::style_fade_runs` counts). The mix is the blend unit's: linear light in the HDR stage and on an sRGB surface. Which style an id belongs to is a storage table written once a frame (id to registry index), and which style just drew is the draw's instance index, so one table serves every style in both stages. A style that does better than a cross-fade opts out with `.blends_itself()` and reads `.g` itself: ASCII does, for its display-space `fade` and its cell-by-cell `dissolve`.
 - **Timing.** Each style is a GPU-timer scope under its `label`, so `flint render --gpu-time` and the player's `--perf` name it.
 - **The command line.** `flint render --style <name>` reaches a new style from its descriptor alone.
 
@@ -1161,7 +1165,7 @@ Flint writes everything around the function: the bindings, a `params` struct wit
 | `flint_sample(uv)` | the input anywhere, in the same space as `p.color` |
 | `flint_luma(c)`, `flint_hash(v)`, `flint_to_display(c)`, `flint_to_linear(c)` | small helpers |
 | `flint_depth(uv)`, `flint_view_depth(uv)`, `flint_world_pos(uv)` | with `inputs = ["depth"]`: raw depth, metres from the eye, the world position |
-| `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` or `<name>_style` names this style (their `blend`), 0 elsewhere and on an opt-out |
+| `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` or `<name>_style` names this style (their `blend`), 0 elsewhere and on an opt-out. A shader that never calls `flint_style_blend` is [cross-faded](#blend-for-free) by the framework; one that calls it draws the blend itself and isn't (decided when the `.shader.toml` is read, so adding or removing the call takes effect at the next load or `.shader.toml` edit) |
 | `flint_params_at(uv)` | with `inputs = ["mask"]`: the settings of the entity at `uv`, for reading a neighbour's (`params` is already this pixel's) |
 | `flint_edges(uv)`, `flint_edge(uv)` | with `inputs = ["edges"]`: the [shared edges](#shared-edges) (silhouette, crease, direction), and the stronger of the two strengths; 1 is an edge |
 
@@ -1341,11 +1345,11 @@ Transparents and particles write no depth, so the depth test alone can't see the
 flint render demo/style_veil.scene.toml --particle-time 2 --output veil.png
 ```
 
-- A style that honours the blend (ASCII, and user styles through `flint_style_blend`) shows the fire as fire and the stone through any uncovered share. A fully covered pixel keeps its id at blend 0, so under a whole-frame ASCII the stone behind thick smoke is a smooth hole, as a blend-0 entity is. Pencil and watercolor ignore `.g` and still draw what's in front in their style until the framework cross-fade (#396).
+- Every mask-reading style honours the blend, so it shows the fire as fire and the stone through any uncovered share: ASCII and user styles that call `flint_style_blend` by their own code, and pencil, watercolor and the rest through the framework's [cross-fade](#blend-for-free) (#396). A fully covered pixel keeps its id at blend 0, so under a whole-frame ASCII the stone behind thick smoke is a smooth hole, as a blend-0 entity is.
 - A transparent that is itself styled stays out of the veil: it is in the mask as a lens ([above](#terrain-and-transparents)).
 - The pass costs about 0.02 ms at 1080p on an RTX 4070 for `demo/style_veil.scene.toml` (69 particles and a pane), and is skipped in a frame with no styled draws.
 
-To read it in a style, set `uses_mask: MaskUse::Always` (or `MaskUse::When(f)` to read it only under some settings), make a layout with `kit::mask_layout` and bind it with `frame.mask_bind(...)`; in WGSL it is a `texture_2d<u32>` read with `textureLoad`, the id in `.r` and the blend in `.g` (`stylize/mask_view.rs` and `mask_view.wgsl` show the whole thing). A per-entity style honours a blend by mixing its pixel with its input by `f32(m.g) / 65535.0`; one that ignores `.g` draws every entity at blend 1.
+To read it in a style, set `uses_mask: MaskUse::Always` (or `MaskUse::When(f)` to read it only under some settings), make a layout with `kit::mask_layout` and bind it with `frame.mask_bind(...)`; in WGSL it is a `texture_2d<u32>` read with `textureLoad`, the id in `.r` and the blend in `.g` (`stylize/mask_view.rs` and `mask_view.wgsl` show the whole thing). A style needn't do anything with `.g`: the framework [cross-fades](#blend-for-free) its entities by it. One that does better than a cross-fade reads `.g` itself and sets `.blends_itself()`.
 
 ### Per-entity settings
 

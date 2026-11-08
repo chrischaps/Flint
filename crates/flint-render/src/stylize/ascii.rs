@@ -394,7 +394,9 @@ pub(super) static STYLE: StyleDescriptor =
         // edges are on and something is styled (#350)
         .uses_mask(MaskUse::When(reads_mask))
         .hints(HINTS)
-        .component("ascii_style");
+        .component("ascii_style")
+        // Its fade mixes in display space and its dissolve turns whole cells (#278)
+        .blends_itself();
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;

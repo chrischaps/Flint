@@ -574,6 +574,10 @@ pub struct SceneRenderer {
     style_scissor: bool,
     /// The blend of each styled entity drawn at less than 1 (#278).
     style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
+    /// Whether the last style mask drew a veil over its entities (#290):
+    /// something unstyled in front, so the mask's blend is below 1 there
+    /// even with every entity fully styled (#396 cross-fades by it).
+    style_mask_veiled: bool,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
     /// Whether the `edges` view switched ASCII on itself (#349).
@@ -916,6 +920,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_mask_veiled: false,
             mask_view_forced: false,
             ascii_forced: false,
             grass_compute_uniform_buffer: None,
@@ -2444,6 +2449,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_mask_veiled: false,
             mask_view_forced: false,
             ascii_forced: false,
             grass_compute_uniform_buffer: None,
@@ -4732,6 +4738,7 @@ impl SceneRenderer {
         depth_view: &wgpu::TextureView,
         depth_owned: bool,
     ) {
+        self.style_mask_veiled = false;
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
@@ -4921,6 +4928,7 @@ impl SceneRenderer {
                         draws: &self.particle_draws,
                     });
         }
+        let veiled = !veil.is_empty();
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
                 device,
@@ -4936,6 +4944,15 @@ impl SceneRenderer {
                 &veil,
             );
         }
+        self.style_mask_veiled = veiled;
+    }
+
+    /// Whether some pixel of the last style mask may hold a blend below 1
+    /// (#396): an entity drawn part-way into its style (#278), or a veil
+    /// over a styled one (#290). While neither, the framework's
+    /// cross-fade is skipped.
+    pub fn style_mask_fades(&self) -> bool {
+        !self.style_blend_by_entity.is_empty() || self.style_mask_veiled
     }
 
     /// The entity style mask's per-draw uniform bytes and how many styled
@@ -5238,6 +5255,15 @@ impl SceneRenderer {
         self.postprocess_pipeline
             .as_ref()
             .map_or(0, |pp| pp.styles.edge_runs())
+    }
+
+    /// How many times the framework's cross-fade (#396) has been drawn:
+    /// once after each style it fades, on each frame some mask pixel is
+    /// below a blend of 1.
+    pub fn style_fade_runs(&self) -> u64 {
+        self.postprocess_pipeline
+            .as_ref()
+            .map_or(0, |pp| pp.styles.fade_runs())
     }
 
     /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),

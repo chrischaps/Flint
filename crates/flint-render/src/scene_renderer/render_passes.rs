@@ -1430,6 +1430,7 @@ impl SceneRenderer {
                     far: camera.far,
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
+                mask_fades: self.style_mask_fades(),
                 style_ids: &self.style_ids,
                 style_bounds: &style_bounds,
                 edges: None,
@@ -1474,6 +1475,7 @@ impl SceneRenderer {
                 None,
                 pp.styles.blend_pass(),
                 pp.styles.ownership(),
+                pp.styles.fade(),
                 &mut |label, encoder, run| scoped(label, encoder, run),
             ),
             _ => None,
@@ -1631,6 +1633,7 @@ impl SceneRenderer {
                 }),
                 pp.styles.blend_pass(),
                 pp.styles.ownership(),
+                pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);

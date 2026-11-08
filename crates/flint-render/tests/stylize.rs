@@ -1095,6 +1095,101 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
     }
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
+    // ASCII blends itself (#396): the framework's cross-fade never ran
+    assert_eq!(renderer.style_fade_runs(), 0, "ASCII was cross-faded twice");
+}
+
+/// #396: a per-entity style with no blend code of its own (pencil) fades
+/// with `blend`, the framework cross-fading its output back toward its
+/// input: blend 0 is the entity's own shading, 1 the full style, and 0.5
+/// lands every styled pixel halfway between the two. Fully styled, the
+/// cross-fade isn't drawn at all, and a ramp allocates nothing.
+#[test]
+fn a_style_with_no_blend_code_fades_by_the_framework() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-2.5, -2.5, -2.5]));
+    bounds.insert("max".into(), vec3([2.5, 2.5, 2.5]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    set_entity_style(&mut world, cube, "pencil").unwrap();
+    let full = gpu.frame(&mut renderer, &world);
+    assert_ne!(full, plain, "pencil drew nothing");
+    assert_eq!(
+        renderer.style_fade_runs(),
+        0,
+        "a full blend was cross-faded"
+    );
+
+    let at = |renderer: &mut SceneRenderer, world: &mut FlintWorld, b: f64| {
+        set_style_param(world, cube, "blend", b.into()).unwrap();
+        gpu.frame(renderer, world)
+    };
+    let close = |a: &[u8], b: &[u8]| a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 1);
+    let none = at(&mut renderer, &mut world, 0.0);
+    assert!(close(&none, &plain), "blend 0 is the entity's own shading");
+    assert!(renderer.style_fade_runs() > 0, "the cross-fade never ran");
+    assert_eq!(
+        at(&mut renderer, &mut world, 1.0),
+        full,
+        "blend 1 is the full style, byte for byte"
+    );
+
+    // Every pixel pencil touches lands near the midpoint in linear light
+    // (an sRGB target blends there); none it doesn't touch moves
+    let to_linear = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let half = at(&mut renderer, &mut world, 0.5);
+    let (mut styled_px, mut worst) = (0, 0.0f32);
+    for ((p, f), h) in plain.chunks(4).zip(full.chunks(4)).zip(half.chunks(4)) {
+        if p == f {
+            assert!(close(h, p), "a pixel the style never touches changed");
+            continue;
+        }
+        styled_px += 1;
+        for c in 0..3 {
+            let mid = 0.5 * (to_linear(p[c]) + to_linear(f[c]));
+            worst = worst.max((to_linear(h[c]) - mid).abs());
+        }
+    }
+    eprintln!("fade 0.5 over {styled_px} styled pixels: worst {worst:.4} from the midpoint");
+    assert!(styled_px > 100, "pencil styled only {styled_px} pixels");
+    assert!(worst < 0.02, "a pixel strayed {worst} from the midpoint");
+
+    // A ramp allocates nothing: the table and binds are made once
+    at(&mut renderer, &mut world, 0.25);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    for i in 0..12 {
+        at(&mut renderer, &mut world, i as f64 / 12.0);
+    }
+    assert_eq!(renderer.kept_post_binds(), binds);
+    assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
 
 /// #335: two entities in one frame draw in two glyph sets. The right cube
