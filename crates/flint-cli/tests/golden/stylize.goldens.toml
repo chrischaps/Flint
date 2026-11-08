@@ -300,6 +300,20 @@ name = "pencil-boil"
 scene = "demo/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1.3"]
 
+# Images from files (#390): demo/papers/cold_press.png under the strokes,
+# and demo/strokes/graphite.png's four strokes along each dash. The
+# pencil cases above name none, so passing unblessed is what pins "the
+# procedural paper is unchanged when none is named"
+[[case]]
+name = "pencil-paper-image"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=cold_press,grain=0.8"]
+
+[[case]]
+name = "pencil-stroke-image"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+
 # --- the other registered styles ------------------------------------------
 #
 # Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph
@@ -349,6 +363,14 @@ args = ["--no-grid", "--style", "palette:palette=cga16"]
 name = "watercolor"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "watercolor"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# On the same paper image as pencil-paper-image (#390), a texel every 1.5
+# points, its relief the grain the pigment settles in
+[[case]]
+name = "watercolor-paper-image"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "watercolor:paper_image=cold_press,grain_scale=1.5,grain=0.6"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)

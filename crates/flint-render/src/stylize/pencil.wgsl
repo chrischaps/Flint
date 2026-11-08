@@ -12,7 +12,9 @@
 //     second at another offset by `sketchy`), so outlines overshoot and
 //     double the way quick sketch lines do.
 //   - paper: a tone with grain at three scales; graphite catches on the
-//     paper's tooth, so strokes break up where the paper dips.
+//     paper's tooth, so strokes break up where the paper dips. A paper
+//     image (#390) takes the noise's place, and a stroke image the
+//     analytic dash's (style_image.wgsl reads both).
 // Every random choice is an integer hash of the stroke's row, its dash,
 // its layer and the seed: a fixed seed draws the same picture every run.
 
@@ -49,10 +51,42 @@ fn strokes(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, grow: 
     if hs.x < 0.1 {
         return 0.0;
     }
+    if row.h.w > 0.5 {
+        return strip(x, off, len, row, grow, hs);
+    }
     let taper = smoothstep(0.0, 0.15, x) * smoothstep(1.0, 0.85, x);
     let width = row.a.y * (0.45 + 0.55 * taper) * sqrt(grow);
     let cov = 1.0 - smoothstep(width * 0.5 - aa, width * 0.5 + aa, abs(off));
     return cov * mix(0.5, 1.0, taper) * (0.7 + 0.3 * hs.y);
+}
+
+// A dash drawn from the stroke image (#390): `x` 0..1 along the dash,
+// `off` points across it from its middle. The image is `stroke_rows`
+// strokes stacked top to bottom, each drawn left to right; a dash takes
+// one by its hash. A row spans twice the stroke width (thinner while the
+// tone has only just reached the layer) and its ink is the image's dark,
+// or opaque, texels over the strip's measured ink.
+fn strip(x: f32, off: f32, len: f32, row: PencilRow, grow: f32, hs: vec3<f32>) -> f32 {
+    let band = row.a.y * 2.0 * sqrt(grow);
+    let v = off / max(band, 1e-3) + 0.5;
+    if v <= 0.0 || v >= 1.0 {
+        return 0.0;
+    }
+    let rows = max(u32(row.h.y + 0.5), 1u);
+    let pick = min(u32(hs.z * f32(rows)), rows - 1u);
+    let dims = vec2<f32>(textureDimensions(stroke_tex, 0));
+    let rh = dims.y / f32(rows);
+    let ppp = u.pixels_per_point;
+    // The level from the texels a pixel spans along the dash, but never
+    // so coarse that a row is under two texels tall: across, a stroke is a
+    // pixel or two whatever the image, and rows mustn't bleed together
+    let along = dims.x / max(len * ppp, 1e-3);
+    let lod = min(log2(max(along, 1.0)), log2(max(rh * 0.5, 1.0)));
+    let lo = vec2<f32>(0.0, f32(pick) * rh);
+    let hi = vec2<f32>(dims.x, f32(pick + 1u) * rh);
+    let c = img_read(stroke_tex, vec2<f32>(x * dims.x, (f32(pick) + v) * rh), lod, false, lo, hi);
+    let ink = c.a * (1.0 - luma(c.rgb)) / max(u.img.z, 0.02);
+    return clamp(ink, 0.0, 1.0) * (0.75 + 0.25 * hs.y);
 }
 
 @fragment
@@ -152,14 +186,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Paper: a tone with grain, and tooth the graphite skips over
     let grain = row.d.y;
-    let fine = vnoise(pt * 0.9, 7u);
-    let mid = vnoise(pt * 0.21, 11u);
-    let broad = vnoise(pt * 0.03, 13u);
-    let paper_noise = 0.45 * fine + 0.35 * mid + 0.2 * broad;
-    let tooth = smoothstep(0.2, 0.75, fine * 0.7 + mid * 0.3);
+    var paper_noise: f32;
+    var tooth: f32;
+    var paper: vec3<f32>;
+    if row.h.z > 0.5 {
+        // The paper image (#390), tiled in points from the screen's corner:
+        // its height is the tooth and the tone, its hue tints the paper
+        let scale = max(row.h.x, 0.05);
+        let lod = log2(max(1.0 / (scale * ppp), 1e-3));
+        let c = img_read(paper_tex, pt / scale, lod, true, vec2<f32>(0.0), vec2<f32>(0.0));
+        let hgt = img_paper_height(c, u.img.x, u.img.y);
+        paper_noise = hgt;
+        tooth = smoothstep(0.2, 0.75, hgt);
+        paper = row.e.xyz * img_paper_tint(c) * (1.0 - grain * 0.5 * (0.5 - hgt));
+    } else {
+        let fine = vnoise(pt * 0.9, 7u);
+        let mid = vnoise(pt * 0.21, 11u);
+        let broad = vnoise(pt * 0.03, 13u);
+        paper_noise = 0.45 * fine + 0.35 * mid + 0.2 * broad;
+        tooth = smoothstep(0.2, 0.75, fine * 0.7 + mid * 0.3);
+        paper = row.e.xyz * (1.0 - grain * 0.12 * (1.0 - paper_noise));
+    }
     var ink = 1.0 - light;
     ink *= mix(1.0, 0.35 + 0.65 * tooth, grain);
-    let paper = row.e.xyz * (1.0 - grain * 0.12 * (1.0 - paper_noise));
 
     // Coloured ground and lead by `color`
     let scene = shown(src.rgb);

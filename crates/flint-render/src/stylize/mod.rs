@@ -93,6 +93,7 @@
 pub mod catalog;
 pub mod custom;
 pub mod edges;
+pub mod images;
 pub mod kit;
 mod spec;
 mod targets;
