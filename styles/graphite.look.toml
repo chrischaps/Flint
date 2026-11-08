@@ -24,8 +24,8 @@ Spacing is the pencil's sharpness: 4 points reads as a fine study, 9 as a
 quick sketch. Contrast decides how much of the frame is hatched: stylize_props'
 dark ground takes all three layers at 1.4, and the sky stays bare paper.
 direction = screen is the most graphic (one hand, one angle); surface wraps
-strokes round forms; tensor follows the picture's own edges and gets busy
-round shadows. Wobble 0 is a technical drawing, 4 a nervous one.
+strokes round forms; tensor follows the picture's own edges, sweeping
+round shadows and silhouettes. Wobble 0 is a technical drawing, 4 a nervous one.
 """
 
 [post_process]
