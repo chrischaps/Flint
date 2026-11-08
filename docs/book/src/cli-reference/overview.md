@@ -294,6 +294,11 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
+| `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
+| `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
+| `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
+| `--flip-stats` / `--flip-json <file>` | (off) | With `--frames`: count the ASCII style's glyph flips and A-B-A reversals from its own grid, printed per frame and in sum, or written as JSON |
+| `--no-images` | `false` | With `--frames`: write no PNGs |
 | `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
 | `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |

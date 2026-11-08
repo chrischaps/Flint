@@ -6,6 +6,7 @@ pub mod calibrate;
 pub mod common_args;
 pub mod edit_router;
 pub mod entity;
+pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;
 pub mod gen_preview;

@@ -54,6 +54,11 @@ Flint uses an **edit -> validate -> play** loop:
    #                           Also on flint-player. ADR 0058)
    #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --frames 181 --frame-dt 0.0166667 --orbit 6.8755 | --camera-path cam.toml
+   #                          (#345: N frames on one renderer as out_0000.png...; temporal
+   #                           styles see consecutive frames; --flip-stats / --flip-json f.json
+   #                           count ASCII glyph flips and A-B-A reversals from its own grid,
+   #                           --no-images skips the PNGs; byte-identical run to run)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
