@@ -2007,3 +2007,185 @@ fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
         "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
     );
 }
+
+/// Write a user style's files into a fresh folder and load it.
+fn user_style(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("flint-{tag}-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    for (name, text) in files {
+        std::fs::write(styles.join(name), text).unwrap();
+    }
+    let messages = flint_render::stylize::custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    dir
+}
+
+fn style_on(gpu: &Gpu, name: &str) -> SceneRenderer {
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled(name, true);
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(&gpu.device);
+    renderer
+}
+
+/// #412: a user style of three passes, each into a target of its own at
+/// its own size and format, the last reading both; every target is
+/// listed with its size and bytes.
+#[test]
+fn a_user_style_of_passes_draws_through_targets_of_its_own() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let dir = user_style(
+        "passes-412",
+        &[
+            (
+                "utest_passes.shader.toml",
+                r#"version = 1
+name = "utest_passes"
+
+[[passes]]
+name = "fill"
+shader = "fill.wgsl"
+target = "small"
+format = "rgba8"
+scale = 0.5
+
+[[passes]]
+name = "mono"
+shader = "mono.wgsl"
+target = "mono"
+format = "r32f"
+scale = 0.25
+reads = ["small"]
+
+[[passes]]
+shader = "out.wgsl"
+reads = ["small", "mono"]
+"#,
+            ),
+            (
+                "fill.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 return vec4<f32>(0.5, flint.pass_size.x / 64.0, 0.75, 1.0);\n}\n",
+            ),
+            (
+                "mono.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 return vec4<f32>(flint_target_small(p.uv).g * flint.pass_size.x / 16.0, 0.0, 0.0, 1.0);\n}\n",
+            ),
+            (
+                "out.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 let s = flint_target_small(p.uv);\n    \
+                 let m = flint_target_mono(p.uv).r;\n    \
+                 return vec4<f32>(s.r, m, flint_target_small_size().x / flint.resolution.x * s.b / 0.75, 1.0);\n}\n",
+            ),
+        ],
+    );
+    assert!(flint_render::stylize::custom::errors()
+        .iter()
+        .all(|(n, _)| n != "utest_passes"));
+    let mut renderer = style_on(&gpu, "utest_passes");
+    let pixels = gpu.frame(&mut renderer, &box_world());
+    // fill: r 0.5, g = its own size (32) / 64 = 0.5; mono: 0.5 * 16 / 16;
+    // out: the small target's size (32) over 64 times b/0.75 = 0.5. Display
+    // 0.5 is 128 (rounding either way), every pixel
+    let off = pixels
+        .chunks(4)
+        .filter(|p| p[..3].iter().any(|&c| (c as i32 - 128).abs() > 2))
+        .count();
+    assert_eq!(off, 0, "first pixel {:?}", &pixels[..4]);
+
+    let targets = renderer.style_target_entries();
+    let find = |name: &str| targets.iter().find(|t| t.name == name).cloned();
+    let small = find("utest_passes.small").expect("listed");
+    assert_eq!((small.width, small.height), (SIZE / 2, SIZE / 2));
+    assert_eq!(small.format, wgpu::TextureFormat::Rgba8Unorm);
+    assert_eq!(small.bytes, 32 * 32 * 4);
+    let mono = find("utest_passes.mono").expect("listed");
+    assert_eq!(
+        (mono.width, mono.format),
+        (SIZE / 4, wgpu::TextureFormat::R32Float)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #412: a history target reads last frame's while it's this picture's
+/// past (`flint.history` says so) and starts over, cleared, after a reset.
+#[test]
+fn a_history_target_accumulates_and_starts_over_after_a_reset() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let dir = user_style(
+        "history-412",
+        &[
+            (
+                "utest_history.shader.toml",
+                r#"version = 1
+name = "utest_history"
+
+[[passes]]
+name = "acc"
+shader = "acc.wgsl"
+target = "acc"
+history = true
+reads = ["acc"]
+
+[[passes]]
+name = "show"
+shader = "show.wgsl"
+reads = ["acc"]
+"#,
+            ),
+            (
+                "acc.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 return vec4<f32>(flint_target_acc(p.uv).r + 0.125, flint.history, 0.0, 1.0);\n}\n",
+            ),
+            (
+                "show.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 let a = flint_target_acc(p.uv);\n    \
+                 return vec4<f32>(a.r, a.g, 0.0, 1.0);\n}\n",
+            ),
+        ],
+    );
+    let mut renderer = style_on(&gpu, "utest_history");
+    let world = box_world();
+    // A display-stage style returns display values: the byte is value * 255
+    let first = |renderer: &mut SceneRenderer| {
+        let p = gpu.frame(renderer, &world);
+        (p[0] as f32 / 255.0, p[1] as f32 / 255.0)
+    };
+    let close = |a: f32, b: f32| (a - b).abs() < 0.02;
+    let (r, h) = first(&mut renderer);
+    assert!(close(r, 0.125) && close(h, 0.0), "frame 1: {r} {h}");
+    let (r, h) = first(&mut renderer);
+    assert!(close(r, 0.25) && close(h, 1.0), "frame 2: {r} {h}");
+    let (r, _) = first(&mut renderer);
+    assert!(close(r, 0.375), "frame 3: {r}");
+    renderer.reset_style_history();
+    let (r, h) = first(&mut renderer);
+    assert!(close(r, 0.125) && close(h, 0.0), "after a reset: {r} {h}");
+    let names: Vec<&str> = renderer
+        .style_target_entries()
+        .iter()
+        .map(|t| t.name)
+        .filter(|n| n.starts_with("utest_history"))
+        .collect();
+    assert_eq!(names, ["utest_history.acc.a", "utest_history.acc.b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

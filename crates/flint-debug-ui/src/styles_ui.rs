@@ -258,11 +258,26 @@ impl StylesEditor {
                 // A user-authored style (ADR 0112, #275): where it lives, and
                 // whether it compiles
                 if let Some(source) = stylize::custom::source(style.name) {
-                    ui.weak("user").on_hover_text(format!(
-                        "{}\n{}\nSaving either file reloads it",
-                        source.toml_path.display(),
-                        source.wgsl_path.display()
-                    ));
+                    // Each pass's WGSL, and the targets the passes write (#412)
+                    let mut hover = source.toml_path.display().to_string();
+                    for pass in &source.passes {
+                        hover.push('\n');
+                        hover.push_str(&pass.wgsl_path.display().to_string());
+                        if source.passes.len() > 1 {
+                            hover.push_str(&format!("  (pass {})", pass.name));
+                        }
+                    }
+                    for t in &source.targets {
+                        hover.push_str(&format!(
+                            "\ntarget {}: {} at {} of the stage{}",
+                            t.name,
+                            t.format.name(),
+                            t.scale,
+                            if t.history { ", with history" } else { "" }
+                        ));
+                    }
+                    hover.push_str("\nSaving any of these files reloads it");
+                    ui.weak("user").on_hover_text(hover);
                     if let Some((_, error)) = stylize::custom::errors()
                         .into_iter()
                         .find(|(name, _)| name == style.name)

@@ -1052,6 +1052,28 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             println!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
         }
         println!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
+        // What each of the style chain's textures costs (#412): the
+        // built-ins' and every user style's targets
+        let targets = renderer.style_target_entries();
+        if !targets.is_empty() {
+            let total: u64 = targets.iter().map(|t| t.bytes).sum();
+            println!(
+                "Style targets: {} ({:.2} MB)",
+                targets.len(),
+                total as f64 / (1024.0 * 1024.0)
+            );
+            let w = targets.iter().map(|t| t.name.len()).max().unwrap_or(0);
+            for t in &targets {
+                println!(
+                    "  {:<w$} {:>5}x{:<5} {:<15} {:>7.2} MB",
+                    t.name,
+                    t.width,
+                    t.height,
+                    format!("{:?}", t.format),
+                    t.bytes as f64 / (1024.0 * 1024.0)
+                );
+            }
+        }
     }
 
     if let Some(frames) = args.frames {

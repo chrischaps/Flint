@@ -2966,6 +2966,16 @@ impl SceneRenderer {
             .unwrap_or_default()
     }
 
+    /// Each of the style chain's textures with its size and bytes (#412):
+    /// the built-ins' and every user style's targets (`<style>.<target>`,
+    /// `.a`/`.b` for a history pair), sorted by name.
+    pub fn style_target_entries(&self) -> Vec<crate::stylize::TargetEntry> {
+        self.postprocess_resources
+            .as_ref()
+            .map(|r| r.styles.entries())
+            .unwrap_or_default()
+    }
+
     /// Time the frame's phases on the GPU, or stop (ADR 0108): the grass
     /// compute, the shadows, the scene, the post-process chain, its last
     /// pass (the composite, or FXAA when it's on) and the world lines, each

@@ -1071,7 +1071,97 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+### Passes and targets of its own
+
+*#412.* Four of the six built-ins need more than one pass: a blur is two (across, then down), a wash is painted and then read, ASCII keeps last frame's cells. A user style does this with `[[passes]]` in place of the top-level `shader`. Each pass is a WGSL `fn style` of its own, run in the order listed. Every pass but the last writes a **target** of the style's own, and the last writes the stage's output:
+
+```toml
+# styles/orton.shader.toml (demo/styles/orton.*): a blurred, overexposed copy screened over the frame
+version = 1
+name = "orton"
+stage = "display"
+
+[[passes]]
+name = "expose"              # optional: pass1, pass2... by place
+shader = "orton_expose.wgsl"
+target = "exposed"           # what it writes
+format = "rgba16f"           # or "rgba8" (0..1, stored as written) or "r32f" (one float)
+scale = 0.5                  # of the stage's size, 0.0625..1 (default 1)
+
+[[passes]]
+name = "blur_x"
+shader = "orton_blur_x.wgsl"
+target = "wide"
+scale = 0.5
+reads = ["exposed"]          # earlier passes' targets
+
+[[passes]]
+name = "blur_y"
+shader = "orton_blur_y.wgsl"
+target = "soft"
+scale = 0.5
+reads = ["wide"]
+
+[[passes]]
+name = "sandwich"            # the last: no target
+shader = "orton.wgsl"
+reads = ["soft"]
+```
+
+A pass reads what it lists in `reads` with helpers the framework writes for each one:
+
+| | |
+|---|---|
+| `flint_target_<name>(uv)` | the target at `uv`, filtered (nearest for `r32f`, which most web GPUs can't filter) |
+| `flint_target_<name>_load(texel)` | one texel, clamped to the edge |
+| `flint_target_<name>_size()` | its size in pixels |
+| `flint.pass_size`, `flint.pass_index` | the size of what this pass draws (its target, or the output) and its place, 0 first |
+
+A target holds what its pass returns, unchanged: there is no sRGB encode, so a display-stage pass that writes `p.color` into an `rgba16f` target and a later pass that reads it see the same display values. Only the last pass's result is encoded for the output. `params` are shared by every pass, and `inputs` (depth, mask, edges) reach every pass.
+
+**History.** `history = true` on a pass's target keeps it from frame to frame. The framework keeps two textures and swaps them each frame, so a pass at or before the writer that reads the target gets **last frame's**, and passes after the writer get this frame's. A target can therefore read itself:
+
+```toml
+[[passes]]
+name = "trail"
+shader = "trail.wgsl"
+target = "trail"
+history = true
+reads = ["trail"]            # last frame's trail
+```
+
+Last frame's is kept only if it is this picture's past, the rule ASCII's cells follow (#277). On a first frame, a frame after [`reset_style_history`](#temporal-stability) (a camera cut or a new scene), after a resize, or when the style was off the frame before, the history texture is cleared to transparent black and `flint.history` is 0. Otherwise it is 1. Fade with `mix(now, past, keep * flint.history)` and a cut starts clean.
+
+**What is checked when the description loads** (each error names the passes):
+
+- A read of a target before the pass that writes it: `pass "a" reads target "tb" before pass "b" writes it; move "a" after "b" (or add history = true to read last frame's)`.
+- A cycle: `a cycle: passes "a" -> "b" -> "a" each read what the next writes`. A pass reading its own target without `history` is one too.
+- The shape: a target on every pass but the last and none on the last; one writer a target; known formats; `scale` within 0.0625..1; no pass reading a target nobody writes. A target nobody reads loads, with a warning.
+- **The caps.** At most 8 passes and 4 targets, and together the targets may cost no more than four full-size `rgba16f` targets: 32 bytes for each pixel of the stage, a history target counting twice. That is 66 MB at 1920x1080. The orton demo's three half-size targets cost 6 bytes a pixel (12 MB at 1080p).
+
+A shader that doesn't compile is reported as before, with its own file, line and column. A helper of a target the pass doesn't read gets a hint (`add "soft" to reads of pass "blur_y"`). Until every pass has compiled once the style draws its input unchanged, and after that a broken edit keeps that pass's last good build. Each pass's `.wgsl` reloads on its own.
+
+**What it costs.** `flint render --gpu-time` times the style as one row and then lists every texture of the style chain with its size, format and bytes. A user style's targets are named `<style>.<target>`, with `.a`/`.b` for a history pair:
+
+```text
+  Hologram       0.012 ms
+  Orton glow     0.032 ms
+  frame          0.912 ms
+Style targets: 7 (16.70 MB)
+  orton.exposed          640x360   Rgba16Float        1.76 MB
+  orton.soft             640x360   Rgba16Float        1.76 MB
+  orton.wide             640x360   Rgba16Float        1.76 MB
+  style display in      1280x720   Rgba8UnormSrgb     3.52 MB
+  ...
+```
+
+That is `demo/user_styles.scene.toml --style orton --gpu-time 240` at 1280x720 on an RTX 4070: the four passes of the Orton glow together cost 0.032 ms.
+
+The F2 overlay's `Style targets` line includes them in its total. F4's `user` tag lists each pass's file and each target when you hover it.
+
+![demo/user_styles.scene.toml under --style orton: the yard's light blooms softly, edges stay crisp](../images/user-style-orton.png)
+
+**What a user style can't do yet:** string options, images of its own (#413), per-entity settings (a component like `ascii_style`, #414), compute passes or mip chains. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what user styles reach: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`), `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`) and `orton` (four passes through three half-size targets).
 
 ## Goldens
 
