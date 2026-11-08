@@ -17,6 +17,9 @@
 //! edge_max = 3.0        # more than this is texture (grass), not a line
 //! edge_depth = 0.6      # relative view-distance step that is an edge
 //! edge_normal = 2.5     # normal change (Sobel) that is a crease
+//! edge_ink = "cell"     # cell | color | hue: the line glyphs' ink (#351)
+//! edge_color = [0.85, 0.82, 0.74]  # for edge_ink = "color"; or "#d9d1bd"
+//! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
 //! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
 //! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
 //! silhouette = "pixel"  # per-entity: pixel | cell (whole glyphs at the edge, #338)
@@ -94,6 +97,16 @@
 //! drawn. Edges follow the screen grid: per-entity variants on an object
 //! grid keep their tone glyphs.
 //!
+//! Line glyphs are inked as the cell's tone glyph by default. Along a
+//! silhouette that colour is a mix of the object and what's behind it, so
+//! `edge_ink` (#351) gives them an ink of their own: `color` (one colour,
+//! mixed toward the near side's hue by `edge_tint`) or `hue` (the near
+//! side's own colour, inked as the colour mode inks a cell). The edge cell
+//! pass averages the picture under the edge pixels that decided a cell's
+//! line, which lie on the near side, and stores the hue, 7 bits a channel,
+//! above the outline and cross-axis bits of its texel's z (the texture is
+//! `Rgba32Float`, so z is an exact integer).
+//!
 //! ## Silhouettes (#288)
 //!
 //! A per-entity variant cuts its silhouette to the pixel but fills it
@@ -139,6 +152,15 @@ pub const MAX_RAMP: usize = 128;
 
 /// The colour modes, by their option spelling.
 pub const COLOR_MODES: &[&str] = &["source", "tint", "raw", "mono", "palette"];
+
+/// What inks the edges' line glyphs (#351), by their option spelling:
+/// as the cell's tone glyph, one colour, or the near side's hue.
+pub const EDGE_INKS: &[&str] = &["cell", "color", "hue"];
+
+/// The edge ink's index in [`EDGE_INKS`] (0, `cell`, for an unknown one).
+fn edge_ink_mode(name: &str) -> u32 {
+    EDGE_INKS.iter().position(|m| *m == name).unwrap_or(0) as u32
+}
 
 /// The ground (background fill) modes, by their option spelling.
 pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
@@ -320,6 +342,33 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 0.2,
             max: 8.0,
         },
+        // The edge ink (#351): `edge_ink = "color"` inks line glyphs in
+        // this colour (the ASCII spike's warm off-white), mixed toward the
+        // near side's hue by `edge_tint`
+        StyleParam {
+            name: "edge_color_r",
+            default: 0.85,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "edge_color_g",
+            default: 0.82,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "edge_color_b",
+            default: 0.74,
+            min: 0.0,
+            max: 1.0,
+        },
+        StyleParam {
+            name: "edge_tint",
+            default: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
         StyleParam {
             name: "outline",
             default: 1.0,
@@ -392,6 +441,12 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "transition",
             default: "fade",
             choices: TRANSITIONS,
+            discover: None,
+        },
+        StyleOption {
+            name: "edge_ink",
+            default: "cell",
+            choices: EDGE_INKS,
             discover: None,
         },
         StyleOption {
@@ -499,6 +554,21 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "edge_normal",
             "Edge crease",
             "The normal change that counts as a crease; lower finds more",
+        ),
+        StyleHint::new(
+            "edge_ink",
+            "Edge ink",
+            "What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)",
+        ),
+        StyleHint::new(
+            "edge_color",
+            "Edge colour",
+            "The line glyphs' ink for edge ink color",
+        ),
+        StyleHint::new(
+            "edge_tint",
+            "Edge tint",
+            "For edge ink color: mixes the colour toward the near side's hue; 0 = the colour alone, 1 = the hue",
         ),
         StyleHint::new(
             "outline",
@@ -749,7 +819,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                     "ASCII Edge Cell Shader",
                     include_str!("ascii_edge_cells.wgsl"),
                 ),
-                &[&uniform_bgl, &edges_in_bgl],
+                // The picture too (#351): the near side's hue
+                &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl],
                 EDGE_CELL_FORMAT,
             ),
             edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
@@ -832,7 +903,8 @@ struct AsciiUniforms {
     palette_len: u32,
     palette_match: u32,
     palette_bg: [f32; 3],
-    _pad: u32,
+    /// What inks the line glyphs (#351): 0 cell, 1 color, 2 hue.
+    edge_ink: u32,
     smoothing: f32,
     hysteresis: f32,
     dither: f32,
@@ -847,7 +919,10 @@ struct AsciiUniforms {
     /// The whole frame's palette chroma and ink dither (#320).
     chroma: f32,
     palette_dither: f32,
-    _pad_palette: [u32; 2],
+    /// For edge ink color: how far the colour mixes toward the near
+    /// side's hue (#351).
+    edge_tint: f32,
+    _pad_palette: u32,
     /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
     /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
@@ -871,6 +946,8 @@ struct AsciiUniforms {
     /// The grids of the variants whose silhouettes snap to whole cells
     /// (#338), `variant_meta[3]` of them: (cell, origin).
     snap_grids: [[f32; 4]; MAX_SNAP_GRIDS],
+    /// The line glyphs' ink for edge ink color (#351), display rgb, unused w.
+    edge_color: [f32; 4],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -952,7 +1029,10 @@ struct EdgeCellUniforms {
     threshold: f32,
     max_len: f32,
     edge_size: [f32; 2],
-    _pad: [f32; 2],
+    /// Whether the picture arrives linear, to be read as display values
+    /// for the near side's hue (#351).
+    srgb: u32,
+    _pad: f32,
 }
 
 /// The edge debug view's uniforms (#349), `ascii_edge_view.wgsl`.
@@ -1002,7 +1082,10 @@ pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> S
 /// (1 crease, 2 depth, 3 outline).
 const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
-const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// 32-bit, so z holds the outline and cross-axis bits and the near side's hue above
+/// them as an exact integer (#351); x, y and w are kept at f16 precision,
+/// as they were.
+const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// How many entries a variant table buffer holds to fit `needed`: what it
 /// holds already when that's enough, else the next power of two (#336).
@@ -2215,11 +2298,12 @@ impl Ascii {
         &self,
         frame: &StyleFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
         edge_cells: &Owned,
         cell: [f32; 2],
-        origin: [f32; 2],
         table: &wgpu::BindGroup,
     ) {
+        let origin = grid_origin([frame.width, frame.height], cell);
         let edge_uniforms = EdgeUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
             camera_pos: frame.camera.position,
@@ -2269,7 +2353,8 @@ impl Ascii {
             threshold: frame.param("edge_threshold").max(0.01),
             max_len: frame.param("edge_max"),
             edge_size: [edges.size[0] as f32, edges.size[1] as f32],
-            _pad: [0.0; 2],
+            srgb: frame.srgb() as u32,
+            _pad: 0.0,
         };
         frame.queue.write_buffer(
             &self.edge_cell_uniforms,
@@ -2288,6 +2373,7 @@ impl Ascii {
                     &self.edge_cell_uniforms,
                 ),
                 &edges.bind,
+                &self.picture_bind(frame, input, false),
             ],
         );
     }
@@ -2580,7 +2666,7 @@ impl StylePass for Ascii {
         // glyphs' edges off, and draws them in place of the glyphs
         let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
         if edges > 0.0 || edge_view {
-            self.encode_edges(frame, encoder, edge_cells, cell, origin, &edge_table);
+            self.encode_edges(frame, encoder, input, edge_cells, cell, &edge_table);
         }
         if edge_view {
             self.encode_edge_view(frame, encoder, input, output, edge_cells, cell, origin);
@@ -2632,7 +2718,7 @@ impl StylePass for Ascii {
             palette_len: palette.colors().len() as u32,
             palette_match: palette.matching().index(),
             palette_bg: palette.background(),
-            _pad: 0,
+            edge_ink: edge_ink_mode(frame.option("edge_ink")),
             // `smoothing` is per 60 Hz frame; this frame keeps it raised to
             // the number of 60 Hz frames it stands for (#342). The cap keeps
             // a high rate's weight from parking the 16-bit history for good
@@ -2647,7 +2733,8 @@ impl StylePass for Ascii {
             stretch: frame.param("normalize").clamp(0.0, 1.0),
             chroma: frame.param("chroma").clamp(0.0, 8.0),
             palette_dither: frame.param("palette_dither").clamp(0.0, 1.0),
-            _pad_palette: [0; 2],
+            edge_tint: frame.param("edge_tint").clamp(0.0, 1.0),
+            _pad_palette: 0,
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],
@@ -2661,6 +2748,10 @@ impl StylePass for Ascii {
             bands: [[0.0; 4]; MAX_BANDS],
             band_rows: [[0; 4]; MAX_BANDS],
             snap_grids: [[0.0; 4]; MAX_SNAP_GRIDS],
+            edge_color: {
+                let [r, g, b] = frame.color("edge_color");
+                [r, g, b, 0.0]
+            },
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -2905,7 +2996,7 @@ mod tests {
         // header (its rows, and its slots, are storage buffers since #336:
         // a row is 144 bytes, #288's silhouette floors and #320's palette
         // look, then #335's glyph cell and edge start), and the variant cell
-        // bands' two vec4 each (#313)
+        // bands' two vec4 each (#313), and #351's edge colour
         assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
@@ -2916,6 +3007,12 @@ mod tests {
                 + 16
                 + MAX_BANDS * 32
                 + MAX_SNAP_GRIDS * 16
+                + 16
+        );
+        // #351's edge colour, last
+        assert_eq!(
+            std::mem::offset_of!(AsciiUniforms, edge_color),
+            std::mem::size_of::<AsciiUniforms>() - 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);

@@ -12,6 +12,12 @@
 #   cube     style_mask "ascii": outline, plus creases where faces meet
 #   pillar   unstyled: depth and crease edges only, at the thresholds
 # The sphere sits against a sky of about its own brightness on purpose.
+#
+# Edge ink (#351): the outlines in an ink of their own, against a tone fill
+# in another (amber lines over a green phosphor fill):
+#   cargo run --bin flint -- render demo/ascii_edges.scene.toml --schemas schemas --no-grid #     --style ascii:color=tint,edge_ink=color,edge_color=#ffb347 --output ink.png
+# or in the table below: color = "tint", edge_ink = "color", edge_color = "#ffb347".
+# edge_ink = "hue" draws each line in its near side's own colour instead.
 
 [scene]
 name = "ASCII Edges"
