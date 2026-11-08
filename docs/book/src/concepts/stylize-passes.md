@@ -1072,8 +1072,27 @@ Flint writes everything around the function: the bindings, a `params` struct wit
 | `flint_sample(uv)` | the input anywhere, in the same space as `p.color` |
 | `flint_luma(c)`, `flint_hash(v)`, `flint_to_display(c)`, `flint_to_linear(c)` | small helpers |
 | `flint_depth(uv)`, `flint_view_depth(uv)`, `flint_world_pos(uv)` | with `inputs = ["depth"]`: raw depth, metres from the eye, the world position |
-| `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` names this style (their `blend`) |
+| `flint_mask_id(uv)`, `flint_style_blend(uv)` | with `inputs = ["mask"]`: the [style mask](#the-entity-style-mask) id, and 0..1 for entities whose `style_mask` or `<name>_style` names this style (their `blend`), 0 elsewhere and on an opt-out |
+| `flint_params_at(uv)` | with `inputs = ["mask"]`: the settings of the entity at `uv`, for reading a neighbour's (`params` is already this pixel's) |
 | `flint_edges(uv)`, `flint_edge(uv)` | with `inputs = ["edges"]`: the [shared edges](#shared-edges) (silhouette, crease, direction), and the stronger of the two strengths; 1 is an edge |
+
+**Per entity (#414).** A style with `"mask"` in its `inputs` is per-entity, like ASCII, pencil and watercolor. A `style_mask { style = "<name>" }` on an entity switches it on with no `[post_process.styles.<name>]` table, and the style gets a component of its own, `<name>_style`, whose fields are its parameters (plus `enabled` and `blend`, as on `ascii_style`). Each distinct set of settings is a variant with its own mask id, and the framework uploads a row of `Params` for each, so in the WGSL `params` holds the settings of the entity the pixel shows, each field falling back on the scene's table, then the default. A pixel that no entity of the style covers reads the scene's row. `enabled = false` opts an entity out: its pixels read `flint_style_blend` as 0. Scripts reach the component the way they reach ASCII's: `set_entity_style(id, "hologram")`, `set_style_param(id, "glow", 1.5)`, `tween_style_param`.
+
+```toml
+[entities.ybot.style_mask]        # on, with the scene's settings (or the defaults)
+style = "hologram"
+
+[entities.barrel.hologram_style]  # on, with its own
+glow = 2.0
+lines = 6.0
+blend = 0.6
+```
+
+One frame holds 15 variants of a style (and mask ids up to 255); any more take the scene's settings, with a warning. The component has no schema file, so the scene loader neither fills in defaults nor checks its fields' types. A style that doesn't read the mask can't tell entities apart, so it stays whole-frame: only its table switches it on, and a `style_mask` naming it does nothing. The same holds for the built-ins without a component (`invert`, `mask_view`, `edges_view`, `palette`).
+
+| ![two holograms, one frame](../images/user-style-hologram-per-entity.png) |
+|---|
+| `demo/user_styles.scene.toml` with no hologram table. The YBot's `style_mask` takes the defaults (`glow = 0.8`, 3-point lines). The barrel's `hologram_style` sets a brighter rim and wider lines at `blend = 0.6` |
 
 **When it goes wrong.** Flint checks the composed shader with naga before the GPU sees it. An error names your file, line and column, quotes the line, and gives a hint if you called a depth or mask helper without declaring the input. A style that doesn't compile still loads and draws its input unchanged, so the scene keeps its other styles. Loops are allowed, but each one is warned about: a loop that never ends hangs the GPU until the driver resets it.
 
@@ -1091,11 +1110,11 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 
 **On the web.** `flint bundle` packs `styles/` with the rest of the game. It loads every user style each scene sees from the packed files, the way the browser will, and refuses the bundle if a description doesn't read, its shader isn't packed or the shader doesn't compile. In the browser the style is checked by the browser's own compiler, and nothing reloads (#415 tracks showing those errors on the page).
 
-| ![hologram](../images/user-style-hologram.png) `hologram`: `inputs = ["mask"]`; the YBot and the barrel carry `style_mask { style = "hologram" }`, the barrel at `blend = 0.6` | ![contour](../images/user-style-contour.png) `--style contour`: `inputs = ["depth"]`; height lines from `flint_world_pos`, range rings round the eye |
+| ![hologram](../images/user-style-hologram.png) `hologram`: `inputs = ["mask"]`; the YBot and the barrel carry `style_mask { style = "hologram" }`, the barrel at `blend = 0.6` (rendered before #414, with the table the scene then needed; [per entity](#user-authored-styles) shows it now) | ![contour](../images/user-style-contour.png) `--style contour`: `inputs = ["depth"]`; height lines from `flint_world_pos`, range rings round the eye |
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+**What a user style can't do yet:** more than one pass, textures of its own, string options, frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
 
 ## Goldens
 

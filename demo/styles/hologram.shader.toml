@@ -1,10 +1,15 @@
 # A user-authored style that reads the entity style mask (#274): props with
 # `style_mask { style = "hologram" }` turn into a flickering projection and
-# everything else stays as it is.
+# everything else stays as it is. Reading the mask makes it per-entity
+# (#414): no [post_process.styles.hologram] table is needed, and a prop's
+# `hologram_style` component sets its own params (`params.glow` in the
+# WGSL is that prop's):
 #
-#   [post_process.styles.hologram]     # switches the style on
 #   [entities.ybot.style_mask]
 #   style = "hologram"
+#   [entities.barrel.hologram_style]
+#   glow = 2.0
+#   blend = 0.6
 version = 1
 name = "hologram"
 label = "Hologram"
