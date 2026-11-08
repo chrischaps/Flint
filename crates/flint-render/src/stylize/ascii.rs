@@ -253,12 +253,15 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
     StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
     StyleHint::new("color", "Colour mode", "source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
-    StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml"),
+    StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml")
+        .when("color", &["palette"]),
     StyleHint::new("ground", "Ground", "Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
     StyleHint::new("cell", "Cell size (pt)", "Cell width in points; the height follows the font").integer(),
     StyleHint::new("brightness", "Brightness", "Shifts the tone before a glyph is picked"),
     StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
-    StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)"),
+    StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)")
+        .when("ground", &["dim", "inverse"])
+        .unless("color", &["palette"]),
     StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
     StyleHint::new(
         "exposure",
@@ -296,12 +299,14 @@ const HINTS: &[StyleHint] = &[
         "chroma",
         "Palette chroma",
         "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
-    ),
+    )
+    .when("color", &["palette"]),
     StyleHint::new(
         "palette_dither",
         "Palette dither",
         "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
-    ),
+    )
+    .when("color", &["palette"]),
     StyleHint::new(
         "scope",
         "Scope",
@@ -317,7 +322,7 @@ const HINTS: &[StyleHint] = &[
         "Transition",
         "How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches",
     ),
-    StyleHint::new("tint", "Tint", "The ink for colour mode tint"),
+    StyleHint::new("tint", "Tint", "The ink for colour mode tint").when("color", &["tint"]),
     StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
     StyleHint::new(
         "edges",
