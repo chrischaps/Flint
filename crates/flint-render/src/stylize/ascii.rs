@@ -85,7 +85,9 @@
 //! resolution (depth, normals rebuilt from it, and the style mask), and
 //! `ascii_edge_cells.wgsl` reduces each glyph cell to one line glyph by the
 //! summed structure tensor of every edge pixel in it. The glyph pass draws
-//! it over the tone glyph, thinning a line that splits between two cells.
+//! it over the tone glyph in the one cell the line passes within half a
+//! cell of (#352: the cell pass records where the line crosses the cell's
+//! centre column or row; `ascii_edge_thin.wgsl` keeps it there).
 //! A mask outline fires wherever the id changes and either side is one of
 //! this style's ids (the plain `ascii` id or any per-entity variant's), so
 //! it is what separates one styled entity from another, and it is always
