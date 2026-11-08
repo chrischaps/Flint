@@ -96,7 +96,9 @@ Flint uses an **edit -> validate -> play** loop:
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor;
    #                          `--look help` lists them with their tune sweeps)
    #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
-   #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;
+   #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b,
+   #                          wooze.<knob> (Living Props builds; one Sweep type in
+   #                          commands/sweep.rs, one sheet in style_sheet.rs, #353);
    #                          cells 640x360 unless --width/--height. Cells are in points:
    #                          confirm a winner at the final size)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
