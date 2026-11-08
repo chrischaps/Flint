@@ -453,6 +453,9 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 | `set_style_param(entity_id, param, value)` | Change one setting: a number (`cell`, `glow`, `brightness`, `levels`, ...; clamped to the style's range), a string (`ramp`, `color`, `palette`, `grid`, `transition`, ...), `enabled` (`true`/`false`), `blend` (0--1, how much of the style shows; [Blending in and out](stylize-passes.md#blending-in-and-out)) or a [colour](stylize-passes.md#colours) (`tint`: a three-number array or a `"#rrggbb"` string). Integers count as numbers, so web scripts (i64 only) work unchanged |
 | `tween_style_param(entity_id, param, target, seconds[, easing])` | Let the engine ease a number, `blend` or a colour to `target` over `seconds` of game time (#370), instead of a `set_style_param` in every `on_update`. `easing` is `"linear"`, `"smooth"` (the default, a smoothstep), `"ease_in"`, `"ease_out"` or `"ease_in_out"`. Fires `style_tween_done` with `#{ entity, param }` when it arrives |
 | `clear_entity_style(entity_id)` | Take the entity's own style off, and stop its tweens |
+| `get_entity_style(entity_id)` → `String` | The style the entity is drawn in: its own, one it inherits from its nearest styled ancestor (a style component or a `style_mask`), or the scene's whole-frame style; `""` for none (#372) |
+| `get_entity_style_variant(entity_id)` → `String` | The same style's variant, named for the settings that set it apart: `"ascii{cell=12,ramp=blocks}"`, `"ascii@barrel"` for an object grid, or the style's own name for a whole-frame style; `""` for none |
+| `get_style_param(entity_id, param)` → value | The setting in effect: the entity's (or the ancestor's it inherits), else the scene's `[post_process.styles.<name>]` table, else the style's default. A number (`cell`), a string (`ramp`), a colour as `[r, g, b]` (`tint`), `blend` (0--1, 1 for a whole-frame style) or `enabled` (`true`); `()` when the entity is drawn in no style or the style has no such setting |
 | `reset_style_history()` | The next frame doesn't follow on from this one (a cutscene's new shot, a teleport, a respawn): styles that remember earlier frames, such as ASCII's [temporal stability](stylize-passes.md#camera-cuts), draw it as if it were the first (#343) |
 | `set_camera_cut_detection(enabled)` | Turn the player's own [cut detection](stylize-passes.md#camera-cuts) on or off (on by default). A script that calls `reset_style_history()` at its own cuts can turn it off |
 | `set_look(name)` | Draw the whole frame in a [look](stylize-passes.md#looks-in-scenes-f4-and-scripts) (`"graphite"`, `"matrix"`, or a `styles/<name>.look.toml` beside the scene), laid under the scene's own `[post_process]` keys in place of the look it had (#356). `""` is no look. An unknown look is a warning and changes nothing. Call it once per change, not every frame: each call re-reads the look and replaces the post config |
@@ -463,6 +466,17 @@ Calls are queued and applied after the frame's scripts, before the renderer read
 Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity.
 
 A clear only removes the entity's own style. One it inherits from an ancestor, or the scene's whole-frame ASCII, still reaches it: to keep it smooth under those, use `set_style_param(id, "enabled", false)`.
+
+The reads follow the renderer's own rules, so they answer what `has_component(id, "ascii_style")` can't: a hoop under a styled barrel reads `"ascii"` and the barrel's settings, an unstyled bench in a whole-frame ASCII scene reads `"ascii"` and the scene's, and an entity opted out (`enabled = false`) reads the next whole-frame style that still reaches it, or `""`. Where several whole-frame styles run, the last in the chain (display after HDR) is the one named. With post-processing off, everything reads `""`. They see the world as the script finds it: a `set_entity_style` is queued, so it reads back from the next frame on.
+
+```rust
+fn on_update() {
+    let hoop = get_entity("hoop");                 // a child of the barrel
+    if get_entity_style(hoop) == "ascii" && get_style_param(hoop, "cell") > 16.0 {
+        set_style_param(get_entity("barrel"), "cell", 8.0);
+    }
+}
+```
 
 ```rust
 // Coarse glyphs settling into a fine grid over 1.5 s

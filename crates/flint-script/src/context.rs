@@ -627,6 +627,9 @@ pub struct ScriptCallContext {
     /// `raycast_meshes` and `screen_to_mesh` (ADR 0105). Set by the host
     /// after each render update (`ScriptSystem::set_ray_scene`).
     pub ray_scene: Arc<flint_core::ray_mesh::RayScene>,
+    /// What `get_entity_style` and `get_style_param` ask (#372). Set by the
+    /// host, which can see the renderer's style registry; survives `clear()`.
+    pub style_reader: Option<Arc<dyn crate::style_reader::StyleReader>>,
     /// Real text measurement, installed by the host once a text backend
     /// exists: `(text, size, font family, letter spacing) -> (width, height)`
     /// in logical points. `measure_text` falls back to a glyph-count
@@ -722,6 +725,7 @@ impl ScriptCallContext {
             terrain_height_fn: None,
             ground: None,
             ray_scene: Arc::default(),
+            style_reader: None,
             text_measurer: None,
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),

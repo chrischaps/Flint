@@ -1181,7 +1181,24 @@ impl PlayerApp {
     }
 
     #[profiling::function]
+    /// Hand scripts' style reads (#372) the settings the renderer draws
+    /// with, copied only when they've changed since the last hand-over.
+    fn publish_style_reader(&mut self) {
+        let Some(renderer) = &self.scene_renderer else {
+            return;
+        };
+        let generation = renderer.post_config_generation();
+        if self.style_reader_generation != Some(generation) {
+            self.style_reader_generation = Some(generation);
+            let config = renderer.effective_post_process_config().clone();
+            self.script.set_style_reader(std::sync::Arc::new(
+                super::style_commands::SceneStyles::new(config),
+            ));
+        }
+    }
+
     fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
+        self.publish_style_reader();
         // Set transition state for script access
         match &self.transition_phase {
             TransitionPhase::Idle => {
