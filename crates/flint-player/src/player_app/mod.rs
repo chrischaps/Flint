@@ -211,6 +211,8 @@ pub struct PlayerApp {
     camera: Camera,
     /// Resets style history when the camera cuts (#343)
     camera_cut: camera_cut::CameraCutDetector,
+    /// Style settings the engine is easing for scripts (#370)
+    style_tweens: style_commands::StyleTweens,
 
     // Skeletal animation: entity_id → asset name for bone matrix updates
     skeletal_entity_assets: HashMap<flint_core::EntityId, String>,

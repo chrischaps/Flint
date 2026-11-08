@@ -1295,6 +1295,22 @@ impl PlayerApp {
         // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
         self.script.call_draw_uis(&mut self.world);
 
+        // Style tweens (#370) move on with game time, and pause with the
+        // scripts that started them. Stepped before this frame's commands,
+        // so a tween asked for now starts moving next frame, and a
+        // set_style_param this frame overrides (and stops) it.
+        if self.state_machine.active_config().scripts == SystemPolicy::Run {
+            let step = self
+                .style_tweens
+                .step(&mut self.world, self.clock.delta_time);
+            for event in step.events {
+                self.physics.push_event(event);
+            }
+            for message in step.failures {
+                tracing::warn!(target: "script", "{message}");
+            }
+        }
+
         let script_commands = self.script.drain_commands();
         self.process_script_commands(script_commands);
 
