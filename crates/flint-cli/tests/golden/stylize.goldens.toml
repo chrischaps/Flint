@@ -399,6 +399,22 @@ scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--look", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
+# The pencil style's other hands (#391)
+[[case]]
+name = "look-coloured-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "coloured_pencil"]
+
+[[case]]
+name = "look-blueprint"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "blueprint"]
+
+[[case]]
+name = "look-charcoal"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "charcoal"]
+
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"

@@ -729,7 +729,7 @@ contrast = 1.4
 wobble = 1.8
 ```
 
-Five looks ship, compiled into the CLI so they work from a game repo as well. A `styles/<name>.look.toml` beside the scene, or in its parent folder, takes the place of a built-in with the same name.
+Eight looks ship, compiled into the CLI so they work from a game repo as well. A `styles/<name>.look.toml` beside the scene, or in its parent folder, takes the place of a built-in with the same name.
 
 | Look | Built from |
 |------|------------|
@@ -738,6 +738,11 @@ Five looks ship, compiled into the CLI so they work from a game repo as well. A 
 | `ink_wash` | Kuwahara radius 6, desaturation, warm paper fog and grade, grain: monochrome brush pools |
 | `watercolor` | the watercolor style in four glazes, pigment 0.85, no bloom, light SSAO |
 | `graphite` | the pencil style at a 5-point spacing, contrast 1.4, doubled outlines (inverted mono ASCII before #273) |
+| `coloured_pencil` | the pencil style at `color = 0.6`: the scene's colours in a warm lead on cream paper, two layers, heavy grain (#391) |
+| `blueprint` | the pencil style in white lead on blue paper, `direction = "screen"`, no wobble, sketch or texture lines: a technical drawing (#391) |
+| `charcoal` | the pencil style at an 11-point spacing and 3-point strokes, rubbed shade 0.8, heavy grain, doubled outlines (#391) |
+
+![The four pencil looks on stylize_props: graphite, coloured_pencil, blueprint, charcoal](../images/look-sweep-pencil.png)
 
 ```bash
 flint render --look help                                   # every look, its tune sweeps and notes
