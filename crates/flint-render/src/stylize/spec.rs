@@ -20,8 +20,10 @@
 //! when it lists them), a colour for each of its
 //! [`colors`](super::StyleDescriptor::colors) (`#rrggbb` or `r/g/b`, since
 //! commas split keys; its channels `tint_r`... still take numbers), and
-//! `enabled` / `off`. Values outside a
-//! parameter's F4 range are taken as written, as a scene's are.
+//! `enabled` / `off`. A number outside its parameter's F4 range (a
+//! colour's channels included) is refused, naming the range (#355): a
+//! style clamps it or draws it badly, and either way not as asked. A scene's table keeps
+//! such a value and warns.
 
 use super::{color_from_text, find, names, registry, StyleDescriptor};
 use crate::postprocess::PostProcessConfig;
@@ -203,16 +205,26 @@ fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), Str
         }
         return Ok(());
     }
-    if descriptor.color_setting(key).is_some() {
-        return match color_from_text(value) {
-            Some(_) => Ok(()),
-            None => Err(format!(
+    if let Some(color) = descriptor.color_setting(key) {
+        let Some(rgb) = color_from_text(value) else {
+            return Err(format!(
                 "{name}: {key} must be a colour, #rrggbb or r/g/b (0.3/1/0.4), not '{value}'"
-            )),
+            ));
         };
+        for (p, v) in color.channels.iter().zip(rgb) {
+            if let Some(e) = p.range_error(v) {
+                return Err(format!("{name}: {key}={value}: {e}"));
+            }
+        }
+        return Ok(());
     }
-    if descriptor.params.iter().any(|p| p.name == key) {
-        return number(name, key, value);
+    if let Some(param) = descriptor.params.iter().find(|p| p.name == key) {
+        number(name, key, value)?;
+        let n: f32 = value.parse().expect("checked by number");
+        return match param.range_error(n) {
+            Some(e) => Err(format!("{name}: {e}")),
+            None => Ok(()),
+        };
     }
     Err(format!(
         "{name} has no key '{key}'; it takes: {}",
@@ -368,6 +380,31 @@ mod tests {
         assert!(nan.contains("number"), "{nan}");
         assert!(StyleSpec::parse("ascii:cell").is_err());
         assert!(StyleSpec::parse("kuwahara:cell=3").is_err());
+    }
+
+    #[test]
+    fn a_number_outside_its_range_is_refused_naming_the_range() {
+        let cell = StyleSpec::parse("ascii:cell=400").unwrap_err();
+        assert_eq!(cell, "ascii: cell=400 is outside its range 4..32");
+        assert!(StyleSpec::parse("ascii:cell=3.5").is_err());
+        // The ends are inside
+        assert!(StyleSpec::parse("ascii:cell=4").is_ok());
+        assert!(StyleSpec::parse("ascii:cell=32").is_ok());
+        // A colour's channels have ranges too
+        let tint = StyleSpec::parse("ascii:tint=2/1/0.4").unwrap_err();
+        assert!(
+            tint.contains("tint_r=2 is outside its range 0..1"),
+            "{tint}"
+        );
+        assert!(StyleSpec::parse("ascii:tint=#ffffff").is_ok());
+        // `order` is a place in the chain, not a parameter: any number
+        assert!(StyleSpec::parse("ascii:order=1000").is_ok());
+        // Every default sits inside its own range
+        for d in registry() {
+            for p in d.params {
+                assert!(p.range_error(p.default).is_none(), "{}.{}", d.name, p.name);
+            }
+        }
     }
 
     #[test]

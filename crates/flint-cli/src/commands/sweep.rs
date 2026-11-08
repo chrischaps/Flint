@@ -258,24 +258,14 @@ fn parse_wooze(knob: &str, values: &[String]) -> Result<SweepKey, String> {
 
 fn parse_style(key: &str, style: &str, k: &str, values: &[String]) -> Result<SweepKey, String> {
     for value in values {
+        // `StyleSpec` refuses a value past its param's range (#355), which
+        // would draw the same column twice
         match flint_render::stylize::StyleSpec::parse(&format!("{style}:{k}={value}")) {
             Ok(_) => {}
             // Maybe a user style (#274), registered only once the scene's
             // folder is read; the column's apply checks it
             Err(e) if e.starts_with("unknown style") => {}
             Err(e) => return Err(format!("--sweep {key}={value}: {e}")),
-        }
-        // A style clamps a param to its range, so a value past it would
-        // draw the same column twice; say so instead.
-        let param =
-            flint_render::stylize::find(style).and_then(|d| d.params.iter().find(|p| p.name == k));
-        if let (Some(p), Ok(n)) = (param, value.parse::<f32>()) {
-            if n < p.min || n > p.max {
-                return Err(format!(
-                    "--sweep {key}={value}: outside {style}.{k}'s range {}..{}",
-                    p.min, p.max
-                ));
-            }
         }
     }
     Ok(SweepKey::Style {
@@ -399,7 +389,8 @@ mod tests {
             .unwrap_err()
             .contains("two values"));
         assert!(Sweep::parse("ascii.cel=6,8").is_err());
-        assert!(Sweep::parse("ascii.cell=6,400").is_err(), "out of range");
+        let range = Sweep::parse("ascii.cell=6,400").unwrap_err();
+        assert!(range.contains("outside its range 4..32"), "{range}");
         assert!(Sweep::parse("post.exposur=1,2")
             .unwrap_err()
             .contains("exposure"));

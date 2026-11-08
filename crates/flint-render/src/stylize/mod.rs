@@ -132,12 +132,27 @@ impl StyleStage {
 }
 
 /// One numeric parameter a style takes, with the range the F4 menu offers.
+/// A value outside it is refused by `--style` and warned about in a scene
+/// table (#355): a style clamps it or draws it badly.
 #[derive(Clone, Copy, Debug)]
 pub struct StyleParam {
     pub name: &'static str,
     pub default: f32,
     pub min: f32,
     pub max: f32,
+}
+
+impl StyleParam {
+    /// Why `value` won't draw as written, when it lies outside
+    /// `min..=max`: "cell=400 is outside its range 4..32". `None` inside.
+    pub fn range_error(&self, value: f32) -> Option<String> {
+        (value < self.min || value > self.max).then(|| {
+            format!(
+                "{}={value} is outside its range {}..{}",
+                self.name, self.min, self.max
+            )
+        })
+    }
 }
 
 /// One named choice a style takes (a font, a ramp, a colour mode): a
@@ -1336,6 +1351,12 @@ impl StyleSettings {
                     match color_from_toml(value) {
                         Some(rgb) => {
                             for (p, v) in color.channels.iter().zip(rgb) {
+                                if let Some(e) = p.range_error(v) {
+                                    warnings.push(format!(
+                                        "styles.{name}.{key}: {e}; kept as written, \
+                                         past what the style is tuned for"
+                                    ));
+                                }
                                 setting.params.insert(p.name.to_string(), v);
                             }
                         }
@@ -1345,7 +1366,7 @@ impl StyleSettings {
                     }
                     continue;
                 }
-                if !descriptor.params.iter().any(|p| p.name == key) {
+                let Some(param) = descriptor.params.iter().find(|p| p.name == key) else {
                     let known = descriptor.setting_keys();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
@@ -1356,12 +1377,19 @@ impl StyleSettings {
                         }
                     ));
                     continue;
-                }
+                };
                 let number = value
                     .as_float()
                     .or_else(|| value.as_integer().map(|i| i as f64));
                 match number {
                     Some(n) => {
+                        // Kept as written, as a stray option is: F4 shows
+                        // it, and the style decides what to draw
+                        if let Some(e) = param.range_error(n as f32) {
+                            warnings.push(format!(
+                                "styles.{name}.{e}; kept as written, past what the style is tuned for"
+                            ));
+                        }
                         setting.params.insert(key.clone(), n as f32);
                     }
                     None => warnings.push(format!("styles.{name}.{key} must be a number")),
@@ -2281,16 +2309,40 @@ mod tests {
         assert!(warnings[0].contains("unknown style 'nope'"), "{warnings:?}");
 
         let tables: BTreeMap<String, toml::Table> =
-            toml::from_str("[invert]\nenabled = false\nstrength = 2\nwobble = 3\n").unwrap();
+            toml::from_str("[invert]\nenabled = false\nstrength = 1\nwobble = 3\n").unwrap();
         let (settings, warnings) = StyleSettings::from_tables(&tables);
         assert!(!settings.is_enabled("invert"));
         assert_eq!(
             settings.param("invert", "strength"),
-            Some(2.0),
+            Some(1.0),
             "integers read as numbers"
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn a_table_value_outside_its_range_warns_and_is_kept() {
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[invert]\nstrength = 2\n[ascii]\ncell = 8\ntint = [0.3, 1.5, 0.4]\n")
+                .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        // Kept as written, as a stray option is: F4 shows it
+        assert_eq!(settings.param("invert", "strength"), Some(2.0));
+        assert_eq!(settings.param("ascii", "tint_g"), Some(1.5));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with("styles.invert.strength=2 is outside its range 0..1")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("styles.ascii.tint: tint_g=1.5 is outside its range 0..1")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

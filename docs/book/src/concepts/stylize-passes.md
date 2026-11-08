@@ -16,12 +16,13 @@ bloom_enabled = true
 strength = 1.0          # a parameter: a number
 ```
 
-A table switches its style on unless it says `enabled = false`. Every other key is one of the style's parameters (a number) or one of its options (a string, such as a font or a ramp). Unknown style names and keys are reported as warnings when the scene loads, with the names that do exist, and so is a value outside an option's closed list of choices (#318: a colour mode, a ground, a scope; a ramp or a palette only suggests its list, since a glyph set brings its own ramps and a palette may be a file). The value is kept as written and draws as the default. `flint validate` reports the same warnings:
+A table switches its style on unless it says `enabled = false`. Every other key is one of the style's parameters (a number) or one of its options (a string, such as a font or a ramp). Unknown style names and keys are reported as warnings when the scene loads, with the names that do exist, and so is a value outside an option's closed list of choices (#318: a colour mode, a ground, a scope; a ramp or a palette only suggests its list, since a glyph set brings its own ramps and a palette may be a file). The value is kept as written and draws as the default. A number outside its parameter's range (the range `--list-styles` and F4 give, a colour's channels included) warns too, and is kept as written (#355): a style may clamp it or draw it badly, so it rarely draws as asked. `flint validate` reports the same warnings:
 
 ```text
 WARN unknown style 'watercolour' in [post_process.styles]; registered: kuwahara, watercolor, ascii, pencil, invert, mask_view
 WARN style 'invert' has no parameter 'wobble'; it takes: strength
 WARN styles.ascii.color: unknown value 'plaid'; it takes: source, tint, raw, mono, palette (drawing as 'source')
+WARN styles.invert.strength=3 is outside its range 0..1; kept as written, past what the style is tuned for
 ```
 
 Kuwahara's table is `[post_process.styles.kuwahara]`. Scenes from before the table spell it `kuwahara_enabled`, `kuwahara_radius` and so on in `[post_process]`; those keys are folded into the table when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
@@ -36,6 +37,12 @@ flint render demo/stylize_props.scene.toml --style ascii:color=tint,tint=#ffb340
 flint render levels/tavern.scene.toml --style ascii:off       # the scene's table off (entities' ascii_style stay on, #376)
 flint edit demo/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render demo/pbr_test.scene.toml --style help            # every style and its keys
+```
+
+A word is checked before anything draws, and a mistake stops the command with what would have worked: an unknown style or key names the ones that exist, and a number outside its parameter's range names the range (#355), as `--sweep` does for each column:
+
+```text
+error: invalid value 'ascii:cell=400' for '--style <STYLES>': ascii: cell=400 is outside its range 4..32
 ```
 
 The windowed hosts take the same words (#328): `flint play`, `flint-player` and the scene viewer (`flint edit scene.toml`), with `--style-time` beside them. They write the words over the scene's `[post_process]` when it loads and again after each scene transition (the player), each hot reload and each authored/default swap in F4 (the viewer), so the command line keeps winning over the file. F4 and the F3 Styles panel still edit the live result, and their Authored button goes back to what the scene says. On the web the query takes them as `?style=ascii:cell=12`, repeated for more than one (`?style=ascii&style=invert`).
@@ -66,7 +73,7 @@ invert (Invert) [display, builtin]
   strength  1  [0 .. 1]  — How far toward the negative: 0 = none, 1 = full
 ```
 
-Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: a value outside it is taken as written. Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
+Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: `--style` refuses a value outside it, and a scene's table warns and keeps it (#355). Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
 The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when the list is closed), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
