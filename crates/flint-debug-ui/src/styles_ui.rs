@@ -6,11 +6,14 @@
 //! A section has the style's toggle, a row per setting (a combo or text
 //! field for an option, a slider for a parameter, one colour picker for an
 //! `_r/_g/_b` triple; labels, hover text and whole-number steps come from
-//! the descriptor's hints), and three buttons: **Defaults** clears the
-//! style's values, **Authored** puts back what the scene says, and **Copy
+//! the descriptor's hints), and four buttons: **Defaults** clears the
+//! style's values, **Authored** puts back what the scene says, **Copy
 //! TOML** puts the `[post_process.styles.<name>]` block that reproduces
 //! what is on screen on the clipboard, so a look tuned by eye goes back
-//! into the scene in one paste.
+//! into the scene in one paste, and **Commit to scene** (#364) writes that
+//! block into the scene file itself, key by key
+//! ([`flint_scene::SceneDocument::set_style_table`]), while the host names
+//! a file to write.
 //!
 //! While the host gives it the scene's authored settings, a dot marks each
 //! value that differs from them (hover for the scene's value), and the
@@ -62,12 +65,17 @@ pub struct StylesEdit {
     /// A style was switched on: the host builds its pipelines
     /// (`ensure_style_resources`).
     pub needs_resources: bool,
+    /// This style was just written to the scene file (#364): what the
+    /// config says of it is now what the scene says, so the host makes its
+    /// authored settings match (`StyleSettings::restore` from the config).
+    pub committed: Option<&'static str>,
 }
 
 impl StylesEdit {
     fn merge(&mut self, other: StylesEdit) {
         self.changed |= other.changed;
         self.needs_resources |= other.needs_resources;
+        self.committed = other.committed.or(self.committed);
     }
 }
 
@@ -98,6 +106,15 @@ pub struct StylesEditor {
     /// options' values they were found under, so a combo lists the folder
     /// once rather than every frame. Dropped when the scene changes.
     choices: HashMap<(&'static str, &'static str), (String, Vec<String>)>,
+    /// The scene file Commit to scene writes (#364); `None` (a scene from
+    /// a bundle, or a host with no file) hides the button.
+    scene_file: Option<PathBuf>,
+    /// Why Commit to scene is greyed out right now, when it is (the
+    /// viewer's unsaved entity edits, which the reload would drop).
+    commit_blocked: Option<String>,
+    /// The last commit's note beside the buttons: the style, when, and its
+    /// error if it failed.
+    commit_note: Option<(&'static str, f64, Option<String>)>,
 }
 
 impl StylesEditor {
@@ -107,6 +124,39 @@ impl StylesEditor {
     pub fn set_scene_dir(&mut self, scene_dir: Option<PathBuf>) {
         self.scene_dir = scene_dir;
         self.choices.clear();
+    }
+
+    /// The scene file Commit to scene writes into (#364). `None` hides the
+    /// button: a scene played from a bundle has no file to write.
+    pub fn set_scene_file(&mut self, scene_file: Option<PathBuf>) {
+        self.scene_file = scene_file;
+    }
+
+    /// The scene file Commit to scene writes, when there is one.
+    pub fn scene_file(&self) -> Option<&Path> {
+        self.scene_file.as_deref()
+    }
+
+    /// Grey out Commit to scene, saying why on hover; `None` allows it.
+    pub fn set_commit_blocked(&mut self, reason: Option<String>) {
+        self.commit_blocked = reason;
+    }
+
+    /// Write style `style`'s settings in `pp` into the scene file and make
+    /// `pp` say exactly what the file now says of it (the values at their
+    /// defaults dropped), so it and the authored settings compare equal.
+    pub fn commit(
+        &self,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+    ) -> Result<(), String> {
+        let path = self
+            .scene_file
+            .as_deref()
+            .ok_or_else(|| "No scene file to write".to_string())?;
+        let committed = commit_style(path, style, pp)?;
+        pp.styles.restore(style.name, &committed);
+        Ok(())
     }
 
     /// The scene folder the editor looks in.
@@ -287,8 +337,71 @@ impl StylesEditor {
                             ui.ctx().request_repaint();
                         }
                     }
+                    edit.merge(self.commit_button(ui, style, pp));
                 });
             });
+        edit
+    }
+
+    /// The Commit to scene button and its note, while there is a scene
+    /// file to write.
+    fn commit_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+    ) -> StylesEdit {
+        let mut edit = StylesEdit::default();
+        let Some(path) = self.scene_file.as_deref() else {
+            return edit;
+        };
+        let file = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
+        let button = ui
+            .add_enabled(
+                self.commit_blocked.is_none(),
+                egui::Button::new("Commit to scene").small(),
+            )
+            .on_hover_text(format!(
+                "Write this look into {file}'s [post_process.styles.{}], keeping its comments \
+                 (values back at their default are removed)",
+                style.name
+            ));
+        let button = match &self.commit_blocked {
+            Some(reason) => button.on_disabled_hover_text(reason.as_str()),
+            None => button,
+        };
+        let now = ui.input(|i| i.time);
+        if button.clicked() {
+            match self.commit(style, pp) {
+                Ok(()) => {
+                    edit.changed = true;
+                    edit.committed = Some(style.name);
+                    self.commit_note = Some((style.name, now, None));
+                }
+                Err(e) => {
+                    tracing::error!("Commit to scene failed: {e}");
+                    self.commit_note = Some((style.name, now, Some(e)));
+                }
+            }
+        }
+        if let Some((name, at, error)) = &self.commit_note {
+            if *name == style.name {
+                match error {
+                    Some(e) => {
+                        ui.colored_label(ui.visuals().error_fg_color, "not written")
+                            .on_hover_text(e.as_str());
+                    }
+                    None if now - at < COPIED_NOTE_SECS => {
+                        ui.weak("written");
+                        ui.ctx().request_repaint();
+                    }
+                    None => {}
+                }
+            }
+        }
         edit
     }
 
@@ -473,6 +586,36 @@ impl StylesEditor {
         }
         changed
     }
+}
+
+/// Write style `style`'s settings in `pp` into the scene file at `path`
+/// (#364): the block Copy TOML would copy, merged key by key into the
+/// file's `[post_process.styles.<name>]`. Returns the settings the file now
+/// holds for the style, read back from that block.
+pub fn commit_style(
+    path: &Path,
+    style: &'static StyleDescriptor,
+    pp: &PostProcessConfig,
+) -> Result<StyleSettings, String> {
+    let block = stylize::style_toml(style, pp);
+    let mut doc = flint_scene::SceneDocument::from_file(path)?;
+    doc.set_style_table(style.name, &block, &style.table_keys())?;
+    doc.save(path)?;
+    let parsed: toml::Table =
+        toml::from_str(&block).map_err(|e| format!("Style block doesn't parse: {e}"))?;
+    let table = parsed
+        .get("post_process")
+        .and_then(|p| p.get("styles"))
+        .and_then(|s| s.get(style.name))
+        .and_then(|t| t.as_table())
+        .cloned()
+        .unwrap_or_default();
+    let tables = std::collections::BTreeMap::from([(style.name.to_string(), table)]);
+    let (settings, warnings) = StyleSettings::from_tables(&tables);
+    for warning in warnings {
+        tracing::warn!("Committed style block: {warning}");
+    }
+    Ok(settings)
 }
 
 /// The styles on in `stage`, in the order its chain runs them (#299).
@@ -899,6 +1042,100 @@ mod tests {
         let chain = chain_of(StyleStage::Display, &pp);
         move_earlier(&mut pp, &chain, 2);
         assert_eq!(names(&pp), ["ascii", "invert", "watercolor"]);
+    }
+
+    /// A scene's `[post_process.styles]` as a fresh load reads it.
+    fn styles_in_file(path: &Path) -> StyleSettings {
+        let text = std::fs::read_to_string(path).unwrap();
+        let file: toml::Table = toml::from_str(&text).unwrap();
+        let tables = file
+            .get("post_process")
+            .and_then(|p| p.get("styles"))
+            .and_then(|s| s.as_table())
+            .map(|s| {
+                s.iter()
+                    .map(|(k, v)| (k.clone(), v.as_table().unwrap().clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        settings
+    }
+
+    #[test]
+    fn commit_writes_the_look_and_clears_the_marks() {
+        let dir = std::env::temp_dir().join(format!("flint-commit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("room.scene.toml");
+        std::fs::write(
+            &path,
+            "# A dim room\n[scene]\nname = \"Room\"\n\n[post_process]\nbloom_intensity = 0.1 # soft\n\n\
+             # The look\n[post_process.styles.ascii]\ncell = 12 # tuned by eye\nglow = 0.6\n",
+        )
+        .unwrap();
+        let mut authored = styles_in_file(&path);
+        let mut pp = PostProcessConfig {
+            styles: authored.clone(),
+            ..Default::default()
+        };
+        // Tuned in F4: a new cell and ramp, glow back at its default, a tint
+        let ascii = stylize::find("ascii").unwrap();
+        pp.styles.set_param("ascii", "cell", 9.0);
+        pp.styles.set_option("ascii", "ramp", "blocks");
+        let glow = ascii.params.iter().find(|p| p.name == "glow").unwrap();
+        pp.styles.set_param("ascii", "glow", glow.default);
+        pp.styles.set_color("ascii", "tint", [0.35, 1.0, 0.45]);
+        let shown = pp.clone();
+
+        let mut editor = StylesEditor::default();
+        editor.set_scene_file(Some(path.clone()));
+        editor.commit(ascii, &mut pp).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# A dim room"), "{text}");
+        assert!(text.contains("bloom_intensity = 0.1 # soft"), "{text}");
+        assert!(
+            text.contains("# The look\n[post_process.styles.ascii]"),
+            "{text}"
+        );
+        assert!(text.contains("cell = 9 # tuned by eye"), "{text}");
+        assert!(!text.contains("glow"), "{text}");
+
+        // Loaded fresh, the scene draws what was on screen
+        let fresh = styles_in_file(&path);
+        assert!(fresh.same_style("ascii", &pp.styles));
+        for p in ascii.params {
+            assert_eq!(
+                ascii.param(&shown, p.name),
+                ascii.param(&pp, p.name),
+                "{}",
+                p.name
+            );
+        }
+        for o in ascii.options {
+            assert_eq!(
+                ascii.option(&shown, o.name),
+                ascii.option(&pp, o.name),
+                "{}",
+                o.name
+            );
+        }
+
+        // The host's authored settings follow the commit: nothing is marked
+        authored.restore("ascii", &pp.styles);
+        let text = drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert!(text.contains(&"Commit to scene".to_string()), "{text:?}");
+        assert!(!text.contains(&"edited".to_string()), "{text:?}");
+        assert_eq!(editor.marked, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_scene_file_no_commit_button() {
+        let mut pp = all_on();
+        let text = drawn_text(&mut StylesEditor::default(), &mut pp, None);
+        assert!(!text.contains(&"Commit to scene".to_string()));
+        assert!(text.contains(&"Copy TOML".to_string()));
     }
 
     #[test]
