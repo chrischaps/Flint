@@ -1,0 +1,57 @@
+# Blueprint: white lines on blue paper. Straight, single outlines and one
+# even hatch at a fixed angle, so the scene reads as a technical drawing.
+#
+#   flint render <scene> --look blueprint -o blueprint.png
+#   flint render <scene> --look blueprint --sweep pencil.layers=0,1,2 -o hatch.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# One of three pencil looks beside graphite (#391).
+
+[look]
+name = "blueprint"
+description = "Blueprint: white technical lines on blue paper, straight outlines, one hatch angle"
+tune = [
+    "pencil.layers=0,1,2",
+    "pencil.contour_width=0.75,1,1.5",
+    "pencil.angle=30,45,60",
+    "pencil.brightness=0.25,0.45,0.55",
+]
+notes = """
+The lead is white, so where graphite would darken, blueprint lightens: the
+hatching marks the scene's shadows as white rule. layers = 0 leaves outlines
+only (a clean elevation); 1 adds the shadow hatch; 2 starts to fill the
+paper. wobble, sketchy and detail are 0 on purpose: a drafted line is true,
+single, and drawn only at the form's edges, never at its texture.
+brightness keeps the hatch to the shadows: on stylize_props, 0.25 rules the
+whole floor, 0.45 leaves it a faint wash, 0.55 leaves the props' outlines
+alone. A dark scene wants it higher still.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = true
+ssao_intensity = 1.0
+exposure = 1.1
+# No vignette: the darker corners would read as hatch, white on blue
+vignette_enabled = false
+
+[post_process.styles.pencil]
+direction = "screen"
+angle = 45.0
+layers = 1
+spacing = 6.0
+thickness = 0.8
+contrast = 1.1
+brightness = 0.45
+darkness = 0.6
+shade = 0.0
+contour = 1.2
+contour_width = 1.0
+crease = 1.4
+detail = 0.0
+wobble = 0.0
+sketchy = 0.0
+grain = 0.15
+paper = [0.12, 0.25, 0.55]
+lead = [0.92, 0.95, 1.0]

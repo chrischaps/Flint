@@ -31,6 +31,11 @@ struct Row {
     flags: u32,
     paper: vec3<f32>,
     layers: f32,
+    // 1: paint on the paper image (#390)
+    image: f32,
+    _p0: f32,
+    _p1: f32,
+    _p2: f32,
 };
 
 struct PaintUniforms {
@@ -41,6 +46,8 @@ struct PaintUniforms {
     passthrough: u32,
     near: f32,
     far: f32,
+    // The paper image's mean and spread of luma (#390)
+    paper_stats: vec4<f32>,
     rows: array<Row, 16>,
     slots: array<vec4<u32>, 64>,
 };
@@ -52,6 +59,8 @@ struct PaintUniforms {
 @group(2) @binding(1) var wash_sampler: sampler;
 @group(3) @binding(0) var mask_texture: texture_2d<u32>;
 @group(3) @binding(1) var depth_texture: texture_depth_2d;
+// The paper image (#390), a blank texel while none is named
+@group(3) @binding(2) var paper_texture: texture_2d<f32>;
 
 const PASS_THROUGH: u32 = 1u;
 
@@ -232,8 +241,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     );
     let depth_edge = smoothstep(0.02, 0.15, (farther - z) / max(z, 1e-3));
 
-    // Density: the pigment's thickness here, 1 = as the picture has it
-    let h = paper_height(pt, r.grain_scale);
+    // Density: the pigment's thickness here, 1 = as the picture has it.
+    // The paper image (#390), a texel every grain_scale points, gives the
+    // height and a tint in place of the noise
+    var h = paper_height(pt, r.grain_scale);
+    var tint = vec3<f32>(1.0);
+    if (r.image > 0.5) {
+        let lod = log2(max(1.0 / (r.grain_scale * ppp), 1e-3));
+        let c = img_read(paper_texture, pt / r.grain_scale, lod, true, vec2<f32>(0.0), vec2<f32>(0.0));
+        h = img_paper_height(c, params.paper_stats.x, params.paper_stats.y);
+        tint = img_paper_tint(c);
+    }
     let load = 1.0 - luma(base);
     var d = r.pigment;
     // Pooling deepens a dark colour fastest under C^d, so it fades with the
@@ -251,6 +269,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // The paper: its colour, and its relief catching light
     let relief = 1.0 - r.grain * (0.5 - h) * 0.3;
-    let out = clamp(pigment * r.paper * relief, vec3<f32>(0.0), vec3<f32>(1.0));
+    let out = clamp(pigment * r.paper * tint * relief, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(select(out, to_linear(out), params.srgb == 1u), src.a);
 }
