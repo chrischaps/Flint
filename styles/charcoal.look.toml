@@ -1,0 +1,51 @@
+# Charcoal: broad, smudged strokes on toothy paper. Wide spacing, thick
+# lines, rubbed shade in the darks and every outline drawn twice.
+#
+#   flint render <scene> --look charcoal -o charcoal.png
+#   flint render <scene> --look charcoal --sweep pencil.shade=0.4,0.8,1 -o smudge.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# One of three pencil looks beside graphite (#391).
+
+[look]
+name = "charcoal"
+description = "Charcoal: broad strokes, rubbed darks, heavy grain and doubled outlines"
+tune = [
+    "pencil.shade=0.4,0.8,1",
+    "pencil.spacing=8,11,15",
+    "pencil.thickness=2,3,4",
+    "pencil.grain=0.6,0.9,1",
+]
+notes = """
+shade is the smudge: the soft rubbed tone under the strokes in the darks.
+At 0.8 the shadows go to a velvet black with the strokes still showing on
+top; at 1 they block in. Spacing and thickness go together: a stick of
+charcoal is wide, so keep thickness near a quarter of the spacing or the
+strokes merge into a wash. Grain is the paper's tooth, which charcoal
+catches on hardest; under 0.6 it looks like a soft pencil instead.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = true
+ssao_intensity = 1.4
+exposure = 1.1
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.pencil]
+spacing = 11.0
+thickness = 3.0
+layers = 3
+contrast = 1.5
+darkness = 0.95
+shade = 0.8
+contour = 1.3
+contour_width = 2.5
+detail = 0.2
+wobble = 3.0
+sketchy = 1.0
+grain = 0.9
+paper = [0.9, 0.88, 0.84]
+lead = [0.07, 0.065, 0.07]

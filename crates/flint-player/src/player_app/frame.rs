@@ -644,7 +644,8 @@ impl PlayerApp {
             &context.device,
             &context.queue,
             &mut encoder,
-            &context.depth_view,
+            // With its id, so bind groups over it are kept (#379)
+            context.depth_target(),
             &self.camera,
             &view,
         );
@@ -1784,8 +1785,14 @@ impl PlayerApp {
                 render_stats_overlay(ctx, stats, debug_width);
             }
 
+            // On the web, above the page's wordmark in the same corner
+            // (index.html's `.mark`, two lines at bottom 20px; #415)
             #[cfg(feature = "debug-hud")]
-            flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
+            flint_debug_ui::paint_style_errors(
+                ctx,
+                &style_errors,
+                if cfg!(target_arch = "wasm32") { 52.0 } else { 0.0 },
+            );
         });
 
         self.draw_commands = draw_commands;

@@ -33,6 +33,14 @@
 //! prelude decodes and encodes an sRGB target, so a user never meets the
 //! gotcha the built-ins work around by hand.
 //!
+//! A style that reads the mask (`inputs = ["mask"]`) is per-entity
+//! (#414), as ASCII is: it gets the component `<name>_style`, a
+//! `style_mask` naming it switches it on with no table, and `params` is
+//! a private copy the entry point fills with the pixel's own row of the
+//! settings table (row 0 the scene's, then one a variant, and a slot
+//! table from mask id to row), so a shader written for the whole frame
+//! reads each entity's settings unchanged.
+//!
 //! The composed module is parsed and validated with naga before wgpu sees
 //! it (natively), and an error comes back as `file:line:col` in the user's
 //! file. A style that fails draws its input unchanged (a passthrough) and
@@ -266,6 +274,12 @@ pub struct StyleSource {
     pub inputs: Inputs,
     /// Bloom reads the style's result by default (#300).
     pub feeds_bloom: bool,
+    /// The component an entity takes the style with (#414): `<name>_style`
+    /// for a style that reads the mask, its fields the parameters. It
+    /// makes the style per-entity, as `ascii_style` does ASCII: a
+    /// `style_mask` naming it (or the component) switches it on with no
+    /// table, and each entity's settings reach its own pixels as `params`.
+    pub component: Option<String>,
     /// Parameters in uniform order (by name).
     pub params: Vec<(String, ParamDef)>,
     /// Options in uniform order (by name), after the parameters (#413).
@@ -503,6 +517,7 @@ impl ShaderStyleDef {
         }
         images.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(StyleSource {
+            component: inputs.mask.then(|| component_name(&self.name)),
             label: self.label.unwrap_or_else(|| super::humanize(&self.name)),
             name: self.name,
             stage,
@@ -520,6 +535,20 @@ impl ShaderStyleDef {
 /// How many parameters a style may declare: 64 floats is a 272-byte
 /// uniform, well inside every backend's limit.
 pub const MAX_PARAMS: usize = 64;
+
+/// Settings rows a mask-reading style's uniform holds (#414): row 0 the
+/// scene's, then one a per-entity variant. Variants past it are drawn
+/// with the scene's settings.
+pub const MAX_VARIANTS: usize = 16;
+
+/// Mask ids the slot table covers; an entity of the style with an id past
+/// it is drawn like an unstyled pixel.
+pub const MAX_IDS: usize = 256;
+
+/// The component a mask-reading user style `name` is set on entities with.
+pub fn component_name(name: &str) -> String {
+    format!("{name}_style")
+}
 
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
@@ -576,7 +605,6 @@ struct StylePixel {
 };
 
 @group(0) @binding(0) var<uniform> flint: FlintFrame;
-@group(0) @binding(1) var<uniform> params: Params;
 @group(1) @binding(0) var flint_input: texture_2d<f32>;
 @group(1) @binding(1) var flint_sampler: sampler;
 
@@ -663,14 +691,32 @@ fn flint_mask_id(uv: vec2<f32>) -> u32 {
     return textureLoad(flint_mask_texture, flint_mask_texel(uv), 0).r;
 }
 
+// Mask id -> this style's settings row + 1; 0 for a pixel that isn't one
+// of this style's entities (or one opted out)
+fn flint_slot(id: u32) -> u32 {
+    if (id >= 256u) {
+        return 0u;
+    }
+    return flint_params.slots[id / 4u][id % 4u];
+}
+
 // How much of this style the entity at uv asks for: 0 where it isn't this
-// style's (a `style_mask` naming it), else its blend 0..1 (#278)
+// style's (a `style_mask` or `<name>_style` naming it), else its blend
+// 0..1 (#278)
 fn flint_style_blend(uv: vec2<f32>) -> f32 {
     let m = textureLoad(flint_mask_texture, flint_mask_texel(uv), 0);
-    if (flint.mask_id == 0u || m.r != flint.mask_id) {
+    if (flint_slot(m.r) == 0u) {
         return 0.0;
     }
     return f32(m.g) / 65535.0;
+}
+
+// The settings of the entity at uv (#414): its `<name>_style` fields, else
+// the scene's table, else the defaults. `params` is this for the pixel
+// being drawn; this reads a neighbour's
+fn flint_params_at(uv: vec2<f32>) -> Params {
+    let s = flint_slot(flint_mask_id(uv));
+    return flint_params.rows[max(s, 1u) - 1u];
 }
 "#;
 
@@ -693,7 +739,13 @@ fn flint_edge(uv: vec2<f32>) -> f32 {
 }
 "#;
 
-fn epilogue(stage: StyleStage) -> String {
+fn epilogue(source: &StyleSource) -> String {
+    let stage = source.stage;
+    let own = if source.inputs.mask {
+        "params = flint_params_at(in.uv);"
+    } else {
+        "params = flint_params.rows[0];"
+    };
     let out = if stage == StyleStage::Display {
         "let c = style(p);\n    \
          let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
@@ -720,6 +772,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> FlintVertexOut {{
 
 @fragment
 fn fs_main(in: FlintVertexOut) -> @location(0) vec4<f32> {{
+    {own}
     var p: StylePixel;
     p.uv = in.uv;
     p.pos = in.position.xy;
@@ -744,6 +797,21 @@ pub fn prelude(source: &StyleSource) -> String {
     // Never empty, and the fields above round up to 16 bytes before it
     text.push_str("    _flint_pad: vec4<f32>,\n};\n");
     text.push_str(&option_constants(source));
+    // The settings table (#414): row 0 the scene's, then a row for each
+    // per-entity variant, and which row each mask id takes
+    let mask = source.inputs.mask;
+    text.push_str(&format!(
+        "\nstruct FlintParamTable {{\n    rows: array<Params, {}>,\n{}}};\n\
+         @group(0) @binding(1) var<uniform> flint_params: FlintParamTable;\n\
+         // This pixel's settings: its entity's, else the scene's\n\
+         var<private> params: Params;\n",
+        table_rows(mask),
+        if mask {
+            format!("    slots: array<vec4<u32>, {}>,\n", MAX_IDS / 4)
+        } else {
+            String::new()
+        }
+    ));
     text.push_str(&prelude_sample(source.stage));
     if source.inputs.depth {
         text.push_str(PRELUDE_DEPTH);
@@ -849,7 +917,7 @@ pub fn compose(source: &StyleSource, user: &str) -> Composed {
         user.push('\n');
     }
     let user_lines = user.matches('\n').count();
-    let text = format!("{prelude}{user}{}", epilogue(source.stage));
+    let text = format!("{prelude}{user}{}", epilogue(source));
     Composed {
         text,
         prelude_lines,
@@ -863,6 +931,42 @@ pub const PASSTHROUGH: &str = "fn style(p: StylePixel) -> vec4<f32> {\n    retur
 /// The size in bytes of a style's `Params` uniform.
 pub fn params_size(count: usize) -> usize {
     count.div_ceil(4) * 16 + 16
+}
+
+/// The settings rows a style's table holds: one (the scene's) unless it
+/// reads the mask, which is what tells entities apart.
+pub fn table_rows(mask: bool) -> usize {
+    if mask {
+        MAX_VARIANTS
+    } else {
+        1
+    }
+}
+
+/// The size in bytes of a style's settings table (#414): its rows of
+/// `Params`, then for a mask-reading style the slot of each mask id.
+pub fn table_size(count: usize, mask: bool) -> usize {
+    table_rows(mask) * params_size(count) + if mask { MAX_IDS * 4 } else { 0 }
+}
+
+/// The settings table's contents, as 32-bit words: `rows` (row 0 the
+/// scene's) each laid out as `Params` with values in declaration order,
+/// then, with `slots`, the row + 1 each mask id takes (0: not this
+/// style's).
+pub fn table_words(count: usize, rows: &[Vec<f32>], slots: Option<&[u32; MAX_IDS]>) -> Vec<u32> {
+    let stride = params_size(count) / 4;
+    let mask = slots.is_some();
+    let mut words = vec![0u32; table_size(count, mask) / 4];
+    for (r, row) in rows.iter().take(table_rows(mask)).enumerate() {
+        for (i, v) in row.iter().take(count).enumerate() {
+            words[r * stride + i] = v.to_bits();
+        }
+    }
+    if let Some(slots) = slots {
+        let at = table_rows(mask) * stride;
+        words[at..at + MAX_IDS].copy_from_slice(slots);
+    }
+    words
 }
 
 // ---------------------------------------------------------------------------
@@ -893,7 +997,8 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
         locate(
             &composed,
             &file,
-            e.location(&composed.text),
+            e.location(&composed.text)
+                .map(|l| (l.line_number, l.line_position)),
             e.message(),
             source,
         )
@@ -913,7 +1018,8 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
         locate(
             &composed,
             &file,
-            e.location(&composed.text),
+            e.location(&composed.text)
+                .map(|l| (l.line_number, l.line_position)),
             &message,
             source,
         )
@@ -924,25 +1030,26 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
 /// `file:line:col: message`, with the line remapped into the user's file
 /// and the offending line quoted; a hint when the user called a helper of
 /// an input they didn't declare.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// `at` is the composed module's 1-based (line, column): naga's natively,
+/// the browser compiler's on the web (#415).
 fn locate(
     composed: &Composed,
     file: &str,
-    at: Option<naga::SourceLocation>,
+    at: Option<(u32, u32)>,
     message: &str,
     source: &StyleSource,
 ) -> String {
     let mut out = match at {
-        Some(loc) => match composed.user_line(loc.line_number as usize) {
+        Some((line_number, line_position)) => match composed.user_line(line_number as usize) {
             Some(line) => {
                 let text = composed
                     .text
                     .lines()
-                    .nth(loc.line_number as usize - 1)
+                    .nth(line_number as usize - 1)
                     .unwrap_or("");
                 format!(
-                    "{file}:{line}:{}: {message}\n    {line} | {}",
-                    loc.line_position,
+                    "{file}:{line}:{line_position}: {message}\n    {line} | {}",
                     text.trim_end()
                 )
             }
@@ -950,8 +1057,7 @@ fn locate(
                 "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
             ),
             None => format!(
-                "{file}: {message} (in the generated code, line {}; check the parameter names)",
-                loc.line_number
+                "{file}: {message} (in the generated code, line {line_number}; check the parameter names)"
             ),
         },
         None => format!("{file}: {message}"),
@@ -1121,6 +1227,7 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
                             | "flint_world_pos"
                             | "flint_mask_id"
                             | "flint_style_blend"
+                            | "flint_params_at"
                             | "flint_edges"
                             | "flint_edge"
                     ),
@@ -1136,11 +1243,41 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
     }
 }
 
-/// On the web there is no naga in the player: the browser's own WGSL
-/// compiler reports, through wgpu's error scope.
+/// On the web there is no naga in the player: wgpu builds naga's WGSL front
+/// end for wasm, but only its `webgl` backend calls it, so the linker drops
+/// it and checking here would add it to the download (#415). The browser's
+/// own WGSL compiler reports instead, a frame or two later
+/// ([`compiler_error`], read when the build settles).
 #[cfg(target_arch = "wasm32")]
 pub fn check(_source: &StyleSource, _user: &str) -> Result<Report, String> {
     Ok(Report::default())
+}
+
+/// The first error in a compiler's report on `composed` (the browser's
+/// `getCompilationInfo()` on the web), as `file:line:col: message` with the
+/// line in the user's file, as [`check`] gives natively (#415). `None`
+/// when it reported none.
+pub fn compiler_error(
+    source: &StyleSource,
+    composed: &Composed,
+    info: &wgpu::CompilationInfo,
+) -> Option<String> {
+    let errors: Vec<_> = info
+        .messages
+        .iter()
+        .filter(|m| m.message_type == wgpu::CompilationMessageType::Error)
+        .collect();
+    let first = errors.first()?;
+    let file = source.wgsl_path.display().to_string();
+    let at = first
+        .location
+        .map(|l| (l.line_number, l.line_position))
+        .filter(|(line, _)| *line > 0);
+    let mut out = locate(composed, &file, at, first.message.trim(), source);
+    if errors.len() > 1 {
+        out.push_str(&format!("\n    (and {} more)", errors.len() - 1));
+    }
+    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,12 +1390,26 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Whether user WGSL calls `flint_style_blend` outside a line comment.
+fn calls_style_blend(user: &str) -> bool {
+    user.lines().any(|line| {
+        let code = line.split("//").next().unwrap_or("");
+        code.contains("flint_style_blend")
+    })
+}
+
 /// Make `source`'s descriptor and register it: appended, or with
 /// `replace`, put where the style of the same name stands (#275).
 fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // A shader that fails registers anyway: it draws a passthrough and its
     // error waits for the host, so a typo never takes a style's settings away
-    let error = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+    let wgsl = flint_core::vfs::read_to_string(&source.wgsl_path);
+    // A shader that reads its own blend draws it (#396): the framework's
+    // cross-fade would apply it twice. Decided when the description is
+    // read, so a shader that starts or stops calling it takes effect at the
+    // next load or `.shader.toml` edit
+    let blends_itself = wgsl.as_ref().is_ok_and(|user| calls_style_blend(user));
+    let error = match wgsl {
         Err(e) => Some(format!("{}: {e}", source.wgsl_path.display())),
         Ok(user) => match check(&source, &user) {
             Ok(report) => {
@@ -1351,23 +1502,30 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
             }),
     );
     let name = leak(source.name.clone());
-    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(
-        StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
-            .params(Box::leak(params.into_boxed_slice()))
-            .options(Box::leak(options.into_boxed_slice()))
-            .uses_mask(if source.inputs.mask {
-                MaskUse::Always
-            } else {
-                MaskUse::Never
-            })
-            .needs(if source.inputs.edges {
-                &[StyleNeed::Edges]
-            } else {
-                &[]
-            })
-            .hints(Box::leak(hints.into_boxed_slice()))
-            .feeds_bloom(source.feeds_bloom),
-    ));
+    let mut built = StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create);
+    if let Some(component) = &source.component {
+        built = built.component(leak(component.clone()));
+    }
+    let built = built
+        .params(Box::leak(params.into_boxed_slice()))
+        .options(Box::leak(options.into_boxed_slice()))
+        .uses_mask(if source.inputs.mask {
+            MaskUse::Always
+        } else {
+            MaskUse::Never
+        })
+        .needs(if source.inputs.edges {
+            &[StyleNeed::Edges]
+        } else {
+            &[]
+        })
+        .hints(Box::leak(hints.into_boxed_slice()))
+        .feeds_bloom(source.feeds_bloom);
+    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(if blends_itself {
+        built.blends_itself()
+    } else {
+        built
+    }));
     // The chain's bind cache keys on these names, so each install gets its
     // own: a replaced style (#275) builds new buffers and layouts, and a
     // cached group under the old name would bind the old pass's buffers
@@ -1609,12 +1767,61 @@ struct FlintFrameUniforms {
 struct Build {
     /// The user's pipeline, or `None` while it has never compiled.
     pipeline: Option<wgpu::RenderPipeline>,
+    /// A build waiting for the compiler's verdict before it draws (#415).
+    pending: Option<Pending>,
     /// The WGSL file's modified time when last read.
     #[cfg(not(target_arch = "wasm32"))]
     modified: Option<std::time::SystemTime>,
     /// Frames since the file was last looked at.
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+}
+
+/// A pipeline made but not yet trusted: it draws once both of the GPU's
+/// answers say it compiled (#415). Natively both are ready as soon as it
+/// is made; on the web they are browser promises, settled a frame or two
+/// later, and polled each frame until then (an invalid pipeline in a pass
+/// would lose the whole frame, so the last good build draws meanwhile).
+struct Pending {
+    pipeline: wgpu::RenderPipeline,
+    composed: Composed,
+    /// The shader compiler's messages, with composed-module lines.
+    info: Settling<wgpu::CompilationInfo>,
+    /// What the validation error scope caught (the shader, or the
+    /// pipeline against its layout).
+    scope: Settling<Option<wgpu::Error>>,
+}
+
+/// A future polled by hand once a frame, never awaited: nothing in a frame
+/// may block on the browser.
+enum Settling<T> {
+    Waiting(std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>),
+    Done(T),
+}
+
+impl<T> Settling<T> {
+    fn new(future: impl std::future::Future<Output = T> + Send + 'static) -> Self {
+        Settling::Waiting(Box::pin(future))
+    }
+
+    /// Poll once if still waiting; whether it has settled.
+    fn poll(&mut self) -> bool {
+        if let Settling::Waiting(future) = self {
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(value) => *self = Settling::Done(value),
+                std::task::Poll::Pending => return false,
+            }
+        }
+        true
+    }
+
+    fn take(self) -> Option<T> {
+        match self {
+            Settling::Done(value) => Some(value),
+            Settling::Waiting(_) => None,
+        }
+    }
 }
 
 struct CustomPass {
@@ -1634,6 +1841,8 @@ struct CustomPass {
     /// Group 2 when a style binds images but reads none of the optional
     /// buffers: an empty group keeps the images at group 3.
     empty: Option<wgpu::BindGroup>,
+    /// Whether the variant overflow has been warned about.
+    warned: std::sync::atomic::AtomicBool,
 }
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -1702,7 +1911,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         bind_group_layouts: &[&frame_bgl, &input_bgl],
         push_constant_ranges: &[],
     });
-    let passthrough = pipeline(
+    let (_, passthrough) = pipeline(
         device,
         &passthrough_layout,
         &compose(&bare, PASSTHROUGH).text,
@@ -1713,7 +1922,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
         params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("User Style Params"),
-            size: params_size(source.uniform_fields()) as u64,
+            size: table_size(source.uniform_fields(), source.inputs.mask) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -1724,6 +1933,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         passthrough,
         build: Mutex::new(Build {
             pipeline: None,
+            pending: None,
             #[cfg(not(target_arch = "wasm32"))]
             modified: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1731,6 +1941,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         }),
         images: images.map(Mutex::new),
         empty,
+        warned: Default::default(),
         loaded,
     };
     pass.rebuild(device);
@@ -1768,12 +1979,12 @@ fn pipeline(
     layout: &wgpu::PipelineLayout,
     text: &str,
     format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
+) -> (wgpu::ShaderModule, wgpu::RenderPipeline) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("User Style Pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -1797,7 +2008,8 @@ fn pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
-    })
+    });
+    (module, pipeline)
 }
 
 /// How many frames pass between looks at the WGSL file's modified time:
@@ -2087,31 +2299,52 @@ impl CustomPass {
             self.set_error(Some(e));
             return;
         }
-        // naga has passed it; the error scope catches what the backend's own
-        // compiler still refuses (and, on the web, everything)
+        // naga has passed it natively; the compiler's messages and the error
+        // scope catch what the backend's own compiler still refuses (and, on
+        // the web, everything). Neither is awaited: the build waits as
+        // `pending` until both settle (#415)
+        let composed = compose(source, &user);
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let made = pipeline(
-            device,
-            &self.layout,
-            &compose(source, &user).text,
-            self.format,
-        );
-        #[cfg(not(target_arch = "wasm32"))]
-        let refused = pollster::block_on(device.pop_error_scope());
-        #[cfg(target_arch = "wasm32")]
-        let refused: Option<wgpu::Error> = {
-            // No blocking on the web: the browser logs it, and the frame
-            // after shows what it drew
-            drop(device.pop_error_scope());
-            None
+        let (module, made) = pipeline(device, &self.layout, &composed.text, self.format);
+        let scope = Settling::new(device.pop_error_scope());
+        let info = Settling::new(module.get_compilation_info());
+        build.pending = Some(Pending {
+            pipeline: made,
+            composed,
+            info,
+            scope,
+        });
+        self.settle(&mut build);
+    }
+
+    /// Poll a pending build; once the GPU has answered, draw it, or keep
+    /// what was drawing and say why. Natively the answer is in on the
+    /// first poll, inside [`Self::rebuild`].
+    fn settle(&self, build: &mut Build) {
+        let Some(pending) = build.pending.as_mut() else {
+            return;
         };
-        match refused {
-            Some(e) => self.set_error(Some(format!(
+        let info_in = pending.info.poll();
+        if !(pending.scope.poll() && info_in) {
+            return;
+        }
+        let Some(pending) = build.pending.take() else {
+            return;
+        };
+        let source = &self.loaded.source;
+        let info = pending.info.take();
+        let refused = pending.scope.take().flatten();
+        let compiled = info
+            .as_ref()
+            .and_then(|info| compiler_error(source, &pending.composed, info));
+        match (compiled, refused) {
+            (Some(e), _) => self.set_error(Some(e)),
+            (None, Some(e)) => self.set_error(Some(format!(
                 "{}: the GPU refused it: {e}",
                 source.wgsl_path.display()
             ))),
-            None => {
-                build.pipeline = Some(made);
+            (None, None) => {
+                build.pipeline = Some(pending.pipeline);
                 self.set_error(None);
             }
         }
@@ -2214,21 +2447,67 @@ impl StylePass for CustomPass {
         frame
             .queue
             .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-        let mut values = vec![0.0f32; params_size(source.uniform_fields()) / 4];
-        for (slot, (name, p)) in values.iter_mut().zip(&source.params) {
-            *slot = frame.param(name).clamp(p.min, p.max);
-        }
-        // Options follow as u32 indices, written as their bits
-        for (slot, (name, o)) in values[source.params.len()..]
-            .iter_mut()
-            .zip(&source.options)
-        {
-            *slot = f32::from_bits(o.index(frame.option(name)));
-        }
+        // The settings table (#414): row 0 the scene's, then one a variant
+        // Each row is the params, then the options (#413) as u32 indices
+        // written as their bits
+        let row = |param: &dyn Fn(&str) -> f32, option: &dyn Fn(&str) -> u32| -> Vec<f32> {
+            source
+                .params
+                .iter()
+                .map(|(name, p)| param(name).clamp(p.min, p.max))
+                .chain(
+                    source
+                        .options
+                        .iter()
+                        .map(|(name, _)| f32::from_bits(option(name))),
+                )
+                .collect()
+        };
+        let index = |name: &str, value: &str| {
+            source
+                .options
+                .iter()
+                .find(|(n, _)| n == name)
+                .map_or(0, |(_, o)| o.index(value))
+        };
+        let mut rows = vec![row(&|n| frame.param(n), &|n| index(n, frame.option(n)))];
+        let words = if source.inputs.mask {
+            let mut slots = [0u32; MAX_IDS];
+            let mut overflow = false;
+            for (id, v) in frame.variants() {
+                if v.off {
+                    continue; // an opt-out reads as no entity of this style
+                }
+                let Some(slot) = slots.get_mut(id as usize) else {
+                    overflow = true;
+                    continue;
+                };
+                if rows.len() == MAX_VARIANTS {
+                    overflow = true;
+                    *slot = 1; // the scene's settings
+                    continue;
+                }
+                rows.push(row(&|n| frame.variant_param(v, n), &|n| {
+                    index(n, frame.variant_option(v, n))
+                }));
+                *slot = rows.len() as u32;
+            }
+            if overflow && !self.warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(
+                    "style '{}': more per-entity variants than the {} a frame holds (or mask \
+                     ids past {MAX_IDS}); the rest take the scene's settings",
+                    source.name,
+                    MAX_VARIANTS - 1
+                );
+            }
+            table_words(source.uniform_fields(), &rows, Some(&slots))
+        } else {
+            table_words(source.uniform_fields(), &rows, None)
+        };
         let images_ready = self.update_images(frame);
         frame
             .queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&values));
+            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&words));
 
         let frame_bg = frame.bind(names.frame, 0, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2248,7 +2527,9 @@ impl StylePass for CustomPass {
         });
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
-        let build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        // A build the browser hasn't answered for yet (#415)
+        self.settle(&mut build);
         let passthrough = |encoder: &mut wgpu::CommandEncoder| {
             kit::fullscreen_pass(
                 encoder,
@@ -2336,6 +2617,18 @@ mod tests {
         def.check(Path::new(file))
     }
 
+    /// #396: a shader that reads its own blend opts out of the framework's
+    /// cross-fade; a mention in a comment doesn't count.
+    #[test]
+    fn a_shader_calling_flint_style_blend_blends_itself() {
+        assert!(calls_style_blend(
+            "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * flint_style_blend(p.uv);\n}\n"
+        ));
+        assert!(!calls_style_blend(
+            "// no flint_style_blend here: the framework fades me\nfn style(p: StylePixel) -> vec4<f32> {\n    return p.color;\n}\n"
+        ));
+    }
+
     fn duotone() -> StyleSource {
         source(
             r#"
@@ -2399,6 +2692,48 @@ mod tests {
         assert!(source(builtin, "styles/ascii.shader.toml")
             .unwrap_err()
             .contains("built-in"));
+    }
+
+    #[test]
+    fn a_mask_reading_style_is_per_entity() {
+        let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+        let file = "styles/x.shader.toml";
+        assert_eq!(source(base, file).unwrap().component, None);
+        let masked = source(&format!("{base}inputs = [\"mask\"]\n"), file).unwrap();
+        assert_eq!(masked.component.as_deref(), Some("x_style"));
+    }
+
+    #[test]
+    fn the_settings_table_holds_a_row_a_variant_and_a_slot_an_id() {
+        // Two params: a 32-byte row; 16 rows, then 256 slots
+        assert_eq!(table_size(2, false), 32);
+        assert_eq!(table_size(2, true), 16 * 32 + 256 * 4);
+        let rows = vec![vec![0.5, 1.0], vec![0.25, 2.0]];
+        let mut slots = [0u32; MAX_IDS];
+        slots[3] = 2;
+        let words = table_words(2, &rows, Some(&slots));
+        assert_eq!(words.len(), table_size(2, true) / 4);
+        let f = |i: usize| f32::from_bits(words[i]);
+        assert_eq!((f(0), f(1)), (0.5, 1.0), "row 0, the scene's");
+        assert_eq!((f(8), f(9)), (0.25, 2.0), "row 1 at the next 32 bytes");
+        assert_eq!(words[16 * 8 + 3], 2, "id 3 takes row 1 (+1)");
+        let bare = table_words(2, &rows, None);
+        assert_eq!(bare.len(), 8, "a style without the mask holds row 0 alone");
+    }
+
+    #[test]
+    fn neighbours_settings_are_readable() {
+        let s = source(
+            "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\ninputs = [\"mask\"]\n\
+             [params.glow]\ndefault = 0.5\nmin = 0.0\nmax = 1.0\n",
+            "styles/x.shader.toml",
+        )
+        .unwrap();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    let n = flint_params_at(p.uv + flint.texel);\n    \
+                    return p.color * (params.glow + n.glow);\n}\n";
+        let report = check(&s, user).unwrap();
+        assert_eq!(report.texture_reads, 1, "flint_params_at reads the mask");
     }
 
     #[test]
@@ -2589,6 +2924,235 @@ fn style(p: StylePixel) -> vec4<f32> {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn message(
+        message_type: wgpu::CompilationMessageType,
+        text: &str,
+        at: Option<(u32, u32)>,
+    ) -> wgpu::CompilationMessage {
+        wgpu::CompilationMessage {
+            message: text.to_string(),
+            message_type,
+            location: at.map(|(line_number, line_position)| wgpu::SourceLocation {
+                line_number,
+                line_position,
+                offset: 0,
+                length: 1,
+            }),
+        }
+    }
+
+    /// The browser's report names lines of the composed module; the error
+    /// shown names the user's file and line, quoted, as naga's does (#415).
+    #[test]
+    fn browser_messages_point_into_the_users_file() {
+        use wgpu::CompilationMessageType::{Error, Warning};
+        let s = duotone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * glow;\n}\n";
+        let c = compose(&s, user);
+        let line = c.prelude_lines as u32 + 2;
+        let info = wgpu::CompilationInfo {
+            messages: vec![
+                message(Warning, "unused variable", Some((line, 5))),
+                message(Error, "unresolved identifier 'glow'", Some((line, 22))),
+                message(Error, "a second one", Some((line, 1))),
+            ],
+        };
+        let e = compiler_error(&s, &c, &info).unwrap();
+        let file = s.wgsl_path.display().to_string();
+        assert!(
+            e.starts_with(&format!("{file}:2:22: unresolved identifier 'glow'")),
+            "{e}"
+        );
+        assert!(
+            e.contains("2 | ") && e.contains("return p.color * glow;"),
+            "{e}"
+        );
+        assert!(e.contains("(and 1 more)"), "{e}");
+
+        // Warnings alone are no error
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Warning, "unused variable", Some((line, 5)))],
+        };
+        assert_eq!(compiler_error(&s, &c, &info), None);
+
+        // A line in the generated code, and no location at all
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Error, "bad param", Some((3, 1)))],
+        };
+        let e = compiler_error(&s, &c, &info).unwrap();
+        assert!(e.contains("in the generated code, line 3"), "{e}");
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Error, "Getting compilation info failed", None)],
+        };
+        assert_eq!(
+            compiler_error(&s, &c, &info).unwrap(),
+            format!("{file}: Getting compilation info failed")
+        );
+    }
+
+    /// Which pipeline this is (wgpu hashes resources by identity).
+    fn identity(p: &wgpu::RenderPipeline) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    }
+
+    /// A future that answers on its `polls`th poll, as a browser promise
+    /// settles a frame or two after the pipeline was made.
+    struct Late<T> {
+        polls: u32,
+        value: Option<T>,
+    }
+
+    impl<T: Unpin> std::future::Future for Late<T> {
+        type Output = T;
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<T> {
+            self.polls -= 1;
+            if self.polls == 0 {
+                std::task::Poll::Ready(self.value.take().unwrap())
+            } else {
+                std::task::Poll::Pending
+            }
+        }
+    }
+
+    /// The web's path, driven natively: a build the compiler hasn't
+    /// answered for draws nothing new and reports nothing; when the answer
+    /// comes frames later, an error lands in `errors()` with the user's
+    /// line and the last good build keeps drawing; a clean answer swaps
+    /// the new build in (#415).
+    #[test]
+    fn a_late_compiler_answer_settles_on_a_later_frame() {
+        let Some((device, _queue)) = device() else {
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("flint-user-late-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(
+            styles.join("utest_late.shader.toml"),
+            "version = 1\nname = \"utest_late\"\nshader = \"late.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("late.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_dir(&dir).is_empty());
+        let descriptor = super::super::find("utest_late").unwrap();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let pass = build(&StyleDevice {
+            device: &device,
+            descriptor,
+            format,
+        });
+        let error = || {
+            errors()
+                .into_iter()
+                .find(|(n, _)| n == "utest_late")
+                .map(|(_, e)| e)
+        };
+        assert_eq!(error(), None);
+        let source = pass.loaded.source.clone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * glow;\n}\n";
+        let composed = compose(&source, user);
+        let line = composed.prelude_lines as u32 + 2;
+        let (_, made) = pipeline(
+            &device,
+            &pass.layout,
+            &compose(&source, PASSTHROUGH).text,
+            format,
+        );
+        let first = pass
+            .build
+            .lock()
+            .unwrap()
+            .pipeline
+            .as_ref()
+            .map(identity)
+            .unwrap();
+        let made_id = identity(&made);
+        pass.build.lock().unwrap().pending = Some(Pending {
+            pipeline: made,
+            composed: composed.clone(),
+            info: Settling::new(Late {
+                polls: 3,
+                value: Some(wgpu::CompilationInfo {
+                    messages: vec![message(
+                        wgpu::CompilationMessageType::Error,
+                        "unresolved identifier 'glow'",
+                        Some((line, 22)),
+                    )],
+                }),
+            }),
+            scope: Settling::new(Late {
+                polls: 2,
+                value: Some(None),
+            }),
+        });
+        let settle = || {
+            let mut build = pass.build.lock().unwrap();
+            pass.settle(&mut build);
+            build.pending.is_some()
+        };
+        assert!(settle(), "frame 1: still waiting");
+        assert!(settle(), "frame 2: the scope is in, the report isn't");
+        assert_eq!(error(), None, "nothing to say until both answer");
+        assert!(!settle(), "frame 3: settled");
+        let e = error().expect("the browser's error is reported");
+        assert!(
+            e.contains("late.wgsl:2:22: unresolved identifier 'glow'"),
+            "{e}"
+        );
+        assert_eq!(
+            pass.build
+                .lock()
+                .unwrap()
+                .pipeline
+                .as_ref()
+                .map(identity)
+                .unwrap(),
+            first,
+            "the last good build keeps drawing"
+        );
+
+        // A clean answer, a frame late: the new build draws, the error clears
+        let (_, made) = pipeline(
+            &device,
+            &pass.layout,
+            &compose(&source, PASSTHROUGH).text,
+            format,
+        );
+        let made_id_2 = identity(&made);
+        assert_ne!(made_id, made_id_2);
+        pass.build.lock().unwrap().pending = Some(Pending {
+            pipeline: made,
+            composed,
+            info: Settling::new(Late {
+                polls: 2,
+                value: Some(wgpu::CompilationInfo { messages: vec![] }),
+            }),
+            scope: Settling::new(std::future::ready(None)),
+        });
+        assert!(settle());
+        assert!(error().is_some(), "the old error stands while waiting");
+        assert!(!settle());
+        assert_eq!(error(), None);
+        assert_eq!(
+            pass.build
+                .lock()
+                .unwrap()
+                .pipeline
+                .as_ref()
+                .map(identity)
+                .unwrap(),
+            made_id_2
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn load_dir_registers_styles_and_keeps_broken_ones_as_passthroughs() {
         let dir = std::env::temp_dir().join(format!("flint-user-styles-{}", std::process::id()));
@@ -2631,10 +3195,17 @@ fn style(p: StylePixel) -> vec4<f32> {
         let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_good", "k"), Some(0.25));
-        // Loading again is a no-op
-        let before = super::super::registry().len();
+        // Loading again is a no-op. Counted by name: tests running beside
+        // this one register styles of their own in the same registry
+        let copies = || {
+            super::super::registry()
+                .iter()
+                .filter(|d| d.name.starts_with("utest_good") || d.name.starts_with("utest_bad"))
+                .count()
+        };
+        let before = copies();
         assert!(load_dir(&dir).is_empty());
-        assert_eq!(super::super::registry().len(), before);
+        assert_eq!(copies(), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2875,6 +3446,31 @@ fn style(p: StylePixel) -> vec4<f32> {
             .map(|i| format!("[images.i{i}]\nfile = \"i.png\"\n"))
             .collect();
         assert!(err(&many).contains("at most"));
+    }
+
+    /// #413 with #414: a per-entity style's options sit in every row of its
+    /// settings table, after the floats, and its prelude validates.
+    #[test]
+    fn per_entity_options_ride_in_each_row() {
+        let s = source(
+            "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\ninputs = [\"mask\"]\n\
+             [params.a]\ndefault = 0.5\nmin = 0\nmax = 1\n\
+             [options.finish]\ndefault = \"matte\"\nchoices = [\"matte\", \"gloss\"]\n\
+             [images.paper]\nfile = \"p.png\"\n",
+            "styles/x.shader.toml",
+        )
+        .unwrap();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    let n = flint_params_at(p.uv + flint.texel);\n    \
+                    let gloss = f32(params.finish == FLINT_FINISH_GLOSS) + f32(n.finish);\n    \
+                    return flint_image_paper(p.uv) * params.a * gloss;\n}\n";
+        check(&s, user).unwrap_or_else(|e| panic!("{e}"));
+        let rows = vec![vec![0.5, f32::from_bits(0)], vec![0.25, f32::from_bits(1)]];
+        let words = table_words(s.uniform_fields(), &rows, Some(&[0u32; MAX_IDS]));
+        let stride = params_size(s.uniform_fields()) / 4;
+        assert_eq!(words[1], 0, "row 0: matte");
+        assert_eq!(words[stride + 1], 1, "row 1: gloss");
+        assert_eq!(f32::from_bits(words[stride]), 0.25);
     }
 
     /// #413: the prelude declares each image's helpers and each option's

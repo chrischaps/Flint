@@ -421,6 +421,15 @@ impl SceneRenderer {
                 blend_mode,
                 sort_depth: 0.0,
                 casts_shadow: Self::ecs_casts_shadow(world, entity_id),
+                world_aabb: {
+                    let bones = self
+                        .entity_bone_matrices
+                        .get(&entity_id)
+                        .or_else(|| self.asset_bone_matrices.get(asset_name))
+                        .map_or(&[][..], Vec::as_slice);
+                    let (lo, hi) = super::posed_aabb(bones, gpu_mesh.aabb_min, gpu_mesh.aabb_max);
+                    Some(transform_aabb(&model_matrix, lo, hi))
+                },
             };
 
             if is_transparent {
@@ -1208,6 +1217,10 @@ impl SceneRenderer {
         model[3][2] += rz;
 
         let inv_transpose = mat4_inv_transpose(&model);
+        // The box's world bounds, for the style scissor only (#385): boxes
+        // aren't culled, and `world_aabb` would start culling them
+        let half = [size[0] * 0.5, size[1] * 0.5, size[2] * 0.5];
+        let box_aabb = Some(transform_aabb(&model, [-half[0], -half[1], -half[2]], half));
 
         let transform_uniforms = TransformUniforms {
             view_proj: [[0.0; 4]; 4],
@@ -1319,6 +1332,7 @@ impl SceneRenderer {
                         proc_blend_mode,
                     );
                     draw.casts_shadow = casts_shadow;
+                    draw.style_aabb = box_aabb;
                     if proc_is_transparent {
                         self.transparent_draws.push(draw);
                     } else {
@@ -1354,6 +1368,7 @@ impl SceneRenderer {
                         BlendMode::Alpha,
                     );
                     draw.casts_shadow = casts_shadow;
+                    draw.style_aabb = box_aabb;
                     self.entity_draws.push(draw);
                 }
             } else {
@@ -1408,6 +1423,7 @@ impl SceneRenderer {
                     proc_blend_mode,
                 );
                 draw.casts_shadow = casts_shadow;
+                draw.style_aabb = box_aabb;
                 if proc_is_transparent {
                     self.transparent_draws.push(draw);
                 } else {
