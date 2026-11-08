@@ -195,8 +195,7 @@ fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), Str
     if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
         // An option whose choices are found at run time (a palette file,
         // a font's ramps) is open: the style resolves the name, and warns
-        let closed = option.discover.is_none() && !option.choices.is_empty();
-        if closed && !option.choices.contains(&value) {
+        if option.refuses(value) {
             return Err(format!(
                 "{name}: {key} must be one of {}",
                 option.choices.join(", ")
@@ -362,6 +361,9 @@ mod tests {
         assert!(key.contains("cell=8"), "{key}");
         let choice = StyleSpec::parse("ascii:color=purple").unwrap_err();
         assert!(choice.contains("source"), "{choice}");
+        // Open lists only suggest (#318): a glyph set's own ramp, a palette file
+        assert!(StyleSpec::parse("ascii:ramp=runes").is_ok());
+        assert!(StyleSpec::parse("ascii:palette=palettes/dusk.palette.toml").is_ok());
         let nan = StyleSpec::parse("invert:strength=lots").unwrap_err();
         assert!(nan.contains("number"), "{nan}");
         assert!(StyleSpec::parse("ascii:cell").is_err());

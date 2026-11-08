@@ -178,6 +178,20 @@ impl StyleOption {
         self
     }
 
+    /// Whether `choices` are the only values (#318): a fixed list with
+    /// nothing found at run time (a colour mode, a scope). A scene asking
+    /// for another is warned at load with the list. Discovered choices are
+    /// suggestions (a font's ramps, a palette that may be a file path), and
+    /// an empty list takes any text.
+    pub fn closed(&self) -> bool {
+        self.discover.is_none() && !self.choices.is_empty()
+    }
+
+    /// A value this option will never mean: outside a closed list.
+    pub fn refuses(&self, value: &str) -> bool {
+        self.closed() && !self.choices.contains(&value)
+    }
+
     /// The values to offer for this option in `scope`: what `discover`
     /// finds when the option has it, else its fixed `choices`. The F4 menu
     /// and the unknown-value check (#318) read this one list.
@@ -1232,9 +1246,19 @@ impl StyleSettings {
                     }
                     continue;
                 }
-                if descriptor.options.iter().any(|o| o.name == key) {
+                if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
                     match value.as_str() {
+                        // Kept all the same: the style falls back to its
+                        // default, and F4 shows the stray value as it is
                         Some(text) => {
+                            if option.refuses(text) {
+                                warnings.push(format!(
+                                    "styles.{name}.{key}: unknown value '{text}'; \
+                                     it takes: {} (drawing as '{}')",
+                                    option.choices.join(", "),
+                                    option.default
+                                ));
+                            }
                             setting.options.insert(key.clone(), text.to_string());
                         }
                         None => warnings.push(format!("styles.{name}.{key} must be a string")),
@@ -2251,6 +2275,52 @@ mod tests {
             toml::from_str("[ascii]\nglyphs = 1\n").unwrap();
         let (_, warnings) = StyleSettings::from_tables(&tables);
         assert!(warnings[0].contains("ramp"), "{warnings:?}");
+    }
+
+    #[test]
+    fn closed_options_warn_on_unknown_values_at_load() {
+        // #318: a colour mode is one of a fixed few; "plaid" is warned with
+        // the list and the default it draws as, and is kept as written
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[ascii]\ncolor = \"plaid\"\n").unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("styles.ascii.color")
+                && warnings[0].contains("'plaid'")
+                && warnings[0].contains("source, tint, raw")
+                && warnings[0].contains("drawing as 'source'"),
+            "{warnings:?}"
+        );
+        assert_eq!(settings.option("ascii", "color"), Some("plaid"));
+
+        // Every closed option of every built-in style warns the same way
+        for d in registry() {
+            for o in d.options.iter().filter(|o| o.closed()) {
+                assert!(
+                    !o.choices.is_empty(),
+                    "{}.{} closed on nothing",
+                    d.name,
+                    o.name
+                );
+                assert!(o.choices.contains(&o.default), "{}.{}", d.name, o.name);
+                let toml = format!("[{}]\n{} = \"plaid\"\n", d.name, o.name);
+                let tables: BTreeMap<String, toml::Table> = toml::from_str(&toml).unwrap();
+                let (_, warnings) = StyleSettings::from_tables(&tables);
+                assert_eq!(warnings.len(), 1, "{}.{}: {warnings:?}", d.name, o.name);
+            }
+        }
+
+        // A known value is quiet, and open lists only suggest: a glyph set's
+        // own ramp and a palette file load without a word
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            "[ascii]\ncolor = \"palette\"\nramp = \"runes\"\n\
+             palette = \"palettes/dusk.palette.toml\"\nfont = \"mono\"\n\
+             [pencil]\ndirection = \"tensor\"\n",
+        )
+        .unwrap();
+        let (_, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
