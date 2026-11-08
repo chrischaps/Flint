@@ -70,6 +70,7 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
         let (col, row) = ((i % PER_ROW) as u32, (i / PER_ROW) as u32);
         let x = MARGIN + col * (cell_w + 2 + GUTTER);
         let y = top + row * (row_h + GUTTER);
+        debug_assert_eq!((x + 1, y + 1), cell_origin(cell_w, cell_h, i));
         frame(&mut sheet, x, y, cell_w + 2, cell_h + 2);
         image::imageops::replace(&mut sheet, cell, i64::from(x + 1), i64::from(y + 1));
         if let Some(label) = text.labels.get(i) {
@@ -86,6 +87,21 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
         }
     }
     sheet
+}
+
+/// Where cell `i`'s picture sits on a [`compose`]d sheet of `cell_w` x
+/// `cell_h` cells (its top-left pixel, inside the frame), so a reader can
+/// crop it back out (#357's report test).
+pub fn cell_origin(cell_w: u32, cell_h: u32, i: usize) -> (u32, u32) {
+    let scale = text_scale(cell_w);
+    let line = GLYPH * scale;
+    let head = GLYPH * (scale + 1) + 6 * scale + line + 10 * scale;
+    let row_h = cell_h + 2 + 6 * scale + line + 4 * scale;
+    let (col, row) = ((i % PER_ROW) as u32, (i / PER_ROW) as u32);
+    (
+        MARGIN + col * (cell_w + 2 + GUTTER) + 1,
+        MARGIN + head + row * (row_h + GUTTER) + 1,
+    )
 }
 
 /// `text` shortened with `~` so it fits `width` pixels.

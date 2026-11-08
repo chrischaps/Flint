@@ -438,7 +438,7 @@ pub fn base_def(
 
 /// A sweep value as TOML: a number, bool or array when it reads as one
 /// (`0.7,0.75,0.82` becomes an array), otherwise a string.
-fn parse_value(text: &str) -> toml::Value {
+pub fn parse_value(text: &str) -> toml::Value {
     let try_parse = |t: &str| {
         toml::from_str::<toml::Table>(&format!("v = {t}"))
             .ok()

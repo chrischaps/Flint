@@ -16,6 +16,8 @@ pub mod gen_store;
 pub mod golden_sheet;
 pub mod init;
 pub mod look;
+pub mod look_measure;
+pub mod look_refine;
 pub mod particle_edit;
 pub mod play;
 pub mod play_chart;

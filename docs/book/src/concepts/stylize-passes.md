@@ -727,6 +727,32 @@ The ASCII looks set no `edges` key, so they draw the [edge glyphs](#edges) by de
 
 ![ascii_noir's brightness swept: at 0 the ground is black, at 0.15 it comes back, at 0.45 the props drown](../images/look-sweep-noir-brightness.png)
 
+### Measuring and refining a look
+
+A sheet is judged by eye. **`--report FILE.json`** (#357) also measures each column, from the same pixels the sheet is made of: mean luminance, the share of near-black (luma ≤ 24) and near-white (≥ 232) pixels, edge density (the share of pixels whose right + down luma step passes 24), and, when the ASCII style drew, the grid's size, its share of blank cells and the share of cells on each step of the ramp, darkest first. Edge glyphs are counted in `off_ramp`. The same sweep prints a line per column:
+
+```text
+$ flint render demo/stylize_props.scene.toml --look ascii_noir \
+    --sweep ascii.brightness=0,0.15,0.3,0.45 --report brightness.json -o brightness.png
+  [0] luma 0.10  black 82%  white 1%  edges 24%  blank cells 29%
+  [0.15] luma 0.18  black 69%  white 2%  edges 42%  blank cells 5%
+  ...
+```
+
+**`--reference ref.png`** adds each column's distance to a target image, using the metric `flint gen --ai-refine` uses (#183): mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100 where 0 is the reference itself. It's a ruler, not a judge. It can say whether one column is closer than another, but it doesn't measure taste. On a sheet each label gets `d <score>`, the nearest column is starred, and `nearest` in the report names it.
+
+**`--ai-refine`** closes the loop: `flint render scene --look <x> --reference ref.png --ai-refine`. Each round an agent sees the reference, the current render, the look's block, every key it may change (with ranges) and every edit tried so far with its score. It proposes up to `--refine-candidates` (4) candidates in `--sweep` key syntax. Each candidate is checked like a sweep value, then rendered and measured. The best is kept if it lowers the distance by more than 0.05. The loop stops after `--refine-rounds` (4), or after two rounds in a row with no gain, or when the agent has nothing left to propose. It writes:
+
+- `<look>_refined.look.toml` beside `-o` (or `--refine-out`): the kept block, plus a note of what was kept and what it cost;
+- the same path with `.json`: the log of every candidate, its score and image measures, and whether it was kept;
+- `-o`: a sheet showing the reference, the start, and each kept round.
+
+`--ai-provider anthropic` (the default) asks Claude (`ANTHROPIC_API_KEY`, `--ai-model`). Every call goes through the procgen `CostMeter`: it's priced, appended to `.flint/procgen_costs.json`, and refused before sending when it could pass `--max-cost`. `--ai-provider mock` is free and offline. It walks the look's own `tune` sweeps one untried value at a time, which turns the loop into a measured coordinate search. Toward a hidden target (ascii_noir at cell 12, brightness 0.3, contrast 1.2), the mock went 7.68 → 0.00 in five rounds. Contrast 1.2 scored *worse* than the start on its own, and only helped once the other two had moved.
+
+Toward the `matrix` look's render, with Claude (four calls, $0.115), ascii_noir went 25.66 → 15.09. Claude turned the colour to `tint` and the ramp to `detailed`, then found that `glow` was the strongest lever. It also learned from the log that whitening the tint and turning off the vignette both scored worse:
+
+![Refining ascii_noir toward the matrix look: reference, start 25.7, then rounds at 25.0, 19.2, 15.2, 15.1](../images/look-refine-noir-to-matrix.png)
+
 ### Choosing cell size and ramp
 
 - **The cell is in points, not image pixels.** A 640-wide sweep cell at `cell = 8` is 80 glyphs across, while the same look at 1920 is 240. Use a sweep to compare values against each other, then confirm the winner with one render at the final size. Glow and fine ramps in particular read differently at full size.
