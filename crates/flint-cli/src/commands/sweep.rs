@@ -18,7 +18,7 @@
 //! wooze field can draw (feature/living-props, #206). The sheet the columns land
 //! on is [`super::style_sheet::compose`] for every family.
 
-use super::look::{find, known_fields, overlay, suggestion, Look};
+use super::look::{did_you_mean, find, overlay, Look};
 use anyhow::{Context, Result};
 use flint_scene::PostProcessDef;
 
@@ -223,11 +223,10 @@ pub fn identical_neighbours<T: PartialEq>(cells: &[T]) -> Vec<usize> {
 }
 
 fn parse_post(field: &str) -> Result<SweepKey, String> {
-    let known = known_fields();
-    if !known.iter().any(|k| k == field) {
+    if !PostProcessDef::field_names().iter().any(|k| k == field) {
         return Err(format!(
             "--sweep: [post_process] has no field '{field}'{}",
-            suggestion(field, &known)
+            did_you_mean(PostProcessDef::closest_field(field))
         ));
     }
     Ok(SweepKey::Post {
