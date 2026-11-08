@@ -295,7 +295,7 @@ Procedural generation framework:
 - `Generator` trait --- pluggable generator interface with `generate()`, `param_schema()`, `estimate_cost()`
 - `GeneratorRegistry` --- register and look up generators by type name
 - `ProcGenSpec` --- TOML spec format with metadata, seed config, and generator parameters
-- Built-in generators: `tree_v1` (L-system/space colonization trees), `texture_v1` (PBR texture maps), `creature_v1`
+- Built-in generators: `tree_v1` (L-system/space colonization trees), `texture_v1` (PBR texture maps), `creature_v1`, `form_v1` (one abstract living form on a spine)
 - `ProcGenCache` --- LRU cache keyed by (spec_hash, seed) with memory budget, over a `DiskCache` tier in `.flint/procgen-cache/` that keeps outputs between runs
 - Algorithmic building blocks: noise (Perlin, simplex, Worley, FBM), L-system engine, mesh builder, space colonization
 

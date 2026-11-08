@@ -4,6 +4,7 @@
 //! produce meshes, textures, and materials for specific asset types.
 
 pub mod creature;
+pub mod form;
 pub mod texture;
 pub mod tree;
 pub mod util;
@@ -15,4 +16,5 @@ pub fn register_built_in_generators(registry: &mut GeneratorRegistry) {
     registry.register(Box::new(tree::TreeGenerator));
     registry.register(Box::new(texture::TextureGenerator));
     registry.register(Box::new(creature::CreatureGenerator));
+    registry.register(Box::new(form::FormGenerator));
 }
