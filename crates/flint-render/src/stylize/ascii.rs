@@ -586,12 +586,24 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         &[&table_bgl, &stats_in_bgl],
         &[VARIANT_CELL_FORMAT; 2],
     );
+    let stats_resolve_module =
+        kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER);
     let stats_resolve_pipeline = kit::fullscreen_pipeline(
         device,
         "ASCII Stats Resolve Pipeline",
-        &kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER),
+        &stats_resolve_module,
         &[&table_bgl, &edges_in_bgl],
         STATS_FORMAT,
+    );
+    // Each row's runs summed into the row (#337)
+    let stats_rows_pipeline = kit::fullscreen_pipeline_with(
+        device,
+        "ASCII Stats Rows Pipeline",
+        &stats_resolve_module,
+        "fs_rows",
+        &[&table_bgl, &edges_in_bgl],
+        STATS_FORMAT,
+        None,
     );
     let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
     // The edge debug view (#349): the edge pixels and the edge cells in
@@ -647,7 +659,9 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         variant_cells: Mutex::new([None, None]),
         stats_pipeline,
         stats_resolve_pipeline,
+        stats_rows_pipeline,
         stats_in_bgl,
+        stats_runs: Mutex::new(None),
         stats_rows: Mutex::new(None),
         stats: Mutex::new(None),
         pipeline: kit::fullscreen_pipeline(
@@ -1182,6 +1196,10 @@ const STATS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// The tone statistics lattice's rows; `STATS_ROWS` in ascii_common.wgsl.
 pub const STATS_ROWS: u32 = 180;
 
+/// The runs each lattice row is summed in, a texel each (#337);
+/// `STATS_CHUNKS` in ascii_common.wgsl.
+pub const STATS_CHUNKS: u32 = 16;
+
 /// The `temporal` option's spellings: `off` draws every frame as if it
 /// were the first.
 pub const TEMPORAL_MODES: &[&str] = &["on", "off"];
@@ -1421,8 +1439,11 @@ struct Ascii {
     variant_cells: Mutex<[Option<Owned>; 2]>,
     stats_pipeline: wgpu::RenderPipeline,
     stats_resolve_pipeline: wgpu::RenderPipeline,
+    stats_rows_pipeline: wgpu::RenderPipeline,
     stats_in_bgl: wgpu::BindGroupLayout,
-    /// Tone statistics (#289): per (slot, lattice row), then per slot.
+    /// Tone statistics (#289): per (slot, run of a lattice row, #337), per
+    /// (slot, row), then per slot.
+    stats_runs: Mutex<Option<Owned>>,
     stats_rows: Mutex<Option<Owned>>,
     stats: Mutex<Option<Owned>>,
     pipeline: wgpu::RenderPipeline,
@@ -2241,23 +2262,39 @@ impl Ascii {
         with_mask: bool,
         stats: &Owned,
     ) {
+        let mut runs_slot = self.stats_runs.lock().unwrap_or_else(|e| e.into_inner());
+        let runs = Owned::ensure(
+            &mut runs_slot,
+            frame.device,
+            "ASCII Tone Stat Runs",
+            STATS_FORMAT,
+            // A column a slot, as wide as the resolved stats
+            [stats.size[0], STATS_ROWS * STATS_CHUNKS],
+            &self.edges_in_bgl,
+        );
         let mut rows_slot = self.stats_rows.lock().unwrap_or_else(|e| e.into_inner());
         let rows = Owned::ensure(
             &mut rows_slot,
             frame.device,
             "ASCII Tone Stat Rows",
             STATS_FORMAT,
-            // A column a slot, as wide as the resolved stats
             [stats.size[0], STATS_ROWS],
             &self.edges_in_bgl,
         );
         let input_bind = self.picture_bind(frame, input, with_mask);
         kit::fullscreen_pass(
             encoder,
-            "ASCII Tone Stat Rows",
-            &rows.view,
+            "ASCII Tone Stat Runs",
+            &runs.view,
             &self.stats_pipeline,
             &[uniform, &input_bind],
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Tone Stat Rows",
+            &rows.view,
+            &self.stats_rows_pipeline,
+            &[uniform, &runs.bind],
         );
         kit::fullscreen_pass(
             encoder,
@@ -3146,6 +3183,8 @@ mod tests {
         // The lattice's rows are one constant in two languages
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const STATS_ROWS: u32 = {STATS_ROWS}u;")));
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const STATS_CHUNKS: u32 = {STATS_CHUNKS}u;")));
         // And so are the variant cell state's bands (#313)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_BANDS: u32 = {MAX_BANDS}u;")));
