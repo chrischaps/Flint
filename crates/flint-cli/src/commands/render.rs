@@ -45,9 +45,23 @@ pub struct RenderArgs {
     /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
     /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
     /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
-    /// --width/--height size each cell
-    #[arg(long, value_parser = super::sweep::parse_sweep)]
-    pub sweep: Option<super::sweep::Sweep>,
+    /// --width/--height size each cell. Give it twice for a grid (#358):
+    /// the first key across, the second down
+    #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append)]
+    pub sweep: Vec<super::sweep::Sweep>,
+
+    /// A sweep's cells at the final render's scale (#358): draw each at
+    /// --width/--height (default 1920x1080) and keep this region pixel for
+    /// pixel, X,Y,W,H. Point-sized styles (ASCII cells) then draw as many
+    /// glyphs across it as the final render does there
+    #[arg(long, value_parser = super::sweep::parse_crop, conflicts_with = "sweep_scale")]
+    pub sweep_crop: Option<super::sweep::CellView>,
+
+    /// `full`: draw each sweep cell at --width/--height (default 1920x1080)
+    /// and shrink it to 640 wide, so the whole frame is composed as the final
+    /// render is (glyphs blur); `cell` (default): each cell a 640x360 frame
+    #[arg(long, value_parser = ["cell", "full"])]
+    pub sweep_scale: Option<String>,
 
     /// Write the frame's (or each --sweep column's) measures as JSON
     /// (#357): mean luminance, near-black / near-white shares, edge
@@ -631,13 +645,18 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
-    if wants_text && args.sweep.is_some() {
+    let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
+    let view = super::sweep::CellView::from_args(args.sweep_crop, args.sweep_scale.as_deref());
+    if grid.is_none() && (args.sweep_crop.is_some() || args.sweep_scale.is_some()) {
+        anyhow::bail!("--sweep-crop and --sweep-scale shape a sweep's cells: add a --sweep");
+    }
+    if wants_text && grid.is_some() {
         anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
     }
-    if args.frames.is_some() && args.sweep.is_some() {
+    if args.frames.is_some() && grid.is_some() {
         anyhow::bail!("--frames draws one sequence: drop --sweep");
     }
-    if let Some(knob) = args.sweep.as_ref().and_then(|s| s.wooze_knob()) {
+    if let Some(knob) = grid.as_ref().and_then(|g| g.wooze_knob()) {
         anyhow::bail!(
             "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
              build doesn't have: it lives on feature/living-props until that merges (#206)"
@@ -670,12 +689,16 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .as_deref()
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
-    let (width, height) = if args.sweep.is_some() || args.ai_refine {
-        let (w, h) = super::sweep::CELL_SIZE;
-        (args.width.unwrap_or(w), args.height.unwrap_or(h))
-    } else {
-        (args.width.unwrap_or(1920), args.height.unwrap_or(1080))
+    let (width, height) = match grid {
+        Some(_) => view.render_size(args.width, args.height),
+        // A refine's rounds are sheet cells too
+        None if args.ai_refine => {
+            let (w, h) = super::sweep::CELL_SIZE;
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
+        None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
     };
+    view.check(width, height).map_err(|e| anyhow::anyhow!(e))?;
     let reference = args
         .reference
         .as_deref()
@@ -718,14 +741,15 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // GPU work: the scene's block, under the look, under the column.
     let scene_pp = scene_file.post_process.as_ref();
     let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
+    let cells = grid.as_ref().map_or(vec![(0, 0)], |g| g.cells());
     let mut configs = Vec::new();
-    for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
-        let def = match &args.sweep {
-            Some(sweep) => sweep.column_def(i, scene_pp, look.as_ref(), &args.scene)?,
+    for &(c, r) in &cells {
+        let def = match &grid {
+            Some(grid) => grid.cell_def(c, r, scene_pp, look.as_ref(), &args.scene)?,
             None => base_pp.clone(),
         };
         let mut config = post_process_config(&args, def.as_ref())?;
-        if let Some(spec) = args.sweep.as_ref().and_then(|s| s.column_style(i)) {
+        for spec in grid.as_ref().map_or(Vec::new(), |g| g.cell_styles(c, r)) {
             flint_render::stylize::apply_style_spec(&mut config, &spec)
                 .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
         }
@@ -1100,30 +1124,43 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             let scale = (img.width() / 1280).clamp(1, 3);
             super::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
         }
-        if let Some(sweep) = &args.sweep {
-            println!("  {} = {}", sweep.name(), sweep.values[i]);
+        if let Some(grid) = &grid {
+            let (c, r) = cells[i];
+            println!("  {}", grid.describe(c, r));
         }
         frames.push(img);
     }
 
-    // A sweep whose neighbours drew the same showed nothing: say so (#216)
-    if let Some(sweep) = &args.sweep {
-        for i in super::sweep::identical_neighbours(&frames) {
-            eprintln!("Warning: {}", sweep.identical_warning(i));
+    // A sweep whose neighbours drew the same showed nothing: say so (#216).
+    // Judged on the frames as drawn, before a crop could hide a difference.
+    if let Some(grid) = &grid {
+        for warning in grid.identical_warnings(&frames) {
+            eprintln!("Warning: {warning}");
         }
     }
 
-    // Measures (#357), from the same pixels the sheet is made of
+    // The pictures the sheet is made of: each frame as its cell shows it
+    // (cropped or shrunk under --sweep-crop / --sweep-scale, #358)
+    let pictures: Vec<image::RgbaImage> = match &grid {
+        Some(_) => frames.into_iter().map(|f| view.cell(f)).collect(),
+        None => frames,
+    };
+
+    // Measures (#357), from those same pixels. The ASCII section counts the
+    // whole drawn frame's grid, which a crop shows only part of.
     let mut columns = Vec::new();
     if args.report.is_some() || reference.is_some() {
         use super::look_measure as lm;
-        for (i, img) in frames.iter().enumerate() {
+        for (i, img) in pictures.iter().enumerate() {
             let image = lm::measure(img);
             let ascii = texts.get(i).cloned().flatten().map(|t| {
                 lm::measure_ascii(&t, lm::ascii_ramp(&configs[i], Path::new(&args.scene)))
             });
             let distance = reference.as_ref().map(|r| lm::distance_to(r, img));
-            let value = args.sweep.as_ref().map(|s| s.values[i].clone());
+            let value = grid.as_ref().map(|g| {
+                let (c, r) = cells[i];
+                g.describe(c, r)
+            });
             println!(
                 "  [{}] {}{}",
                 value.as_deref().unwrap_or("frame"),
@@ -1143,46 +1180,68 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let nearest = super::look_measure::RenderReport::nearest_column(&columns);
 
-    let img = match &args.sweep {
-        None => frames.swap_remove(0),
-        Some(sweep) => {
+    let mut pictures = pictures;
+    let img = match &grid {
+        None => pictures.swap_remove(0),
+        Some(grid) => {
             let over = match &look {
                 Some(look) => format!("  over {}", look.name),
                 None => String::new(),
             };
-            // With a reference, each label carries its distance and the
-            // nearest is starred (#357)
-            let labels = (0..sweep.values.len())
-                .map(|i| {
-                    let label = sweep.label(i);
-                    match columns.get(i).and_then(|c| c.distance) {
-                        Some(d) => {
-                            let star = if nearest == Some(i) { " *" } else { "" };
-                            format!("{label}  d {:.1}{star}", d.score)
-                        }
-                        None => label,
-                    }
-                })
-                .collect();
-            let subtitle = match &args.reference {
-                Some(r) => format!("sweep {}{over}  d = distance to {r}", sweep.name()),
-                None => format!("sweep {}{over}", sweep.name()),
+            // Only a sheet that isn't of small frames says how big they were
+            let scale = match view {
+                super::sweep::CellView::Small => String::new(),
+                _ => format!("  {}", view.describe(width, height)),
             };
-            super::style_sheet::compose(
-                &frames,
-                &super::style_sheet::SheetText::new(
-                    scene_file.scene.name.clone(),
-                    subtitle,
-                    labels,
+            let reference_note = match &args.reference {
+                Some(r) => format!("  d = distance to {r}"),
+                None => String::new(),
+            };
+            let subtitle = format!("sweep {}{over}{scale}{reference_note}", grid.name());
+            let label = |s: &super::sweep::Sweep| (0..s.values.len()).map(|i| s.label(i)).collect();
+            match &grid.rows {
+                None => {
+                    // With a reference, each label carries its distance and
+                    // the nearest is starred (#357)
+                    let labels: Vec<String> = label(&grid.columns);
+                    let labels = labels
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, l)| match columns.get(i).and_then(|c| c.distance) {
+                            Some(d) => {
+                                let star = if nearest == Some(i) { " *" } else { "" };
+                                format!("{l}  d {:.1}{star}", d.score)
+                            }
+                            None => l,
+                        })
+                        .collect();
+                    super::style_sheet::compose(
+                        &pictures,
+                        &super::style_sheet::SheetText::new(
+                            scene_file.scene.name.clone(),
+                            subtitle,
+                            labels,
+                        ),
+                    )
+                }
+                Some(rows) => super::style_sheet::compose_grid(
+                    &pictures,
+                    &super::style_sheet::GridText {
+                        title: scene_file.scene.name.clone(),
+                        subtitle,
+                        row_key: rows.name(),
+                        column_labels: label(&grid.columns),
+                        row_labels: label(rows),
+                    },
                 ),
-            )
+            }
         }
     };
     if let Some(path) = &args.report {
         let report = super::look_measure::RenderReport {
             scene: args.scene.clone(),
             look: look.as_ref().map(|l| l.name.clone()),
-            sweep: args.sweep.as_ref().map(|s| s.name()),
+            sweep: grid.as_ref().map(|g| g.name()),
             reference: args.reference.clone(),
             width,
             height,
