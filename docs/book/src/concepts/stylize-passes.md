@@ -300,6 +300,27 @@ Under a render scale the edge pixels are the scene's, so a line is still one cel
 
 Edges come with the colour modes: line glyphs are inked as the cell's tone glyph would be, cut out of the ink under `ground = "inverse"`, and glow around them. The edge cells lie on the screen grid, so per-entity variants on that grid get them, and a variant on `grid = "object"` keeps its tone glyphs. Edge cells keep no history: under #277's temporal stability the tone glyphs hold still and the lines follow the geometry each frame. The [stylize goldens](#goldens) pin pbr_test without edges (the #265 golden, unchanged), with edges, and the sphere and box above.
 
+#### Seeing the decisions: `--debug-mode edges`
+
+A missing or doubled line glyph could come from any of the three passes, and the glyphs alone don't say which. The edge view (#349) draws what each pass decided, in place of the glyphs, over the scene in dim grey:
+
+```bash
+flint render demo/ascii_edges.scene.toml --debug-mode edges --no-grid --output edges.png
+flint render demo/ascii_edges.scene.toml --debug-mode edges --no-grid --style ascii:cell=16 --output cells.png
+```
+
+- **Edge pixels**, by the source that marked them: cyan a depth step, amber a crease, magenta a styled entity's outline.
+- **Each cell's decision**: a green line in the glyph's direction where the cell draws one; a dim dashed line where it yields its line to a neighbour (pass 3's thinning); a red wash where it holds more than `edge_max` and counts as texture; nothing where it holds less than `edge_threshold`.
+- **Each cell's edge length**: a bar along the cell's foot, full at `edge_max`, with a white tick at `edge_threshold`. In cells 12 pixels or wider the length is also written in the top left, in cell widths.
+
+![The ASCII edges demo in the edge view: cyan silhouettes on the pillar and the horizon, amber creases on the box, magenta outlines around the sphere and the box, green line glyphs through the cells, and the legend card in the lower left](../images/ascii-edges-debug.png)
+
+![A close-up at 16-point cells: the pillar's foot and the box's top, each cell's length written in its corner](../images/ascii-edges-debug-cells.png)
+
+*`demo/ascii_edges.scene.toml` at 1280x720 (top) and at `ascii:cell=16`, cropped and doubled (bottom). The horizon is a depth step, the sky's far plane against the ground. Along the box's top the crease and the outline run a few pixels apart, so its cells hold 2.1 to 2.7 cell widths, inside `edge_max`; where the pillar meets the ground they hold 3.0, right at it.*
+
+Read it beside the four keys in the table above: `edge_depth` and `edge_normal` decide the coloured pixels, `edge_threshold` and `edge_max` the cells. `flint render` prints the thresholds it drew at and the legend, and draws the same legend in the image's lower left. Lower `edge_max` until a cell turns red to see how close a run of geometry is to being called texture. The view draws through post-processing, and switches ASCII on at its defaults in a scene that has none. In the player and viewer it is **Style Edges** in F4's debug shading list, with the legend under it.
+
 ### Dark props: exposure and normalize
 
 Glyph density follows luminance, so a dark prop maps to `.` and `-` and nearly disappears: a barrel in the meadow reads as a black shape with a few dots. Carrying hue in the ink helps, but the brightness is still gone. A `luminance` palette (`phosphor`, `amber`, `mono`) dims it twice, since it picks the ink rung by the same tone (#289).

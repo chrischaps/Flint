@@ -95,9 +95,11 @@ fn parse_style_spec(s: &str) -> Result<String, String> {
 
 pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {
     match s {
-        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" => Ok(s.to_string()),
+        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" | "edges" => {
+            Ok(s.to_string())
+        }
         _ => Err(format!(
-            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style",
+            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style, edges",
             s
         )),
     }

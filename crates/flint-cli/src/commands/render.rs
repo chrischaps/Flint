@@ -808,12 +808,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             "unlit" => DebugMode::Unlit,
             "metalrough" => DebugMode::MetallicRoughness,
             "style" => DebugMode::StyleMask,
+            "edges" => DebugMode::StyleEdges,
             _ => DebugMode::Pbr,
         };
-        if mode == DebugMode::StyleMask && args.no_postprocess {
+        if matches!(mode, DebugMode::StyleMask | DebugMode::StyleEdges) && args.no_postprocess {
             eprintln!(
-                "warning: --debug-mode style draws through post-processing, \
-                 which --no-postprocess turns off; the image shows no mask"
+                "warning: --debug-mode {mode_str} draws through post-processing, \
+                 which --no-postprocess turns off; the image shows none of it"
             );
         }
         renderer.set_debug_mode(mode);
@@ -1008,6 +1009,34 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 println!("{}", flint_render::style_mask::legend_line(ids));
             }
             super::style_sheet::draw_legend(&mut img, &flint_render::style_mask::legend(ids));
+        }
+        // The edge view says which colour is which source and decision
+        // (#349), and the thresholds it was drawn at
+        if renderer.debug_state().mode == DebugMode::StyleEdges && !args.no_postprocess {
+            let thresholds = flint_render::stylize::edge_view_thresholds(
+                renderer.effective_post_process_config(),
+            );
+            if i == 0 {
+                let names: Vec<&str> = flint_render::stylize::EDGE_VIEW_LEGEND
+                    .iter()
+                    .map(|(_, name)| *name)
+                    .collect();
+                println!("ascii edges: {thresholds}");
+                println!(
+                    "  pixels cyan/amber/magenta: {}; cells green/dashed/red/grey: {}",
+                    names[..3].join(", "),
+                    names[3..].join(", ")
+                );
+            }
+            let mut rows: Vec<(Option<[f32; 3]>, String)> = flint_render::stylize::EDGE_VIEW_LEGEND
+                .iter()
+                .map(|(color, name)| (Some(*color), name.to_string()))
+                .collect();
+            rows.extend(thresholds.split("; ").map(|t| (None, t.to_string())));
+            // Nine rows: half the mask legend's size, so the card leaves the
+            // scene readable
+            let scale = (img.width() / 1280).clamp(1, 3);
+            super::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
         }
         if let Some(sweep) = &args.sweep {
             println!("  {} = {}", sweep.name(), sweep.values[i]);

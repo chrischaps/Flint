@@ -124,6 +124,13 @@ name = "ascii-edges-scale05"
 scene = "demo/ascii_edges.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5"]
 
+# The edge debug view (#349): edge pixels by source, each cell's decision
+# and its length bar, with the legend card the render draws
+[[case]]
+name = "ascii-edges-view"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--debug-mode", "edges"]
+
 # The grid-fixed ordered dither (#277): the one temporal-stability knob a
 # single frame shows (smoothing and hysteresis need a frame before)
 [[case]]

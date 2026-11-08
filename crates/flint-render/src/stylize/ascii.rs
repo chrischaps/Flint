@@ -719,6 +719,14 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             STATS_FORMAT,
         );
         let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
+        // The edge debug view (#349): the edge pixels and the edge cells in
+        let edge_view_pipeline = kit::fullscreen_pipeline(
+            device,
+            "ASCII Edge View Pipeline",
+            &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
+            &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edges_in_bgl],
+            d.format,
+        );
         Box::new(Ascii {
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
@@ -746,6 +754,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
                 device,
                 "ASCII Edge Cell Uniforms",
+            ),
+            edge_view_pipeline,
+            edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
+                device,
+                "ASCII Edge View Uniforms",
             ),
             edges_in_bgl,
             depth_bgl,
@@ -940,7 +953,51 @@ struct EdgeCellUniforms {
     _pad: [f32; 2],
 }
 
-/// Edge pixels: the unit gradient's structure tensor and the edge's kind.
+/// The edge debug view's uniforms (#349), `ascii_edge_view.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct EdgeViewUniforms {
+    cell: [f32; 2],
+    origin: [f32; 2],
+    size: [f32; 2],
+    edge_size: [f32; 2],
+    threshold: f32,
+    max_len: f32,
+    srgb: f32,
+    dim: f32,
+    thick: f32,
+    _pad: [f32; 3],
+}
+
+/// The edge debug view's colours (#349), as `ascii_edge_view.wgsl` paints
+/// them (display values), each with what it marks: the legend `flint
+/// render --debug-mode edges` draws and F4 lists.
+pub const EDGE_VIEW_LEGEND: &[([f32; 3], &str)] = &[
+    ([0.25, 0.85, 1.0], "depth step"),
+    ([1.0, 0.68, 0.2], "crease"),
+    ([1.0, 0.35, 0.85], "styled outline"),
+    ([0.4, 1.0, 0.45], "cell draws a line glyph"),
+    ([0.25, 0.55, 0.3], "cell yields its line (dashed)"),
+    ([1.0, 0.25, 0.2], "past edge_max: texture"),
+    ([0.55, 0.55, 0.55], "under edge_threshold"),
+];
+
+/// The four edge keys the view (#349) is read against, as `config` sets
+/// them: `edge_threshold 0.5, edge_max 3 (cell widths); edge_depth 0.6,
+/// edge_normal 2.5`.
+pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> String {
+    let p = |name: &str| STYLE.param(config, name);
+    format!(
+        "edge_threshold {}, edge_max {} (cell widths); edge_depth {}, edge_normal {}",
+        p("edge_threshold"),
+        p("edge_max"),
+        p("edge_depth"),
+        p("edge_normal")
+    )
+}
+
+/// Edge pixels: the unit gradient's structure tensor and the edge's source
+/// (1 crease, 2 depth, 3 outline).
 const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
 const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -1127,7 +1184,12 @@ const CELLS_SHADER: &str = concat!(
 pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
-    include_str!("ascii.wgsl")
+    include_str!("ascii.wgsl"),
+    include_str!("ascii_edge_thin.wgsl")
+);
+const EDGE_VIEW_SHADER: &str = concat!(
+    include_str!("ascii_edge_view.wgsl"),
+    include_str!("ascii_edge_thin.wgsl")
 );
 const VARIANT_CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
@@ -1495,6 +1557,10 @@ struct Ascii {
     edge_cell_pipeline: wgpu::RenderPipeline,
     edge_uniforms: wgpu::Buffer,
     edge_cell_uniforms: wgpu::Buffer,
+    /// The edge debug view (#349), drawn instead of the glyphs under
+    /// `DebugMode::StyleEdges`.
+    edge_view_pipeline: wgpu::RenderPipeline,
+    edge_view_uniforms: wgpu::Buffer,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -2224,6 +2290,56 @@ impl Ascii {
         );
     }
 
+    /// The edge debug view (#349): the edge pixels by source and each
+    /// cell's decision, over the picture in grey.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_edge_view(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
+        output: &wgpu::TextureView,
+        edge_cells: &Owned,
+        cell: [f32; 2],
+        origin: [f32; 2],
+    ) {
+        let edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(edges) = edges_slot.as_ref() else {
+            return;
+        };
+        let uniforms = EdgeViewUniforms {
+            cell,
+            origin,
+            size: [frame.width as f32, frame.height as f32],
+            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
+            threshold: frame.param("edge_threshold").max(0.01),
+            max_len: frame.param("edge_max"),
+            srgb: if frame.srgb() { 1.0 } else { 0.0 },
+            dim: 0.3,
+            thick: frame.pixels_per_point.max(1.0).round(),
+            _pad: [0.0; 3],
+        };
+        frame
+            .queue
+            .write_buffer(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge View Pass",
+            output,
+            &self.edge_view_pipeline,
+            &[
+                &frame.uniform(
+                    "ASCII Edge View Uniform BG",
+                    &self.uniform_bgl,
+                    &self.edge_view_uniforms,
+                ),
+                &frame.sampled_input("ASCII Edge View Input BG", &self.input_bgl, input),
+                &edges.bind,
+                &edge_cells.bind,
+            ],
+        );
+    }
+
     /// Each slot's tone range into `stats` (#289): per lattice row, then
     /// summed per slot, both from this frame's picture.
     fn encode_stats(
@@ -2458,8 +2574,15 @@ impl StylePass for Ascii {
         );
         // The variant table (#336), written before any pass reads it
         let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &mut slots);
-        if edges > 0.0 {
+        // The edge debug view (#349) runs the edge passes even with the
+        // glyphs' edges off, and draws them in place of the glyphs
+        let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
+        if edges > 0.0 || edge_view {
             self.encode_edges(frame, encoder, edge_cells, cell, origin, &edge_table);
+        }
+        if edge_view {
+            self.encode_edge_view(frame, encoder, input, output, edge_cells, cell, origin);
+            return;
         }
 
         // Last frame's cells and this frame's, ping-ponged (#277)
@@ -2793,6 +2916,11 @@ mod tests {
                 "ascii_edge_cells.wgsl",
                 include_str!("ascii_edge_cells.wgsl"),
                 std::mem::size_of::<EdgeCellUniforms>(),
+            ),
+            (
+                "ascii_edge_view.wgsl",
+                EDGE_VIEW_SHADER,
+                std::mem::size_of::<EdgeViewUniforms>(),
             ),
         ] {
             let module = naga::front::wgsl::parse_str(src).expect(name);

@@ -14,9 +14,10 @@
 // a depth or mask edge is kept on its near side only.
 //
 // Output, per depth pixel: the unit gradient's structure tensor
-// (gx*gx, gx*gy, gy*gy) in screen space (y down), and w = 0 (no edge),
-// 1 (a geometry edge) or 2 (a styled entity's outline). The cell pass sums
-// them over each glyph cell.
+// (gx*gx, gx*gy, gy*gy) in screen space (y down), and w = the source that
+// decided it: 0 (no edge), 1 (a crease), 2 (a depth step) or 3 (a styled
+// entity's outline). The cell pass sums them over each glyph cell; the
+// edge debug view (#349) colours each pixel by it.
 
 struct EdgeUniforms {
     inv_view_proj: mat4x4<f32>,
@@ -183,15 +184,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ng = vec2<f32>(lx, ly);
     var g = ng;
     var strength = normal_edge;
+    var kind = 1.0;
     if depth_edge >= 1.0 && length(dg) > 1e-6 {
         g = dg;
         strength = depth_edge;
+        kind = 2.0;
     }
-    var kind = 1.0;
     if outline && (abs(igx) + abs(igy)) > 0.5 {
         strength = max(strength, 1.0);
         g = vec2<f32>(igx, igy);
-        kind = 2.0;
+        kind = 3.0;
     }
     let len = length(g);
     // `!(x >= 1)` also turns away a NaN that got through
