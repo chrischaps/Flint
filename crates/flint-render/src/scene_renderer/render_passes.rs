@@ -1600,6 +1600,21 @@ impl SceneRenderer {
             self.grass_instance_count = count.min(self.grass_max_instances);
         }
 
+        // Only the cells within reach of the camera are dispatched (ADR 0089)
+        let spacing = 1.0 / config.density.sqrt();
+        let window = grass_dispatch_window(
+            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
+            [self.grass_terrain_width, self.grass_terrain_depth],
+            spacing,
+            [camera.position.x, camera.position.z],
+            config.max_distance,
+        );
+        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
+        let workgroups_x = count_x.div_ceil(8);
+        let workgroups_z = count_z.div_ceil(8);
+        let group_count = workgroups_x * workgroups_z;
+        self.ensure_grass_group_slots(device, group_count);
+
         let grass_pipeline = match &self.grass_pipeline {
             Some(p) => p,
             None => return,
@@ -1618,22 +1633,11 @@ impl SceneRenderer {
             None => return,
         };
 
-        // Reset the draw arguments to no blades; the compute pass counts them in
+        // Reset the draw arguments to no blades; the scan pass counts them in
         let Some(draw_args) = &self.grass_draw_args_buffer else {
             return;
         };
         queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
-
-        // Only the cells within reach of the camera are dispatched (ADR 0089)
-        let spacing = 1.0 / config.density.sqrt();
-        let window = grass_dispatch_window(
-            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
-            [self.grass_terrain_width, self.grass_terrain_depth],
-            spacing,
-            [camera.position.x, camera.position.z],
-            config.max_distance,
-        );
-        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
 
         // Only the blades in view are drawn. The planes are pushed out by the
         // tallest blade, and with shadows on by how far its shadow reaches,
@@ -1672,7 +1676,7 @@ impl SceneRenderer {
             // A terrain's samples sit on its mesh's vertices; a game's
             // ground map's in its cells (ADR 0098)
             height_at_corners: !self.grass_on_ground as u32,
-            _pad0: 0,
+            group_count,
             _pad1: 0,
             _pad2: 0,
             frustum_planes,
@@ -1713,19 +1717,23 @@ impl SceneRenderer {
         }
 
         // Compute dispatch over the window (none when the camera is out of reach;
-        // the counter, reset above, then reads zero)
-        let workgroups_x = count_x.div_ceil(8);
-        let workgroups_z = count_z.div_ceil(8);
-
-        if workgroups_x > 0 && workgroups_z > 0 {
+        // the counter, reset above, then reads zero). Three passes put the
+        // blades in grid order, the same every run (#341): an atomic append
+        // ordered them by which GPU thread got there first, and the blade
+        // drawn first wins a depth tie, so captures moved by a level.
+        if group_count > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Grass Compute Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&grass_pipeline.compute_pipeline);
             pass.set_bind_group(0, compute_uniform_bg, &[]);
             pass.set_bind_group(1, compute_texture_bg, &[]);
             pass.set_bind_group(2, compute_storage_bg, &[]);
+            pass.set_pipeline(&grass_pipeline.count_pipeline);
+            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
+            pass.set_pipeline(&grass_pipeline.scan_pipeline);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&grass_pipeline.emit_pipeline);
             pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
         }
 
