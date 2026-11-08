@@ -2863,29 +2863,12 @@ fn reads_mask(
                 .any(|(id, _)| ids.variant(id).is_some_and(|v| v.style != STYLE.name)))
 }
 
-/// The style mask ids whose pixels a display style that runs after ASCII
-/// draws over (#317): an entity of another style that's on this frame.
+/// The style mask ids whose pixels aren't ASCII's in the finished frame
+/// (#317): an entity of another style that's on this frame, which the
+/// framework hands back to that style (#384) whichever of the two runs
+/// first.
 fn overdrawn_ids(frame: &StyleFrame<'_>) -> Vec<u32> {
-    let chain = super::stage_chain(StyleStage::Display, frame.config);
-    let Some(ours) = chain.iter().position(|(d, _)| d.name == STYLE.name) else {
-        return Vec::new();
-    };
-    let later: Vec<&str> = chain[ours + 1..]
-        .iter()
-        .filter(|(d, _)| d.is_on(frame.config, frame.style_ids))
-        .map(|(d, _)| d.name)
-        .collect();
-    frame
-        .style_ids
-        .iter()
-        .filter(|(id, _)| {
-            frame
-                .style_ids
-                .variant(*id)
-                .is_some_and(|v| !v.off && later.contains(&v.style.as_str()))
-        })
-        .map(|(id, _)| u32::from(id))
-        .collect()
+    frame.foreign_ids().into_iter().map(u32::from).collect()
 }
 
 /// The text grid's first visible texel (#317): the cell state's texel 0

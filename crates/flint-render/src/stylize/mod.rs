@@ -94,6 +94,7 @@ pub mod catalog;
 pub mod custom;
 pub mod edges;
 pub mod kit;
+pub mod ownership;
 mod spec;
 mod targets;
 pub mod text;
@@ -592,6 +593,14 @@ pub struct StyleDescriptor {
     /// overrides it with `feeds_bloom` in the style's table
     /// ([`StyleDescriptor::feeds_bloom_in`]).
     pub feeds_bloom: bool,
+    /// Whether the style leaves the pixels another style owns (#384): an
+    /// entity that asks for another running style (`style_mask { style =
+    /// "pencil" }` in an ASCII frame) keeps the input there, put back by
+    /// the framework after the style draws ([`ownership`]). True for every
+    /// style but those that look at the whole picture on purpose: the
+    /// debug views and a glow over the finished frame
+    /// ([`draws_over_entities`](Self::draws_over_entities)).
+    pub yields: bool,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -629,6 +638,7 @@ impl StyleDescriptor {
             hints: &[],
             component: None,
             feeds_bloom: false,
+            yields: true,
             create,
         }
     }
@@ -674,6 +684,13 @@ impl StyleDescriptor {
         self.feeds_bloom = feeds_bloom;
         self
     }
+
+    /// Draws over every pixel, other styles' entities included
+    /// ([`yields`](Self::yields) off): a debug view, or a finishing glow.
+    pub const fn draws_over_entities(mut self) -> Self {
+        self.yields = false;
+        self
+    }
 }
 
 impl StyleDescriptor {
@@ -696,6 +713,20 @@ impl StyleDescriptor {
         self.is_on(config, ids)
             && (self.uses_mask.now(config, ids)
                 || (self.component.is_some() && ids.mentions(self.name)))
+    }
+
+    /// The mask ids another running style owns this frame (#384), in id
+    /// order: ids whose variant names a registered style other than this
+    /// one that is on ([`is_on`](Self::is_on)), opt-outs aside. A style
+    /// that [`yields`](Self::yields) leaves their pixels as its input
+    /// had them.
+    pub fn foreign_ids(&self, config: &PostProcessConfig, ids: &StyleIds) -> Vec<u16> {
+        let table = owner_table(config, ids);
+        let me = registry_index(self).map(|i| i as u32);
+        (1..table.len())
+            .filter(|&id| table[id] != ownership::NONE && Some(table[id]) != me)
+            .map(|id| id as u16)
+            .collect()
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -1263,6 +1294,37 @@ impl StyleFrame<'_> {
         variant.option(self.descriptor, self.config, name)
     }
 
+    /// The mask ids whose pixels another running style owns (#384,
+    /// [`StyleDescriptor::foreign_ids`]). The framework already puts the
+    /// input back on them after a style that
+    /// [`yields`](StyleDescriptor::yields) draws; a style reads this to
+    /// skip work there (pencil's contours, ASCII's text grid).
+    pub fn foreign_ids(&self) -> Vec<u16> {
+        self.descriptor.foreign_ids(self.config, self.style_ids)
+    }
+
+    /// The owner table the ownership pass reads after this style, or
+    /// `None` when it has nothing to do: the style doesn't yield, there is
+    /// no mask, a debug view runs one style alone, or no pixel is another
+    /// style's.
+    pub(crate) fn owner_table(&self) -> Option<Vec<u32>> {
+        if !self.descriptor.yields
+            || self.mask.is_none()
+            || matches!(
+                self.debug_mode,
+                crate::DebugMode::StyleMask | crate::DebugMode::StyleEdges
+            )
+        {
+            return None;
+        }
+        let me = registry_index(self.descriptor)? as u32;
+        let table = owner_table(self.config, self.style_ids);
+        table
+            .iter()
+            .any(|&o| o != ownership::NONE && o != me)
+            .then_some(table)
+    }
+
     /// Whether `config` switches this style on for the whole frame, rather
     /// than only for the entities that ask for it.
     pub fn whole_frame(&self) -> bool {
@@ -1673,6 +1735,9 @@ pub struct StyleSet {
     text_capture: bool,
     /// The draw that shows a style's `blend` (#369), any style's.
     blend: blend::BlendPass,
+    /// The ownership pass (#384), built with the first style.
+    ownership: Option<ownership::OwnershipPass>,
+    ownership_failed: bool,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -1735,6 +1800,23 @@ impl StyleSet {
                 }
             }
         }
+        if self.ownership.is_none()
+            && !self.ownership_failed
+            && self.built.iter().any(Option::is_some)
+        {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ownership::OwnershipPass::new(device)
+            })) {
+                Ok(pass) => self.ownership = Some(pass),
+                Err(_) => {
+                    tracing::warn!(
+                        "style ownership unavailable: its shader failed to build; whole-frame \
+                         styles draw over other styles' entities"
+                    );
+                    self.ownership_failed = true;
+                }
+            }
+        }
         if self.edges.is_none()
             && !self.edges_failed
             && registry
@@ -1777,6 +1859,11 @@ impl StyleSet {
         self.edge_runs
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         made
+    }
+
+    /// The ownership pass (#384) [`run_stage`] draws after each style.
+    pub(crate) fn ownership(&self) -> Option<&ownership::OwnershipPass> {
+        self.ownership.as_ref()
     }
 
     /// How many times the shared edge pass has been drawn since the
@@ -1987,6 +2074,7 @@ pub(crate) fn run_stage(
     input: StyleInput<'_>,
     to: Option<StyleInput<'_>>,
     blender: &blend::BlendPass,
+    ownership: Option<&ownership::OwnershipPass>,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
     debug_assert_eq!(styles.len(), steps.len());
@@ -2041,6 +2129,11 @@ pub(crate) fn run_stage(
         scope(descriptor.label, encoder, &mut |encoder| {
             pass.encode(frame, encoder, &src, dst_view);
             blender.draw(frame, encoder, &src, dst_view, blend);
+            // Each pixel one style's (#384): another style's entities get
+            // this style's input back
+            if let Some(ownership) = ownership {
+                ownership.encode(frame, encoder, &src, dst_view);
+            }
         });
     }
     result
@@ -2119,9 +2212,47 @@ pub fn is_builtin(name: &str) -> bool {
     REGISTRY.iter().any(|d| d.name == name)
 }
 
-/// Whether any style on this frame reads the entity style mask.
+/// Whether any style on this frame reads the entity style mask: one
+/// asks for it, or one that [`yields`](StyleDescriptor::yields) is on
+/// while another running style owns an entity's pixels (#384).
 pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled && registry().iter().any(|d| d.reads_mask(config, ids))
+    config.enabled
+        && registry().iter().any(|d| {
+            d.reads_mask(config, ids)
+                || (d.yields && d.is_on(config, ids) && !d.foreign_ids(config, ids).is_empty())
+        })
+}
+
+/// Which style owns each mask id this frame (#384), by registry index,
+/// [`ownership::NONE`] for none: the style its variant names, when that
+/// style is registered and on and the variant isn't an opt-out. Id 0
+/// (unstyled) is always none; the table is [`ownership::MAX_IDS`] long.
+pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
+    let registry = registry();
+    let mut table = vec![ownership::NONE; ownership::MAX_IDS];
+    for (id, _) in ids.iter() {
+        let Some(slot) = table.get_mut(id as usize) else {
+            continue;
+        };
+        let Some(v) = ids.variant(id) else {
+            continue;
+        };
+        if v.off {
+            continue;
+        }
+        if let Some(i) = registry
+            .iter()
+            .position(|d| d.name == v.style && d.is_on(config, ids))
+        {
+            *slot = i as u32;
+        }
+    }
+    table
+}
+
+/// Where `d` stands in the [`registry`], by name.
+pub(crate) fn registry_index(d: &StyleDescriptor) -> Option<usize> {
+    registry().iter().position(|r| r.name == d.name)
 }
 
 /// The style called `name`.

@@ -460,16 +460,11 @@ impl Pencil {
         );
         let mut rows = vec![whole];
         let mut slots = [0u32; MAX_IDS];
-        // Ids another style draws are that style's pixels
-        for (id, _) in frame.style_ids.iter() {
-            let Some(v) = frame.style_ids.variant(id) else {
-                continue;
-            };
-            if (id as usize) < MAX_IDS
-                && v.style != STYLE.name
-                && !v.off
-                && super::find(&v.style).is_some()
-            {
+        // Ids another running style draws are that style's pixels (#384:
+        // the framework puts the input back there too; the slot keeps
+        // pencil's contours and hatching from reading them as its own)
+        for id in frame.foreign_ids() {
+            if (id as usize) < MAX_IDS {
                 slots[id as usize] = FOREIGN;
             }
         }

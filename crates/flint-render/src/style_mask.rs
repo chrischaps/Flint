@@ -1815,4 +1815,70 @@ mod tests {
         let (none, _) = resolved(&empty, &config);
         assert!(!crate::stylize::any_uses_mask(&config, &none));
     }
+
+    /// #384: each pixel is one style's. A whole-frame style's foreign ids
+    /// are the entities another running style owns: not its own, not an
+    /// opt-out, not a style that isn't on.
+    #[test]
+    fn a_whole_frame_style_leaves_another_styles_entities() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let pencil = crate::stylize::find("pencil").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_param("ascii", "edges", 0.0);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "style_mask", "style = \"ascii\"");
+        with_component(&mut world, "cask", "style_mask", "style = \"pencil\"");
+        with_component(&mut world, "crate", "pencil_style", "spacing = 6.0");
+        with_component(&mut world, "tag", "pencil_style", "enabled = false");
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (ids, out) = resolved(&world, &config);
+        let id = |name: &str| out[&world.get_id(name).unwrap()];
+
+        let foreign = ascii.foreign_ids(&config, &ids);
+        assert!(foreign.contains(&id("cask")), "a style_mask naming pencil");
+        assert!(foreign.contains(&id("crate")), "a pencil_style");
+        assert!(!foreign.contains(&id("barrel")), "its own");
+        assert!(!foreign.contains(&id("tag")), "an opt-out is nobody's");
+        assert!(!foreign.contains(&id("box")), "invert isn't on");
+        // And the other way round, pencil leaves ASCII's barrel
+        assert_eq!(pencil.foreign_ids(&config, &ids), vec![id("barrel")]);
+
+        let table = crate::stylize::owner_table(&config, &ids);
+        assert_eq!(table[0], crate::stylize::ownership::NONE, "unstyled");
+        assert_eq!(table[id("tag") as usize], crate::stylize::ownership::NONE);
+        assert_eq!(table[id("cask") as usize], table[id("crate") as usize]);
+        assert_ne!(table[id("cask") as usize], table[id("barrel") as usize]);
+
+        // A whole-frame invert now owns the box: ASCII leaves it too
+        config.styles.set_enabled("invert", true);
+        assert!(ascii.foreign_ids(&config, &ids).contains(&id("box")));
+
+        // Neither Kuwahara nor invert reads the mask, but Kuwahara yields
+        // to invert's box, so the mask is drawn for it
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("kuwahara", true);
+        config.styles.set_enabled("invert", true);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (only_box, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &only_box));
+        config.styles.set_enabled("kuwahara", false);
+        assert!(
+            !crate::stylize::any_uses_mask(&config, &only_box),
+            "invert alone has nobody to yield to"
+        );
+    }
+
+    /// #384: the views that look at the whole picture on purpose don't
+    /// yield; every other built-in does, with no code of its own.
+    #[test]
+    fn only_debug_views_and_the_glow_draw_over_entities() {
+        let over: Vec<&str> = crate::stylize::registry()
+            .iter()
+            .filter(|d| !d.yields)
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(over, ["display_bloom", "mask_view", "edges_view"]);
+    }
 }
