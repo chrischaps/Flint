@@ -17,6 +17,7 @@ pub mod gpu_select;
 pub mod bind_cache;
 pub mod gpu_timer;
 pub mod glyph_atlas;
+pub mod look;
 mod gpu_mesh;
 pub mod grass_pipeline;
 pub mod ground_fog;

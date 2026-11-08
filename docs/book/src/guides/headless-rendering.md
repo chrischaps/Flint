@@ -90,7 +90,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
-| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's: `ascii_noir`, `matrix`, `ink_wash`, `graphite`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
+| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
 | `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` (Living Props builds only); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
 | `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
 | `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
@@ -323,7 +323,7 @@ The cost is crash isolation. A case that panics is run again in its own `flint r
 | Flag | Description |
 |------|-------------|
 | `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. The contact sheet shows what each replaced. Look at it before committing |
-| `--case <name>` | Only this case, or every case whose name contains it; repeatable |
+| `--case <name>` | Only this case. A name that is exactly a case's picks that case alone (`--case ascii-silhouette-cell` skips `ascii-silhouette-cell-object`); one that names no case picks every case whose name contains it (`--case ascii-silhouette` runs both). Repeatable: a case runs when any filter picks it |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level; written when any pixel moved), `report.json` and the `index.html` contact sheet go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
 | `--bless-variant` | Write each render as this adapter's variant of its golden, `<stem>.<key>.png` |

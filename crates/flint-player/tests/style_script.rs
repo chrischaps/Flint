@@ -385,3 +385,114 @@ fn on_update() {
     assert!(failures[1].contains("whole-frame"), "{failures:?}");
     assert!(world.get_component(barrel, "ascii_style").is_none());
 }
+
+// Reading back (#372): frame 0 styles the barrel; from frame 1 on the
+// script asks what the barrel and the hoop (its child) are drawn in and
+// writes the answers into its own component for the test to read.
+const READBACK: &str = r##"
+fn on_update() {
+    let me = self_entity();
+    let n = get_field(me, "story", "frame");
+    let barrel = get_entity("barrel");
+    let hoop = get_entity("hoop");
+    if n == 0 {
+        set_entity_style(barrel, "ascii");
+        set_style_param(barrel, "ramp", "blocks");
+        set_style_param(barrel, "cell", 12);
+        set_style_param(barrel, "tint", "#ff8000");
+    }
+    set_field(me, "story", "barrel", get_entity_style(barrel));
+    set_field(me, "story", "hoop", get_entity_style(hoop));
+    set_field(me, "story", "variant", get_entity_style_variant(hoop));
+    set_field(me, "story", "cell", get_style_param(hoop, "cell"));
+    set_field(me, "story", "ramp", get_style_param(hoop, "ramp"));
+    set_field(me, "story", "glow", get_style_param(hoop, "glow"));
+    let tint = get_style_param(hoop, "tint");
+    set_field(me, "story", "tint_r", if type_of(tint) == "array" { tint[0] } else { -1.0 });
+    let none = get_style_param(get_entity("bench"), "cell");
+    set_field(me, "story", "bench_unit", type_of(none) == "()");
+    set_field(me, "story", "frame", n + 1);
+}
+"##;
+
+#[test]
+fn a_script_reads_back_its_style_and_an_inherited_one() {
+    use flint_player::SceneStyles;
+    use flint_render::PostProcessConfig;
+    use std::sync::Arc;
+
+    let mut world = FlintWorld::new();
+    let barrel = world.spawn("barrel").unwrap();
+    let hoop = world.spawn("hoop").unwrap();
+    world.spawn("bench").unwrap();
+    world.set_parent(hoop, barrel).unwrap();
+    let mut engine = ScriptEngine::new();
+    let mut config = PostProcessConfig::default();
+    config.styles.set_param("ascii", "glow", 0.4);
+    engine.set_style_reader(Arc::new(SceneStyles::new(config)));
+    director(&mut engine, &mut world, READBACK);
+    let director = world.get_id("director").unwrap();
+    let story = |world: &FlintWorld, key: &str| -> toml::Value {
+        world
+            .get_component(director, "story")
+            .and_then(|s| s.get(key).cloned())
+            .unwrap_or_else(|| panic!("story.{key} unset"))
+    };
+
+    // Frame 0: the set is queued, so the reads still see it unstyled
+    let (_, failures) = frame(&mut engine, &mut world);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(story(&world, "barrel").as_str(), Some(""));
+    assert_eq!(story(&world, "hoop").as_str(), Some(""));
+
+    // Frame 1: the barrel's own style, and the hoop's inherited one with
+    // the barrel's settings, the scene's, and the defaults under them
+    frame(&mut engine, &mut world);
+    assert_eq!(story(&world, "barrel").as_str(), Some("ascii"));
+    assert_eq!(story(&world, "hoop").as_str(), Some("ascii"));
+    let variant = story(&world, "variant");
+    let variant = variant.as_str().unwrap();
+    assert!(
+        variant.starts_with("ascii{")
+            && variant.contains("ramp=blocks")
+            && variant.contains("cell=12"),
+        "{variant}"
+    );
+    assert_eq!(story(&world, "cell").as_float(), Some(12.0), "the entity's");
+    assert_eq!(story(&world, "ramp").as_str(), Some("blocks"));
+    let glow = story(&world, "glow").as_float().unwrap();
+    assert!((glow - 0.4).abs() < 1e-6, "the scene's: {glow}");
+    assert_eq!(story(&world, "tint_r").as_float(), Some(1.0));
+    assert_eq!(story(&world, "bench_unit").as_bool(), Some(true));
+}
+
+#[test]
+fn without_a_reader_every_entity_reads_unstyled() {
+    let mut world = FlintWorld::new();
+    let barrel = world.spawn("barrel").unwrap();
+    world
+        .set_component(barrel, "ascii_style", toml::Table::new().into())
+        .unwrap();
+    let mut engine = ScriptEngine::new();
+    director(
+        &mut engine,
+        &mut world,
+        r#"
+fn on_update() {
+    let me = self_entity();
+    set_field(me, "story", "style", get_entity_style(get_entity("barrel")));
+}
+"#,
+    );
+    frame(&mut engine, &mut world);
+    let director = world.get_id("director").unwrap();
+    let style = world
+        .get_component(director, "story")
+        .unwrap()
+        .get("style")
+        .cloned();
+    assert_eq!(
+        style.and_then(|v| v.as_str().map(str::to_string)),
+        Some(String::new())
+    );
+}
