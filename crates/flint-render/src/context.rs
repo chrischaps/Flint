@@ -27,6 +27,11 @@ pub struct RenderContext {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
+    /// `depth_texture`'s [`new_depth_id`](crate::bind_cache::new_depth_id),
+    /// taken again whenever it is made again, so the renderer can keep bind
+    /// groups over `depth_view` (#379). A host that replaces the texture
+    /// itself takes a new one too.
+    pub depth_id: u64,
     // Retained for surface recreation on Android resume
     instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -169,6 +174,7 @@ impl RenderContext {
             size,
             depth_texture,
             depth_view,
+            depth_id: crate::bind_cache::new_depth_id(),
             instance,
             adapter,
             surface_copyable,
@@ -299,6 +305,7 @@ impl RenderContext {
         self.size = size;
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
+        self.depth_id = crate::bind_cache::new_depth_id();
 
         Ok(())
     }
@@ -314,6 +321,7 @@ impl RenderContext {
             let (depth_texture, depth_view) = create_depth_texture(&self.device, &self.config);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
+            self.depth_id = crate::bind_cache::new_depth_id();
         }
     }
 
@@ -324,6 +332,12 @@ impl RenderContext {
             self.config.present_mode,
             wgpu::PresentMode::AutoVsync | wgpu::PresentMode::Fifo | wgpu::PresentMode::FifoRelaxed
         )
+    }
+
+    /// The depth view with its id, for
+    /// [`SceneRenderer::encode_to`](crate::SceneRenderer::encode_to).
+    pub fn depth_target(&self) -> crate::bind_cache::DepthTarget<'_> {
+        crate::bind_cache::DepthTarget::new(&self.depth_view, self.depth_id)
     }
 
     /// Get aspect ratio

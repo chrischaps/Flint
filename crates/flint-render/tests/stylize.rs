@@ -768,6 +768,141 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
 /// How far the wobbling camera's target moves, in metres.
 const WOBBLE: f32 = 0.08;
 
+/// Each 8 px cell's mean RGB, row by row.
+fn cell_means(frame: &[u8]) -> Vec<[f32; 3]> {
+    let n = SIZE as usize / 8;
+    (0..n * n)
+        .map(|i| {
+            let (cx, cy) = (i % n, i / n);
+            let mut sum = [0.0f32; 3];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let p = pixel(frame, cx * 8 + x, cy * 8 + y);
+                    for c in 0..3 {
+                        sum[c] += p[c] as f32 / 64.0;
+                    }
+                }
+            }
+            sum
+        })
+        .collect()
+}
+
+#[test]
+fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // A wall of boxes two metres wide, red and green by turns, at equal
+    // luminance: smoothing can't tell a red cell's past from a green one
+    // by its jump, so a past read from the wrong surface shows as a hue
+    let mut world = FlintWorld::new();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for i in -12..12 {
+        let id = world.spawn(format!("panel_{i}")).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([i as f64 * 2.0 + 1.0, 0.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-1.0, -12.0, -0.5]));
+        bounds.insert("max".into(), vec3([1.0, 12.0, 0.5]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+        let color = if i % 2 == 0 {
+            [0.8, 0.2, 0.2]
+        } else {
+            [0.2, 0.377, 0.2]
+        };
+        let mut material = toml::Table::new();
+        material.insert(
+            "color".into(),
+            toml::Value::Array(
+                color
+                    .iter()
+                    .map(|&c| c.into())
+                    .chain([1.0.into()])
+                    .collect(),
+            ),
+        );
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
+    }
+
+    // Two frames: the camera trucks one panel to the side between them, so
+    // every cell's surface last frame was in another cell, and the cell
+    // itself last showed the other colour
+    let run = |temporal: &str| -> Vec<Vec<u8>> {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_option("ascii", "temporal", temporal);
+        config.styles.set_option("ascii", "color", "raw");
+        config.styles.set_param("ascii", "background", 1.0);
+        config.styles.set_param("ascii", "smoothing", 0.95);
+        config.styles.set_param("ascii", "hysteresis", 0.0);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        [0.0f32, 2.0]
+            .iter()
+            .map(|&x| {
+                let camera = Camera {
+                    position: flint_core::Vec3::new(x, 0.0, 12.0),
+                    target: flint_core::Vec3::new(x, 0.0, 0.0),
+                    ..Camera::default()
+                };
+                renderer.update_from_world(&world, &gpu.device);
+                renderer.render_to(
+                    &gpu.device,
+                    &gpu.queue,
+                    &gpu.depth_view,
+                    &camera,
+                    &gpu.color_view,
+                );
+                gpu.device.poll(wgpu::Maintain::Wait);
+                gpu.pixels()
+            })
+            .collect()
+    };
+    // Cells whose colour is off the stateless frame's by more than 12 levels
+    let wrong = |frames: &[Vec<u8>], truth: &[Vec<u8>]| -> usize {
+        cell_means(&frames[1])
+            .iter()
+            .zip(cell_means(&truth[1]))
+            .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 12.0))
+            .count()
+    };
+    let off = run("off");
+    let on = run("on");
+    let reproject = run("reproject");
+    assert_eq!(reproject[0], off[0], "the first frame differs reprojected");
+    assert_ne!(off[0], off[1], "the camera moved nothing");
+    let (on_wrong, reproject_wrong) = (wrong(&on, &off), wrong(&reproject, &off));
+    eprintln!(
+        "cells off the present after a one-panel truck: on {on_wrong}, reproject {reproject_wrong}"
+    );
+    // Screen-space history smooths most cells towards the other colour
+    assert!(
+        on_wrong >= 24,
+        "screen-space history should show the other panel: {on_wrong}"
+    );
+    // Reprojected, a cell's past is its own panel, but for the column that
+    // came on screen and the cells a panel edge crosses
+    assert!(
+        reproject_wrong * 3 <= on_wrong,
+        "reprojected history should read each surface's own past: on {on_wrong}, reproject {reproject_wrong}"
+    );
+}
+
 /// The GPU objects the application holds: buffers, bind groups, textures
 /// and texture views.
 fn held(gpu: &Gpu) -> [usize; 4] {
@@ -781,6 +916,114 @@ fn held(gpu: &Gpu) -> [usize; 4] {
         hub.textures.num_kept_from_user,
         hub.texture_views.num_kept_from_user,
     ]
+}
+
+/// #379: at render scale 1 the scene draws into the caller's depth view,
+/// which wgpu 23 can't key. Given with an id, the bind groups over it
+/// (SSAO's, the composite's, the style mask's) are kept from frame to
+/// frame instead of made every frame, and a new id remakes them once.
+#[test]
+fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    // The cube in glyphs, outlined: the style mask runs (#350)
+    flint_render::entity_style::set_entity_style(&mut world, cube, "ascii").unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut config = renderer.post_process_config().clone();
+    config.ssao_enabled = true;
+    renderer.set_post_process_config(config);
+
+    let frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
+        renderer.update_from_world(&world, &gpu.device);
+        renderer.render_to(
+            &gpu.device,
+            &gpu.queue,
+            depth,
+            &Camera::default(),
+            &gpu.color_view,
+        );
+        gpu.device.poll(wgpu::Maintain::Wait);
+        gpu.pixels()
+    };
+    let per_frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
+        let before = renderer.post_binds_made();
+        let pixels = frame(renderer, depth);
+        (renderer.post_binds_made() - before, pixels)
+    };
+
+    // No id: what every host did before, warmed up first
+    let bare = flint_render::DepthTarget::from(&gpu.depth_view);
+    frame(&mut renderer, bare);
+    assert!(
+        renderer.style_mask_draws().is_some_and(|(_, n)| n > 0),
+        "the test needs the style mask on"
+    );
+    let (made_bare, bare_pixels) = per_frame(&mut renderer, bare);
+
+    // An id: the first frame makes them, the next ones none
+    let id = flint_render::new_depth_id();
+    let keyed = flint_render::DepthTarget::new(&gpu.depth_view, id);
+    let (made_first, _) = per_frame(&mut renderer, keyed);
+    let kept = renderer.kept_post_binds();
+    let steady: Vec<u64> = (0..8).map(|_| per_frame(&mut renderer, keyed).0).collect();
+    let (_, keyed_pixels) = per_frame(&mut renderer, keyed);
+
+    // A new depth texture (a resize, say) comes with a new id: made once
+    // again, and the old id's groups dropped rather than piled up
+    let next = flint_render::DepthTarget::new(&gpu.depth_view, flint_render::new_depth_id());
+    let (made_next, _) = per_frame(&mut renderer, next);
+    let (made_after, _) = per_frame(&mut renderer, next);
+    eprintln!(
+        "bind groups a frame: bare {made_bare}, keyed first {made_first} then {steady:?}, \
+         new id {made_next} then {made_after}; kept {kept} -> {}",
+        renderer.kept_post_binds()
+    );
+    assert!(
+        made_bare >= 3,
+        "a bare view should cost SSAO's, the composite's and the mask's groups every frame, made {made_bare}"
+    );
+    // A bare frame makes a group at each use, and some are used twice
+    assert!(
+        (1..=made_bare).contains(&made_first),
+        "the first keyed frame makes each group once"
+    );
+    assert!(
+        steady.iter().all(|&n| n == 0),
+        "a steady keyed frame made bind groups: {steady:?}"
+    );
+    assert_eq!(made_next, made_first, "a new id remakes each group once");
+    assert_eq!(made_after, 0);
+    assert_eq!(
+        renderer.kept_post_binds(),
+        kept,
+        "the old id's groups were kept"
+    );
+    assert_eq!(
+        keyed_pixels, bare_pixels,
+        "kept groups drew a different frame"
+    );
 }
 
 #[test]
@@ -975,6 +1218,103 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
         if i == 0 {
             assert_eq!(frame, plain, "the skipped style changed a pixel");
         }
+    }
+    assert_eq!(renderer.kept_post_binds(), binds);
+    assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
+    // ASCII blends itself (#396): the framework's cross-fade never ran
+    assert_eq!(renderer.style_fade_runs(), 0, "ASCII was cross-faded twice");
+}
+
+/// #396: a per-entity style with no blend code of its own (pencil) fades
+/// with `blend`, the framework cross-fading its output back toward its
+/// input: blend 0 is the entity's own shading, 1 the full style, and 0.5
+/// lands every styled pixel halfway between the two. Fully styled, the
+/// cross-fade isn't drawn at all, and a ramp allocates nothing.
+#[test]
+fn a_style_with_no_blend_code_fades_by_the_framework() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-2.5, -2.5, -2.5]));
+    bounds.insert("max".into(), vec3([2.5, 2.5, 2.5]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    set_entity_style(&mut world, cube, "pencil").unwrap();
+    let full = gpu.frame(&mut renderer, &world);
+    assert_ne!(full, plain, "pencil drew nothing");
+    assert_eq!(
+        renderer.style_fade_runs(),
+        0,
+        "a full blend was cross-faded"
+    );
+
+    let at = |renderer: &mut SceneRenderer, world: &mut FlintWorld, b: f64| {
+        set_style_param(world, cube, "blend", b.into()).unwrap();
+        gpu.frame(renderer, world)
+    };
+    let close = |a: &[u8], b: &[u8]| a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 1);
+    // At 0 pencil is off (#400): no pass, no cross-fade, the plain frame
+    let none = at(&mut renderer, &mut world, 0.0);
+    assert_eq!(none, plain, "blend 0 is the entity's own shading");
+    assert_eq!(renderer.style_fade_runs(), 0, "blend 0 was cross-faded");
+    assert_eq!(
+        at(&mut renderer, &mut world, 1.0),
+        full,
+        "blend 1 is the full style, byte for byte"
+    );
+
+    // Every pixel pencil touches lands near the midpoint in linear light
+    // (an sRGB target blends there); none it doesn't touch moves
+    let to_linear = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let half = at(&mut renderer, &mut world, 0.5);
+    assert!(renderer.style_fade_runs() > 0, "the cross-fade never ran");
+    let (mut styled_px, mut worst) = (0, 0.0f32);
+    for ((p, f), h) in plain.chunks(4).zip(full.chunks(4)).zip(half.chunks(4)) {
+        if p == f {
+            assert!(close(h, p), "a pixel the style never touches changed");
+            continue;
+        }
+        styled_px += 1;
+        for c in 0..3 {
+            let mid = 0.5 * (to_linear(p[c]) + to_linear(f[c]));
+            worst = worst.max((to_linear(h[c]) - mid).abs());
+        }
+    }
+    eprintln!("fade 0.5 over {styled_px} styled pixels: worst {worst:.4} from the midpoint");
+    assert!(styled_px > 100, "pencil styled only {styled_px} pixels");
+    assert!(worst < 0.02, "a pixel strayed {worst} from the midpoint");
+
+    // A ramp allocates nothing: the table and binds are made once
+    at(&mut renderer, &mut world, 0.25);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    for i in 0..12 {
+        at(&mut renderer, &mut world, i as f64 / 12.0);
     }
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
@@ -1332,6 +1672,140 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #414: a user style that reads the mask is per-entity. Its generated
+/// `<name>_style` component (or a `style_mask` naming it) switches it on
+/// with no `[post_process.styles]` table, and each entity's settings reach
+/// its own pixels as `params`: three boxes, three `glow`s, one frame.
+#[test]
+fn a_user_style_takes_settings_per_entity() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // Paints its entities (r = glow, g = 1, b = 0) and passes the rest
+    let dir = std::env::temp_dir().join(format!("flint-glow-414-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::write(
+        styles.join("utest_glow.shader.toml"),
+        "version = 1\nname = \"utest_glow\"\nshader = \"utest_glow.wgsl\"\ninputs = [\"mask\"]\n\
+         [params.glow]\ndefault = 0.5\nmin = 0.0\nmax = 1.0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_glow.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         if (flint_style_blend(p.uv) <= 0.0) {\n        return p.color;\n    }\n    \
+         return vec4<f32>(params.glow, 1.0, 0.0, 1.0);\n}\n",
+    )
+    .unwrap();
+    let messages = flint_render::stylize::custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let glow = flint_render::stylize::find("utest_glow").expect("the user style registered");
+    assert_eq!(glow.component, Some("utest_glow_style"));
+
+    // Three boxes in a row across the default camera's view
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let mut world = FlintWorld::new();
+    let mut boxes = Vec::new();
+    for (i, a) in [-3.2, 0.0, 3.2].into_iter().enumerate() {
+        let e = world.spawn(format!("box{i}")).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([a * s, -a * s, 0.0]));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-1.0; 3]));
+        bounds.insert("max".into(), vec3([1.0; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        boxes.push(e);
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    let painted = |f: &[u8]| f.chunks(4).filter(|p| p[1] == 255 && p[2] == 0).count();
+    assert_eq!(
+        painted(&plain),
+        0,
+        "the test's colour is in the plain frame"
+    );
+
+    let glow_of = |g: f64| {
+        let mut t = toml::Table::new();
+        t.insert("glow".into(), g.into());
+        toml::Value::Table(t)
+    };
+    world
+        .set_component(boxes[0], "utest_glow_style", glow_of(0.25))
+        .unwrap();
+    world
+        .set_component(boxes[1], "utest_glow_style", glow_of(0.75))
+        .unwrap();
+    let mut mask = toml::Table::new();
+    mask.insert("style".into(), "utest_glow".into());
+    world
+        .set_component(boxes[2], "style_mask", mask.into())
+        .unwrap();
+    assert!(
+        !renderer
+            .post_process_config()
+            .styles
+            .is_enabled("utest_glow"),
+        "the scene has no table for it"
+    );
+    renderer.update_from_world(&world, &gpu.device);
+    renderer.ensure_style_resources(&gpu.device);
+    let styled = gpu.frame(&mut renderer, &world);
+
+    // Each box in its own glow (display values; 6 levels for the sRGB
+    // round trip), the third at the default
+    let quarter = near(&styled, [0.25, 1.0, 0.0]);
+    let three_quarters = near(&styled, [0.75, 1.0, 0.0]);
+    let half = near(&styled, [0.5, 1.0, 0.0]);
+    eprintln!(
+        "glow 0.25: {quarter} px, 0.75: {three_quarters} px, default 0.5: {half} px, all {}",
+        painted(&styled)
+    );
+    for (n, what) in [
+        (quarter, "glow = 0.25"),
+        (three_quarters, "glow = 0.75"),
+        (half, "the style_mask's default"),
+    ] {
+        assert!(n > 40, "only {n} pixels in {what}");
+    }
+    assert_eq!(
+        quarter + three_quarters + half,
+        painted(&styled),
+        "a painted pixel took none of the three settings"
+    );
+    // The rest of the frame is the plain one
+    let changed_off_boxes = plain
+        .chunks(4)
+        .zip(styled.chunks(4))
+        .filter(|(a, b)| a != b && !(b[1] == 255 && b[2] == 0))
+        .count();
+    assert_eq!(changed_off_boxes, 0, "pixels off the boxes changed");
+
+    // An opt-out leaves its box as it was
+    let mut off = toml::Table::new();
+    off.insert("enabled".into(), false.into());
+    world
+        .set_component(boxes[1], "utest_glow_style", off.into())
+        .unwrap();
+    let opted = gpu.frame(&mut renderer, &world);
+    assert_eq!(near(&opted, [0.75, 1.0, 0.0]), 0, "the opt-out was painted");
+    assert!(near(&opted, [0.25, 1.0, 0.0]) > 40);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The pixels within 6 of `rgb` (8-bit display values) in each channel.
 fn near(pixels: &[u8], rgb: [f32; 3]) -> usize {
     let want = rgb.map(|v| (v * 255.0).round() as i32);
@@ -1524,6 +1998,104 @@ fn boxed(world: &mut FlintWorld, name: &str, half: f64, y: f64, opacity: Option<
             .set_component(id, "material", material.into())
             .unwrap();
     }
+}
+
+/// #385: a per-entity style draws only inside its entities' screen bounds.
+/// Two small props, one in pencil and one in ASCII, over a floor nobody
+/// styles: each id's bounds are a small part of the frame, they hold every
+/// pixel the style changed, and the scissored frame is the full one byte
+/// for byte, frame after frame.
+#[test]
+fn per_entity_styles_scissored_to_their_props_draw_the_same_bytes() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    use flint_render::style_mask::IdBounds;
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for (name, at) in [("sketch", [2.5, 0.0, -2.5]), ("glyphs", [-2.5, 0.0, 2.5])] {
+        let id = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([10.0, 30.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.6; 3]));
+        bounds.insert("max".into(), vec3([0.6; 3]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    let (sketch, glyphs) = (
+        world.get_id("sketch").unwrap(),
+        world.get_id("glyphs").unwrap(),
+    );
+    set_entity_style(&mut world, sketch, "pencil").unwrap();
+    set_entity_style(&mut world, glyphs, "ascii").unwrap();
+    renderer.set_style_scissor(true);
+    let scissored = gpu.frame(&mut renderer, &world);
+
+    // Each id is bounded, and small
+    let bounds = renderer.style_screen_bounds(&Camera::default());
+    let ids = renderer.style_ids().clone();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let mut rects = Vec::new();
+    for (id, name) in ids.iter() {
+        let IdBounds::Uv(r) = bounds.get(id) else {
+            panic!("{name}: {:?}", bounds.get(id));
+        };
+        eprintln!("{name}: {r:?}");
+        assert!(
+            r[2] - r[0] < 0.25 && r[3] - r[1] < 0.25,
+            "{name} fills {r:?}"
+        );
+        rects.push(r);
+    }
+    // Every pixel the styles changed is inside an id's bounds, padded by
+    // a few pixels of ASCII's reach (two 8 px cells)
+    let size = SIZE as f32;
+    let inside = |x: usize, y: usize| {
+        rects.iter().any(|r| {
+            let pad = 20.0;
+            (x as f32) >= r[0] * size - pad
+                && (x as f32) < r[2] * size + pad
+                && (y as f32) >= r[1] * size - pad
+                && (y as f32) < r[3] * size + pad
+        })
+    };
+    let mut changed = 0;
+    for (i, (a, b)) in plain.chunks(4).zip(scissored.chunks(4)).enumerate() {
+        if a != b {
+            changed += 1;
+            let (x, y) = (i % SIZE as usize, i / SIZE as usize);
+            assert!(inside(x, y), "pixel {x},{y} changed outside the props");
+        }
+    }
+    assert!(changed > 20, "the styles changed only {changed} pixels");
+
+    // The full passes draw the same frame
+    renderer.set_style_scissor(false);
+    for _ in 0..2 {
+        let full = gpu.frame(&mut renderer, &world);
+        assert!(
+            full == scissored,
+            "the scissored frame differs from the full one"
+        );
+    }
+    renderer.set_style_scissor(true);
+    assert!(gpu.frame(&mut renderer, &world) == scissored);
 }
 
 fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
@@ -2024,4 +2596,117 @@ fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
         slow - fast > 3.0 / 30.0,
         "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
     );
+}
+
+#[test]
+fn a_script_cross_fades_whole_frame_styles_without_allocating_and_clears_exactly() {
+    // What set_post_style / set_post_style_param do (#369): edit the
+    // renderer's [post_process.styles] table, here a lit cube under
+    // Kuwahara (HDR) and invert (display), each faded by its `blend`
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::post_style::{reset_post_style, set_post_style, set_post_style_param};
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let authored = renderer.post_process_config().clone();
+    let plain = gpu.frame(&mut renderer, &world);
+    let edit = |renderer: &mut SceneRenderer, f: &dyn Fn(&mut flint_render::PostProcessConfig)| {
+        let mut config = renderer.post_process_config().clone();
+        f(&mut config);
+        renderer.set_post_process_config(config);
+    };
+
+    // Invert on at blend 0 shows none of it, at 1 all of it
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "invert", true).unwrap();
+        set_post_style_param(c, "invert", "blend", 0.0.into()).unwrap();
+    });
+    let none = gpu.frame(&mut renderer, &world);
+    let worst = plain.iter().zip(&none).map(|(a, b)| a.abs_diff(*b)).max();
+    assert!(
+        worst <= Some(1),
+        "blend 0 should be the plain frame, off by {worst:?}"
+    );
+    edit(&mut renderer, &|c| {
+        set_post_style_param(c, "invert", "blend", 1.0.into()).unwrap()
+    });
+    let full = gpu.frame(&mut renderer, &world);
+    for (i, (a, b)) in plain.iter().zip(&full).enumerate() {
+        if i % 4 != 3 {
+            assert!(
+                (255 - *a).abs_diff(*b) <= 1,
+                "byte {i}: plain {a}, inverted {b}"
+            );
+        }
+    }
+
+    // A cross-fade: Kuwahara and invert ramp in together every frame, as a
+    // script tweening them would. Warm up (Kuwahara's first build, the
+    // blend pipelines and binds), then count what is held.
+    let fade = |renderer: &mut SceneRenderer, i: usize| {
+        let t = i as f64 / 24.0;
+        edit(renderer, &|c| {
+            set_post_style(c, "kuwahara", true).unwrap();
+            set_post_style_param(c, "kuwahara", "blend", t.into()).unwrap();
+            set_post_style_param(c, "kuwahara", "radius", (2.0 + 4.0 * t).into()).unwrap();
+            set_post_style_param(c, "invert", "blend", (0.5 * t).into()).unwrap();
+        });
+        gpu.frame(renderer, &world)
+    };
+    fade(&mut renderer, 0);
+    fade(&mut renderer, 1);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    let mut seen = std::collections::BTreeSet::new();
+    for i in 1..=24 {
+        seen.insert(fade(&mut renderer, i));
+    }
+    eprintln!(
+        "24 faded frames: {} distinct, post binds {binds} -> {}, held {objects:?} -> {:?}",
+        seen.len(),
+        renderer.kept_post_binds(),
+        held(&gpu)
+    );
+    assert!(seen.len() > 12, "the fade changed little on screen");
+    assert!(!seen.contains(&plain), "a faded frame was the plain one");
+    assert_eq!(
+        renderer.kept_post_binds(),
+        binds,
+        "a fade step kept a new bind group"
+    );
+    assert_eq!(held(&gpu), objects, "a fade step left GPU objects behind");
+
+    // Clear: both off gives back the plain frame byte for byte, and so
+    // does putting the scene's own settings back
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", false).unwrap();
+        set_post_style(c, "invert", false).unwrap();
+    });
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", true).unwrap();
+        reset_post_style(c, &authored, "kuwahara").unwrap();
+        reset_post_style(c, &authored, "invert").unwrap();
+    });
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
 }

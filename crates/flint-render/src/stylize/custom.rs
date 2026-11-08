@@ -33,6 +33,14 @@
 //! prelude decodes and encodes an sRGB target, so a user never meets the
 //! gotcha the built-ins work around by hand.
 //!
+//! A style that reads the mask (`inputs = ["mask"]`) is per-entity
+//! (#414), as ASCII is: it gets the component `<name>_style`, a
+//! `style_mask` naming it switches it on with no table, and `params` is
+//! a private copy the entry point fills with the pixel's own row of the
+//! settings table (row 0 the scene's, then one a variant, and a slot
+//! table from mask id to row), so a shader written for the whole frame
+//! reads each entity's settings unchanged.
+//!
 //! The composed module is parsed and validated with naga before wgpu sees
 //! it (natively), and an error comes back as `file:line:col` in the user's
 //! file. A style that fails draws its input unchanged (a passthrough) and
@@ -126,6 +134,12 @@ pub struct StyleSource {
     pub inputs: Inputs,
     /// Bloom reads the style's result by default (#300).
     pub feeds_bloom: bool,
+    /// The component an entity takes the style with (#414): `<name>_style`
+    /// for a style that reads the mask, its fields the parameters. It
+    /// makes the style per-entity, as `ascii_style` does ASCII: a
+    /// `style_mask` naming it (or the component) switches it on with no
+    /// table, and each entity's settings reach its own pixels as `params`.
+    pub component: Option<String>,
     /// Parameters in uniform order (by name).
     pub params: Vec<(String, ParamDef)>,
     /// The `.shader.toml`.
@@ -227,6 +241,7 @@ impl ShaderStyleDef {
         }
         let dir = toml_path.parent().unwrap_or(Path::new("."));
         Ok(StyleSource {
+            component: inputs.mask.then(|| component_name(&self.name)),
             label: self.label.unwrap_or_else(|| super::humanize(&self.name)),
             name: self.name,
             stage,
@@ -242,6 +257,20 @@ impl ShaderStyleDef {
 /// How many parameters a style may declare: 64 floats is a 272-byte
 /// uniform, well inside every backend's limit.
 pub const MAX_PARAMS: usize = 64;
+
+/// Settings rows a mask-reading style's uniform holds (#414): row 0 the
+/// scene's, then one a per-entity variant. Variants past it are drawn
+/// with the scene's settings.
+pub const MAX_VARIANTS: usize = 16;
+
+/// Mask ids the slot table covers; an entity of the style with an id past
+/// it is drawn like an unstyled pixel.
+pub const MAX_IDS: usize = 256;
+
+/// The component a mask-reading user style `name` is set on entities with.
+pub fn component_name(name: &str) -> String {
+    format!("{name}_style")
+}
 
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
@@ -298,7 +327,6 @@ struct StylePixel {
 };
 
 @group(0) @binding(0) var<uniform> flint: FlintFrame;
-@group(0) @binding(1) var<uniform> params: Params;
 @group(1) @binding(0) var flint_input: texture_2d<f32>;
 @group(1) @binding(1) var flint_sampler: sampler;
 
@@ -385,14 +413,32 @@ fn flint_mask_id(uv: vec2<f32>) -> u32 {
     return textureLoad(flint_mask_texture, flint_mask_texel(uv), 0).r;
 }
 
+// Mask id -> this style's settings row + 1; 0 for a pixel that isn't one
+// of this style's entities (or one opted out)
+fn flint_slot(id: u32) -> u32 {
+    if (id >= 256u) {
+        return 0u;
+    }
+    return flint_params.slots[id / 4u][id % 4u];
+}
+
 // How much of this style the entity at uv asks for: 0 where it isn't this
-// style's (a `style_mask` naming it), else its blend 0..1 (#278)
+// style's (a `style_mask` or `<name>_style` naming it), else its blend
+// 0..1 (#278)
 fn flint_style_blend(uv: vec2<f32>) -> f32 {
     let m = textureLoad(flint_mask_texture, flint_mask_texel(uv), 0);
-    if (flint.mask_id == 0u || m.r != flint.mask_id) {
+    if (flint_slot(m.r) == 0u) {
         return 0.0;
     }
     return f32(m.g) / 65535.0;
+}
+
+// The settings of the entity at uv (#414): its `<name>_style` fields, else
+// the scene's table, else the defaults. `params` is this for the pixel
+// being drawn; this reads a neighbour's
+fn flint_params_at(uv: vec2<f32>) -> Params {
+    let s = flint_slot(flint_mask_id(uv));
+    return flint_params.rows[max(s, 1u) - 1u];
 }
 "#;
 
@@ -415,7 +461,13 @@ fn flint_edge(uv: vec2<f32>) -> f32 {
 }
 "#;
 
-fn epilogue(stage: StyleStage) -> String {
+fn epilogue(source: &StyleSource) -> String {
+    let stage = source.stage;
+    let own = if source.inputs.mask {
+        "params = flint_params_at(in.uv);"
+    } else {
+        "params = flint_params.rows[0];"
+    };
     let out = if stage == StyleStage::Display {
         "let c = style(p);\n    \
          let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
@@ -442,6 +494,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> FlintVertexOut {{
 
 @fragment
 fn fs_main(in: FlintVertexOut) -> @location(0) vec4<f32> {{
+    {own}
     var p: StylePixel;
     p.uv = in.uv;
     p.pos = in.position.xy;
@@ -461,6 +514,21 @@ pub fn prelude(source: &StyleSource) -> String {
     }
     // Never empty, and the f32s above round up to 16 bytes before it
     text.push_str("    _flint_pad: vec4<f32>,\n};\n");
+    // The settings table (#414): row 0 the scene's, then a row for each
+    // per-entity variant, and which row each mask id takes
+    let mask = source.inputs.mask;
+    text.push_str(&format!(
+        "\nstruct FlintParamTable {{\n    rows: array<Params, {}>,\n{}}};\n\
+         @group(0) @binding(1) var<uniform> flint_params: FlintParamTable;\n\
+         // This pixel's settings: its entity's, else the scene's\n\
+         var<private> params: Params;\n",
+        table_rows(mask),
+        if mask {
+            format!("    slots: array<vec4<u32>, {}>,\n", MAX_IDS / 4)
+        } else {
+            String::new()
+        }
+    ));
     text.push_str(&prelude_sample(source.stage));
     if source.inputs.depth {
         text.push_str(PRELUDE_DEPTH);
@@ -484,7 +552,7 @@ pub fn compose(source: &StyleSource, user: &str) -> Composed {
         user.push('\n');
     }
     let user_lines = user.matches('\n').count();
-    let text = format!("{prelude}{user}{}", epilogue(source.stage));
+    let text = format!("{prelude}{user}{}", epilogue(source));
     Composed {
         text,
         prelude_lines,
@@ -498,6 +566,42 @@ pub const PASSTHROUGH: &str = "fn style(p: StylePixel) -> vec4<f32> {\n    retur
 /// The size in bytes of a style's `Params` uniform.
 pub fn params_size(count: usize) -> usize {
     count.div_ceil(4) * 16 + 16
+}
+
+/// The settings rows a style's table holds: one (the scene's) unless it
+/// reads the mask, which is what tells entities apart.
+pub fn table_rows(mask: bool) -> usize {
+    if mask {
+        MAX_VARIANTS
+    } else {
+        1
+    }
+}
+
+/// The size in bytes of a style's settings table (#414): its rows of
+/// `Params`, then for a mask-reading style the slot of each mask id.
+pub fn table_size(count: usize, mask: bool) -> usize {
+    table_rows(mask) * params_size(count) + if mask { MAX_IDS * 4 } else { 0 }
+}
+
+/// The settings table's contents, as 32-bit words: `rows` (row 0 the
+/// scene's) each laid out as `Params` with values in declaration order,
+/// then, with `slots`, the row + 1 each mask id takes (0: not this
+/// style's).
+pub fn table_words(count: usize, rows: &[Vec<f32>], slots: Option<&[u32; MAX_IDS]>) -> Vec<u32> {
+    let stride = params_size(count) / 4;
+    let mask = slots.is_some();
+    let mut words = vec![0u32; table_size(count, mask) / 4];
+    for (r, row) in rows.iter().take(table_rows(mask)).enumerate() {
+        for (i, v) in row.iter().take(count).enumerate() {
+            words[r * stride + i] = v.to_bits();
+        }
+    }
+    if let Some(slots) = slots {
+        let at = table_rows(mask) * stride;
+        words[at..at + MAX_IDS].copy_from_slice(slots);
+    }
+    words
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +836,7 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
                     | "flint_world_pos"
                     | "flint_mask_id"
                     | "flint_style_blend"
+                    | "flint_params_at"
                     | "flint_edges"
                     | "flint_edge"
             ))
@@ -860,12 +965,26 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Whether user WGSL calls `flint_style_blend` outside a line comment.
+fn calls_style_blend(user: &str) -> bool {
+    user.lines().any(|line| {
+        let code = line.split("//").next().unwrap_or("");
+        code.contains("flint_style_blend")
+    })
+}
+
 /// Make `source`'s descriptor and register it: appended, or with
 /// `replace`, put where the style of the same name stands (#275).
 fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // A shader that fails registers anyway: it draws a passthrough and its
     // error waits for the host, so a typo never takes a style's settings away
-    let error = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+    let wgsl = flint_core::vfs::read_to_string(&source.wgsl_path);
+    // A shader that reads its own blend draws it (#396): the framework's
+    // cross-fade would apply it twice. Decided when the description is
+    // read, so a shader that starts or stops calling it takes effect at the
+    // next load or `.shader.toml` edit
+    let blends_itself = wgsl.as_ref().is_ok_and(|user| calls_style_blend(user));
+    let error = match wgsl {
         Err(e) => Some(format!("{}: {e}", source.wgsl_path.display())),
         Ok(user) => match check(&source, &user) {
             Ok(report) => {
@@ -903,22 +1022,29 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         })
         .collect();
     let name = leak(source.name.clone());
-    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(
-        StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
-            .params(Box::leak(params.into_boxed_slice()))
-            .uses_mask(if source.inputs.mask {
-                MaskUse::Always
-            } else {
-                MaskUse::Never
-            })
-            .needs(if source.inputs.edges {
-                &[StyleNeed::Edges]
-            } else {
-                &[]
-            })
-            .hints(Box::leak(hints.into_boxed_slice()))
-            .feeds_bloom(source.feeds_bloom),
-    ));
+    let mut built = StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create);
+    if let Some(component) = &source.component {
+        built = built.component(leak(component.clone()));
+    }
+    let built = built
+        .params(Box::leak(params.into_boxed_slice()))
+        .uses_mask(if source.inputs.mask {
+            MaskUse::Always
+        } else {
+            MaskUse::Never
+        })
+        .needs(if source.inputs.edges {
+            &[StyleNeed::Edges]
+        } else {
+            &[]
+        })
+        .hints(Box::leak(hints.into_boxed_slice()))
+        .feeds_bloom(source.feeds_bloom);
+    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(if blends_itself {
+        built.blends_itself()
+    } else {
+        built
+    }));
     // The chain's bind cache keys on these names, so each install gets its
     // own: a replaced style (#275) builds new buffers and layouts, and a
     // cached group under the old name would bind the old pass's buffers
@@ -1170,6 +1296,8 @@ struct CustomPass {
     /// Draws the input unchanged, while the user's shader can't.
     passthrough: wgpu::RenderPipeline,
     build: Mutex<Build>,
+    /// Whether the variant overflow has been warned about.
+    warned: std::sync::atomic::AtomicBool,
 }
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -1234,7 +1362,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
         params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("User Style Params"),
-            size: params_size(source.params.len()) as u64,
+            size: table_size(source.params.len(), source.inputs.mask) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -1250,6 +1378,7 @@ fn build(d: &StyleDevice) -> CustomPass {
             #[cfg(not(target_arch = "wasm32"))]
             since_poll: 0,
         }),
+        warned: Default::default(),
         loaded,
     };
     pass.rebuild(device);
@@ -1443,13 +1572,49 @@ impl StylePass for CustomPass {
         frame
             .queue
             .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-        let mut values = vec![0.0f32; params_size(source.params.len()) / 4];
-        for (slot, (name, p)) in values.iter_mut().zip(&source.params) {
-            *slot = frame.param(name).clamp(p.min, p.max);
-        }
+        // The settings table (#414): row 0 the scene's, then one a variant
+        let row = |param: &dyn Fn(&str) -> f32| -> Vec<f32> {
+            source
+                .params
+                .iter()
+                .map(|(name, p)| param(name).clamp(p.min, p.max))
+                .collect()
+        };
+        let mut rows = vec![row(&|n| frame.param(n))];
+        let words = if source.inputs.mask {
+            let mut slots = [0u32; MAX_IDS];
+            let mut overflow = false;
+            for (id, v) in frame.variants() {
+                if v.off {
+                    continue; // an opt-out reads as no entity of this style
+                }
+                let Some(slot) = slots.get_mut(id as usize) else {
+                    overflow = true;
+                    continue;
+                };
+                if rows.len() == MAX_VARIANTS {
+                    overflow = true;
+                    *slot = 1; // the scene's settings
+                    continue;
+                }
+                rows.push(row(&|n| frame.variant_param(v, n)));
+                *slot = rows.len() as u32;
+            }
+            if overflow && !self.warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(
+                    "style '{}': more per-entity variants than the {} a frame holds (or mask \
+                     ids past {MAX_IDS}); the rest take the scene's settings",
+                    source.name,
+                    MAX_VARIANTS - 1
+                );
+            }
+            table_words(source.params.len(), &rows, Some(&slots))
+        } else {
+            table_words(source.params.len(), &rows, None)
+        };
         frame
             .queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&values));
+            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&words));
 
         let frame_bg = frame.bind(names.frame, 0, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1548,6 +1713,18 @@ mod tests {
         def.check(Path::new(file))
     }
 
+    /// #396: a shader that reads its own blend opts out of the framework's
+    /// cross-fade; a mention in a comment doesn't count.
+    #[test]
+    fn a_shader_calling_flint_style_blend_blends_itself() {
+        assert!(calls_style_blend(
+            "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * flint_style_blend(p.uv);\n}\n"
+        ));
+        assert!(!calls_style_blend(
+            "// no flint_style_blend here: the framework fades me\nfn style(p: StylePixel) -> vec4<f32> {\n    return p.color;\n}\n"
+        ));
+    }
+
     fn duotone() -> StyleSource {
         source(
             r#"
@@ -1611,6 +1788,48 @@ mod tests {
         assert!(source(builtin, "styles/ascii.shader.toml")
             .unwrap_err()
             .contains("built-in"));
+    }
+
+    #[test]
+    fn a_mask_reading_style_is_per_entity() {
+        let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+        let file = "styles/x.shader.toml";
+        assert_eq!(source(base, file).unwrap().component, None);
+        let masked = source(&format!("{base}inputs = [\"mask\"]\n"), file).unwrap();
+        assert_eq!(masked.component.as_deref(), Some("x_style"));
+    }
+
+    #[test]
+    fn the_settings_table_holds_a_row_a_variant_and_a_slot_an_id() {
+        // Two params: a 32-byte row; 16 rows, then 256 slots
+        assert_eq!(table_size(2, false), 32);
+        assert_eq!(table_size(2, true), 16 * 32 + 256 * 4);
+        let rows = vec![vec![0.5, 1.0], vec![0.25, 2.0]];
+        let mut slots = [0u32; MAX_IDS];
+        slots[3] = 2;
+        let words = table_words(2, &rows, Some(&slots));
+        assert_eq!(words.len(), table_size(2, true) / 4);
+        let f = |i: usize| f32::from_bits(words[i]);
+        assert_eq!((f(0), f(1)), (0.5, 1.0), "row 0, the scene's");
+        assert_eq!((f(8), f(9)), (0.25, 2.0), "row 1 at the next 32 bytes");
+        assert_eq!(words[16 * 8 + 3], 2, "id 3 takes row 1 (+1)");
+        let bare = table_words(2, &rows, None);
+        assert_eq!(bare.len(), 8, "a style without the mask holds row 0 alone");
+    }
+
+    #[test]
+    fn neighbours_settings_are_readable() {
+        let s = source(
+            "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\ninputs = [\"mask\"]\n\
+             [params.glow]\ndefault = 0.5\nmin = 0.0\nmax = 1.0\n",
+            "styles/x.shader.toml",
+        )
+        .unwrap();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    let n = flint_params_at(p.uv + flint.texel);\n    \
+                    return p.color * (params.glow + n.glow);\n}\n";
+        let report = check(&s, user).unwrap();
+        assert_eq!(report.texture_reads, 1, "flint_params_at reads the mask");
     }
 
     #[test]
