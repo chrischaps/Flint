@@ -342,7 +342,7 @@ impl StyleIds {
 
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
-fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
     let from = |c: &str| {
         world
             .get_component(root, c)?
@@ -437,7 +437,7 @@ fn variant_name(v: &StyleVariant, root: &str) -> String {
 /// What a styled root asks for: its variant's name and the variant, or
 /// `None` for a `style_mask` opt-out. A style component (in registry
 /// order) wins over a `style_mask` on the same entity.
-fn request(
+pub(crate) fn request(
     world: &FlintWorld,
     config: &PostProcessConfig,
     root: EntityId,
@@ -468,6 +468,32 @@ fn request(
     }
     let name = variant_name(&variant, world.get_name(root).unwrap_or(""));
     Some((name, variant))
+}
+
+/// Whether `id` asks for a style itself: it carries a `style_mask` or a
+/// style's own component, so it roots a styled subtree.
+pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
+    world.get_component(id, STYLE_MASK_COMPONENT).is_some()
+        || crate::stylize::registry()
+            .iter()
+            .filter_map(|d| d.component)
+            .any(|c| world.get_component(id, c).is_some())
+}
+
+/// The styled root `id` takes its style from (#372): itself, else its
+/// nearest ancestor that asks for one, as [`resolve`] hands ids down.
+/// `None` when no entity on its chain to the top is styled.
+pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
+    let mut at = Some(id);
+    // A parent cycle can't load, but don't spin if one is built at run time
+    for _ in 0..4096 {
+        let e = at?;
+        if is_style_root(world, e) {
+            return Some(e);
+        }
+        at = world.get_parent(e);
+    }
+    None
 }
 
 /// Whether any entity carries a `style_mask` or a style's own component.

@@ -656,7 +656,7 @@ pub fn refined_look_toml(log: &RefineLog, base: &Look, name: &str) -> Result<Str
         toml::to_string(&root)?
     );
     // It must load as a look
-    Look::parse(name, &text, "refined")?;
+    Look::parse(name, &text, "refined").map_err(|e| anyhow::anyhow!(e))?;
     Ok(text)
 }
 

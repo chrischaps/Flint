@@ -213,7 +213,11 @@ fn cell_def(
     scene_path: &str,
 ) -> Result<Option<PostProcessDef>> {
     let mut def = match axes.iter().find(|(s, _)| s.key == SweepKey::Look) {
-        Some((s, i)) => Some(find(&s.values[*i], scene_path)?.apply(scene)?),
+        Some((s, i)) => Some(
+            find(&s.values[*i], scene_path)?
+                .apply(scene)
+                .map_err(|e| anyhow::anyhow!(e))?,
+        ),
         None => base_def(scene, base)?,
     };
     for (s, i) in axes {
@@ -553,7 +557,7 @@ pub fn base_def(
     look: Option<&Look>,
 ) -> Result<Option<PostProcessDef>> {
     match look {
-        Some(look) => Ok(Some(look.apply(scene)?)),
+        Some(look) => Ok(Some(look.apply(scene).map_err(|e| anyhow::anyhow!(e))?)),
         None => Ok(scene.cloned()),
     }
 }

@@ -26,6 +26,22 @@
 //! text_cells = 0                  # ...or with at most this many cells different
 //! ```
 //!
+//! A case with `matches` has no golden file (#417): it renders the scene a
+//! second time with those flags in place of its own and must equal that
+//! render, exactly unless it gives a tolerance. One adapter, one run, so
+//! it holds on any GPU. With `error`, a user style's error must hold that
+//! text afterwards (in this process, `stylize::custom::errors()`, which is
+//! what `flint render` prints; with `--isolate`, the render's log):
+//!
+//! ```toml
+//! [[case]]
+//! name = "user-style-broken"
+//! scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+//! args = ["--no-grid", "--style", "broken"]
+//! matches = ["--no-grid"]          # the same frame without the style
+//! error = "broken.wgsl:9:9"
+//! ```
+//!
 //! A case with `text` is a structural golden too: it renders with
 //! `--ascii-text` and its character grid must match the checked-in one
 //! cell for cell (the PNG stays the visual check). A miss writes
@@ -73,7 +89,10 @@ pub struct GoldenArgs {
     #[arg(long)]
     pub bless_variant: bool,
 
-    /// Goldens: run only the cases whose name contains this (repeatable)
+    /// Goldens: run only this case. A name that is exactly a case's picks
+    /// that case alone (`ascii-silhouette-cell` skips
+    /// `ascii-silhouette-cell-object`); one that names no case picks every
+    /// case whose name contains it (repeatable)
     #[arg(long = "case")]
     pub cases: Vec<String>,
 
@@ -177,6 +196,15 @@ struct Case {
     /// How many of the grid's cells may differ from it (default 0).
     #[serde(default)]
     text_cells: usize,
+    /// Compare with a second render of the scene made with these flags in
+    /// place of `args`, not with a golden file (#417): "this frame must be
+    /// the frame without X". Exact unless the case gives a tolerance.
+    #[serde(default)]
+    matches: Option<Vec<String>>,
+    /// Text a user style's error must hold after the render (#417): what
+    /// `flint render` prints as a warning, e.g. `"broken.wgsl:9:9"`.
+    #[serde(default)]
+    error: Option<String>,
 }
 
 /// How a render's ASCII grid compares with its golden text (#317).
@@ -359,9 +387,21 @@ struct RenderCli {
 
 /// How a case's render went.
 enum Rendered {
-    Done,
+    /// With the user styles' errors it raised: a spawned render's whole
+    /// log, or in this process [`user_style_errors`] (the messages
+    /// `flint render` prints as warnings).
+    Done(String),
     NoGpu,
     Failed(String),
+}
+
+/// Every loaded user style's error, a line each, as `flint render` warns
+/// of them: what an in-process case's `error` is checked against.
+fn user_style_errors() -> String {
+    flint_render::stylize::custom::errors()
+        .into_iter()
+        .map(|(_, e)| e + "\n")
+        .collect()
 }
 
 /// Sets the working directory back when dropped.
@@ -390,14 +430,14 @@ fn render_spawned(flint: &Path, root: &Path, argv: &[std::ffi::OsString]) -> Res
         .args(argv)
         .output()
         .with_context(|| format!("running {}", flint.display()))?;
-    if output.status.success() {
-        return Ok(Rendered::Done);
-    }
     let log = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    if output.status.success() {
+        return Ok(Rendered::Done(log));
+    }
     Ok(if looks_like_no_gpu(&log) {
         Rendered::NoGpu
     } else {
@@ -426,7 +466,7 @@ fn render_in_process(
         super::render::run_in(cli.args, host)
     }));
     match ran {
-        Ok(Ok(())) => Ok(Rendered::Done),
+        Ok(Ok(())) => Ok(Rendered::Done(user_style_errors())),
         Ok(Err(e)) => {
             let log = format!("{e:#}");
             Ok(if looks_like_no_gpu(&log) {
@@ -573,18 +613,37 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     for case in chosen {
         let width = case.width.unwrap_or(manifest.suite.width);
         let height = case.height.unwrap_or(manifest.suite.height);
-        let tolerance = Tolerance {
-            level: case.tolerance.level.unwrap_or(manifest.tolerance.level),
-            share: case.tolerance.share.unwrap_or(manifest.tolerance.share),
-            mean: case.tolerance.mean.unwrap_or(manifest.tolerance.mean),
+        // A case that matches a second render of its own wants it exact:
+        // one device, one process, the same scene (#417)
+        let defaults = if case.matches.is_some() {
+            Tolerance {
+                level: 0,
+                share: 0.0,
+                mean: 0.0,
+            }
+        } else {
+            manifest.tolerance
         };
-        let plain = here.join(
-            case.golden
-                .clone()
-                .unwrap_or_else(|| format!("{}.png", case.name)),
-        );
-        // This adapter's variant, when it has one, is the golden (#314)
-        let variant = key.as_deref().map(|k| variant_path(&plain, k));
+        let tolerance = Tolerance {
+            level: case.tolerance.level.unwrap_or(defaults.level),
+            share: case.tolerance.share.unwrap_or(defaults.share),
+            mean: case.tolerance.mean.unwrap_or(defaults.mean),
+        };
+        let reference = out_dir.join(format!("{}.reference.png", case.name));
+        let plain = match &case.matches {
+            Some(_) => reference.clone(),
+            None => here.join(
+                case.golden
+                    .clone()
+                    .unwrap_or_else(|| format!("{}.png", case.name)),
+            ),
+        };
+        // This adapter's variant, when it has one, is the golden (#314).
+        // A reference render is this adapter's already
+        let variant = key
+            .as_deref()
+            .filter(|_| case.matches.is_none())
+            .map(|k| variant_path(&plain, k));
         let golden = match &variant {
             Some(v) if args.bless_variant || v.exists() => v.clone(),
             _ => plain.clone(),
@@ -634,36 +693,76 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         let text_render = out_dir.join(format!("{}.txt", case.name));
         let _ = std::fs::remove_file(&text_render);
 
-        let mut argv: Vec<std::ffi::OsString> = vec!["render".into(), case.scene.clone().into()];
-        argv.extend(
-            [
-                "--width".to_string(),
-                width.to_string(),
-                "--height".to_string(),
-                height.to_string(),
-            ]
-            .into_iter()
-            .chain(manifest.suite.args.iter().cloned())
-            .chain(case.args.iter().cloned())
-            .map(Into::into),
-        );
-        if text_golden.is_some() {
-            argv.push("--ascii-text".into());
-            argv.push(text_render.clone().into_os_string());
-        }
-        argv.push("--output".into());
-        argv.push(render.clone().into_os_string());
+        let _ = std::fs::remove_file(&reference);
+        let argv_for = |flags: &[String], output: &Path, text: bool| {
+            let mut argv: Vec<std::ffi::OsString> =
+                vec!["render".into(), case.scene.clone().into()];
+            argv.extend(
+                [
+                    "--width".to_string(),
+                    width.to_string(),
+                    "--height".to_string(),
+                    height.to_string(),
+                ]
+                .into_iter()
+                .chain(manifest.suite.args.iter().cloned())
+                .chain(flags.iter().cloned())
+                .map(Into::into),
+            );
+            if text {
+                argv.push("--ascii-text".into());
+                argv.push(text_render.clone().into_os_string());
+            }
+            argv.push("--output".into());
+            argv.push(output.as_os_str().to_owned());
+            argv
+        };
+        let argv = argv_for(&case.args, &render, text_golden.is_some());
 
         let started = std::time::Instant::now();
-        let rendered = if args.isolate {
-            render_spawned(&flint, &root, &argv)?
-        } else {
-            render_in_process(&mut host, &flint, &root, &argv)?
+        let mut draw = |argv: &[std::ffi::OsString]| {
+            if args.isolate {
+                render_spawned(&flint, &root, argv)
+            } else {
+                render_in_process(&mut host, &flint, &root, argv)
+            }
         };
+        let mut rendered = draw(&argv)?;
+        // The reference the case must match: its scene again, with the
+        // case's `matches` flags in place of its own
+        if let (Rendered::Done(_), Some(flags)) = (&rendered, &case.matches) {
+            if let bad @ (Rendered::NoGpu | Rendered::Failed(_)) =
+                draw(&argv_for(flags, &reference, false))?
+            {
+                rendered = match bad {
+                    Rendered::Failed(log) => {
+                        Rendered::Failed(format!("the reference render failed:\n{log}"))
+                    }
+                    other => other,
+                };
+            }
+        }
         let ms = started.elapsed().as_millis();
         report.ms = ms;
         match rendered {
-            Rendered::Done => {}
+            Rendered::Done(log) => {
+                // A user style's error the case expects (#417)
+                if let Some(want) = &case.error {
+                    if !log.contains(want.as_str()) {
+                        failed += 1;
+                        println!(
+                            "  FAIL  {:<28} no user style error holding '{want}'; errors:\n{log}",
+                            case.name
+                        );
+                        report.status = "fail";
+                        report.message = Some(format!(
+                            "expected a user style error holding '{want}', got:\n{log}"
+                        ));
+                        reports.push(report);
+                        continue;
+                    }
+                }
+            }
             Rendered::NoGpu => {
                 no_gpu = true;
                 println!("  SKIP  {:<28} no GPU adapter", case.name);
@@ -760,7 +859,9 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             report.text = Some(tc);
         }
 
-        if blessing {
+        // A case matching its own reference has no golden to bless: it is
+        // compared as ever, and a bless doesn't fail on it
+        if blessing && case.matches.is_none() {
             if let Some(parent) = golden.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -803,7 +904,9 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 tolerance.mean,
                 cmp.max,
                 ms,
-                if golden != plain {
+                if case.matches.is_some() {
+                    ", against its reference render"
+                } else if golden != plain {
                     ", against its variant"
                 } else {
                     ""
@@ -986,6 +1089,16 @@ mod tests {
             if let Err(e) = RenderCli::try_parse_from(argv) {
                 panic!("case '{}': {e}", case.name);
             }
+            // ...and so do the flags of the render it must match (#417)
+            if let Some(flags) = &case.matches {
+                let argv = ["flint render".to_string(), case.scene.clone()]
+                    .into_iter()
+                    .chain(manifest.suite.args.iter().cloned())
+                    .chain(flags.iter().cloned());
+                if let Err(e) = RenderCli::try_parse_from(argv) {
+                    panic!("case '{}' matches: {e}", case.name);
+                }
+            }
         }
     }
 
@@ -1010,6 +1123,16 @@ mod tests {
         let dir = path.parent().unwrap();
         let mut used = std::collections::HashSet::new();
         for case in &manifest.cases {
+            // A case that matches its own reference render has no golden
+            // file, and a golden it named would never be read
+            if case.matches.is_some() {
+                assert!(
+                    case.golden.is_none() && case.text.is_none(),
+                    "{} matches a reference render: it takes no golden",
+                    case.name
+                );
+                continue;
+            }
             let name = case
                 .golden
                 .clone()
@@ -1073,11 +1196,38 @@ mod tests {
         }
     }
 
+    /// Each style has a props bench of its own (#386): a case on the mixed
+    /// bench, which carries ASCII and pencil props both, moves with either
+    /// style, so only the mask views and the one deliberately mixed case
+    /// may use it. Anything else picks `stylize_props_<style>` or `_plain`.
+    #[test]
+    fn only_the_mixed_cases_use_the_mixed_props_bench() {
+        let (_, manifest) = stylize_manifest();
+        let mixed = ["style-mask", "style-mask-msaa4", "styles-mixed"];
+        for case in &manifest.cases {
+            if case.scene == "demo/stylize_props.scene.toml" {
+                assert!(
+                    mixed.contains(&case.name.as_str()),
+                    "case '{}' is on the mixed props bench: use the bench of its own \
+                     style (demo/stylize_props_ascii, _pencil or _plain), so another \
+                     style's change doesn't move it",
+                    case.name
+                );
+            }
+        }
+        for name in mixed {
+            assert!(
+                manifest.cases.iter().any(|c| c.name == name),
+                "the mixed case '{name}' is gone"
+            );
+        }
+    }
+
     /// A new look adds a golden case too (#279).
     #[test]
     fn every_shipped_look_has_a_golden_case() {
         let (_, manifest) = stylize_manifest();
-        for look in crate::commands::look::builtin_names() {
+        for look in flint_render::look::builtin_names() {
             let reached = manifest
                 .cases
                 .iter()

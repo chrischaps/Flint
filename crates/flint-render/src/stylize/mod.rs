@@ -925,6 +925,10 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     if descriptor.stage == StyleStage::Hdr && feeds != descriptor.feeds_bloom {
         out.push_str(&format!("feeds_bloom = {feeds}\n"));
     }
+    let blend = config.styles.blend(descriptor.name);
+    if blend < 1.0 {
+        out.push_str(&format!("blend = {}\n", toml_float(blend)));
+    }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
         if value != o.default {
@@ -1401,11 +1405,16 @@ pub struct StyleSetting {
     /// The scene's `feeds_bloom` (#300), when it sets one; `None` keeps
     /// the descriptor's default.
     pub feeds_bloom: Option<bool>,
+    /// How much of the style's result shows over what it read, 0 to 1
+    /// (#369); `None` is all of it. A script fades a whole-frame style in
+    /// and out by ramping it (the stage draws what the style read back over
+    /// its result, [`run_stage`]).
+    pub blend: Option<f32>,
 }
 
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one.
-pub const RESERVED_KEYS: [&str; 3] = ["enabled", "order", "feeds_bloom"];
+pub const RESERVED_KEYS: [&str; 4] = ["enabled", "order", "feeds_bloom", "blend"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1470,6 +1479,31 @@ impl StyleSettings {
         self.styles.entry(name.to_string()).or_default().feeds_bloom = feeds;
     }
 
+    /// How much of style `name` shows over what it read (#369): its
+    /// table's `blend`, 1 when it sets none.
+    pub fn blend(&self, name: &str) -> f32 {
+        self.styles
+            .get(name)
+            .and_then(|s| s.blend)
+            .map_or(1.0, |b| b.clamp(0.0, 1.0))
+    }
+
+    /// Set how much of style `name` shows, clamped to 0..1; `None` (or 1)
+    /// shows all of it. Leaves the style on or off as it was.
+    pub fn set_blend(&mut self, name: &str, blend: Option<f32>) {
+        let blend = blend
+            .filter(|b| b.is_finite())
+            .map(|b| b.clamp(0.0, 1.0))
+            .filter(|b| *b < 1.0);
+        match self.styles.get_mut(name) {
+            Some(setting) => setting.blend = blend,
+            None if blend.is_some() => {
+                self.styles.entry(name.to_string()).or_default().blend = blend;
+            }
+            None => {}
+        }
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -1500,6 +1534,7 @@ impl StyleSettings {
             setting.options.clear();
             setting.order = None;
             setting.feeds_bloom = None;
+            setting.blend = None;
         }
     }
 
@@ -1568,6 +1603,21 @@ impl StyleSettings {
                     match number {
                         Some(n) => setting.order = Some(n as f32),
                         None => warnings.push(format!("styles.{name}.order must be a number")),
+                    }
+                    continue;
+                }
+                if key == "blend" {
+                    let number = value
+                        .as_float()
+                        .or_else(|| value.as_integer().map(|i| i as f64))
+                        .filter(|n| n.is_finite());
+                    match number {
+                        Some(n) => {
+                            let b = (n as f32).clamp(0.0, 1.0);
+                            setting.blend = (b < 1.0).then_some(b);
+                        }
+                        None => warnings
+                            .push(format!("styles.{name}.blend must be a number from 0 to 1")),
                     }
                     continue;
                 }
@@ -1683,6 +1733,8 @@ pub struct StyleSet {
     /// Whether glyph styles keep their frame as text (#317), handed to
     /// each pass when it's built.
     text_capture: bool,
+    /// The draw that shows a style's `blend` (#369), any style's.
+    blend: blend::BlendPass,
     /// The ownership pass (#384), built with the first style.
     ownership: Option<ownership::OwnershipPass>,
     ownership_failed: bool,
@@ -1694,6 +1746,12 @@ fn descriptor_id(d: &'static StyleDescriptor) -> usize {
 }
 
 impl StyleSet {
+    /// The draw every stage runs after a style whose `blend` is under 1
+    /// (#369); hand it to [`run_stage`].
+    pub(crate) fn blend_pass(&self) -> &blend::BlendPass {
+        &self.blend
+    }
+
     /// Build every style `config` switches on that isn't built yet.
     /// Returns the ones whose creation panicked (they stay off for the
     /// rest of the run).
@@ -2003,7 +2061,9 @@ pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &
 /// targets; only the pings the steps name are made. With `to`, the last
 /// style writes there and this returns `None`; without, it returns the
 /// target holding the result and that target's input id. `frame` carries
-/// the stage's size and format; its descriptor is set per style.
+/// the stage's size and format; its descriptor is set per style. A style
+/// whose `blend` is under 1 (#369) has what it read drawn back over its
+/// result by `blender`, inside its own timing scope.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_stage(
     styles: &[(&'static StyleDescriptor, &dyn StylePass)],
@@ -2013,6 +2073,7 @@ pub(crate) fn run_stage(
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
     to: Option<StyleInput<'_>>,
+    blender: &blend::BlendPass,
     ownership: Option<&ownership::OwnershipPass>,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
@@ -2064,8 +2125,10 @@ pub(crate) fn run_stage(
             }
         };
         let frame = &*frame;
+        let blend = frame.config.styles.blend(descriptor.name);
         scope(descriptor.label, encoder, &mut |encoder| {
             pass.encode(frame, encoder, &src, dst_view);
+            blender.draw(frame, encoder, &src, dst_view, blend);
             // Each pixel one style's (#384): another style's entities get
             // this style's input back
             if let Some(ownership) = ownership {
@@ -2089,6 +2152,8 @@ macro_rules! register_styles {
         static REGISTRY: &[&StyleDescriptor] = &[$(&$module::STYLE),*];
     };
 }
+
+mod blend;
 
 register_styles!(
     kuwahara,

@@ -169,6 +169,18 @@ pub struct PostProcessDef {
     /// headless pixel-diff gates run without it; ADR 0050).
     #[serde(default)]
     pub fxaa: bool,
+    /// A look (#356): a `styles/<name>.look.toml` beside the scene (or its
+    /// parent's `styles/`), or a built-in (`ascii_noir`, `graphite`, ...),
+    /// laid under this block's own keys. `flint_render::look::resolve`
+    /// applies it; until then the struct holds the scene's keys alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<String>,
+    /// The keys the scene's `[post_process]` wrote, as written (the loader
+    /// records them), so a look goes under exactly those and a later
+    /// `set_look` can re-lay a different one. `None` for a block built in
+    /// code, which then counts every field as its own.
+    #[serde(skip)]
+    pub authored: Option<toml::Table>,
 }
 
 fn default_grade_one() -> [f32; 3] {
@@ -373,6 +385,7 @@ impl PostProcessDef {
         def.kuwahara_hardness = Some(0.0);
         def.kuwahara_anisotropy = Some(0.0);
         def.styles.insert("_".into(), toml::Table::new());
+        def.look = Some(String::new());
         let mut names: Vec<String> = toml::Table::try_from(&def)
             .map(|t| t.keys().cloned().collect())
             .unwrap_or_default();
@@ -417,6 +430,26 @@ impl PostProcessDef {
                 format!("{at}[post_process] has no field '{key}'{hint} (ignored)")
             })
             .collect()
+    }
+
+    /// A scene file's `[post_process]` table as written, for
+    /// [`Self::authored`]. `None` when there is none or the text doesn't
+    /// parse.
+    pub fn authored_table(scene_text: &str) -> Option<toml::Table> {
+        let mut doc = toml::from_str::<toml::Table>(scene_text).ok()?;
+        match doc.remove("post_process") {
+            Some(toml::Value::Table(post)) => Some(post),
+            _ => None,
+        }
+    }
+
+    /// A `[post_process]` block from its table, remembering the table as
+    /// what it authors (as the loader does), for blocks built in code that
+    /// a look should go under (#356).
+    pub fn from_authored(table: toml::Table) -> Result<Self, toml::de::Error> {
+        let mut def: Self = toml::Value::Table(table.clone()).try_into()?;
+        def.authored = Some(table);
+        Ok(def)
     }
 
     /// The style tables, with the old `kuwahara_*` keys folded in
