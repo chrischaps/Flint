@@ -108,8 +108,8 @@
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
-    StyleParam, StylePass, StyleStage, StyleTexture,
+    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleFrame, StyleHint, StyleInput,
+    StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
@@ -373,9 +373,9 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             discover: None,
         },
     ],
-    // The mask gives styled entities their outlines (#267); with no entity
-    // asking for a style it is one cleared target and an empty pass
-    uses_mask: true,
+    // The mask gives styled entities their outlines (#267), so only while
+    // edges are on and something is styled (#350)
+    uses_mask: MaskUse::When(reads_mask),
     needs: &[],
     hints: &[
         StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
@@ -2630,6 +2630,23 @@ impl StylePass for Ascii {
     }
 }
 
+/// Whether ASCII reads the style mask under `config` (#350), beside the
+/// per-entity case every style with a component gets (an entity naming
+/// ASCII: its variants are looked up by mask id). With no id there is no
+/// boundary to outline and no entity to pass through; past that the mask
+/// is read for its outlines while `edges > 0`, and for the pixels of
+/// another style's entities, which a later style draws over (#317).
+fn reads_mask(
+    config: &crate::postprocess::PostProcessConfig,
+    ids: &crate::style_mask::StyleIds,
+) -> bool {
+    !ids.is_empty()
+        && (STYLE.param(config, "edges") > 0.0
+            || ids
+                .iter()
+                .any(|(id, _)| ids.variant(id).is_some_and(|v| v.style != STYLE.name)))
+}
+
 /// The style mask ids whose pixels a display style that runs after ASCII
 /// draws over (#317): an entity of another style that's on this frame.
 fn overdrawn_ids(frame: &StyleFrame<'_>) -> Vec<u32> {
@@ -2747,7 +2764,7 @@ mod tests {
         }
         let edges = STYLE.params.iter().find(|p| p.name == "edges").unwrap();
         assert_eq!(edges.default, 1.0);
-        assert!(STYLE.uses_mask, "outlines read the style mask");
+        assert!(STYLE.uses_mask.ever(), "outlines read the style mask");
     }
 
     #[test]

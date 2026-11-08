@@ -424,6 +424,46 @@ pub enum StyleNeed {
     Edges,
 }
 
+/// Whether a style reads the entity style mask (#263), and when (#350).
+#[derive(Clone, Copy)]
+pub enum MaskUse {
+    /// Never: the mask is drawn for it only if it is per-entity and an
+    /// entity names it.
+    Never,
+    /// Whenever the style is on.
+    Always,
+    /// While the style is on and this says so for the frame's config and
+    /// ids: ASCII's outlines read it only with `edges > 0` and something
+    /// styled to outline.
+    When(fn(&PostProcessConfig, &StyleIds) -> bool),
+}
+
+impl MaskUse {
+    /// Whether the style may read the mask at all (`--list-styles`).
+    pub fn ever(self) -> bool {
+        !matches!(self, MaskUse::Never)
+    }
+
+    /// Whether it reads the mask under `config` with these ids.
+    pub fn now(self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        match self {
+            MaskUse::Never => false,
+            MaskUse::Always => true,
+            MaskUse::When(f) => f(config, ids),
+        }
+    }
+}
+
+impl std::fmt::Debug for MaskUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MaskUse::Never => "Never",
+            MaskUse::Always => "Always",
+            MaskUse::When(_) => "When(..)",
+        })
+    }
+}
+
 /// A registered style: what it is called, where it runs and how to make it.
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
@@ -436,9 +476,10 @@ pub struct StyleDescriptor {
     /// Named choices and their defaults, read with [`StyleFrame::option`].
     pub options: &'static [StyleOption],
     /// Whether the style reads the entity style mask (#263). While any
-    /// such style is on, the renderer draws the mask each frame and hands
-    /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
-    pub uses_mask: bool,
+    /// such style is on and [`MaskUse::now`] holds, the renderer draws the
+    /// mask each frame and hands it over as [`StyleFrame::mask`]; while
+    /// none is, the mask isn't made.
+    pub uses_mask: MaskUse,
     /// Framework-made inputs the style reads (#301). While any style that
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
@@ -479,12 +520,13 @@ impl StyleDescriptor {
         self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
     }
 
-    /// Whether this style reads the style mask this frame: it always does
-    /// (`uses_mask`), or it is per-entity and an entity names it, opt-outs
-    /// included.
+    /// Whether this style reads the style mask this frame: its `uses_mask`
+    /// says so for this config, or it is per-entity and an entity names
+    /// it, opt-outs included.
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
-            && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
+            && (self.uses_mask.now(config, ids)
+                || (self.component.is_some() && ids.mentions(self.name)))
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).

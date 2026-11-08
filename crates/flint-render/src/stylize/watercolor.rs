@@ -112,7 +112,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         choices: SCOPES,
         discover: None,
     }],
-    uses_mask: false,
+    uses_mask: super::MaskUse::Never,
     needs: &[],
     hints: &[
         StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
