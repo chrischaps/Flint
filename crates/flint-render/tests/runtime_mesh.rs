@@ -924,6 +924,69 @@ fn grass_config() -> flint_terrain::GrassConfig {
     }
 }
 
+/// The blades come out in grid order, the same every frame and every run
+/// (#341). An atomic append ordered them by which GPU thread got there
+/// first; where two blades meet at one depth the one drawn first wins, so
+/// `--frame-step` captures moved by a level in a few pixels.
+#[test]
+fn grass_blades_come_out_in_grid_order_every_run() {
+    let gpu = gpu_or_skip!();
+    let config = grass_config();
+    let ground = flint_render::GrassGround {
+        origin: [-10.0, -10.0],
+        size: [20.0, 20.0],
+        mask: &[255],
+        mask_width: 1,
+        mask_height: 1,
+        scale_by_mask: false,
+        height: flint_render::GrassHeight::Flat(0.0),
+    };
+    let grow = || {
+        let mut renderer = gpu.renderer();
+        if !renderer.has_grass_pipeline() {
+            return None;
+        }
+        renderer
+            .set_grass_ground(&gpu.device, &gpu.queue, &config, &ground)
+            .unwrap();
+        let first = grown_blades(&gpu, &mut renderer);
+        let again = grown_blades(&gpu, &mut renderer);
+        Some((first, again))
+    };
+    let Some((first, again)) = grow() else {
+        eprintln!("no compute grass on this adapter; skipping");
+        return;
+    };
+    let bytes = |blades: &[flint_render::GrassInstanceGpu]| -> Vec<u8> {
+        bytemuck::cast_slice(blades).to_vec()
+    };
+    assert_eq!(bytes(&first), bytes(&again), "the next frame reorders the blades");
+    let (other, _) = grow().unwrap();
+    assert_eq!(bytes(&first), bytes(&other), "another renderer orders them differently");
+
+    // In grid order: workgroup by workgroup (8x8 cells, x first), then cell
+    // by cell inside it. The whole square is in the camera's window, so the
+    // window starts at cell 0. A blade is jittered up to half a cell from
+    // its cell's corner; one too near the half-way mark to tell is skipped.
+    let spacing = 1.0 / config.density.sqrt();
+    let cell = |at: f32| {
+        let t = (at + 10.0) / spacing + 0.5;
+        (t - t.round()).abs().gt(&1e-3).then_some(t.floor() as u32)
+    };
+    let mut last = None;
+    for blade in &first {
+        let [x, _, z] = blade.position;
+        let (Some(cx), Some(cz)) = (cell(x), cell(z)) else {
+            continue;
+        };
+        let key = (cz / 8, cx / 8, cz % 8, cx % 8);
+        if let Some(last) = last {
+            assert!(key > last, "a blade in cell ({cx}, {cz}) comes after {last:?}");
+        }
+        last = Some(key);
+    }
+}
+
 #[test]
 fn grass_stands_on_the_blend_of_a_ground_maps_heights() {
     let gpu = gpu_or_skip!();
