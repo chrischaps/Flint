@@ -15,6 +15,15 @@
 // asks for. Below 1 the glyph pixel is mixed with the picture as it came
 // (fade), or the cell is drawn whole or not at all, by its patch noise
 // (dissolve, flag 2).
+//
+// Cell silhouettes (#338): a variant with flag 4 (`silhouette = "cell"`)
+// draws a cell whole or not at all. A cell of its grid is its when at least
+// `cell_share` of the cell's 16 lattice samples are its pixels; every pixel
+// of such a cell draws as the variant, whatever the mask says there, and
+// its own pixels in a cell it doesn't hold draw as the whole frame does. So
+// each pixel asks, per grid a snapping variant uses, which variant holds its
+// cell (`resolve`): the question is the cell's, and every pixel of the cell
+// gets the same answer.
 
 @group(1) @binding(0) var cells: texture_2d<u32>;
 @group(2) @binding(0) var atlas: texture_2d<f32>;
@@ -318,6 +327,163 @@ fn slot_at(p: vec2<f32>) -> u32 {
     return slot_of(mask_texel(p).x);
 }
 
+// A variant's flag: its silhouette snaps to whole cells (#338)
+const SNAP: u32 = 4u;
+
+// Whether slot `slot` is a drawn variant whose silhouette snaps
+fn snaps(slot: u32) -> bool {
+    return slot != 0u && (variants[slot].flags & (SNAP | 1u)) == SNAP;
+}
+
+// Who draws a pixel: a variant slot (0 = the whole frame), how much of
+// the style it asks for (the mask's .g), and where the picture is read
+// when it passes through (the pixel itself, but see `scene_behind`)
+struct Owner {
+    slot: u32,
+    blend: f32,
+    read_at: vec2<f32>,
+}
+
+// The lattice sample `k` (0..16, row by row) of the cell whose top left is
+// `cell_min`, `cell` wide: a pixel's top left
+fn lattice(cell_min: vec2<f32>, cell: vec2<f32>, k: i32) -> vec2<f32> {
+    return floor(cell_min + (vec2<f32>(f32(k & 3), f32(k >> 2u)) + 0.5) / 4.0 * cell);
+}
+
+// A snapped variant's pixel in a cell it doesn't hold shows the scene, not
+// its own smooth shading (#338): the picture at the nearest of the cell's
+// lattice samples that isn't the variant's, so a dropped edge cell reads as
+// what's around the entity, a quarter cell at a time.
+fn scene_behind(p: vec2<f32>, slot: u32) -> vec2<f32> {
+    let v = variants[slot];
+    let c = floor((p - v.origin) / v.cell);
+    let cell_min = c * v.cell + v.origin;
+    var best = p;
+    var best_d = 1e9;
+    for (var k = 0; k < 16; k++) {
+        let q = lattice(cell_min, v.cell, k);
+        let d = dot(q + 0.5 - p, q + 0.5 - p);
+        if d < best_d && slot_at(q) != slot {
+            best_d = d;
+            best = q + 0.5;
+        }
+    }
+    return best;
+}
+
+fn same_grid(slot: u32, cell: vec2<f32>, origin: vec2<f32>) -> bool {
+    let v = variants[slot];
+    return all(v.cell == cell) && all(v.origin == origin);
+}
+
+// The snapping variant on the grid (`cell`, `origin`) that holds the cell
+// under `p`: of the variants on that grid that snap, the one with the most
+// of the cell's 16 lattice samples (the first met on a tie), if it has at
+// least its `cell_share` of them; slot 0 for none. One pass, in registers:
+// it counts the first two such variants met in the cell, which is every one
+// unless three snapping variants of one grid meet in a cell (the third is
+// then left out). Private arrays would spill to memory: every pixel on the
+// screen runs this once a snapping grid. The blend is the one at the
+// variant's first sample, so the whole cell fades alike.
+fn grid_owner(p: vec2<f32>, cell: vec2<f32>, origin: vec2<f32>) -> Owner {
+    let c = floor((p - origin) / cell);
+    let cell_min = c * cell + origin;
+    var a = 0u;
+    var a_n = 0u;
+    var a_blend = 1.0;
+    var b = 0u;
+    var b_n = 0u;
+    var b_blend = 1.0;
+    for (var k = 0; k < 16; k++) {
+        let m = mask_texel(lattice(cell_min, cell, k));
+        // Most samples are unstyled: no table reads for them
+        if m.x == 0u {
+            continue;
+        }
+        let s = slot_of(m.x);
+        if s == 0u {
+            continue;
+        }
+        if s == a {
+            a_n += 1u;
+        } else if s == b {
+            b_n += 1u;
+        } else if snaps(s) && same_grid(s, cell, origin) {
+            if a == 0u {
+                a = s;
+                a_n = 1u;
+                a_blend = f32(m.y) / 65535.0;
+            } else if b == 0u {
+                b = s;
+                b_n = 1u;
+                b_blend = f32(m.y) / 65535.0;
+            }
+        }
+    }
+    var out: Owner;
+    out.slot = 0u;
+    out.blend = 1.0;
+    out.read_at = p;
+    if b_n > a_n {
+        a = b;
+        a_n = b_n;
+        a_blend = b_blend;
+    }
+    if a != 0u && f32(a_n) + 1e-3 >= variants[a].cell_share * 16.0 {
+        out.slot = a;
+        out.blend = a_blend;
+    }
+    return out;
+}
+
+// Who draws the pixel at `p`: the mask's slot, or with snapping variants
+// in the frame (#338) the variant holding the pixel's cell. A pixel of a
+// variant that cuts its silhouette to the pixel keeps its own; the pixel's
+// own variant's grid is asked first, then each snapping grid in turn.
+fn resolve(p: vec2<f32>) -> Owner {
+    var o: Owner;
+    o.slot = 0u;
+    o.blend = 1.0;
+    o.read_at = p;
+    if u.variant_meta.x <= 1u {
+        return o;
+    }
+    let m = mask_texel(p);
+    o.slot = slot_of(m.x);
+    o.blend = f32(m.y) / 65535.0;
+    if u.variant_meta.w == 0u || (o.slot != 0u && !snaps(o.slot)) {
+        return o;
+    }
+    var own_cell = vec2<f32>(-1.0);
+    var own_origin = vec2<f32>(0.0);
+    if o.slot != 0u {
+        own_cell = variants[o.slot].cell;
+        own_origin = variants[o.slot].origin;
+        let w = grid_owner(p, own_cell, own_origin);
+        if w.slot != 0u {
+            return w;
+        }
+    }
+    for (var g = 0u; g < min(u.variant_meta.w, MAX_SNAP_GRIDS); g++) {
+        let grid = u.snap_grids[g];
+        if all(grid.xy == own_cell) && all(grid.zw == own_origin) {
+            continue;
+        }
+        let w = grid_owner(p, grid.xy, grid.zw);
+        if w.slot != 0u {
+            return w;
+        }
+    }
+    // Nobody holds the cell: the whole frame's, and a dropped pixel of a
+    // snapped variant shows the scene around it
+    if o.slot != 0u {
+        o.read_at = scene_behind(p, o.slot);
+    }
+    o.slot = 0u;
+    o.blend = 1.0;
+    return o;
+}
+
 fn cell_hash(c: vec2<f32>) -> f32 {
     return fract(sin(dot(c, vec2<f32>(127.1, 311.7))) * 43758.5453);
 }
@@ -453,7 +619,8 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     // variant only grazes (under a quarter of its samples, easing out by
     // five eighths) inks its pixels at least `min_coverage`.
     var floor_ink = v.min_coverage * (1.0 - smoothstep(0.25, 0.625, d.share));
-    if v.outline > 0.0 && on_silhouette(slot, p, v.outline) {
+    // A snapped silhouette (#338) is the cells' own edge: no pixel outline
+    if v.outline > 0.0 && (v.flags & SNAP) == 0u && on_silhouette(slot, p, v.outline) {
         floor_ink = 1.0;
     }
     return shade(v, d.col, d.t, d.step, d.cell, d.local, d.edge, floor_ink);
@@ -485,14 +652,11 @@ fn on_silhouette(slot: u32, p: vec2<f32>, width: f32) -> bool {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.position.xy;
-    var slot = 0u;
-    // How much of the style the pixel's entity asks for, 0..1 (mask .g)
-    var blend = 1.0;
-    if u.variant_meta.x > 1u {
-        let m = mask_texel(p);
-        slot = slot_of(m.x);
-        blend = f32(m.y) / 65535.0;
-    }
+    // Who draws the pixel, and how much of the style its entity asks for,
+    // 0..1 (mask .g)
+    let owner = resolve(p);
+    let slot = owner.slot;
+    let blend = owner.blend;
     var out: vec3<f32>;
     if slot != 0u {
         let v = variants[slot];
@@ -514,7 +678,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     } else {
         if u.variant_meta.y == 1u {
-            return passed(p);
+            return passed(owner.read_at);
         }
         let rel = p - u.origin;
         let cell = floor(rel / u.cell);
@@ -557,13 +721,9 @@ fn text_cell(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, edg
 // What fs_main draws at pixel `p` of the cell whose cell state texel is
 // `index`, as a text texel (w left 0)
 fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
-    var slot = 0u;
-    var blend = 1.0;
-    if u.variant_meta.x > 1u {
-        let m = mask_texel(p);
-        slot = slot_of(m.x);
-        blend = f32(m.y) / 65535.0;
-    }
+    let owner = resolve(p);
+    let slot = owner.slot;
+    let blend = owner.blend;
     if slot != 0u {
         let v = variants[slot];
         if (v.flags & 1u) != 0u || blend <= 0.0 {
@@ -578,7 +738,7 @@ fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
         return text_cell(v, d.col, d.t, d.step, d.cell, d.edge);
     }
     if u.variant_meta.y == 1u {
-        return text_passed(p);
+        return text_passed(owner.read_at);
     }
     let state = textureLoad(cells, index, 0);
     let col = vec3<f32>(state.rgb) / UNORM16;

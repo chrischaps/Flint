@@ -51,7 +51,9 @@ pub struct GrassComputeUniforms {
     /// texel's cell, as a [`GrassHeight::Map`] is read. Either way a blade
     /// stands on the blend of the four samples round it.
     pub height_at_corners: u32,
-    pub _pad0: u32,
+    /// Workgroups in this frame's dispatch, which the scan pass runs over
+    /// (#341).
+    pub group_count: u32,
     pub _pad1: u32,
     pub _pad2: u32,
     /// The camera frustum's planes (`ax + by + cz + d >= 0` is inside),
@@ -496,7 +498,11 @@ pub fn generate_blade_mesh() -> (Vec<GrassVertex>, Vec<u16>) {
 
 /// The grass rendering pipeline (compute + render)
 pub struct GrassPipeline {
-    pub compute_pipeline: wgpu::ComputePipeline,
+    /// The blade placement passes, run in this order (#341): count each
+    /// workgroup's blades, scan the counts into first slots, write the blades
+    pub count_pipeline: wgpu::ComputePipeline,
+    pub scan_pipeline: wgpu::ComputePipeline,
+    pub emit_pipeline: wgpu::ComputePipeline,
     pub render_pipeline: wgpu::RenderPipeline,
     pub shadow_pipeline: wgpu::RenderPipeline,
     // Bind group layouts
@@ -615,6 +621,17 @@ impl GrassPipeline {
                         },
                         count: None,
                     },
+                    // Each workgroup's blade count, then its first slot (#341)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
                 label: Some("Grass Compute Storage Layout"),
             });
@@ -631,14 +648,19 @@ impl GrassPipeline {
                 label: Some("Grass Compute Pipeline Layout"),
             });
 
-        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Grass Compute Pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &compute_shader,
-            entry_point: Some("cs_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let compute_pass = |label: &str, entry_point: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&compute_pipeline_layout),
+                module: &compute_shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let count_pipeline = compute_pass("Grass Count Pipeline", "cs_count");
+        let scan_pipeline = compute_pass("Grass Scan Pipeline", "cs_scan");
+        let emit_pipeline = compute_pass("Grass Emit Pipeline", "cs_emit");
 
         // --- Render bind group layouts ---
 
@@ -815,7 +837,9 @@ impl GrassPipeline {
         });
 
         Some(Self {
-            compute_pipeline,
+            count_pipeline,
+            scan_pipeline,
+            emit_pipeline,
             render_pipeline,
             shadow_pipeline,
             compute_uniform_layout,

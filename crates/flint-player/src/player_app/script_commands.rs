@@ -196,6 +196,14 @@ impl PlayerApp {
                 ScriptCommand::UnloadChunk { chunk_id } => {
                     self.unload_chunk(&chunk_id);
                 }
+                ScriptCommand::ResetStyleHistory => {
+                    if let Some(renderer) = &mut self.scene_renderer {
+                        renderer.reset_style_history();
+                    }
+                }
+                ScriptCommand::SetCameraCutDetection { enabled } => {
+                    self.camera_cut.enabled = enabled;
+                }
             }
         }
     }

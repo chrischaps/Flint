@@ -193,7 +193,7 @@ flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--frames <n>` | (none) | Frames to draw, written as `<stem>_0000.png`... beside `--output` (with `--ascii-text`, numbered grids too) |
-| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind and `--particle-time` particles advance by it |
+| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles and the ASCII history's smoothing (#342) advance by it |
 | `--orbit <deg/s>` | (still camera) | Turn the camera about its target, from the scene's `[camera]` or the orbit flags |
 | `--camera-path <file>` | (still camera) | Follow keys instead, position and target interpolated linearly |
 | `--flip-stats` | `false` | Count the ASCII style's glyph flips and reversals, per frame and in sum |

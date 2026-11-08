@@ -1105,6 +1105,8 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         }
         renderer.ocean_time = base_time + t as f64;
         renderer.grass_time = t;
+        // History smoothing scales by the frame's game time (#342)
+        renderer.style_dt = dt;
         if let Some(p) = particles.as_deref_mut() {
             if i > 0 {
                 p.simulate_to(world, dt, dt.min(1.0 / 60.0));

@@ -161,14 +161,16 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `edge_normal` | `2.5` | The normal change, as a Sobel over normals rebuilt from depth, that counts as a crease (lower finds more) |
 | `outline` | `1` | Per-entity only: ink a styled entity's own pixels this many points from its silhouette (0--4, at least one pixel when on; 0 = off), so features thinner than a cell keep their shape ([Silhouettes](#silhouettes), #288) |
 | `min_coverage` | `0.5` | Per-entity only: the least ink of the pixels in a cell the entity only grazes (0--1) |
+| `silhouette` | `"pixel"` | Per-entity only: `pixel` cuts the glyphs at the entity's exact edge; `cell` draws every edge cell whole, as the entity's glyph or as the scene, by how much of it the entity covers ([Whole-cell silhouettes](#whole-cell-silhouettes), #338) |
+| `cell_share` | `0.5` | Per-entity only, with `silhouette = "cell"`: the share of a cell's 16 colour samples the entity must cover for the cell to be its (1/16--1) |
 | `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first |
-| `smoothing` | `0.6` | How much of last frame's colour a cell keeps (0--0.95). A cell whose colour jumps takes the new one at once, so nothing trails |
+| `smoothing` | `0.6` | How much of last frame's colour a cell keeps, per 60 Hz frame (0--0.95): at 120 Hz each frame keeps its square root, at 30 Hz its square, so a change settles in the same game time at any frame rate (#342). A cell whose colour jumps takes the new one at once, so nothing trails |
 | `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1) |
 | `dither` | `0` | Ordered (4x4 Bayer) dither before the ramp, fixed to the grid: gradients break into a still pattern instead of one hard edge (0--1, `--ascii-dither`) |
 
 ### Temporal stability
 
-In motion, a cell whose tone sits on a ramp boundary tips to the neighbouring glyph and back at the slightest change, and the whole picture crawls. So the style draws in two passes: a cell pass writes each cell's colour and glyph into a small state texture (one texel a cell), and the glyph pass draws from it. The state is kept for the next frame. A cell blends in part of last frame's colour (`smoothing`) and keeps last frame's glyph until its tone has clearly moved on (`hysteresis`).
+In motion, a cell whose tone sits on a ramp boundary tips to the neighbouring glyph and back at the slightest change, and the whole picture crawls. So the style draws in two passes: a cell pass writes each cell's colour and glyph into a small state texture (one texel a cell), and the glyph pass draws from it. The state is kept for the next frame. A cell blends in part of last frame's colour (`smoothing`, scaled by the frame's length in game time: the player's clock, so the fixed step under `--frame-step`) and keeps last frame's glyph until its tone has clearly moved on (`hysteresis`).
 
 On `demo/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captured at 1280x720 with `--frame-step 0.0166667` for 3 s (181 frames, 14,400 cells), `python tools/ascii_flips.py` counted:
 
@@ -181,7 +183,24 @@ Reversals, where a glyph changes and changes back two frames later, are the shim
 
 `flint render --frames 181 --orbit 6.8755 --flip-stats` measures the same thing headlessly and exactly, from the style's own grid ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345). With `edges = 0` it gives 105.1 flips and 0.0 reversals a frame with the history on, against 321.1 and 57.8 with it off. The edge glyphs (#267), which came after this measurement, don't go through the history yet. With them on, the history leaves 30.3 reversals a frame (#477).
 
-The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. The player's captures can still differ from run to run by one level in a few pixels, with the history on or off (#341). The history absorbs those differences rather than carrying them forward. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up. Call it on a camera cut too, so the new shot doesn't start from the old one's glyphs.
+The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. Until #341 the player's captures still differed by one level in a few pixels, history on or off: the grass compute's blades came out in a different order each run. Five captures of the motion bench are now byte-identical. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up, and on a [camera cut](#camera-cuts).
+
+#### Camera cuts
+
+After a cut (a cutscene's new shot, a teleport, a respawn) the history belongs to the old shot. Kept, it blends the old shot's colours into the new one's first frames, and cells whose tone barely changed keep the old glyph through the hysteresis band, for as long as the shot lasts. Two things reset it (#343):
+
+- **Scripts** call `reset_style_history()` on the frame of the cut ([Scripting → Style API](scripting.md#style-api)). The next frame is drawn as if it were the first.
+- **The player watches the camera** and resets by itself when a frame's step is both large and sudden: a move of more than 2 m or a turn of more than 30° in one frame, at more than four times the rate of the frame before. The second test keeps a fast chase camera, or a hitch that stretches one frame, from resetting every frame and losing its stability. A missed cut costs a shot's worth of stale glyphs, a false one costs one frame drawn without history. FOV and orthographic zoom changes aren't watched: a script that cuts by zoom calls `reset_style_history()`. `set_camera_cut_detection(false)` turns the watch off; the thresholds are the constants in `crates/flint-player/src/player_app/camera_cut.rs`.
+
+`demo/ascii_cuts.scene.toml` cuts between two shots of the meadow clearing every second. Its script's `mode` is `"script"` (it resets at each cut), `"auto"` (the player's detection does) or `"none"` (neither). Captured at 1280x720 with `--frame-step 0.0166667` for 2.5 s, cells whose glyph differs from the `"script"` run (of 14,400):
+
+| Mode | Before the first cut | First frame of the new shot | Its last frame, a second later | All frames after the cut |
+|------|---|---|---|---|
+| `"script"` | 0 | 0 | 0 | 0 |
+| `"auto"` | 0 | 0 | 0 | 0 |
+| `"none"` | 0 | 1,006 (7.0%) | 493 (3.4%) | 45,800 |
+
+The carry-over is mostly in mid tones: `-` where the new shot has `=`, `.` and `:` in the grass. Half of it is still there when the shot ends, because cells that clear the hysteresis band have no reason to change.
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.04 ms at 1080p on an RTX 4070 (`--gpu-time 240`), down from about 0.15 ms before #277 split it in two: the cell pass averages each cell's colour once, where the old single pass did it for every pixel. That is with `edges = 0`. The [edge passes](#edges) add about 0.4 ms (measured on the tavern before #277, as 0.15 against 0.53--0.67 ms).
 
@@ -367,6 +386,24 @@ They apply to per-entity variants only: the whole frame's cells have no silhouet
 flint render demo/ascii_silhouette.scene.toml --no-grid -o bench.png
 flint render demo/ascii_silhouette.scene.toml --no-grid --style ascii:outline=0,min_coverage=0 -o before.png
 ```
+
+### Whole-cell silhouettes
+
+The outline reads a prop as a shape cut out of the scene: the glyphs end at the mask's pixel-exact edge, so the cells along it are half glyphs. `silhouette = "cell"` (#338) is the other reading, a silhouette made of whole glyphs. Each cell of the variant's grid is all glyph or all scene, decided by how much of it the entity covers:
+
+- A cell where the entity covers at least `cell_share` (default 0.5) of the cell's 16 colour samples is the entity's. Every pixel in it draws the entity's glyph, the scene's pixels in the cell included.
+- A cell it covers less of is dropped. The entity's own pixels in it show the scene around the entity, each the picture at the nearest of the cell's samples that isn't the entity's, rather than the prop's smooth shading. With the whole frame in ASCII they draw the whole frame's glyph instead.
+
+![demo/ascii_entities.scene.toml, the barrel and crate at 3x: with pixel silhouettes the glyphs end at an outline along the mask's edge; with cell silhouettes every edge cell is a whole glyph or the meadow](../images/ascii-silhouette-cell.png)
+
+The edge becomes a staircase of cells, like a character on a text screen. The pixel `outline` is off on a snapped variant, since the edge is the cells'. `min_coverage` still applies, and lowering `cell_share` (0.25 keeps more of a bench's legs) is the way to hold thin features. Edge glyphs (#267) still draw in the cells the entity keeps. Object grids (`grid = "object"`) snap on their own grid. A variant that keeps `silhouette = "pixel"` keeps its own pixels even inside a snapped neighbour's cell.
+
+```bash
+flint render demo/ascii_entities.scene.toml --no-grid --style ascii:silhouette=cell -o cells.png
+flint render demo/ascii_entities.scene.toml --no-grid --style ascii:silhouette=cell,cell_share=0.25 -o thin.png
+```
+
+The glyph pass works out each pixel's cell, so every pixel of a cell gets the same answer. It reads the cell's 16 mask samples once for the pixel's own grid, then once for each other grid a snapping variant uses (up to 8; a variant on a ninth still drops its own minority cells but fills none). Each pass keeps counts in registers for the first two snapping variants met in the cell, so a third variant of the same grid meeting them in one cell is left out. On `demo/ascii_entities` at 1080p on an RTX 4070 (`--gpu-time 240`, three alternating runs, two snapping grids) the ASCII pass took 0.34–0.38 ms with cells against 0.17–0.24 ms with pixels (edges off), and 0.64–0.68 ms against 0.49–0.54 ms with edges on: about 0.15 ms more. A first version that kept the samples in private arrays cost 0.4 ms more. A pixel the mask itself misses (a grazing silhouette pixel its depth tolerance drops) still passes through, as it does with `pixel`.
 
 ## Pencil
 

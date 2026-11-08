@@ -773,6 +773,12 @@ pub struct StyleFrame<'a> {
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
     pub time: f32,
+    /// Seconds of game time since the last frame (#342), for history that
+    /// decays at a rate rather than a step a frame. Game time, so it is the
+    /// fixed step under `--frame-step` and the capture is deterministic.
+    /// Read it through [`per_60hz`] to turn a per-60 Hz-frame weight into
+    /// this frame's.
+    pub dt: f32,
     /// This frame's number: one more than the last frame the renderer drew
     /// through the post chain. A style that keeps history from frame to
     /// frame (ASCII's temporal stability, #277) trusts it only when the
@@ -792,6 +798,20 @@ pub struct StyleFrame<'a> {
     pub scene_dir: Option<&'a std::path::Path>,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
+}
+
+/// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
+/// as this frame's weight, `w^(dt * 60)` (#342): at 120 Hz two frames keep
+/// what one 60 Hz frame keeps, at 30 Hz one frame keeps what two do, so a
+/// change settles in the same game time at any rate. A `dt` that isn't a
+/// positive number says nothing about the rate and reads as 1/60.
+pub fn per_60hz(w: f32, dt: f32) -> f32 {
+    let dt = if dt.is_finite() && dt > 0.0 {
+        dt
+    } else {
+        1.0 / 60.0
+    };
+    w.clamp(0.0, 1.0).powf(dt * 60.0)
 }
 
 impl StyleFrame<'_> {
@@ -1784,6 +1804,20 @@ pub fn names() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz
+    /// frame what two do, and a dt that says nothing reads as 1/60.
+    #[test]
+    fn per_60hz_weights_keep_the_same_share_per_second() {
+        let w = 0.6;
+        assert!((per_60hz(w, 1.0 / 60.0) - w).abs() < 1e-6);
+        assert!((per_60hz(w, 1.0 / 120.0).powi(2) - w).abs() < 1e-6);
+        assert!((per_60hz(w, 1.0 / 30.0) - w * w).abs() < 1e-6);
+        for dt in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(per_60hz(w, dt), per_60hz(w, 1.0 / 60.0), "dt {dt}");
+        }
+        assert_eq!(per_60hz(0.0, 1.0 / 144.0), 0.0);
+    }
 
     #[test]
     fn registry_names_are_unique_and_lowercase() {

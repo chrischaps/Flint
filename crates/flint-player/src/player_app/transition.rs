@@ -451,6 +451,8 @@ impl PlayerApp {
             // The new scene's first frame has no past: styles that keep
             // history (ASCII's temporal stability, #277) start over
             renderer.reset_style_history();
+            // ...and the new scene's first camera is no cut from the old one's
+            self.camera_cut.forget();
 
             // Scene-authored hemisphere ambient + wrap; reset first so the
             // previous scene's values never leak into one that doesn't

@@ -1069,6 +1069,102 @@ fn two_entities_draw_in_two_glyph_sets_in_one_frame() {
     });
 }
 
+/// How far `scene` is from whole `cell`-pixel cells: over every grid
+/// offset (0..cell on each axis), the least sum, block by block, of the
+/// pixels on the block's minority side (0 = every block all scene or all
+/// glyph).
+fn part_cell_pixels(scene: &[bool], cell: usize) -> usize {
+    let n = SIZE as usize;
+    let mut best = usize::MAX;
+    for oy in 0..cell {
+        for ox in 0..cell {
+            let mut blocks = std::collections::HashMap::<(usize, usize), (usize, usize)>::new();
+            for (i, s) in scene.iter().enumerate() {
+                let b = ((i % n + cell - ox) / cell, (i / n + cell - oy) / cell);
+                let e = blocks.entry(b).or_default();
+                if *s {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                }
+            }
+            best = best.min(blocks.values().map(|(a, b)| *a.min(b)).sum());
+        }
+    }
+    best
+}
+
+/// #338: `silhouette = "cell"` makes a per-entity silhouette of whole
+/// glyphs: every 8x8 cell is all scene or all glyph, where the pixel
+/// silhouette cuts cells, and a dropped cell shows the scene, not the
+/// cube's own shading. The mask misses a few of the cube's grazing
+/// silhouette pixels (its depth tolerance; they pass through as they are in
+/// both modes), and a dropped pixel whose nearest scene sample is one of
+/// them takes its colour, so the cell frame gets a budget of twice those.
+#[test]
+fn a_cell_silhouette_draws_every_edge_cell_whole_or_not_at_all() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+    let mut world = box_world();
+    let plain = gpu.frame(&mut renderer, &world);
+    let cube = world.get_id("cube").unwrap();
+    set_entity_style(&mut world, cube, "ascii").unwrap();
+    set_style_param(&mut world, cube, "cell", 8.0.into()).unwrap();
+    let pixel = gpu.frame(&mut renderer, &world);
+    set_style_param(&mut world, cube, "silhouette", "cell".into()).unwrap();
+    let cell = gpu.frame(&mut renderer, &world);
+
+    // A pixel shows the scene where it is (near enough) the empty frame's
+    let scene = |frame: &[u8]| -> Vec<bool> {
+        frame
+            .chunks(4)
+            .zip(empty.chunks(4))
+            .map(|(p, e)| (0..3).all(|c| p[c].abs_diff(e[c]) <= 2))
+            .collect()
+    };
+    let cube_px: Vec<bool> = scene(&plain).iter().map(|s| !s).collect();
+    let covered = cube_px.iter().filter(|c| **c).count();
+    // The cube's pixels a frame leaves exactly as they were: its own shading
+    let unchanged = |frame: &[u8]| -> usize {
+        (0..cube_px.len())
+            .filter(|&i| cube_px[i] && plain[i * 4..i * 4 + 4] == frame[i * 4..i * 4 + 4])
+            .count()
+    };
+    let missed = unchanged(&pixel);
+    let pixel_part = part_cell_pixels(&scene(&pixel), 8);
+    let cell_part = part_cell_pixels(&scene(&cell), 8);
+    eprintln!(
+        "cube {covered} px, {missed} unmasked; part-cell px: pixel silhouette {pixel_part}, cell {cell_part}"
+    );
+    assert!(covered > 400, "the cube fills the middle of the frame");
+    assert!(missed < 20, "the mask covers the cube");
+    assert!(
+        pixel_part > 4 * missed,
+        "the pixel silhouette cuts cells (the test's control)"
+    );
+    assert!(
+        cell_part <= 2 * missed,
+        "a cell silhouette leaves part cells"
+    );
+    assert_eq!(
+        unchanged(&cell),
+        missed,
+        "a dropped cell left the cube's own shading"
+    );
+}
+
 /// A tilted box filling the middle of the frame: silhouettes against the
 /// sky and creases where its faces meet.
 fn box_world() -> FlintWorld {
@@ -1751,4 +1847,98 @@ fn five_hundred_anchored_props_each_draw_on_their_own_grid() {
     assert_eq!(gpu.frame(&mut renderer, &world), styled);
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "the variant table allocated a frame");
+}
+
+/// #342: ASCII's `smoothing` is per 60 Hz frame, so a step in the cells'
+/// colour settles in the same game time at 30 Hz and at 120 Hz (four
+/// times as many frames), within a 30 Hz frame. Under the old per-frame
+/// weight the 120 Hz run settled in a quarter of the 30 Hz run's time.
+#[test]
+fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let world = FlintWorld::new();
+    // The sky, a little brighter after the step: a change under the
+    // snap threshold, so the cells average it in rather than take it
+    const STEP: f32 = 0.3;
+    let config = |renderer: &SceneRenderer, exposure: f32, temporal: &str| {
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_option("ascii", "temporal", temporal);
+        config.styles.set_param("ascii", "smoothing", 0.9);
+        config.styles.set_param("ascii", "hysteresis", 0.0);
+        config.styles.set_param("ascii", "exposure", exposure);
+        // Ink and ground both in the cell's own colour, so the frame
+        // follows the cells' colour smoothly whatever glyph a cell draws
+        config.styles.set_option("ascii", "color", "raw");
+        config.styles.set_param("ascii", "background", 1.0);
+        config
+    };
+    let mean = |pixels: &[u8]| -> f64 {
+        let rgb = pixels.chunks(4).flat_map(|p| &p[..3]);
+        rgb.map(|&b| b as f64).sum::<f64>() / (pixels.len() / 4 * 3) as f64
+    };
+    let renderer = || {
+        let mut r = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        r.ensure_style_resources(&gpu.device);
+        r
+    };
+    // Where each run starts and ends, drawn without history
+    let still = |exposure: f32| {
+        let mut r = renderer();
+        r.set_post_process_config(config(&r, exposure, "off"));
+        mean(&gpu.frame(&mut r, &world))
+    };
+    let (from, to) = (still(0.0), still(STEP));
+    eprintln!("mean byte {from:.2} -> {to:.2}");
+    assert!(
+        (to - from).abs() > 2.0,
+        "the step moved the frame by {:.2} of a byte; the bench tests nothing",
+        to - from
+    );
+    // The game time at which a run of frames `hz` a second is nine tenths
+    // of the way there; the style is told each frame is `style_dt` long
+    let run = |hz: f32, style_dt: f32| -> f32 {
+        let dt = 1.0 / hz;
+        let mut r = renderer();
+        r.style_dt = style_dt;
+        r.set_post_process_config(config(&r, 0.0, "on"));
+        gpu.frame(&mut r, &world);
+        r.set_post_process_config(config(&r, STEP, "on"));
+        let mut trace = Vec::new();
+        for i in 1..=(2.0 * hz) as usize {
+            let gone = (mean(&gpu.frame(&mut r, &world)) - from) / (to - from);
+            trace.push(format!("{:.3}", gone));
+            if gone >= 0.9 {
+                eprintln!("{hz} Hz: {}", trace.join(" "));
+                return i as f32 * dt;
+            }
+        }
+        panic!("{hz} Hz never settled: {}", trace.join(" "));
+    };
+    let settle = |hz: f32| run(hz, 1.0 / hz);
+    let (slow, fast) = (settle(30.0), settle(120.0));
+    eprintln!("settled at 30 Hz in {slow:.3} s, at 120 Hz in {fast:.3} s");
+    assert!(
+        (slow - fast).abs() <= 1.0 / 30.0 + 1e-4,
+        "30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
+    );
+    // The control: told nothing of the rate (every frame a 60 Hz one, the
+    // old per-frame weight), the two runs are far apart, so the bench can
+    // tell. 120 Hz settles in a quarter of 30 Hz's time
+    let (slow, fast) = (run(30.0, 1.0 / 60.0), run(120.0, 1.0 / 60.0));
+    eprintln!("per frame: 30 Hz in {slow:.3} s, 120 Hz in {fast:.3} s");
+    assert!(
+        slow - fast > 3.0 / 30.0,
+        "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
+    );
 }

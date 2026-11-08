@@ -541,6 +541,9 @@ pub struct SceneRenderer {
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
     grass_compute_storage_bind_group: Option<wgpu::BindGroup>,
+    /// Each placement workgroup's blade count, then its first slot, and how
+    /// many workgroups it holds (#341). Grown by the dispatch that needs more.
+    grass_group_slots: Option<(wgpu::Buffer, u32)>,
     grass_render_uniform_buffer: Option<wgpu::Buffer>,
     grass_render_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_render_instance_bind_group: Option<wgpu::BindGroup>,
@@ -607,6 +610,12 @@ pub struct SceneRenderer {
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
     pub ocean_time: f64,
+    /// Seconds of game time this frame stepped, for styles whose history
+    /// is a rate (ASCII's smoothing, #342): the player sets it from its
+    /// clock's `delta_time` (so it follows `--frame-step`), the viewer from
+    /// its frame time. Hosts that don't set it get 1/60, which is what a
+    /// per-frame weight always meant.
+    pub style_dt: f32,
     // Particles (ADR 0068)
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -850,6 +859,7 @@ impl SceneRenderer {
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
             grass_compute_storage_bind_group: None,
+            grass_group_slots: None,
             grass_render_uniform_buffer: None,
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
@@ -893,6 +903,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             particle_texture_bind_groups: HashMap::new(),
@@ -1863,21 +1874,6 @@ impl SceneRenderer {
             label: Some("Grass Compute Texture Bind Group"),
         });
 
-        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_storage_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: counter_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Compute Storage Bind Group"),
-        });
-
         // Render uniform buffer
         let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Grass Render Uniform Buffer"),
@@ -1927,7 +1923,9 @@ impl SceneRenderer {
         self.grass_compute_uniform_buffer = Some(compute_uniform_buffer);
         self.grass_compute_uniform_bind_group = Some(compute_uniform_bind_group);
         self.grass_compute_texture_bind_group = Some(compute_texture_bind_group);
-        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        // Made by the first dispatch, which knows how many workgroups it runs
+        self.grass_compute_storage_bind_group = None;
+        self.grass_group_slots = None;
         self.grass_render_uniform_buffer = Some(render_uniform_buffer);
         self.grass_render_uniform_bind_group = Some(render_uniform_bind_group);
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
@@ -1978,6 +1976,7 @@ impl SceneRenderer {
         self.grass_compute_uniform_bind_group = None;
         self.grass_compute_texture_bind_group = None;
         self.grass_compute_storage_bind_group = None;
+        self.grass_group_slots = None;
         self.grass_render_uniform_buffer = None;
         self.grass_render_uniform_bind_group = None;
         self.grass_render_instance_bind_group = None;
@@ -2075,22 +2074,6 @@ impl SceneRenderer {
         // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
         let counter_buffer = create_grass_draw_args_buffer(device);
 
-        // Recreate compute storage bind group (binds instance buffer at binding 0)
-        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_storage_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: counter_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Compute Storage Bind Group"),
-        });
-
         // Recreate render instance bind group (binds instance buffer at binding 0)
         let entity_buffer = self
             .grass_entity_buffer
@@ -2120,7 +2103,8 @@ impl SceneRenderer {
         self.grass_max_instances = max_instances;
         self.grass_draw_args_buffer = Some(counter_buffer);
         self.grass_count_readback = Some(GrassCountReadback::new(device));
-        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        // The next dispatch binds the new buffers
+        self.grass_compute_storage_bind_group = None;
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
         self.grass_config = Some(config);
         self.grass_needs_realloc = false;
@@ -2130,6 +2114,58 @@ impl SceneRenderer {
             max_instances,
             instance_buffer_size as f64 / (1024.0 * 1024.0)
         );
+    }
+
+    /// Make sure the grass compute's storage bind group exists and its
+    /// per-workgroup slots hold `groups` workgroups (#341). The slots grow
+    /// to the next power of two, so a window that changes size as the
+    /// camera nears the ground's edge rebuilds them a few times at most.
+    fn ensure_grass_group_slots(&mut self, device: &wgpu::Device, groups: u32) {
+        let groups = groups.max(1);
+        let fits = self
+            .grass_group_slots
+            .as_ref()
+            .is_some_and(|(_, capacity)| *capacity >= groups);
+        if fits && self.grass_compute_storage_bind_group.is_some() {
+            return;
+        }
+        let (Some(grass_pipeline), Some(instances), Some(draw_args)) = (
+            &self.grass_pipeline,
+            &self.grass_instance_buffer,
+            &self.grass_draw_args_buffer,
+        ) else {
+            return;
+        };
+        if !fits {
+            let capacity = groups.next_power_of_two();
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Group Slots"),
+                size: capacity as u64 * 4,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            self.grass_group_slots = Some((buffer, capacity));
+        }
+        let (slots, _) = self.grass_group_slots.as_ref().expect("grass group slots");
+        self.grass_compute_storage_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.compute_storage_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instances.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: draw_args.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: slots.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Compute Storage Bind Group"),
+            }));
     }
 
     /// Read-only access to the current grass config (if loaded).
@@ -2346,6 +2382,7 @@ impl SceneRenderer {
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
             grass_compute_storage_bind_group: None,
+            grass_group_slots: None,
             grass_render_uniform_buffer: None,
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
@@ -2389,6 +2426,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             // Headless particles (ADR 0068): zero instances until a caller
             // steps a ParticleSystem, so existing pixel gates are unchanged.
             particle_pipeline: Some(particle_pipeline),
