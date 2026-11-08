@@ -1755,4 +1755,38 @@ mod tests {
         assert!(!ascii.is_on(&config, &none));
         assert!(!crate::stylize::any_uses_mask(&config, &none));
     }
+
+    /// #350: whole-frame ASCII asks for the mask only while it has edges
+    /// to draw and something styled to outline, or another style's entity
+    /// to pass through.
+    #[test]
+    fn whole_frame_ascii_asks_for_the_mask_only_when_it_reads_it() {
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        let empty = FlintWorld::new();
+        let (none, _) = resolved(&empty, &config);
+        assert!(!crate::stylize::any_uses_mask(&config, &none), "nothing styled");
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
+        let (other, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &other), "edges outline it");
+        config.styles.set_param("ascii", "edges", 0.0);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &other),
+            "another style's entity still passes through"
+        );
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
+        let (ours, _) = resolved(&world, &config);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &ours),
+            "per-entity rows are found by mask id"
+        );
+
+        // --ascii-no-edges in a scene with no style_mask: no mask
+        let (none, _) = resolved(&empty, &config);
+        assert!(!crate::stylize::any_uses_mask(&config, &none));
+    }
 }
