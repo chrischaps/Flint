@@ -23,6 +23,9 @@ pub struct StyleListing {
     pub table: String,
     /// The component an entity takes the style with (per-entity styles).
     pub component: Option<String>,
+    /// Whether it leaves other styles' entities (#384); false for the
+    /// debug views and display bloom, which draw over everything.
+    pub yields: bool,
     /// Whether it reads the entity style mask.
     pub uses_mask: bool,
     pub params: Vec<ParamListing>,
@@ -115,6 +118,7 @@ pub fn listing_in(d: &StyleDescriptor, scene_dir: Option<&Path>) -> StyleListing
         },
         table: format!("[post_process.styles.{}]", d.name),
         component: d.component.map(str::to_string),
+        yields: d.yields,
         uses_mask: d.uses_mask.ever(),
         params: d
             .params
@@ -169,6 +173,9 @@ pub fn catalog_text_for(scene_dir: Option<&Path>) -> String {
         let mut tags = vec![s.stage.to_string(), s.source.to_string()];
         if let Some(c) = &s.component {
             tags.push(format!("per-entity: {c}"));
+        }
+        if !s.yields {
+            tags.push("draws over entities".into());
         }
         if s.uses_mask {
             tags.push("reads mask".into());
