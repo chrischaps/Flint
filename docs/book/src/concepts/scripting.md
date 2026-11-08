@@ -455,6 +455,8 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 | `clear_entity_style(entity_id)` | Take the entity's own style off, and stop its tweens |
 | `reset_style_history()` | The next frame doesn't follow on from this one (a cutscene's new shot, a teleport, a respawn): styles that remember earlier frames, such as ASCII's [temporal stability](stylize-passes.md#camera-cuts), draw it as if it were the first (#343) |
 | `set_camera_cut_detection(enabled)` | Turn the player's own [cut detection](stylize-passes.md#camera-cuts) on or off (on by default). A script that calls `reset_style_history()` at its own cuts can turn it off |
+| `set_look(name)` | Draw the whole frame in a [look](stylize-passes.md#looks-in-scenes-f4-and-scripts) (`"graphite"`, `"matrix"`, or a `styles/<name>.look.toml` beside the scene), laid under the scene's own `[post_process]` keys in place of the look it had (#356). `""` is no look. An unknown look is a warning and changes nothing. Call it once per change, not every frame: each call re-reads the look and replaces the post config |
+| `clear_look()` | Take the look off: the scene's own `[post_process]` keys alone |
 
 Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.
 

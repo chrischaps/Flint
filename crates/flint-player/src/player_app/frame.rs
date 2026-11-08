@@ -39,6 +39,11 @@ impl PlayerApp {
             return;
         }
         self.update_render_scale();
+        if let Some(look) = self.pending_look.take() {
+            if let Err(e) = self.set_look(look.as_deref()) {
+                tracing::warn!("look: {e}");
+            }
+        }
         let Some(context) = &self.render_context else {
             return;
         };
@@ -254,6 +259,9 @@ impl PlayerApp {
             self.pp_debug_freeze = rp.freeze_scripts;
             if flint_debug_ui::DebugPanel::is_dirty(rp) {
                 let flags = rp.take_flags();
+                if flags.look_changed {
+                    self.pending_look = Some(rp.look.clone());
+                }
                 if flags.styles_committed {
                     committed_styles = rp.authored_styles().cloned();
                 }

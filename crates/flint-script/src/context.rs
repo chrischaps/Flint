@@ -295,6 +295,12 @@ pub enum ScriptCommand {
     SetCameraCutDetection {
         enabled: bool,
     },
+    /// Lay a look under the scene's `[post_process]` keys in place of the
+    /// one it has (#356): a `styles/<name>.look.toml` or a built-in.
+    /// `None` takes the look off (the scene's keys alone).
+    SetLook {
+        name: Option<String>,
+    },
     LoadScene {
         path: String,
     },
