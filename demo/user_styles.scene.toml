@@ -1,7 +1,11 @@
 # User-authored styles (#274, ADR 0112): the styles in demo/styles/ are a
 # `.shader.toml` and one WGSL function each, loaded at run time, not
-# compiled into the engine. This scene turns on `hologram` for two props
-# (it reads the entity style mask); the other two draw the whole frame:
+# compiled into the engine. Two props are drawn in `hologram`, which reads
+# the entity style mask, so it is per-entity (#414): the YBot's style_mask
+# alone switches it on, with no [post_process.styles.hologram] table, and
+# the barrel's `hologram_style` (the component every mask-reading user
+# style gets, its fields the style's params) gives it settings of its own.
+# The other two styles draw the whole frame:
 #
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --output holo.png
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --style risograph
@@ -34,9 +38,6 @@ vignette_intensity = 0.25
 ssao_enabled = true
 ssao_radius = 0.6
 ssao_intensity = 0.7
-
-[post_process.styles.hologram]
-glow = 0.9
 
 [entities.sky]
 [entities.sky.sky]
@@ -107,7 +108,7 @@ scale = [0.5, 0.5, 0.5]
 [entities.cask.model]
 asset = "barrel"
 
-# --- Projected: their style_mask names the user style ---
+# --- Projected: a style_mask naming the user style, or its own component ---
 
 [entities.ybot]
 archetype = "character"
@@ -128,8 +129,9 @@ position = [2.4, 0.48, 5.4]
 scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
 asset = "barrel"
-[entities.barrel.style_mask]
-style = "hologram"
+[entities.barrel.hologram_style]
+glow = 2.0
+lines = 6.0
 blend = 0.6
 
 [entities.crate]

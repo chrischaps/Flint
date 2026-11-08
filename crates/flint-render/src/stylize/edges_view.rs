@@ -27,6 +27,8 @@ use bytemuck::{Pod, Zeroable};
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("edges_view", "Edges view", StyleStage::Display, create)
+        // A debug view of the whole frame (#384)
+        .draws_over_entities()
         .params(&[
             StyleParam::new("dim", 0.3, 0.0..=1.0),
             StyleParam::new("threshold", 1.0, 0.1..=4.0),

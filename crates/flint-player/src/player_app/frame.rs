@@ -644,7 +644,8 @@ impl PlayerApp {
             &context.device,
             &context.queue,
             &mut encoder,
-            &context.depth_view,
+            // With its id, so bind groups over it are kept (#379)
+            context.depth_target(),
             &self.camera,
             &view,
         );

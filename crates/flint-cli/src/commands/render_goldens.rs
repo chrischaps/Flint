@@ -26,6 +26,22 @@
 //! text_cells = 0                  # ...or with at most this many cells different
 //! ```
 //!
+//! A case with `matches` has no golden file (#417): it renders the scene a
+//! second time with those flags in place of its own and must equal that
+//! render, exactly unless it gives a tolerance. One adapter, one run, so
+//! it holds on any GPU. With `error`, a user style's error must hold that
+//! text afterwards (in this process, `stylize::custom::errors()`, which is
+//! what `flint render` prints; with `--isolate`, the render's log):
+//!
+//! ```toml
+//! [[case]]
+//! name = "user-style-broken"
+//! scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+//! args = ["--no-grid", "--style", "broken"]
+//! matches = ["--no-grid"]          # the same frame without the style
+//! error = "broken.wgsl:9:9"
+//! ```
+//!
 //! A case with `text` is a structural golden too: it renders with
 //! `--ascii-text` and its character grid must match the checked-in one
 //! cell for cell (the PNG stays the visual check). A miss writes
@@ -51,6 +67,14 @@
 //! with; `--bless-variant` writes this adapter's variant. Each report
 //! names the adapter, the golden compared and where a variant would go.
 //!
+//! Drift (#387): a case that passes but isn't byte-identical with its
+//! golden (a pixel moved, or a grid cell) prints a `DRIFT` line, carries
+//! `"drift": true` in `report.json`, and the run ends naming every such
+//! case, or saying there are none. Drift inside the tolerance is how
+//! stale goldens pile up: the next real change then has to be told apart
+//! from it. `--bless-drifted` re-blesses only those cases (passing ones
+//! that moved), for a deliberate catch-up commit; failures still fail.
+//!
 //! Every case runs in this process, on one GPU device (#329): it parses
 //! the case's flags as `flint render` would and calls the same function.
 //! `--isolate` spawns a `flint render` per case instead.
@@ -72,6 +96,12 @@ pub struct GoldenArgs {
     /// `<stem>.<adapter>.png`, for a case another adapter draws differently
     #[arg(long)]
     pub bless_variant: bool,
+
+    /// Goldens: re-bless only the cases that pass but aren't byte-identical
+    /// with their golden (#387), for a deliberate catch-up commit. Failing
+    /// cases are left alone and still fail the run
+    #[arg(long, conflicts_with_all = ["bless", "bless_variant"])]
+    pub bless_drifted: bool,
 
     /// Goldens: run only this case. A name that is exactly a case's picks
     /// that case alone (`ascii-silhouette-cell` skips
@@ -180,6 +210,15 @@ struct Case {
     /// How many of the grid's cells may differ from it (default 0).
     #[serde(default)]
     text_cells: usize,
+    /// Compare with a second render of the scene made with these flags in
+    /// place of `args`, not with a golden file (#417): "this frame must be
+    /// the frame without X". Exact unless the case gives a tolerance.
+    #[serde(default)]
+    matches: Option<Vec<String>>,
+    /// Text a user style's error must hold after the render (#417): what
+    /// `flint render` prints as a warning, e.g. `"broken.wgsl:9:9"`.
+    #[serde(default)]
+    error: Option<String>,
 }
 
 /// How a render's ASCII grid compares with its golden text (#317).
@@ -289,6 +328,10 @@ pub(crate) struct CaseReport {
     pub args: Vec<String>,
     /// pass, fail, error, missing, blessed or skip.
     pub status: &'static str,
+    /// Passed, but not byte-identical with its golden (#387): some pixel
+    /// or grid cell moved inside the tolerance. A `--bless-drifted` blesses
+    /// exactly these, and keeps the flag on the `blessed` report.
+    pub drift: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<Comparison>,
     pub tolerance: Tolerance,
@@ -320,6 +363,14 @@ pub(crate) struct CaseReport {
     /// copied into the out dir for the contact sheet.
     #[serde(skip)]
     pub had_golden: bool,
+}
+
+impl CaseReport {
+    /// Whether any pixel, or any cell of the grid, differs from the golden.
+    pub fn moved(&self) -> bool {
+        self.comparison.is_some_and(|c| c.changed > 0)
+            || self.text.as_ref().is_some_and(|t| t.cells > 0)
+    }
 }
 
 /// The key an adapter's golden variants carry (#314): `warp` for the
@@ -362,9 +413,21 @@ struct RenderCli {
 
 /// How a case's render went.
 enum Rendered {
-    Done,
+    /// With the user styles' errors it raised: a spawned render's whole
+    /// log, or in this process [`user_style_errors`] (the messages
+    /// `flint render` prints as warnings).
+    Done(String),
     NoGpu,
     Failed(String),
+}
+
+/// Every loaded user style's error, a line each, as `flint render` warns
+/// of them: what an in-process case's `error` is checked against.
+fn user_style_errors() -> String {
+    flint_render::stylize::custom::errors()
+        .into_iter()
+        .map(|(_, e)| e + "\n")
+        .collect()
 }
 
 /// Sets the working directory back when dropped.
@@ -393,14 +456,14 @@ fn render_spawned(flint: &Path, root: &Path, argv: &[std::ffi::OsString]) -> Res
         .args(argv)
         .output()
         .with_context(|| format!("running {}", flint.display()))?;
-    if output.status.success() {
-        return Ok(Rendered::Done);
-    }
     let log = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    if output.status.success() {
+        return Ok(Rendered::Done(log));
+    }
     Ok(if looks_like_no_gpu(&log) {
         Rendered::NoGpu
     } else {
@@ -429,7 +492,7 @@ fn render_in_process(
         super::render::run_in(cli.args, host)
     }));
     match ran {
-        Ok(Ok(())) => Ok(Rendered::Done),
+        Ok(Ok(())) => Ok(Rendered::Done(user_style_errors())),
         Ok(Err(e)) => {
             let log = format!("{e:#}");
             Ok(if looks_like_no_gpu(&log) {
@@ -576,18 +639,37 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     for case in chosen {
         let width = case.width.unwrap_or(manifest.suite.width);
         let height = case.height.unwrap_or(manifest.suite.height);
-        let tolerance = Tolerance {
-            level: case.tolerance.level.unwrap_or(manifest.tolerance.level),
-            share: case.tolerance.share.unwrap_or(manifest.tolerance.share),
-            mean: case.tolerance.mean.unwrap_or(manifest.tolerance.mean),
+        // A case that matches a second render of its own wants it exact:
+        // one device, one process, the same scene (#417)
+        let defaults = if case.matches.is_some() {
+            Tolerance {
+                level: 0,
+                share: 0.0,
+                mean: 0.0,
+            }
+        } else {
+            manifest.tolerance
         };
-        let plain = here.join(
-            case.golden
-                .clone()
-                .unwrap_or_else(|| format!("{}.png", case.name)),
-        );
-        // This adapter's variant, when it has one, is the golden (#314)
-        let variant = key.as_deref().map(|k| variant_path(&plain, k));
+        let tolerance = Tolerance {
+            level: case.tolerance.level.unwrap_or(defaults.level),
+            share: case.tolerance.share.unwrap_or(defaults.share),
+            mean: case.tolerance.mean.unwrap_or(defaults.mean),
+        };
+        let reference = out_dir.join(format!("{}.reference.png", case.name));
+        let plain = match &case.matches {
+            Some(_) => reference.clone(),
+            None => here.join(
+                case.golden
+                    .clone()
+                    .unwrap_or_else(|| format!("{}.png", case.name)),
+            ),
+        };
+        // This adapter's variant, when it has one, is the golden (#314).
+        // A reference render is this adapter's already
+        let variant = key
+            .as_deref()
+            .filter(|_| case.matches.is_none())
+            .map(|k| variant_path(&plain, k));
         let golden = match &variant {
             Some(v) if args.bless_variant || v.exists() => v.clone(),
             _ => plain.clone(),
@@ -598,6 +680,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             scene: case.scene.clone(),
             args: case.args.clone(),
             status: "skip",
+            drift: false,
             comparison: None,
             tolerance,
             render: render.display().to_string(),
@@ -637,36 +720,76 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         let text_render = out_dir.join(format!("{}.txt", case.name));
         let _ = std::fs::remove_file(&text_render);
 
-        let mut argv: Vec<std::ffi::OsString> = vec!["render".into(), case.scene.clone().into()];
-        argv.extend(
-            [
-                "--width".to_string(),
-                width.to_string(),
-                "--height".to_string(),
-                height.to_string(),
-            ]
-            .into_iter()
-            .chain(manifest.suite.args.iter().cloned())
-            .chain(case.args.iter().cloned())
-            .map(Into::into),
-        );
-        if text_golden.is_some() {
-            argv.push("--ascii-text".into());
-            argv.push(text_render.clone().into_os_string());
-        }
-        argv.push("--output".into());
-        argv.push(render.clone().into_os_string());
+        let _ = std::fs::remove_file(&reference);
+        let argv_for = |flags: &[String], output: &Path, text: bool| {
+            let mut argv: Vec<std::ffi::OsString> =
+                vec!["render".into(), case.scene.clone().into()];
+            argv.extend(
+                [
+                    "--width".to_string(),
+                    width.to_string(),
+                    "--height".to_string(),
+                    height.to_string(),
+                ]
+                .into_iter()
+                .chain(manifest.suite.args.iter().cloned())
+                .chain(flags.iter().cloned())
+                .map(Into::into),
+            );
+            if text {
+                argv.push("--ascii-text".into());
+                argv.push(text_render.clone().into_os_string());
+            }
+            argv.push("--output".into());
+            argv.push(output.as_os_str().to_owned());
+            argv
+        };
+        let argv = argv_for(&case.args, &render, text_golden.is_some());
 
         let started = std::time::Instant::now();
-        let rendered = if args.isolate {
-            render_spawned(&flint, &root, &argv)?
-        } else {
-            render_in_process(&mut host, &flint, &root, &argv)?
+        let mut draw = |argv: &[std::ffi::OsString]| {
+            if args.isolate {
+                render_spawned(&flint, &root, argv)
+            } else {
+                render_in_process(&mut host, &flint, &root, argv)
+            }
         };
+        let mut rendered = draw(&argv)?;
+        // The reference the case must match: its scene again, with the
+        // case's `matches` flags in place of its own
+        if let (Rendered::Done(_), Some(flags)) = (&rendered, &case.matches) {
+            if let bad @ (Rendered::NoGpu | Rendered::Failed(_)) =
+                draw(&argv_for(flags, &reference, false))?
+            {
+                rendered = match bad {
+                    Rendered::Failed(log) => {
+                        Rendered::Failed(format!("the reference render failed:\n{log}"))
+                    }
+                    other => other,
+                };
+            }
+        }
         let ms = started.elapsed().as_millis();
         report.ms = ms;
         match rendered {
-            Rendered::Done => {}
+            Rendered::Done(log) => {
+                // A user style's error the case expects (#417)
+                if let Some(want) = &case.error {
+                    if !log.contains(want.as_str()) {
+                        failed += 1;
+                        println!(
+                            "  FAIL  {:<28} no user style error holding '{want}'; errors:\n{log}",
+                            case.name
+                        );
+                        report.status = "fail";
+                        report.message = Some(format!(
+                            "expected a user style error holding '{want}', got:\n{log}"
+                        ));
+                        reports.push(report);
+                        continue;
+                    }
+                }
+            }
             Rendered::NoGpu => {
                 no_gpu = true;
                 println!("  SKIP  {:<28} no GPU adapter", case.name);
@@ -763,7 +886,12 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             report.text = Some(tc);
         }
 
-        if blessing {
+        // Inside the tolerance but not the golden's bytes (#387). A case
+        // matching its own reference has no golden to go stale, so no drift
+        report.drift = pass && report.moved() && case.matches.is_none();
+        // A case matching its own reference has no golden to bless: it is
+        // compared as ever, and a bless doesn't fail on it
+        if (blessing || (args.bless_drifted && report.drift)) && case.matches.is_none() {
             if let Some(parent) = golden.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -806,7 +934,9 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 tolerance.mean,
                 cmp.max,
                 ms,
-                if golden != plain {
+                if case.matches.is_some() {
+                    ", against its reference render"
+                } else if golden != plain {
                     ", against its variant"
                 } else {
                     ""
@@ -823,6 +953,22 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 report.message.as_deref().unwrap_or("")
             ),
         }
+        if report.drift {
+            let text = report
+                .text
+                .as_ref()
+                .filter(|t| t.cells > 0)
+                .map(|t| format!(", {} grid cell(s)", t.cells))
+                .unwrap_or_default();
+            let pixels = report
+                .comparison
+                .map(|c| format!("{} pixel(s) moved (max {})", c.changed, c.max))
+                .unwrap_or_default();
+            println!(
+                "  DRIFT {:<28} {pixels}{text}: inside the tolerance, not byte-identical",
+                case.name
+            );
+        }
         if report.status == "skip" {
             report.status = if pass { "pass" } else { "fail" };
         }
@@ -833,6 +979,41 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     flint_import::memoize_imports(false);
     flint_render::memoize_mip_chains(false);
 
+    // The drift tally (#387): zero, or the cases that have it
+    let drifted: Vec<&str> = reports
+        .iter()
+        .filter(|r| r.drift && r.status == "pass")
+        .map(|r| r.name.as_str())
+        .collect();
+    let rebless: Vec<&str> = reports
+        .iter()
+        .filter(|r| r.drift && r.status == "blessed")
+        .map(|r| r.name.as_str())
+        .collect();
+    let compared = reports.iter().filter(|r| r.comparison.is_some()).count();
+    if args.bless_drifted {
+        println!(
+            "re-blessed {} drifted case(s){}",
+            rebless.len(),
+            if rebless.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", rebless.join(", "))
+            }
+        );
+    } else if !blessing && compared > 0 {
+        if drifted.is_empty() {
+            println!("drift: none, every passing case is byte-identical with its golden");
+        } else {
+            println!(
+                "drift: {} passing case(s) not byte-identical with their golden: {}
+                   (--bless-drifted re-blesses only those, for a catch-up commit)",
+                drifted.len(),
+                drifted.join(", ")
+            );
+        }
+    }
+
     let seconds = started_suite.elapsed().as_secs_f64();
     let report_path = out_dir.join("report.json");
     std::fs::write(&report_path, serde_json::to_string_pretty(&reports)?)
@@ -840,7 +1021,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     let sheet = super::golden_sheet::Sheet {
         suite: &manifest.suite.name,
         manifest: &manifest_path.display().to_string(),
-        bless: blessing,
+        bless: blessing || args.bless_drifted,
         isolate: args.isolate,
         seconds,
         no_gpu,
@@ -989,6 +1170,16 @@ mod tests {
             if let Err(e) = RenderCli::try_parse_from(argv) {
                 panic!("case '{}': {e}", case.name);
             }
+            // ...and so do the flags of the render it must match (#417)
+            if let Some(flags) = &case.matches {
+                let argv = ["flint render".to_string(), case.scene.clone()]
+                    .into_iter()
+                    .chain(manifest.suite.args.iter().cloned())
+                    .chain(flags.iter().cloned());
+                if let Err(e) = RenderCli::try_parse_from(argv) {
+                    panic!("case '{}' matches: {e}", case.name);
+                }
+            }
         }
     }
 
@@ -1013,6 +1204,16 @@ mod tests {
         let dir = path.parent().unwrap();
         let mut used = std::collections::HashSet::new();
         for case in &manifest.cases {
+            // A case that matches its own reference render has no golden
+            // file, and a golden it named would never be read
+            if case.matches.is_some() {
+                assert!(
+                    case.golden.is_none() && case.text.is_none(),
+                    "{} matches a reference render: it takes no golden",
+                    case.name
+                );
+                continue;
+            }
             let name = case
                 .golden
                 .clone()

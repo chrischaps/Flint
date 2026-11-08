@@ -221,6 +221,14 @@ args = ["--no-grid"]
 # space (the picture passes through)
 text = "ascii-style-entities.txt"
 
+# Each pixel one style's (#384): whole-frame ASCII leaves the pencil cask,
+# crate and lid sketched (pencil draws them from the scene, not from the
+# glyphs); the tag, opted out of pencil, is ASCII's
+[[case]]
+name = "ascii-full-yields-to-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii"]
+
 [[case]]
 name = "ascii-style-screen"
 scene = "demo/stylize_props_ascii.scene.toml"
@@ -303,6 +311,13 @@ name = "pencil-tensor"
 scene = "demo/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
 
+# Strokes laid on the surfaces (#389): triplanar stripes in octaves of
+# metres, each picked by its on-screen spacing; the sky keeps the screen's
+[[case]]
+name = "pencil-world"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
+
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them
 [[case]]
@@ -315,6 +330,27 @@ args = ["--no-grid"]
 name = "pencil-boil"
 scene = "demo/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1.3"]
+
+# Images from files (#390): demo/papers/cold_press.png under the strokes,
+# and demo/strokes/graphite.png's four strokes along each dash. The
+# pencil cases above name none, so passing unblessed is what pins "the
+# procedural paper is unchanged when none is named"
+[[case]]
+name = "pencil-paper-image"
+scene = "demo/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=cold_press,grain=0.8"]
+
+[[case]]
+name = "pencil-stroke-image"
+scene = "demo/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+
+# The strip on surfaces (#389 x #390): world strokes draw it too, the row
+# twice the stroke width in metres
+[[case]]
+name = "pencil-world-stroke-image"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
 
 # --- the other registered styles ------------------------------------------
 #
@@ -366,6 +402,14 @@ scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
+# On the same paper image as pencil-paper-image (#390), a texel every 1.5
+# points, its relief the grain the pigment settles in
+[[case]]
+name = "watercolor-paper-image"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "watercolor:paper_image=cold_press,grain_scale=1.5,grain=0.6"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)
 [[case]]
 name = "watercolor-kuwahara"
@@ -381,6 +425,53 @@ name = "watercolor-entities"
 scene = "demo/watercolor.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# --- user-authored styles (#274, #417) ---------------------------------------
+#
+# Styles a game writes (demo/styles/*.shader.toml + WGSL), loaded at run time
+# by the same `stylize::custom::load_dir` call as `flint render` (the suite
+# runs `render::run_in`). These pin what the framework writes around a user's
+# function: the prelude's sRGB round trip at the display stage (each reads a
+# display colour and returns one), the `params` layout, and the depth and
+# mask bindings. All three draw over the scene as authored, hologram on.
+
+# Hologram on the barrel and YBot, as the scene authors it: the mask
+# binding and `flint_style_blend`. The two props are about a twentieth of
+# the frame, so the share is a quarter of the glyph styles': with the
+# params uploaded one slot off, the hologram's own pixels move by up to
+# 181 levels yet only 1.25% of the frame passes 48, which 2% let through
+[[case]]
+name = "user-styles"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid"]
+tolerance = { share = 0.005 }
+
+# Risograph over the whole frame: halftone dots by `params.dot`, two inks
+# and the paper from nine more params, so a shifted layout moves the inks.
+# The YBot and barrel are hologram's, so risograph leaves them (#384)
+[[case]]
+name = "user-style-risograph"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "risograph"]
+
+# Contour: lines of equal distance from `flint_view_depth`, the depth binding
+[[case]]
+name = "user-style-contour"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "contour"]
+
+# A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
+# its input unchanged and say where it failed. The passthrough runs the
+# prelude's round trip (to display on the way in, to linear on the way
+# out), so the frame equals the frame without the style only while the two
+# curves are each other's inverse: an exact match against a second render,
+# not a golden, so it holds on any adapter
+[[case]]
+name = "user-style-broken"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "broken"]
+matches = ["--no-grid"]
+error = "broken.wgsl:9:9"
 
 # --- looks (#279) -----------------------------------------------------------
 # Each shipped styles/<name>.look.toml over the plain props bench, so only
@@ -413,6 +504,22 @@ name = "look-watercolor"
 scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# The pencil style's other hands (#391)
+[[case]]
+name = "look-coloured-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "coloured_pencil"]
+
+[[case]]
+name = "look-blueprint"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "blueprint"]
+
+[[case]]
+name = "look-charcoal"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "charcoal"]
 
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]

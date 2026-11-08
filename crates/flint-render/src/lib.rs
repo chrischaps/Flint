@@ -36,6 +36,7 @@ pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
 pub mod entity_style;
+pub mod post_style;
 pub mod style_mask;
 pub mod stylize;
 pub mod skinned_pipeline;
@@ -55,6 +56,7 @@ pub use glyph_atlas::{
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
+pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use context::{RenderContext, RenderError};
 pub use gpu_select::{list_adapters, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};

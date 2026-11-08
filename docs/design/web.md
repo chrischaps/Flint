@@ -768,7 +768,11 @@ another job, not the mask. The style adds three render passes (mask,
 cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
-a render scale the chain owns its depth and all of them are kept.
+a render scale the chain owns its depth and all of them are kept. Since
+#379 the player passes its depth view with an id
+(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
+context makes the texture again) and those groups are kept at scale 1
+too (measured below the table, "Bind groups over the caller's depth").
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
@@ -781,6 +785,24 @@ them, a frame of shimmer each step; now `resize_postprocess` keeps the
 style targets when only the scale moved (the surface is the same size,
 so the display-stage ones are too), and HDR-stage ones are remade at the
 new size on next use (`a_render_scale_step_keeps_the_style_targets`).
+
+**Per-entity styles draw only near their entities (#385).** Since edges
+(#267) became the default, a per-entity ASCII's cost was its edge pass
+over every pixel, styled or not. Its passes, and pencil's, are now
+scissored to the styled entities' projected bounds (book: Stylize Passes,
+"Drawn only where the entities are"), with the frame byte-identical.
+Desktop, 1920x1080, RTX 4070 laptop, best of five alternating runs:
+
+| scene | style | before | after |
+|---|---|---|---|
+| `stylize_props` (barrel, Y Bot in ASCII; cask, crate in pencil) | ASCII | 0.419 | 0.223 ms |
+| | Pencil | 0.072 | 0.048 ms |
+| `ascii_entities` (six props) | ASCII | 0.450 | 0.166 ms |
+| `stylize_props --style ascii` (whole frame, control) | ASCII | 0.484 | 0.440 ms |
+
+The control isn't scissored and moved within this machine's run-to-run
+spread. The saving scales with the share of the screen the props leave
+untouched, which is what a phone pays for. The browser is unmeasured.
 
 **DX12.** The ASCII and mask passes read every texture with
 `textureLoad` and bind no sampler of their own (the chain's one linear
