@@ -71,6 +71,7 @@ impl PlayerApp {
             camera: Camera::new(),
             skeletal_entity_assets: HashMap::new(),
             camera_cut: Default::default(),
+            style_tweens: Default::default(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,

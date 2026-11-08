@@ -268,6 +268,19 @@ pub enum ScriptCommand {
         param: String,
         value: toml::Value,
     },
+    /// Ease one setting of an entity's style (a number, `blend` or a
+    /// colour) to `target` over `seconds` of game time (#370). The player
+    /// writes the field each frame and fires `style_tween_done` at the end;
+    /// a new tween of the same setting replaces the old one.
+    TweenStyleParam {
+        entity_id: i64,
+        param: String,
+        target: toml::Value,
+        seconds: f64,
+        /// `linear`, `smooth` (the default), `ease_in`, `ease_out` or
+        /// `ease_in_out`
+        easing: String,
+    },
     /// Take an entity's own style off again.
     ClearEntityStyle {
         entity_id: i64,
