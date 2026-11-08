@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart,
     play_suite, prefab, preview, query, render, render_suite, replay_chart, scene, schema,
-    spike_rumble, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
+    spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -151,6 +151,11 @@ enum Commands {
 
     /// Render a scene to a PNG image (headless)
     Render(render::RenderArgs),
+
+    /// User-authored styles: new (from a template), check (no GPU),
+    /// prelude (the generated code), list
+    #[command(subcommand)]
+    Style(style::StyleCommands),
 }
 
 fn main() -> Result<()> {
@@ -220,5 +225,6 @@ fn main() -> Result<()> {
         Commands::TerrainEdit(args) => terrain_edit::run(args),
         Commands::TexEdit(args) => tex_edit::run(args),
         Commands::Render(args) => render::run(args),
+        Commands::Style(cmd) => style::run(cmd),
     }
 }

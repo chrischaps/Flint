@@ -1011,7 +1011,20 @@ What the framework does so a style doesn't have to:
 
 *Experimental, format version 1 ([ADR 0112](../../../adr/0112-user-authored-styles.md); #274, #275). `flint render`, `flint edit`, `flint-player`, `flint bundle` and the web player all load them.*
 
-A game can write a style without touching the engine: a `styles/<name>.shader.toml` and one WGSL function beside it. Flint finds them in the scene's `styles/` folder, then in the folder above (as it finds models), so a game with `levels/` and `styles/` side by side needs nothing else. Start from the commented template, `demo/styles/template.shader.toml` and `template.wgsl`: copy both into your `styles/`, rename them and edit.
+A game can write a style without touching the engine: a `styles/<name>.shader.toml` and one WGSL function beside it. Flint finds them in the scene's `styles/` folder, then in the folder above (as it finds models), so a game with `levels/` and `styles/` side by side needs nothing else. Start one with `flint style new` (#416), from the game's folder:
+
+```bash
+flint style new dusk                         # styles/dusk.shader.toml + styles/dusk.wgsl
+flint style new dusk --stage hdr --inputs depth,mask --dir styles
+flint style check styles/dusk.shader.toml    # no GPU; exit 1 on an error
+flint style check styles                     # every *.shader.toml in a folder
+flint style prelude styles/dusk.shader.toml  # the generated code the WGSL is compiled inside
+flint style prelude styles/dusk.shader.toml --composed   # ...with the WGSL and entry points
+flint style list levels/a.scene.toml         # the same list as flint render --list-styles
+flint render levels/a.scene.toml --style dusk:amount=1
+```
+
+`new` writes a commented passthrough: its header lists every field of `p` and `flint`, and every helper the chosen stage and inputs give (and which inputs would give more), with commented-out calls to the input helpers and one example parameter, `amount`, that does nothing at its default (so the new style renders byte-identical to no style until you change it). It refuses a built-in's name, a name that isn't lowercase letters, digits and `_`, and files that are already there (`--force` overwrites them), and it checks what it wrote. `check` runs the same naga check the hosts run on load, prints `file:line:col` errors with the line quoted (and the hint for a helper of an undeclared input) and the loop and texture-read warnings, and exits 1 if any style failed: the fast loop for an agent, or for CI. For a longer worked example, `demo/styles/template.shader.toml` and `template.wgsl` are a split tone.
 
 ```toml
 # styles/greyscale.shader.toml
