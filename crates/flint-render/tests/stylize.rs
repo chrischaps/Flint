@@ -1196,10 +1196,28 @@ fn a_blend_fades_and_dissolves_an_entity_into_ascii() {
 
     // A ramp allocates nothing: the blend is a mask channel, not a variant
     let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
-    let ids = renderer.style_ids().clone();
-    for i in 0..=12 {
-        at(&mut renderer, &mut world, i as f64 / 12.0);
-        assert_eq!(renderer.style_ids(), &ids, "a blend step made a variant");
+    // and (#400) 0 -> 1 -> 0 keeps one id throughout, though at 0 the
+    // style asks for nothing and its pass and the mask are skipped
+    let names = |r: &SceneRenderer| {
+        r.style_ids()
+            .iter()
+            .map(|(id, n)| (id, n.to_string()))
+            .collect::<Vec<_>>()
+    };
+    let ids = names(&renderer);
+    assert_eq!(ids.len(), 1);
+    for i in (0..=12).chain((0..12).rev()) {
+        let b = i as f64 / 12.0;
+        let frame = at(&mut renderer, &mut world, b);
+        assert_eq!(names(&renderer), ids, "a blend step made a variant");
+        assert_eq!(
+            renderer.style_ids().requests("ascii"),
+            i > 0,
+            "blend {b}: the style is on only above 0"
+        );
+        if i == 0 {
+            assert_eq!(frame, plain, "the skipped style changed a pixel");
+        }
     }
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
@@ -1254,9 +1272,10 @@ fn a_style_with_no_blend_code_fades_by_the_framework() {
         gpu.frame(renderer, world)
     };
     let close = |a: &[u8], b: &[u8]| a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 1);
+    // At 0 pencil is off (#400): no pass, no cross-fade, the plain frame
     let none = at(&mut renderer, &mut world, 0.0);
-    assert!(close(&none, &plain), "blend 0 is the entity's own shading");
-    assert!(renderer.style_fade_runs() > 0, "the cross-fade never ran");
+    assert_eq!(none, plain, "blend 0 is the entity's own shading");
+    assert_eq!(renderer.style_fade_runs(), 0, "blend 0 was cross-faded");
     assert_eq!(
         at(&mut renderer, &mut world, 1.0),
         full,
@@ -1274,6 +1293,7 @@ fn a_style_with_no_blend_code_fades_by_the_framework() {
         }
     };
     let half = at(&mut renderer, &mut world, 0.5);
+    assert!(renderer.style_fade_runs() > 0, "the cross-fade never ran");
     let (mut styled_px, mut worst) = (0, 0.0f32);
     for ((p, f), h) in plain.chunks(4).zip(full.chunks(4)).zip(half.chunks(4)) {
         if p == f {
