@@ -27,8 +27,10 @@
 // style draws its last good build (or the picture unchanged), and the error
 // shows in the corner of the window with its line in this file.
 //
-// Loops are allowed, but keep their bounds constant or a clamped param: a
-// loop that never ends hangs the GPU until the driver resets it.
+// Loops are allowed. Flint guards each one natively (#411): a run of a loop
+// stops after 4096 turns, so a loop that never ends draws a wrong pixel
+// instead of hanging the GPU. Keep bounds constant or a clamped param
+// anyway: the web doesn't guard them yet.
 
 fn tone(c: vec3<f32>) -> vec3<f32> {
     let shadow = vec3<f32>(params.shadow_r, params.shadow_g, params.shadow_b);

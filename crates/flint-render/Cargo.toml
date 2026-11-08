@@ -26,7 +26,7 @@ profiling = { workspace = true }
 
 [dev-dependencies]
 flint-asset = { workspace = true }
-naga = { version = "23", features = ["wgsl-in"] }
+naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
 epaint_default_fonts = "0.30"
 serde_json = { workspace = true }
 
@@ -36,5 +36,6 @@ serde_json = { workspace = true }
 image = { workspace = true, features = ["default"] }
 # User-authored styles (#274) are parsed and validated before wgpu sees
 # them. wgpu already builds naga natively, so this adds nothing there; the
-# web relies on the browser's compiler instead.
-naga = { version = "23", features = ["wgsl-in"] }
+# web relies on the browser's compiler instead. `wgsl-out` writes the
+# module back out with every user loop guarded (#411).
+naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }

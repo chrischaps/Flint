@@ -1320,6 +1320,113 @@ fn a_style_with_no_blend_code_fades_by_the_framework() {
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
 
+/// #398: a small prop's dissolve turns `blend` of its cells wherever it
+/// sits. A box of about 6x5 cells is slid across the grid a part of a cell
+/// at a time; at each place its cells (those its full style changes) and
+/// its turned cells (those drawn as the full style) are counted. On the
+/// order alone a 6x5 prop turned 30-73% of its cells at 0.5 by where it
+/// sat; ranked among its own cells it turns round(0.5 x n). The places run
+/// past 32 dissolves switched on and off in one renderer, which once
+/// wrapped the glyph pass's bind key onto a stale rank texture.
+#[test]
+fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    const CELL: usize = 4;
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut shares = Vec::new();
+    let mut binds = None;
+    for step in 0..40 {
+        let mut world = FlintWorld::new();
+        let prop = world.spawn("prop").unwrap();
+        let mut transform = toml::Table::new();
+        // Across the screen (the default camera looks down (-1, -1, -1), so
+        // (1, 0, -1) is its right) and up, by uneven steps, so the prop
+        // meets the cell grid (and the noise) at a new phase each time
+        let across = -1.3 + step as f64 * 0.23;
+        let up = -0.8 + (step * 7 % 12) as f64 * 0.14;
+        transform.insert(
+            "position".into(),
+            vec3([
+                across * std::f64::consts::FRAC_1_SQRT_2,
+                up,
+                -across * std::f64::consts::FRAC_1_SQRT_2,
+            ]),
+        );
+        // Turned to face the camera, and wide: the frame is squeezed to the
+        // camera's 16:9
+        transform.insert("rotation".into(), vec3([0.0, 45.0, 0.0]));
+        world
+            .set_component(prop, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-4.5, -1.6, -0.8]));
+        bounds.insert("max".into(), vec3([4.5, 1.6, 0.8]));
+        world.set_component(prop, "bounds", bounds.into()).unwrap();
+        let plain = gpu.frame(&mut renderer, &world);
+        set_entity_style(&mut world, prop, "ascii").unwrap();
+        set_style_param(&mut world, prop, "cell", (CELL as f64).into()).unwrap();
+        let full = gpu.frame(&mut renderer, &world);
+        set_style_param(&mut world, prop, "transition", "dissolve".into()).unwrap();
+        set_style_param(&mut world, prop, "blend", 0.5.into()).unwrap();
+        let half = gpu.frame(&mut renderer, &world);
+        // 64 / 4: the grid starts at the frame's corner
+        let cells = SIZE as usize / CELL;
+        let (mut member, mut turned) = (0usize, 0usize);
+        for cy in 0..cells {
+            for cx in 0..cells {
+                let (mut styled, mut glyph) = (false, false);
+                for py in cy * CELL..(cy + 1) * CELL {
+                    for px in cx * CELL..(cx + 1) * CELL {
+                        let (p, f, h) = (
+                            pixel(&plain, px, py),
+                            pixel(&full, px, py),
+                            pixel(&half, px, py),
+                        );
+                        assert!(h == p || h == f, "dissolve drew a mixed pixel");
+                        styled |= p != f;
+                        glyph |= p != f && h == f;
+                    }
+                }
+                member += styled as usize;
+                turned += glyph as usize;
+            }
+        }
+        assert!(
+            (20..=48).contains(&member),
+            "the prop should be about 6x5 cells: {member} at step {step}"
+        );
+        shares.push((member, turned));
+        // Switching the dissolve on and off makes nothing new
+        let kept = renderer.kept_post_binds();
+        assert_eq!(
+            *binds.get_or_insert(kept),
+            kept,
+            "step {step} kept more binds"
+        );
+    }
+    eprintln!("cells, turned at blend 0.5: {shares:?}");
+    for (step, &(member, turned)) in shares.iter().enumerate() {
+        let share = turned as f64 / member as f64;
+        assert!(
+            (share - 0.5).abs() <= 0.1,
+            "{turned} of {member} cells turned at blend 0.5 at step {step}: {:.0}%",
+            share * 100.0
+        );
+    }
+}
+
 /// #335: two entities in one frame draw in two glyph sets. The right cube
 /// names a set whose every glyph is solid ink in tall 4x8 cells: tinted
 /// red, all of its pixels turn red, while the left cube, in the built-in
@@ -2709,4 +2816,140 @@ fn a_script_cross_fades_whole_frame_styles_without_allocating_and_clears_exactly
         reset_post_style(c, &authored, "invert").unwrap();
     });
     assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
+
+/// User styles `names`, each drawing `wgsl`, in a fresh folder of their own.
+fn user_styles(tag: &str, names: &[&str], wgsl: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("flint-{tag}-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    for name in names {
+        std::fs::write(
+            styles.join(format!("{name}.shader.toml")),
+            format!("version = 1\nname = \"{name}\"\nshader = \"{name}.wgsl\"\n"),
+        )
+        .unwrap();
+        std::fs::write(styles.join(format!("{name}.wgsl")), wgsl).unwrap();
+    }
+    dir
+}
+
+/// Draw `world` with only the user styles in `on` switched on (of `all`).
+fn with_styles(
+    gpu: &Gpu,
+    renderer: &mut SceneRenderer,
+    world: &FlintWorld,
+    all: &[&str],
+    on: &[&str],
+) -> Vec<u8> {
+    let mut config = renderer.post_process_config().clone();
+    for name in all {
+        config.styles.set_enabled(name, on.contains(name));
+    }
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(&gpu.device);
+    gpu.frame(renderer, world)
+}
+
+/// #411: a user style whose loop never ends draws a frame (each pixel what
+/// the guard let it reach) instead of hanging the device.
+#[test]
+fn a_loop_that_never_ends_draws_a_frame() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::stylize::custom;
+    // Counts forever; guarded, it stops at LOOP_LIMIT, so n / LIMIT is white
+    let wgsl = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                var n = 0u;\n    \
+                loop {\n        n = n + 1u;\n    }\n    \
+                return vec4<f32>(vec3<f32>(f32(n) / 4096.0), 1.0);\n}\n";
+    let dir = user_styles("loop-411", &["utest_forever"], wgsl);
+    let messages = custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    assert_eq!(custom::LOOP_LIMIT, 4096);
+
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let all = ["utest_forever"];
+    with_styles(&gpu, &mut renderer, &world, &all, &[]);
+    let start = std::time::Instant::now();
+    let pixels = with_styles(&gpu, &mut renderer, &world, &all, &all);
+    let took = start.elapsed();
+    eprintln!("a never-ending loop's frame, built and drawn: {took:?}");
+    assert!(
+        custom::errors().iter().all(|(n, _)| n != "utest_forever"),
+        "{:?}",
+        custom::errors()
+    );
+    assert!(took.as_secs_f32() < 1.0, "the frame took {took:?}");
+    assert!(
+        pixels
+            .chunks(4)
+            .all(|p| p[0] == 255 && p[1] == 255 && p[2] == 255),
+        "not every pixel reached the limit; the first is {:?}",
+        &pixels[..4]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #411: a loop that ends on its own (a 9x9 blur) draws byte for byte the
+/// same guarded as not, though the guarded module is naga's rewrite of the
+/// composed text.
+#[test]
+fn a_bounded_loop_draws_the_same_guarded() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::stylize::custom;
+    let wgsl = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                var acc = vec4<f32>(0.0);\n    \
+                for (var y = -4; y <= 4; y++) {\n        \
+                for (var x = -4; x <= 4; x++) {\n            \
+                acc += flint_sample(p.uv + vec2<f32>(f32(x), f32(y)) * flint.texel * 2.0);\n        \
+                }\n    }\n    \
+                return vec4<f32>(acc.rgb / 81.0, 1.0);\n}\n";
+    let all = ["utest_blur_raw", "utest_blur_guarded"];
+    let raw_dir = user_styles("blur-raw-411", &all[..1], wgsl);
+    let guarded_dir = user_styles("blur-guarded-411", &all[1..], wgsl);
+    // The raw one is checked and built with the guard off (on this thread)
+    custom::set_loop_guard(false);
+    let messages = custom::load_dir(&raw_dir);
+    assert!(
+        messages.len() == 1 && messages[0].contains("loop guard is off"),
+        "{messages:?}"
+    );
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = with_styles(&gpu, &mut renderer, &world, &all[..1], &[]);
+    let raw = with_styles(&gpu, &mut renderer, &world, &all[..1], &all[..1]);
+    custom::set_loop_guard(true);
+    let messages = custom::load_dir(&guarded_dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let guarded = with_styles(&gpu, &mut renderer, &world, &all, &all[1..]);
+    assert_ne!(
+        plain, raw,
+        "the blur changed nothing: the test proves nothing"
+    );
+    let differ = raw.iter().zip(&guarded).filter(|(a, b)| a != b).count();
+    eprintln!("9x9 blur: {differ} bytes differ guarded");
+    assert_eq!(differ, 0, "{differ} bytes differ guarded");
+    let _ = std::fs::remove_dir_all(&raw_dir);
+    let _ = std::fs::remove_dir_all(&guarded_dir);
 }

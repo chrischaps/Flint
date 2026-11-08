@@ -53,6 +53,13 @@ struct Variant {
     // #338: for a variant with the SNAP flag, the least share of a cell's
     // 16 samples it must cover to draw the cell whole
     cell_share: f32,
+    // #398: the first row + 1 of the variant's band in the dissolve rank
+    // state (ascii_dissolve.wgsl), 0 when it has none
+    dissolve_row: u32,
+    // Scalars, not a vec3 (which would align to 16 and leave a hole)
+    _pad_dissolve_a: u32,
+    _pad_dissolve_b: u32,
+    _pad_dissolve_c: u32,
 };
 
 // A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
@@ -140,10 +147,16 @@ struct AsciiUniforms {
     reproject: vec4<u32>,
     // The line glyphs' ink for edge ink color (#351), display rgb
     edge_color: vec4<f32>,
+    // The dissolving variants' bands in the dissolve state (#398): x = how
+    // many, then each one's (slot, first row, rows, columns)
+    dissolve_meta: vec4<u32>,
+    dissolve: array<vec4<u32>, 8>,
 };
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
 const MAX_BANDS: u32 = 8u;
+// Variants whose dissolve is ranked (#398); `MAX_DISSOLVE` in ascii.rs.
+const MAX_DISSOLVE: u32 = 8u;
 // Grids a pixel checks for a snapped cell (#338); `MAX_SNAP_GRIDS` in ascii.rs.
 const MAX_SNAP_GRIDS: u32 = 8u;
 
