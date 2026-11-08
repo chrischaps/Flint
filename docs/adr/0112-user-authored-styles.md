@@ -209,7 +209,7 @@ scene's `[post_process]` (see "Built in #275" below).
   through wgpu's error scope, which can't be awaited inside a frame, so
   the browser logs them. The style still falls back, because the pipeline
   is invalid, but `errors()` doesn't learn why. #275 can resolve the
-  scope's future on the next frame to report it.
+  scope's future on the next frame to report it. *Built in #415, below.*
 - **No hot reload on the web.** There is no file to poll; a bundle is
   fixed.
 - **Bundles already carry them.** `flint bundle` packs `.toml` and
@@ -328,6 +328,39 @@ A game folder outside the engine (`levels/garden.scene.toml`,
 render`, played in `flint-player`, hot-reloaded both files mid-run, and
 bundled and played from the bundle with `flint-player --bundle`, the same
 `MemorySource` path the browser takes. The browser itself wasn't run.
+
+### Built in #415: the browser's errors
+
+- **naga still stays out.** wgpu builds naga's WGSL front end for wasm
+  (`wgpu-core` with `wgsl` is in the tree), but on wasm only the `webgl`
+  backend calls it, and the web build has WebGPU alone, so the linker
+  drops it. Running `check` in the browser would put the front end and
+  the validator into the download.
+- **A build waits for the GPU's answer.** `rebuild` creates the pipeline
+  as *pending* and keeps two futures: `ShaderModule::get_compilation_info()`
+  (the compiler's messages, with lines in the composed module) and the
+  validation error scope's `pop_error_scope()` (the pipeline against its
+  layout too). Neither is awaited: the pass polls both with a no-op waker
+  each frame (`Settling`) and only then trusts the pipeline. Natively both
+  are ready on the first poll, inside `rebuild`, so native and web share
+  one path and the native tests drive the web's (a future that answers on
+  a later poll). An invalid pipeline in a WebGPU pass invalidates the
+  frame's command buffer, so until the answer the last good build (or the
+  passthrough) draws.
+- **Lines in the user's file.** `compiler_error` takes the first
+  `Error` message and maps its line through `Composed::user_line`, by the
+  same `locate` naga's errors use: `file:line:col: message`, the line
+  quoted, `(and N more)` after it. The message lands in the style's error
+  slot, so `errors()`, the player's card and the console show it.
+- **What reaches the browser.** `flint bundle` refuses what naga refuses,
+  so a bundle carries only styles the browser is stricter about. The one
+  found here is derivative uniformity: naga doesn't check it in fragment
+  shaders, while Tint refuses `fwidth`/`dpdx`/`dpdy` under a branch on a
+  pixel's value (`flint_sample` is `textureSampleLevel`, which has no
+  such rule). In Chrome a style calling `fwidth` there drew its input,
+  and about 0.8 s after the first frame the card and the console read
+  `styles/frost.wgsl:12:42: 'fwidth' must only be called from uniform
+  control flow`, with the line quoted.
 
 ## Follow-ups
 
