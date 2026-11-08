@@ -41,11 +41,27 @@ pub struct RenderArgs {
     pub look: Option<String>,
 
     /// Render one setting at several values as one labelled contact sheet
-    /// (#279): `ascii.cell=6,8,12` (any `--style` key), `post.exposure=0.8,1.2`
-    /// (a [post_process] field; split on `|` to sweep a vector), or
-    /// `look=ascii_noir,matrix`. --width/--height size each cell
-    #[arg(long, value_parser = parse_sweep)]
-    pub sweep: Option<super::look::Sweep>,
+    /// (#279, #353): `ascii.cell=6,8,12` (any `--style` key),
+    /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
+    /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
+    /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
+    /// --width/--height size each cell. Give it twice for a grid (#358):
+    /// the first key across, the second down
+    #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append)]
+    pub sweep: Vec<super::sweep::Sweep>,
+
+    /// A sweep's cells at the final render's scale (#358): draw each at
+    /// --width/--height (default 1920x1080) and keep this region pixel for
+    /// pixel, X,Y,W,H. Point-sized styles (ASCII cells) then draw as many
+    /// glyphs across it as the final render does there
+    #[arg(long, value_parser = super::sweep::parse_crop, conflicts_with = "sweep_scale")]
+    pub sweep_crop: Option<super::sweep::CellView>,
+
+    /// `full`: draw each sweep cell at --width/--height (default 1920x1080)
+    /// and shrink it to 640 wide, so the whole frame is composed as the final
+    /// render is (glyphs blur); `cell` (default): each cell a 640x360 frame
+    #[arg(long, value_parser = ["cell", "full"])]
+    pub sweep_scale: Option<String>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -275,6 +291,48 @@ pub struct RenderArgs {
     #[arg(long)]
     pub gpu_time: Option<u32>,
 
+    /// Draw a sequence of N frames on one renderer (#345), written as
+    /// numbered PNGs beside --output (`seq.png` gives `seq_0000.png`...).
+    /// Temporal styles (ASCII's history, #277) see consecutive frames, so
+    /// they behave as in the player. Move the camera with --orbit or
+    /// --camera-path
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub frames: Option<u32>,
+
+    /// With --frames: seconds between frames (default 1/60). Post time,
+    /// grass wind and particles advance by it too
+    #[arg(long, requires = "frames")]
+    pub frame_dt: Option<f32>,
+
+    /// With --frames: orbit the camera about its target at this many
+    /// degrees a second (negative turns the other way)
+    #[arg(
+        long,
+        requires = "frames",
+        allow_hyphen_values = true,
+        conflicts_with = "camera_path"
+    )]
+    pub orbit: Option<f32>,
+
+    /// With --frames: a TOML file of `[[key]] time/position/target`, the
+    /// camera interpolated linearly between keys
+    #[arg(long, requires = "frames")]
+    pub camera_path: Option<String>,
+
+    /// With --frames: count the ASCII style's glyph flips and A-B-A
+    /// reversals frame to frame, exactly, from its own character grid,
+    /// and print them per frame and in sum
+    #[arg(long, requires = "frames")]
+    pub flip_stats: bool,
+
+    /// With --frames: write the flip counts (as --flip-stats) to this JSON
+    #[arg(long, requires = "frames")]
+    pub flip_json: Option<String>,
+
+    /// With --frames: write no PNGs (for a --flip-stats measurement)
+    #[arg(long, requires = "frames")]
+    pub no_images: bool,
+
     /// Bloom intensity (enables bloom; default: 0.04)
     #[arg(long)]
     pub bloom_intensity: Option<f32>,
@@ -472,10 +530,6 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
-    super::look::Sweep::parse(s)
-}
-
 /// A GPU kept between renders in one process (#329). `flint render` makes
 /// its own; `render-suite` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
@@ -542,10 +596,35 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
     }
+    let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
-    if wants_text && args.sweep.is_some() {
+    let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
+    let view = super::sweep::CellView::from_args(args.sweep_crop, args.sweep_scale.as_deref());
+    if grid.is_none() && (args.sweep_crop.is_some() || args.sweep_scale.is_some()) {
+        anyhow::bail!("--sweep-crop and --sweep-scale shape a sweep's cells: add a --sweep");
+    }
+    if wants_text && grid.is_some() {
         anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
     }
+    if args.frames.is_some() && grid.is_some() {
+        anyhow::bail!("--frames draws one sequence: drop --sweep");
+    }
+    if let Some(knob) = grid.as_ref().and_then(|g| g.wooze_knob()) {
+        anyhow::bail!(
+            "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
+             build doesn't have: it lives on feature/living-props until that merges (#206)"
+        );
+    }
+    if let Some(dt) = args.frame_dt {
+        if !(dt.is_finite() && dt > 0.0) {
+            anyhow::bail!("--frame-dt must be a positive number of seconds");
+        }
+    }
+    let camera_path = args
+        .camera_path
+        .as_deref()
+        .map(super::frame_seq::CameraPath::load)
+        .transpose()?;
     // User-authored styles (#274): registered before anything reads a
     // `[post_process.styles]` table, a look or a --style that names one
     let scene_dir = Path::new(&args.scene)
@@ -563,10 +642,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .as_deref()
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
-    let (width, height) = match args.sweep {
-        Some(_) => (args.width.unwrap_or(640), args.height.unwrap_or(360)),
+    let (width, height) = match grid {
+        Some(_) => view.render_size(args.width, args.height),
         None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
     };
+    view.check(width, height).map_err(|e| anyhow::anyhow!(e))?;
     flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
@@ -600,15 +680,16 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
     let scene_pp = scene_file.post_process.as_ref();
-    let base_pp = super::look::base_def(scene_pp, look.as_ref())?;
+    let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
+    let cells = grid.as_ref().map_or(vec![(0, 0)], |g| g.cells());
     let mut configs = Vec::new();
-    for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
-        let def = match &args.sweep {
-            Some(sweep) => sweep.column_def(i, scene_pp, look.as_ref(), &args.scene)?,
+    for &(c, r) in &cells {
+        let def = match &grid {
+            Some(grid) => grid.cell_def(c, r, scene_pp, look.as_ref(), &args.scene)?,
             None => base_pp.clone(),
         };
         let mut config = post_process_config(&args, def.as_ref())?;
-        if let Some(spec) = args.sweep.as_ref().and_then(|s| s.column_style(i)) {
+        for spec in grid.as_ref().map_or(Vec::new(), |g| g.cell_styles(c, r)) {
             flint_render::stylize::apply_style_spec(&mut config, &spec)
                 .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
         }
@@ -752,12 +833,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             "unlit" => DebugMode::Unlit,
             "metalrough" => DebugMode::MetallicRoughness,
             "style" => DebugMode::StyleMask,
+            "edges" => DebugMode::StyleEdges,
             _ => DebugMode::Pbr,
         };
-        if mode == DebugMode::StyleMask && args.no_postprocess {
+        if matches!(mode, DebugMode::StyleMask | DebugMode::StyleEdges) && args.no_postprocess {
             eprintln!(
-                "warning: --debug-mode style draws through post-processing, \
-                 which --no-postprocess turns off; the image shows no mask"
+                "warning: --debug-mode {mode_str} draws through post-processing, \
+                 which --no-postprocess turns off; the image shows none of it"
             );
         }
         renderer.set_debug_mode(mode);
@@ -784,7 +866,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Post-processing: the first column's (the only one without --sweep)
     renderer.set_post_process_config(configs[0].clone());
-    renderer.set_style_text_capture(wants_text);
+    renderer.set_style_text_capture(wants_text || wants_flips);
     renderer.ensure_style_resources(&ctx.device);
     renderer.ensure_fxaa_resources(&ctx.device);
 
@@ -833,6 +915,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
     // at a given --particle-time is reproducible run to run.
+    let mut particle_sim = None;
     if let Some(seconds) = args.particle_time {
         use flint_runtime::RuntimeSystem;
         let mut particles = flint_particles::ParticleSystem::new();
@@ -857,6 +940,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             particles.sync.emitter_count(),
             seconds
         );
+        particle_sim = Some(particles);
     }
 
     // GPU timing: the same frame many times, each pass's time smoothed
@@ -901,6 +985,21 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         println!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
     }
 
+    if let Some(frames) = args.frames {
+        return render_sequence(
+            &args,
+            SequenceRig {
+                ctx,
+                renderer: &mut renderer,
+                world: &world,
+                camera,
+                camera_path: camera_path.as_ref(),
+                particles: particle_sim.as_mut(),
+            },
+            frames,
+        );
+    }
+
     // Render each column (one without --sweep), reading each back
     let mut frames = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {
@@ -919,7 +1018,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         if wants_text {
-            write_ascii_text(&args, renderer.style_text(&ctx.device, "ascii"))?;
+            write_ascii_text(
+                args.ascii_text.as_deref(),
+                args.ascii_text_ansi.as_deref(),
+                renderer.style_text(&ctx.device, "ascii"),
+            )?;
         }
         let mut img = image::RgbaImage::from_raw(width, height, pixels)
             .context("Failed to create image from pixel data")?;
@@ -932,27 +1035,84 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             }
             super::style_sheet::draw_legend(&mut img, &flint_render::style_mask::legend(ids));
         }
-        if let Some(sweep) = &args.sweep {
-            println!("  {} = {}", sweep.name(), sweep.values[i]);
+        // The edge view says which colour is which source and decision
+        // (#349), and the thresholds it was drawn at
+        if renderer.debug_state().mode == DebugMode::StyleEdges && !args.no_postprocess {
+            let thresholds = flint_render::stylize::edge_view_thresholds(
+                renderer.effective_post_process_config(),
+            );
+            if i == 0 {
+                let names: Vec<&str> = flint_render::stylize::EDGE_VIEW_LEGEND
+                    .iter()
+                    .map(|(_, name)| *name)
+                    .collect();
+                println!("ascii edges: {thresholds}");
+                println!(
+                    "  pixels cyan/amber/magenta: {}; cells green/dashed/red/grey: {}",
+                    names[..3].join(", "),
+                    names[3..].join(", ")
+                );
+            }
+            let mut rows: Vec<(Option<[f32; 3]>, String)> = flint_render::stylize::EDGE_VIEW_LEGEND
+                .iter()
+                .map(|(color, name)| (Some(*color), name.to_string()))
+                .collect();
+            rows.extend(thresholds.split("; ").map(|t| (None, t.to_string())));
+            // Nine rows: half the mask legend's size, so the card leaves the
+            // scene readable
+            let scale = (img.width() / 1280).clamp(1, 3);
+            super::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
+        }
+        if let Some(grid) = &grid {
+            let (c, r) = cells[i];
+            println!("  {}", grid.describe(c, r));
         }
         frames.push(img);
     }
 
-    let img = match &args.sweep {
+    // A sweep whose neighbours drew the same showed nothing: say so (#216).
+    // Judged on the frames as drawn, before a crop could hide a difference.
+    if let Some(grid) = &grid {
+        for warning in grid.identical_warnings(&frames) {
+            eprintln!("Warning: {warning}");
+        }
+    }
+
+    let img = match &grid {
         None => frames.swap_remove(0),
-        Some(sweep) => {
+        Some(grid) => {
             let over = match &look {
                 Some(look) => format!("  over {}", look.name),
                 None => String::new(),
             };
-            super::style_sheet::compose(
-                &frames,
-                &super::style_sheet::SheetText {
-                    title: scene_file.scene.name.clone(),
-                    subtitle: format!("sweep {}{over}", sweep.name()),
-                    labels: sweep.values.clone(),
-                },
-            )
+            // Only a sheet that isn't of small frames says how big they were
+            let scale = match view {
+                super::sweep::CellView::Small => String::new(),
+                _ => format!("  {}", view.describe(width, height)),
+            };
+            let subtitle = format!("sweep {}{over}{scale}", grid.name());
+            let cells: Vec<_> = frames.into_iter().map(|f| view.cell(f)).collect();
+            let label = |s: &super::sweep::Sweep| (0..s.values.len()).map(|i| s.label(i)).collect();
+            match &grid.rows {
+                None => super::style_sheet::compose(
+                    &cells,
+                    &super::style_sheet::SheetText::new(
+                        scene_file.scene.name.clone(),
+                        subtitle,
+                        label(&grid.columns),
+                    ),
+                ),
+                Some(rows) => super::style_sheet::compose_grid(
+                    &cells,
+                    &super::style_sheet::GridText {
+                        title: scene_file.scene.name.clone(),
+                        subtitle,
+                        row_key: rows.name(),
+                        column_labels: label(&grid.columns),
+                        row_labels: label(rows),
+                    },
+                ),
+            }
         }
     };
     img.save(&args.output)
@@ -968,9 +1128,143 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     Ok(())
 }
 
+/// What a `--frames` sequence draws with.
+struct SequenceRig<'a> {
+    ctx: &'a HeadlessContext,
+    renderer: &'a mut SceneRenderer,
+    world: &'a flint_ecs::FlintWorld,
+    camera: Camera,
+    camera_path: Option<&'a super::frame_seq::CameraPath>,
+    particles: Option<&'a mut flint_particles::ParticleSystem>,
+}
+
+/// `--frames N` (#345): N frames on one renderer, `--frame-dt` apart, the
+/// camera moved between them, each written as a numbered PNG (and grid
+/// text), with the glyph flips counted when asked.
+fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<()> {
+    use super::frame_seq::{numbered, FlipCounter};
+    let SequenceRig {
+        ctx,
+        renderer,
+        world,
+        mut camera,
+        camera_path,
+        mut particles,
+    } = rig;
+    let dt = args.frame_dt.unwrap_or(1.0 / 60.0);
+    let wants_flips = args.flip_stats || args.flip_json.is_some();
+    let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
+    let base_time = renderer.ocean_time;
+    let yaw0 = camera.yaw;
+    let (width, height) = (ctx.width, ctx.height);
+    if !args.no_images {
+        if let Some(dir) = Path::new(&args.output).parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)
+                    .context(format!("Failed to create {}", dir.display()))?;
+            }
+        }
+    }
+    let number = |p: &Option<String>, i: u32| {
+        p.as_ref()
+            .map(|p| numbered(p, i, frames).to_string_lossy().into_owned())
+    };
+    let mut flips = FlipCounter::default();
+    let motion = match (args.orbit, camera_path) {
+        (Some(rate), _) => format!(", orbiting {rate} deg/s"),
+        (None, Some(path)) => format!(", on a {}-key camera path", path.key.len()),
+        _ => String::new(),
+    };
+    println!("Sequence: {frames} frames, {dt:.6} s apart{motion}");
+    for i in 0..frames {
+        let t = i as f32 * dt;
+        if let Some(rate) = args.orbit {
+            camera.yaw = yaw0 + (rate * t).to_radians();
+            camera.update_orbit();
+        } else if let Some(path) = camera_path {
+            let (position, target) = path.at(t);
+            camera.position = position;
+            camera.target = target;
+        }
+        renderer.ocean_time = base_time + t as f64;
+        renderer.grass_time = t;
+        // History smoothing scales by the frame's game time (#342)
+        renderer.style_dt = dt;
+        if let Some(p) = particles.as_deref_mut() {
+            if i > 0 {
+                p.simulate_to(world, dt, dt.min(1.0 / 60.0));
+            }
+            p.pack(Some(camera.position_array()));
+            renderer.update_particles_from(&ctx.device, &ctx.queue, &p.sync);
+        }
+        renderer.render_to(
+            &ctx.device,
+            &ctx.queue,
+            &ctx.depth_view,
+            &camera,
+            &ctx.color_view,
+        );
+        if wants_text || wants_flips {
+            let text = renderer.style_text(&ctx.device, "ascii");
+            if wants_flips {
+                let Some(text) = &text else {
+                    anyhow::bail!(
+                        "--flip-stats: the ASCII style didn't draw frame {i}; turn it on with \
+                         --ascii, a look, or the scene's [post_process.styles.ascii]"
+                    );
+                };
+                let f = flips.push(text);
+                if args.flip_stats {
+                    match (f.flips, f.reversals) {
+                        (Some(n), Some(r)) => {
+                            println!("  frame {i:>4}: {n:>6} flips {r:>6} reversals")
+                        }
+                        (Some(n), None) => println!("  frame {i:>4}: {n:>6} flips"),
+                        _ => {}
+                    }
+                }
+            }
+            if wants_text {
+                write_ascii_text(
+                    number(&args.ascii_text, i).as_deref(),
+                    number(&args.ascii_text_ansi, i).as_deref(),
+                    text,
+                )?;
+            }
+        }
+        if !args.no_images {
+            let pixels =
+                pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
+            let img = image::RgbaImage::from_raw(width, height, pixels)
+                .context("Failed to create image from pixel data")?;
+            let path = numbered(&args.output, i, frames);
+            img.save(&path)
+                .context(format!("Failed to save image to {}", path.display()))?;
+        }
+    }
+    if !args.no_images {
+        println!(
+            "Rendered {frames} {width}x{height} frames to {} .. {}",
+            numbered(&args.output, 0, frames).display(),
+            numbered(&args.output, frames - 1, frames).display()
+        );
+    }
+    if wants_flips {
+        let stats = flips.stats();
+        println!("Flips: {}", stats.summary());
+        if let Some(path) = &args.flip_json {
+            std::fs::write(path, serde_json::to_string_pretty(&stats)?)
+                .context(format!("Failed to write {path}"))?;
+            println!("Wrote flip counts to {path}");
+        }
+    }
+    Ok(())
+}
+
 /// Write the ASCII grid (#317) to --ascii-text / --ascii-text-ansi.
 fn write_ascii_text(
-    args: &RenderArgs,
+    text_path: Option<&str>,
+    ansi_path: Option<&str>,
     text: Option<flint_render::stylize::GlyphText>,
 ) -> Result<()> {
     let Some(text) = text else {
@@ -979,11 +1273,11 @@ fn write_ascii_text(
              a look, or the scene's [post_process.styles.ascii] / ascii_style entities"
         );
     };
-    if let Some(path) = &args.ascii_text {
+    if let Some(path) = text_path {
         std::fs::write(path, text.to_text()).context(format!("Failed to write {path}"))?;
         println!("Wrote {}x{} ASCII grid to {path}", text.cols, text.rows);
     }
-    if let Some(path) = &args.ascii_text_ansi {
+    if let Some(path) = ansi_path {
         std::fs::write(path, text.to_ansi()).context(format!("Failed to write {path}"))?;
         println!(
             "Wrote {}x{} ANSI ASCII grid to {path}",

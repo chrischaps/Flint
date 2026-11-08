@@ -1,11 +1,11 @@
 //! Scene loading from TOML files
 
-use crate::format::SceneFile;
+use crate::format::{PostProcessDef, SceneFile};
 use crate::prefab;
+use flint_core::vfs;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_schema::{validate_component_data, SchemaRegistry};
-use flint_core::vfs;
 use std::path::Path;
 
 /// Load a scene from a TOML file (with prefab expansion)
@@ -16,6 +16,7 @@ pub fn load_scene<P: AsRef<Path>>(
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
+    warn_unknown_post_fields(&content, Some(path));
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
@@ -30,6 +31,7 @@ pub fn load_scene_string(
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
     let scene_file: SceneFile = toml::from_str(content)?;
+    warn_unknown_post_fields(content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
@@ -37,6 +39,16 @@ pub fn load_scene_string(
 
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file))
+}
+
+/// Warn about `[post_process]` keys that are no field (#354): serde drops
+/// them silently, so a typo would leave the default in place. The scene
+/// still loads.
+fn warn_unknown_post_fields(content: &str, path: Option<&Path>) {
+    let source = path.map(|p| p.display().to_string());
+    for warning in PostProcessDef::unknown_field_warnings(content, source.as_deref()) {
+        tracing::warn!("{warning}");
+    }
 }
 
 /// Reload a scene file, updating the world in place (with prefab expansion)
@@ -48,6 +60,7 @@ pub fn reload_scene<P: AsRef<Path>>(
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
+    warn_unknown_post_fields(&content, Some(path));
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
@@ -66,6 +79,7 @@ pub fn reload_scene_string(
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
     let scene_file: SceneFile = toml::from_str(content)?;
+    warn_unknown_post_fields(content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
@@ -286,9 +300,7 @@ locked = true
     fn ascii_style_takes_an_archetype_preset_and_gains_no_defaults() {
         let mut registry = SchemaRegistry::new();
         registry
-            .load_component_string(include_str!(
-                "../../../schemas/components/ascii_style.toml"
-            ))
+            .load_component_string(include_str!("../../../schemas/components/ascii_style.toml"))
             .unwrap();
         registry
             .load_archetype_string(
@@ -329,7 +341,11 @@ cell = 12
                 .clone()
         };
         let keyboard = get("keyboard");
-        assert_eq!(keyboard["ramp"].as_str(), Some("minimal"), "the entity wins");
+        assert_eq!(
+            keyboard["ramp"].as_str(),
+            Some("minimal"),
+            "the entity wins"
+        );
         assert_eq!(keyboard["color"].as_str(), Some("tint"), "the preset stays");
         assert_eq!(get("monitor")["ramp"].as_str(), Some("blocks"));
         let chair = get("chair");
@@ -445,6 +461,61 @@ dof_focus_range = 3.5
         assert!((pp.dof_strength - 0.5).abs() < 0.001);
         assert!((pp.dof_focus_distance - 22.0).abs() < 0.001);
         assert!((pp.dof_focus_range - 3.5).abs() < 0.001);
+    }
+
+    /// A writer the test's subscriber logs into.
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unknown_post_process_field_warns_with_file_and_still_loads() {
+        let dir = std::env::temp_dir().join(format!("flint_pp_typo_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("typo.scene.toml");
+        std::fs::write(
+            &path,
+            "[scene]\nname = \"Typo\"\n\n[post_process]\nbloom_intensty = 0.5\nexposure = 1.5\n",
+        )
+        .unwrap();
+
+        let log = Captured::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let loaded = tracing::subscriber::with_default(subscriber, || {
+            load_scene(&path, &SchemaRegistry::new())
+        });
+        std::fs::remove_dir_all(&dir).ok();
+
+        let (_, scene_file) = loaded.expect("a typo doesn't stop the load");
+        let pp = scene_file.post_process.unwrap();
+        assert!((pp.exposure - 1.5).abs() < 1e-6, "known fields still read");
+        assert!(
+            (pp.bloom_intensity - 0.04).abs() < 1e-6,
+            "the typo leaves the default"
+        );
+
+        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("WARN"), "{text}");
+        assert!(
+            text.contains(
+                "[post_process] has no field 'bloom_intensty', did you mean 'bloom_intensity'?"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("typo.scene.toml"), "names the file: {text}");
     }
 
     #[test]

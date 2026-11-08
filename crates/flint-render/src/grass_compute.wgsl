@@ -25,7 +25,8 @@ struct GrassComputeUniforms {
     // 0: each sits in the middle of its texel's cell, as a game's ground
     // map does (ADR 0098)
     height_at_corners: u32,
-    _pad0: u32,
+    // Workgroups in this dispatch, for the scan
+    group_count: u32,
     _pad1: u32,
     _pad2: u32,
     // The camera frustum, each plane pushed out for blade height and shadow
@@ -70,6 +71,9 @@ var splat_sampler: sampler;
 var<storage, read_write> instances: array<GrassInstance>;
 @group(2) @binding(1)
 var<storage, read_write> draw_args: DrawArgs;
+// A count of blades per workgroup, then (after cs_scan) its first slot
+@group(2) @binding(2)
+var<storage, read_write> group_slots: array<u32>;
 
 // Hash function for deterministic pseudo-random values from position
 fn hash21(p: vec2<f32>) -> f32 {
@@ -110,8 +114,19 @@ fn ground_height(u: f32, v: f32) -> f32 {
     return mix(mix(h00, h10, t.x), mix(h01, h11, t.x), t.y);
 }
 
-@compute @workgroup_size(8, 8, 1)
-fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+// A cell's blade, if it grows one
+struct Placement {
+    keep: bool,
+    blade: GrassInstance,
+};
+
+// Whether the grid cell `cell` (in the dispatch window) grows a blade, and
+// the blade it grows. Everything about a blade comes from its place in the
+// grid, so the same cell gives the same blade every frame and every run.
+fn place(cell_in_window: vec2<u32>) -> Placement {
+    var none: Placement;
+    none.keep = false;
+
     // Grid spacing from density: spacing = 1 / sqrt(density)
     let spacing = 1.0 / sqrt(params.density);
 
@@ -119,10 +134,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid_x = u32(ceil(params.terrain_width / spacing));
     let grid_z = u32(ceil(params.terrain_depth / spacing));
 
-    let cell_x = gid.x + params.grid_start_x;
-    let cell_z = gid.y + params.grid_start_z;
+    let cell_x = cell_in_window.x + params.grid_start_x;
+    let cell_z = cell_in_window.y + params.grid_start_z;
     if cell_x >= grid_x || cell_z >= grid_z {
-        return;
+        return none;
     }
 
     // Base position on grid
@@ -140,7 +155,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Bounds check
     if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 {
-        return;
+        return none;
     }
 
     // Sample splat map — check density layer weight
@@ -155,14 +170,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     if layer_weight < params.density_threshold {
-        return;
+        return none;
     }
 
     // A partial weight thins the field in proportion to it
     if params.scale_by_density != 0u {
         let keep = hash21(vec2<f32>(world_x * 5.17, world_z * 3.91));
         if keep > layer_weight {
-            return;
+            return none;
         }
     }
 
@@ -173,7 +188,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dist = distance(world_pos, params.camera_pos);
 
     if dist > params.max_distance {
-        return;
+        return none;
     }
 
     // Out of view (the planes are padded, so blades that lean or cast a
@@ -181,7 +196,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var i = 0u; i < 6u; i++) {
         let plane = params.frustum_planes[i];
         if dot(plane.xyz, world_pos) + plane.w < 0.0 {
-            return;
+            return none;
         }
     }
 
@@ -191,7 +206,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let keep_prob = 1.0 - fade_t * fade_t; // Quadratic falloff
         let rand_val = hash21(vec2<f32>(world_x * 7.31, world_z * 13.17));
         if rand_val > keep_prob {
-            return;
+            return none;
         }
     }
 
@@ -207,19 +222,111 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let tint_r = u32(clamp(dry_mix * 255.0, 0.0, 255.0));
     let tint = tint_r | (tint_r << 8u) | (tint_r << 16u) | (255u << 24u);
 
-    // Write instance
-    let idx = atomicAdd(&draw_args.instance_count, 1u);
-    if idx < arrayLength(&instances) {
-        instances[idx] = GrassInstance(
-            world_pos,
-            rotation,
-            height_scale * params.blade_height,
-            tint,
-        );
-    } else {
-        // Full: give the slot back, so the count the draws read never runs
-        // past the buffer. It can't drop below the buffer's length, since
-        // only a blade that found it full takes one back.
-        atomicSub(&draw_args.instance_count, 1u);
+    return Placement(
+        true,
+        GrassInstance(world_pos, rotation, height_scale * params.blade_height, tint),
+    );
+}
+
+// The blades are compacted into `instances` in grid order, in three passes,
+// so the buffer holds the same blades in the same order every run (#341).
+// An atomic append put them in whatever order the GPU's threads finished,
+// and where two blades meet at one depth the one drawn first wins, so a
+// capture changed by a level in a few pixels from run to run.
+//
+//   cs_count  each workgroup counts the blades its 8x8 cells grow
+//   cs_scan   one workgroup turns the counts into each group's first slot,
+//             and writes the total into the draw arguments
+//   cs_emit   each workgroup places its cells again and writes its blades
+//             from its first slot, in cell order
+
+// Which cells of this workgroup grow a blade (cs_count, cs_emit)
+var<workgroup> kept: array<u32, 64>;
+
+fn group_index(group: vec3<u32>, groups: vec3<u32>) -> u32 {
+    return group.x + group.y * groups.x;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_count(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    kept[local] = select(0u, 1u, place(gid.xy).keep);
+    workgroupBarrier();
+    if local == 0u {
+        var count = 0u;
+        for (var i = 0u; i < 64u; i++) {
+            count += kept[i];
+        }
+        group_slots[group_index(group, groups)] = count;
+    }
+}
+
+const SCAN_THREADS: u32 = 256u;
+var<workgroup> partial: array<u32, 256>;
+
+@compute @workgroup_size(256, 1, 1)
+fn cs_scan(@builtin(local_invocation_index) local: u32) {
+    // Each thread sums a run of the groups' counts...
+    let groups = params.group_count;
+    let per_thread = (groups + SCAN_THREADS - 1u) / SCAN_THREADS;
+    let begin = min(local * per_thread, groups);
+    let end = min(begin + per_thread, groups);
+    var sum = 0u;
+    for (var i = begin; i < end; i++) {
+        sum += group_slots[i];
+    }
+    partial[local] = sum;
+    workgroupBarrier();
+
+    // ...the runs are scanned together (inclusive, Hillis-Steele)...
+    for (var step = 1u; step < SCAN_THREADS; step <<= 1u) {
+        var value = partial[local];
+        if local >= step {
+            value += partial[local - step];
+        }
+        workgroupBarrier();
+        partial[local] = value;
+        workgroupBarrier();
+    }
+
+    // ...and each thread turns its run's counts into first slots
+    var slot = partial[local] - sum;
+    for (var i = begin; i < end; i++) {
+        let count = group_slots[i];
+        group_slots[i] = slot;
+        slot += count;
+    }
+
+    // The draws read the count from here, never past the buffer
+    if local == SCAN_THREADS - 1u {
+        atomicStore(&draw_args.instance_count, min(partial[local], arrayLength(&instances)));
+    }
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_emit(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    let placement = place(gid.xy);
+    kept[local] = select(0u, 1u, placement.keep);
+    workgroupBarrier();
+    if placement.keep {
+        // This blade's place among the group's: the kept cells before it
+        var rank = 0u;
+        for (var i = 0u; i < local; i++) {
+            rank += kept[i];
+        }
+        let idx = group_slots[group_index(group, groups)] + rank;
+        // Full: the blades past the buffer's end are the last in grid order
+        if idx < arrayLength(&instances) {
+            instances[idx] = placement.blade;
+        }
     }
 }

@@ -50,7 +50,9 @@ struct Variant {
     // origins sit in the ramp table (NO_EDGE_START: the uniform's own)
     glyph: vec2<f32>,
     edge_start: u32,
-    _p5: u32,
+    // #338: for a variant with the SNAP flag, the least share of a cell's
+    // 16 samples it must cover to draw the cell whole
+    cell_share: f32,
 };
 
 // A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
@@ -83,7 +85,9 @@ struct AsciiUniforms {
     // 0 nearest ink to the cell's hue, 1 a ladder picked by tone
     palette_match: u32,
     palette_bg: vec3<f32>,
-    _pad: u32,
+    // What inks the line glyphs (#351): 0 cell (as the tone glyph),
+    // 1 color (`edge_color`, toward the near hue by `edge_tint`), 2 hue
+    edge_ink: u32,
     // Temporal stability (#277): how much of last frame's cell colour a
     // cell keeps, how far (in ramp steps) its tone may stray before its
     // glyph changes, the ordered dither's strength, and whether last
@@ -102,7 +106,8 @@ struct AsciiUniforms {
     // The whole frame's palette chroma and ink dither (#320)
     chroma: f32,
     palette_dither: f32,
-    _pad_palette: vec2<u32>,
+    edge_tint: f32,
+    _pad_palette: u32,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -117,17 +122,24 @@ struct AsciiUniforms {
     // whole frame alone); y: 1 when the whole frame passes through (only
     // entities asked). Row 0 is unused: the whole frame draws from the
     // fields above and the cell state. z: bands in the variant cell state
-    // (#313).
+    // (#313). w: grids in `snap_grids` (#338).
     variant_meta: vec4<u32>,
     // The variant cell state's bands (#313), `variant_meta.z` of them: each
     // grid's cell and origin, and (first row, rows, columns, footprint as
     // f32 bits)
     bands: array<vec4<f32>, 8>,
     band_rows: array<vec4<u32>, 8>,
+    // The grids of the variants whose silhouettes snap to whole cells
+    // (#338), `variant_meta.w` of them: (cell, origin)
+    snap_grids: array<vec4<f32>, 8>,
+    // The line glyphs' ink for edge ink color (#351), display rgb
+    edge_color: vec4<f32>,
 };
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
 const MAX_BANDS: u32 = 8u;
+// Grids a pixel checks for a snapped cell (#338); `MAX_SNAP_GRIDS` in ascii.rs.
+const MAX_SNAP_GRIDS: u32 = 8u;
 
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
 // The variant table (#336), sized to the frame: every per-entity variant's

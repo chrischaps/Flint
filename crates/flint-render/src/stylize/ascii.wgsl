@@ -15,13 +15,24 @@
 // asks for. Below 1 the glyph pixel is mixed with the picture as it came
 // (fade), or the cell is drawn whole or not at all, by its patch noise
 // (dissolve, flag 2).
+//
+// Cell silhouettes (#338): a variant with flag 4 (`silhouette = "cell"`)
+// draws a cell whole or not at all. A cell of its grid is its when at least
+// `cell_share` of the cell's 16 lattice samples are its pixels; every pixel
+// of such a cell draws as the variant, whatever the mask says there, and
+// its own pixels in a cell it doesn't hold draw as the whole frame does. So
+// each pixel asks, per grid a snapping variant uses, which variant holds its
+// cell (`resolve`): the question is the cell's, and every pixel of the cell
+// gets the same answer.
 
 @group(1) @binding(0) var cells: texture_2d<u32>;
 @group(2) @binding(0) var atlas: texture_2d<f32>;
 @group(3) @binding(0) var entity_input: texture_2d<f32>;
 @group(3) @binding(1) var style_mask: texture_2d<u32>;
 // The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
-// line glyph slot + 1 (0 = none), y = its length in cell widths
+// line glyph slot + 1 (0 = none), y = its length in cell widths, z = the
+// outline and cross-axis bits plus the near side's hue above them, 7 bits
+// a channel (#351), w = the line's offset (#352)
 @group(3) @binding(2) var edge_cells: texture_2d<f32>;
 // Each slot's tone range (#289, ascii_stats_resolve.wgsl)
 @group(3) @binding(3) var tone_stats: texture_2d<f32>;
@@ -40,66 +51,24 @@ fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
     return stretched(luma(col), textureLoad(tone_stats, vec2<i32>(i32(slot), 0), 0), amount);
 }
 
-fn edge_cell_at(c: vec2<i32>) -> vec4<f32> {
-    let cmax = vec2<i32>(textureDimensions(edge_cells)) - vec2<i32>(1);
-    return textureLoad(edge_cells, clamp(c, vec2<i32>(0), cmax), 0);
-}
-
-// Whether neighbour `n` takes the line from a cell with `slot` and `len`:
-// the same glyph, and more of the line (or as much, on the earlier side).
-fn yields_to(n: vec4<f32>, slot: u32, len: f32, earlier: bool) -> bool {
-    if n.x < 0.5 || min(u32(n.x - 0.5), 3u) != slot {
-        return false;
-    }
-    return n.y > len || (n.y == len && earlier);
-}
-
-// The line glyph slot of the screen-grid cell `cell`, or 4 for none. A line
-// running near a cell border splits between the two cells, and each would
-// draw it: a cell holding less than one cell width of line yields to a
-// neighbour across the line (left/right of `│`, above/below of `─`, either
-// side of a diagonal) holding more. A full crossing always draws, so two
-// real edges a cell apart both stay.
+// The line glyph slot of the screen-grid cell `cell`, or 4 for none: the
+// edge cell's, thinned where a line splits between two cells
+// (ascii_edge_thin.wgsl, which follows this file).
 fn edge_slot(cell: vec2<f32>) -> u32 {
     if u.edge_on == 0u {
         return 4u;
     }
-    let c = vec2<i32>(cell) + vec2<i32>(CELL_OFFSET);
-    let e = edge_cell_at(c);
-    if e.x < 0.5 {
-        return 4u;
-    }
-    let slot = min(u32(e.x - 0.5), 3u);
-    let len = e.y;
-    if len >= 1.0 {
-        return slot;
-    }
-    // Offsets to the neighbours on the line normal's positive side (screen
-    // y down); the negative side is the same offsets negated, and wins
-    // ties. `─` and `│` have one; a diagonal three, since a staircase of
-    // `╱` doubles by a straight step as often as by a diagonal one.
-    var off = array<vec2<i32>, 3>(vec2<i32>(0, 1), vec2<i32>(0, 1), vec2<i32>(0, 1));
-    switch slot {
-        case 1u: {
-            off = array<vec2<i32>, 3>(vec2<i32>(1, 0), vec2<i32>(1, 0), vec2<i32>(1, 0));
-        }
-        case 2u: {
-            // `╱` runs (1, -1): its normal is (1, 1)
-            off = array<vec2<i32>, 3>(vec2<i32>(1, 1), vec2<i32>(1, 0), vec2<i32>(0, 1));
-        }
-        case 3u: {
-            // `╲` runs (1, 1): its normal is (1, -1)
-            off = array<vec2<i32>, 3>(vec2<i32>(1, -1), vec2<i32>(1, 0), vec2<i32>(0, -1));
-        }
-        default: {}
-    }
-    for (var k = 0; k < 3; k++) {
-        if yields_to(edge_cell_at(c - off[k]), slot, len, true)
-            || yields_to(edge_cell_at(c + off[k]), slot, len, false) {
-            return 4u;
-        }
-    }
-    return slot;
+    return thinned_slot(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET));
+}
+
+// The near side's hue along screen-grid cell `cell`'s edge (#351), at full
+// value: the object's own colour where the cell's is a mix of it and what's
+// behind
+fn edge_hue(cell: vec2<f32>) -> vec3<f32> {
+    // Exact: w is a whole number under 2^24 (no +0.5, which f32 spacing
+    // of 1 above 2^23 rounds up, carrying red into green)
+    let w = u32(edge_cell_at(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET)).z) >> 2u;
+    return vec3<f32>(f32(w & 127u), f32((w >> 7u) & 127u), f32(w >> 14u)) / 127.0;
 }
 
 fn ramp_origin(step: u32) -> vec2<u32> {
@@ -240,35 +209,46 @@ struct Inks {
     ground: vec3<f32>,
 }
 
-fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
-    let lum = luma(col);
-    // Ink and ground
+// The glyph ink look `v`'s colour mode gives colour `col` at tone `t`, in
+// cell `cell`. Density carries brightness and the ink carries hue at full
+// value, so a dark object's sparse glyphs still read as its colour.
+fn mode_ink(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
     let hue = col / max(max(col.r, max(col.g, col.b)), 1e-4);
-    var ink = vec3<f32>(0.0);
-    var ground = col * v.background;
-    // Density carries brightness and the ink carries hue at full value, so
-    // a dark object's sparse glyphs still read as its colour
+    var ink = hue;
     switch v.color_mode {
         case 1u: {
             ink = v.tint;
-            ground = v.tint * lum * v.background;
         }
         case 2u: {
             ink = col;
         }
         case 3u: {
             ink = vec3<f32>(1.0);
-            ground = vec3<f32>(lum * v.background);
         }
         case 4u: {
             ink = cell_ink(v, hue, t, cell);
+        }
+        default: {}
+    }
+    return clamp(ink * v.ink, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
+    let lum = luma(col);
+    let ink = mode_ink(v, col, t, cell);
+    var ground = col * v.background;
+    switch v.color_mode {
+        case 1u: {
+            ground = v.tint * lum * v.background;
+        }
+        case 3u: {
+            ground = vec3<f32>(lum * v.background);
+        }
+        case 4u: {
             ground = v.palette_bg;
         }
-        default: {
-            ink = hue;
-        }
+        default: {}
     }
-    ink = clamp(ink * v.ink, vec3<f32>(0.0), vec3<f32>(1.0));
     if v.ground == 1u {
         ground = vec3<f32>(0.0);
     }
@@ -283,8 +263,34 @@ fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
     return out;
 }
 
+// Whether cell `edge`'s line glyph takes an ink of its own (#351)
+fn own_edge_ink(edge: u32) -> bool {
+    return edge < 4u && u.edge_ink != 0u;
+}
+
+// The line glyph's own ink (#351) in look `v`, for the cell `cell` of colour
+// `col` and tone `t`: the near side's hue at the cell's value, inked as the
+// colour mode inks a cell (hue); or `edge_color` mixed toward that by
+// `edge_tint` (color). `cell` is on the screen grid, as the edges are.
+fn edge_ink(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
+    let near = edge_hue(cell) * max(max(col.r, max(col.g, col.b)), 1e-4);
+    return line_ink(v, near, t, cell);
+}
+
+// The edge ink for a line whose near side is colour `near`
+fn line_ink(v: Variant, near: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
+    let own = mode_ink(v, near, t, cell);
+    if u.edge_ink == 1u {
+        return mix(u.edge_color.rgb, own, u.edge_tint);
+    }
+    return own;
+}
+
 fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
     let inverse = v.ground == 2u;
+    if own_edge_ink(edge) {
+        return shade_edge(v, col, t, step, cell, local, edge, floor_in);
+    }
     var coverage = glyph_coverage(tone_origin(v, step), local, v.cell, v.glyph);
     // On an edge, the line glyph over the tone glyph; the glow follows
     // whichever glyph mostly shows
@@ -306,6 +312,29 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: 
     return clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// An edge cell whose line glyph has its own ink (#351): the tone glyph
+// fades out under the line as `edges` rises (as in `shade`), in the cell's
+// ink, and the line glyph is laid over it in the edge ink, on either
+// ground (inverse: over the ink-filled cell).
+fn shade_edge(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
+    let inverse = v.ground == 2u;
+    var tone_c = glyph_coverage(tone_origin(v, step), local, v.cell, v.glyph) * (1.0 - u.edges);
+    if !inverse {
+        tone_c = max(tone_c, floor_in);
+    }
+    let line_c = glyph_coverage(edge_origin(v, edge), local, v.cell, v.glyph) * u.edges;
+    let inks = cell_inks(v, col, t, cell);
+    let line_ink = edge_ink(v, col, t, cell);
+    var out = mix(mix(inks.ground, inks.ink, tone_c), line_ink, line_c);
+    if v.glow > 0.0 && !inverse {
+        let line_shows = u.edges >= 0.5;
+        let glow_ink = select(inks.ink, line_ink, line_shows);
+        out += glow_ink * (v.glow * (0.35 + 0.65 * t))
+            * glyph_halo(shown_origin(v, step, edge), local, max(tone_c, line_c), v.cell, v.glyph);
+    }
+    return clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 // The variant slot of the pixel at `p` (output pixels): the mask is at the
 // scene's resolution, so it is read by position scaled to it.
 fn mask_texel(p: vec2<f32>) -> vec2<u32> {
@@ -316,6 +345,163 @@ fn mask_texel(p: vec2<f32>) -> vec2<u32> {
 
 fn slot_at(p: vec2<f32>) -> u32 {
     return slot_of(mask_texel(p).x);
+}
+
+// A variant's flag: its silhouette snaps to whole cells (#338)
+const SNAP: u32 = 4u;
+
+// Whether slot `slot` is a drawn variant whose silhouette snaps
+fn snaps(slot: u32) -> bool {
+    return slot != 0u && (variants[slot].flags & (SNAP | 1u)) == SNAP;
+}
+
+// Who draws a pixel: a variant slot (0 = the whole frame), how much of
+// the style it asks for (the mask's .g), and where the picture is read
+// when it passes through (the pixel itself, but see `scene_behind`)
+struct Owner {
+    slot: u32,
+    blend: f32,
+    read_at: vec2<f32>,
+}
+
+// The lattice sample `k` (0..16, row by row) of the cell whose top left is
+// `cell_min`, `cell` wide: a pixel's top left
+fn lattice(cell_min: vec2<f32>, cell: vec2<f32>, k: i32) -> vec2<f32> {
+    return floor(cell_min + (vec2<f32>(f32(k & 3), f32(k >> 2u)) + 0.5) / 4.0 * cell);
+}
+
+// A snapped variant's pixel in a cell it doesn't hold shows the scene, not
+// its own smooth shading (#338): the picture at the nearest of the cell's
+// lattice samples that isn't the variant's, so a dropped edge cell reads as
+// what's around the entity, a quarter cell at a time.
+fn scene_behind(p: vec2<f32>, slot: u32) -> vec2<f32> {
+    let v = variants[slot];
+    let c = floor((p - v.origin) / v.cell);
+    let cell_min = c * v.cell + v.origin;
+    var best = p;
+    var best_d = 1e9;
+    for (var k = 0; k < 16; k++) {
+        let q = lattice(cell_min, v.cell, k);
+        let d = dot(q + 0.5 - p, q + 0.5 - p);
+        if d < best_d && slot_at(q) != slot {
+            best_d = d;
+            best = q + 0.5;
+        }
+    }
+    return best;
+}
+
+fn same_grid(slot: u32, cell: vec2<f32>, origin: vec2<f32>) -> bool {
+    let v = variants[slot];
+    return all(v.cell == cell) && all(v.origin == origin);
+}
+
+// The snapping variant on the grid (`cell`, `origin`) that holds the cell
+// under `p`: of the variants on that grid that snap, the one with the most
+// of the cell's 16 lattice samples (the first met on a tie), if it has at
+// least its `cell_share` of them; slot 0 for none. One pass, in registers:
+// it counts the first two such variants met in the cell, which is every one
+// unless three snapping variants of one grid meet in a cell (the third is
+// then left out). Private arrays would spill to memory: every pixel on the
+// screen runs this once a snapping grid. The blend is the one at the
+// variant's first sample, so the whole cell fades alike.
+fn grid_owner(p: vec2<f32>, cell: vec2<f32>, origin: vec2<f32>) -> Owner {
+    let c = floor((p - origin) / cell);
+    let cell_min = c * cell + origin;
+    var a = 0u;
+    var a_n = 0u;
+    var a_blend = 1.0;
+    var b = 0u;
+    var b_n = 0u;
+    var b_blend = 1.0;
+    for (var k = 0; k < 16; k++) {
+        let m = mask_texel(lattice(cell_min, cell, k));
+        // Most samples are unstyled: no table reads for them
+        if m.x == 0u {
+            continue;
+        }
+        let s = slot_of(m.x);
+        if s == 0u {
+            continue;
+        }
+        if s == a {
+            a_n += 1u;
+        } else if s == b {
+            b_n += 1u;
+        } else if snaps(s) && same_grid(s, cell, origin) {
+            if a == 0u {
+                a = s;
+                a_n = 1u;
+                a_blend = f32(m.y) / 65535.0;
+            } else if b == 0u {
+                b = s;
+                b_n = 1u;
+                b_blend = f32(m.y) / 65535.0;
+            }
+        }
+    }
+    var out: Owner;
+    out.slot = 0u;
+    out.blend = 1.0;
+    out.read_at = p;
+    if b_n > a_n {
+        a = b;
+        a_n = b_n;
+        a_blend = b_blend;
+    }
+    if a != 0u && f32(a_n) + 1e-3 >= variants[a].cell_share * 16.0 {
+        out.slot = a;
+        out.blend = a_blend;
+    }
+    return out;
+}
+
+// Who draws the pixel at `p`: the mask's slot, or with snapping variants
+// in the frame (#338) the variant holding the pixel's cell. A pixel of a
+// variant that cuts its silhouette to the pixel keeps its own; the pixel's
+// own variant's grid is asked first, then each snapping grid in turn.
+fn resolve(p: vec2<f32>) -> Owner {
+    var o: Owner;
+    o.slot = 0u;
+    o.blend = 1.0;
+    o.read_at = p;
+    if u.variant_meta.x <= 1u {
+        return o;
+    }
+    let m = mask_texel(p);
+    o.slot = slot_of(m.x);
+    o.blend = f32(m.y) / 65535.0;
+    if u.variant_meta.w == 0u || (o.slot != 0u && !snaps(o.slot)) {
+        return o;
+    }
+    var own_cell = vec2<f32>(-1.0);
+    var own_origin = vec2<f32>(0.0);
+    if o.slot != 0u {
+        own_cell = variants[o.slot].cell;
+        own_origin = variants[o.slot].origin;
+        let w = grid_owner(p, own_cell, own_origin);
+        if w.slot != 0u {
+            return w;
+        }
+    }
+    for (var g = 0u; g < min(u.variant_meta.w, MAX_SNAP_GRIDS); g++) {
+        let grid = u.snap_grids[g];
+        if all(grid.xy == own_cell) && all(grid.zw == own_origin) {
+            continue;
+        }
+        let w = grid_owner(p, grid.xy, grid.zw);
+        if w.slot != 0u {
+            return w;
+        }
+    }
+    // Nobody holds the cell: the whole frame's, and a dropped pixel of a
+    // snapped variant shows the scene around it
+    if o.slot != 0u {
+        o.read_at = scene_behind(p, o.slot);
+    }
+    o.slot = 0u;
+    o.blend = 1.0;
+    return o;
 }
 
 fn cell_hash(c: vec2<f32>) -> f32 {
@@ -453,7 +639,13 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     // variant only grazes (under a quarter of its samples, easing out by
     // five eighths) inks its pixels at least `min_coverage`.
     var floor_ink = v.min_coverage * (1.0 - smoothstep(0.25, 0.625, d.share));
-    if v.outline > 0.0 && on_silhouette(slot, p, v.outline) {
+    // A snapped silhouette (#338) is the cells' own edge: no pixel outline
+    if v.outline > 0.0 && (v.flags & SNAP) == 0u && on_silhouette(slot, p, v.outline) {
+        // The silhouette is an outline too (#351): with an edge ink of its
+        // own it takes that, the pixel being the near side itself
+        if u.edge_ink != 0u && v.ground != 2u {
+            return line_ink(v, d.col, d.t, d.cell);
+        }
         floor_ink = 1.0;
     }
     return shade(v, d.col, d.t, d.step, d.cell, d.local, d.edge, floor_ink);
@@ -492,14 +684,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let rel = p - u.origin;
     let cell = floor(rel / u.cell);
     let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
-    var slot = 0u;
-    // How much of the style the pixel's entity asks for, 0..1 (mask .g)
-    var blend = 1.0;
-    if u.variant_meta.x > 1u {
-        let m = mask_texel(p);
-        slot = slot_of(m.x);
-        blend = f32(m.y) / 65535.0;
-    }
+    // Who draws the pixel, and how much of the style its entity asks for,
+    // 0..1 (mask .g)
+    let owner = resolve(p);
+    let slot = owner.slot;
+    let blend = owner.blend;
     var out: vec3<f32>;
     if slot != 0u {
         let v = variants[slot];
@@ -520,7 +709,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     } else {
         if u.variant_meta.y == 1u {
-            return passed(p);
+            return passed(owner.read_at);
         }
         let local = rel - cell * u.cell;
         let col = vec3<f32>(state.rgb) / UNORM16;
@@ -552,19 +741,20 @@ fn text_passed(p: vec2<f32>) -> vec4<u32> {
 fn text_cell(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, edge: u32) -> vec4<u32> {
     let o = shown_origin(v, step, edge);
     let inks = cell_inks(v, col, t, cell);
-    return vec4<u32>(o.x | (o.y << 16u), pack_rgb(inks.ink), pack_rgb(inks.ground), 0u);
+    var ink = inks.ink;
+    // The line glyph shows, in its own ink (#351)
+    if own_edge_ink(edge) && u.edges >= 0.5 {
+        ink = edge_ink(v, col, t, cell);
+    }
+    return vec4<u32>(o.x | (o.y << 16u), pack_rgb(ink), pack_rgb(inks.ground), 0u);
 }
 
 // What fs_main draws at pixel `p` of the cell whose cell state texel is
 // `index`, as a text texel (w left 0)
 fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
-    var slot = 0u;
-    var blend = 1.0;
-    if u.variant_meta.x > 1u {
-        let m = mask_texel(p);
-        slot = slot_of(m.x);
-        blend = f32(m.y) / 65535.0;
-    }
+    let owner = resolve(p);
+    let slot = owner.slot;
+    let blend = owner.blend;
     if slot != 0u {
         let v = variants[slot];
         if (v.flags & 1u) != 0u || blend <= 0.0 {
@@ -579,7 +769,7 @@ fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
         return text_cell(v, d.col, d.t, d.step, d.cell, d.edge);
     }
     if u.variant_meta.y == 1u {
-        return text_passed(p);
+        return text_passed(owner.read_at);
     }
     let state = textureLoad(cells, index, 0);
     let col = vec3<f32>(state.rgb) / UNORM16;

@@ -2,6 +2,11 @@
 //! setting, side by side, each labelled with what it was given. The letters
 //! are the ASCII style's own built-in 8x8 glyphs (#264), so the sheet speaks
 //! in the same type the styles draw with.
+//!
+//! It is every sweep's sheet (#353): a style, post or look sweep's, and a
+//! Living Props `wooze.*` sweep's (#216), which also writes the game time in
+//! the top right and a note under a label when a column didn't take its value
+//! everywhere.
 
 use flint_render::glyph_atlas::GlyphAtlas;
 use image::{Rgba, RgbaImage};
@@ -25,8 +30,26 @@ pub struct SheetText {
     pub title: String,
     /// Under it: what was swept, and over what.
     pub subtitle: String,
+    /// Top right, or nothing when empty: the moment the cells show (`T 3.50S`).
+    pub time: String,
     /// One per cell: the value it took.
     pub labels: Vec<String>,
+    /// One per cell, or none: anything a reader has to know to believe the
+    /// label, dim under it. Empty notes take no room.
+    pub notes: Vec<String>,
+}
+
+impl SheetText {
+    /// A sheet with a title, a subtitle and a label a cell, and nothing else.
+    pub fn new(title: impl Into<String>, subtitle: impl Into<String>, labels: Vec<String>) -> Self {
+        Self {
+            title: title.into(),
+            subtitle: subtitle.into(),
+            time: String::new(),
+            labels,
+            notes: Vec::new(),
+        }
+    }
 }
 
 /// How big the letters are: a glyph pixel per `scale` image pixels.
@@ -44,10 +67,15 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
     let title_scale = scale + 1;
     let line = GLYPH * scale;
 
-    let head = GLYPH * title_scale + 6 * scale + line + 10 * scale;
-    let label_band = 6 * scale + line + 4 * scale;
-    let row_h = cell_h + 2 + label_band;
     let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
+    let subtitle = wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale);
+    let head = GLYPH * title_scale + 6 * scale + subtitle.len() as u32 * (line + 3 * scale)
+        - 3 * scale
+        + 10 * scale;
+    let noted = text.notes.iter().any(|note| !note.is_empty());
+    let note_band = if noted { 3 * scale + line } else { 0 };
+    let label_band = 6 * scale + line + note_band + 4 * scale;
+    let row_h = cell_h + 2 + label_band;
     let height = MARGIN * 2 + head + rows * row_h + (rows - 1) * GUTTER;
     let mut sheet = RgbaImage::from_pixel(width, height, PAPER);
     let font = GlyphAtlas::builtin();
@@ -62,8 +90,19 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
         TITLE,
         &text.title,
     );
+    if !text.time.is_empty() {
+        // Right-aligned on the title's line, clipped at the left margin
+        let advance = GLYPH * title_scale;
+        let fit = fit_text(&text.time, width - 2 * MARGIN, title_scale);
+        let w = fit.chars().count() as u32 * advance;
+        let x = (width - MARGIN).saturating_sub(w).max(MARGIN);
+        draw_text(&mut sheet, &font, x, y, title_scale, LABEL, &fit);
+    }
     y += GLYPH * title_scale + 6 * scale;
-    draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, &text.subtitle);
+    for (k, part) in subtitle.iter().enumerate() {
+        let y = y + k as u32 * (line + 3 * scale);
+        draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, part);
+    }
     let top = MARGIN + head;
 
     for (i, cell) in cells.iter().enumerate() {
@@ -84,8 +123,119 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
                 &fit,
             );
         }
+        if let Some(note) = text.notes.get(i).filter(|n| !n.is_empty()) {
+            let fit = fit_text(note, cell_w, scale);
+            let below = y + cell_h + 2 + 6 * scale + line + 3 * scale;
+            draw_text(&mut sheet, &font, x + 1, below, scale, DIM, &fit);
+        }
     }
     sheet
+}
+
+/// A two-key sheet's words (#358): the first key's values over the columns,
+/// the second's down the left of the rows.
+pub struct GridText {
+    pub title: String,
+    pub subtitle: String,
+    /// The key down the side, written over its labels.
+    pub row_key: String,
+    pub column_labels: Vec<String>,
+    pub row_labels: Vec<String>,
+}
+
+/// Lay `cells` (all one size, a row at a time) out as a grid of
+/// `column_labels.len()` columns, never wrapped: a column is one value
+/// all the way down, so the eye can run along either key.
+pub fn compose_grid(cells: &[RgbaImage], text: &GridText) -> RgbaImage {
+    let (cell_w, cell_h) = cells.first().map_or((1, 1), RgbaImage::dimensions);
+    let columns = text.column_labels.len().max(1) as u32;
+    let rows = cells.len().div_ceil(columns as usize).max(1) as u32;
+    let scale = text_scale(cell_w);
+    let title_scale = scale + 1;
+    let line = GLYPH * scale;
+
+    let column_band = line + 6 * scale;
+    let longest = text
+        .row_labels
+        .iter()
+        .chain(std::iter::once(&text.row_key))
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(1)
+        .min(16) as u32;
+    let side = longest * line + GUTTER;
+    let width = MARGIN * 2 + side + columns * (cell_w + 2) + (columns - 1) * GUTTER;
+    let subtitle = wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale);
+    let head = GLYPH * title_scale + 6 * scale + subtitle.len() as u32 * (line + 3 * scale)
+        - 3 * scale
+        + 10 * scale;
+    let height = MARGIN * 2 + head + column_band + rows * (cell_h + 2) + (rows - 1) * GUTTER;
+    let mut sheet = RgbaImage::from_pixel(width, height, PAPER);
+    let font = GlyphAtlas::builtin();
+
+    draw_text(
+        &mut sheet,
+        &font,
+        MARGIN,
+        MARGIN,
+        title_scale,
+        TITLE,
+        &text.title,
+    );
+    let y = MARGIN + GLYPH * title_scale + 6 * scale;
+    for (k, part) in subtitle.iter().enumerate() {
+        let y = y + k as u32 * (line + 3 * scale);
+        draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, part);
+    }
+    let band_y = MARGIN + head;
+    let top = band_y + column_band;
+    // The down key heads the row labels, level with the first row's top,
+    // apart from the column labels' line
+    let row_key = fit_text(&text.row_key, side - GUTTER, scale);
+    draw_text(&mut sheet, &font, MARGIN, top + 1, scale, DIM, &row_key);
+    let left = MARGIN + side;
+
+    for (c, label) in text.column_labels.iter().enumerate() {
+        let x = left + c as u32 * (cell_w + 2 + GUTTER);
+        let fit = fit_text(label, cell_w, scale);
+        draw_text(&mut sheet, &font, x + 1, band_y, scale, LABEL, &fit);
+    }
+    for (r, label) in text.row_labels.iter().enumerate() {
+        let y = top + r as u32 * (cell_h + 2 + GUTTER);
+        let fit = fit_text(label, side - GUTTER, scale);
+        // Level with the middle of the row
+        let mid = y + (cell_h + 2).saturating_sub(line) / 2;
+        draw_text(&mut sheet, &font, MARGIN, mid, scale, LABEL, &fit);
+    }
+    for (i, cell) in cells.iter().enumerate() {
+        let (c, r) = (i as u32 % columns, i as u32 / columns);
+        let x = left + c * (cell_w + 2 + GUTTER);
+        let y = top + r * (cell_h + 2 + GUTTER);
+        frame(&mut sheet, x, y, cell_w + 2, cell_h + 2);
+        image::imageops::replace(&mut sheet, cell, i64::from(x + 1), i64::from(y + 1));
+    }
+    sheet
+}
+
+/// `text` in lines that fit `width` pixels, broken only where it has two
+/// spaces (between its parts: what was swept, over what, at what scale), so
+/// a narrow sheet keeps every part instead of clipping the last.
+fn wrap_at_breaks(text: &str, width: u32, scale: u32) -> Vec<String> {
+    let max = (width / (GLYPH * scale)).max(1) as usize;
+    let mut lines: Vec<String> = Vec::new();
+    for part in text.split("  ") {
+        match lines.last_mut() {
+            Some(last) if last.chars().count() + 2 + part.chars().count() <= max => {
+                last.push_str("  ");
+                last.push_str(part);
+            }
+            _ => lines.push(part.to_string()),
+        }
+    }
+    lines
+        .into_iter()
+        .map(|l| fit_text(&l, width, scale))
+        .collect()
 }
 
 /// `text` shortened with `~` so it fits `width` pixels.
@@ -154,11 +304,6 @@ pub fn draw_text(
 /// Nothing styled still gets a card saying so, so an empty mask reads as
 /// empty rather than broken.
 pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::LegendEntry]) {
-    let (w, h) = img.dimensions();
-    let scale = (w / 640).clamp(1, 3);
-    let line = GLYPH * scale;
-    let pad = 6 * scale;
-    let gap = 4 * scale;
     let rows: Vec<(Option<[f32; 3]>, String)> = if entries.is_empty() {
         vec![(None, "no styled entities".to_string())]
     } else {
@@ -167,6 +312,24 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
             .map(|e| (Some(e.color), format!("{} {}", e.id, e.name)))
             .collect()
     };
+    let scale = (img.width() / 640).clamp(1, 3);
+    draw_card(img, "style mask", &rows, scale);
+}
+
+/// A legend card in the image's lower left: `title`, then a row each of
+/// a swatch (display values) and its text, or the text alone. The style
+/// mask view's (#309) and the ASCII edge view's (#349). `scale` is image
+/// pixels a font pixel.
+pub fn draw_card(
+    img: &mut RgbaImage,
+    title: &str,
+    rows: &[(Option<[f32; 3]>, String)],
+    scale: u32,
+) {
+    let (w, h) = img.dimensions();
+    let line = GLYPH * scale;
+    let pad = 6 * scale;
+    let gap = 4 * scale;
     let longest = rows
         .iter()
         .map(|(_, t)| t.chars().count())
@@ -186,7 +349,7 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
         }
     }
     let font = GlyphAtlas::builtin();
-    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, "style mask");
+    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, title);
     for (i, (color, text)) in rows.iter().enumerate() {
         let y = y0 + pad + header + i as u32 * (line + gap);
         let mut tx = x0 + pad;
@@ -223,11 +386,49 @@ mod tests {
     const BLUE: Rgba<u8> = Rgba([10, 10, 200, 255]);
 
     fn text(labels: &[&str]) -> SheetText {
-        SheetText {
-            title: "A Scene".into(),
-            subtitle: "ascii.cell".into(),
-            labels: labels.iter().map(|l| l.to_string()).collect(),
-        }
+        SheetText::new(
+            "A Scene",
+            "ascii.cell",
+            labels.iter().map(|l| l.to_string()).collect(),
+        )
+    }
+
+    /// #216's sheets say the moment, top right, in the label's ink.
+    #[test]
+    fn a_time_prints_top_right() {
+        let cells = vec![RgbaImage::from_pixel(240, 120, RED); 2];
+        let plain = compose(&cells, &text(&["0", "1"]));
+        let mut timed = text(&["0", "1"]);
+        timed.time = "T 3.50S".into();
+        let timed = compose(&cells, &timed);
+        assert_eq!(plain.dimensions(), timed.dimensions(), "no extra room");
+        let ink_right = |s: &RgbaImage| {
+            (s.width() / 2..s.width())
+                .flat_map(|x| (0..MARGIN + 24).map(move |y| (x, y)))
+                .filter(|&(x, y)| *s.get_pixel(x, y) != PAPER)
+                .count()
+        };
+        assert_eq!(ink_right(&plain), 0);
+        assert!(ink_right(&timed) > 0);
+    }
+
+    /// #216's notes: dim, under their own label, and only room when one is set.
+    #[test]
+    fn a_note_prints_under_its_label() {
+        let cells = vec![RgbaImage::from_pixel(240, 120, RED); 2];
+        let plain = compose(&cells, &text(&["0", "1"]));
+        let mut noted = text(&["0", "1"]);
+        noted.notes = vec![String::new(), "props read 0.3".into()];
+        let noted = compose(&cells, &noted);
+        assert!(noted.height() > plain.height(), "a note gets a line");
+        let dim_under_second = (MARGIN + 242 + GUTTER..noted.width())
+            .flat_map(|x| (plain.height() - MARGIN..noted.height()).map(move |y| (x, y)))
+            .filter(|&(x, y)| *noted.get_pixel(x, y) != PAPER)
+            .count();
+        assert!(dim_under_second > 0, "the note is under the second cell");
+        let mut empty = text(&["0", "1"]);
+        empty.notes = vec![String::new(); 2];
+        assert_eq!(compose(&cells, &empty).dimensions(), plain.dimensions());
     }
 
     fn count(sheet: &RgbaImage, color: Rgba<u8>) -> usize {
@@ -315,6 +516,63 @@ mod tests {
         }
         // The top right is untouched
         assert_eq!(*img.get_pixel(600, 20), Rgba([90, 90, 90, 255]));
+    }
+
+    fn grid_text(columns: &[&str], rows: &[&str]) -> GridText {
+        GridText {
+            title: "A Scene".into(),
+            subtitle: "sweep a x b".into(),
+            row_key: "b".into(),
+            column_labels: columns.iter().map(|l| l.to_string()).collect(),
+            row_labels: rows.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_grid_keeps_every_column_one_value_down() {
+        // Five across never wraps: a column is a value all the way down
+        let mut cells = vec![RgbaImage::from_pixel(40, 30, RED); 10];
+        cells[4] = RgbaImage::from_pixel(40, 30, BLUE);
+        cells[9] = RgbaImage::from_pixel(40, 30, BLUE);
+        let sheet = compose_grid(&cells, &grid_text(&["1", "2", "3", "4", "5"], &["x", "y"]));
+        assert_eq!(count(&sheet, RED), 8 * 40 * 30, "every cell whole");
+        let blue: Vec<(u32, u32)> = sheet
+            .enumerate_pixels()
+            .filter(|(_, _, p)| **p == BLUE)
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        let xs: std::collections::BTreeSet<u32> = blue.iter().map(|p| p.0).collect();
+        assert_eq!(xs.len(), 40, "both blue cells in one column");
+        let ys: std::collections::BTreeSet<u32> = blue.iter().map(|p| p.1).collect();
+        assert_eq!(ys.len(), 60, "...in two rows");
+        assert_eq!(*xs.iter().next_back().unwrap(), sheet.width() - MARGIN - 2);
+    }
+
+    #[test]
+    fn a_grid_labels_its_rows_on_the_left() {
+        let cells = vec![RgbaImage::from_pixel(240, 120, RED); 4];
+        let sheet = compose_grid(&cells, &grid_text(&["0", "1"], &["low", "high"]));
+        let left_of_cells = |s: &RgbaImage, y0: u32, y1: u32| {
+            (MARGIN..MARGIN + 3 * 8)
+                .flat_map(|x| (y0..y1).map(move |y| (x, y)))
+                .filter(|&(x, y)| *s.get_pixel(x, y) == LABEL || s.get_pixel(x, y)[0] > 150)
+                .count()
+        };
+        let h = sheet.height();
+        assert!(
+            left_of_cells(&sheet, h - MARGIN - 122, h - MARGIN) > 0,
+            "the last row's label"
+        );
+    }
+
+    #[test]
+    fn a_long_subtitle_wraps_between_its_parts() {
+        let t = "sweep a x b  over noir  1:1 240x135 at 220,130 of 640x360";
+        assert_eq!(wrap_at_breaks(t, 8 * 60, 1), [t]);
+        assert_eq!(
+            wrap_at_breaks(t, 8 * 30, 1),
+            ["sweep a x b  over noir", "1:1 240x135 at 220,130 of 640~"]
+        );
     }
 
     #[test]

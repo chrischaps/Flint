@@ -33,7 +33,38 @@ pub struct ValidateArgs {
     pub format: String,
 }
 
+/// What a scene load would warn about its `[post_process.styles]` (#318):
+/// unknown styles, keys and closed options' values, after its own user
+/// styles are registered. Warnings, not violations: the scene still loads.
+fn style_warnings(scene: &str) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(scene) else {
+        return Vec::new();
+    };
+    let Ok(file) = toml::from_str::<flint_scene::SceneFile>(&text) else {
+        return Vec::new(); // load_scene below says what is wrong with it
+    };
+    let Some(post) = file.post_process else {
+        return Vec::new();
+    };
+    let tables = post.style_tables();
+    if tables.is_empty() {
+        return Vec::new();
+    }
+    let scene_dir = std::path::Path::new(scene)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut warnings = flint_render::stylize::custom::load_dir(scene_dir);
+    warnings.extend(flint_render::stylize::StyleSettings::from_tables(&tables).1);
+    warnings
+}
+
 pub fn run(args: ValidateArgs) -> Result<()> {
+    // Style tables first: they are checked whether or not any constraints
+    // exist, on stderr so `--format json` stays one document
+    for warning in style_warnings(&args.scene) {
+        eprintln!("warning: {warning}");
+    }
+
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {

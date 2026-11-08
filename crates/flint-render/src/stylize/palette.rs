@@ -65,7 +65,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         // The scene's own palettes too, as ASCII offers them (#322)
         discover: Some(super::ascii::palette_choices),
     }],
-    uses_mask: false,
+    uses_mask: super::MaskUse::Never,
     needs: &[],
     hints: &[
         StyleHint::new(

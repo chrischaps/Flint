@@ -2,6 +2,7 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+mod camera_cut;
 mod debug_panels;
 mod egui_input;
 mod events;
@@ -208,6 +209,8 @@ pub struct PlayerApp {
     render_context: Option<RenderContext>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
+    /// Resets style history when the camera cuts (#343)
+    camera_cut: camera_cut::CameraCutDetector,
 
     // Skeletal animation: entity_id → asset name for bone matrix updates
     skeletal_entity_assets: HashMap<flint_core::EntityId, String>,

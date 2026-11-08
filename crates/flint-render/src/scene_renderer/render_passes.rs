@@ -645,7 +645,7 @@ impl SceneRenderer {
         self.draw_bind_cache.arena = arena;
     }
 
-    /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
+    /// Execute the main render pass: skybox → terrain → entities → grid → sprites → particles → debug.
     #[profiling::function]
     pub(super) fn render_main_pass<'a>(
         &'a self,
@@ -744,24 +744,15 @@ impl SceneRenderer {
             }
         }
 
-        // Render grid
-        if phase.draws_opaque() {
-            if let Some(grid) = &self.grid_draw {
-                render_pass.set_pipeline(&self.pipeline.line_pipeline);
-                render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
-            }
-        }
-
         // In WireframeOnly mode: depth prepass masks outline interior,
         // then outline, then wireframe lines on top.
         if wireframe_only {
             self.render_wireframe_only_pass(render_pass);
+            if phase.draws_opaque() {
+                self.draw_editor_grid(render_pass);
+            }
         } else {
+            // The editor grid is drawn in here, after the opaque geometry.
             self.render_normal_pass(render_pass, phase);
         }
 
@@ -807,6 +798,26 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
+    }
+
+    /// The editor grid, as an overlay (#346): depth-tested against what is
+    /// already drawn, with the line bias, but never writing depth. Drawn
+    /// after the opaque geometry, so the grid still shows on a floor at
+    /// y = 0 and hides behind anything standing on it, while the depth that
+    /// styles, SSAO, fog and the edge passes read holds only the scene. With
+    /// depth writes, ASCII's edges traced every grid line.
+    fn draw_editor_grid<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        let Some(grid) = &self.grid_draw else {
+            return;
+        };
+        render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+        // Billboards may have left their texture group at slot 2.
+        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+        render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
+        render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
     }
 
     /// Draw the wireframe edges of every skinned draw call (opaque and
@@ -1152,7 +1163,10 @@ impl SceneRenderer {
                     }
                 }
             }
-        } // end opaque phase (outlines + entities + skinned + billboards)
+
+            // After every opaque draw: an overlay, not geometry (#346)
+            self.draw_editor_grid(render_pass);
+        } // end opaque phase (outlines + entities + skinned + billboards + grid)
 
         if !phase.draws_ocean_and_after() {
             return;
@@ -1321,6 +1335,9 @@ impl SceneRenderer {
         // The `style` debug view shows the mask over the plain scene (#334):
         // mask_view runs alone, so no other style's output speckles its hues
         let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        // and the `edges` view (#349) shows the ASCII style's edge passes
+        // over the plain scene: ASCII alone, drawing its edge view
+        let solo = solo.or((self.debug_state.mode == DebugMode::StyleEdges).then_some("ascii"));
         let hdr_styles = crate::stylize::solo(
             pp.styles
                 .active(crate::stylize::StyleStage::Hdr, config, ids),
@@ -1366,12 +1383,14 @@ impl SceneRenderer {
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
+                dt: self.style_dt,
                 frame: self
                     .style_frame_serial
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
+                debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,
             }
@@ -1599,6 +1618,21 @@ impl SceneRenderer {
             self.grass_instance_count = count.min(self.grass_max_instances);
         }
 
+        // Only the cells within reach of the camera are dispatched (ADR 0089)
+        let spacing = 1.0 / config.density.sqrt();
+        let window = grass_dispatch_window(
+            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
+            [self.grass_terrain_width, self.grass_terrain_depth],
+            spacing,
+            [camera.position.x, camera.position.z],
+            config.max_distance,
+        );
+        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
+        let workgroups_x = count_x.div_ceil(8);
+        let workgroups_z = count_z.div_ceil(8);
+        let group_count = workgroups_x * workgroups_z;
+        self.ensure_grass_group_slots(device, group_count);
+
         let grass_pipeline = match &self.grass_pipeline {
             Some(p) => p,
             None => return,
@@ -1617,22 +1651,11 @@ impl SceneRenderer {
             None => return,
         };
 
-        // Reset the draw arguments to no blades; the compute pass counts them in
+        // Reset the draw arguments to no blades; the scan pass counts them in
         let Some(draw_args) = &self.grass_draw_args_buffer else {
             return;
         };
         queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
-
-        // Only the cells within reach of the camera are dispatched (ADR 0089)
-        let spacing = 1.0 / config.density.sqrt();
-        let window = grass_dispatch_window(
-            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
-            [self.grass_terrain_width, self.grass_terrain_depth],
-            spacing,
-            [camera.position.x, camera.position.z],
-            config.max_distance,
-        );
-        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
 
         // Only the blades in view are drawn. The planes are pushed out by the
         // tallest blade, and with shadows on by how far its shadow reaches,
@@ -1671,7 +1694,7 @@ impl SceneRenderer {
             // A terrain's samples sit on its mesh's vertices; a game's
             // ground map's in its cells (ADR 0098)
             height_at_corners: !self.grass_on_ground as u32,
-            _pad0: 0,
+            group_count,
             _pad1: 0,
             _pad2: 0,
             frustum_planes,
@@ -1712,19 +1735,23 @@ impl SceneRenderer {
         }
 
         // Compute dispatch over the window (none when the camera is out of reach;
-        // the counter, reset above, then reads zero)
-        let workgroups_x = count_x.div_ceil(8);
-        let workgroups_z = count_z.div_ceil(8);
-
-        if workgroups_x > 0 && workgroups_z > 0 {
+        // the counter, reset above, then reads zero). Three passes put the
+        // blades in grid order, the same every run (#341): an atomic append
+        // ordered them by which GPU thread got there first, and the blade
+        // drawn first wins a depth tie, so captures moved by a level.
+        if group_count > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Grass Compute Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&grass_pipeline.compute_pipeline);
             pass.set_bind_group(0, compute_uniform_bg, &[]);
             pass.set_bind_group(1, compute_texture_bg, &[]);
             pass.set_bind_group(2, compute_storage_bg, &[]);
+            pass.set_pipeline(&grass_pipeline.count_pipeline);
+            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
+            pass.set_pipeline(&grass_pipeline.scan_pipeline);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&grass_pipeline.emit_pipeline);
             pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
         }
 

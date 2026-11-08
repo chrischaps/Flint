@@ -98,6 +98,7 @@ mod spec;
 mod targets;
 pub mod text;
 
+pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
@@ -131,12 +132,27 @@ impl StyleStage {
 }
 
 /// One numeric parameter a style takes, with the range the F4 menu offers.
+/// A value outside it is refused by `--style` and warned about in a scene
+/// table (#355): a style clamps it or draws it badly.
 #[derive(Clone, Copy, Debug)]
 pub struct StyleParam {
     pub name: &'static str,
     pub default: f32,
     pub min: f32,
     pub max: f32,
+}
+
+impl StyleParam {
+    /// Why `value` won't draw as written, when it lies outside
+    /// `min..=max`: "cell=400 is outside its range 4..32". `None` inside.
+    pub fn range_error(&self, value: f32) -> Option<String> {
+        (value < self.min || value > self.max).then(|| {
+            format!(
+                "{}={value} is outside its range {}..{}",
+                self.name, self.min, self.max
+            )
+        })
+    }
 }
 
 /// One named choice a style takes (a font, a ramp, a colour mode): a
@@ -176,6 +192,20 @@ impl StyleOption {
     pub const fn discovered(mut self, discover: fn(&ChoiceScope<'_>) -> Vec<String>) -> Self {
         self.discover = Some(discover);
         self
+    }
+
+    /// Whether `choices` are the only values (#318): a fixed list with
+    /// nothing found at run time (a colour mode, a scope). A scene asking
+    /// for another is warned at load with the list. Discovered choices are
+    /// suggestions (a font's ramps, a palette that may be a file path), and
+    /// an empty list takes any text.
+    pub fn closed(&self) -> bool {
+        self.discover.is_none() && !self.choices.is_empty()
+    }
+
+    /// A value this option will never mean: outside a closed list.
+    pub fn refuses(&self, value: &str) -> bool {
+        self.closed() && !self.choices.contains(&value)
     }
 
     /// The values to offer for this option in `scope`: what `discover`
@@ -410,6 +440,46 @@ pub enum StyleNeed {
     Edges,
 }
 
+/// Whether a style reads the entity style mask (#263), and when (#350).
+#[derive(Clone, Copy)]
+pub enum MaskUse {
+    /// Never: the mask is drawn for it only if it is per-entity and an
+    /// entity names it.
+    Never,
+    /// Whenever the style is on.
+    Always,
+    /// While the style is on and this says so for the frame's config and
+    /// ids: ASCII's outlines read it only with `edges > 0` and something
+    /// styled to outline.
+    When(fn(&PostProcessConfig, &StyleIds) -> bool),
+}
+
+impl MaskUse {
+    /// Whether the style may read the mask at all (`--list-styles`).
+    pub fn ever(self) -> bool {
+        !matches!(self, MaskUse::Never)
+    }
+
+    /// Whether it reads the mask under `config` with these ids.
+    pub fn now(self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        match self {
+            MaskUse::Never => false,
+            MaskUse::Always => true,
+            MaskUse::When(f) => f(config, ids),
+        }
+    }
+}
+
+impl std::fmt::Debug for MaskUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MaskUse::Never => "Never",
+            MaskUse::Always => "Always",
+            MaskUse::When(_) => "When(..)",
+        })
+    }
+}
+
 /// A registered style: what it is called, where it runs and how to make it.
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
@@ -422,9 +492,10 @@ pub struct StyleDescriptor {
     /// Named choices and their defaults, read with [`StyleFrame::option`].
     pub options: &'static [StyleOption],
     /// Whether the style reads the entity style mask (#263). While any
-    /// such style is on, the renderer draws the mask each frame and hands
-    /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
-    pub uses_mask: bool,
+    /// such style is on and [`MaskUse::now`] holds, the renderer draws the
+    /// mask each frame and hands it over as [`StyleFrame::mask`]; while
+    /// none is, the mask isn't made.
+    pub uses_mask: MaskUse,
     /// Framework-made inputs the style reads (#301). While any style that
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
@@ -465,12 +536,13 @@ impl StyleDescriptor {
         self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
     }
 
-    /// Whether this style reads the style mask this frame: it always does
-    /// (`uses_mask`), or it is per-entity and an entity names it, opt-outs
-    /// included.
+    /// Whether this style reads the style mask this frame: its `uses_mask`
+    /// says so for this config, or it is per-entity and an entity names
+    /// it, opt-outs included.
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
-            && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
+            && (self.uses_mask.now(config, ids)
+                || (self.component.is_some() && ids.mentions(self.name)))
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -759,6 +831,12 @@ pub struct StyleFrame<'a> {
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
     pub time: f32,
+    /// Seconds of game time since the last frame (#342), for history that
+    /// decays at a rate rather than a step a frame. Game time, so it is the
+    /// fixed step under `--frame-step` and the capture is deterministic.
+    /// Read it through [`per_60hz`] to turn a per-60 Hz-frame weight into
+    /// this frame's.
+    pub dt: f32,
     /// This frame's number: one more than the last frame the renderer drew
     /// through the post chain. A style that keeps history from frame to
     /// frame (ASCII's temporal stability, #277) trusts it only when the
@@ -776,8 +854,26 @@ pub struct StyleFrame<'a> {
     /// The scene's folder, for styles that load files (a glyph set from
     /// `fonts/`), when the host knows it.
     pub scene_dir: Option<&'a std::path::Path>,
+    /// The renderer's debug shading mode: a style with a debug view of its
+    /// own draws it under its mode (ASCII's edges under
+    /// [`DebugMode::StyleEdges`](crate::DebugMode::StyleEdges), #349).
+    pub debug_mode: crate::DebugMode,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
+}
+
+/// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
+/// as this frame's weight, `w^(dt * 60)` (#342): at 120 Hz two frames keep
+/// what one 60 Hz frame keeps, at 30 Hz one frame keeps what two do, so a
+/// change settles in the same game time at any rate. A `dt` that isn't a
+/// positive number says nothing about the rate and reads as 1/60.
+pub fn per_60hz(w: f32, dt: f32) -> f32 {
+    let dt = if dt.is_finite() && dt > 0.0 {
+        dt
+    } else {
+        1.0 / 60.0
+    };
+    w.clamp(0.0, 1.0).powf(dt * 60.0)
 }
 
 impl StyleFrame<'_> {
@@ -1232,9 +1328,19 @@ impl StyleSettings {
                     }
                     continue;
                 }
-                if descriptor.options.iter().any(|o| o.name == key) {
+                if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
                     match value.as_str() {
+                        // Kept all the same: the style falls back to its
+                        // default, and F4 shows the stray value as it is
                         Some(text) => {
+                            if option.refuses(text) {
+                                warnings.push(format!(
+                                    "styles.{name}.{key}: unknown value '{text}'; \
+                                     it takes: {} (drawing as '{}')",
+                                    option.choices.join(", "),
+                                    option.default
+                                ));
+                            }
                             setting.options.insert(key.clone(), text.to_string());
                         }
                         None => warnings.push(format!("styles.{name}.{key} must be a string")),
@@ -1245,6 +1351,12 @@ impl StyleSettings {
                     match color_from_toml(value) {
                         Some(rgb) => {
                             for (p, v) in color.channels.iter().zip(rgb) {
+                                if let Some(e) = p.range_error(v) {
+                                    warnings.push(format!(
+                                        "styles.{name}.{key}: {e}; kept as written, \
+                                         past what the style is tuned for"
+                                    ));
+                                }
                                 setting.params.insert(p.name.to_string(), v);
                             }
                         }
@@ -1254,7 +1366,7 @@ impl StyleSettings {
                     }
                     continue;
                 }
-                if !descriptor.params.iter().any(|p| p.name == key) {
+                let Some(param) = descriptor.params.iter().find(|p| p.name == key) else {
                     let known = descriptor.setting_keys();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
@@ -1265,12 +1377,19 @@ impl StyleSettings {
                         }
                     ));
                     continue;
-                }
+                };
                 let number = value
                     .as_float()
                     .or_else(|| value.as_integer().map(|i| i as f64));
                 match number {
                     Some(n) => {
+                        // Kept as written, as a stray option is: F4 shows
+                        // it, and the style decides what to draw
+                        if let Some(e) = param.range_error(n as f32) {
+                            warnings.push(format!(
+                                "styles.{name}.{e}; kept as written, past what the style is tuned for"
+                            ));
+                        }
                         setting.params.insert(key.clone(), n as f32);
                     }
                     None => warnings.push(format!("styles.{name}.{key} must be a number")),
@@ -1761,6 +1880,20 @@ pub fn names() -> Vec<&'static str> {
 mod tests {
     use super::*;
 
+    /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz
+    /// frame what two do, and a dt that says nothing reads as 1/60.
+    #[test]
+    fn per_60hz_weights_keep_the_same_share_per_second() {
+        let w = 0.6;
+        assert!((per_60hz(w, 1.0 / 60.0) - w).abs() < 1e-6);
+        assert!((per_60hz(w, 1.0 / 120.0).powi(2) - w).abs() < 1e-6);
+        assert!((per_60hz(w, 1.0 / 30.0) - w * w).abs() < 1e-6);
+        for dt in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(per_60hz(w, dt), per_60hz(w, 1.0 / 60.0), "dt {dt}");
+        }
+        assert_eq!(per_60hz(0.0, 1.0 / 144.0), 0.0);
+    }
+
     #[test]
     fn registry_names_are_unique_and_lowercase() {
         let names = names();
@@ -1818,7 +1951,17 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(colors, vec![("tint", ["tint_r", "tint_g", "tint_b"])]);
+        assert_eq!(
+            colors,
+            vec![
+                ("tint", ["tint_r", "tint_g", "tint_b"]),
+                // #351
+                (
+                    "edge_color",
+                    ["edge_color_r", "edge_color_g", "edge_color_b"]
+                ),
+            ]
+        );
         // Every param is reachable exactly once
         for d in registry() {
             let mut seen: Vec<&str> = Vec::new();
@@ -1842,8 +1985,10 @@ mod tests {
     fn a_colour_is_one_key_in_a_scene() {
         let ascii = find("ascii").unwrap();
         let colors = ascii.colors();
-        assert_eq!(colors.len(), 1);
+        // The tint, and the edge ink's colour (#351)
+        assert_eq!(colors.len(), 2);
         assert_eq!(colors[0].base, "tint");
+        assert_eq!(colors[1].base, "edge_color");
         assert_eq!(colors[0].default_rgb(), [0.35, 1.0, 0.45]);
         assert_eq!(ascii.color_of("tint_g").unwrap().base, "tint");
         assert!(ascii.color_of("glow").is_none());
@@ -2176,16 +2321,40 @@ mod tests {
         assert!(warnings[0].contains("unknown style 'nope'"), "{warnings:?}");
 
         let tables: BTreeMap<String, toml::Table> =
-            toml::from_str("[invert]\nenabled = false\nstrength = 2\nwobble = 3\n").unwrap();
+            toml::from_str("[invert]\nenabled = false\nstrength = 1\nwobble = 3\n").unwrap();
         let (settings, warnings) = StyleSettings::from_tables(&tables);
         assert!(!settings.is_enabled("invert"));
         assert_eq!(
             settings.param("invert", "strength"),
-            Some(2.0),
+            Some(1.0),
             "integers read as numbers"
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn a_table_value_outside_its_range_warns_and_is_kept() {
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[invert]\nstrength = 2\n[ascii]\ncell = 8\ntint = [0.3, 1.5, 0.4]\n")
+                .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        // Kept as written, as a stray option is: F4 shows it
+        assert_eq!(settings.param("invert", "strength"), Some(2.0));
+        assert_eq!(settings.param("ascii", "tint_g"), Some(1.5));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with("styles.invert.strength=2 is outside its range 0..1")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("styles.ascii.tint: tint_g=1.5 is outside its range 0..1")),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -2251,6 +2420,52 @@ mod tests {
             toml::from_str("[ascii]\nglyphs = 1\n").unwrap();
         let (_, warnings) = StyleSettings::from_tables(&tables);
         assert!(warnings[0].contains("ramp"), "{warnings:?}");
+    }
+
+    #[test]
+    fn closed_options_warn_on_unknown_values_at_load() {
+        // #318: a colour mode is one of a fixed few; "plaid" is warned with
+        // the list and the default it draws as, and is kept as written
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[ascii]\ncolor = \"plaid\"\n").unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("styles.ascii.color")
+                && warnings[0].contains("'plaid'")
+                && warnings[0].contains("source, tint, raw")
+                && warnings[0].contains("drawing as 'source'"),
+            "{warnings:?}"
+        );
+        assert_eq!(settings.option("ascii", "color"), Some("plaid"));
+
+        // Every closed option of every built-in style warns the same way
+        for d in registry() {
+            for o in d.options.iter().filter(|o| o.closed()) {
+                assert!(
+                    !o.choices.is_empty(),
+                    "{}.{} closed on nothing",
+                    d.name,
+                    o.name
+                );
+                assert!(o.choices.contains(&o.default), "{}.{}", d.name, o.name);
+                let toml = format!("[{}]\n{} = \"plaid\"\n", d.name, o.name);
+                let tables: BTreeMap<String, toml::Table> = toml::from_str(&toml).unwrap();
+                let (_, warnings) = StyleSettings::from_tables(&tables);
+                assert_eq!(warnings.len(), 1, "{}.{}: {warnings:?}", d.name, o.name);
+            }
+        }
+
+        // A known value is quiet, and open lists only suggest: a glyph set's
+        // own ramp and a palette file load without a word
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            "[ascii]\ncolor = \"palette\"\nramp = \"runes\"\n\
+             palette = \"palettes/dusk.palette.toml\"\nfont = \"mono\"\n\
+             [pencil]\ndirection = \"tensor\"\n",
+        )
+        .unwrap();
+        let (_, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

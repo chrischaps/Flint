@@ -672,7 +672,7 @@ mod tests {
         stage: StyleStage::Display,
         params: &[],
         options: &[StyleOption::new("file", "", &[])],
-        uses_mask: false,
+        uses_mask: flint_render::stylize::MaskUse::Never,
         needs: &[],
         hints: &[],
         component: None,
