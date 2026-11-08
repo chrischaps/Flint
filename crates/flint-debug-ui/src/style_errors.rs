@@ -65,11 +65,14 @@ pub fn paint_style_errors(ctx: &egui::Context, errors: &[(String, String)], bott
                         }
                     }
                     ui.add_space(4.0);
+                    // A bundle is fixed: nothing reloads on the web (#415)
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let hint = "Its last good build (or its input, unchanged) draws meanwhile. \
+                                Save the file to try again.";
+                    #[cfg(target_arch = "wasm32")]
+                    let hint = "Its input draws unchanged. Fix the file and pack the bundle again.";
                     ui.label(
-                        RichText::new(
-                            "Its last good build (or its input, unchanged) draws meanwhile. \
-                             Save the file to try again.",
-                        )
+                        RichText::new(hint)
                         .color(quiet)
                         .font(FontId::proportional(11.5)),
                     );

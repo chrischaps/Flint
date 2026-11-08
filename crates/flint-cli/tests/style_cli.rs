@@ -60,7 +60,7 @@ fn new_then_check_exits_zero_and_lists_it() {
     let out = flint(&dir, &["style", "list", "levels/a.scene.toml"]);
     assert!(out.status.success(), "{}", text(&out));
     assert!(
-        text(&out).contains("dusk (Dusk) [display, user, reads mask]"),
+        text(&out).contains("dusk (Dusk) [display, user, per-entity: dusk_style, reads mask]"),
         "{}",
         text(&out)
     );

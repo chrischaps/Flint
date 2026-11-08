@@ -85,7 +85,9 @@ integer = false
   `<base>_r/_g/_b` params fold into a colour picker. All of this comes
   from the descriptor, with no code per style.
 - **No string options in v1.** Options exist for fonts and ramps, which
-  a WGSL function can't use without textures (see Follow-ups).
+  a WGSL function can't use without textures (see Follow-ups). *#413
+  added both, still `version = 1` since the additions are compatible:
+  see "Built in #413" below.*
 
 ### 2. The shader: one function, the framework writes the rest
 
@@ -163,7 +165,8 @@ prototype; #275 wires the player and viewer.
 | no `fn style`, a binding, an entry point of the user's own | naga IR check | the same as above |
 | the backend's own compiler refuses what naga passed | `push_error_scope` around the pipeline (blocking natively) | the same as above |
 | a later edit breaks it (hot reload) | rebuild | the **last good build keeps drawing**; the error replaces the old one; fixing it logs "compiles again" |
-| a loop that never ends | **not detectable** | warned at check: "N loops: a loop that never ends hangs the GPU until the driver resets it (TDR)"; >32 texture reads written out are warned too |
+| a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the loop runs as written, unguarded |
+| many texture reads | check | >32 reads written out are warned |
 | the shader crashes the driver | `catch_unwind` around `create` (ADR 0111) | the style stays off; the renderer reports a lost device |
 
 `stylize::custom::errors()` lists each style's current error for the host
@@ -185,11 +188,47 @@ considered three mitigations:
   common thing a style does.
 - *Inject a guard counter into every naga `Loop`* and write the module
   back out with naga's WGSL backend. This is sound and invisible to the
-  user, and it costs one compare a loop iteration. It needs naga's
-  `wgsl-out` and an IR rewrite. Filed as a follow-up, recommended before
-  user styles ship in a bundle someone else wrote.
-- *Warn* (chosen for v1). User styles today are written by the game's own
-  author, who sees the warning on the first render.
+  user, and it costs one add and one compare a loop iteration. It needs
+  naga's `wgsl-out` and an IR rewrite. **Chosen in #411** (natively).
+- *Warn* (v1, #274). User styles were written by the game's own author,
+  who saw the warning on the first render. It is still what a check says
+  when the guard is off (`custom::set_loop_guard(false)`, for tests).
+
+**The guard (#411).** After naga parses and validates the composed module,
+`custom::check` walks every `Statement::Loop` in the user's functions (the
+prelude's and the entry points are left alone). Each loop gets a `u32`
+local of its own, stored 0 just before the loop (so a nested loop's count
+starts again each time its outer loop turns), incremented at the end of
+`continuing`, and `break if` that reaches `LOOP_LIMIT` (4096), or-ed with
+the loop's own `break if` when it has one. `continue` goes through
+`continuing`, so every turn counts. The module is validated again and
+written out with `naga::back::wgsl`, and wgpu builds that text
+(`Report::guarded`); a style without loops builds its composed text as
+before. What it costs and shows:
+
+- A loop that ends on its own within the limit runs exactly as written: a
+  9x9 blur draws byte for byte the same guarded as not
+  (`a_bounded_loop_draws_the_same_guarded`, in `tests/stylize.rs`), which
+  also shows naga's written-out module draws what the composed text did.
+- A `loop {}` style draws a frame (`a_loop_that_never_ends_draws_a_frame`,
+  37 ms built and drawn, and `flint render` of such a scene: 0.9 ms of GPU
+  at 960x540, the whole command 1.2 s). Before, it hung the GPU until TDR.
+- The limit is per run of a loop, so nested loops multiply (a 64x64
+  kernel is fine). A loop that needs more than 4096 turns a pixel is far
+  past what a full-screen pass can afford anyway.
+- Errors still point into the user's file: they come from the first
+  parse, before the rewrite. The guard's own failure (re-validation or
+  writing) is reported as a Flint bug and the style draws a passthrough;
+  the unguarded text is never built.
+
+**On the web the guard is not run.** The player has no naga on wasm (§6):
+shipping `wgsl-in`, the validator and `wgsl-out` would put most of naga
+into the web build against the 4 MB gzip line (#123), to guard styles that
+`flint bundle` has already checked natively. The cheaper road is for the
+bundle to carry the guarded module, written at pack time, so the browser
+compiles that with no naga at all (#550). Until then a
+runaway loop in a bundle loses the device in the browser, as before (not
+tried here).
 
 ### 5. Hot reload
 
@@ -209,7 +248,7 @@ scene's `[post_process]` (see "Built in #275" below).
   through wgpu's error scope, which can't be awaited inside a frame, so
   the browser logs them. The style still falls back, because the pipeline
   is invalid, but `errors()` doesn't learn why. #275 can resolve the
-  scope's future on the next frame to report it.
+  scope's future on the next frame to report it. *Built in #415, below.*
 - **No hot reload on the web.** There is no file to poll; a bundle is
   fixed.
 - **Bundles already carry them.** `flint bundle` packs `.toml` and
@@ -328,6 +367,77 @@ A game folder outside the engine (`levels/garden.scene.toml`,
 render`, played in `flint-player`, hot-reloaded both files mid-run, and
 bundled and played from the bundle with `flint-player --bundle`, the same
 `MemorySource` path the browser takes. The browser itself wasn't run.
+
+### Built in #415: the browser's errors
+
+- **naga still stays out.** wgpu builds naga's WGSL front end for wasm
+  (`wgpu-core` with `wgsl` is in the tree), but on wasm only the `webgl`
+  backend calls it, and the web build has WebGPU alone, so the linker
+  drops it. Running `check` in the browser would put the front end and
+  the validator into the download.
+- **A build waits for the GPU's answer.** `rebuild` creates the pipeline
+  as *pending* and keeps two futures: `ShaderModule::get_compilation_info()`
+  (the compiler's messages, with lines in the composed module) and the
+  validation error scope's `pop_error_scope()` (the pipeline against its
+  layout too). Neither is awaited: the pass polls both with a no-op waker
+  each frame (`Settling`) and only then trusts the pipeline. Natively both
+  are ready on the first poll, inside `rebuild`, so native and web share
+  one path and the native tests drive the web's (a future that answers on
+  a later poll). An invalid pipeline in a WebGPU pass invalidates the
+  frame's command buffer, so until the answer the last good build (or the
+  passthrough) draws.
+- **Lines in the user's file.** `compiler_error` takes the first
+  `Error` message and maps its line through `Composed::user_line`, by the
+  same `locate` naga's errors use: `file:line:col: message`, the line
+  quoted, `(and N more)` after it. The message lands in the style's error
+  slot, so `errors()`, the player's card and the console show it.
+- **What reaches the browser.** `flint bundle` refuses what naga refuses,
+  so a bundle carries only styles the browser is stricter about. The one
+  found here is derivative uniformity: naga doesn't check it in fragment
+  shaders, while Tint refuses `fwidth`/`dpdx`/`dpdy` under a branch on a
+  pixel's value (`flint_sample` is `textureSampleLevel`, which has no
+  such rule). In Chrome a style calling `fwidth` there drew its input,
+  and about 0.8 s after the first frame the card and the console read
+  `styles/frost.wgsl:12:42: 'fwidth' must only be called from uniform
+  control flow`, with the line quoted.
+
+## Built in #413: images and string options
+
+- **`[images.<name>] file = "..."`** binds a PNG or JPEG beside the
+  description in group 3 (the slot section 2 left free), 8 bits a
+  channel, one mip, `Rgba8Unorm` (stored values) or with `srgb = true`
+  `Rgba8UnormSrgb`. Up to 8 a style. The helpers are
+  `flint_image_<name>(uv)`, `flint_image_tiled_<name>(uv)` (manual
+  bilinear over `textureLoad`, so it wraps without a repeat sampler),
+  `flint_image_size_<name>()` and `flint_lut_<name>(rgb)` (a strip LUT,
+  trilinear from two bilinear reads).
+- **No new sampler.** The images are read with group 1's
+  `flint_sampler`, so group 3 holds textures only and adds nothing to the
+  DX12 sampler heap. Its bind group is the pass's own, made again only
+  when a view changes.
+- **`[options.<name>]`**, kind `choice` (default) or `image`. Options sit
+  in `Params` after the floats, one `u32` each (the index into the
+  choices), and a choice that is a word gets `FLINT_<OPTION>_<CHOICE>`.
+  An image option is also an image binding. With no `choices` it lists
+  the images in its default's folder **once, at load**, and leaks them as
+  a fixed list. That makes every user option closed, so the #318 warning
+  and `--style`'s refusal apply with no new code. The cost: an image added
+  to that folder appears after the `.shader.toml` is next saved (or the
+  next run), not on its own.
+- **Failure.** Every file an image may read is checked to exist at load
+  (`flint bundle` refuses a missing one). Images decode on the first draw,
+  through the vfs. Until each has read once the style is a passthrough
+  with its error; afterwards a file that fails keeps the last good
+  picture. Image errors are kept apart from the shader's, since a good
+  shader build would clear them otherwise.
+- **Reload.** Every 15 frames, natively, the pass stats each image's file
+  and decodes one whose modified time moved. A new choice from the scene
+  or F4 loads on the frame it's made.
+- **Per-entity rows (#414).** A mask-reading style's options sit in every
+  row of the settings table, so an entity's `<name>_style` can set a
+  choice option of its own. An image option is one binding for the
+  frame: it shows the scene's file, and an entity's value changes only
+  its index in `params`.
 
 ## Follow-ups
 

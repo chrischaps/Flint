@@ -52,10 +52,13 @@ fn toml(name: &str, stage: StyleStage, inputs: Inputs) -> String {
     let label = super::super::humanize(name);
     let mask_note = if inputs.mask {
         format!(
-            "\n# With \"mask\", the style reaches the entities that carry\n\
+            "\n# With \"mask\", the style is per-entity (#414): it reaches the entities\n\
+             # that carry\n\
              #   [entities.<n>.style_mask]\n\
              #   style = \"{name}\"\n\
-             # and flint_style_blend(uv) says how much of it each pixel asks for.\n"
+             # or the component `{name}_style`, whose fields are the params below\n\
+             # (each entity its own `amount`) plus `enabled` and `blend`.\n\
+             # flint_style_blend(uv) says how much of it each pixel asks for.\n"
         )
     } else {
         String::new()
@@ -144,10 +147,11 @@ fn wgsl(name: &str, stage: StyleStage, inputs: Inputs) -> String {
     if inputs.mask {
         helpers.push_str(
             "//   flint_mask_id(uv) -> u32      the style mask id (0 = no style)\n\
-             //   flint_style_blend(uv) -> f32  0 off this style's entities, else their blend\n",
+             //   flint_style_blend(uv) -> f32  0 off this style's entities, else their blend\n\
+             //   flint_params_at(uv) -> Params a neighbour's settings (params is this pixel's)\n",
         );
         tries.push_str(&format!(
-            "    // Only on entities with `style_mask {{ style = \"{name}\" }}`:\n    \
+            "    // Only on entities with `style_mask {{ style = \"{name}\" }}` or `{name}_style`:\n    \
              // let mine = flint_style_blend(p.uv);\n"
         ));
     }
