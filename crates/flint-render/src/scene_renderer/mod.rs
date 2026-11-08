@@ -662,6 +662,11 @@ pub struct SceneRenderer {
     /// What callers set (`set_post_process_config`): the scene's look, kept
     /// whole so lifting a quality cap brings its effect back.
     authored_postprocess: PostProcessConfig,
+    /// A fresh [`next_post_config_generation`] whenever the drawn
+    /// configuration may have changed, so a host mirroring it (scripts'
+    /// style reads, #372) copies it only then. Unique in the process, so a
+    /// rebuilt renderer never repeats an old one's.
+    post_config_generation: u64,
     /// The quality settings in force (FlintKart#55, `set_quality`).
     quality: crate::quality::QualitySettings,
     /// Render scale (#122): the HDR chain is this fraction of the surface on
@@ -704,6 +709,14 @@ pub struct SceneRenderer {
     entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
+}
+
+/// A number no other call in this process returns, for
+/// [`SceneRenderer::post_config_generation`].
+fn next_post_config_generation() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl SceneRenderer {
@@ -933,6 +946,7 @@ impl SceneRenderer {
             postprocess_resources: Some(postprocess_resources),
             authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            post_config_generation: next_post_config_generation(),
             quality: crate::quality::QualitySettings {
                 msaa: sample_count,
                 ..Default::default()
@@ -2460,6 +2474,7 @@ impl SceneRenderer {
             postprocess_resources: Some(postprocess_resources),
             authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            post_config_generation: next_post_config_generation(),
             quality: crate::quality::QualitySettings {
                 msaa: sample_count,
                 ..Default::default()
@@ -4925,6 +4940,15 @@ impl SceneRenderer {
     pub fn set_post_process_config(&mut self, config: PostProcessConfig) {
         self.postprocess_config = crate::quality::mask_post_process(&config, &self.quality);
         self.authored_postprocess = config;
+        self.post_config_generation = next_post_config_generation();
+    }
+
+    /// A number that changes whenever [`effective_post_process_config`]
+    /// may have: a host keeping a copy of it re-reads it only then.
+    ///
+    /// [`effective_post_process_config`]: Self::effective_post_process_config
+    pub fn post_config_generation(&self) -> u64 {
+        self.post_config_generation
     }
 
     /// The quality settings in force; see [`set_quality`](Self::set_quality).
@@ -4966,6 +4990,7 @@ impl SceneRenderer {
         }
         self.quality = q;
         self.postprocess_config = crate::quality::mask_post_process(&self.authored_postprocess, &q);
+        self.post_config_generation = next_post_config_generation();
         q
     }
 
