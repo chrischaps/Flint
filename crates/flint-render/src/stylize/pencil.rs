@@ -49,8 +49,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::{Arc, Mutex};
@@ -73,168 +73,145 @@ pub const MAX_IDS: usize = 256;
 /// The scratch target pass 1 writes: tone, contour, flow.
 pub const PREP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-const fn param(name: &'static str, default: f32, min: f32, max: f32) -> StyleParam {
-    StyleParam {
-        name,
-        default,
-        min,
-        max,
-    }
-}
+const PARAMS: &[StyleParam] = &[
+    StyleParam::new("spacing", 6.0, 2.0..=24.0),
+    StyleParam::new("thickness", 1.0, 0.25..=4.0),
+    StyleParam::new("layers", 3.0, 0.0..=4.0),
+    StyleParam::new("angle", 50.0, 0.0..=180.0),
+    StyleParam::new("brightness", 0.0, -1.0..=1.0),
+    StyleParam::new("contrast", 1.2, 0.0..=4.0),
+    StyleParam::new("darkness", 0.85, 0.0..=1.0),
+    StyleParam::new("shade", 0.25, 0.0..=1.0),
+    StyleParam::new("contour", 1.0, 0.0..=2.0),
+    StyleParam::new("contour_width", 1.25, 0.5..=4.0),
+    StyleParam::new("depth", 1.0, 0.0..=4.0),
+    StyleParam::new("crease", 1.0, 0.0..=4.0),
+    StyleParam::new("detail", 0.35, 0.0..=2.0),
+    StyleParam::new("wobble", 1.5, 0.0..=8.0),
+    StyleParam::new("sketchy", 0.6, 0.0..=1.0),
+    StyleParam::new("grain", 0.5, 0.0..=1.0),
+    StyleParam::new("color", 0.0, 0.0..=1.0),
+    StyleParam::new("seed", 0.0, 0.0..=9999.0),
+    StyleParam::new("boil", 0.0, 0.0..=24.0),
+    StyleParam::new("paper_r", 0.95, 0.0..=1.0),
+    StyleParam::new("paper_g", 0.93, 0.0..=1.0),
+    StyleParam::new("paper_b", 0.88, 0.0..=1.0),
+    StyleParam::new("lead_r", 0.16, 0.0..=1.0),
+    StyleParam::new("lead_g", 0.16, 0.0..=1.0),
+    StyleParam::new("lead_b", 0.19, 0.0..=1.0),
+];
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "pencil",
-    label: "Pencil",
-    stage: StyleStage::Display,
-    params: &[
-        param("spacing", 6.0, 2.0, 24.0),
-        param("thickness", 1.0, 0.25, 4.0),
-        param("layers", 3.0, 0.0, 4.0),
-        param("angle", 50.0, 0.0, 180.0),
-        param("brightness", 0.0, -1.0, 1.0),
-        param("contrast", 1.2, 0.0, 4.0),
-        param("darkness", 0.85, 0.0, 1.0),
-        param("shade", 0.25, 0.0, 1.0),
-        param("contour", 1.0, 0.0, 2.0),
-        param("contour_width", 1.25, 0.5, 4.0),
-        param("depth", 1.0, 0.0, 4.0),
-        param("crease", 1.0, 0.0, 4.0),
-        param("detail", 0.35, 0.0, 2.0),
-        param("wobble", 1.5, 0.0, 8.0),
-        param("sketchy", 0.6, 0.0, 1.0),
-        param("grain", 0.5, 0.0, 1.0),
-        param("color", 0.0, 0.0, 1.0),
-        param("seed", 0.0, 0.0, 9999.0),
-        param("boil", 0.0, 0.0, 24.0),
-        param("paper_r", 0.95, 0.0, 1.0),
-        param("paper_g", 0.93, 0.0, 1.0),
-        param("paper_b", 0.88, 0.0, 1.0),
-        param("lead_r", 0.16, 0.0, 1.0),
-        param("lead_g", 0.16, 0.0, 1.0),
-        param("lead_b", 0.19, 0.0, 1.0),
-    ],
-    options: &[
-        StyleOption {
-            name: "direction",
-            default: "surface",
-            choices: DIRECTIONS,
-            discover: None,
-        },
-        StyleOption {
-            name: "scope",
-            default: "screen",
-            choices: SCOPES,
-            discover: None,
-        },
-        StyleOption {
-            name: "grid",
-            default: "screen",
-            choices: GRIDS,
-            discover: None,
-        },
-    ],
-    uses_mask: super::MaskUse::Never,
-    needs: &[],
-    hints: &[
-        StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
-        StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
-        StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity, so strokes travel with it"),
-        StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
-        StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
-        StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
-        StyleHint::new("angle", "Angle (deg)", "The base hatch angle; where surface or tensor directions are unsure it shows through"),
-        StyleHint::new("brightness", "Brightness", "Shifts the tone before it picks hatch layers"),
-        StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before it picks hatch layers"),
-        StyleHint::new("darkness", "Stroke darkness", "How dark one hatch stroke is"),
-        StyleHint::new("shade", "Rubbed shade", "Soft graphite under the strokes, in the darks"),
-        StyleHint::new("contour", "Outline", "Outline strength; 0 = none"),
-        StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
-        StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
-        StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
-        StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
-        StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
-        StyleHint::new("sketchy", "Sketchy", "A second, offset outline beside the first"),
-        StyleHint::new("grain", "Paper grain", "Paper grain, and how much its tooth breaks the strokes"),
-        StyleHint::new("color", "Colour", "0 draws on paper; 1 draws over the scene's own colour (coloured pencil)"),
-        StyleHint::new("seed", "Seed", "Another whole number is another hand; the same seed draws the same picture").integer(),
-        StyleHint::new("boil", "Boil (per s)", "Redraws a second, for animated lines; 0 = still"),
-        StyleHint::new("paper", "Paper", "Paper colour (display values)"),
-        StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
-    ],
-    component: Some("pencil_style"),
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");
-        let input_bgl = kit::sampled_layout(device, "Pencil Input BGL");
-        let prep_bgl = kit::sampled_layout(device, "Pencil Prep BGL");
-        let geometry_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Pencil Geometry BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
+const OPTIONS: &[StyleOption] = &[
+    StyleOption::new("direction", "surface", DIRECTIONS),
+    StyleOption::new("scope", "screen", SCOPES),
+    StyleOption::new("grid", "screen", GRIDS),
+];
+
+const HINTS: &[StyleHint] = &[
+    StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
+    StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
+    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity, so strokes travel with it"),
+    StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
+    StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
+    StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
+    StyleHint::new("angle", "Angle (deg)", "The base hatch angle; where surface or tensor directions are unsure it shows through"),
+    StyleHint::new("brightness", "Brightness", "Shifts the tone before it picks hatch layers"),
+    StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before it picks hatch layers"),
+    StyleHint::new("darkness", "Stroke darkness", "How dark one hatch stroke is"),
+    StyleHint::new("shade", "Rubbed shade", "Soft graphite under the strokes, in the darks"),
+    StyleHint::new("contour", "Outline", "Outline strength; 0 = none"),
+    StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
+    StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
+    StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
+    StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
+    StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
+    StyleHint::new("sketchy", "Sketchy", "A second, offset outline beside the first"),
+    StyleHint::new("grain", "Paper grain", "Paper grain, and how much its tooth breaks the strokes"),
+    StyleHint::new("color", "Colour", "0 draws on paper; 1 draws over the scene's own colour (coloured pencil)"),
+    StyleHint::new("seed", "Seed", "Another whole number is another hand; the same seed draws the same picture").integer(),
+    StyleHint::new("boil", "Boil (per s)", "Redraws a second, for animated lines; 0 = still"),
+    StyleHint::new("paper", "Paper", "Paper colour (display values)"),
+    StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
+];
+
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("pencil", "Pencil", StyleStage::Display, create)
+        .params(PARAMS)
+        .options(OPTIONS)
+        .hints(HINTS)
+        .component("pencil_style");
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");
+    let input_bgl = kit::sampled_layout(device, "Pencil Input BGL");
+    let prep_bgl = kit::sampled_layout(device, "Pencil Prep BGL");
+    let geometry_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Pencil Geometry BGL"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        // Bound while no entity asks for the style: one unstyled pixel
-        let no_mask = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Pencil No Mask"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
+                count: None,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::style_mask::STYLE_MASK_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let no_mask_view = no_mask.create_view(&Default::default());
-        Box::new(Pencil {
-            prep_pipeline: kit::fullscreen_pipeline(
-                device,
-                "Pencil Prep Pipeline",
-                &kit::shader(device, "Pencil Prep Shader", PREP_SHADER),
-                &[&uniform_bgl, &input_bgl, &geometry_bgl],
-                PREP_FORMAT,
-            ),
-            draw_pipeline: kit::fullscreen_pipeline(
-                device,
-                "Pencil Pipeline",
-                &kit::shader(device, "Pencil Shader", DRAW_SHADER),
-                &[&uniform_bgl, &input_bgl, &geometry_bgl, &prep_bgl],
-                d.format,
-            ),
-            uniforms: kit::uniform_buffer::<PencilUniforms>(device, "Pencil Uniforms"),
-            uniform_bgl,
-            input_bgl,
-            prep_bgl,
-            geometry_bgl,
-            _no_mask: no_mask,
-            no_mask_view,
-            warned: Mutex::new(false),
-        })
-    },
-};
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    // Bound while no entity asks for the style: one unstyled pixel
+    let no_mask = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Pencil No Mask"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: crate::style_mask::STYLE_MASK_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let no_mask_view = no_mask.create_view(&Default::default());
+    Box::new(Pencil {
+        prep_pipeline: kit::fullscreen_pipeline(
+            device,
+            "Pencil Prep Pipeline",
+            &kit::shader(device, "Pencil Prep Shader", PREP_SHADER),
+            &[&uniform_bgl, &input_bgl, &geometry_bgl],
+            PREP_FORMAT,
+        ),
+        draw_pipeline: kit::fullscreen_pipeline(
+            device,
+            "Pencil Pipeline",
+            &kit::shader(device, "Pencil Shader", DRAW_SHADER),
+            &[&uniform_bgl, &input_bgl, &geometry_bgl, &prep_bgl],
+            d.format,
+        ),
+        uniforms: kit::uniform_buffer::<PencilUniforms>(device, "Pencil Uniforms"),
+        uniform_bgl,
+        input_bgl,
+        prep_bgl,
+        geometry_bgl,
+        _no_mask: no_mask,
+        no_mask_view,
+        warned: Mutex::new(false),
+    })
+}
 
 const PREP_SHADER: &str = concat!(
     include_str!("pencil_common.wgsl"),

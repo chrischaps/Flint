@@ -54,8 +54,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
@@ -75,66 +75,55 @@ pub const SCOPES: &[&str] = &["screen", "entities"];
 /// The largest wash radius, in pixels, the blur covers.
 const MAX_WASH_PX: f32 = 48.0;
 
-const fn param(name: &'static str, default: f32, min: f32, max: f32) -> StyleParam {
-    StyleParam {
-        name,
-        default,
-        min,
-        max,
-    }
-}
+const PARAMS: &[StyleParam] = &[
+    StyleParam::new("wash", 4.0, 0.0..=16.0),
+    StyleParam::new("bleed", 0.55, 0.0..=1.0),
+    StyleParam::new("wobble", 2.0, 0.0..=8.0),
+    StyleParam::new("wobble_scale", 40.0, 8.0..=200.0),
+    StyleParam::new("edge", 1.0, 0.0..=4.0),
+    StyleParam::new("edge_depth", 0.8, 0.0..=2.0),
+    StyleParam::new("edge_width", 1.5, 0.5..=6.0),
+    StyleParam::new("turbulence", 0.35, 0.0..=1.0),
+    StyleParam::new("granulation", 0.5, 0.0..=2.0),
+    StyleParam::new("grain", 0.35, 0.0..=1.0),
+    StyleParam::new("grain_scale", 1.0, 0.25..=4.0),
+    StyleParam::new("pigment", 1.0, 0.2..=2.0),
+    StyleParam::new("layers", 4.0, 0.0..=12.0),
+    StyleParam::new("paper_r", 0.97, 0.0..=1.0),
+    StyleParam::new("paper_g", 0.94, 0.0..=1.0),
+    StyleParam::new("paper_b", 0.87, 0.0..=1.0),
+];
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "watercolor",
-    label: "Watercolor",
-    stage: StyleStage::Display,
-    params: &[
-        param("wash", 4.0, 0.0, 16.0),
-        param("bleed", 0.55, 0.0, 1.0),
-        param("wobble", 2.0, 0.0, 8.0),
-        param("wobble_scale", 40.0, 8.0, 200.0),
-        param("edge", 1.0, 0.0, 4.0),
-        param("edge_depth", 0.8, 0.0, 2.0),
-        param("edge_width", 1.5, 0.5, 6.0),
-        param("turbulence", 0.35, 0.0, 1.0),
-        param("granulation", 0.5, 0.0, 2.0),
-        param("grain", 0.35, 0.0, 1.0),
-        param("grain_scale", 1.0, 0.25, 4.0),
-        param("pigment", 1.0, 0.2, 2.0),
-        param("layers", 4.0, 0.0, 12.0),
-        param("paper_r", 0.97, 0.0, 1.0),
-        param("paper_g", 0.94, 0.0, 1.0),
-        param("paper_b", 0.87, 0.0, 1.0),
-    ],
-    options: &[StyleOption {
-        name: "scope",
-        default: "screen",
-        choices: SCOPES,
-        discover: None,
-    }],
-    uses_mask: super::MaskUse::Never,
-    needs: &[],
-    hints: &[
-        StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
-        StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
-        StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
-        StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
-        StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
-        StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
-        StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
-        StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
-        StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
-        StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
-        StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
-        StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
-        StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
-        StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
-        StyleHint::new("paper", "Paper", "The paper's colour"),
-    ],
-    component: Some("watercolor_style"),
-    feeds_bloom: false,
-    create: |d| Box::new(Watercolor::new(d)),
-};
+const OPTIONS: &[StyleOption] = &[StyleOption::new("scope", "screen", SCOPES)];
+
+const HINTS: &[StyleHint] = &[
+    StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
+    StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
+    StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
+    StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
+    StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
+    StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
+    StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
+    StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
+    StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
+    StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
+    StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
+    StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
+    StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
+    StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
+    StyleHint::new("paper", "Paper", "The paper's colour"),
+];
+
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("watercolor", "Watercolor", StyleStage::Display, create)
+        .params(PARAMS)
+        .options(OPTIONS)
+        .hints(HINTS)
+        .component("watercolor_style");
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    Box::new(Watercolor::new(d))
+}
 
 /// One blur direction's uniforms.
 #[repr(C)]
