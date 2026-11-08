@@ -70,8 +70,7 @@ scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii:ramp=detailed,color=tint,cell=10"]
 
 # Cells are in points: at 2x each one is twice the pixels. Edges off here
-# and in the next: these pin the glyph grid, and pbr_test's editor grid
-# writes depth, so the edges would trace it
+# and in the next: these pin the glyph grid alone
 [[case]]
 name = "ascii-full-hidpi"
 scene = "demo/pbr_test.scene.toml"
@@ -86,13 +85,24 @@ args = ["--style", "ascii:edges=0", "--msaa", "4"]
 # --- ASCII edges (#267) ---------------------------------------------------
 #
 # Line glyphs on silhouettes, creases and styled entities' outlines. The
-# grid is off in each: it writes depth and would be traced.
+# grid is off in most, to keep the frames plain; since #346 it writes no
+# depth, and ascii-edges-pbr-grid holds that it isn't traced.
 
 # The two boxes and the character outlined
 [[case]]
 name = "ascii-edges-pbr"
 scene = "demo/pbr_test.scene.toml"
 args = ["--no-grid", "--style", "ascii"]
+
+# The same frame with the editor grid on (#346). The grid is an overlay
+# that writes no depth, so the edges must not trace it: its lines lift
+# the tone glyphs a step and nothing more. Before #346 every grid line came
+# back as a run of `╱ ╲` glyphs: the old renderer misses this golden by
+# 9.1% of pixels past the limit, mean 21
+[[case]]
+name = "ascii-edges-pbr-grid"
+scene = "demo/pbr_test.scene.toml"
+args = ["--style", "ascii"]
 
 # A styled sphere and box: their outlines must be unbroken glyph lines
 # (the scene turns the style on itself)
@@ -113,6 +123,13 @@ args = ["--no-grid", "--msaa", "4"]
 name = "ascii-edges-scale05"
 scene = "demo/ascii_edges.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5"]
+
+# The edge debug view (#349): edge pixels by source, each cell's decision
+# and its length bar, with the legend card the render draws
+[[case]]
+name = "ascii-edges-view"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--debug-mode", "edges"]
 
 # The grid-fixed ordered dither (#277): the one temporal-stability knob a
 # single frame shows (smoothing and hysteresis need a frame before)
@@ -184,6 +201,18 @@ args = ["--no-grid", "--ascii-scope", "screen"]
 name = "ascii-style-object"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
+
+# Whole-cell silhouettes (#338): every edge cell of the glyph props is drawn
+# whole or shows the scene, on the screen grid and on object grids
+[[case]]
+name = "ascii-silhouette-cell"
+scene = "demo/ascii_entities.scene.toml"
+args = ["--no-grid", "--style", "ascii:silhouette=cell"]
+
+[[case]]
+name = "ascii-silhouette-cell-object"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:silhouette=cell,edges=0"]
 
 # The variant cell pre-pass (#313) sums a variant's cells once, but only at
 # a footprint of 2 or more: these pin it on both grids. Blessed with main's

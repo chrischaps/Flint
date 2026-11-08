@@ -38,6 +38,7 @@ flint render levels/tavern.scene.toml \
 | `--msaa <1\|4>` | `1` | Scene-pass MSAA sample count |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
 | `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |
+| `--frames <n>` | (none) | Draw a moving sequence of `n` frames ([Frame sequences](#frame-sequences)) |
 
 ## Post-Processing Flags
 
@@ -146,7 +147,7 @@ flint render scene.toml --debug-mode wireframe --output wireframe.png
 # Surface normals
 flint render scene.toml --debug-mode normals --output normals.png
 
-# Other modes: depth, uv, unlit, metalrough, style
+# Other modes: depth, uv, unlit, metalrough, style, edges
 flint render scene.toml --debug-mode depth --output depth.png
 
 # Wireframe overlay on solid geometry
@@ -161,7 +162,7 @@ flint render scene.toml --no-tonemapping --output linear.png
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Draw wireframe edges over solid shading |
 | `--show-normals` | `false` | Draw face-normal direction arrows |
 | `--no-tonemapping` | `false` | Disable tonemapping for raw linear output |
@@ -177,6 +178,65 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 - **Animation does not run.** Skinned meshes render at bind pose. For a posed headless frame use the model previewer's render mode instead: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture.
 - **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes (ADR 0052), which matters when a CI job renders dozens of frames.
+
+## Frame sequences
+
+One render is one frame, so a style that remembers the frame before (the ASCII style's per-cell history, #277) never gets to use its memory. `--frames <n>` draws a sequence on one renderer instead, `--frame-dt` apart (default 1/60 s), moving the camera between frames. The styles see consecutive frames and their history runs as it does in the player, without a window, a script or a capture tool (#345):
+
+```bash
+flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+    --width 1280 --height 720 --frames 181 --orbit 6.8755 --output out/seq.png
+#   Sequence: 181 frames, 0.016667 s apart, orbiting 6.8755 deg/s
+#   Rendered 181 1280x720 frames to out/seq_0000.png .. out/seq_0180.png
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--frames <n>` | (none) | Frames to draw, written as `<stem>_0000.png`... beside `--output` (with `--ascii-text`, numbered grids too) |
+| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles and the ASCII history's smoothing (#342) advance by it |
+| `--orbit <deg/s>` | (still camera) | Turn the camera about its target, from the scene's `[camera]` or the orbit flags |
+| `--camera-path <file>` | (still camera) | Follow keys instead, position and target interpolated linearly |
+| `--flip-stats` | `false` | Count the ASCII style's glyph flips and reversals, per frame and in sum |
+| `--flip-json <file>` | (none) | Write the counts as JSON (per-frame arrays and the means) |
+| `--no-images` | `false` | Skip the PNGs, for a measurement |
+
+A camera path is a TOML list of keys, in seconds from the first frame:
+
+```toml
+[[key]]
+time = 0.0
+position = [3.2, 1.5, 8.5]
+target = [0.6, 0.6, 4.2]
+
+[[key]]
+time = 3.0
+position = [5.4, 1.5, 6.9]
+target = [0.6, 0.6, 4.2]
+```
+
+### Measuring shimmer
+
+`--flip-stats` reads the character grid the ASCII style drew each frame (the [text capture](#reading-a-render-as-text)), so it counts glyphs exactly, with no thresholds on pixels. It prints two numbers. **Flips** are the cells whose glyph changed since the frame before, and real motion flips glyphs too. **Reversals** are the cells that changed back to the glyph they had two frames ago (A, B, A). Motion rarely does that in two frames, but shimmer does little else, so reversals measure the shimmer itself. Its summary line reads like `tools/ascii_flips.py`'s, and the two agree cell for cell on the same frames.
+
+The #277 bench, with the history on and off and with and without the edge glyphs (#267):
+
+```bash
+flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+    --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats \
+    --style ascii:temporal=off --style ascii:edges=0
+#   Flips: 181 frames, 14400 cells: 321.1 flips/frame (2.23%), 57.8 reversals/frame (0.40%)
+```
+
+| `demo/ascii_motion`, 181 frames | flips/frame | reversals/frame |
+|---|---|---|
+| `temporal = "off"`, `edges = 0` | 321.1 (2.23%) | 57.8 (0.40%) |
+| `temporal = "on"`, `edges = 0` | 105.1 (0.73%) | **0.0** |
+| `temporal = "off"`, edges on (default) | 389.7 (2.71%) | 69.1 (0.48%) |
+| `temporal = "on"`, edges on (default) | 227.7 (1.58%) | 30.3 (0.21%) |
+
+The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
+
+A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
 
 ## CI Pipeline Integration
 

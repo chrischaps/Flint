@@ -1069,6 +1069,102 @@ fn two_entities_draw_in_two_glyph_sets_in_one_frame() {
     });
 }
 
+/// How far `scene` is from whole `cell`-pixel cells: over every grid
+/// offset (0..cell on each axis), the least sum, block by block, of the
+/// pixels on the block's minority side (0 = every block all scene or all
+/// glyph).
+fn part_cell_pixels(scene: &[bool], cell: usize) -> usize {
+    let n = SIZE as usize;
+    let mut best = usize::MAX;
+    for oy in 0..cell {
+        for ox in 0..cell {
+            let mut blocks = std::collections::HashMap::<(usize, usize), (usize, usize)>::new();
+            for (i, s) in scene.iter().enumerate() {
+                let b = ((i % n + cell - ox) / cell, (i / n + cell - oy) / cell);
+                let e = blocks.entry(b).or_default();
+                if *s {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                }
+            }
+            best = best.min(blocks.values().map(|(a, b)| *a.min(b)).sum());
+        }
+    }
+    best
+}
+
+/// #338: `silhouette = "cell"` makes a per-entity silhouette of whole
+/// glyphs: every 8x8 cell is all scene or all glyph, where the pixel
+/// silhouette cuts cells, and a dropped cell shows the scene, not the
+/// cube's own shading. The mask misses a few of the cube's grazing
+/// silhouette pixels (its depth tolerance; they pass through as they are in
+/// both modes), and a dropped pixel whose nearest scene sample is one of
+/// them takes its colour, so the cell frame gets a budget of twice those.
+#[test]
+fn a_cell_silhouette_draws_every_edge_cell_whole_or_not_at_all() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+    let mut world = box_world();
+    let plain = gpu.frame(&mut renderer, &world);
+    let cube = world.get_id("cube").unwrap();
+    set_entity_style(&mut world, cube, "ascii").unwrap();
+    set_style_param(&mut world, cube, "cell", 8.0.into()).unwrap();
+    let pixel = gpu.frame(&mut renderer, &world);
+    set_style_param(&mut world, cube, "silhouette", "cell".into()).unwrap();
+    let cell = gpu.frame(&mut renderer, &world);
+
+    // A pixel shows the scene where it is (near enough) the empty frame's
+    let scene = |frame: &[u8]| -> Vec<bool> {
+        frame
+            .chunks(4)
+            .zip(empty.chunks(4))
+            .map(|(p, e)| (0..3).all(|c| p[c].abs_diff(e[c]) <= 2))
+            .collect()
+    };
+    let cube_px: Vec<bool> = scene(&plain).iter().map(|s| !s).collect();
+    let covered = cube_px.iter().filter(|c| **c).count();
+    // The cube's pixels a frame leaves exactly as they were: its own shading
+    let unchanged = |frame: &[u8]| -> usize {
+        (0..cube_px.len())
+            .filter(|&i| cube_px[i] && plain[i * 4..i * 4 + 4] == frame[i * 4..i * 4 + 4])
+            .count()
+    };
+    let missed = unchanged(&pixel);
+    let pixel_part = part_cell_pixels(&scene(&pixel), 8);
+    let cell_part = part_cell_pixels(&scene(&cell), 8);
+    eprintln!(
+        "cube {covered} px, {missed} unmasked; part-cell px: pixel silhouette {pixel_part}, cell {cell_part}"
+    );
+    assert!(covered > 400, "the cube fills the middle of the frame");
+    assert!(missed < 20, "the mask covers the cube");
+    assert!(
+        pixel_part > 4 * missed,
+        "the pixel silhouette cuts cells (the test's control)"
+    );
+    assert!(
+        cell_part <= 2 * missed,
+        "a cell silhouette leaves part cells"
+    );
+    assert_eq!(
+        unchanged(&cell),
+        missed,
+        "a dropped cell left the cube's own shading"
+    );
+}
+
 /// A tilted box filling the middle of the frame: silhouettes against the
 /// sky and creases where its faces meet.
 fn box_world() -> FlintWorld {
@@ -1216,6 +1312,71 @@ fn two_styles_share_one_edge_pass_a_frame() {
         "drawn after every style let go"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The pixels within 6 of `rgb` (8-bit display values) in each channel.
+fn near(pixels: &[u8], rgb: [f32; 3]) -> usize {
+    let want = rgb.map(|v| (v * 255.0).round() as i32);
+    pixels
+        .chunks(4)
+        .filter(|p| (0..3).all(|c| (i32::from(p[c]) - want[c]).abs() <= 6))
+        .count()
+}
+
+/// #349: `DebugMode::StyleEdges` draws the ASCII style's edge view, ASCII
+/// switched on for it in a scene that has none: the box's silhouette in the
+/// depth step's colour, its cells' line glyphs in green, and no glyphs.
+/// Leaving the mode gives the plain frame back exactly.
+#[test]
+fn the_edges_debug_view_shows_sources_and_cells_and_lets_go() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    assert!(!renderer
+        .effective_post_process_config()
+        .styles
+        .is_enabled("ascii"));
+
+    renderer.set_debug_mode(flint_render::DebugMode::StyleEdges);
+    let viewed = gpu.frame(&mut renderer, &world);
+    assert!(
+        renderer
+            .effective_post_process_config()
+            .styles
+            .is_enabled("ascii"),
+        "the view switched ASCII on"
+    );
+    let legend = flint_render::stylize::EDGE_VIEW_LEGEND;
+    let colour = |name: &str| legend.iter().find(|(_, n)| n.starts_with(name)).unwrap().0;
+    let depth = near(&viewed, colour("depth"));
+    let crease = near(&viewed, colour("crease"));
+    let line = near(&viewed, colour("cell draws"));
+    eprintln!("depth {depth}, crease {crease}, line glyph {line} pixels");
+    assert!(depth > 20, "only {depth} depth-step pixels around the box");
+    assert!(crease > 5, "only {crease} crease pixels on a turned box");
+    assert!(line > 20, "only {line} pixels of line glyphs");
+
+    renderer.set_debug_mode(flint_render::DebugMode::Pbr);
+    let after = gpu.frame(&mut renderer, &world);
+    assert!(
+        !renderer
+            .effective_post_process_config()
+            .styles
+            .is_enabled("ascii"),
+        "ASCII stayed on after the view"
+    );
+    assert_eq!(after, plain, "the frame changed after the view let go");
 }
 
 /// A transparent pane in front of a styled entity takes back the share of

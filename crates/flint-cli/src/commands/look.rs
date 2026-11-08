@@ -137,14 +137,8 @@ pub fn overlay(base: Option<&PostProcessDef>, over: &toml::Table) -> Result<Post
     let mut over = over.clone();
     flint_scene::fold_legacy_style_keys(&mut over);
     let over = &over;
-    let known = known_fields();
-    for key in over.keys() {
-        if !known.iter().any(|k| k == key) {
-            bail!(
-                "[post_process] has no field '{key}'{}",
-                suggestion(key, &known)
-            );
-        }
+    if let Some((key, near)) = PostProcessDef::unknown_fields(over).into_iter().next() {
+        bail!("[post_process] has no field '{key}'{}", did_you_mean(near));
     }
     merge(&mut table, over);
     let def: PostProcessDef = toml::Value::Table(table)
@@ -158,48 +152,12 @@ pub fn overlay(base: Option<&PostProcessDef>, over: &toml::Table) -> Result<Post
     Ok(def)
 }
 
-/// Every field a `[post_process]` block can name.
-fn known_fields() -> Vec<String> {
-    let def: PostProcessDef = toml::Value::Table(toml::Table::new())
-        .try_into()
-        .expect("an empty [post_process] deserializes");
-    let mut fields: Vec<String> = toml::Table::try_from(&def)
-        .map(|t| t.keys().cloned().collect())
-        .unwrap_or_default();
-    // Skipped when empty, so the empty block doesn't show it
-    fields.push("styles".to_string());
-    fields
-}
-
-/// ", did you mean 'x'?" when one known name is close.
-fn suggestion(key: &str, known: &[String]) -> String {
-    known
-        .iter()
-        .map(|k| (strsim_distance(key, k), k))
-        .filter(|(d, _)| *d <= 3)
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, k)| format!(", did you mean '{k}'?"))
+/// ", did you mean 'x'?" when a known name is close
+/// ([`PostProcessDef::closest_field`], shared with the scene loader's
+/// warning, #354).
+fn did_you_mean(near: Option<String>) -> String {
+    near.map(|k| format!(", did you mean '{k}'?"))
         .unwrap_or_default()
-}
-
-/// Levenshtein distance, small and good enough for field names.
-fn strsim_distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut prev = row[0];
-        row[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cur = row[j + 1];
-            row[j + 1] = if ca == *cb {
-                prev
-            } else {
-                1 + prev.min(row[j]).min(row[j + 1])
-            };
-            prev = cur;
-        }
-    }
-    row[b.len()]
 }
 
 /// Merge `over` into `base`: tables recurse, everything else replaces.
@@ -381,10 +339,10 @@ impl Sweep {
         let key = if key == "look" {
             SweepKey::Look
         } else if let Some(field) = key.strip_prefix("post.") {
-            if !known_fields().iter().any(|k| k == field) {
+            if !PostProcessDef::field_names().iter().any(|k| k == field) {
                 return Err(format!(
                     "--sweep: [post_process] has no field '{field}'{}",
-                    suggestion(field, &known_fields())
+                    did_you_mean(PostProcessDef::closest_field(field))
                 ));
             }
             SweepKey::Post {
