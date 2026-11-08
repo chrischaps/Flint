@@ -68,8 +68,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                          (#266; a scene's ascii_style entities need no flag)
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1 --ascii-dither 0 (#277)
    #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
-   #                          (#267 line glyphs on depth/crease/mask edges; capture with --no-grid,
-   #                           the editor grid writes depth and gets traced)
+   #                          (#267 line glyphs on depth/crease/mask edges; the editor grid is a
+   #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
    #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
    #                          against its descriptor; repeatable; `--style help`;
