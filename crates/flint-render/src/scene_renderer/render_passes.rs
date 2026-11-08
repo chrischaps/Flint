@@ -1290,6 +1290,51 @@ impl SceneRenderer {
         }
     }
 
+    /// Each style id's screen bounds this frame (#385): the projected world
+    /// bounds of exactly the draws the mask draws for it (terrain chunks in
+    /// view, opaque and transparent models and boxes, skinned meshes as
+    /// posed), so a styled pixel is always inside its id's rect.
+    pub(super) fn style_bounds(&self, view_proj: &[[f32; 4]; 4]) -> crate::style_mask::StyleBounds {
+        use crate::style_mask::IdBounds;
+        let mut bounds = crate::style_mask::StyleBounds::known();
+        let ids = &self.style_by_entity;
+        if ids.is_empty() {
+            return bounds;
+        }
+        let frustum = self.camera_frustum.as_ref();
+        let of = |aabb: Option<([f32; 3], [f32; 3])>| match aabb {
+            Some((min, max)) if frustum.is_some_and(|f| !f.aabb_visible(min, max)) => {
+                IdBounds::Nowhere
+            }
+            Some((min, max)) => IdBounds::of_box(view_proj, min, max),
+            None => IdBounds::Everywhere,
+        };
+        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
+        if let Some(id) = id_of(&self.terrain_entity) {
+            for d in &self.terrain_draws {
+                bounds.add(id, of(Some((d.aabb_min, d.aabb_max))));
+            }
+        }
+        for d in self.entity_draws.iter().chain(&self.transparent_draws) {
+            if d.is_wireframe {
+                continue;
+            }
+            if let Some(id) = id_of(&d.entity_id) {
+                bounds.add(id, of(d.world_aabb.or(d.style_aabb)));
+            }
+        }
+        for d in self
+            .skinned_entity_draws
+            .iter()
+            .chain(&self.transparent_skinned_draws)
+        {
+            if let Some(id) = id_of(&d.entity_id) {
+                bounds.add(id, of(d.world_aabb));
+            }
+        }
+        bounds
+    }
+
     /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
     #[profiling::function]
     /// `depth_owned`: `depth_view` is the scaled scene's own, made with the
@@ -1359,6 +1404,12 @@ impl SceneRenderer {
                 resources.height,
             )
         });
+        // Where each id's entities are (#385), for styles' scissors
+        let style_bounds = if style_mask.is_some() && self.style_scissor {
+            self.style_bounds(&camera.view_projection_matrix())
+        } else {
+            crate::style_mask::StyleBounds::default()
+        };
         let mut style_frame = (!hdr_styles.is_empty() || !display_styles.is_empty()).then(|| {
             crate::stylize::StyleFrame {
                 device,
@@ -1380,6 +1431,7 @@ impl SceneRenderer {
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
                 style_ids: &self.style_ids,
+                style_bounds: &style_bounds,
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,

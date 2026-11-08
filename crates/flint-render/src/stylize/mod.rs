@@ -1013,6 +1013,10 @@ pub struct StyleFrame<'a> {
     pub mask: Option<&'a wgpu::TextureView>,
     /// Which id each style name has in [`mask`](Self::mask).
     pub style_ids: &'a crate::style_mask::StyleIds,
+    /// Where each style id's entities can be on screen this frame (#385),
+    /// from the world bounds of the draws the mask draws. Read it through
+    /// [`styled_rect`](Self::styled_rect).
+    pub style_bounds: &'a crate::style_mask::StyleBounds,
     /// The shared geometry edges (#301, [`edges`] says what the channels
     /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
     /// `textureLoad`. `Some` whenever a style that
@@ -1053,6 +1057,14 @@ pub struct StyleFrame<'a> {
     pub debug_mode: crate::DebugMode,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
+}
+
+/// Whether per-entity styles scissor their passes to their entities
+/// (#385): on unless `FLINT_STYLE_SCISSOR=0`, which is for checking that
+/// the scissored frame is the full one, byte for byte. Read once.
+pub fn scissor_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLINT_STYLE_SCISSOR").map_or(true, |v| v.trim() != "0"))
 }
 
 /// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
@@ -1263,6 +1275,74 @@ impl StyleFrame<'_> {
     /// than only for the entities that ask for it.
     pub fn whole_frame(&self) -> bool {
         self.descriptor.is_enabled(self.config)
+    }
+
+    /// Whether the style draws every pixel this frame: its table is on and
+    /// its `scope` (where it has one) isn't `entities`. Otherwise it draws
+    /// only its entities' pixels and passes the rest through.
+    pub fn covers_frame(&self) -> bool {
+        self.whole_frame() && self.option("scope") != "entities"
+    }
+
+    /// The pixels of this frame (`width` x `height`) the style can change
+    /// (#385): the screen bounds of its per-entity variants' draws (opt-outs
+    /// left out), grown by `pad` pixels for how far a styled pixel reaches
+    /// (a cell, a blur) and by a pixel or two for the mask's own rounding.
+    /// `None` when that could be anywhere: the style
+    /// [`covers_frame`](Self::covers_frame), one of its draws has no bounds
+    /// or crosses the camera plane, or `FLINT_STYLE_SCISSOR=0` turns the
+    /// scissor off. An empty rect means no entity of the style is in view.
+    ///
+    /// Outside it a per-entity style's passthrough holds, so a pass that
+    /// writes the input there ([`kit::scissored_pass`]) is the full pass.
+    pub fn styled_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        if self.covers_frame() || !scissor_enabled() {
+            return None;
+        }
+        let mut uv = crate::style_mask::IdBounds::Nowhere;
+        for (id, v) in self.variants() {
+            if !v.off {
+                uv = uv.union(self.style_bounds.get(id));
+            }
+        }
+        let [x0, y0, x1, y1] = match uv {
+            crate::style_mask::IdBounds::Everywhere => return None,
+            crate::style_mask::IdBounds::Nowhere => return Some(kit::PixelRect::EMPTY),
+            crate::style_mask::IdBounds::Uv(r) => r,
+        };
+        let (w, h) = (self.width as f32, self.height as f32);
+        let rect = kit::PixelRect {
+            x: (x0 * w).floor().max(0.0) as u32,
+            y: (y0 * h).floor().max(0.0) as u32,
+            width: 0,
+            height: 0,
+        };
+        let right = ((x1 * w).ceil().max(0.0) as u32).min(self.width);
+        let bottom = ((y1 * h).ceil().max(0.0) as u32).min(self.height);
+        let rect = kit::PixelRect {
+            width: right.saturating_sub(rect.x),
+            height: bottom.saturating_sub(rect.y),
+            ..rect
+        };
+        // The mask is drawn at the depth's size: a display pixel reads the
+        // mask texel under it, up to one texel (of this frame's pixels)
+        // past the projected box, and MSAA or a rasterizer's rounding a
+        // pixel more
+        let texel = (self.width as f32 / self.depth_size[0].max(1) as f32)
+            .max(self.height as f32 / self.depth_size[1].max(1) as f32)
+            .ceil() as u32;
+        let slack = 2 + texel;
+        let rect = rect.padded(pad.saturating_add(slack), self.width, self.height);
+        tracing::trace!(
+            style = self.descriptor.name,
+            pad,
+            x = rect.x,
+            y = rect.y,
+            w = rect.width,
+            h = rect.height,
+            "styled rect"
+        );
+        Some(rect)
     }
 
     /// Where world point `p` lands in this frame, in pixels from the top

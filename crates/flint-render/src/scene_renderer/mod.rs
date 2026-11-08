@@ -94,6 +94,10 @@ pub(super) struct DrawCall {
     sort_depth: f32,
     /// World-space bounds for frustum culling. `None` draws are never culled.
     world_aabb: Option<([f32; 3], [f32; 3])>,
+    /// World-space bounds of a draw that isn't culled by them (a
+    /// procedural box), for the per-entity style scissor (#385): it reads
+    /// `world_aabb`, else these.
+    style_aabb: Option<([f32; 3], [f32; 3])>,
     /// The camera distances this draw is drawn at: its mesh's level of detail
     /// and the entity's `lod.draw_distance`. `None` draws at every distance.
     lod: Option<DrawLod>,
@@ -325,6 +329,34 @@ pub(super) fn draw_visible(draw: &DrawCall, frustum: &crate::frustum::Frustum) -
         .map_or(true, |(min, max)| frustum.aabb_visible(min, max))
 }
 
+/// The bounds of a skinned mesh whose bind-pose box is `min..max` once
+/// posed by `bones` (#385). A skinned vertex is a weighted blend of its
+/// position under up to four bone matrices; with weights summing to one
+/// the blend lies in the box around every bone's image of the bind-pose
+/// box. The bind-pose box itself (identity bones) and the origin (a bone
+/// slot never written reads as zero) are in too, so the bound holds
+/// whichever slots a vertex names.
+pub(super) fn posed_aabb(
+    bones: &[[[f32; 4]; 4]],
+    min: [f32; 3],
+    max: [f32; 3],
+) -> ([f32; 3], [f32; 3]) {
+    let mut lo = [0.0f32; 3];
+    let mut hi = [0.0f32; 3];
+    for i in 0..3 {
+        lo[i] = min[i].min(0.0);
+        hi[i] = max[i].max(0.0);
+    }
+    for bone in bones {
+        let (a, b) = transform_aabb(bone, min, max);
+        for i in 0..3 {
+            lo[i] = lo[i].min(a[i]);
+            hi[i] = hi[i].max(b[i]);
+        }
+    }
+    (lo, hi)
+}
+
 /// The world-space AABB enclosing a local AABB under `model` (column-major),
 /// by Arvo's method: exact for the transformed box, never too small.
 pub(super) fn transform_aabb(
@@ -398,6 +430,10 @@ struct SkinnedDrawCall {
     sort_depth: f32,
     /// As [`DrawCall::casts_shadow`].
     casts_shadow: bool,
+    /// World-space bounds of the posed mesh (#385): its bind-pose box
+    /// under every bone matrix, which holds any blend of them. `None`
+    /// when the bones aren't known on the CPU.
+    world_aabb: Option<([f32; 3], [f32; 3])>,
 }
 
 /// Configuration for creating a SceneRenderer
@@ -533,6 +569,9 @@ pub struct SceneRenderer {
     /// Styled entities -> their mask id, rebuilt each `update_from_world`
     /// while the mask is wanted (empty otherwise).
     style_by_entity: HashMap<flint_core::EntityId, u16>,
+    /// Whether per-entity styles scissor their passes to their entities'
+    /// screen bounds (#385); `FLINT_STYLE_SCISSOR=0` starts it off.
+    style_scissor: bool,
     /// The blend of each styled entity drawn at less than 1 (#278).
     style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
@@ -698,6 +737,11 @@ pub struct SceneRenderer {
     /// shared by every entity that instances the asset, so entities playing
     /// different clips need their own storage or the last upload wins.
     entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
+    /// The bone matrices last written for each entity, and for each
+    /// asset's shared buffer, kept on the CPU to bound the posed meshes
+    /// for the per-entity style scissor (#385).
+    entity_bone_matrices: HashMap<flint_core::EntityId, Vec<[[f32; 4]; 4]>>,
+    asset_bone_matrices: HashMap<String, Vec<[[f32; 4]; 4]>>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
 }
@@ -804,6 +848,8 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            entity_bone_matrices: HashMap::new(),
+            asset_bone_matrices: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -855,6 +901,7 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
             ascii_forced: false,
@@ -2328,6 +2375,8 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            entity_bone_matrices: HashMap::new(),
+            asset_bone_matrices: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -2379,6 +2428,7 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
             ascii_forced: false,
@@ -2618,6 +2668,17 @@ impl SceneRenderer {
                 })
             });
         queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
+        let kept = &matrices[..matrices.len().min(crate::skinned_pipeline::MAX_BONES)];
+        let entity = self.entity_bone_matrices.entry(entity_id).or_default();
+        entity.clear();
+        entity.extend_from_slice(kept);
+        if let Some(asset) = self.asset_bone_matrices.get_mut(asset_name) {
+            asset.clear();
+            asset.extend_from_slice(kept);
+        } else {
+            self.asset_bone_matrices
+                .insert(asset_name.to_string(), kept.to_vec());
+        }
         // Its sub-meshes share one buffer
         if let Some(mesh) = self
             .mesh_cache
@@ -2628,9 +2689,29 @@ impl SceneRenderer {
         }
     }
 
+    /// Whether per-entity styles draw only inside their entities' screen
+    /// bounds (#385). On by default (`FLINT_STYLE_SCISSOR=0` starts it
+    /// off); the frame is the same either way, only cheaper with it on.
+    pub fn set_style_scissor(&mut self, on: bool) {
+        self.style_scissor = on;
+    }
+
+    pub fn style_scissor(&self) -> bool {
+        self.style_scissor
+    }
+
+    /// Where each style id's entities are on screen under `camera`, from
+    /// the draws of the last [`update_from_world`](Self::update_from_world)
+    /// (#385): what the per-entity style scissor reads.
+    pub fn style_screen_bounds(&self, camera: &Camera) -> crate::style_mask::StyleBounds {
+        self.style_bounds(&camera.view_projection_matrix())
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.entity_bone_buffers.clear();
+        self.entity_bone_matrices.clear();
+        self.asset_bone_matrices.clear();
         self.skinned_bone_binds.clear();
     }
 
@@ -3646,6 +3727,7 @@ impl SceneRenderer {
             blend_mode,
             sort_depth: 0.0,
             world_aabb: None,
+            style_aabb: None,
             lod: None,
         }
     }
@@ -3776,6 +3858,7 @@ impl SceneRenderer {
             blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
             world_aabb: None,
+            style_aabb: None,
             lod: None,
         }
     }

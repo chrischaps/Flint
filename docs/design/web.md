@@ -759,6 +759,24 @@ style targets when only the scale moved (the surface is the same size,
 so the display-stage ones are too), and HDR-stage ones are remade at the
 new size on next use (`a_render_scale_step_keeps_the_style_targets`).
 
+**Per-entity styles draw only near their entities (#385).** Since edges
+(#267) became the default, a per-entity ASCII's cost was its edge pass
+over every pixel, styled or not. Its passes, and pencil's, are now
+scissored to the styled entities' projected bounds (book: Stylize Passes,
+"Drawn only where the entities are"), with the frame byte-identical.
+Desktop, 1920x1080, RTX 4070 laptop, best of five alternating runs:
+
+| scene | style | before | after |
+|---|---|---|---|
+| `stylize_props` (barrel, Y Bot in ASCII; cask, crate in pencil) | ASCII | 0.419 | 0.223 ms |
+| | Pencil | 0.072 | 0.048 ms |
+| `ascii_entities` (six props) | ASCII | 0.450 | 0.166 ms |
+| `stylize_props --style ascii` (whole frame, control) | ASCII | 0.484 | 0.440 ms |
+
+The control isn't scissored and moved within this machine's run-to-run
+spread. The saving scales with the share of the screen the props leave
+untouched, which is what a phone pays for. The browser is unmeasured.
+
 **DX12.** The ASCII and mask passes read every texture with
 `textureLoad` and bind no sampler of their own (the chain's one linear
 sampler is in the input group bound once a pass), so they add nothing to

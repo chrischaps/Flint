@@ -1508,6 +1508,104 @@ fn boxed(world: &mut FlintWorld, name: &str, half: f64, y: f64, opacity: Option<
     }
 }
 
+/// #385: a per-entity style draws only inside its entities' screen bounds.
+/// Two small props, one in pencil and one in ASCII, over a floor nobody
+/// styles: each id's bounds are a small part of the frame, they hold every
+/// pixel the style changed, and the scissored frame is the full one byte
+/// for byte, frame after frame.
+#[test]
+fn per_entity_styles_scissored_to_their_props_draw_the_same_bytes() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    use flint_render::style_mask::IdBounds;
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for (name, at) in [("sketch", [2.5, 0.0, -2.5]), ("glyphs", [-2.5, 0.0, 2.5])] {
+        let id = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([10.0, 30.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.6; 3]));
+        bounds.insert("max".into(), vec3([0.6; 3]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    let (sketch, glyphs) = (
+        world.get_id("sketch").unwrap(),
+        world.get_id("glyphs").unwrap(),
+    );
+    set_entity_style(&mut world, sketch, "pencil").unwrap();
+    set_entity_style(&mut world, glyphs, "ascii").unwrap();
+    renderer.set_style_scissor(true);
+    let scissored = gpu.frame(&mut renderer, &world);
+
+    // Each id is bounded, and small
+    let bounds = renderer.style_screen_bounds(&Camera::default());
+    let ids = renderer.style_ids().clone();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let mut rects = Vec::new();
+    for (id, name) in ids.iter() {
+        let IdBounds::Uv(r) = bounds.get(id) else {
+            panic!("{name}: {:?}", bounds.get(id));
+        };
+        eprintln!("{name}: {r:?}");
+        assert!(
+            r[2] - r[0] < 0.25 && r[3] - r[1] < 0.25,
+            "{name} fills {r:?}"
+        );
+        rects.push(r);
+    }
+    // Every pixel the styles changed is inside an id's bounds, padded by
+    // a few pixels of ASCII's reach (two 8 px cells)
+    let size = SIZE as f32;
+    let inside = |x: usize, y: usize| {
+        rects.iter().any(|r| {
+            let pad = 20.0;
+            (x as f32) >= r[0] * size - pad
+                && (x as f32) < r[2] * size + pad
+                && (y as f32) >= r[1] * size - pad
+                && (y as f32) < r[3] * size + pad
+        })
+    };
+    let mut changed = 0;
+    for (i, (a, b)) in plain.chunks(4).zip(scissored.chunks(4)).enumerate() {
+        if a != b {
+            changed += 1;
+            let (x, y) = (i % SIZE as usize, i / SIZE as usize);
+            assert!(inside(x, y), "pixel {x},{y} changed outside the props");
+        }
+    }
+    assert!(changed > 20, "the styles changed only {changed} pixels");
+
+    // The full passes draw the same frame
+    renderer.set_style_scissor(false);
+    for _ in 0..2 {
+        let full = gpu.frame(&mut renderer, &world);
+        assert!(
+            full == scissored,
+            "the scissored frame differs from the full one"
+        );
+    }
+    renderer.set_style_scissor(true);
+    assert!(gpu.frame(&mut renderer, &world) == scissored);
+}
+
 fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
     &frame[(y * SIZE as usize + x) * 4..][..4]
 }
