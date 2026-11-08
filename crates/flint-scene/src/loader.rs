@@ -16,7 +16,7 @@ pub fn load_scene<P: AsRef<Path>>(
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
-    warn_unknown_post_fields(&content, Some(path));
+    note_post_process(&mut scene_file, &content, Some(path));
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
@@ -30,8 +30,8 @@ pub fn load_scene_string(
     content: &str,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
-    let scene_file: SceneFile = toml::from_str(content)?;
-    warn_unknown_post_fields(content, None);
+    let mut scene_file: SceneFile = toml::from_str(content)?;
+    note_post_process(&mut scene_file, content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
@@ -43,11 +43,15 @@ pub fn load_scene_string(
 
 /// Warn about `[post_process]` keys that are no field (#354): serde drops
 /// them silently, so a typo would leave the default in place. The scene
-/// still loads.
-fn warn_unknown_post_fields(content: &str, path: Option<&Path>) {
+/// still loads. Then record the keys the block wrote
+/// ([`PostProcessDef::authored`]), which a look goes under (#356).
+fn note_post_process(scene_file: &mut SceneFile, content: &str, path: Option<&Path>) {
     let source = path.map(|p| p.display().to_string());
     for warning in PostProcessDef::unknown_field_warnings(content, source.as_deref()) {
         tracing::warn!("{warning}");
+    }
+    if let Some(def) = &mut scene_file.post_process {
+        def.authored = PostProcessDef::authored_table(content);
     }
 }
 
@@ -60,7 +64,7 @@ pub fn reload_scene<P: AsRef<Path>>(
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
-    warn_unknown_post_fields(&content, Some(path));
+    note_post_process(&mut scene_file, &content, Some(path));
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
@@ -78,8 +82,8 @@ pub fn reload_scene_string(
     world: &mut FlintWorld,
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
-    let scene_file: SceneFile = toml::from_str(content)?;
-    warn_unknown_post_fields(content, None);
+    let mut scene_file: SceneFile = toml::from_str(content)?;
+    note_post_process(&mut scene_file, content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");

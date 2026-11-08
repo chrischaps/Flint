@@ -132,7 +132,10 @@ impl StyleStage {
 }
 
 /// One numeric parameter a style takes, with the range the F4 menu offers.
+/// A value outside it is refused by `--style` and warned about in a scene
+/// table (#355): a style clamps it or draws it badly.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleParam {
     pub name: &'static str,
     pub default: f32,
@@ -140,9 +143,40 @@ pub struct StyleParam {
     pub max: f32,
 }
 
+impl StyleParam {
+    /// A parameter with its default and the range the menu offers:
+    /// `StyleParam::new("cell", 8.0, 4.0..=32.0)`. Build every parameter
+    /// through this (#366): a field added later gets its default here, so
+    /// no style has to change.
+    pub const fn new(
+        name: &'static str,
+        default: f32,
+        range: std::ops::RangeInclusive<f32>,
+    ) -> Self {
+        Self {
+            name,
+            default,
+            min: *range.start(),
+            max: *range.end(),
+        }
+    }
+
+    /// Why `value` won't draw as written, when it lies outside
+    /// `min..=max`: "cell=400 is outside its range 4..32". `None` inside.
+    pub fn range_error(&self, value: f32) -> Option<String> {
+        (value < self.min || value > self.max).then(|| {
+            format!(
+                "{}={value} is outside its range {}..{}",
+                self.name, self.min, self.max
+            )
+        })
+    }
+}
+
 /// One named choice a style takes (a font, a ramp, a colour mode): a
 /// string in `[post_process.styles.<name>]`, where a parameter is a number.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleOption {
     pub name: &'static str,
     pub default: &'static str,
@@ -282,6 +316,7 @@ pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
 /// menu folds them into one colour picker, and its hint is the base's
 /// (`tint`). See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleHint {
     /// The parameter, option or colour base the hint is for.
     pub name: &'static str,
@@ -290,6 +325,27 @@ pub struct StyleHint {
     pub help: &'static str,
     /// Whole numbers only (a cell size, a count): the slider steps by 1.
     pub integer: bool,
+    /// When the setting matters (#365): up to two conditions on options,
+    /// from [`when`](Self::when) and [`unless`](Self::unless), all of
+    /// which must hold for the style to read it. While one fails the F4
+    /// menu greys the row out and says why. None: always read.
+    pub conditions: [Option<StyleWhen>; 2],
+}
+
+/// One condition of a [`StyleHint`]: the setting is read only while option
+/// `option` is one of `values` (or, with `unless`, none of them).
+#[derive(Clone, Copy, Debug)]
+pub struct StyleWhen {
+    pub option: &'static str,
+    pub values: &'static [&'static str],
+    pub unless: bool,
+}
+
+impl StyleWhen {
+    /// Whether the setting is read while the option is `current`.
+    pub fn holds(&self, current: &str) -> bool {
+        self.values.contains(&current) != self.unless
+    }
 }
 
 impl StyleHint {
@@ -299,7 +355,37 @@ impl StyleHint {
             label,
             help,
             integer: false,
+            conditions: [None, None],
         }
+    }
+
+    /// The same hint, for a setting that only matters while option
+    /// `option` is one of `values` (#365): `.when("color", &["tint"])`.
+    pub const fn when(self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.condition(StyleWhen {
+            option,
+            values,
+            unless: false,
+        })
+    }
+
+    /// The same hint, for a setting that does nothing while option
+    /// `option` is one of `values` (#365): `.unless("color", &["palette"])`.
+    pub const fn unless(self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.condition(StyleWhen {
+            option,
+            values,
+            unless: true,
+        })
+    }
+
+    const fn condition(self, c: StyleWhen) -> Self {
+        let conditions = match self.conditions {
+            [None, b] => [Some(c), b],
+            [a @ Some(_), None] => [a, Some(c)],
+            [Some(_), Some(_)] => panic!("a StyleHint holds at most two conditions"),
+        };
+        Self { conditions, ..self }
     }
 
     /// The same hint, stepping by whole numbers.
@@ -425,7 +511,50 @@ pub enum StyleNeed {
     Edges,
 }
 
+/// Whether a style reads the entity style mask (#263), and when (#350).
+#[derive(Clone, Copy)]
+pub enum MaskUse {
+    /// Never: the mask is drawn for it only if it is per-entity and an
+    /// entity names it.
+    Never,
+    /// Whenever the style is on.
+    Always,
+    /// While the style is on and this says so for the frame's config and
+    /// ids: ASCII's outlines read it only with `edges > 0` and something
+    /// styled to outline.
+    When(fn(&PostProcessConfig, &StyleIds) -> bool),
+}
+
+impl MaskUse {
+    /// Whether the style may read the mask at all (`--list-styles`).
+    pub fn ever(self) -> bool {
+        !matches!(self, MaskUse::Never)
+    }
+
+    /// Whether it reads the mask under `config` with these ids.
+    pub fn now(self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        match self {
+            MaskUse::Never => false,
+            MaskUse::Always => true,
+            MaskUse::When(f) => f(config, ids),
+        }
+    }
+}
+
+impl std::fmt::Debug for MaskUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MaskUse::Never => "Never",
+            MaskUse::Always => "Always",
+            MaskUse::When(_) => "When(..)",
+        })
+    }
+}
+
 /// A registered style: what it is called, where it runs and how to make it.
+/// Built with [`StyleDescriptor::new`] and its setters, never as a literal
+/// (#366); `non_exhaustive` holds other crates to that.
+#[non_exhaustive]
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
     pub name: &'static str,
@@ -437,9 +566,10 @@ pub struct StyleDescriptor {
     /// Named choices and their defaults, read with [`StyleFrame::option`].
     pub options: &'static [StyleOption],
     /// Whether the style reads the entity style mask (#263). While any
-    /// such style is on, the renderer draws the mask each frame and hands
-    /// it over as [`StyleFrame::mask`]; while none is, the mask isn't made.
-    pub uses_mask: bool,
+    /// such style is on and [`MaskUse::now`] holds, the renderer draws the
+    /// mask each frame and hands it over as [`StyleFrame::mask`]; while
+    /// none is, the mask isn't made.
+    pub uses_mask: MaskUse,
     /// Framework-made inputs the style reads (#301). While any style that
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
@@ -467,6 +597,85 @@ pub struct StyleDescriptor {
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
 }
 
+/// Building a descriptor (#366): `StyleDescriptor::new` with what every
+/// style has, then a setter for each thing it differs in, all `const` so
+/// the result is a `static`:
+///
+/// ```ignore
+/// pub(super) static STYLE: StyleDescriptor =
+///     StyleDescriptor::new("invert", "Invert", StyleStage::Hdr, create)
+///         .params(&[StyleParam::new("amount", 1.0, 0.0..=1.0)]);
+/// ```
+///
+/// A field added to the descriptor gets its default in `new`, so no style
+/// module has to change; build descriptors only this way.
+impl StyleDescriptor {
+    /// A style with no parameters, options, mask, needs or hints, not
+    /// per-entity, not feeding bloom.
+    pub const fn new(
+        name: &'static str,
+        label: &'static str,
+        stage: StyleStage,
+        create: fn(&StyleDevice) -> Box<dyn StylePass>,
+    ) -> Self {
+        Self {
+            name,
+            label,
+            stage,
+            params: &[],
+            options: &[],
+            uses_mask: MaskUse::Never,
+            needs: &[],
+            hints: &[],
+            component: None,
+            feeds_bloom: false,
+            create,
+        }
+    }
+
+    /// Its parameters ([`StyleParam::new`]).
+    pub const fn params(mut self, params: &'static [StyleParam]) -> Self {
+        self.params = params;
+        self
+    }
+
+    /// Its named choices ([`StyleOption::new`]).
+    pub const fn options(mut self, options: &'static [StyleOption]) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Whether and when it reads the style mask.
+    pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
+        self.uses_mask = uses_mask;
+        self
+    }
+
+    /// The framework-made inputs it reads.
+    pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
+        self.needs = needs;
+        self
+    }
+
+    /// How the F4 menu labels its settings.
+    pub const fn hints(mut self, hints: &'static [StyleHint]) -> Self {
+        self.hints = hints;
+        self
+    }
+
+    /// Per-entity, through `component` (`ascii_style`).
+    pub const fn component(mut self, component: &'static str) -> Self {
+        self.component = Some(component);
+        self
+    }
+
+    /// Whether bloom reads its result by default.
+    pub const fn feeds_bloom(mut self, feeds_bloom: bool) -> Self {
+        self.feeds_bloom = feeds_bloom;
+        self
+    }
+}
+
 impl StyleDescriptor {
     /// Whether `config` switches this style on (post-processing as a whole
     /// aside).
@@ -480,12 +689,13 @@ impl StyleDescriptor {
         self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
     }
 
-    /// Whether this style reads the style mask this frame: it always does
-    /// (`uses_mask`), or it is per-entity and an entity names it, opt-outs
-    /// included.
+    /// Whether this style reads the style mask this frame: its `uses_mask`
+    /// says so for this config, or it is per-entity and an entity names
+    /// it, opt-outs included.
     pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         self.is_on(config, ids)
-            && (self.uses_mask || (self.component.is_some() && ids.mentions(self.name)))
+            && (self.uses_mask.now(config, ids)
+                || (self.component.is_some() && ids.mentions(self.name)))
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -528,6 +738,34 @@ impl StyleDescriptor {
     /// one.
     pub fn hint(&self, name: &str) -> Option<&'static StyleHint> {
         self.hints.iter().find(|h| h.name == name)
+    }
+
+    /// Why setting `name` does nothing under `config`, or `None` while it
+    /// is read (#365): its hint's [`when`](StyleHint::when) names an
+    /// option whose current value isn't one of those that read it. The
+    /// line is what the F4 menu shows on the greyed-out row.
+    pub fn unused_reason(&self, config: &PostProcessConfig, name: &str) -> Option<String> {
+        let hint = self.hint(name)?;
+        hint.conditions.iter().flatten().find_map(|c| {
+            let current = self.option(config, c.option);
+            if c.holds(current) {
+                return None;
+            }
+            let label = self.label_for(c.option);
+            let shown = if current.is_empty() {
+                "(default)"
+            } else {
+                current
+            };
+            Some(if c.unless {
+                format!("Unused while {label} is {shown}")
+            } else {
+                format!(
+                    "Unused while {label} is {shown}: only {} reads it",
+                    c.values.join(" or ")
+                )
+            })
+        })
     }
 
     /// What the F4 menu calls setting `name`: its hint's label, or the
@@ -597,6 +835,18 @@ impl StyleDescriptor {
         keys
     }
 
+    /// Every key a scene's table for this style can hold: `enabled`,
+    /// `order`, `feeds_bloom`, the options, each parameter (colour channels
+    /// one by one) and each colour's own key. A commit to the scene (#364)
+    /// owns these and leaves any other key alone.
+    pub fn table_keys(&self) -> Vec<&'static str> {
+        let mut keys = vec!["enabled", "order", "feeds_bloom"];
+        keys.extend(self.options.iter().map(|o| o.name));
+        keys.extend(self.params.iter().map(|p| p.name));
+        keys.extend(self.colors().iter().map(|c| c.base));
+        keys
+    }
+
     /// The rows of this style's F4 section, in drawing order.
     pub fn controls(&self) -> Vec<StyleControl> {
         let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
@@ -643,6 +893,10 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     let feeds = descriptor.feeds_bloom_in(config);
     if descriptor.stage == StyleStage::Hdr && feeds != descriptor.feeds_bloom {
         out.push_str(&format!("feeds_bloom = {feeds}\n"));
+    }
+    let blend = config.styles.blend(descriptor.name);
+    if blend < 1.0 {
+        out.push_str(&format!("blend = {}\n", toml_float(blend)));
     }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
@@ -1089,11 +1343,16 @@ pub struct StyleSetting {
     /// The scene's `feeds_bloom` (#300), when it sets one; `None` keeps
     /// the descriptor's default.
     pub feeds_bloom: Option<bool>,
+    /// How much of the style's result shows over what it read, 0 to 1
+    /// (#369); `None` is all of it. A script fades a whole-frame style in
+    /// and out by ramping it (the stage draws what the style read back over
+    /// its result, [`run_stage`]).
+    pub blend: Option<f32>,
 }
 
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one.
-pub const RESERVED_KEYS: [&str; 3] = ["enabled", "order", "feeds_bloom"];
+pub const RESERVED_KEYS: [&str; 4] = ["enabled", "order", "feeds_bloom", "blend"];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1158,6 +1417,31 @@ impl StyleSettings {
         self.styles.entry(name.to_string()).or_default().feeds_bloom = feeds;
     }
 
+    /// How much of style `name` shows over what it read (#369): its
+    /// table's `blend`, 1 when it sets none.
+    pub fn blend(&self, name: &str) -> f32 {
+        self.styles
+            .get(name)
+            .and_then(|s| s.blend)
+            .map_or(1.0, |b| b.clamp(0.0, 1.0))
+    }
+
+    /// Set how much of style `name` shows, clamped to 0..1; `None` (or 1)
+    /// shows all of it. Leaves the style on or off as it was.
+    pub fn set_blend(&mut self, name: &str, blend: Option<f32>) {
+        let blend = blend
+            .filter(|b| b.is_finite())
+            .map(|b| b.clamp(0.0, 1.0))
+            .filter(|b| *b < 1.0);
+        match self.styles.get_mut(name) {
+            Some(setting) => setting.blend = blend,
+            None if blend.is_some() => {
+                self.styles.entry(name.to_string()).or_default().blend = blend;
+            }
+            None => {}
+        }
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -1188,6 +1472,7 @@ impl StyleSettings {
             setting.options.clear();
             setting.order = None;
             setting.feeds_bloom = None;
+            setting.blend = None;
         }
     }
 
@@ -1259,6 +1544,21 @@ impl StyleSettings {
                     }
                     continue;
                 }
+                if key == "blend" {
+                    let number = value
+                        .as_float()
+                        .or_else(|| value.as_integer().map(|i| i as f64))
+                        .filter(|n| n.is_finite());
+                    match number {
+                        Some(n) => {
+                            let b = (n as f32).clamp(0.0, 1.0);
+                            setting.blend = (b < 1.0).then_some(b);
+                        }
+                        None => warnings
+                            .push(format!("styles.{name}.blend must be a number from 0 to 1")),
+                    }
+                    continue;
+                }
                 if key == "feeds_bloom" {
                     match value.as_bool() {
                         Some(_) if descriptor.stage != StyleStage::Hdr => warnings.push(format!(
@@ -1294,6 +1594,12 @@ impl StyleSettings {
                     match color_from_toml(value) {
                         Some(rgb) => {
                             for (p, v) in color.channels.iter().zip(rgb) {
+                                if let Some(e) = p.range_error(v) {
+                                    warnings.push(format!(
+                                        "styles.{name}.{key}: {e}; kept as written, \
+                                         past what the style is tuned for"
+                                    ));
+                                }
                                 setting.params.insert(p.name.to_string(), v);
                             }
                         }
@@ -1303,7 +1609,7 @@ impl StyleSettings {
                     }
                     continue;
                 }
-                if !descriptor.params.iter().any(|p| p.name == key) {
+                let Some(param) = descriptor.params.iter().find(|p| p.name == key) else {
                     let known = descriptor.setting_keys();
                     warnings.push(format!(
                         "style '{name}' has no parameter '{key}'; it takes: {}",
@@ -1314,12 +1620,19 @@ impl StyleSettings {
                         }
                     ));
                     continue;
-                }
+                };
                 let number = value
                     .as_float()
                     .or_else(|| value.as_integer().map(|i| i as f64));
                 match number {
                     Some(n) => {
+                        // Kept as written, as a stray option is: F4 shows
+                        // it, and the style decides what to draw
+                        if let Some(e) = param.range_error(n as f32) {
+                            warnings.push(format!(
+                                "styles.{name}.{e}; kept as written, past what the style is tuned for"
+                            ));
+                        }
                         setting.params.insert(key.clone(), n as f32);
                     }
                     None => warnings.push(format!("styles.{name}.{key} must be a number")),
@@ -1358,6 +1671,8 @@ pub struct StyleSet {
     /// Whether glyph styles keep their frame as text (#317), handed to
     /// each pass when it's built.
     text_capture: bool,
+    /// The draw that shows a style's `blend` (#369), any style's.
+    blend: blend::BlendPass,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -1366,6 +1681,12 @@ fn descriptor_id(d: &'static StyleDescriptor) -> usize {
 }
 
 impl StyleSet {
+    /// The draw every stage runs after a style whose `blend` is under 1
+    /// (#369); hand it to [`run_stage`].
+    pub(crate) fn blend_pass(&self) -> &blend::BlendPass {
+        &self.blend
+    }
+
     /// Build every style `config` switches on that isn't built yet.
     /// Returns the ones whose creation panicked (they stay off for the
     /// rest of the run).
@@ -1653,7 +1974,9 @@ pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &
 /// targets; only the pings the steps name are made. With `to`, the last
 /// style writes there and this returns `None`; without, it returns the
 /// target holding the result and that target's input id. `frame` carries
-/// the stage's size and format; its descriptor is set per style.
+/// the stage's size and format; its descriptor is set per style. A style
+/// whose `blend` is under 1 (#369) has what it read drawn back over its
+/// result by `blender`, inside its own timing scope.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_stage(
     styles: &[(&'static StyleDescriptor, &dyn StylePass)],
@@ -1663,6 +1986,7 @@ pub(crate) fn run_stage(
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
     to: Option<StyleInput<'_>>,
+    blender: &blend::BlendPass,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
     debug_assert_eq!(styles.len(), steps.len());
@@ -1713,8 +2037,10 @@ pub(crate) fn run_stage(
             }
         };
         let frame = &*frame;
+        let blend = frame.config.styles.blend(descriptor.name);
         scope(descriptor.label, encoder, &mut |encoder| {
-            pass.encode(frame, encoder, &src, dst_view)
+            pass.encode(frame, encoder, &src, dst_view);
+            blender.draw(frame, encoder, &src, dst_view, blend);
         });
     }
     result
@@ -1733,6 +2059,8 @@ macro_rules! register_styles {
         static REGISTRY: &[&StyleDescriptor] = &[$(&$module::STYLE),*];
     };
 }
+
+mod blend;
 
 register_styles!(
     kuwahara,
@@ -1810,6 +2138,60 @@ pub fn names() -> Vec<&'static str> {
 mod tests {
     use super::*;
 
+    /// #365: ASCII's tint and palette settings say they're unused outside
+    /// their colour modes, and background outside the grounds and the
+    /// colour mode that read it.
+    #[test]
+    fn hints_say_when_a_setting_is_unused() {
+        let ascii = find("ascii").expect("ascii registered");
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("ascii", true);
+        // Default colour mode is source: neither tint nor palette is read
+        let tint = ascii.unused_reason(&pp, "tint").expect("tint unused in source");
+        assert!(tint.contains("Colour mode is source"), "{tint}");
+        assert!(tint.contains("only tint reads it"), "{tint}");
+        for name in ["palette", "chroma", "palette_dither"] {
+            assert!(ascii.unused_reason(&pp, name).is_some(), "{name}");
+        }
+        // Settings without conditions are always read
+        for name in ["cell", "glow", "color", "ground", "font"] {
+            assert_eq!(ascii.unused_reason(&pp, name), None, "{name}");
+        }
+        assert_eq!(ascii.unused_reason(&pp, "background"), None);
+
+        pp.styles.set_option("ascii", "color", "tint");
+        assert_eq!(ascii.unused_reason(&pp, "tint"), None);
+        assert!(ascii.unused_reason(&pp, "palette").is_some());
+
+        pp.styles.set_option("ascii", "color", "palette");
+        assert!(ascii.unused_reason(&pp, "tint").is_some());
+        for name in ["palette", "chroma", "palette_dither"] {
+            assert_eq!(ascii.unused_reason(&pp, name), None, "{name}");
+        }
+        // The palette brings its own ground colour
+        let bg = ascii.unused_reason(&pp, "background").expect("palette ground");
+        assert_eq!(bg, "Unused while Colour mode is palette");
+
+        pp.styles.set_option("ascii", "color", "mono");
+        pp.styles.set_option("ascii", "ground", "black");
+        assert!(ascii.unused_reason(&pp, "background").is_some());
+        pp.styles.set_option("ascii", "ground", "inverse");
+        assert_eq!(ascii.unused_reason(&pp, "background"), None);
+    }
+
+    #[test]
+    fn a_hint_holds_its_conditions_in_order() {
+        const H: StyleHint = StyleHint::new("x", "X", "")
+            .when("a", &["1"])
+            .unless("b", &["2"]);
+        let [Some(first), Some(second)] = H.conditions else {
+            panic!("two conditions");
+        };
+        assert!(first.holds("1") && !first.holds("3"));
+        assert!(!second.holds("2") && second.holds("3"));
+        assert!(StyleHint::new("y", "Y", "").conditions.iter().all(Option::is_none));
+    }
+
     /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz
     /// frame what two do, and a dt that says nothing reads as 1/60.
     #[test]
@@ -1881,7 +2263,17 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(colors, vec![("tint", ["tint_r", "tint_g", "tint_b"])]);
+        assert_eq!(
+            colors,
+            vec![
+                ("tint", ["tint_r", "tint_g", "tint_b"]),
+                // #351
+                (
+                    "edge_color",
+                    ["edge_color_r", "edge_color_g", "edge_color_b"]
+                ),
+            ]
+        );
         // Every param is reachable exactly once
         for d in registry() {
             let mut seen: Vec<&str> = Vec::new();
@@ -1905,8 +2297,10 @@ mod tests {
     fn a_colour_is_one_key_in_a_scene() {
         let ascii = find("ascii").unwrap();
         let colors = ascii.colors();
-        assert_eq!(colors.len(), 1);
+        // The tint, and the edge ink's colour (#351)
+        assert_eq!(colors.len(), 2);
         assert_eq!(colors[0].base, "tint");
+        assert_eq!(colors[1].base, "edge_color");
         assert_eq!(colors[0].default_rgb(), [0.35, 1.0, 0.45]);
         assert_eq!(ascii.color_of("tint_g").unwrap().base, "tint");
         assert!(ascii.color_of("glow").is_none());
@@ -2239,16 +2633,40 @@ mod tests {
         assert!(warnings[0].contains("unknown style 'nope'"), "{warnings:?}");
 
         let tables: BTreeMap<String, toml::Table> =
-            toml::from_str("[invert]\nenabled = false\nstrength = 2\nwobble = 3\n").unwrap();
+            toml::from_str("[invert]\nenabled = false\nstrength = 1\nwobble = 3\n").unwrap();
         let (settings, warnings) = StyleSettings::from_tables(&tables);
         assert!(!settings.is_enabled("invert"));
         assert_eq!(
             settings.param("invert", "strength"),
-            Some(2.0),
+            Some(1.0),
             "integers read as numbers"
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no parameter 'wobble'"));
+    }
+
+    #[test]
+    fn a_table_value_outside_its_range_warns_and_is_kept() {
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[invert]\nstrength = 2\n[ascii]\ncell = 8\ntint = [0.3, 1.5, 0.4]\n")
+                .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        // Kept as written, as a stray option is: F4 shows it
+        assert_eq!(settings.param("invert", "strength"), Some(2.0));
+        assert_eq!(settings.param("ascii", "tint_g"), Some(1.5));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with("styles.invert.strength=2 is outside its range 0..1")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("styles.ascii.tint: tint_g=1.5 is outside its range 0..1")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

@@ -24,7 +24,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass, StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -50,137 +51,110 @@ const SLOT_STRIDE: u64 = 256;
 /// Threshold, a downsample and an upsample per further level, composite.
 const SLOTS: usize = 2 * MAX_LEVELS;
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "display_bloom",
-    label: "Display bloom",
-    stage: StyleStage::Display,
-    params: &[
-        StyleParam {
-            name: "intensity",
-            default: 1.5,
-            min: 0.0,
-            max: 4.0,
+pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
+    "display_bloom",
+    "Display bloom",
+    StyleStage::Display,
+    create,
+)
+.params(&[
+    StyleParam::new("intensity", 1.5, 0.0..=4.0),
+    StyleParam::new("threshold", 0.55, 0.0..=1.0),
+    StyleParam::new("knee", 0.25, 0.0..=1.0),
+    StyleParam::new("levels", 5.0, 1.0..=7.0),
+    StyleParam::new("saturation", 1.0, 0.0..=1.0),
+])
+.hints(&[
+    StyleHint::new(
+        "intensity",
+        "Intensity",
+        "How much halo is added over the picture",
+    ),
+    StyleHint::new(
+        "threshold",
+        "Threshold",
+        "The display value (0-1) a pixel's brightest channel must pass to glow",
+    ),
+    StyleHint::new(
+        "knee",
+        "Knee",
+        "How softly the threshold starts, as a share of it",
+    ),
+    StyleHint::new(
+        "levels",
+        "Reach",
+        "Mip levels: each doubles how far the halo spreads (in points)",
+    )
+    .integer(),
+    StyleHint::new(
+        "saturation",
+        "Saturation",
+        "1 keeps the glowing pixel's hue, 0 glows white",
+    ),
+])
+// A display style draws after bloom; it is the bloom here
+.feeds_bloom(false);
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Display Bloom Uniform BGL");
+    let sampled_bgl = kit::sampled_layout(device, "Display Bloom Source BGL");
+    let module = kit::shader(
+        device,
+        "Display Bloom Shader",
+        include_str!("display_bloom.wgsl"),
+    );
+    let chain_layouts = [&uniform_bgl, &sampled_bgl];
+    let pipeline = |label: &str, entry: &str, format, blend, layouts: &[_]| {
+        kit::fullscreen_pipeline_with(device, label, &module, entry, layouts, format, blend)
+    };
+    let additive = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
         },
-        StyleParam {
-            name: "threshold",
-            default: 0.55,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "knee",
-            default: 0.25,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "levels",
-            default: 5.0,
-            min: 1.0,
-            max: 7.0,
-        },
-        StyleParam {
-            name: "saturation",
-            default: 1.0,
-            min: 0.0,
-            max: 1.0,
-        },
-    ],
-    options: &[],
-    uses_mask: false,
-    needs: &[],
-    hints: &[
-        StyleHint::new(
-            "intensity",
-            "Intensity",
-            "How much halo is added over the picture",
+        alpha: wgpu::BlendComponent::OVER,
+    };
+    Box::new(DisplayBloom {
+        threshold: pipeline(
+            "Display Bloom Threshold",
+            "fs_threshold",
+            MIP_FORMAT,
+            None,
+            &chain_layouts,
         ),
-        StyleHint::new(
-            "threshold",
-            "Threshold",
-            "The display value (0-1) a pixel's brightest channel must pass to glow",
+        down: pipeline(
+            "Display Bloom Down",
+            "fs_down",
+            MIP_FORMAT,
+            None,
+            &chain_layouts,
         ),
-        StyleHint::new(
-            "knee",
-            "Knee",
-            "How softly the threshold starts, as a share of it",
+        up: pipeline(
+            "Display Bloom Up",
+            "fs_up",
+            MIP_FORMAT,
+            Some(additive),
+            &chain_layouts,
         ),
-        StyleHint::new(
-            "levels",
-            "Reach",
-            "Mip levels: each doubles how far the halo spreads (in points)",
-        )
-        .integer(),
-        StyleHint::new(
-            "saturation",
-            "Saturation",
-            "1 keeps the glowing pixel's hue, 0 glows white",
+        composite: pipeline(
+            "Display Bloom Composite",
+            "fs_composite",
+            d.format,
+            None,
+            &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
         ),
-    ],
-    component: None,
-    // A display style draws after bloom; it is the bloom here
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Display Bloom Uniform BGL");
-        let sampled_bgl = kit::sampled_layout(device, "Display Bloom Source BGL");
-        let module = kit::shader(
-            device,
-            "Display Bloom Shader",
-            include_str!("display_bloom.wgsl"),
-        );
-        let chain_layouts = [&uniform_bgl, &sampled_bgl];
-        let pipeline = |label: &str, entry: &str, format, blend, layouts: &[_]| {
-            kit::fullscreen_pipeline_with(device, label, &module, entry, layouts, format, blend)
-        };
-        let additive = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent::OVER,
-        };
-        Box::new(DisplayBloom {
-            threshold: pipeline(
-                "Display Bloom Threshold",
-                "fs_threshold",
-                MIP_FORMAT,
-                None,
-                &chain_layouts,
-            ),
-            down: pipeline(
-                "Display Bloom Down",
-                "fs_down",
-                MIP_FORMAT,
-                None,
-                &chain_layouts,
-            ),
-            up: pipeline(
-                "Display Bloom Up",
-                "fs_up",
-                MIP_FORMAT,
-                Some(additive),
-                &chain_layouts,
-            ),
-            composite: pipeline(
-                "Display Bloom Composite",
-                "fs_composite",
-                d.format,
-                None,
-                &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
-            ),
-            uniforms: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Display Bloom Uniforms"),
-                size: SLOTS as u64 * SLOT_STRIDE,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            uniform_bgl,
-            sampled_bgl,
-        })
-    },
-};
+        uniforms: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Display Bloom Uniforms"),
+            size: SLOTS as u64 * SLOT_STRIDE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+        uniform_bgl,
+        sampled_bgl,
+    })
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Pod, Zeroable)]

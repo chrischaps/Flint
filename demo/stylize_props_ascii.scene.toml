@@ -1,0 +1,37 @@
+# Stylize props, ASCII only (#386): demo/stylize_props.scene.toml's
+# clearing with only its ASCII props styled. The barrel and YBot carry
+# style_mask "ascii"; the cask, crate, lid and tag are plain, so a change
+# to pencil (or any other per-entity style) leaves the ASCII goldens alone.
+# The clearing is demo/prefabs/stylize_props.prefab.toml.
+#
+#   cargo run --bin flint -- render demo/stylize_props_ascii.scene.toml --no-grid --output props.png
+
+[scene]
+name = "Stylize Props (ASCII)"
+version = "1.0"
+description = "The stylize props with only the ASCII props styled, for the ASCII goldens (#386)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[prefabs.props]
+template = "stylize_props"
+prefix = "props"
+
+[prefabs.props.overrides.barrel.style_mask]
+style = "ascii"
+[prefabs.props.overrides.ybot.style_mask]
+style = "ascii"

@@ -90,8 +90,13 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
-| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's: `ascii_noir`, `matrix`, `ink_wash`, `graphite`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
-| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`; cells default to 640x360 |
+| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
+| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` (Living Props builds only); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
+| `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
+| `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
+| `--report <file.json>` | (none) | Each column's (or the frame's) measures: mean luminance, near-black/white shares, edge density, the ASCII ramp-step histogram, the distance to `--reference` ([Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look)) |
+| `--reference <png>` | (none) | A target image: each frame or column's distance to it, printed, on the sheet's labels and in the report |
+| `--ai-refine` | off | With `--look` and `--reference`: an agent proposes edits, each rendered and measured, kept while the distance falls; writes `<look>_refined.look.toml`, its `.json` log and a sheet of the rounds. `--refine-rounds 4`, `--refine-candidates 4`, `--refine-out`, `--ai-provider anthropic\|mock`, `--ai-model`, `--max-cost` |
 | `--grade-lift <r,g,b>` | `0,0,0` | Color grade lift |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
 | `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
@@ -303,6 +308,23 @@ row 4: 2 cell(s)
 
 That's `ascii-full` with `brightness=-0.004` added. The PNG check passes it, with 0.19% of pixels moved against a 2% limit. The text check fails it, because 28 cells in 8 rows changed glyph. A structural golden is much stricter than a pixel tolerance, so give a case `text_cells` if its glyphs sit on a tone boundary that another GPU may round the other way.
 
+### Cases that match a second render
+
+Some claims aren't about a picture but about two pictures being the same: "a style that fails to compile draws the frame as if it weren't there". A case with `matches` states that (#417). It has no golden file. It renders the scene with its own `args`, then again with `matches` in their place, and the two must be identical unless the case gives a `tolerance`. Both renders come from one adapter in one run, so the case holds on any GPU and has nothing to bless. The second render is `<case>.reference.png` in the out dir, shown as the golden on the contact sheet.
+
+`error` adds a check on what the render reported: after the case renders, some user style's error must contain that text, which is the message `flint render` prints as a warning (with `--isolate`, the render's whole log is searched).
+
+```toml
+[[case]]
+name = "user-style-broken"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "broken"]   # a style whose WGSL fails
+matches = ["--no-grid"]                     # must equal the frame without it
+error = "broken.wgsl:9:9"                   # and say where it failed
+```
+
+The stylize suite's broken-style case is stricter than it looks. A display-stage user style reads its input through the prelude's sRGB-to-display curve and writes through the inverse, and the passthrough does too. So the frame equals the unstyled one only while the two curves undo each other. With `flint_to_linear`'s exponent changed from 2.4 to 2.2, 98% of the pixels move (mean 7 levels), and the case fails.
+
 ### The contact sheet
 
 Every run writes `index.html` to the out dir (#329): one card a case with the golden, the render and the diff side by side, then a meter for each number against its limit (the tick is the limit), the case's scene and flags, and the text diff when its grid moved. Cases that failed come first, then the ones where any pixel moved, then the identical ones, each group in manifest order; the buttons at the top filter by group. **blink** flips a render with its golden in place, which shows a one-pixel shift that a side-by-side hides. The page reads its images beside itself (`<case>.png`, `<case>.diff.png`, and `golden/<case>.png`, a copy of the golden as it was before the run), so the out dir can be zipped or uploaded whole.
@@ -318,7 +340,7 @@ The cost is crash isolation. A case that panics is run again in its own `flint r
 | Flag | Description |
 |------|-------------|
 | `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. The contact sheet shows what each replaced. Look at it before committing |
-| `--case <name>` | Only this case, or every case whose name contains it; repeatable |
+| `--case <name>` | Only this case. A name that is exactly a case's picks that case alone (`--case ascii-silhouette-cell` skips `ascii-silhouette-cell-object`); one that names no case picks every case whose name contains it (`--case ascii-silhouette` runs both). Repeatable: a case runs when any filter picks it |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level; written when any pixel moved), `report.json` and the `index.html` contact sheet go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
 | `--bless-variant` | Write each render as this adapter's variant of its golden, `<stem>.<key>.png` |

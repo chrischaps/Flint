@@ -1,0 +1,185 @@
+# The broken-style bench (#417): a ramp of boxes from near black to white
+# and round the hues, under a sky, so a frame spans the whole display
+# range, the sRGB curve's linear toe included. `styles/broken.*` beside it
+# fails to compile; rendered with `--style broken` the frame must equal
+# the frame rendered without it, pixel for pixel:
+#
+#   flint render crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml \
+#     --schemas schemas --no-grid --style broken
+#
+# No models, so it finds nothing outside this folder but the schemas.
+
+[scene]
+name = "Broken style bench"
+version = "1.0"
+description = "A user style that fails must draw a passthrough (#417)"
+
+[camera]
+position = [0.0, 3.2, 9.5]
+target = [0.0, 0.7, 0.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.1
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.10, 0.18, 0.42, 1.0]
+horizon_color = [0.92, 0.70, 0.48, 1.0]
+haze_color = [0.95, 0.78, 0.60, 0.6]
+cloud_coverage = 0.25
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.55, -0.6, -0.5]
+color = [1.0, 0.9, 0.75]
+intensity = 2.2
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-30, -0.2, -30]
+max = [30, 0, 30]
+[entities.ground.material]
+color = [0.05, 0.045, 0.04, 1.0]
+roughness = 0.9
+
+# The grey ramp, front row: the darkest boxes sit on the curve's toe
+[entities.grey_0]
+archetype = "furniture"
+[entities.grey_0.transform]
+position = [-4.2, 0, 1.5]
+[entities.grey_0.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_0.material]
+color = [0.004, 0.004, 0.004, 1.0]
+roughness = 0.8
+
+[entities.grey_1]
+archetype = "furniture"
+[entities.grey_1.transform]
+position = [-2.8, 0, 1.5]
+[entities.grey_1.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_1.material]
+color = [0.02, 0.02, 0.02, 1.0]
+roughness = 0.8
+
+[entities.grey_2]
+archetype = "furniture"
+[entities.grey_2.transform]
+position = [-1.4, 0, 1.5]
+[entities.grey_2.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_2.material]
+color = [0.08, 0.08, 0.08, 1.0]
+roughness = 0.8
+
+[entities.grey_3]
+archetype = "furniture"
+[entities.grey_3.transform]
+position = [0.0, 0, 1.5]
+[entities.grey_3.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_3.material]
+color = [0.2, 0.2, 0.2, 1.0]
+roughness = 0.8
+
+[entities.grey_4]
+archetype = "furniture"
+[entities.grey_4.transform]
+position = [1.4, 0, 1.5]
+[entities.grey_4.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_4.material]
+color = [0.4, 0.4, 0.4, 1.0]
+roughness = 0.8
+
+[entities.grey_5]
+archetype = "furniture"
+[entities.grey_5.transform]
+position = [2.8, 0, 1.5]
+[entities.grey_5.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_5.material]
+color = [0.7, 0.7, 0.7, 1.0]
+roughness = 0.8
+
+[entities.grey_6]
+archetype = "furniture"
+[entities.grey_6.transform]
+position = [4.2, 0, 1.5]
+[entities.grey_6.bounds]
+min = [-0.45, 0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.grey_6.material]
+color = [1.0, 1.0, 1.0, 1.0]
+roughness = 0.8
+
+# The hues, back row, taller
+[entities.hue_red]
+archetype = "furniture"
+[entities.hue_red.transform]
+position = [-3.5, 0, -1.0]
+[entities.hue_red.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.6, 0.5]
+[entities.hue_red.material]
+color = [0.85, 0.08, 0.06, 1.0]
+roughness = 0.5
+
+[entities.hue_amber]
+archetype = "furniture"
+[entities.hue_amber.transform]
+position = [-1.75, 0, -1.0]
+[entities.hue_amber.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.6, 0.5]
+[entities.hue_amber.material]
+color = [0.95, 0.55, 0.05, 1.0]
+roughness = 0.5
+
+[entities.hue_green]
+archetype = "furniture"
+[entities.hue_green.transform]
+position = [0.0, 0, -1.0]
+[entities.hue_green.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.6, 0.5]
+[entities.hue_green.material]
+color = [0.1, 0.6, 0.2, 1.0]
+roughness = 0.5
+
+[entities.hue_teal]
+archetype = "furniture"
+[entities.hue_teal.transform]
+position = [1.75, 0, -1.0]
+[entities.hue_teal.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.6, 0.5]
+[entities.hue_teal.material]
+color = [0.05, 0.5, 0.6, 1.0]
+roughness = 0.5
+
+[entities.hue_violet]
+archetype = "furniture"
+[entities.hue_violet.transform]
+position = [3.5, 0, -1.0]
+[entities.hue_violet.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.6, 0.5]
+[entities.hue_violet.material]
+color = [0.4, 0.12, 0.75, 1.0]
+roughness = 0.5

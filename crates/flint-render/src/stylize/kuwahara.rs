@@ -15,37 +15,44 @@ use super::{
 use crate::postprocess::HDR_FORMAT;
 use bytemuck::{Pod, Zeroable};
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "kuwahara",
-    label: "Kuwahara",
-    stage: StyleStage::Hdr,
-    params: &[
-        param("radius", 4.0, 1.0, 8.0),
-        param("sharpness", 8.0, 1.0, 16.0),
-        param("hardness", 8.0, 1.0, 16.0),
-        param("anisotropy", 1.0, 0.0, 2.0),
-    ],
-    options: &[],
-    uses_mask: false,
-    needs: &[],
-    hints: &[
-        StyleHint::new("radius", "Radius (px)", "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more").integer(),
-        StyleHint::new("sharpness", "Sharpness", "How strongly the least varied sector wins; lower blends sectors more softly"),
-        StyleHint::new("hardness", "Hardness", "How sharply sectors fall off; lower gives broader, smoother strokes"),
-        StyleHint::new("anisotropy", "Anisotropy", "How far strokes stretch along the image's edges; 0 is round"),
-    ],
-    component: None,
-    feeds_bloom: false,
-    create: |d| Box::new(Kuwahara::new(d)),
-};
+pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
+    "kuwahara",
+    "Kuwahara",
+    StyleStage::Hdr,
+    create,
+)
+.params(&[
+    StyleParam::new("radius", 4.0, 1.0..=8.0),
+    StyleParam::new("sharpness", 8.0, 1.0..=16.0),
+    StyleParam::new("hardness", 8.0, 1.0..=16.0),
+    StyleParam::new("anisotropy", 1.0, 0.0..=2.0),
+])
+.hints(&[
+    StyleHint::new(
+        "radius",
+        "Radius (px)",
+        "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more",
+    )
+    .integer(),
+    StyleHint::new(
+        "sharpness",
+        "Sharpness",
+        "How strongly the least varied sector wins; lower blends sectors more softly",
+    ),
+    StyleHint::new(
+        "hardness",
+        "Hardness",
+        "How sharply sectors fall off; lower gives broader, smoother strokes",
+    ),
+    StyleHint::new(
+        "anisotropy",
+        "Anisotropy",
+        "How far strokes stretch along the image's edges; 0 is round",
+    ),
+]);
 
-const fn param(name: &'static str, default: f32, min: f32, max: f32) -> StyleParam {
-    StyleParam {
-        name,
-        default,
-        min,
-        max,
-    }
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    Box::new(Kuwahara::new(d))
 }
 
 /// The tensor passes' uniforms.

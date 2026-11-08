@@ -451,31 +451,90 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 |----------|-------------|
 | `set_entity_style(entity_id, style)` | Draw the entity and its descendants in `style` (`"ascii"`). Settings it had before are kept, and any other style or `style_mask` on it comes off |
 | `set_style_param(entity_id, param, value)` | Change one setting: a number (`cell`, `glow`, `brightness`, `levels`, ...; clamped to the style's range), a string (`ramp`, `color`, `palette`, `grid`, `transition`, ...), `enabled` (`true`/`false`), `blend` (0--1, how much of the style shows; [Blending in and out](stylize-passes.md#blending-in-and-out)) or a [colour](stylize-passes.md#colours) (`tint`: a three-number array or a `"#rrggbb"` string). Integers count as numbers, so web scripts (i64 only) work unchanged |
-| `clear_entity_style(entity_id)` | Take the entity's own style off |
+| `tween_style_param(entity_id, param, target, seconds[, easing])` | Let the engine ease a number, `blend` or a colour to `target` over `seconds` of game time (#370), instead of a `set_style_param` in every `on_update`. `easing` is `"linear"`, `"smooth"` (the default, a smoothstep), `"ease_in"`, `"ease_out"` or `"ease_in_out"`. Fires `style_tween_done` with `#{ entity, param }` when it arrives |
+| `clear_entity_style(entity_id)` | Take the entity's own style off, and stop its tweens |
+| `get_entity_style(entity_id)` → `String` | The style the entity is drawn in: its own, one it inherits from its nearest styled ancestor (a style component or a `style_mask`), or the scene's whole-frame style; `""` for none (#372) |
+| `get_entity_style_variant(entity_id)` → `String` | The same style's variant, named for the settings that set it apart: `"ascii{cell=12,ramp=blocks}"`, `"ascii@barrel"` for an object grid, or the style's own name for a whole-frame style; `""` for none |
+| `get_style_param(entity_id, param)` → value | The setting in effect: the entity's (or the ancestor's it inherits), else the scene's `[post_process.styles.<name>]` table, else the style's default. A number (`cell`), a string (`ramp`), a colour as `[r, g, b]` (`tint`), `blend` (0--1, 1 for a whole-frame style) or `enabled` (`true`); `()` when the entity is drawn in no style or the style has no such setting |
 | `reset_style_history()` | The next frame doesn't follow on from this one (a cutscene's new shot, a teleport, a respawn): styles that remember earlier frames, such as ASCII's [temporal stability](stylize-passes.md#camera-cuts), draw it as if it were the first (#343) |
 | `set_camera_cut_detection(enabled)` | Turn the player's own [cut detection](stylize-passes.md#camera-cuts) on or off (on by default). A script that calls `reset_style_history()` at its own cuts can turn it off |
+| `set_look(name)` | Draw the whole frame in a [look](stylize-passes.md#looks-in-scenes-f4-and-scripts) (`"graphite"`, `"matrix"`, or a `styles/<name>.look.toml` beside the scene), laid under the scene's own `[post_process]` keys in place of the look it had (#356). `""` is no look. An unknown look is a warning and changes nothing. Call it once per change, not every frame: each call re-reads the look and replaces the post config |
+| `clear_look()` | Take the look off: the scene's own `[post_process]` keys alone |
 
 Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.
 
-Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity.
+Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity; switch them with [`set_post_style`](#whole-frame-styles).
 
 A clear only removes the entity's own style. One it inherits from an ancestor, or the scene's whole-frame ASCII, still reaches it: to keep it smooth under those, use `set_style_param(id, "enabled", false)`.
 
+The reads follow the renderer's own rules, so they answer what `has_component(id, "ascii_style")` can't: a hoop under a styled barrel reads `"ascii"` and the barrel's settings, an unstyled bench in a whole-frame ASCII scene reads `"ascii"` and the scene's, and an entity opted out (`enabled = false`) reads the next whole-frame style that still reaches it, or `""`. Where several whole-frame styles run, the last in the chain (display after HDR) is the one named. With post-processing off, everything reads `""`. They see the world as the script finds it: a `set_entity_style` is queued, so it reads back from the next frame on.
+
 ```rust
-// Coarse glyphs settling into a fine grid over 1.5 s
 fn on_update() {
-    let barrel = get_entity("barrel");
-    if !has_component(barrel, "ascii_style") { set_entity_style(barrel, "ascii"); }
-    let k = total_time() / 1.5;
-    if k > 1.0 { k = 1.0; }
-    set_style_param(barrel, "cell", 22.0 - 15.0 * k);
-}
-fn on_event(name, data) {
-    if name == "style_changed" { log(`${entity_name(data.entity)} -> ${data.style}`); }
+    let hoop = get_entity("hoop");                 // a child of the barrel
+    if get_entity_style(hoop) == "ascii" && get_style_param(hoop, "cell") > 16.0 {
+        set_style_param(get_entity("barrel"), "cell", 8.0);
+    }
 }
 ```
 
+```rust
+// Coarse glyphs settling into a fine grid over 1.5 s
+fn on_init() {
+    let barrel = get_entity("barrel");
+    set_entity_style(barrel, "ascii");
+    set_style_param(barrel, "cell", 22.0);
+    tween_style_param(barrel, "cell", 7.0, 1.5);
+}
+fn on_event(name, data) {
+    if name == "style_changed" { log(`${entity_name(data.entity)} -> ${data.style}`); }
+    if name == "style_tween_done" { log(`${entity_name(data.entity)}'s ${data.param} arrived`); }
+}
+```
+
+#### Tweens
+
+A tween starts where the setting is now: the entity's own value, else the scene's `[post_process.styles.<name>]` table, else the style's default (`blend`: 1). It begins to move the frame after the call and is stepped on game time, so it pauses with the scripts and a `--frame-step` capture is the same every run. The target is clamped to the setting's range, as `set_style_param` would. On its last step it writes the target exactly and fires `style_tween_done`; a script that wants a loop starts the next tween from `on_event` (`demo/scripts/ascii_story.rhai` makes the bench breathe that way).
+
+- A new tween of the same setting replaces the old one, from wherever it had got to.
+- A `set_style_param` of that setting stops it: the script took over.
+- `clear_entity_style` stops all of the entity's tweens, and so does giving it another style.
+- `seconds` of 0 or less sets the target at once and fires `style_tween_done` with it.
+- Options (`ramp`, `grid`, ...) and `enabled` don't ease; they refuse with a warning, like any other mistake.
+
+`blend` is the cheapest setting to tween: it rides in the style mask beside the entity's id, so it never makes a variant. A tween of `cell` or `glow` makes a new variant row every frame it moves.
+
 `demo/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `demo/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
+
+#### Whole-frame styles
+
+The same for the scene's `[post_process.styles.<name>]` tables (#369): any registered style, for the whole frame. Kuwahara, invert, watercolor, palette, the full-screen ASCII look and [user styles](stylize-passes.md#user-authored-styles) all work.
+
+| Function | Description |
+|----------|-------------|
+| `set_post_style(style, enabled)` | Switch `style` on or off for the whole frame. Settings it had before are kept |
+| `set_post_style_param(style, param, value)` | Change one setting: a number (`radius`, `cell`, `strength`, ...; clamped to the style's range), a string option (`ramp`, `palette`, ...; one of its choices when the list is closed), a [colour](stylize-passes.md#colours) (`tint`), `enabled`, `order`, `feeds_bloom` (HDR styles), or `blend`, 0--1: how much of the style shows over what it read. Setting a param doesn't switch the style on |
+| `reset_post_style(style)` | Put the style back to what the scene authored (with any `--style` words over it): on or off, and every value |
+
+`set_post_style` and `reset_post_style` fire `post_style_changed` to every script's `on_event`, with `#{ style, enabled }`; a param change fires nothing. A param change every frame is a uniform write in a pass that already exists, and `blend` is one more draw with a blend constant, so neither allocates. A style switched on is built the first frame it draws. Mistakes are logged as warnings and change nothing. A scene load or transition puts the new scene's own settings in place.
+
+`blend` is how a script cross-fades into a look ([Blending a whole-frame style](stylize-passes.md#blending-a-whole-frame-style)):
+
+```rust
+// Fall asleep into paint over 3 s, starting at 2 s
+fn on_init() {
+    set_post_style("kuwahara", true);
+    set_post_style_param("kuwahara", "blend", 0.0);   // on, but none of it shows yet
+}
+fn on_update() {
+    let k = (total_time() - 2.0) / 3.0;
+    k = if k < 0.0 { 0.0 } else if k > 1.0 { 1.0 } else { k };
+    set_post_style_param("kuwahara", "blend", k);
+    set_post_style_param("kuwahara", "radius", 3.0 + 4.0 * k);
+}
+```
+
+`demo/dream_story.scene.toml` tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
 
 ### Post-Processing API
 

@@ -20,8 +20,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StylePass, StyleStage,
 };
 use crate::palette::{oklab, Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
@@ -34,83 +34,66 @@ pub const DEFAULT_PALETTE: &str = "cga";
 /// Slots in the table: every ink and the ground.
 pub const TABLE_SLOTS: usize = MAX_COLORS + 1;
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "palette",
-    label: "Palette",
-    stage: StyleStage::Display,
-    params: &[
-        StyleParam {
-            name: "dither",
-            default: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "pixel",
-            default: 1.0,
-            min: 1.0,
-            max: 32.0,
-        },
-        StyleParam {
-            name: "chroma",
-            default: 1.0,
-            min: 0.0,
-            max: 4.0,
-        },
-    ],
-    options: &[StyleOption {
-        name: "palette",
-        default: DEFAULT_PALETTE,
-        choices: BUILTIN_PALETTES,
-        // The scene's own palettes too, as ASCII offers them (#322)
-        discover: Some(super::ascii::palette_choices),
-    }],
-    uses_mask: false,
-    needs: &[],
-    hints: &[
-        StyleHint::new(
-            "palette",
-            "Palette",
-            "A built-in, or palettes/<name>.palette.toml beside the scene",
+const PARAMS: &[StyleParam] = &[
+    StyleParam::new("dither", 0.0, 0.0..=1.0),
+    StyleParam::new("pixel", 1.0, 1.0..=32.0),
+    StyleParam::new("chroma", 1.0, 0.0..=4.0),
+];
+
+const OPTIONS: &[StyleOption] = &[
+    // The scene's own palettes too, as ASCII offers them (#322)
+    StyleOption::new("palette", DEFAULT_PALETTE, BUILTIN_PALETTES)
+        .discovered(super::ascii::palette_choices),
+];
+
+const HINTS: &[StyleHint] = &[
+    StyleHint::new(
+        "palette",
+        "Palette",
+        "A built-in, or palettes/<name>.palette.toml beside the scene",
+    ),
+    StyleHint::new(
+        "dither",
+        "Dither",
+        "Ordered 4x4 dither between the two nearest colours (a ladder: half a rung either way), fixed to the blocks: 0 = flat bands",
+    ),
+    StyleHint::new(
+        "pixel",
+        "Pixel size",
+        "Block size in points: 1 = every pixel its own colour, more = a chunky low-resolution screen",
+    )
+    .integer(),
+    StyleHint::new(
+        "chroma",
+        "Chroma",
+        "For a nearest palette: scales each block's saturation (OKLab a/b) before matching, so a muted scene reaches the palette's colours; 1 = as it is",
+    ),
+];
+
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("palette", "Palette", StyleStage::Display, create)
+        .params(PARAMS)
+        .options(OPTIONS)
+        .hints(HINTS);
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Palette Uniform BGL");
+    let input_bgl = kit::sampled_layout(device, "Palette Input BGL");
+    Box::new(PaletteStyle {
+        pipeline: kit::fullscreen_pipeline(
+            device,
+            "Palette Pipeline",
+            &kit::shader(device, "Palette Shader", SHADER),
+            &[&uniform_bgl, &input_bgl],
+            d.format,
         ),
-        StyleHint::new(
-            "dither",
-            "Dither",
-            "Ordered 4x4 dither between the two nearest colours (a ladder: half a rung either way), fixed to the blocks: 0 = flat bands",
-        ),
-        StyleHint::new(
-            "pixel",
-            "Pixel size",
-            "Block size in points: 1 = every pixel its own colour, more = a chunky low-resolution screen",
-        )
-        .integer(),
-        StyleHint::new(
-            "chroma",
-            "Chroma",
-            "For a nearest palette: scales each block's saturation (OKLab a/b) before matching, so a muted scene reaches the palette's colours; 1 = as it is",
-        ),
-    ],
-    component: None,
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Palette Uniform BGL");
-        let input_bgl = kit::sampled_layout(device, "Palette Input BGL");
-        Box::new(PaletteStyle {
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "Palette Pipeline",
-                &kit::shader(device, "Palette Shader", SHADER),
-                &[&uniform_bgl, &input_bgl],
-                d.format,
-            ),
-            uniforms: kit::uniform_buffer::<PaletteUniforms>(device, "Palette Uniforms"),
-            uniform_bgl,
-            input_bgl,
-            palettes: Mutex::new((Vec::new(), PaletteCache::default())),
-        })
-    },
-};
+        uniforms: kit::uniform_buffer::<PaletteUniforms>(device, "Palette Uniforms"),
+        uniform_bgl,
+        input_bgl,
+        palettes: Mutex::new((Vec::new(), PaletteCache::default())),
+    })
+}
 
 /// The style's shader: its own code, then the shared matcher.
 pub const SHADER: &str = concat!(

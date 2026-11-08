@@ -342,7 +342,7 @@ impl StyleIds {
 
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
-fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
     let from = |c: &str| {
         world
             .get_component(root, c)?
@@ -437,7 +437,7 @@ fn variant_name(v: &StyleVariant, root: &str) -> String {
 /// What a styled root asks for: its variant's name and the variant, or
 /// `None` for a `style_mask` opt-out. A style component (in registry
 /// order) wins over a `style_mask` on the same entity.
-fn request(
+pub(crate) fn request(
     world: &FlintWorld,
     config: &PostProcessConfig,
     root: EntityId,
@@ -468,6 +468,32 @@ fn request(
     }
     let name = variant_name(&variant, world.get_name(root).unwrap_or(""));
     Some((name, variant))
+}
+
+/// Whether `id` asks for a style itself: it carries a `style_mask` or a
+/// style's own component, so it roots a styled subtree.
+pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
+    world.get_component(id, STYLE_MASK_COMPONENT).is_some()
+        || crate::stylize::registry()
+            .iter()
+            .filter_map(|d| d.component)
+            .any(|c| world.get_component(id, c).is_some())
+}
+
+/// The styled root `id` takes its style from (#372): itself, else its
+/// nearest ancestor that asks for one, as [`resolve`] hands ids down.
+/// `None` when no entity on its chain to the top is styled.
+pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
+    let mut at = Some(id);
+    // A parent cycle can't load, but don't spin if one is built at run time
+    for _ in 0..4096 {
+        let e = at?;
+        if is_style_root(world, e) {
+            return Some(e);
+        }
+        at = world.get_parent(e);
+    }
+    None
 }
 
 /// Whether any entity carries a `style_mask` or a style's own component.
@@ -1753,6 +1779,40 @@ mod tests {
         // Nobody asking: off, and the mask isn't drawn
         let (none, _) = resolved(&FlintWorld::new(), &config);
         assert!(!ascii.is_on(&config, &none));
+        assert!(!crate::stylize::any_uses_mask(&config, &none));
+    }
+
+    /// #350: whole-frame ASCII asks for the mask only while it has edges
+    /// to draw and something styled to outline, or another style's entity
+    /// to pass through.
+    #[test]
+    fn whole_frame_ascii_asks_for_the_mask_only_when_it_reads_it() {
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        let empty = FlintWorld::new();
+        let (none, _) = resolved(&empty, &config);
+        assert!(!crate::stylize::any_uses_mask(&config, &none), "nothing styled");
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
+        let (other, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &other), "edges outline it");
+        config.styles.set_param("ascii", "edges", 0.0);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &other),
+            "another style's entity still passes through"
+        );
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
+        let (ours, _) = resolved(&world, &config);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &ours),
+            "per-entity rows are found by mask id"
+        );
+
+        // --ascii-no-edges in a scene with no style_mask: no mask
+        let (none, _) = resolved(&empty, &config);
         assert!(!crate::stylize::any_uses_mask(&config, &none));
     }
 }

@@ -100,7 +100,8 @@ Per-entity styles read an `R16Uint` id per pixel (#263). It is drawn after
 the scene pass by redrawing each styled entity's opaque static, box and
 skinned draws with their cached transform (and bone) bind groups. It is
 depth-tested in the shader against the frame's single-sample depth, with a
-slope tolerance. It is drawn only while a `uses_mask` style is on.
+slope tolerance. It is drawn only while a style whose `uses_mask` asks for it is on (a
+constant, or per frame from the config and ids since #350).
 
 We did not add an extra colour attachment to every scene pipeline. The
 redraw cost under 0.1 ms in the spike (about 0.02 ms for six entities at

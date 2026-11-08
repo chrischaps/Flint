@@ -41,11 +41,74 @@ pub struct RenderArgs {
     pub look: Option<String>,
 
     /// Render one setting at several values as one labelled contact sheet
-    /// (#279): `ascii.cell=6,8,12` (any `--style` key), `post.exposure=0.8,1.2`
-    /// (a [post_process] field; split on `|` to sweep a vector), or
-    /// `look=ascii_noir,matrix`. --width/--height size each cell
-    #[arg(long, value_parser = parse_sweep)]
-    pub sweep: Option<super::look::Sweep>,
+    /// (#279, #353): `ascii.cell=6,8,12` (any `--style` key),
+    /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
+    /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
+    /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
+    /// --width/--height size each cell. Give it twice for a grid (#358):
+    /// the first key across, the second down
+    #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append)]
+    pub sweep: Vec<super::sweep::Sweep>,
+
+    /// A sweep's cells at the final render's scale (#358): draw each at
+    /// --width/--height (default 1920x1080) and keep this region pixel for
+    /// pixel, X,Y,W,H. Point-sized styles (ASCII cells) then draw as many
+    /// glyphs across it as the final render does there
+    #[arg(long, value_parser = super::sweep::parse_crop, conflicts_with = "sweep_scale")]
+    pub sweep_crop: Option<super::sweep::CellView>,
+
+    /// `full`: draw each sweep cell at --width/--height (default 1920x1080)
+    /// and shrink it to 640 wide, so the whole frame is composed as the final
+    /// render is (glyphs blur); `cell` (default): each cell a 640x360 frame
+    #[arg(long, value_parser = ["cell", "full"])]
+    pub sweep_scale: Option<String>,
+
+    /// Write the frame's (or each --sweep column's) measures as JSON
+    /// (#357): mean luminance, near-black / near-white shares, edge
+    /// density, the ASCII grid's ramp-step histogram when it drew, and the
+    /// distance to --reference. Measured from the sheet's own pixels
+    #[arg(long, value_name = "FILE.json")]
+    pub report: Option<String>,
+
+    /// A target image: each frame or column gets its distance to it (the
+    /// metric `flint gen --ai-refine` uses, a score out of 100, lower is
+    /// closer), printed, labelled on a sweep sheet and in --report
+    #[arg(long, value_name = "PNG")]
+    pub reference: Option<String>,
+
+    /// Refine --look toward --reference (#357): an agent proposes edits,
+    /// each is rendered and measured, the best is kept while the distance
+    /// falls. Writes the refined look (--refine-out), a JSON log beside it
+    /// and a sheet of the rounds (-o). Calls go through the cost meter and
+    /// ledger (.flint/procgen_costs.json)
+    #[arg(long, requires_all = ["look", "reference"], conflicts_with_all = ["sweep", "frames"])]
+    pub ai_refine: bool,
+
+    /// Most refine rounds
+    #[arg(long, default_value_t = 4)]
+    pub refine_rounds: u32,
+
+    /// Candidates rendered a round
+    #[arg(long, default_value_t = 4)]
+    pub refine_candidates: usize,
+
+    /// Where the refined look goes [default: <look>_refined.look.toml
+    /// beside -o]; its log is the same path with .json
+    #[arg(long, value_name = "FILE.look.toml")]
+    pub refine_out: Option<String>,
+
+    /// Who proposes refine edits: `anthropic` (Claude; ANTHROPIC_API_KEY)
+    /// or `mock` (free, offline: walks the look's tune sweeps)
+    #[arg(long, default_value = "anthropic")]
+    pub ai_provider: String,
+
+    /// The Claude model for --ai-refine
+    #[arg(long)]
+    pub ai_model: Option<String>,
+
+    /// Refuse any call that could take the run's spend past this (USD)
+    #[arg(long)]
+    pub max_cost: Option<f64>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -514,10 +577,6 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
-    super::look::Sweep::parse(s)
-}
-
 /// A GPU kept between renders in one process (#329). `flint render` makes
 /// its own; `render-suite` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
@@ -586,11 +645,22 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
-    if wants_text && args.sweep.is_some() {
+    let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
+    let view = super::sweep::CellView::from_args(args.sweep_crop, args.sweep_scale.as_deref());
+    if grid.is_none() && (args.sweep_crop.is_some() || args.sweep_scale.is_some()) {
+        anyhow::bail!("--sweep-crop and --sweep-scale shape a sweep's cells: add a --sweep");
+    }
+    if wants_text && grid.is_some() {
         anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
     }
-    if args.frames.is_some() && args.sweep.is_some() {
+    if args.frames.is_some() && grid.is_some() {
         anyhow::bail!("--frames draws one sequence: drop --sweep");
+    }
+    if let Some(knob) = grid.as_ref().and_then(|g| g.wooze_knob()) {
+        anyhow::bail!(
+            "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
+             build doesn't have: it lives on feature/living-props until that merges (#206)"
+        );
     }
     if let Some(dt) = args.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
@@ -619,10 +689,24 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .as_deref()
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
-    let (width, height) = match args.sweep {
-        Some(_) => (args.width.unwrap_or(640), args.height.unwrap_or(360)),
+    let (width, height) = match grid {
+        Some(_) => view.render_size(args.width, args.height),
+        // A refine's rounds are sheet cells too
+        None if args.ai_refine => {
+            let (w, h) = super::sweep::CELL_SIZE;
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
         None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
     };
+    view.check(width, height).map_err(|e| anyhow::anyhow!(e))?;
+    let reference = args
+        .reference
+        .as_deref()
+        .map(super::look_measure::load_reference)
+        .transpose()?;
+    if (args.report.is_some() || reference.is_some()) && args.frames.is_some() {
+        anyhow::bail!("--report / --reference measure one frame or a sweep: drop --frames");
+    }
     flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
@@ -655,16 +739,26 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Create headless context
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
-    let scene_pp = scene_file.post_process.as_ref();
-    let base_pp = super::look::base_def(scene_pp, look.as_ref())?;
+    // A scene's own look (#356) goes under its keys first; --look then
+    // goes over the result
+    let scene_pp = scene_file
+        .post_process
+        .as_ref()
+        .map(|def| flint_render::look::resolve_scene(def, &args.scene));
+    let scene_pp = scene_pp.as_ref();
+    if let Some(name) = scene_pp.and_then(|d| d.look.as_deref()) {
+        println!("Scene look: {name}");
+    }
+    let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
+    let cells = grid.as_ref().map_or(vec![(0, 0)], |g| g.cells());
     let mut configs = Vec::new();
-    for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
-        let def = match &args.sweep {
-            Some(sweep) => sweep.column_def(i, scene_pp, look.as_ref(), &args.scene)?,
+    for &(c, r) in &cells {
+        let def = match &grid {
+            Some(grid) => grid.cell_def(c, r, scene_pp, look.as_ref(), &args.scene)?,
             None => base_pp.clone(),
         };
         let mut config = post_process_config(&args, def.as_ref())?;
-        if let Some(spec) = args.sweep.as_ref().and_then(|s| s.column_style(i)) {
+        for spec in grid.as_ref().map_or(Vec::new(), |g| g.cell_styles(c, r)) {
             flint_render::stylize::apply_style_spec(&mut config, &spec)
                 .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
         }
@@ -841,7 +935,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Post-processing: the first column's (the only one without --sweep)
     renderer.set_post_process_config(configs[0].clone());
-    renderer.set_style_text_capture(wants_text || wants_flips);
+    renderer.set_style_text_capture(wants_text || wants_flips || args.report.is_some());
     renderer.ensure_style_resources(&ctx.device);
     renderer.ensure_fxaa_resources(&ctx.device);
 
@@ -975,23 +1069,24 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         );
     }
 
+    if args.ai_refine {
+        let look = look.expect("clap requires --look with --ai-refine");
+        let reference = reference.expect("clap requires --reference with --ai-refine");
+        return refine_look(&args, look, reference, &mut |table| {
+            let def = super::look::overlay(scene_pp, table)?;
+            let config = post_process_config(&args, Some(&def))?;
+            draw_frame(ctx, &mut renderer, &camera, Some(config))
+        });
+    }
+
     // Render each column (one without --sweep), reading each back
     let mut frames = Vec::with_capacity(configs.len());
+    let mut texts = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {
-        if i > 0 {
-            renderer.set_post_process_config(config.clone());
-            renderer.ensure_style_resources(&ctx.device);
-            renderer.ensure_fxaa_resources(&ctx.device);
+        let pixels = draw_pixels(ctx, &mut renderer, &camera, (i > 0).then(|| config.clone()))?;
+        if args.report.is_some() {
+            texts.push(renderer.style_text(&ctx.device, "ascii"));
         }
-        renderer.render_to(
-            &ctx.device,
-            &ctx.queue,
-            &ctx.depth_view,
-            &camera,
-            &ctx.color_view,
-        );
-        let pixels =
-            pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         if wants_text {
             write_ascii_text(
                 args.ascii_text.as_deref(),
@@ -1038,29 +1133,135 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             let scale = (img.width() / 1280).clamp(1, 3);
             super::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
         }
-        if let Some(sweep) = &args.sweep {
-            println!("  {} = {}", sweep.name(), sweep.values[i]);
+        if let Some(grid) = &grid {
+            let (c, r) = cells[i];
+            println!("  {}", grid.describe(c, r));
         }
         frames.push(img);
     }
 
-    let img = match &args.sweep {
-        None => frames.swap_remove(0),
-        Some(sweep) => {
+    // A sweep whose neighbours drew the same showed nothing: say so (#216).
+    // Judged on the frames as drawn, before a crop could hide a difference.
+    if let Some(grid) = &grid {
+        for warning in grid.identical_warnings(&frames) {
+            eprintln!("Warning: {warning}");
+        }
+    }
+
+    // The pictures the sheet is made of: each frame as its cell shows it
+    // (cropped or shrunk under --sweep-crop / --sweep-scale, #358)
+    let pictures: Vec<image::RgbaImage> = match &grid {
+        Some(_) => frames.into_iter().map(|f| view.cell(f)).collect(),
+        None => frames,
+    };
+
+    // Measures (#357), from those same pixels. The ASCII section counts the
+    // whole drawn frame's grid, which a crop shows only part of.
+    let mut columns = Vec::new();
+    if args.report.is_some() || reference.is_some() {
+        use super::look_measure as lm;
+        for (i, img) in pictures.iter().enumerate() {
+            let image = lm::measure(img);
+            let ascii = texts.get(i).cloned().flatten().map(|t| {
+                lm::measure_ascii(&t, lm::ascii_ramp(&configs[i], Path::new(&args.scene)))
+            });
+            let distance = reference.as_ref().map(|r| lm::distance_to(r, img));
+            let value = grid.as_ref().map(|g| {
+                let (c, r) = cells[i];
+                g.describe(c, r)
+            });
+            println!(
+                "  [{}] {}{}",
+                value.as_deref().unwrap_or("frame"),
+                lm::summary(&image, ascii.as_ref()),
+                distance
+                    .map(|d| format!("  distance {:.2}", d.score))
+                    .unwrap_or_default()
+            );
+            columns.push(lm::ColumnReport {
+                index: i,
+                value,
+                image,
+                ascii,
+                distance: distance.map(Into::into),
+            });
+        }
+    }
+    let nearest = super::look_measure::RenderReport::nearest_column(&columns);
+
+    let mut pictures = pictures;
+    let img = match &grid {
+        None => pictures.swap_remove(0),
+        Some(grid) => {
             let over = match &look {
                 Some(look) => format!("  over {}", look.name),
                 None => String::new(),
             };
-            super::style_sheet::compose(
-                &frames,
-                &super::style_sheet::SheetText {
-                    title: scene_file.scene.name.clone(),
-                    subtitle: format!("sweep {}{over}", sweep.name()),
-                    labels: sweep.values.clone(),
-                },
-            )
+            // Only a sheet that isn't of small frames says how big they were
+            let scale = match view {
+                super::sweep::CellView::Small => String::new(),
+                _ => format!("  {}", view.describe(width, height)),
+            };
+            let reference_note = match &args.reference {
+                Some(r) => format!("  d = distance to {r}"),
+                None => String::new(),
+            };
+            let subtitle = format!("sweep {}{over}{scale}{reference_note}", grid.name());
+            let label = |s: &super::sweep::Sweep| (0..s.values.len()).map(|i| s.label(i)).collect();
+            match &grid.rows {
+                None => {
+                    // With a reference, each label carries its distance and
+                    // the nearest is starred (#357)
+                    let labels: Vec<String> = label(&grid.columns);
+                    let labels = labels
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, l)| match columns.get(i).and_then(|c| c.distance) {
+                            Some(d) => {
+                                let star = if nearest == Some(i) { " *" } else { "" };
+                                format!("{l}  d {:.1}{star}", d.score)
+                            }
+                            None => l,
+                        })
+                        .collect();
+                    super::style_sheet::compose(
+                        &pictures,
+                        &super::style_sheet::SheetText::new(
+                            scene_file.scene.name.clone(),
+                            subtitle,
+                            labels,
+                        ),
+                    )
+                }
+                Some(rows) => super::style_sheet::compose_grid(
+                    &pictures,
+                    &super::style_sheet::GridText {
+                        title: scene_file.scene.name.clone(),
+                        subtitle,
+                        row_key: rows.name(),
+                        column_labels: label(&grid.columns),
+                        row_labels: label(rows),
+                    },
+                ),
+            }
         }
     };
+    if let Some(path) = &args.report {
+        let report = super::look_measure::RenderReport {
+            scene: args.scene.clone(),
+            look: look.as_ref().map(|l| l.name.clone()),
+            sweep: grid.as_ref().map(|g| g.name()),
+            reference: args.reference.clone(),
+            width,
+            height,
+            thresholds: super::look_measure::Thresholds::USED,
+            columns,
+            nearest,
+        };
+        std::fs::write(path, serde_json::to_string_pretty(&report)?)
+            .context(format!("Failed to write {path}"))?;
+        println!("Wrote measures to {path}");
+    }
     img.save(&args.output)
         .context(format!("Failed to save image to {}", args.output))?;
 
@@ -1071,6 +1272,114 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         args.output
     );
 
+    Ok(())
+}
+
+/// One still frame, read back: under `config` when given (a sweep column,
+/// a refine candidate), each drawn as a first frame so no column inherits
+/// the last one's ASCII history (#277's hysteresis would carry glyphs
+/// across).
+fn draw_pixels(
+    ctx: &HeadlessContext,
+    renderer: &mut SceneRenderer,
+    camera: &Camera,
+    config: Option<flint_render::PostProcessConfig>,
+) -> Result<Vec<u8>> {
+    if let Some(config) = config {
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&ctx.device);
+        renderer.ensure_fxaa_resources(&ctx.device);
+    }
+    renderer.reset_style_history();
+    renderer.render_to(
+        &ctx.device,
+        &ctx.queue,
+        &ctx.depth_view,
+        camera,
+        &ctx.color_view,
+    );
+    pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")
+}
+
+/// [`draw_pixels`] as an image.
+fn draw_frame(
+    ctx: &HeadlessContext,
+    renderer: &mut SceneRenderer,
+    camera: &Camera,
+    config: Option<flint_render::PostProcessConfig>,
+) -> Result<image::RgbaImage> {
+    let pixels = draw_pixels(ctx, renderer, camera, config)?;
+    image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
+        .context("Failed to create image from pixel data")
+}
+
+/// `--ai-refine` (#357): run the loop, then write the refined look, its log
+/// and the sheet of rounds.
+fn refine_look(
+    args: &RenderArgs,
+    look: super::look::Look,
+    reference: image::RgbImage,
+    draw: &mut dyn FnMut(&toml::Table) -> Result<image::RgbaImage>,
+) -> Result<()> {
+    use super::look_refine as lr;
+    let (agent, meter) =
+        lr::build_agent(&args.ai_provider, args.ai_model.as_deref(), args.max_cost)?;
+    let name = format!("{}_refined", look.name);
+    let out = args
+        .refine_out
+        .clone()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| lr::default_out(&args.output, &name));
+    let reference_path = args.reference.clone().unwrap_or_default();
+    let log = lr::run(
+        lr::Options {
+            look: look.clone(),
+            reference_path,
+            reference,
+            rounds: args.refine_rounds.max(1),
+            candidates: args.refine_candidates.max(1),
+        },
+        agent.as_ref(),
+        &meter,
+        draw,
+    )?;
+    let text = lr::refined_look_toml(&log, &look, &name)?;
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).ok();
+    }
+    std::fs::write(&out, text).context(format!("Failed to write {}", out.display()))?;
+    let log_path = out.with_extension("json");
+    std::fs::write(&log_path, serde_json::to_string_pretty(&log)?)
+        .context(format!("Failed to write {}", log_path.display()))?;
+    let (labels, cells): (Vec<String>, Vec<image::RgbaImage>) = log.frames.iter().cloned().unzip();
+    let sheet = super::style_sheet::compose(
+        &cells,
+        &super::style_sheet::SheetText::new(
+            format!("refine {} toward {}", look.name, log.reference),
+            format!(
+                "{}: distance {:.2} -> {:.2}, {} round(s), {} call(s), ${:.4}",
+                log.agent, log.start.score, log.end.score, log.rounds_run, log.calls, log.cost_usd
+            ),
+            labels,
+        ),
+    );
+    sheet
+        .save(&args.output)
+        .context(format!("Failed to save image to {}", args.output))?;
+    println!(
+        "Refined {}: distance {:.2} -> {:.2} ({}), {} call(s), ${:.4}",
+        look.name, log.start.score, log.end.score, log.stopped, log.calls, log.cost_usd
+    );
+    println!(
+        "Wrote {} (load it with --look {})",
+        out.display(),
+        out.display()
+    );
+    println!(
+        "Wrote {} and the rounds' sheet {}",
+        log_path.display(),
+        args.output
+    );
     Ok(())
 }
 
