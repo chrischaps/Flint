@@ -224,7 +224,7 @@ shipping `wgsl-in`, the validator and `wgsl-out` would put most of naga
 into the web build against the 4 MB gzip line (#123), to guard styles that
 `flint bundle` has already checked natively. The cheaper road is for the
 bundle to carry the guarded module, written at pack time, so the browser
-compiles that with no naga at all; filed as a follow-up. Until then a
+compiles that with no naga at all (#550). Until then a
 runaway loop in a bundle loses the device in the browser, as before (not
 tried here).
 
