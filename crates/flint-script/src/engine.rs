@@ -37,6 +37,7 @@ pub struct ScriptInstance {
     pub has_on_animation_end: bool,
     pub has_on_sequence_cue: bool,
     pub has_on_event: bool,
+    pub has_on_expression: bool,
     pub init_called: bool,
 }
 
@@ -57,6 +58,7 @@ impl ScriptInstance {
         let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         let has_on_event = has_function(&ast, cb::ON_EVENT);
+        let has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
 
         Self {
             ast,
@@ -76,6 +78,7 @@ impl ScriptInstance {
             has_on_animation_end,
             has_on_sequence_cue,
             has_on_event,
+            has_on_expression,
             init_called: false,
         }
     }
@@ -97,6 +100,7 @@ impl ScriptInstance {
         self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         self.has_on_event = has_function(&ast, cb::ON_EVENT);
+        self.has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -122,6 +126,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_SCENE_ENTER, 0),
     (cb::ON_ANIMATION_END, 1),
     (cb::ON_EVENT, 2),
+    (cb::ON_EXPRESSION, 1),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -549,6 +554,41 @@ impl ScriptEngine {
                 (name.to_string(), data.clone()),
             ) {
                 tracing::warn!("on_event error ({}): {}", script.source_path, e);
+            }
+        }
+    }
+
+    /// Deliver expression states from outside the process (Flint#518), in
+    /// arrival order. Each becomes what `expression()` returns, then every
+    /// script that defines `on_expression(state)` hears it, in entity-id
+    /// order. With no states this does nothing, so `expression()` holds the
+    /// last one until another arrives.
+    pub fn deliver_expressions(&mut self, world: &mut FlintWorld, states: Vec<rhai::Map>) {
+        if states.is_empty() {
+            return;
+        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
+        let mut entity_ids: Vec<EntityId> = self
+            .scripts
+            .iter()
+            .filter(|(_, s)| s.has_on_expression)
+            .map(|(id, _)| *id)
+            .collect();
+        entity_ids.sort_by_key(|id| id.raw());
+
+        for state in states {
+            crate::lock_or_recover(&self.ctx).expression = state.clone();
+            for &entity_id in &entity_ids {
+                let script = self.scripts.get_mut(&entity_id).unwrap();
+                crate::lock_or_recover(&self.ctx).current_entity = entity_id;
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    cb::ON_EXPRESSION,
+                    (rhai::Dynamic::from_map(state.clone()),),
+                ) {
+                    tracing::warn!("on_expression error ({}): {}", script.source_path, e);
+                }
             }
         }
     }

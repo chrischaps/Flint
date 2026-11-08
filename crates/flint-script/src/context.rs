@@ -639,6 +639,11 @@ pub struct ScriptCallContext {
     /// Conducted-parameters snapshot for this frame (set by the host before
     /// scripts run; neutral defaults when no music session — ADR 0020)
     pub conducted: ConductedSnapshot,
+    /// The latest expression state from outside the process (Flint#518):
+    /// a timeline or a localhost socket, as the host feeds it. Empty until
+    /// the first one arrives. `expression()` reads it; it outlives scene
+    /// changes, since it describes the world outside the game, not the scene.
+    pub expression: rhai::Map,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -718,6 +723,7 @@ impl ScriptCallContext {
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),
             conducted: ConductedSnapshot::default(),
+            expression: rhai::Map::new(),
         }
     }
 

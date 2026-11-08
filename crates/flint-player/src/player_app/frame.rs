@@ -921,6 +921,15 @@ impl PlayerApp {
             }
         }
 
+        // Expression states due by now (Flint#518): the timeline on the game
+        // clock, then what the socket's reader threads have parsed. Queued
+        // for the scripts' update below, which hears them before on_update.
+        if let Some(feed) = &mut self.expression_feed {
+            for state in feed.poll(self.clock.total_time) {
+                self.script.queue_expression(state);
+            }
+        }
+
         // Advance transition phase timing
         self.advance_transition();
 

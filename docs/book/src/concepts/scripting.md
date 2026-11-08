@@ -51,6 +51,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_sequence_cue` | `fn on_sequence_cue(sequence, cue)` | An animation sequence passed a `cue` event (see [Animation](animation.md#sequences)) |
 | `on_animation_end` | `fn on_animation_end(clip)` | A `once` sprite clip finished (see [2D Sprites](sprites-2d.md)) |
 | `on_event` | `fn on_event(name, data)` | A custom game event fired by a script, the engine or a player extension (see [Event API](#event-api)) |
+| `on_expression` | `fn on_expression(state)` | A new state arrived from outside the process: a timeline or a localhost socket (see [Expression API](#expression-api)) |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -284,6 +285,63 @@ reaches `on_event` at the start of the next frame, before that frame's
 
 A payload that isn't a table arrives as `#{ value: data }`. Events are dropped
 while the game state pauses scripts, as input actions are.
+
+### Expression API
+
+State from outside the player process, for a game that something else drives:
+a live bridge, a rehearsal timeline, a recorded replay. The player is started
+with either source, or both:
+
+```bash
+flint play scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json
+flint play scenes/stage.scene.toml --expression-listen 127.0.0.1:7777
+```
+
+| Function | Description |
+|----------|-------------|
+| `expression()` | The latest state as a map; `#{}` before the first arrives |
+
+Every script that defines `on_expression(state)` hears each new state, once,
+in arrival order and entity-id order, before that frame's `on_update`. During
+the call `expression()` already returns that state, so a frame that takes two
+calls `on_expression` twice and leaves the second in place. The state holds
+until another arrives, and outlives scene changes: it describes the world
+outside the game.
+
+```rhai
+fn on_expression(state) {
+    log(`now ${state.state}, energy ${state.energy}`);
+}
+
+fn on_update() {
+    let e = expression();
+    if e.len() == 0 { return; }          // nothing has arrived yet
+    // ease toward e.energy here; a state says what is happening, not how it moves
+}
+```
+
+Flint doesn't know the fields. Any JSON object arrives as a map, and every
+number as a float, so `1` and `1.0` read the same. Whoever writes the messages
+owns their vocabulary and how strictly to check it.
+
+- **`--expression-timeline <file>`** plays `{"events": [{..., "t": secs}, ...]}`
+  on the game clock, so `--frame-step` and `set_time_scale` apply to it. An
+  event is delivered on the first frame whose game time reaches its `t`; one
+  long frame delivers all that came due, in file order. `t` must be 0 or later
+  and never decrease. Other top-level fields are ignored.
+- **`--expression-listen <ip:port>`** takes newline-delimited JSON objects over
+  TCP. It binds loopback only (`127.0.0.1` or `::1`; anything else is refused)
+  and is off unless given. Reader threads parse each line off the frame
+  thread, so a frame never waits on the network, and a frame takes at most 64
+  states. A line that isn't a JSON object, or is over 64 KiB, is logged and
+  dropped, and the connection stays open. At most 8 connections at once. If
+  more than 256 states are waiting, the oldest go: each is a whole snapshot,
+  so the latest is the one that matters.
+
+The feed logs each state it delivers at info under the `expression` target
+(`RUST_LOG=expression=info,script=info` shows them beside the scripts' own
+`log` lines). While the game state pauses scripts, states wait for them, up to
+256.
 
 ### Log API
 

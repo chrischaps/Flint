@@ -64,7 +64,16 @@ pub struct ScriptSystem {
     pub(crate) engine: ScriptEngine,
     pub(crate) sync: ScriptSync,
     pending_events: Vec<GameEvent>,
+    /// Expression states from outside the process, waiting for the next
+    /// `update` (Flint#518). Not cleared by a scene change: they describe the
+    /// world outside the game.
+    pending_expressions: std::collections::VecDeque<rhai::Map>,
 }
+
+/// The most expression states held for scripts that aren't running (a paused
+/// state, a long load). Past this the oldest go first: each state is a whole
+/// snapshot, so the latest is the one that matters.
+pub const MAX_PENDING_EXPRESSIONS: usize = 256;
 
 impl ScriptSystem {
     /// Time each script's `on_update` from now on, for a perf readout.
@@ -83,7 +92,28 @@ impl ScriptSystem {
             engine: ScriptEngine::new(),
             sync: ScriptSync::new(),
             pending_events: Vec::new(),
+            pending_expressions: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Queue an expression state from outside the process (Flint#518). The
+    /// next `update` makes it what `expression()` returns and calls
+    /// `on_expression(state)` on every script that defines it, before any
+    /// `on_update`, so a state queued this frame is seen this frame.
+    pub fn queue_expression(&mut self, state: rhai::Map) {
+        if self.pending_expressions.len() >= MAX_PENDING_EXPRESSIONS {
+            self.pending_expressions.pop_front();
+            tracing::warn!(
+                "expression: more than {MAX_PENDING_EXPRESSIONS} states waiting for scripts; dropped the oldest"
+            );
+        }
+        self.pending_expressions.push_back(state);
+    }
+
+    /// The expression state scripts see now (`expression()`): the last one
+    /// delivered, or an empty map before any.
+    pub fn expression(&self) -> rhai::Map {
+        crate::lock_or_recover(&self.engine.ctx).expression.clone()
     }
 
     /// Clear all script state for a scene transition.
@@ -529,6 +559,14 @@ impl RuntimeSystem for ScriptSystem {
             self.engine.add_update_time("[events]", began);
         }
 
+        // Expression states from outside (Flint#518), so on_update sees them
+        let began = now();
+        let states: Vec<rhai::Map> = self.pending_expressions.drain(..).collect();
+        self.engine.deliver_expressions(world, states);
+        if let Some(began) = began {
+            self.engine.add_update_time("[expression]", began);
+        }
+
         // Call on_update() for all scripts
         self.engine.call_updates(world);
 
@@ -641,6 +679,74 @@ mod tests {
         system.engine.add_script(id, ast, "host.rhai".into());
         system.engine.call_updates(&mut world);
         assert_eq!(*seen.lock().unwrap(), [42, 7, 42, 7]);
+    }
+
+    #[test]
+    fn expression_states_reach_scripts_in_order_before_on_update() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut system = ScriptSystem::new();
+        {
+            let seen = seen.clone();
+            system
+                .rhai_engine_mut()
+                .register_fn("record", move |s: &str| seen.lock().unwrap().push(s.into()));
+        }
+        let source = r#"
+            fn on_expression(state) {
+                // expression() already says what this call is about
+                record(`heard ${state.state} (now ${expression().state}) energy ${state.energy}`);
+            }
+            fn on_update() {
+                let e = expression();
+                record(if e.len() == 0 { "update: none" } else { `update: ${e.state}` });
+            }
+        "#;
+        let mut world = FlintWorld::new();
+        let id = world.spawn("listener").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "listener.rhai".into());
+
+        system.update(&mut world, 0.016).unwrap();
+        let state = |name: &str, energy: f64| {
+            let mut m = rhai::Map::new();
+            m.insert("state".into(), name.into());
+            m.insert("energy".into(), rhai::Dynamic::from_float(energy));
+            m
+        };
+        system.queue_expression(state("thinking", 0.6));
+        system.queue_expression(state("speaking", 0.5));
+        system.update(&mut world, 0.016).unwrap();
+        system.update(&mut world, 0.016).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "update: none",
+                "heard thinking (now thinking) energy 0.6",
+                "heard speaking (now speaking) energy 0.5",
+                "update: speaking",
+                "update: speaking", // it holds until another arrives
+            ]
+        );
+
+        // A scene change keeps the state: it's the world outside the game.
+        system.clear();
+        assert_eq!(
+            system.expression()["state"].clone().into_string().unwrap(),
+            "speaking"
+        );
+    }
+
+    #[test]
+    fn expression_backlog_keeps_the_latest() {
+        let mut system = ScriptSystem::new();
+        for i in 0..(MAX_PENDING_EXPRESSIONS + 10) {
+            let mut m = rhai::Map::new();
+            m.insert("i".into(), (i as i64).into());
+            system.queue_expression(m);
+        }
+        assert_eq!(system.pending_expressions.len(), MAX_PENDING_EXPRESSIONS);
+        assert_eq!(system.pending_expressions[0]["i"].as_int().unwrap(), 10);
     }
 
     #[test]

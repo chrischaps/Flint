@@ -8,6 +8,7 @@
 //!                [--screenshot <out.png>] [--screenshot-at <secs>]
 //!                [--screenshot-every <secs>] [--exit-after <secs>]
 //!                [--frame-step <secs>] [--input-script <file>]
+//!                [--expression-timeline <file>] [--expression-listen <ip:port>]
 //!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Screenshots capture the presented frame — the 3D scene *and* the egui
@@ -140,6 +141,18 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     input_script: Option<String>,
 
+    /// Play expression states from a JSON timeline on the game clock:
+    /// `{"events": [{..., "t": secs}, ...]}`. Scripts read the latest with
+    /// `expression()` and hear each in `on_expression(state)` (Flint#518)
+    #[arg(long, value_name = "FILE")]
+    expression_timeline: Option<String>,
+
+    /// Take expression states as newline-delimited JSON objects over TCP at
+    /// this loopback address (e.g. 127.0.0.1:7777). Off unless given; only
+    /// 127.0.0.1 or ::1 can listen (Flint#518)
+    #[arg(long, value_name = "IP:PORT")]
+    expression_listen: Option<String>,
+
     /// Open the rendering stats overlay (F2) from the first frame, so a
     /// capture shows it
     #[arg(long)]
@@ -257,6 +270,10 @@ fn main() -> Result<()> {
     if let Some(path) = &args.input_script {
         app.capture.input_script = Some(flint_player::InputScript::load(path)?);
     }
+    app.expression_feed = flint_player::ExpressionFeed::open(
+        args.expression_timeline.as_deref(),
+        args.expression_listen.as_deref(),
+    )?;
     app.capture.show_stats = args.stats;
     if let Some(compare) = &args.compare {
         let (a, b) = compare
