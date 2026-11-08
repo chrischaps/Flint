@@ -154,11 +154,6 @@ pub fn draw_text(
 /// Nothing styled still gets a card saying so, so an empty mask reads as
 /// empty rather than broken.
 pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::LegendEntry]) {
-    let (w, h) = img.dimensions();
-    let scale = (w / 640).clamp(1, 3);
-    let line = GLYPH * scale;
-    let pad = 6 * scale;
-    let gap = 4 * scale;
     let rows: Vec<(Option<[f32; 3]>, String)> = if entries.is_empty() {
         vec![(None, "no styled entities".to_string())]
     } else {
@@ -167,6 +162,24 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
             .map(|e| (Some(e.color), format!("{} {}", e.id, e.name)))
             .collect()
     };
+    let scale = (img.width() / 640).clamp(1, 3);
+    draw_card(img, "style mask", &rows, scale);
+}
+
+/// A legend card in the image's lower left: `title`, then a row each of
+/// a swatch (display values) and its text, or the text alone. The style
+/// mask view's (#309) and the ASCII edge view's (#349). `scale` is image
+/// pixels a font pixel.
+pub fn draw_card(
+    img: &mut RgbaImage,
+    title: &str,
+    rows: &[(Option<[f32; 3]>, String)],
+    scale: u32,
+) {
+    let (w, h) = img.dimensions();
+    let line = GLYPH * scale;
+    let pad = 6 * scale;
+    let gap = 4 * scale;
     let longest = rows
         .iter()
         .map(|(_, t)| t.chars().count())
@@ -186,7 +199,7 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
         }
     }
     let font = GlyphAtlas::builtin();
-    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, "style mask");
+    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, title);
     for (i, (color, text)) in rows.iter().enumerate() {
         let y = y0 + pad + header + i as u32 * (line + gap);
         let mut tx = x0 + pad;

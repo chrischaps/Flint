@@ -485,6 +485,9 @@ impl RenderDebugPanel {
             if self.debug_mode == DebugMode::StyleMask {
                 style_legend_ui(ui, &self.style_legend);
             }
+            if self.debug_mode == DebugMode::StyleEdges {
+                edge_legend_ui(ui);
+            }
         });
 
         self.flags = f;
@@ -517,6 +520,31 @@ fn style_legend_ui(ui: &mut egui::Ui, rows: &[LegendEntry]) {
         });
     }
     ui.weak("Grey: unstyled. White: where ids meet.");
+}
+
+/// The Style Edges view's legend (#349): what each colour marks.
+fn edge_legend_ui(ui: &mut egui::Ui) {
+    for (i, ([r, g, b], name)) in flint_render::stylize::EDGE_VIEW_LEGEND.iter().enumerate() {
+        if i == 3 {
+            ui.weak("Each glyph cell:");
+        } else if i == 0 {
+            ui.weak("Each edge pixel:");
+        }
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            ui.painter().rect_filled(
+                rect,
+                2.0,
+                egui::Color32::from_rgb(byte(*r), byte(*g), byte(*b)),
+            );
+            ui.label(*name);
+        });
+    }
+    ui.weak(
+        "A cell's foot bar is its edge length over edge_max, the tick edge_threshold. \
+         Tune them, edge_depth and edge_normal under Styles > ascii.",
+    );
 }
 
 fn fov_label(fov_deg: f32) -> &'static str {

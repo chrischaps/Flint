@@ -305,6 +305,12 @@ exposure = 1.0
 
 All fields are optional --- omitted values use their defaults. The full key list with defaults is in [File Formats](../formats/overview.md).
 
+A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). The scene still loads, and `flint validate` shows the same line:
+
+```text
+WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did you mean 'bloom_intensity'? (ignored)
+```
+
 When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, render mode and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
 
 The scene viewer applies the scene's `[post_process]` block on load (ADR 0046). The Rendering & Effects menu can swap between the authored block and the viewer's default look.

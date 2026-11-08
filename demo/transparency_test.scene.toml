@@ -8,7 +8,6 @@ version = "1.0"
 description = "Test scene for transparent material rendering"
 
 [post_process]
-enabled = true
 exposure = 1.2
 bloom_enabled = true
 bloom_intensity = 0.3

@@ -537,6 +537,8 @@ pub struct SceneRenderer {
     style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
+    /// Whether the `edges` view switched ASCII on itself (#349).
+    ascii_forced: bool,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
@@ -855,6 +857,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
+            ascii_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2378,6 +2381,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_blend_by_entity: HashMap::new(),
             mask_view_forced: false,
+            ascii_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -4577,6 +4581,16 @@ impl SceneRenderer {
             }
         } else if std::mem::take(&mut self.mask_view_forced) {
             styles.set_enabled("mask_view", false);
+        }
+        // The `edges` view (#349) is drawn by the ASCII style itself, so a
+        // scene without it gets it, at its defaults, for the view
+        if self.debug_state.mode == DebugMode::StyleEdges {
+            if !styles.is_enabled("ascii") {
+                styles.set_enabled("ascii", true);
+                self.ascii_forced = true;
+            }
+        } else if std::mem::take(&mut self.ascii_forced) {
+            styles.set_enabled("ascii", false);
         }
     }
 

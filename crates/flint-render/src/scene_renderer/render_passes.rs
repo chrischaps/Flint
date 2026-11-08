@@ -645,7 +645,7 @@ impl SceneRenderer {
         self.draw_bind_cache.arena = arena;
     }
 
-    /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
+    /// Execute the main render pass: skybox → terrain → entities → grid → sprites → particles → debug.
     #[profiling::function]
     pub(super) fn render_main_pass<'a>(
         &'a self,
@@ -744,24 +744,15 @@ impl SceneRenderer {
             }
         }
 
-        // Render grid
-        if phase.draws_opaque() {
-            if let Some(grid) = &self.grid_draw {
-                render_pass.set_pipeline(&self.pipeline.line_pipeline);
-                render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
-            }
-        }
-
         // In WireframeOnly mode: depth prepass masks outline interior,
         // then outline, then wireframe lines on top.
         if wireframe_only {
             self.render_wireframe_only_pass(render_pass);
+            if phase.draws_opaque() {
+                self.draw_editor_grid(render_pass);
+            }
         } else {
+            // The editor grid is drawn in here, after the opaque geometry.
             self.render_normal_pass(render_pass, phase);
         }
 
@@ -807,6 +798,26 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
+    }
+
+    /// The editor grid, as an overlay (#346): depth-tested against what is
+    /// already drawn, with the line bias, but never writing depth. Drawn
+    /// after the opaque geometry, so the grid still shows on a floor at
+    /// y = 0 and hides behind anything standing on it, while the depth that
+    /// styles, SSAO, fog and the edge passes read holds only the scene. With
+    /// depth writes, ASCII's edges traced every grid line.
+    fn draw_editor_grid<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        let Some(grid) = &self.grid_draw else {
+            return;
+        };
+        render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+        // Billboards may have left their texture group at slot 2.
+        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+        render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
+        render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
     }
 
     /// Draw the wireframe edges of every skinned draw call (opaque and
@@ -1152,7 +1163,10 @@ impl SceneRenderer {
                     }
                 }
             }
-        } // end opaque phase (outlines + entities + skinned + billboards)
+
+            // After every opaque draw: an overlay, not geometry (#346)
+            self.draw_editor_grid(render_pass);
+        } // end opaque phase (outlines + entities + skinned + billboards + grid)
 
         if !phase.draws_ocean_and_after() {
             return;
@@ -1321,6 +1335,9 @@ impl SceneRenderer {
         // The `style` debug view shows the mask over the plain scene (#334):
         // mask_view runs alone, so no other style's output speckles its hues
         let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        // and the `edges` view (#349) shows the ASCII style's edge passes
+        // over the plain scene: ASCII alone, drawing its edge view
+        let solo = solo.or((self.debug_state.mode == DebugMode::StyleEdges).then_some("ascii"));
         let hdr_styles = crate::stylize::solo(
             pp.styles
                 .active(crate::stylize::StyleStage::Hdr, config, ids),
@@ -1373,6 +1390,7 @@ impl SceneRenderer {
                 history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
+                debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,
             }

@@ -30,10 +30,13 @@ Flint uses an **edit -> validate -> play** loop:
    flint render levels/demo.scene.toml --output test.png --schemas schemas \
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
    # Debug/post-processing flags:
-   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style
+   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style|edges
    #                          (style = the entity style mask, #263: needs post-processing;
    #                          prints and draws a legend of each id's hue, #309; runs mask_view
    #                          alone, the scene's other styles suspended, #334)
+   #                          (edges = ASCII's edge passes, #349: pixels by source, cells by
+   #                          decision + length bar; ascii alone, on at defaults if absent;
+   #                          ascii_edge_view.wgsl; StyleFrame::debug_mode carries the mode)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
@@ -54,6 +57,11 @@ Flint uses an **edit -> validate -> play** loop:
    #                           Also on flint-player. ADR 0058)
    #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --frames 181 --frame-dt 0.0166667 --orbit 6.8755 | --camera-path cam.toml
+   #                          (#345: N frames on one renderer as out_0000.png...; temporal
+   #                           styles see consecutive frames; --flip-stats / --flip-json f.json
+   #                           count ASCII glyph flips and A-B-A reversals from its own grid,
+   #                           --no-images skips the PNGs; byte-identical run to run)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
@@ -68,8 +76,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                          (#266; a scene's ascii_style entities need no flag)
    #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1 --ascii-dither 0 (#277)
    #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
-   #                          (#267 line glyphs on depth/crease/mask edges; capture with --no-grid,
-   #                           the editor grid writes depth and gets traced)
+   #                          (#267 line glyphs on depth/crease/mask edges; the editor grid is a
+   #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
    #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
    #                          against its descriptor; repeatable; `--style help`;
