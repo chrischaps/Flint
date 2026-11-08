@@ -1320,6 +1320,113 @@ fn a_style_with_no_blend_code_fades_by_the_framework() {
     assert_eq!(held(&gpu), objects, "a blend ramp left GPU objects behind");
 }
 
+/// #398: a small prop's dissolve turns `blend` of its cells wherever it
+/// sits. A box of about 6x5 cells is slid across the grid a part of a cell
+/// at a time; at each place its cells (those its full style changes) and
+/// its turned cells (those drawn as the full style) are counted. On the
+/// order alone a 6x5 prop turned 30-73% of its cells at 0.5 by where it
+/// sat; ranked among its own cells it turns round(0.5 x n). The places run
+/// past 32 dissolves switched on and off in one renderer, which once
+/// wrapped the glyph pass's bind key onto a stale rank texture.
+#[test]
+fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::{set_entity_style, set_style_param};
+    const CELL: usize = 4;
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut shares = Vec::new();
+    let mut binds = None;
+    for step in 0..40 {
+        let mut world = FlintWorld::new();
+        let prop = world.spawn("prop").unwrap();
+        let mut transform = toml::Table::new();
+        // Across the screen (the default camera looks down (-1, -1, -1), so
+        // (1, 0, -1) is its right) and up, by uneven steps, so the prop
+        // meets the cell grid (and the noise) at a new phase each time
+        let across = -1.3 + step as f64 * 0.23;
+        let up = -0.8 + (step * 7 % 12) as f64 * 0.14;
+        transform.insert(
+            "position".into(),
+            vec3([
+                across * std::f64::consts::FRAC_1_SQRT_2,
+                up,
+                -across * std::f64::consts::FRAC_1_SQRT_2,
+            ]),
+        );
+        // Turned to face the camera, and wide: the frame is squeezed to the
+        // camera's 16:9
+        transform.insert("rotation".into(), vec3([0.0, 45.0, 0.0]));
+        world
+            .set_component(prop, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-4.5, -1.6, -0.8]));
+        bounds.insert("max".into(), vec3([4.5, 1.6, 0.8]));
+        world.set_component(prop, "bounds", bounds.into()).unwrap();
+        let plain = gpu.frame(&mut renderer, &world);
+        set_entity_style(&mut world, prop, "ascii").unwrap();
+        set_style_param(&mut world, prop, "cell", (CELL as f64).into()).unwrap();
+        let full = gpu.frame(&mut renderer, &world);
+        set_style_param(&mut world, prop, "transition", "dissolve".into()).unwrap();
+        set_style_param(&mut world, prop, "blend", 0.5.into()).unwrap();
+        let half = gpu.frame(&mut renderer, &world);
+        // 64 / 4: the grid starts at the frame's corner
+        let cells = SIZE as usize / CELL;
+        let (mut member, mut turned) = (0usize, 0usize);
+        for cy in 0..cells {
+            for cx in 0..cells {
+                let (mut styled, mut glyph) = (false, false);
+                for py in cy * CELL..(cy + 1) * CELL {
+                    for px in cx * CELL..(cx + 1) * CELL {
+                        let (p, f, h) = (
+                            pixel(&plain, px, py),
+                            pixel(&full, px, py),
+                            pixel(&half, px, py),
+                        );
+                        assert!(h == p || h == f, "dissolve drew a mixed pixel");
+                        styled |= p != f;
+                        glyph |= p != f && h == f;
+                    }
+                }
+                member += styled as usize;
+                turned += glyph as usize;
+            }
+        }
+        assert!(
+            (20..=48).contains(&member),
+            "the prop should be about 6x5 cells: {member} at step {step}"
+        );
+        shares.push((member, turned));
+        // Switching the dissolve on and off makes nothing new
+        let kept = renderer.kept_post_binds();
+        assert_eq!(
+            *binds.get_or_insert(kept),
+            kept,
+            "step {step} kept more binds"
+        );
+    }
+    eprintln!("cells, turned at blend 0.5: {shares:?}");
+    for (step, &(member, turned)) in shares.iter().enumerate() {
+        let share = turned as f64 / member as f64;
+        assert!(
+            (share - 0.5).abs() <= 0.1,
+            "{turned} of {member} cells turned at blend 0.5 at step {step}: {:.0}%",
+            share * 100.0
+        );
+    }
+}
+
 /// #335: two entities in one frame draw in two glyph sets. The right cube
 /// names a set whose every glyph is solid ink in tall 4x8 cells: tinted
 /// red, all of its pixels turn red, while the left cube, in the built-in
