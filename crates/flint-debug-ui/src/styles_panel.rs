@@ -64,6 +64,12 @@ impl StylesDebugPanel {
         self.entities = entities;
     }
 
+    /// The authored settings the editor compares against, replaced when
+    /// the scene's look changes (#356).
+    pub fn set_authored(&mut self, authored: Option<StyleSettings>) {
+        self.authored = authored;
+    }
+
     /// The scene's folder, where the editor finds the scene's own palettes
     /// and glyph sets to offer (#322).
     pub fn with_scene_dir(mut self, scene_dir: Option<std::path::PathBuf>) -> Self {

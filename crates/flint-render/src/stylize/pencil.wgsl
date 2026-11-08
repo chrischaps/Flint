@@ -20,6 +20,9 @@
 @group(1) @binding(1) var input_sampler: sampler;
 @group(3) @binding(0) var prep_texture: texture_2d<f32>;
 @group(3) @binding(1) var prep_sampler: sampler;
+// The tensor flow, blurred wide by pencil_flow.wgsl (#392); read only by
+// rows whose direction is tensor
+@group(3) @binding(2) var flow_texture: texture_2d<f32>;
 
 const PI: f32 = 3.14159265;
 const BINS: f32 = 12.0;
@@ -75,13 +78,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let pt = in.pos.xy / ppp;
     let aa = 0.7 / ppp;
 
-    // The flow: pass 1's directions blurred over about a stroke's length,
-    // with the base angle underneath where they are unsure
+    // The flow, with the base angle underneath where it is unsure. Surface
+    // directions are blurred here over about a stroke's length (they are
+    // smooth already, and a wider blur would carry them over silhouettes);
+    // tensor ones come blurred over three spacings by the flow passes
     let base = row.a.w;
     let screen = vec2<f32>(cos(2.0 * base), sin(2.0 * base));
     var v = screen;
     let direction = u32(row.e.w + 0.5);
-    if direction != 1u {
+    if direction == 2u {
+        v = textureSampleLevel(flow_texture, prep_sampler, in.uv, 0.0).xy + screen * 0.12;
+    } else if direction == 0u {
         let reach = row.a.x * ppp * 1.5;
         var sum = vec2<f32>(0.0);
         for (var j = -2; j <= 2; j++) {

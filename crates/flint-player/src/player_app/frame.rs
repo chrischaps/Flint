@@ -39,6 +39,11 @@ impl PlayerApp {
             return;
         }
         self.update_render_scale();
+        if let Some(look) = self.pending_look.take() {
+            if let Err(e) = self.set_look(look.as_deref()) {
+                tracing::warn!("look: {e}");
+            }
+        }
         let Some(context) = &self.render_context else {
             return;
         };
@@ -254,6 +259,9 @@ impl PlayerApp {
             self.pp_debug_freeze = rp.freeze_scripts;
             if flint_debug_ui::DebugPanel::is_dirty(rp) {
                 let flags = rp.take_flags();
+                if flags.look_changed {
+                    self.pending_look = Some(rp.look.clone());
+                }
                 if flags.styles_committed {
                     committed_styles = rp.authored_styles().cloned();
                 }
@@ -1173,7 +1181,24 @@ impl PlayerApp {
     }
 
     #[profiling::function]
+    /// Hand scripts' style reads (#372) the settings the renderer draws
+    /// with, copied only when they've changed since the last hand-over.
+    fn publish_style_reader(&mut self) {
+        let Some(renderer) = &self.scene_renderer else {
+            return;
+        };
+        let generation = renderer.post_config_generation();
+        if self.style_reader_generation != Some(generation) {
+            self.style_reader_generation = Some(generation);
+            let config = renderer.effective_post_process_config().clone();
+            self.script.set_style_reader(std::sync::Arc::new(
+                super::style_commands::SceneStyles::new(config),
+            ));
+        }
+    }
+
     fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
+        self.publish_style_reader();
         // Set transition state for script access
         match &self.transition_phase {
             TransitionPhase::Idle => {

@@ -462,9 +462,13 @@ fn check_scenes(source: Arc<MemorySource>, scenes: &[String], schemas: &[String]
                 }
             }
         }
+        let mut looks = Vec::new();
         for scene in scenes {
             match flint_scene::load_scene(scene, &registry) {
                 Ok((_, file)) => {
+                    if let Some(post) = file.post_process.as_ref().filter(|p| p.look.is_some()) {
+                        looks.push((scene.clone(), post.clone()));
+                    }
                     let mut unknown: BTreeSet<&str> = BTreeSet::new();
                     for def in file.entities.values() {
                         if let Some(arch) = &def.archetype {
@@ -487,6 +491,18 @@ fn check_scenes(source: Arc<MemorySource>, scenes: &[String], schemas: &[String]
             }
         }
         problems.extend(check_user_styles(scenes));
+        // A look a scene names (#356) is read from the packed files on the
+        // web, after its user styles: one left out (or one that no longer
+        // fits) would quietly draw the scene without it
+        for (scene, post) in looks {
+            let name = post.look.clone().unwrap_or_default();
+            if let Err(e) = flint_render::look::resolve(&post, Some(&name), &scene) {
+                problems.push(Missing {
+                    from: scene,
+                    what: format!("(look \"{name}\" doesn't load: {e})"),
+                });
+            }
+        }
         problems
     })
 }
@@ -861,6 +877,43 @@ mod tests {
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].what.contains("\"ghost\""));
         assert_eq!(problems[1].from, "levels/b.scene.toml");
+    }
+
+    /// #356: a scene's look is found in the packed files or among the
+    /// built-ins, or the bundle says so.
+    #[test]
+    fn a_scenes_look_is_checked_from_the_bundle() {
+        let files = pack(&[
+            (
+                "styles/dusk.look.toml",
+                "[look]\ndescription = \"d\"\n[post_process]\nexposure = 0.6\n",
+            ),
+            (
+                "levels/a.scene.toml",
+                "[scene]\nname = \"a\"\n[post_process]\nlook = \"dusk\"\n",
+            ),
+            (
+                "levels/b.scene.toml",
+                "[scene]\nname = \"b\"\n[post_process]\nlook = \"graphite\"\n",
+            ),
+            (
+                "levels/c.scene.toml",
+                "[scene]\nname = \"c\"\n[post_process]\nlook = \"gone\"\n",
+            ),
+        ]);
+        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
+        let problems = check_scenes(
+            Arc::new(source),
+            &[
+                "levels/a.scene.toml".into(),
+                "levels/b.scene.toml".into(),
+                "levels/c.scene.toml".into(),
+            ],
+            &["schemas".into()],
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].from, "levels/c.scene.toml");
+        assert!(problems[0].what.contains("look \"gone\""), "{problems:?}");
     }
 
     /// #275: a user style must pack its shader, and the shader must

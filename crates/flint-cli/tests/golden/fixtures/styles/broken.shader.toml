@@ -1,0 +1,16 @@
+# A user style that never compiles (#417), for the goldens: `broken.wgsl`
+# makes a vec3 of a vec4 on line 9. A style that fails must draw its input
+# unchanged (the passthrough, which still runs the prelude's sRGB round
+# trip at the display stage) and name the file, line and column.
+#
+# It lives here, not in demo/styles/, so no demo scene shows its error.
+version = 1
+name = "broken"
+label = "Broken (test fixture)"
+stage = "display"
+shader = "broken.wgsl"
+
+[params.amount]
+default = 0.5
+min = 0.0
+max = 1.0

@@ -46,6 +46,9 @@ pub struct RenderPanelFlags {
     pub styles_committed: bool,
     /// FXAA was just enabled — host must call ensure_fxaa_resources.
     pub fxaa_needs_resources: bool,
+    /// A look was picked (#356): the host lays [`RenderDebugPanel::look`]
+    /// under the scene's keys and uploads the result.
+    pub look_changed: bool,
 }
 
 impl RenderPanelFlags {
@@ -57,6 +60,7 @@ impl RenderPanelFlags {
             || self.lighting_changed
             || self.lighting_reset
             || self.fov_changed
+            || self.look_changed
     }
 }
 
@@ -79,6 +83,11 @@ pub struct RenderDebugPanel {
     /// The style mask view's legend (#309), shown under the debug mode
     /// while it is Style Mask; set by the host from the renderer's ids.
     style_legend: Vec<LegendEntry>,
+    /// The looks the scene can reach (#356), set by the host.
+    looks: Vec<LookEntry>,
+    /// The look the scene draws with (`None`: its own keys alone); the
+    /// picker writes the choice here and raises `look_changed`.
+    pub look: Option<String>,
     flags: RenderPanelFlags,
     open: bool,
     dirty: bool,
@@ -107,6 +116,8 @@ impl RenderDebugPanel {
             authored_styles: None,
             styles_editor: StylesEditor::default(),
             style_legend: Vec::new(),
+            looks: Vec::new(),
+            look: None,
             flags: RenderPanelFlags::default(),
             open: false,
             dirty: false,
@@ -167,6 +178,45 @@ impl RenderDebugPanel {
         self.styles_editor.set_scene_dir(scene_dir);
     }
 
+    /// The looks to offer (#356; `flint_render::look::list` of the
+    /// scene) and the one in use, set by the host on scene load and after
+    /// a script or the picker changes it.
+    pub fn set_looks(&mut self, looks: &[flint_render::look::Look], current: Option<&str>) {
+        self.looks = looks
+            .iter()
+            .map(|l| LookEntry {
+                name: l.name.clone(),
+                hover: match l.description.is_empty() {
+                    true => l.source.clone(),
+                    false => format!("{}\n\n{}", l.description, l.source),
+                },
+            })
+            .collect();
+        self.look = current.map(str::to_string);
+    }
+
+    /// The look in use, as the host last said (a script's `set_look`,
+    /// #356), without touching the list on offer.
+    pub fn set_current_look(&mut self, current: Option<&str>) {
+        self.look = current.map(str::to_string);
+    }
+
+    /// The names of the looks on offer.
+    pub fn look_names(&self) -> impl Iterator<Item = &str> {
+        self.looks.iter().map(|l| l.name.as_str())
+    }
+
+    /// Pick a look as the menu does, raising `look_changed` for the host.
+    /// For hosts and tests that drive the panel without a click.
+    pub fn pick_look(&mut self, look: Option<&str>) {
+        if self.look.as_deref() == look {
+            return;
+        }
+        self.look = look.map(str::to_string);
+        self.flags.look_changed = true;
+        self.dirty = true;
+    }
+
     /// Mirror the renderer's style ids into the Style Mask legend. Cheap
     /// every frame: it rebuilds only when the ids changed.
     pub fn set_style_ids(&mut self, ids: &StyleIds) {
@@ -200,6 +250,49 @@ impl RenderDebugPanel {
     /// DebugPanel loop (the viewer draws it inside its own egui Window).
     pub fn ui_contents(&mut self, ui: &mut egui::Ui) {
         let mut f = self.flags;
+
+        // A look (#356): a whole preset, laid under the scene's own keys.
+        // Picking one replaces the post config; the sections below then
+        // tune what it set
+        if !self.looks.is_empty() {
+            section(ui, "Look", true, |ui| {
+                let none = "None (the scene's keys)";
+                let current = self.look.clone();
+                let mut picked: Option<Option<String>> = None;
+                egui::ComboBox::from_label("Look")
+                    .selected_text(current.as_deref().unwrap_or(none))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(current.is_none(), none).clicked() {
+                            picked = Some(None);
+                        }
+                        for entry in &self.looks {
+                            let on = current.as_deref() == Some(entry.name.as_str());
+                            if ui
+                                .selectable_label(on, &entry.name)
+                                .on_hover_text(&entry.hover)
+                                .clicked()
+                            {
+                                picked = Some(Some(entry.name.clone()));
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "A styles/<name>.look.toml beside the scene, or a built-in. It goes \
+                         under the scene's own [post_process] keys and replaces what this \
+                         menu changed since.",
+                    );
+                if let Some(look) = current.as_deref() {
+                    ui.weak(format!("[post_process] look = \"{look}\""));
+                }
+                if let Some(choice) = picked {
+                    if choice != current {
+                        self.look = choice;
+                        f.look_changed = true;
+                    }
+                }
+            });
+        }
 
         section(ui, "Post chain", true, |ui| {
             if self.show_freeze {
@@ -525,6 +618,14 @@ impl RenderDebugPanel {
     }
 }
 
+/// A look on offer in the picker.
+#[derive(Debug, Clone)]
+struct LookEntry {
+    name: String,
+    /// What it is and where it comes from.
+    hover: String,
+}
+
 /// The Style Mask view's legend: a swatch of each id's hue, its id and
 /// the style variant it stands for.
 fn style_legend_ui(ui: &mut egui::Ui, rows: &[LegendEntry]) {
@@ -708,5 +809,31 @@ mod tests {
         panel.set_style_ids(&ids);
         assert_eq!(panel.style_legend()[0].name, "pencil");
         assert_eq!(panel.style_legend()[0].id, 1, "ids renumber by name order");
+    }
+
+    /// #356: F4 offers the scene's looks and a pick reaches the host.
+    #[test]
+    fn the_look_picker_lists_looks_and_raises_a_flag() {
+        let mut panel = RenderDebugPanel::new(true);
+        let looks = flint_render::look::list("nowhere/a.scene.toml");
+        panel.set_looks(&looks, Some("graphite"));
+        let names: Vec<&str> = panel.look_names().collect();
+        assert!(
+            names.contains(&"graphite") && names.contains(&"matrix"),
+            "{names:?}"
+        );
+        assert_eq!(panel.look.as_deref(), Some("graphite"));
+
+        panel.pick_look(Some("graphite"));
+        assert!(!panel.is_dirty(), "the same look is no change");
+        panel.pick_look(Some("matrix"));
+        assert!(panel.is_dirty());
+        let flags = panel.take_flags();
+        assert!(flags.look_changed && !flags.pp_changed);
+        assert_eq!(panel.look.as_deref(), Some("matrix"));
+
+        panel.pick_look(None);
+        assert!(panel.take_flags().look_changed);
+        assert_eq!(panel.look, None);
     }
 }

@@ -607,6 +607,11 @@ impl ScriptEngine {
         std::mem::take(&mut c.commands)
     }
 
+    /// What scripts' `get_entity_style` and `get_style_param` ask (#372).
+    pub fn set_style_reader(&self, reader: Arc<dyn crate::style_reader::StyleReader>) {
+        crate::lock_or_recover(&self.ctx).style_reader = Some(reader);
+    }
+
     /// Clear all script instances. Preserves the Rhai Engine and registered API.
     pub fn clear(&mut self) {
         self.scripts.clear();

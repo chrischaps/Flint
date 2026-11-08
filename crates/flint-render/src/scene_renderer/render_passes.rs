@@ -1472,6 +1472,8 @@ impl SceneRenderer {
                     id: crate::stylize::input_id::HDR,
                 },
                 None,
+                pp.styles.blend_pass(),
+                pp.styles.ownership(),
                 &mut |label, encoder, run| scoped(label, encoder, run),
             ),
             _ => None,
@@ -1627,6 +1629,8 @@ impl SceneRenderer {
                     view: final_target,
                     id: crate::stylize::input_id::FXAA_IN,
                 }),
+                pp.styles.blend_pass(),
+                pp.styles.ownership(),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);
