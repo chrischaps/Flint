@@ -304,12 +304,30 @@ impl StylesEditor {
     ) -> bool {
         let label = style.label_for(control.name());
         let help = style.hint(control.name()).map_or("", |h| h.help);
+        // A setting the current options don't read (#365) is drawn greyed
+        // out, its hover line saying why; its reset and authored cells stay
+        // live, so it can still be put back
+        let unused = style.unused_reason(pp, control.name());
+        let active = unused.is_none();
+        let disabled_help = match (&unused, help.is_empty()) {
+            (Some(why), true) => why.clone(),
+            (Some(why), false) => format!("{why}\n{help}"),
+            (None, _) => String::new(),
+        };
         let with_help = |r: egui::Response| {
-            if help.is_empty() {
+            let r = if help.is_empty() {
                 r
             } else {
                 r.on_hover_text(help)
+            };
+            if active {
+                r
+            } else {
+                r.on_disabled_hover_text(&disabled_help)
             }
+        };
+        let label_cell = |ui: &mut egui::Ui| {
+            with_help(ui.add_enabled(active, egui::Label::new(&label)));
         };
         let mut changed = false;
         match control {
@@ -323,11 +341,12 @@ impl StylesEditor {
                 let mut picked = None;
                 let choices = self.choices(style, o, pp);
                 {
-                    with_help(ui.label(&label));
+                    label_cell(ui);
                     if choices.is_empty() {
                         let key = (style.name, o.name);
                         let buffer = self.text.entry(key).or_insert_with(|| current.clone());
-                        let r = ui.add(
+                        let r = ui.add_enabled(
+                            active,
                             egui::TextEdit::singleline(buffer)
                                 .id(text_id(style.name, o.name))
                                 .desired_width(120.0)
@@ -348,31 +367,34 @@ impl StylesEditor {
                         } else {
                             current.as_str()
                         };
-                        egui::ComboBox::from_id_salt((style.name, o.name))
-                            .selected_text(shown)
-                            .show_ui(ui, |ui| {
-                                if o.default.is_empty()
-                                    && ui
-                                        .selectable_label(current.is_empty(), "(default)")
-                                        .clicked()
-                                {
-                                    picked = Some(String::new());
-                                }
-                                for choice in &choices {
-                                    if ui
-                                        .selectable_label(current == *choice, choice.as_str())
-                                        .clicked()
+                        let combo = ui.add_enabled_ui(active, |ui| {
+                            egui::ComboBox::from_id_salt((style.name, o.name))
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    if o.default.is_empty()
+                                        && ui
+                                            .selectable_label(current.is_empty(), "(default)")
+                                            .clicked()
                                     {
-                                        picked = Some(choice.clone());
+                                        picked = Some(String::new());
                                     }
-                                }
-                                // A value the scene names that the list
-                                // doesn't (a palette by its path) stays
-                                // pickable
-                                if !current.is_empty() && !choices.contains(&current) {
-                                    let _ = ui.selectable_label(true, &current);
-                                }
-                            });
+                                    for choice in &choices {
+                                        if ui
+                                            .selectable_label(current == *choice, choice.as_str())
+                                            .clicked()
+                                        {
+                                            picked = Some(choice.clone());
+                                        }
+                                    }
+                                    // A value the scene names that the list
+                                    // doesn't (a palette by its path) stays
+                                    // pickable
+                                    if !current.is_empty() && !choices.contains(&current) {
+                                        let _ = ui.selectable_label(true, &current);
+                                    }
+                                });
+                        });
+                        with_help(combo.response);
                     }
                     if reset_cell(ui, current != o.default, &format!("{:?}", o.default)) {
                         picked = Some(o.default.to_string());
@@ -393,12 +415,12 @@ impl StylesEditor {
                 let mut value = style.param(pp, p.name);
                 let scene = authored.map(|a| a.param(style.name, p.name).unwrap_or(p.default));
                 {
-                    with_help(ui.label(&label));
+                    label_cell(ui);
                     let mut slider = egui::Slider::new(&mut value, p.min..=p.max);
                     if integer {
                         slider = slider.step_by(1.0).fixed_decimals(0);
                     }
-                    changed |= with_help(ui.add(slider)).changed();
+                    changed |= with_help(ui.add_enabled(active, slider)).changed();
                     if reset_cell(ui, value != p.default, &number(p.default, integer)) {
                         value = p.default;
                         changed = true;
@@ -418,7 +440,7 @@ impl StylesEditor {
                 let scene = authored
                     .map(|a| channels.map(|c| a.param(style.name, c.name).unwrap_or(c.default)));
                 {
-                    with_help(ui.label(&label));
+                    label_cell(ui);
                     // Style colours are display values (what the eye sees,
                     // as the display-stage shaders work), so the picker is
                     // the sRGB one; its bytes replace the value only when
@@ -426,6 +448,9 @@ impl StylesEditor {
                     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
                     let mut srgb = rgb.map(byte);
                     ui.horizontal(|ui| {
+                        if !active {
+                            ui.disable();
+                        }
                         if with_help(ui.color_edit_button_srgb(&mut srgb)).changed() {
                             rgb = srgb.map(|b| b as f32 / 255.0);
                             changed = true;
@@ -652,6 +677,98 @@ mod tests {
         let edited = drawn_text(&mut editor, &mut pp, Some(&authored));
         assert!(edited.contains(&"edited".to_string()));
         assert_eq!(editor.marked, 1);
+    }
+
+    /// Each label the editor drew and how strongly: how far its colour
+    /// stands from the panel's (a disabled row is tinted towards it).
+    fn drawn_strength(editor: &mut StylesEditor, pp: &mut PostProcessConfig) -> Vec<(String, f32)> {
+        let ctx = egui::Context::default();
+        let mut out = Vec::new();
+        let panel = ctx.style().visuals.panel_fill;
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    editor.ui(ui, pp, None);
+                });
+            });
+            out.clear();
+            fn walk(shape: &egui::Shape, panel: egui::Color32, out: &mut Vec<(String, f32)>) {
+                match shape {
+                    egui::Shape::Text(t) => {
+                        let color = t
+                            .override_text_color
+                            .or_else(|| {
+                                t.galley
+                                    .job
+                                    .sections
+                                    .first()
+                                    .map(|s| s.format.color)
+                                    .filter(|c| *c != egui::Color32::PLACEHOLDER)
+                            })
+                            .unwrap_or(t.fallback_color);
+                        let strength = color
+                            .to_array()
+                            .iter()
+                            .zip(panel.to_array())
+                            .take(3)
+                            .map(|(a, b)| (*a as f32 - b as f32).abs())
+                            .sum::<f32>()
+                            * t.opacity_factor;
+                        out.push((t.galley.job.text.clone(), strength));
+                    }
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, panel, out)),
+                    _ => {}
+                }
+            }
+            for clipped in output.shapes {
+                walk(&clipped.shape, panel, &mut out);
+            }
+        }
+        out
+    }
+
+    fn strength_of(drawn: &[(String, f32)], label: &str) -> f32 {
+        drawn
+            .iter()
+            .find(|(t, _)| t == label)
+            .unwrap_or_else(|| panic!("{label} not drawn"))
+            .1
+    }
+
+    #[test]
+    fn a_setting_the_colour_mode_ignores_is_greyed_out() {
+        // #365: in source mode Tint and Palette fade; switching to tint
+        // brings Tint back, and a setting without conditions never fades
+        let mut editor = StylesEditor::default();
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("ascii", true);
+        let source = drawn_strength(&mut editor, &mut pp);
+        let full = strength_of(&source, "Glow");
+        assert!(strength_of(&source, "Tint") < full * 0.9, "{source:?}");
+        assert!(strength_of(&source, "Palette") < full * 0.9);
+
+        pp.styles.set_option("ascii", "color", "tint");
+        let tint = drawn_strength(&mut editor, &mut pp);
+        assert_eq!(strength_of(&tint, "Tint"), strength_of(&tint, "Glow"));
+        assert!(strength_of(&tint, "Palette") < full * 0.9);
+        // Drawing greyed rows changes nothing
+        assert_eq!(pp.styles.option("ascii", "color"), Some("tint"));
+    }
+
+    #[test]
+    fn a_style_without_conditions_draws_every_row_alike() {
+        // pencil has hints but no conditions: every label at one strength
+        let mut editor = StylesEditor::default();
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("pencil", true);
+        let drawn = drawn_strength(&mut editor, &mut pp);
+        let pencil = stylize::find("pencil").unwrap();
+        let labels: Vec<f32> = pencil
+            .controls()
+            .into_iter()
+            .map(|c| strength_of(&drawn, &pencil.label_for(c.name())))
+            .collect();
+        assert!(labels.windows(2).all(|w| w[0] == w[1]), "{labels:?}");
     }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
