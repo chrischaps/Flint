@@ -100,7 +100,9 @@ Flint uses an **edit -> validate -> play** loop:
    #                          wooze.<knob> (Living Props builds; one Sweep type in
    #                          commands/sweep.rs, one sheet in style_sheet.rs, #353);
    #                          cells 640x360 unless --width/--height. Cells are in points:
-   #                          confirm a winner at the final size)
+   #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
+   #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
+   #                          two --sweep flags make a grid, first across, second down, #358)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
    #   --ascii-edge-normal 2.5   (tone bands, tone footprint, edge sensitivity)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction

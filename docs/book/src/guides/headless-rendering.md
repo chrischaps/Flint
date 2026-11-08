@@ -91,7 +91,9 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
 | `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's: `ascii_noir`, `matrix`, `ink_wash`, `graphite`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
-| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` (Living Props builds only); cells default to 640x360, and pixel-identical neighbours are warned about |
+| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` (Living Props builds only); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
+| `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
+| `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
 | `--grade-lift <r,g,b>` | `0,0,0` | Color grade lift |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
 | `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
