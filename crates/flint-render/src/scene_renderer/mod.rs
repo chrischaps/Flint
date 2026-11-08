@@ -4597,7 +4597,7 @@ impl SceneRenderer {
         self.render_to(
             &context.device,
             &context.queue,
-            &context.depth_view,
+            context.depth_target(),
             camera,
             view,
         );
@@ -4707,6 +4707,15 @@ impl SceneRenderer {
             .map_or(0, |r| r.binds.len())
     }
 
+    /// Bind groups the post chain has made since it was last rebuilt, the
+    /// ones it made for a single frame included: a steady frame adds none
+    /// once the caller's depth comes with an id (#379).
+    pub fn post_binds_made(&self) -> u64 {
+        self.postprocess_resources
+            .as_ref()
+            .map_or(0, |r| r.binds.made())
+    }
+
     /// The style ids the mask uses: which number each `style_mask` style
     /// name has this frame.
     pub fn style_ids(&self) -> &crate::style_mask::StyleIds {
@@ -4736,7 +4745,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
     ) {
         self.style_mask_veiled = false;
         let Some(resources) = &self.postprocess_resources else {
@@ -4938,7 +4947,7 @@ impl SceneRenderer {
                 &mask,
                 &veil_target.view,
                 depth_view,
-                depth_owned,
+                depth_key,
                 msaa_depth,
                 &draws,
                 &veil,
@@ -5434,11 +5443,11 @@ impl SceneRenderer {
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
-    pub fn render_to(
+    pub fn render_to<'d>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        depth_view: &wgpu::TextureView,
+        depth: impl Into<crate::bind_cache::DepthTarget<'d>>,
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
@@ -5448,7 +5457,7 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Frame Encoder"),
         });
-        self.encode_to(device, queue, &mut encoder, depth_view, camera, target_view);
+        self.encode_to(device, queue, &mut encoder, depth, camera, target_view);
         queue.submit(std::iter::once(encoder.finish()));
         self.frame_submitted();
     }
@@ -5462,18 +5471,25 @@ impl SceneRenderer {
     /// second camera's uniforms would overwrite this one's. After
     /// submitting, call [`frame_submitted`](Self::frame_submitted).
     #[profiling::function]
-    pub fn encode_to(
+    ///
+    /// `depth` is the caller's depth buffer: a `&TextureView`, or a
+    /// [`DepthTarget`](crate::bind_cache::DepthTarget) with an id
+    /// ([`RenderContext::depth_target`](crate::RenderContext::depth_target))
+    /// so the bind groups over it are kept from frame to frame (#379).
+    pub fn encode_to<'d>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        depth: impl Into<crate::bind_cache::DepthTarget<'d>>,
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
         if self.device_lost {
             return;
         }
+        let depth = depth.into();
+        let depth_view = depth.view;
         // A style switched on by any route (scene load, F4, a script's
         // config) is built before the frame that first needs it (#262).
         // When nothing new is on this is a walk over the registry.
@@ -5491,6 +5507,13 @@ impl SceneRenderer {
         let surface_depth_view = depth_view;
         let scaled_depth = self.scaled_depth.clone();
         let depth_view = scaled_depth.as_ref().map_or(depth_view, |d| &d.view);
+        // Who vouches for that view, so bind groups over it can be kept:
+        // the chain for its own, the caller's id for the caller's (#379).
+        let depth_key = if scaled_depth.is_some() {
+            crate::bind_cache::DepthKey::Owned
+        } else {
+            crate::bind_cache::DepthKey::caller(depth.id)
+        };
         let clear_color = wgpu::Color {
             r: self.clear_color[0] as f64,
             g: self.clear_color[1] as f64,
@@ -5728,7 +5751,7 @@ impl SceneRenderer {
                 let blit_bind_group =
                     resources
                         .binds
-                        .get_if(scaled_depth.is_some(), "ocean grab blit", 0, || {
+                        .get_over(depth_key, "ocean grab blit", 0, || {
                             device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 layout: &op.blit_bind_group_layout,
                                 entries: &[
@@ -5824,7 +5847,7 @@ impl SceneRenderer {
         // against the frame's single-sample depth, while a style reads it.
         if has_postprocess && self.style_mask_wanted() {
             let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
-            self.encode_style_mask(device, queue, encoder, depth_view, scaled_depth.is_some());
+            self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end(encoder, scope);
             }
@@ -5837,7 +5860,7 @@ impl SceneRenderer {
                 queue,
                 encoder,
                 depth_view,
-                scaled_depth.is_some(),
+                depth_key,
                 target_view,
                 camera,
                 gpu_timer.as_mut(),

@@ -720,10 +720,18 @@ impl StyleDescriptor {
         config.styles.is_enabled(self.name)
     }
 
-    /// Whether this style runs this frame: `config` switches it on, or it
-    /// is per-entity and an entity asks for it (#266).
+    /// Whether this style runs this frame: `config` draws it over the
+    /// frame ([`Self::covers_frame`]), or it is per-entity and an entity
+    /// asks for it (#266) at a blend above 0 (#400).
     pub fn is_on(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
+        self.covers_frame(config) || (self.component.is_some() && ids.requests(self.name))
+    }
+
+    /// Whether `config` draws this style over the whole frame: its table
+    /// is on and isn't a per-entity style's `scope = "entities"` preset,
+    /// which draws only where its entities ask (#400).
+    pub fn covers_frame(&self, config: &PostProcessConfig) -> bool {
+        self.is_enabled(config) && self.option(config, "scope") != "entities"
     }
 
     /// Whether this style reads the style mask this frame: its `uses_mask`
@@ -1061,9 +1069,9 @@ pub struct StyleFrame<'a> {
     /// the scene's, so smaller than `width` x `height` at the display stage
     /// under a render scale. The style mask is this size too.
     pub depth_size: [u32; 2],
-    /// Whether `depth` is the chain's own, so bind groups over it may be
-    /// kept ([`StyleFrame::depth_bind`]).
-    pub depth_owned: bool,
+    /// Who vouches for `depth`, so bind groups over it may be kept
+    /// ([`StyleFrame::depth_bind`], #379).
+    pub depth_key: crate::bind_cache::DepthKey,
     pub camera: StyleCamera,
     /// The entity style mask (#263): one style id a pixel
     /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
@@ -1207,15 +1215,16 @@ impl StyleFrame<'_> {
         self.binds.get(name, variant, make)
     }
 
-    /// A bind group over [`depth`](Self::depth): kept when the chain owns
-    /// the depth, made for this frame alone when it doesn't.
+    /// A bind group over [`depth`](Self::depth): kept while the chain owns
+    /// the depth or the caller's depth id holds, made for this frame alone
+    /// when nothing vouches for it (#379).
     pub fn depth_bind(
         &self,
         name: &'static str,
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get_if(self.depth_owned, name, variant, make)
+        self.binds.get_over(self.depth_key, name, variant, make)
     }
 
     /// True the first time it's asked about `name` while the chain lives:
@@ -2386,8 +2395,11 @@ pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
 
 /// Which style owns each mask id this frame (#384), by registry index,
 /// [`ownership::NONE`] for none: the style its variant names, when that
-/// style is registered and on and the variant isn't an opt-out. Id 0
-/// (unstyled) is always none; the table is [`ownership::MAX_IDS`] long.
+/// style is registered and on and the variant isn't an opt-out. A faded id
+/// (#400: its entities all at blend 0) keeps its style as owner though the
+/// style is off for it, so a whole-frame style leaves the prop as it came,
+/// as it did while the faded style still ran. Id 0 (unstyled) is always
+/// none; the table is [`ownership::MAX_IDS`] long.
 pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
     let registry = registry();
     let mut table = vec![ownership::NONE; ownership::MAX_IDS];
@@ -2403,7 +2415,7 @@ pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
         }
         if let Some(i) = registry
             .iter()
-            .position(|d| d.name == v.style && d.is_on(config, ids))
+            .position(|d| d.name == v.style && (ids.is_faded(id) || d.is_on(config, ids)))
         {
             *slot = i as u32;
         }

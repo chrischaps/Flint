@@ -245,6 +245,11 @@ pub struct StyleIds {
     names: Vec<String>,
     /// What each name stands for, beside `names`.
     variants: Vec<StyleVariant>,
+    /// Beside `names`: whether every entity drawn in the id is at blend 0
+    /// (#400). A faded id keeps its number and variant, so a ramp out of 0
+    /// finds them where it left them, but asks for nothing: a style whose
+    /// entities have all faded is off, its pass and the mask not drawn.
+    faded: Vec<bool>,
 }
 
 impl StyleIds {
@@ -267,9 +272,29 @@ impl StyleIds {
             .map(|(i, v)| ((i + 1) as u16, v))
     }
 
-    /// Whether an entity asks to be drawn in `style` (an opt-out doesn't).
+    /// Whether an entity asks to be drawn in `style`: an opt-out doesn't,
+    /// nor does an id whose entities are all at blend 0 ([`Self::is_faded`]).
     pub fn requests(&self, style: &str) -> bool {
-        self.variants.iter().any(|v| v.style == style && !v.off)
+        self.variants
+            .iter()
+            .zip(&self.faded)
+            .any(|(v, &faded)| v.style == style && !v.off && !faded)
+    }
+
+    /// Whether every entity drawn in id `id` is at blend 0 (#400).
+    pub fn is_faded(&self, id: u16) -> bool {
+        (id as usize)
+            .checked_sub(1)
+            .and_then(|i| self.faded.get(i))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Mark which ids have faded: `faded(id)` for every id.
+    fn set_faded(&mut self, faded: impl Fn(u16) -> bool) {
+        for (i, slot) in self.faded.iter_mut().enumerate() {
+            *slot = faded((i + 1) as u16);
+        }
     }
 
     /// Whether any entity names `style`, opt-outs included.
@@ -279,7 +304,8 @@ impl StyleIds {
 
     /// Make the table hold exactly `entries` (any order; a repeated name
     /// keeps its first variant). Returns whether the set of names changed;
-    /// the variants (their anchors move) are taken either way.
+    /// the variants (their anchors move) are taken either way, and no id
+    /// is faded until [`resolve_blended`] says so.
     pub fn set(&mut self, mut entries: Vec<(String, StyleVariant)>) -> bool {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries.dedup_by(|a, b| a.0 == b.0);
@@ -290,9 +316,11 @@ impl StyleIds {
             for (slot, (_, v)) in self.variants.iter_mut().zip(entries) {
                 *slot = v;
             }
+            self.faded.fill(false);
             return false;
         }
         (self.names, self.variants) = entries.into_iter().unzip();
+        self.faded = vec![false; self.names.len()];
         true
     }
 
@@ -640,7 +668,10 @@ pub(crate) fn resolve(
 /// into `blends` (cleared first; #278). The blend is the root's, carried
 /// down its subtree with its id. It isn't part of the variant: entities
 /// fading at different rates still share one id, so a ramp makes no new
-/// variant a frame.
+/// variant a frame. An id all of whose roots are at blend 0 is marked
+/// faded in `ids` (#400): it keeps its number and its entities stay in
+/// `out`, so the mask is the same whenever another style draws it, but it
+/// no longer switches its style on.
 pub(crate) fn resolve_blended(
     world: &FlintWorld,
     config: &PostProcessConfig,
@@ -667,12 +698,16 @@ pub(crate) fn resolve_blended(
         .collect();
     ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
     let mut stack = Vec::new();
+    // Ids with a root above blend 0 (#400), a flag per id
+    let mut shown = vec![false; ids.len() + 1];
     for (root, req) in &requests {
         let root = *root;
         let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
         let blend = requested_blend(world, root);
+        // As the mask's `.g` holds it: a blend that rounds to 0 shows nothing
+        shown[id as usize] |= encode_blend(blend) > 0;
         stack.clear();
         stack.push(root);
         while let Some(e) = stack.pop() {
@@ -689,6 +724,7 @@ pub(crate) fn resolve_blended(
             );
         }
     }
+    ids.set_faded(|id| !shown[id as usize]);
 }
 
 /// The debug view's colour for style `id`: hues a golden angle apart, so
@@ -1302,10 +1338,10 @@ impl StyleMaskPass {
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
         veil: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_if(
-            depth_owned,
+        binds.get_over(
+            depth_key,
             "Style Mask Draw BG",
             self.draw_buffer_id,
             || {
@@ -1479,7 +1515,7 @@ impl StyleMaskPass {
         mask: &crate::stylize::StyleTexture,
         veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
         veil: &Veil<'_>,
@@ -1542,7 +1578,7 @@ impl StyleMaskPass {
         }
 
         let draw_bg = (!draws.is_empty())
-            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_owned));
+            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_key));
         let mut pass = clear_pass(encoder, "Style Mask Pass", &mask.view);
         if let Some(draw_bg) = &draw_bg {
             record_draws(
@@ -1867,6 +1903,75 @@ mod tests {
             "an opt-out alone doesn't switch the style on"
         );
         assert!(ids.mentions("ascii"));
+    }
+
+    /// #400: an id whose every entity is at blend 0 keeps its number but
+    /// asks for nothing, so its style and the mask stay off until one of
+    /// them rises again.
+    #[test]
+    fn an_id_at_blend_zero_keeps_its_number_and_asks_for_nothing() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "ascii_style", "blend = 0.0");
+        with_component(&mut world, "crate", "ascii_style", "blend = 0");
+        with_component(&mut world, "lamp", "ascii_style", "cell = 12\nblend = 0.0");
+        let config = PostProcessConfig::default();
+        let resolve_at = |world: &FlintWorld, ids: &mut StyleIds| {
+            let mut out = HashMap::new();
+            resolve_blended(world, &config, ids, &mut out, &mut HashMap::new());
+            out
+        };
+        let mut ids = StyleIds::default();
+        let out = resolve_at(&world, &mut ids);
+        let barrel = out[&world.get_id("barrel").unwrap()];
+        let lamp = out[&world.get_id("lamp").unwrap()];
+        assert_eq!(out.len(), 3, "faded entities stay in the mask's map");
+        assert!(ids.is_faded(barrel) && ids.is_faded(lamp));
+        assert!(!ids.requests("ascii"), "all at 0: the style is off");
+        let ascii = crate::stylize::find("ascii").unwrap();
+        assert!(!ascii.is_on(&config, &ids));
+        assert!(!crate::stylize::any_uses_mask(&config, &ids));
+
+        // One of the two plain ascii entities rises: its id is shown, the
+        // lamp's own stays faded, and nothing is renumbered
+        let before = ids.clone();
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.004");
+        let out = resolve_at(&world, &mut ids);
+        assert_eq!(out[&world.get_id("barrel").unwrap()], barrel);
+        let same = |ids: &StyleIds| ids.iter().eq(before.iter());
+        assert!(same(&ids), "a rise renumbered the ids");
+        assert!(!ids.is_faded(barrel), "a root above 0 shows its id");
+        assert!(ids.is_faded(lamp));
+        assert!(ids.requests("ascii") && ascii.is_on(&config, &ids));
+
+        // A blend under half a step of the mask's encoding is 0
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.000001");
+        resolve_at(&world, &mut ids);
+        assert!(!ids.requests("ascii"));
+        assert!(same(&ids), "a fall renumbered the ids");
+
+        // A `scope = "entities"` table is only the entities' preset: it
+        // doesn't keep the style on (#278's demo), a screen table does
+        let mut preset = PostProcessConfig::default();
+        preset.styles.set_enabled("ascii", true);
+        assert!(ascii.is_on(&preset, &ids), "a screen table draws the frame");
+        preset.styles.set_option("ascii", "scope", "entities");
+        assert!(!ascii.is_on(&preset, &ids));
+        assert!(!crate::stylize::any_uses_mask(&preset, &ids));
+        with_component(&mut world, "crate", "ascii_style", "blend = 1.0");
+        resolve_at(&world, &mut ids);
+        assert!(ascii.is_on(&preset, &ids));
+
+        // Under a whole-frame pencil a faded prop is still ASCII's (#384's
+        // ownership): pencil leaves it as it came, a hole, and draws the
+        // mask for it, though ASCII itself is off
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.0");
+        resolve_at(&world, &mut ids);
+        let mut pencil_frame = PostProcessConfig::default();
+        pencil_frame.styles.set_enabled("pencil", true);
+        let pencil = crate::stylize::find("pencil").unwrap();
+        assert!(!ascii.is_on(&pencil_frame, &ids));
+        assert_eq!(pencil.foreign_ids(&pencil_frame, &ids), vec![barrel, lamp]);
+        assert!(crate::stylize::any_uses_mask(&pencil_frame, &ids));
     }
 
     #[test]

@@ -1861,8 +1861,8 @@ impl PostProcessPipeline {
 
     /// Run the SSAO generation and blur passes.
     /// Reads the depth buffer and writes blurred AO to `resources.ssao_blur_view`.
-    /// `depth_owned`: `depth_view` lives as long as `resources` (the scaled
-    /// scene's depth), so the bind group over it can be kept.
+    /// `depth_key`: who vouches for `depth_view`, so the bind group over it
+    /// can be kept ([`DepthKey`](crate::bind_cache::DepthKey), #379).
     #[allow(clippy::too_many_arguments)]
     pub fn run_ssao(
         &self,
@@ -1872,7 +1872,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
     ) {
         // Write SSAO uniforms
@@ -1904,7 +1904,7 @@ impl PostProcessPipeline {
                 }],
             })
         });
-        let depth_bg = resources.binds.get_if(depth_owned, "ssao depth", 0, || {
+        let depth_bg = resources.binds.get_over(depth_key, "ssao depth", 0, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Depth BG"),
                 layout: &self.ssao_depth_bgl,
@@ -1998,7 +1998,7 @@ impl PostProcessPipeline {
     /// Run the volumetric ray-march and bilateral blur passes.
     /// Reads the depth buffer and shadow maps, writes blurred god rays to
     /// `resources.volumetric_blur_view`. `shadow_id` is the shadow pass's
-    /// [`gpu_id`](crate::bind_cache::gpu_id), `depth_owned` as in
+    /// [`gpu_id`](crate::bind_cache::gpu_id), `depth_key` as in
     /// [`run_ssao`](Self::run_ssao).
     #[allow(clippy::too_many_arguments)]
     pub fn run_volumetric(
@@ -2009,7 +2009,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
         shadow: VolumetricShadow<'_>,
     ) {
@@ -2046,7 +2046,7 @@ impl PostProcessPipeline {
         });
         let depth_bg = resources
             .binds
-            .get_if(depth_owned, "volumetric depth", 0, || {
+            .get_over(depth_key, "volumetric depth", 0, || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Volumetric Depth BG"),
                     layout: &self.volumetric_depth_bgl,
@@ -2123,7 +2123,7 @@ impl PostProcessPipeline {
         let blur_texture_bg =
             resources
                 .binds
-                .get_if(depth_owned, "volumetric blur texture", 0, || {
+                .get_over(depth_key, "volumetric blur texture", 0, || {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Volumetric Blur Texture BG"),
                         layout: &self.volumetric_blur_texture_bgl,
@@ -2170,7 +2170,7 @@ impl PostProcessPipeline {
         config: &PostProcessConfig,
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
@@ -2200,7 +2200,7 @@ impl PostProcessPipeline {
         let ssao_depth_bg =
             resources
                 .binds
-                .get_if(depth_owned, "composite ssao+depth", variant, || {
+                .get_over(depth_key, "composite ssao+depth", variant, || {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Composite SSAO+Depth+Volumetric BG"),
                         layout: &self.composite_ssao_bgl,

@@ -308,9 +308,7 @@ pub fn drawn_style(
         .flat_map(|stage| stylize::stage_chain(stage, config))
         .map(|(d, _)| d)
         .rfind(|d| {
-            d.is_enabled(config)
-                && d.option(config, "scope") != "entities"
-                && opted_out.as_deref() != Some(d.name)
+            d.covers_frame(config) && opted_out.as_deref() != Some(d.name)
         })
         .map(|d| DrawnStyle {
             style: d.name.to_string(),
