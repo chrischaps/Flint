@@ -683,10 +683,18 @@ impl StyleDescriptor {
         config.styles.is_enabled(self.name)
     }
 
-    /// Whether this style runs this frame: `config` switches it on, or it
-    /// is per-entity and an entity asks for it (#266).
+    /// Whether this style runs this frame: `config` draws it over the
+    /// frame ([`Self::covers_frame`]), or it is per-entity and an entity
+    /// asks for it (#266) at a blend above 0 (#400).
     pub fn is_on(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        self.is_enabled(config) || (self.component.is_some() && ids.requests(self.name))
+        self.covers_frame(config) || (self.component.is_some() && ids.requests(self.name))
+    }
+
+    /// Whether `config` draws this style over the whole frame: its table
+    /// is on and isn't a per-entity style's `scope = "entities"` preset,
+    /// which draws only where its entities ask (#400).
+    pub fn covers_frame(&self, config: &PostProcessConfig) -> bool {
+        self.is_enabled(config) && self.option(config, "scope") != "entities"
     }
 
     /// Whether this style reads the style mask this frame: its `uses_mask`
