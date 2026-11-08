@@ -28,6 +28,8 @@ pub(super) static STYLE: StyleDescriptor =
             StyleParam::new("outline", 1.0, 0.0..=4.0),
         ])
         .uses_mask(super::MaskUse::Always)
+        // It shows every id; nothing is passed through (#384)
+        .draws_over_entities()
         .hints(&[
             StyleHint::new(
                 "shading",

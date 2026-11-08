@@ -29,16 +29,27 @@ pub struct GpuMesh {
 
 /// Local-space bounds of `vertices`; all zeros when there are none.
 pub fn vertex_bounds(vertices: &[Vertex]) -> ([f32; 3], [f32; 3]) {
-    if vertices.is_empty() {
-        return ([0.0; 3], [0.0; 3]);
-    }
+    bounds_of(vertices.iter().map(|v| v.position))
+}
+
+/// [`vertex_bounds`] of bare positions.
+pub fn position_bounds(positions: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
+    bounds_of(positions.iter().copied())
+}
+
+fn bounds_of(positions: impl Iterator<Item = [f32; 3]>) -> ([f32; 3], [f32; 3]) {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
-    for v in vertices {
+    let mut any = false;
+    for p in positions {
+        any = true;
         for i in 0..3 {
-            min[i] = min[i].min(v.position[i]);
-            max[i] = max[i].max(v.position[i]);
+            min[i] = min[i].min(p[i]);
+            max[i] = max[i].max(p[i]);
         }
+    }
+    if !any {
+        return ([0.0; 3], [0.0; 3]);
     }
     (min, max)
 }
@@ -87,6 +98,9 @@ pub struct GpuSkinnedMesh {
     pub bone_buffer: Arc<wgpu::Buffer>,
     pub bone_bind_group: wgpu::BindGroup,
     pub skin_index: usize,
+    /// The bind-pose positions' bounds, in the mesh's own space.
+    pub aabb_min: [f32; 3],
+    pub aabb_max: [f32; 3],
     index_data: Vec<u8>,
 }
 
@@ -494,6 +508,8 @@ impl MeshCache {
                     bone_buffer: bone_buffer.clone(),
                     bone_bind_group,
                     skin_index,
+                    aabb_min: position_bounds(&mesh.positions).0,
+                    aabb_max: position_bounds(&mesh.positions).1,
                     index_data,
                 }
             })

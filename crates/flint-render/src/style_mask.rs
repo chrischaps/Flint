@@ -340,9 +340,123 @@ impl StyleIds {
     }
 }
 
+/// Where one style id's entities can be on screen this frame (#385).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IdBounds {
+    /// None of its draws is in view.
+    Nowhere,
+    /// Inside `[x0, y0, x1, y1]` in UV (0..1, y down).
+    Uv([f32; 4]),
+    /// Anywhere: a draw with no bounds, or one crossing the camera plane.
+    Everywhere,
+}
+
+impl IdBounds {
+    /// The bounds holding both.
+    pub fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Everywhere, _) | (_, Self::Everywhere) => Self::Everywhere,
+            (Self::Nowhere, b) | (b, Self::Nowhere) => b,
+            (Self::Uv(a), Self::Uv(b)) => Self::Uv([
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]),
+        }
+    }
+
+    /// Where world box `min..max` lands under `view_proj` (column-major,
+    /// as [`Camera::view_projection_matrix`](crate::Camera::view_projection_matrix)):
+    /// the projection of its 8 corners, clamped to the screen. A box
+    /// wholly behind the camera is nowhere; one crossing the camera plane
+    /// could be anywhere.
+    pub fn of_box(view_proj: &[[f32; 4]; 4], min: [f32; 3], max: [f32; 3]) -> Self {
+        let m = view_proj;
+        let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        let mut behind = 0;
+        for i in 0..8 {
+            let p = [
+                if i & 1 == 0 { min[0] } else { max[0] },
+                if i & 2 == 0 { min[1] } else { max[1] },
+                if i & 4 == 0 { min[2] } else { max[2] },
+            ];
+            let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
+            let w = row(3);
+            if !w.is_finite() {
+                return Self::Everywhere;
+            }
+            if w <= 1e-6 {
+                behind += 1;
+                continue;
+            }
+            let uv = [row(0) / w * 0.5 + 0.5, 0.5 - row(1) / w * 0.5];
+            for k in 0..2 {
+                lo[k] = lo[k].min(uv[k]);
+                hi[k] = hi[k].max(uv[k]);
+            }
+        }
+        if behind == 8 {
+            return Self::Nowhere;
+        }
+        if behind > 0 || !(lo[0].is_finite() && lo[1].is_finite()) {
+            return Self::Everywhere;
+        }
+        if hi[0] < 0.0 || hi[1] < 0.0 || lo[0] > 1.0 || lo[1] > 1.0 {
+            return Self::Nowhere;
+        }
+        Self::Uv([
+            lo[0].clamp(0.0, 1.0),
+            lo[1].clamp(0.0, 1.0),
+            hi[0].clamp(0.0, 1.0),
+            hi[1].clamp(0.0, 1.0),
+        ])
+    }
+}
+
+/// Each style id's screen bounds this frame (#385), from the world bounds
+/// of the draws the mask draws for it. A table the renderer didn't fill
+/// knows nothing, so every id in it is [`IdBounds::Everywhere`].
+#[derive(Clone, Debug, Default)]
+pub struct StyleBounds {
+    known: bool,
+    /// Index = style id.
+    by_id: Vec<IdBounds>,
+}
+
+impl StyleBounds {
+    /// An empty table that knows its ids are nowhere until told otherwise.
+    pub fn known() -> Self {
+        Self {
+            known: true,
+            by_id: Vec::new(),
+        }
+    }
+
+    /// Widen id `id`'s bounds by `b`.
+    pub fn add(&mut self, id: u16, b: IdBounds) {
+        let i = id as usize;
+        if self.by_id.len() <= i {
+            self.by_id.resize(i + 1, IdBounds::Nowhere);
+        }
+        self.by_id[i] = self.by_id[i].union(b);
+    }
+
+    /// Where id `id`'s entities can be.
+    pub fn get(&self, id: u16) -> IdBounds {
+        if !self.known {
+            return IdBounds::Everywhere;
+        }
+        self.by_id
+            .get(id as usize)
+            .copied()
+            .unwrap_or(IdBounds::Nowhere)
+    }
+}
+
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
-fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
     let from = |c: &str| {
         world
             .get_component(root, c)?
@@ -437,7 +551,7 @@ fn variant_name(v: &StyleVariant, root: &str) -> String {
 /// What a styled root asks for: its variant's name and the variant, or
 /// `None` for a `style_mask` opt-out. A style component (in registry
 /// order) wins over a `style_mask` on the same entity.
-fn request(
+pub(crate) fn request(
     world: &FlintWorld,
     config: &PostProcessConfig,
     root: EntityId,
@@ -468,6 +582,32 @@ fn request(
     }
     let name = variant_name(&variant, world.get_name(root).unwrap_or(""));
     Some((name, variant))
+}
+
+/// Whether `id` asks for a style itself: it carries a `style_mask` or a
+/// style's own component, so it roots a styled subtree.
+pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
+    world.get_component(id, STYLE_MASK_COMPONENT).is_some()
+        || crate::stylize::registry()
+            .iter()
+            .filter_map(|d| d.component)
+            .any(|c| world.get_component(id, c).is_some())
+}
+
+/// The styled root `id` takes its style from (#372): itself, else its
+/// nearest ancestor that asks for one, as [`resolve`] hands ids down.
+/// `None` when no entity on its chain to the top is styled.
+pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
+    let mut at = Some(id);
+    // A parent cycle can't load, but don't spin if one is built at run time
+    for _ in 0..4096 {
+        let e = at?;
+        if is_style_root(world, e) {
+            return Some(e);
+        }
+        at = world.get_parent(e);
+    }
+    None
 }
 
 /// Whether any entity carries a `style_mask` or a style's own component.
@@ -1474,6 +1614,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_box_projects_to_its_screen_rect_and_behind_the_camera_to_nothing() {
+        let camera = crate::Camera {
+            position: flint_core::Vec3::new(0.0, 0.0, 10.0),
+            target: flint_core::Vec3::ZERO,
+            ..Default::default()
+        };
+        let vp = camera.view_projection_matrix();
+        // A unit box at the origin, straight ahead: around the centre
+        let IdBounds::Uv([x0, y0, x1, y1]) = IdBounds::of_box(&vp, [-0.5; 3], [0.5; 3]) else {
+            panic!("in view");
+        };
+        assert!(x0 < 0.5 && x1 > 0.5 && y0 < 0.5 && y1 > 0.5);
+        assert!(x1 - x0 < 0.3 && y1 - y0 < 0.3, "small at 10 m");
+        // Above the centre is up the screen, which is y down
+        let IdBounds::Uv([_, _, _, top_y1]) =
+            IdBounds::of_box(&vp, [-0.5, 2.0, -0.5], [0.5, 3.0, 0.5])
+        else {
+            panic!("in view");
+        };
+        assert!(top_y1 < 0.5);
+        // Behind the camera, off to the side, and around the camera
+        assert_eq!(
+            IdBounds::of_box(&vp, [-0.5, -0.5, 20.0], [0.5, 0.5, 21.0]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [100.0, -0.5, -0.5], [101.0, 0.5, 0.5]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [-1.0, -1.0, 9.0], [1.0, 1.0, 11.0]),
+            IdBounds::Everywhere
+        );
+    }
+
+    #[test]
+    fn style_bounds_union_per_id_and_know_nothing_unfilled() {
+        assert_eq!(StyleBounds::default().get(1), IdBounds::Everywhere);
+        let mut b = StyleBounds::known();
+        assert_eq!(b.get(3), IdBounds::Nowhere);
+        b.add(2, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(2, IdBounds::Uv([0.0, 0.3, 0.2, 0.5]));
+        b.add(2, IdBounds::Nowhere);
+        assert_eq!(b.get(2), IdBounds::Uv([0.0, 0.2, 0.3, 0.5]));
+        b.add(1, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(1, IdBounds::Everywhere);
+        assert_eq!(b.get(1), IdBounds::Everywhere);
+    }
+
+    #[test]
     fn ids_follow_name_order_and_survive_repeats() {
         let mut ids = StyleIds::default();
         assert!(ids.sync(&mut vec!["pencil", "ascii", "pencil"]));
@@ -1788,5 +1978,71 @@ mod tests {
         // --ascii-no-edges in a scene with no style_mask: no mask
         let (none, _) = resolved(&empty, &config);
         assert!(!crate::stylize::any_uses_mask(&config, &none));
+    }
+
+    /// #384: each pixel is one style's. A whole-frame style's foreign ids
+    /// are the entities another running style owns: not its own, not an
+    /// opt-out, not a style that isn't on.
+    #[test]
+    fn a_whole_frame_style_leaves_another_styles_entities() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let pencil = crate::stylize::find("pencil").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_param("ascii", "edges", 0.0);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "style_mask", "style = \"ascii\"");
+        with_component(&mut world, "cask", "style_mask", "style = \"pencil\"");
+        with_component(&mut world, "crate", "pencil_style", "spacing = 6.0");
+        with_component(&mut world, "tag", "pencil_style", "enabled = false");
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (ids, out) = resolved(&world, &config);
+        let id = |name: &str| out[&world.get_id(name).unwrap()];
+
+        let foreign = ascii.foreign_ids(&config, &ids);
+        assert!(foreign.contains(&id("cask")), "a style_mask naming pencil");
+        assert!(foreign.contains(&id("crate")), "a pencil_style");
+        assert!(!foreign.contains(&id("barrel")), "its own");
+        assert!(!foreign.contains(&id("tag")), "an opt-out is nobody's");
+        assert!(!foreign.contains(&id("box")), "invert isn't on");
+        // And the other way round, pencil leaves ASCII's barrel
+        assert_eq!(pencil.foreign_ids(&config, &ids), vec![id("barrel")]);
+
+        let table = crate::stylize::owner_table(&config, &ids);
+        assert_eq!(table[0], crate::stylize::ownership::NONE, "unstyled");
+        assert_eq!(table[id("tag") as usize], crate::stylize::ownership::NONE);
+        assert_eq!(table[id("cask") as usize], table[id("crate") as usize]);
+        assert_ne!(table[id("cask") as usize], table[id("barrel") as usize]);
+
+        // A whole-frame invert now owns the box: ASCII leaves it too
+        config.styles.set_enabled("invert", true);
+        assert!(ascii.foreign_ids(&config, &ids).contains(&id("box")));
+
+        // Neither Kuwahara nor invert reads the mask, but Kuwahara yields
+        // to invert's box, so the mask is drawn for it
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("kuwahara", true);
+        config.styles.set_enabled("invert", true);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (only_box, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &only_box));
+        config.styles.set_enabled("kuwahara", false);
+        assert!(
+            !crate::stylize::any_uses_mask(&config, &only_box),
+            "invert alone has nobody to yield to"
+        );
+    }
+
+    /// #384: the views that look at the whole picture on purpose don't
+    /// yield; every other built-in does, with no code of its own.
+    #[test]
+    fn only_debug_views_and_the_glow_draw_over_entities() {
+        let over: Vec<&str> = crate::stylize::registry()
+            .iter()
+            .filter(|d| !d.yields)
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(over, ["display_bloom", "mask_view", "edges_view"]);
     }
 }

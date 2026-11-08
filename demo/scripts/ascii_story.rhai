@@ -6,12 +6,16 @@
 //
 //   0 s  everything smooth
 //   2 s  barrel -> ascii, its cells settle from 22 to 7 points
-//   4 s  bench  -> ascii blocks, its glow breathing
-//   6 s  both cleared
+//   4 s  bench  -> ascii blocks, its glow breathing; the crate goes too,
+//        and the lantern on it follows (it inherits the crate's style)
+//   6 s  all cleared
 //
 // The script only says what happens at each beat. The engine eases the
 // settings (tween_style_param, #370): the barrel's cells, and the bench's
 // glow, which turns around each time its tween says it's done.
+// The caption in the corner reads each prop's style back (#372) with
+// get_entity_style and get_style_param: what the renderer draws it
+// in this frame, the lantern's inherited from the crate under it.
 
 let period = 8.0;
 
@@ -43,12 +47,42 @@ fn on_update() {
             set_style_param(bench, "levels", 4);
             set_style_param(bench, "glow", 0.4);
             tween_style_param(bench, "glow", 0.8, 0.5, "ease_out");
+            let crate_ = get_entity("crate");
+            set_entity_style(crate_, "ascii");
+            set_style_param(crate_, "ramp", "minimal");
         } else if beat == 0 || beat == 3 {
             // Clearing also stops their tweens
             clear_entity_style(barrel);
             clear_entity_style(bench);
+            clear_entity_style(get_entity("crate"));
         }
         set_field(self_entity(), "story", "beat", beat);
+    }
+}
+
+// One prop's line: its name, the style it's drawn in, and two of the
+// settings in effect (its own, else the scene's, else the default), or
+// "smooth" when nothing styles it
+fn readout(name) {
+    let id = get_entity(name);
+    let style = get_entity_style(id);
+    if style == "" {
+        return `${name}   smooth`;
+    }
+    let ramp = get_style_param(id, "ramp");
+    if ramp == "" { ramp = "default"; }
+    let cell = (get_style_param(id, "cell") * 10.0).round() / 10.0;
+    `${name}   ${style}   ramp ${ramp}   cell ${cell}`
+}
+
+fn on_draw_ui() {
+    let lines = [readout("barrel"), readout("bench"), readout("crate"), readout("lantern")];
+    let y = 18.0;
+    draw_rect(12.0, 10.0, 430.0, 28.0 + 22.0 * lines.len(), 0.02, 0.03, 0.02, 0.62);
+    draw_text(24.0, y, "read back: get_entity_style / get_style_param", 13.0, 0.55, 0.75, 0.5, 1.0);
+    for line in lines {
+        y += 22.0;
+        draw_text(24.0, y, line, 16.0, 0.85, 0.95, 0.8, 1.0);
     }
 }
 
