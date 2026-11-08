@@ -87,3 +87,17 @@ default = 12.0
 min = 0.0
 max = 200.0
 label = "Haze start (m)"
+
+# Strings and images (#413; demo/styles/darkroom.* uses them):
+#
+# [options.finish]              # params.finish: a u32 index into choices,
+# default = "matte"             # with FLINT_FINISH_MATTE / FLINT_FINISH_GLOSS
+# choices = ["matte", "gloss"]  # defined; F4 draws a combo box
+#
+# [options.paper]               # the scene picks a file: flint_image_paper(uv),
+# kind = "image"                # flint_image_tiled_paper(uv), flint_image_size_paper();
+# default = "papers/cotton.png" # no choices = every image in papers/
+#
+# [images.grade]                # a fixed file beside this one: flint_lut_grade(rgb)
+# file = "luts/warm_print.png"  # reads it as a 3D LUT strip; srgb = true decodes
+#                               # sRGB to linear as it's read
