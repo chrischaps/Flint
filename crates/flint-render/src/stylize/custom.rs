@@ -50,7 +50,7 @@
 use super::kit;
 use super::{
     MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed,
-    StyleParam, StylePass, StyleStage,
+    StyleOption, StyleParam, StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeMap;
@@ -93,13 +93,153 @@ pub struct ShaderStyleDef {
     pub inputs: Vec<String>,
     #[serde(default)]
     pub params: BTreeMap<String, ParamDef>,
+    /// String options (#413): a choice the shader reads as a `u32` index,
+    /// or an image the scene picks by file name.
+    #[serde(default)]
+    pub options: BTreeMap<String, OptionDef>,
+    /// Images of the style's own (#413): a LUT, a paper, a brush sheet.
+    #[serde(default)]
+    pub images: BTreeMap<String, ImageDef>,
     /// Bloom reads this style's result (#300); hdr styles only.
     #[serde(default)]
     pub feeds_bloom: bool,
 }
 
+/// One `[images.<name>]` table (#413): a file beside the `.shader.toml`,
+/// read in the shader with `flint_image_<name>(uv)`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageDef {
+    /// A PNG or JPEG beside the description (subfolders allowed, `..` not).
+    pub file: String,
+    /// Decode the file's sRGB to linear light as it's read (a colour
+    /// picture for an hdr style). Off: the shader gets the values as
+    /// stored, which at the display stage are display values like
+    /// `p.color`, and which a LUT or a height map wants untouched.
+    #[serde(default)]
+    pub srgb: bool,
+}
+
+/// One `[options.<name>]` table (#413).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionDef {
+    /// `"choice"` (the default): one of `choices`, read as
+    /// `params.<name>`, a `u32` index into them. `"image"`: a file name,
+    /// read as `flint_image_<name>(uv)` (and its index in `params`).
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub default: String,
+    /// A choice option's values. An image option without them offers the
+    /// images in its default's folder.
+    #[serde(default)]
+    pub choices: Vec<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
+    /// An image option's files decode sRGB to linear (see [`ImageDef`]).
+    #[serde(default)]
+    pub srgb: bool,
+}
+
+/// What an option holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionKind {
+    Choice,
+    Image,
+}
+
+/// An option, checked: its choices in index order.
+#[derive(Debug, Clone)]
+pub struct OptionSource {
+    pub kind: OptionKind,
+    pub default: String,
+    pub choices: Vec<String>,
+    pub label: Option<String>,
+    pub help: Option<String>,
+}
+
+impl OptionSource {
+    /// The index `value` stands for: its place in `choices`, or the
+    /// default's for a value outside them (warned at scene load, #318).
+    pub fn index(&self, value: &str) -> u32 {
+        let at = |v: &str| self.choices.iter().position(|c| c == v);
+        at(value).or_else(|| at(&self.default)).unwrap_or(0) as u32
+    }
+}
+
+/// One image a style binds, in binding order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageSource {
+    pub name: String,
+    /// `Some(file)` for an `[images]` table; `None` for an image option,
+    /// whose file is the scene's choice.
+    pub file: Option<String>,
+    pub srgb: bool,
+}
+
+/// How many images a style may bind: with the input and the three
+/// optional buffers it stays inside every backend's 16 sampled textures.
+pub const MAX_IMAGES: usize = 8;
+
+/// The image files a style may read (what [`crate::open_image`] decodes
+/// into 8-bit colour).
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+
 fn default_stage() -> String {
     "display".into()
+}
+
+/// `file` is a relative path to an image inside the style's folder.
+fn check_image_file(at: &dyn std::fmt::Display, key: &str, file: &str) -> Result<(), String> {
+    let path = Path::new(file);
+    if file.is_empty() || path.is_absolute() || path.components().any(|c| c.as_os_str() == "..") {
+        return Err(format!(
+            "{at}: {key} = \"{file}\" must be a file beside the .shader.toml (subfolders, no ..)"
+        ));
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!(
+            "{at}: {key} = \"{file}\" is not an image this engine reads ({})",
+            IMAGE_EXTENSIONS.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// The images in `default`'s folder (relative to `dir`), each as a path
+/// relative to `dir`, sorted, `default` among them: an image option's
+/// choices when it lists none. Read through the vfs, so a bundle lists the
+/// files it packed.
+fn images_beside(dir: &Path, default: &str) -> Vec<String> {
+    let sub = Path::new(default).parent().unwrap_or(Path::new(""));
+    let mut found: Vec<String> = flint_core::vfs::read_dir(dir.join(sub))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| {
+            let file = p.file_name()?.to_str()?.to_string();
+            let ext = Path::new(&file).extension()?.to_str()?.to_ascii_lowercase();
+            IMAGE_EXTENSIONS.contains(&ext.as_str()).then(|| {
+                if sub.as_os_str().is_empty() {
+                    file
+                } else {
+                    format!("{}/{file}", sub.to_string_lossy().replace('\\', "/"))
+                }
+            })
+        })
+        .collect();
+    if !found.iter().any(|f| f == default) {
+        found.push(default.to_string());
+    }
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// Which optional buffers a style reads.
@@ -128,10 +268,26 @@ pub struct StyleSource {
     pub feeds_bloom: bool,
     /// Parameters in uniform order (by name).
     pub params: Vec<(String, ParamDef)>,
+    /// Options in uniform order (by name), after the parameters (#413).
+    pub options: Vec<(String, OptionSource)>,
+    /// Images in binding order (by name; group 3, #413).
+    pub images: Vec<ImageSource>,
     /// The `.shader.toml`.
     pub toml_path: PathBuf,
     /// The WGSL file it names, beside it.
     pub wgsl_path: PathBuf,
+}
+
+impl StyleSource {
+    /// The folder the description is in: its shader and images are here.
+    pub fn dir(&self) -> &Path {
+        self.toml_path.parent().unwrap_or(Path::new("."))
+    }
+
+    /// How many 4-byte fields its `Params` uniform has before the pad.
+    pub fn uniform_fields(&self) -> usize {
+        self.params.len() + self.options.len()
+    }
 }
 
 impl ShaderStyleDef {
@@ -215,8 +371,10 @@ impl ShaderStyleDef {
                 ));
             }
         }
-        if self.params.len() > MAX_PARAMS {
-            return Err(format!("{at}: at most {MAX_PARAMS} parameters"));
+        if self.params.len() + self.options.len() > MAX_PARAMS {
+            return Err(format!(
+                "{at}: at most {MAX_PARAMS} parameters and options together"
+            ));
         }
         let shader = Path::new(&self.shader);
         if shader.is_absolute() || shader.components().any(|c| c.as_os_str() == "..") {
@@ -226,6 +384,124 @@ impl ShaderStyleDef {
             ));
         }
         let dir = toml_path.parent().unwrap_or(Path::new("."));
+
+        // Options and images share the parameters' names: one table key,
+        // one `params` field or one `flint_image_` helper each
+        let check_name = |what: &str, name: &str| -> Result<(), String> {
+            if !is_identifier(name) || name.starts_with("flint") {
+                return Err(format!(
+                    "{at}: {what} \"{name}\" must be lowercase letters, digits and _, \
+                     and not start with flint"
+                ));
+            }
+            if super::RESERVED_KEYS.contains(&name) {
+                return Err(format!(
+                    "{at}: {what} \"{name}\" is taken: every style's table reads {}",
+                    super::RESERVED_KEYS.join(", ")
+                ));
+            }
+            if self.params.contains_key(name) {
+                return Err(format!(
+                    "{at}: {what} \"{name}\" has a parameter's name; each name is one setting"
+                ));
+            }
+            Ok(())
+        };
+        let mut options = Vec::new();
+        let mut images = Vec::new();
+        for (name, o) in self.options {
+            check_name("option", &name)?;
+            let kind = match o.kind.as_deref().unwrap_or("choice") {
+                "choice" => OptionKind::Choice,
+                "image" => OptionKind::Image,
+                other => {
+                    return Err(format!(
+                        "{at}: options.{name}: kind = \"{other}\"; it is \"choice\" or \"image\""
+                    ))
+                }
+            };
+            let choices = match kind {
+                OptionKind::Choice => {
+                    if o.srgb {
+                        return Err(format!(
+                            "{at}: options.{name}: srgb is for an image option (kind = \"image\")"
+                        ));
+                    }
+                    if o.choices.is_empty() {
+                        return Err(format!(
+                            "{at}: options.{name}: a choice option lists its choices"
+                        ));
+                    }
+                    o.choices.clone()
+                }
+                OptionKind::Image => {
+                    check_image_file(&at, &format!("options.{name}.default"), &o.default)?;
+                    for c in &o.choices {
+                        check_image_file(&at, &format!("options.{name}.choices"), c)?;
+                    }
+                    if o.choices.is_empty() {
+                        images_beside(dir, &o.default)
+                    } else {
+                        o.choices.clone()
+                    }
+                }
+            };
+            if !choices.contains(&o.default) {
+                return Err(format!(
+                    "{at}: options.{name}: default \"{}\" is not one of its choices ({})",
+                    o.default,
+                    choices.join(", ")
+                ));
+            }
+            if let Some(dup) = choices
+                .iter()
+                .enumerate()
+                .find(|(i, c)| choices[..*i].contains(c))
+            {
+                return Err(format!(
+                    "{at}: options.{name}: \"{}\" is listed twice",
+                    dup.1
+                ));
+            }
+            if kind == OptionKind::Image {
+                images.push(ImageSource {
+                    name: name.clone(),
+                    file: None,
+                    srgb: o.srgb,
+                });
+            }
+            options.push((
+                name,
+                OptionSource {
+                    kind,
+                    default: o.default,
+                    choices,
+                    label: o.label,
+                    help: o.help,
+                },
+            ));
+        }
+        for (name, image) in self.images {
+            check_name("image", &name)?;
+            if options.iter().any(|(o, _)| *o == name) {
+                return Err(format!(
+                    "{at}: image \"{name}\" has an option's name; an image option is \
+                     already an image"
+                ));
+            }
+            check_image_file(&at, &format!("images.{name}.file"), &image.file)?;
+            images.push(ImageSource {
+                name,
+                file: Some(image.file),
+                srgb: image.srgb,
+            });
+        }
+        if images.len() > MAX_IMAGES {
+            return Err(format!(
+                "{at}: at most {MAX_IMAGES} images (image options among them)"
+            ));
+        }
+        images.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(StyleSource {
             label: self.label.unwrap_or_else(|| super::humanize(&self.name)),
             name: self.name,
@@ -233,6 +509,8 @@ impl ShaderStyleDef {
             inputs,
             feeds_bloom: self.feeds_bloom,
             params: self.params.into_iter().collect(),
+            options,
+            images,
             toml_path: toml_path.to_path_buf(),
             wgsl_path: dir.join(shader),
         })
@@ -459,8 +737,13 @@ pub fn prelude(source: &StyleSource) -> String {
     for (name, _) in &source.params {
         text.push_str(&format!("    {name}: f32,\n"));
     }
-    // Never empty, and the f32s above round up to 16 bytes before it
+    // Options (#413): an index into their choices
+    for (name, _) in &source.options {
+        text.push_str(&format!("    {name}: u32,\n"));
+    }
+    // Never empty, and the fields above round up to 16 bytes before it
     text.push_str("    _flint_pad: vec4<f32>,\n};\n");
+    text.push_str(&option_constants(source));
     text.push_str(&prelude_sample(source.stage));
     if source.inputs.depth {
         text.push_str(PRELUDE_DEPTH);
@@ -471,8 +754,90 @@ pub fn prelude(source: &StyleSource) -> String {
     if source.inputs.edges {
         text.push_str(PRELUDE_EDGES);
     }
+    for (binding, image) in source.images.iter().enumerate() {
+        text.push_str(&prelude_image(binding, image));
+    }
     text.push_str("\n// ---- user style ----\n");
     text
+}
+
+/// `const FLINT_<OPTION>_<CHOICE>: u32` for each choice that is a word,
+/// so a shader says `params.finish == FLINT_FINISH_GLOSS`, not `== 1u`.
+fn option_constants(source: &StyleSource) -> String {
+    let mut text = String::new();
+    for (name, option) in &source.options {
+        if option.kind != OptionKind::Choice {
+            continue;
+        }
+        for (i, choice) in option.choices.iter().enumerate() {
+            let word = choice.to_ascii_uppercase().replace('-', "_");
+            if word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !word.is_empty() {
+                text.push_str(&format!(
+                    "const FLINT_{}_{word}: u32 = {i}u;\n",
+                    name.to_ascii_uppercase()
+                ));
+            }
+        }
+    }
+    text
+}
+
+/// One image's binding and helpers (#413). It is read with the input's
+/// sampler (group 1): a style's images add no sampler to the DX12 heap.
+fn prelude_image(binding: usize, image: &ImageSource) -> String {
+    let n = &image.name;
+    let what = image
+        .file
+        .as_deref()
+        .map_or_else(|| "the scene's choice".to_string(), |f| f.to_string());
+    format!(
+        r#"
+// Image `{n}` ({what})
+@group(3) @binding({binding}) var flint_image_texture_{n}: texture_2d<f32>;
+
+// Image `{n}` at uv (0..1 across it), bilinear, clamped at its edges
+fn flint_image_{n}(uv: vec2<f32>) -> vec4<f32> {{
+    return textureSampleLevel(flint_image_texture_{n}, flint_sampler, uv, 0.0);
+}}
+
+// Image `{n}`'s size in texels
+fn flint_image_size_{n}() -> vec2<f32> {{
+    return vec2<f32>(textureDimensions(flint_image_texture_{n}));
+}}
+
+// Image `{n}` repeated: uv 1.25 is uv 0.25, bilinear across the seam
+fn flint_image_tiled_{n}(uv: vec2<f32>) -> vec4<f32> {{
+    let dims = vec2<i32>(textureDimensions(flint_image_texture_{n}));
+    let st = uv * vec2<f32>(dims) - 0.5;
+    let base = floor(st);
+    let f = st - base;
+    let p0 = ((vec2<i32>(base) % dims) + dims) % dims;
+    let p1 = (p0 + vec2<i32>(1)) % dims;
+    let a = textureLoad(flint_image_texture_{n}, p0, 0);
+    let b = textureLoad(flint_image_texture_{n}, vec2<i32>(p1.x, p0.y), 0);
+    let c = textureLoad(flint_image_texture_{n}, vec2<i32>(p0.x, p1.y), 0);
+    let d = textureLoad(flint_image_texture_{n}, p1, 0);
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}}
+
+// Image `{n}` read as a 3D LUT laid out as a strip: N slices of N x N side
+// by side (N*N wide, N high), blue choosing the slice left to right, red
+// across each slice and green down it (the layout of Unreal's and most
+// tools' strips). `c` and the result are 0..1, in the image's values
+fn flint_lut_{n}(c: vec3<f32>) -> vec3<f32> {{
+    let size = vec2<f32>(textureDimensions(flint_image_texture_{n}));
+    let n = size.y;
+    let rgb = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)) * (n - 1.0);
+    let slice = floor(rgb.b);
+    let next = min(slice + 1.0, n - 1.0);
+    let x = rgb.r + 0.5;
+    let y = (rgb.g + 0.5) / n;
+    let lo = textureSampleLevel(flint_image_texture_{n}, flint_sampler, vec2<f32>((slice * n + x) / size.x, y), 0.0).rgb;
+    let hi = textureSampleLevel(flint_image_texture_{n}, flint_sampler, vec2<f32>((next * n + x) / size.x, y), 0.0).rgb;
+    return mix(lo, hi, rgb.b - slice);
+}}
+"#
+    )
 }
 
 /// `user` (the style's WGSL) inside its prelude and entry points.
@@ -601,6 +966,18 @@ fn locate(
     if !source.inputs.edges && missing(&["flint_edges", "flint_edge"]) {
         out.push_str("\n    hint: add \"edges\" to inputs in the .shader.toml");
     }
+    if missing(&["'flint_image_", "'flint_lut_"]) {
+        let names: Vec<&str> = source.images.iter().map(|i| i.name.as_str()).collect();
+        out.push_str(&format!(
+            "\n    hint: an image is declared as [images.<name>] or an option with \
+             kind = \"image\"; this style's images: {}",
+            if names.is_empty() {
+                "none".to_string()
+            } else {
+                names.join(", ")
+            }
+        ));
+    }
     out
 }
 
@@ -644,7 +1021,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
         if var.binding.is_some() && in_user(module.global_variables.get_span(h)) {
             return Err(format!(
                 "{file}{}: `{}` declares a binding; a style reads only the prelude's \
-                 (flint_input, params, depth, mask, edges)",
+                 (flint_input, params, depth, mask, edges, images)",
                 line_of(module.global_variables.get_span(h)),
                 var.name.as_deref().unwrap_or("?")
             ));
@@ -724,17 +1101,30 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
     match statement {
         S::Call { function, .. } => {
             let name = module.functions[*function].name.as_deref().unwrap_or("");
-            usize::from(matches!(
-                name,
-                "flint_sample"
-                    | "flint_depth"
-                    | "flint_view_depth"
-                    | "flint_world_pos"
-                    | "flint_mask_id"
-                    | "flint_style_blend"
-                    | "flint_edges"
-                    | "flint_edge"
-            ))
+            if name.starts_with("flint_image_size_") {
+                return 0;
+            }
+            // A tiled read is four loads, a LUT two samples
+            if name.starts_with("flint_image_tiled_") {
+                return 4;
+            }
+            if name.starts_with("flint_lut_") {
+                return 2;
+            }
+            usize::from(
+                name.starts_with("flint_image_")
+                    || matches!(
+                        name,
+                        "flint_sample"
+                            | "flint_depth"
+                            | "flint_view_depth"
+                            | "flint_world_pos"
+                            | "flint_mask_id"
+                            | "flint_style_blend"
+                            | "flint_edges"
+                            | "flint_edge"
+                    ),
+            )
         }
         S::Loop {
             body, continuing, ..
@@ -763,6 +1153,9 @@ struct Loaded {
     names: BindNames,
     /// The last error (load, check or build), for hosts to show.
     error: Mutex<Option<String>>,
+    /// The images' error (#413): a file missing or that doesn't decode.
+    /// Kept apart from the shader's, which a good build clears.
+    image_error: Mutex<Option<String>>,
     /// The `.shader.toml`'s modified time when last read
     /// ([`reload_changed`]).
     #[cfg(not(target_arch = "wasm32"))]
@@ -878,13 +1271,54 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     if let Some(e) = &error {
         messages.push(e.clone());
     }
+    // Every image it may bind is there to read (a bundle that didn't pack
+    // one is refused, #413); the pass decodes them when it first draws
+    let mut missing_images = Vec::new();
+    for image in &source.images {
+        let files: Vec<&str> = match &image.file {
+            Some(file) => vec![file.as_str()],
+            None => source
+                .options
+                .iter()
+                .find(|(n, _)| *n == image.name)
+                .map(|(_, o)| o.choices.iter().map(String::as_str).collect())
+                .unwrap_or_default(),
+        };
+        for file in files {
+            let path = source.dir().join(file);
+            if !flint_core::vfs::is_file(&path) {
+                missing_images.push(format!(
+                    "{}: image not found (style \"{}\", image {})",
+                    path.display(),
+                    source.name,
+                    image.name
+                ));
+            }
+        }
+    }
+    messages.extend(missing_images.iter().cloned());
+    let image_error = (!missing_images.is_empty()).then(|| missing_images.join("\n"));
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     let params: Vec<StyleParam> = source
         .params
         .iter()
         .map(|(name, p)| StyleParam::new(leak(name.clone()), p.default, p.min..=p.max))
         .collect();
-    let hints: Vec<StyleHint> = source
+    let options: Vec<StyleOption> = source
+        .options
+        .iter()
+        .map(|(name, o)| {
+            let choices: Vec<&'static str> = o.choices.iter().map(|c| leak(c.clone())).collect();
+            // A fixed list (an image option's found once, here): closed, so
+            // a scene naming another value is warned at load (#318)
+            StyleOption::new(
+                leak(name.clone()),
+                leak(o.default.clone()),
+                Box::leak(choices.into_boxed_slice()),
+            )
+        })
+        .collect();
+    let mut hints: Vec<StyleHint> = source
         .params
         .iter()
         .zip(&params)
@@ -902,10 +1336,25 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
             }
         })
         .collect();
+    hints.extend(
+        source
+            .options
+            .iter()
+            .zip(&options)
+            .filter(|((_, o), _)| o.label.is_some() || o.help.is_some())
+            .map(|((name, o), so)| {
+                StyleHint::new(
+                    so.name,
+                    leak(o.label.clone().unwrap_or_else(|| super::humanize(name))),
+                    leak(o.help.clone().unwrap_or_default()),
+                )
+            }),
+    );
     let name = leak(source.name.clone());
     let descriptor: &'static StyleDescriptor = Box::leak(Box::new(
         StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
             .params(Box::leak(params.into_boxed_slice()))
+            .options(Box::leak(options.into_boxed_slice()))
             .uses_mask(if source.inputs.mask {
                 MaskUse::Always
             } else {
@@ -937,6 +1386,7 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         source,
         names,
         error: Mutex::new(error),
+        image_error: Mutex::new(image_error),
     });
     let mut all = LOADED.write().unwrap_or_else(|e| e.into_inner());
     match all
@@ -1102,7 +1552,16 @@ pub fn errors() -> Vec<(String, String)> {
         .unwrap_or_else(|e| e.into_inner())
         .iter()
         .filter_map(|l| {
-            let error = l.error.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+            let shader = l.error.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let images = l
+                .image_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let error = match (shader, images) {
+                (Some(s), Some(i)) => format!("{s}\n{i}"),
+                (s, i) => s.or(i)?,
+            };
             Some((l.source.name.clone(), error))
         })
         .collect()
@@ -1170,6 +1629,11 @@ struct CustomPass {
     /// Draws the input unchanged, while the user's shader can't.
     passthrough: wgpu::RenderPipeline,
     build: Mutex<Build>,
+    /// The style's images (#413), group 3.
+    images: Option<Mutex<ImageSet>>,
+    /// Group 2 when a style binds images but reads none of the optional
+    /// buffers: an empty group keeps the images at group 3.
+    empty: Option<wgpu::BindGroup>,
 }
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -1185,7 +1649,8 @@ fn build(d: &StyleDevice) -> CustomPass {
         entries: &[uniform_entry(0), uniform_entry(1)],
     });
     let input_bgl = kit::sampled_layout(device, "User Style Input BGL");
-    let extra_bgl = source.inputs.any().then(|| {
+    let images = ImageSet::new(device, source);
+    let extra_bgl = (source.inputs.any() || images.is_some()).then(|| {
         let mut entries = Vec::new();
         if source.inputs.depth {
             entries.push(texture_entry(0, wgpu::TextureSampleType::Depth));
@@ -1208,6 +1673,19 @@ fn build(d: &StyleDevice) -> CustomPass {
     if let Some(extra) = &extra_bgl {
         layouts.push(extra);
     }
+    if let Some(images) = &images {
+        layouts.push(&images.layout);
+    }
+    let empty = extra_bgl
+        .as_ref()
+        .filter(|_| !source.inputs.any())
+        .map(|bgl| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("User Style Empty BG"),
+                layout: bgl,
+                entries: &[],
+            })
+        });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("User Style Layout"),
         bind_group_layouts: &layouts,
@@ -1216,6 +1694,7 @@ fn build(d: &StyleDevice) -> CustomPass {
     // The passthrough is the same prelude with no inputs: always compiles
     let bare = StyleSource {
         inputs: Inputs::default(),
+        images: Vec::new(),
         ..source.clone()
     };
     let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1234,7 +1713,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
         params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("User Style Params"),
-            size: params_size(source.params.len()) as u64,
+            size: params_size(source.uniform_fields()) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -1250,6 +1729,8 @@ fn build(d: &StyleDevice) -> CustomPass {
             #[cfg(not(target_arch = "wasm32"))]
             since_poll: 0,
         }),
+        images: images.map(Mutex::new),
+        empty,
         loaded,
     };
     pass.rebuild(device);
@@ -1324,6 +1805,251 @@ fn pipeline(
 #[cfg(not(target_arch = "wasm32"))]
 const POLL_FRAMES: u32 = 15;
 
+// ---------------------------------------------------------------------------
+// Images (#413)
+// ---------------------------------------------------------------------------
+
+/// One image binding and what it holds now.
+struct ImageSlot {
+    source: ImageSource,
+    /// An image option's choices and default (`None` for a fixed image).
+    option: Option<OptionSource>,
+    /// The file loaded now (relative to the style's folder) and its view.
+    loaded: Option<(String, wgpu::TextureView)>,
+    /// That file's modified time when read, for the poll.
+    #[cfg(not(target_arch = "wasm32"))]
+    modified: Option<std::time::SystemTime>,
+    /// A file that failed, with its modified time then: not tried again
+    /// until it changes, and its error.
+    failed: Option<(String, Option<std::time::SystemTime>, String)>,
+}
+
+/// A style's images: decoded through the vfs when first drawn or chosen,
+/// read again when their files change (natively), bound in group 3.
+struct ImageSet {
+    dir: PathBuf,
+    slots: Vec<ImageSlot>,
+    layout: wgpu::BindGroupLayout,
+    /// Made again whenever a slot's view changes.
+    bind: Option<wgpu::BindGroup>,
+    #[cfg(not(target_arch = "wasm32"))]
+    since_poll: u32,
+}
+
+/// What one [`ImageSet::update`] did.
+#[derive(Debug, Default, PartialEq)]
+struct ImageUpdate {
+    /// Files read (first loads, new choices and reloads).
+    loaded: Vec<String>,
+    /// Every slot has an image to bind.
+    ready: bool,
+    /// The slots' errors, one line each.
+    error: Option<String>,
+}
+
+impl ImageSet {
+    fn new(device: &wgpu::Device, source: &StyleSource) -> Option<Self> {
+        if source.images.is_empty() {
+            return None;
+        }
+        let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..source.images.len())
+            .map(|i| {
+                texture_entry(
+                    i as u32,
+                    wgpu::TextureSampleType::Float { filterable: true },
+                )
+            })
+            .collect();
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("User Style Images BGL"),
+            entries: &entries,
+        });
+        let slots = source
+            .images
+            .iter()
+            .map(|image| ImageSlot {
+                option: source
+                    .options
+                    .iter()
+                    .find(|(n, _)| *n == image.name)
+                    .map(|(_, o)| o.clone()),
+                source: image.clone(),
+                loaded: None,
+                #[cfg(not(target_arch = "wasm32"))]
+                modified: None,
+                failed: None,
+            })
+            .collect();
+        Some(Self {
+            dir: source.dir().to_path_buf(),
+            slots,
+            layout,
+            bind: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            since_poll: 0,
+        })
+    }
+
+    /// Load what each slot should hold: its file, or for an option the
+    /// file `choose(name)` names (its default when that isn't a choice).
+    /// With `poll`, natively, a file whose modified time moved is read
+    /// again. A file that fails keeps the slot's last good image.
+    fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        choose: &dyn Fn(&str) -> String,
+        poll: bool,
+    ) -> ImageUpdate {
+        let mut update = ImageUpdate::default();
+        for slot in &mut self.slots {
+            let want = match (&slot.source.file, &slot.option) {
+                (Some(file), _) => file.clone(),
+                (None, Some(option)) => {
+                    let chosen = choose(&slot.source.name);
+                    if option.choices.contains(&chosen) {
+                        chosen
+                    } else {
+                        option.default.clone()
+                    }
+                }
+                (None, None) => continue,
+            };
+            let path = self.dir.join(&want);
+            #[cfg(not(target_arch = "wasm32"))]
+            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            #[cfg(target_arch = "wasm32")]
+            let now: Option<std::time::SystemTime> = None;
+            let is_loaded = slot.loaded.as_ref().is_some_and(|(f, _)| *f == want);
+            #[cfg(not(target_arch = "wasm32"))]
+            let stale = is_loaded && poll && now.is_some() && now != slot.modified;
+            #[cfg(target_arch = "wasm32")]
+            let stale = {
+                let _ = poll;
+                false
+            };
+            let tried = slot
+                .failed
+                .as_ref()
+                .is_some_and(|(f, at, _)| *f == want && *at == now);
+            if is_loaded && !stale {
+                // Back on a file that reads: an old choice's failure is past
+                if slot.failed.as_ref().is_some_and(|(f, _, _)| *f != want) {
+                    slot.failed = None;
+                }
+                continue;
+            }
+            if tried {
+                continue;
+            }
+            match upload_image(device, queue, &path, slot.source.srgb, &slot.source.name) {
+                Ok(view) => {
+                    slot.loaded = Some((want.clone(), view));
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        slot.modified = now;
+                    }
+                    slot.failed = None;
+                    self.bind = None;
+                    update.loaded.push(want);
+                }
+                Err(e) => slot.failed = Some((want, now, e)),
+            }
+        }
+        // A slot showing another file than it was asked for (a new choice
+        // that failed) keeps drawing its last good one; the error says so
+        let errors: Vec<&str> = self
+            .slots
+            .iter()
+            .filter_map(|s| s.failed.as_ref().map(|(_, _, e)| e.as_str()))
+            .collect();
+        update.error = (!errors.is_empty()).then(|| errors.join("\n"));
+        update.ready = self.slots.iter().all(|s| s.loaded.is_some());
+        update
+    }
+
+    /// The group 3 bind group over every slot's view (all loaded).
+    fn bind_group(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
+        let slots = &self.slots;
+        let layout = &self.layout;
+        self.bind.get_or_insert_with(|| {
+            let entries: Vec<wgpu::BindGroupEntry> = slots
+                .iter()
+                .enumerate()
+                .map(|(i, s)| wgpu::BindGroupEntry {
+                    binding: i as u32,
+                    resource: wgpu::BindingResource::TextureView(
+                        &s.loaded.as_ref().expect("every slot is loaded").1,
+                    ),
+                })
+                .collect();
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("User Style Images BG"),
+                layout,
+                entries: &entries,
+            })
+        })
+    }
+}
+
+/// Decode the image at `path` (through the vfs) into a texture of its own,
+/// 8 bits a channel, one mip: `Rgba8UnormSrgb` with `srgb` (read back as
+/// linear light), else `Rgba8Unorm` (the stored values).
+fn upload_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: &Path,
+    srgb: bool,
+    name: &str,
+) -> Result<wgpu::TextureView, String> {
+    let image = crate::open_image(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    let max = device.limits().max_texture_dimension_2d;
+    if width == 0 || height == 0 || width > max || height > max {
+        return Err(format!(
+            "{}: {width}x{height} is not a size this GPU binds (1..{max} a side)",
+            path.display()
+        ));
+    }
+    let size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("User Style Image {name}")),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &image,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        size,
+    );
+    Ok(texture.create_view(&wgpu::TextureViewDescriptor::default()))
+}
+
 impl CustomPass {
     fn set_error(&self, error: Option<String>) {
         let mut slot = self.loaded.error.lock().unwrap_or_else(|e| e.into_inner());
@@ -1391,6 +2117,51 @@ impl CustomPass {
         }
     }
 
+    /// Bring the images up to date for this frame (#413): the scene's
+    /// choices, and natively a look at the files' modified times every
+    /// [`POLL_FRAMES`]. Records their error, logged when it changes.
+    /// Whether every image has something to bind.
+    fn update_images(&self, frame: &StyleFrame<'_>) -> bool {
+        let Some(images) = &self.images else {
+            return true;
+        };
+        let mut images = images.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(not(target_arch = "wasm32"))]
+        let poll = {
+            images.since_poll += 1;
+            let due = images.since_poll >= POLL_FRAMES;
+            if due {
+                images.since_poll = 0;
+            }
+            due
+        };
+        #[cfg(target_arch = "wasm32")]
+        let poll = false;
+        let update = images.update(
+            frame.device,
+            frame.queue,
+            &|name| frame.option(name).to_string(),
+            poll,
+        );
+        let name = &self.loaded.source.name;
+        for file in &update.loaded {
+            tracing::debug!("style '{name}': image {file} read");
+        }
+        let mut slot = self
+            .loaded
+            .image_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *slot != update.error {
+            match &update.error {
+                Some(e) => tracing::warn!("style '{name}': {e}"),
+                None => tracing::info!("style '{name}': its images read again"),
+            }
+            *slot = update.error;
+        }
+        update.ready
+    }
+
     /// Rebuild when the WGSL file changed on disk (native only).
     #[cfg(not(target_arch = "wasm32"))]
     fn poll(&self, device: &wgpu::Device) {
@@ -1443,10 +2214,18 @@ impl StylePass for CustomPass {
         frame
             .queue
             .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-        let mut values = vec![0.0f32; params_size(source.params.len()) / 4];
+        let mut values = vec![0.0f32; params_size(source.uniform_fields()) / 4];
         for (slot, (name, p)) in values.iter_mut().zip(&source.params) {
             *slot = frame.param(name).clamp(p.min, p.max);
         }
+        // Options follow as u32 indices, written as their bits
+        for (slot, (name, o)) in values[source.params.len()..]
+            .iter_mut()
+            .zip(&source.options)
+        {
+            *slot = f32::from_bits(o.index(frame.option(name)));
+        }
+        let images_ready = self.update_images(frame);
         frame
             .queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&values));
@@ -1470,11 +2249,31 @@ impl StylePass for CustomPass {
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
         let build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        let passthrough = |encoder: &mut wgpu::CommandEncoder| {
+            kit::fullscreen_pass(
+                encoder,
+                names.pass,
+                output,
+                &self.passthrough,
+                &[&frame_bg, &input_bg],
+            )
+        };
+        let Some(pipeline) = &build.pipeline else {
+            passthrough(encoder);
+            return;
+        };
+        // An image that never read (a missing file) leaves the style a
+        // passthrough with its error, as a shader that doesn't compile does
+        if !images_ready {
+            passthrough(encoder);
+            return;
+        }
         // The mask and the edges are there whenever this style is on and
         // reads them; if a host ever draws without one (or the edge pass
         // failed to build), the passthrough keeps the frame whole
         let extra_bg = match &self.extra_bgl {
             None => None,
+            Some(_) if !source.inputs.any() => None,
             Some(bgl)
                 if (!source.inputs.mask || frame.mask.is_some())
                     && (!source.inputs.edges || frame.edges.is_some()) =>
@@ -1507,35 +2306,24 @@ impl StylePass for CustomPass {
                 }))
             }
             Some(_) => {
-                kit::fullscreen_pass(
-                    encoder,
-                    names.pass,
-                    output,
-                    &self.passthrough,
-                    &[&frame_bg, &input_bg],
-                );
+                passthrough(encoder);
                 return;
             }
         };
-        match (&build.pipeline, extra_bg) {
-            (Some(p), Some(extra)) => kit::fullscreen_pass(
-                encoder,
-                names.pass,
-                output,
-                p,
-                &[&frame_bg, &input_bg, &extra],
-            ),
-            (Some(p), None) => {
-                kit::fullscreen_pass(encoder, names.pass, output, p, &[&frame_bg, &input_bg])
-            }
-            (None, _) => kit::fullscreen_pass(
-                encoder,
-                names.pass,
-                output,
-                &self.passthrough,
-                &[&frame_bg, &input_bg],
-            ),
+        let mut groups: Vec<&wgpu::BindGroup> = vec![&frame_bg, &input_bg];
+        if let Some(extra) = &extra_bg {
+            groups.push(extra);
+        } else if let Some(empty) = &self.empty {
+            groups.push(empty);
         }
+        let mut images = self
+            .images
+            .as_ref()
+            .map(|i| i.lock().unwrap_or_else(|e| e.into_inner()));
+        if let Some(images) = images.as_mut() {
+            groups.push(images.bind_group(frame.device));
+        }
+        kit::fullscreen_pass(encoder, names.pass, output, pipeline, &groups);
     }
 }
 
@@ -1999,6 +2787,280 @@ fn style(p: StylePixel) -> vec4<f32> {
         let after = active(&set);
         assert_eq!(after.len(), 1);
         assert_ne!(before, after, "built from the new descriptor");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn printed() -> StyleSource {
+        source(
+            r#"
+            version = 1
+            name = "printed"
+            shader = "printed.wgsl"
+            [params.grain]
+            default = 1.0
+            min = 0.0
+            max = 4.0
+            [options.finish]
+            default = "matte"
+            choices = ["matte", "gloss", "semi-gloss"]
+            [options.grade]
+            kind = "image"
+            default = "luts/warm.png"
+            choices = ["luts/warm.png", "luts/cold.png"]
+            [images.paper]
+            file = "paper.png"
+            srgb = true
+            "#,
+            "styles/printed.shader.toml",
+        )
+        .unwrap()
+    }
+
+    /// #413: options and images in a description, and what it may not say.
+    #[test]
+    fn options_and_images_are_checked() {
+        let s = printed();
+        let names: Vec<&str> = s.options.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["finish", "grade"], "uniform order is by name");
+        assert_eq!(s.uniform_fields(), 3);
+        let (_, finish) = &s.options[0];
+        assert_eq!(finish.kind, OptionKind::Choice);
+        assert_eq!(finish.index("gloss"), 1);
+        assert_eq!(
+            finish.index("plaid"),
+            0,
+            "an unknown value draws as the default"
+        );
+        let images: Vec<(&str, Option<&str>, bool)> = s
+            .images
+            .iter()
+            .map(|i| (i.name.as_str(), i.file.as_deref(), i.srgb))
+            .collect();
+        assert_eq!(
+            images,
+            [("grade", None, false), ("paper", Some("paper.png"), true)],
+            "binding order is by name; an image option binds too"
+        );
+
+        let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+        let file = "styles/x.shader.toml";
+        let err = |extra: &str| source(&format!("{base}{extra}"), file).unwrap_err();
+        assert!(err("[options.m]\ndefault = \"a\"\n").contains("lists its choices"));
+        assert!(
+            err("[options.m]\ndefault = \"c\"\nchoices = [\"a\", \"b\"]\n")
+                .contains("not one of its choices")
+        );
+        assert!(err("[options.m]\ndefault = \"a\"\nchoices = [\"a\", \"a\"]\n").contains("twice"));
+        assert!(
+            err("[options.m]\nkind = \"font\"\ndefault = \"a\"\nchoices = [\"a\"]\n")
+                .contains("\"choice\" or \"image\"")
+        );
+        assert!(
+            err("[options.m]\ndefault = \"a\"\nchoices = [\"a\"]\nsrgb = true\n")
+                .contains("image option")
+        );
+        assert!(err("[images.p]\nfile = \"../p.png\"\n").contains("no .."));
+        assert!(err("[images.p]\nfile = \"p.hdr\"\n").contains("png, jpg"));
+        assert!(err("[images.flint_p]\nfile = \"p.png\"\n").contains("flint"));
+        assert!(
+            err("[images.p]\nfile = \"p.png\"\n[params.p]\ndefault = 0\nmin = 0\nmax = 1\n")
+                .contains("parameter's name")
+        );
+        assert!(err(
+            "[images.p]\nfile = \"p.png\"\n[options.p]\nkind = \"image\"\ndefault = \"p.png\"\n"
+        )
+        .contains("option's name"));
+        assert!(err("[options.enabled]\ndefault = \"a\"\nchoices = [\"a\"]\n").contains("taken"));
+        let many: String = (0..=MAX_IMAGES)
+            .map(|i| format!("[images.i{i}]\nfile = \"i.png\"\n"))
+            .collect();
+        assert!(err(&many).contains("at most"));
+    }
+
+    /// #413: the prelude declares each image's helpers and each option's
+    /// index and constants, and naga takes a shader that uses them all.
+    #[test]
+    fn images_and_options_validate() {
+        let s = printed();
+        let prelude = prelude(&s);
+        assert!(prelude.contains("finish: u32,"), "{prelude}");
+        assert!(prelude.contains("const FLINT_FINISH_GLOSS: u32 = 1u;"));
+        assert!(prelude.contains("const FLINT_FINISH_SEMI_GLOSS: u32 = 2u;"));
+        assert!(prelude.contains("@group(3) @binding(0) var flint_image_texture_grade"));
+        assert!(prelude.contains("@group(3) @binding(1) var flint_image_texture_paper"));
+        let user = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var c = flint_lut_grade(p.color.rgb);
+    let paper = flint_image_tiled_paper(p.pos / flint_image_size_paper());
+    if (params.finish == FLINT_FINISH_GLOSS) {
+        c = c * 1.1;
+    }
+    let edge = flint_image_paper(p.uv).a;
+    return vec4<f32>(c * paper.rgb * edge * params.grain, 1.0);
+}
+"#;
+        let report = check(&s, user).unwrap_or_else(|e| panic!("{e}"));
+        // LUT 2 + tiled 4 + clamped 1 + size 0
+        assert_eq!(report.texture_reads, 7);
+
+        // An image the style doesn't declare: named, with the ones it has
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    return flint_image_brush(p.uv);\n}\n";
+        let e = check(&s, user).unwrap_err();
+        assert!(
+            e.contains("[images.<name>]") && e.contains("grade, paper"),
+            "{e}"
+        );
+    }
+
+    /// #413: an image option with no list offers its default's folder; the
+    /// list is fixed at load, so a scene naming another file is warned
+    /// (#318) and `--style` refuses it.
+    #[test]
+    fn image_options_find_their_folder_and_warn_on_strangers() {
+        let dir = std::env::temp_dir().join(format!("flint-user-images-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(styles.join("papers")).unwrap();
+        let png = |path: &Path| {
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 180, 150, 255]))
+                .save(path)
+                .unwrap()
+        };
+        png(&styles.join("papers").join("cotton.png"));
+        png(&styles.join("papers").join("kraft.png"));
+        std::fs::write(styles.join("papers").join("notes.txt"), "not an image").unwrap();
+        std::fs::write(
+            styles.join("utest_paper.shader.toml"),
+            "version = 1\nname = \"utest_paper\"\nshader = \"paper.wgsl\"\n\
+             [options.paper]\nkind = \"image\"\ndefault = \"papers/cotton.png\"\n\
+             [images.missing]\nfile = \"nowhere.png\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("paper.wgsl"), PASSTHROUGH).unwrap();
+        let messages = load_dir(&dir);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].contains("nowhere.png") && messages[0].contains("image not found"),
+            "{messages:?}"
+        );
+        assert!(errors()
+            .iter()
+            .any(|(n, e)| n == "utest_paper" && e.contains("nowhere.png")));
+        let d = super::super::find("utest_paper").unwrap();
+        let option = d.options.iter().find(|o| o.name == "paper").unwrap();
+        assert_eq!(option.choices, ["papers/cotton.png", "papers/kraft.png"]);
+        assert!(option.closed());
+
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_paper]\npaper = \"papers/kraft.png\"\n").unwrap();
+        let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            settings.option("utest_paper", "paper"),
+            Some("papers/kraft.png")
+        );
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_paper]\npaper = \"papers/linen.png\"\n").unwrap();
+        let (_, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("unknown value 'papers/linen.png'")
+                && warnings[0].contains("papers/kraft.png"),
+            "{warnings:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #413 on a real device: images load when first drawn, follow the
+    /// scene's choice, read again when their file changes, and keep the
+    /// last good picture when a file breaks.
+    #[test]
+    fn images_load_follow_choices_and_reload() {
+        let Some((device, queue)) = device() else {
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("flint-user-image-gpu-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(styles.join("luts")).unwrap();
+        let png = |path: &Path, w: u32, v: u8| {
+            image::RgbaImage::from_pixel(w, 1, image::Rgba([v, v, v, 255]))
+                .save(path)
+                .unwrap()
+        };
+        png(&styles.join("paper.png"), 4, 200);
+        png(&styles.join("luts").join("a.png"), 2, 10);
+        png(&styles.join("luts").join("b.png"), 2, 20);
+        let toml_path = styles.join("utest_imgs.shader.toml");
+        std::fs::write(
+            &toml_path,
+            "version = 1\nname = \"utest_imgs\"\nshader = \"imgs.wgsl\"\n\
+             [options.grade]\nkind = \"image\"\ndefault = \"luts/a.png\"\n\
+             [images.paper]\nfile = \"paper.png\"\n",
+        )
+        .unwrap();
+        let source = read_source(&toml_path).unwrap();
+        let mut set = ImageSet::new(&device, &source).unwrap();
+        let choice = std::cell::RefCell::new(String::new());
+        let choose = |_: &str| choice.borrow().clone();
+
+        let first = set.update(&device, &queue, &choose, false);
+        assert!(first.ready && first.error.is_none(), "{first:?}");
+        assert_eq!(first.loaded, ["luts/a.png", "paper.png"]);
+        set.bind_group(&device);
+        assert!(set.bind.is_some());
+        let again = set.update(&device, &queue, &choose, true);
+        assert!(again.loaded.is_empty(), "nothing changed: {again:?}");
+        assert!(set.bind.is_some(), "the bind group is kept");
+
+        // The scene picks the other LUT
+        *choice.borrow_mut() = "luts/b.png".into();
+        let picked = set.update(&device, &queue, &choose, false);
+        assert_eq!(picked.loaded, ["luts/b.png"]);
+        assert!(set.bind.is_none(), "bound again over the new view");
+
+        // The paper changes on disk: read again at the next poll only
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        png(&styles.join("paper.png"), 8, 120);
+        assert!(set
+            .update(&device, &queue, &choose, false)
+            .loaded
+            .is_empty());
+        assert_eq!(
+            set.update(&device, &queue, &choose, true).loaded,
+            ["paper.png"]
+        );
+
+        // A broken paper keeps the last good one and says so, once
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(styles.join("paper.png"), b"not a png").unwrap();
+        let broken = set.update(&device, &queue, &choose, true);
+        assert!(broken.ready, "the last good paper still binds");
+        assert!(broken
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("paper.png")));
+        assert!(set.update(&device, &queue, &choose, true).loaded.is_empty());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        png(&styles.join("paper.png"), 4, 90);
+        let fixed = set.update(&device, &queue, &choose, true);
+        assert_eq!(fixed.loaded, ["paper.png"]);
+        assert!(fixed.error.is_none());
+
+        // A missing image never loaded: not ready (the pass draws through)
+        let mut source = source;
+        source.images.push(ImageSource {
+            name: "zz".into(),
+            file: Some("gone.png".into()),
+            srgb: false,
+        });
+        let mut set = ImageSet::new(&device, &source).unwrap();
+        let missing = set.update(&device, &queue, &choose, false);
+        assert!(!missing.ready);
+        assert!(missing
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("gone.png")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

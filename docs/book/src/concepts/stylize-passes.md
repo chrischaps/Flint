@@ -1071,7 +1071,57 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 |---|---|
 | ![risograph](../images/user-style-risograph.png) `--style risograph` (a crop at 1:1): two dot screens out of register, colour only | Each is one `.shader.toml` and under 50 lines of WGSL in `demo/styles/`; none needed a rebuild of the engine |
 
-**What a user style can't do yet:** more than one pass, textures of its own, string options, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
+### Images and options
+
+*#413.* A style can read images of its own (a LUT, a paper, a brush or glyph sheet) and take string options. Both are declared in the `.shader.toml`:
+
+```toml
+# A fixed image, a file beside the .shader.toml (subfolders allowed, no ..)
+[images.brush]
+file = "brushes/dry.png"
+srgb = false               # true: decode sRGB to linear as it's read (a colour picture for an hdr style)
+
+# A choice: params.finish is a u32 index into the choices, and each choice
+# that is a word gets a constant, FLINT_FINISH_MATTE = 0u, FLINT_FINISH_GLOSS = 1u
+[options.finish]
+default = "matte"
+choices = ["matte", "gloss"]
+label = "Finish"           # optional, with help
+
+# An image the scene picks by file name: read as flint_image_paper(uv), and
+# its index in params.paper. Without choices it offers every image in its
+# default's folder (papers/ here), found when the style loads.
+[options.paper]
+kind = "image"
+default = "papers/cotton.png"
+```
+
+The scene picks with strings, as for any built-in's options: `[post_process.styles.darkroom] paper = "papers/washi.png"`, `--style darkroom:finish=gloss`, `--sweep darkroom.grade=luts/neutral.png,luts/bleach.png`. F4 draws each option as a combo box of its choices. A value outside them is warned when the scene loads, naming the choices and the default it draws as (#318), and `--style` refuses it.
+
+Each image `<name>` gets four helpers. They read through the input's sampler, so images add no sampler to the bind group (the DX12 heap, see Critical Gotchas):
+
+| | |
+|---|---|
+| `flint_image_<name>(uv)` | bilinear, 0..1 across the image, clamped at its edges |
+| `flint_image_tiled_<name>(uv)` | bilinear and repeating: uv 1.25 is 0.25, with no seam |
+| `flint_image_size_<name>()` | its size in texels, e.g. to tile it at one texel a point: `p.pos / (flint_image_size_paper() * flint.pixels_per_point)` |
+| `flint_lut_<name>(rgb)` | the image read as a 3D LUT strip: N slices of N x N side by side (N*N wide, N high), blue choosing the slice left to right, red across a slice and green down it, as Unreal's `RGBTable16x1.png` is laid out. Trilinear |
+
+Images are PNG or JPEG, 8 bits a channel and one mip, read through the vfs (so a bundle carries them; `flint bundle` refuses one that names an image it didn't pack). Without `srgb`, the shader gets the values as stored: at the display stage those are display values like `p.color`, and a LUT wants them untouched. A style may bind up to 8 images, image options among them, in group 3. Every file an image may read must exist when the style loads; a missing one is reported, and until it reads the style draws its input unchanged.
+
+Natively, images reload like the shader: save a PNG and the next poll (a few times a second) reads it again. A file that no longer decodes keeps the last good picture drawing and shows its error on the card.
+
+`demo/styles/darkroom.*` uses all three: a LUT grade and a paper as image options (`luts/`, `papers/`, made by `tools/darkroom_images.py`), and a matte or gloss finish.
+
+| ![darkroom on the user styles scene: warm print grade on cotton paper, with a white border](../images/user-style-darkroom.png) | ![four LUTs: neutral, warm print, bleach bypass, cyanotype](../images/user-style-darkroom-grades.png) |
+|---|---|
+| `--style darkroom`: the warm print LUT on cotton paper, matte | `--sweep darkroom.grade=...`: the four LUTs in `demo/styles/luts/` |
+
+![The three papers across, matte and gloss down, over the neutral LUT](../images/user-style-darkroom-papers.png)
+
+`--style darkroom:grade=luts/neutral.png --sweep darkroom.paper=papers/cotton.png,papers/kraft.png,papers/washi.png --sweep darkroom.finish=matte,gloss`: an image option and a choice option as the two axes of one sheet.
+
+**What a user style can't do yet:** more than one pass, render targets of its own, per-entity settings (a component like `ascii_style`), frame history. The built-ins that need those stay in Rust. The demos in `demo/styles/` show what one pass reaches: `risograph` (two misregistered inks), `contour` (survey lines from depth), `darkroom` (a LUT and a paper picked by the scene), `neon` (an hdr style that feeds bloom, `demo/neon_bloom.scene.toml`) and `hologram` (a style mask on chosen props, `demo/user_styles.scene.toml`).
 
 ## Goldens
 

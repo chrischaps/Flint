@@ -85,7 +85,9 @@ integer = false
   `<base>_r/_g/_b` params fold into a colour picker. All of this comes
   from the descriptor, with no code per style.
 - **No string options in v1.** Options exist for fonts and ramps, which
-  a WGSL function can't use without textures (see Follow-ups).
+  a WGSL function can't use without textures (see Follow-ups). *#413
+  added both, still `version = 1` since the additions are compatible:
+  see "Built in #413" below.*
 
 ### 2. The shader: one function, the framework writes the rest
 
@@ -328,6 +330,39 @@ A game folder outside the engine (`levels/garden.scene.toml`,
 render`, played in `flint-player`, hot-reloaded both files mid-run, and
 bundled and played from the bundle with `flint-player --bundle`, the same
 `MemorySource` path the browser takes. The browser itself wasn't run.
+
+## Built in #413: images and string options
+
+- **`[images.<name>] file = "..."`** binds a PNG or JPEG beside the
+  description in group 3 (the slot section 2 left free), 8 bits a
+  channel, one mip, `Rgba8Unorm` (stored values) or with `srgb = true`
+  `Rgba8UnormSrgb`. Up to 8 a style. The helpers are
+  `flint_image_<name>(uv)`, `flint_image_tiled_<name>(uv)` (manual
+  bilinear over `textureLoad`, so it wraps without a repeat sampler),
+  `flint_image_size_<name>()` and `flint_lut_<name>(rgb)` (a strip LUT,
+  trilinear from two bilinear reads).
+- **No new sampler.** The images are read with group 1's
+  `flint_sampler`, so group 3 holds textures only and adds nothing to the
+  DX12 sampler heap. Its bind group is the pass's own, made again only
+  when a view changes.
+- **`[options.<name>]`**, kind `choice` (default) or `image`. Options sit
+  in `Params` after the floats, one `u32` each (the index into the
+  choices), and a choice that is a word gets `FLINT_<OPTION>_<CHOICE>`.
+  An image option is also an image binding. With no `choices` it lists
+  the images in its default's folder **once, at load**, and leaks them as
+  a fixed list. That makes every user option closed, so the #318 warning
+  and `--style`'s refusal apply with no new code. The cost: an image added
+  to that folder appears after the `.shader.toml` is next saved (or the
+  next run), not on its own.
+- **Failure.** Every file an image may read is checked to exist at load
+  (`flint bundle` refuses a missing one). Images decode on the first draw,
+  through the vfs. Until each has read once the style is a passthrough
+  with its error; afterwards a file that fails keeps the last good
+  picture. Image errors are kept apart from the shader's, since a good
+  shader build would clear them otherwise.
+- **Reload.** Every 15 frames, natively, the pass stats each image's file
+  and decodes one whose modified time moved. A new choice from the scene
+  or F4 loads on the frame it's made.
 
 ## Follow-ups
 
