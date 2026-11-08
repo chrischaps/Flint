@@ -300,7 +300,7 @@ A prop whose spec can't live, or whose component has a bad field, stays a still 
 [living] 240 skinned draws this frame
 ```
 
-Headless `flint render` doesn't run the resolver, so it doesn't draw living props; use `flint-player --screenshot`, with `--frame-step` and `--screenshot-every` for a sequence that comes out the same every time.
+Headless `flint render` draws living props too, at time 0, or at `--time T` with the same pixels the player draws at T, and `--time 0..4` gives a sequence ([Headless Rendering](../guides/headless-rendering.md#a-chosen-moment)). Scripts don't run there, so for a grove a script tunes, use `flint-player --frame-step` with `--screenshot-every`.
 
 ### The warped clock
 
