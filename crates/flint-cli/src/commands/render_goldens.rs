@@ -73,7 +73,10 @@ pub struct GoldenArgs {
     #[arg(long)]
     pub bless_variant: bool,
 
-    /// Goldens: run only the cases whose name contains this (repeatable)
+    /// Goldens: run only this case. A name that is exactly a case's picks
+    /// that case alone (`ascii-silhouette-cell` skips
+    /// `ascii-silhouette-cell-object`); one that names no case picks every
+    /// case whose name contains it (repeatable)
     #[arg(long = "case")]
     pub cases: Vec<String>,
 
