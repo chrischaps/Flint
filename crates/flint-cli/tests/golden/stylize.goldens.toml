@@ -206,6 +206,14 @@ args = ["--no-grid"]
 # space (the picture passes through, and the pencil props draw over theirs)
 text = "ascii-style-entities.txt"
 
+# Each pixel one style's (#384): whole-frame ASCII leaves the pencil cask,
+# crate and lid sketched (pencil draws them from the scene, not from the
+# glyphs); the tag, opted out of pencil, is ASCII's
+[[case]]
+name = "ascii-full-yields-to-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii"]
+
 [[case]]
 name = "ascii-style-screen"
 scene = "demo/stylize_props.scene.toml"
