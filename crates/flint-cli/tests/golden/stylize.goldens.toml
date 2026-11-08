@@ -379,6 +379,27 @@ scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
+# A whole-frame blend (#369, #399): the table's `blend` mixes a style's
+# output with its input. Half-way, ASCII is a cross-fade of the clearing
+# and its glyphs; at 0 a style leaves the chain, so the frame is the one
+# without it byte for byte, in either stage
+[[case]]
+name = "ascii-whole-blend-half"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--ascii", "--style", "ascii:blend=0.5"]
+
+[[case]]
+name = "ascii-whole-blend-zero"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--ascii", "--style", "ascii:blend=0"]
+matches = ["--no-grid"]
+
+[[case]]
+name = "kuwahara-blend-zero"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "kuwahara:radius=5,blend=0"]
+matches = ["--no-grid"]
+
 # Palette quantize (#324): a ladder dithered in 2-point blocks, and nearest
 # inks undithered. A colour on an ink boundary flips a whole block by a big
 # step, so these take the glyph styles' tolerance, not the smooth one

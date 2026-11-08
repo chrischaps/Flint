@@ -2744,17 +2744,30 @@ fn a_script_cross_fades_whole_frame_styles_without_allocating_and_clears_exactly
         renderer.set_post_process_config(config);
     };
 
-    // Invert on at blend 0 shows none of it, at 1 all of it
+    // Invert on at blend 0 shows none of it (#399: it leaves the chain, so
+    // the frame is the plain one byte for byte), at 1 all of it
     edit(&mut renderer, &|c| {
         set_post_style(c, "invert", true).unwrap();
         set_post_style_param(c, "invert", "blend", 0.0.into()).unwrap();
     });
     let none = gpu.frame(&mut renderer, &world);
-    let worst = plain.iter().zip(&none).map(|(a, b)| a.abs_diff(*b)).max();
     assert!(
-        worst <= Some(1),
-        "blend 0 should be the plain frame, off by {worst:?}"
+        none == plain,
+        "blend 0 should be the plain frame, byte for byte"
     );
+    // and so is Kuwahara (the HDR stage) at blend 0 beside it
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", true).unwrap();
+        set_post_style_param(c, "kuwahara", "blend", 0.0.into()).unwrap();
+    });
+    let none = gpu.frame(&mut renderer, &world);
+    assert!(
+        none == plain,
+        "two styles at blend 0 should draw the plain frame"
+    );
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", false).unwrap()
+    });
     edit(&mut renderer, &|c| {
         set_post_style_param(c, "invert", "blend", 1.0.into()).unwrap()
     });
