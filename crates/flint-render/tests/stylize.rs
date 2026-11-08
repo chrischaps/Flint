@@ -768,6 +768,141 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
 /// How far the wobbling camera's target moves, in metres.
 const WOBBLE: f32 = 0.08;
 
+/// Each 8 px cell's mean RGB, row by row.
+fn cell_means(frame: &[u8]) -> Vec<[f32; 3]> {
+    let n = SIZE as usize / 8;
+    (0..n * n)
+        .map(|i| {
+            let (cx, cy) = (i % n, i / n);
+            let mut sum = [0.0f32; 3];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let p = pixel(frame, cx * 8 + x, cy * 8 + y);
+                    for c in 0..3 {
+                        sum[c] += p[c] as f32 / 64.0;
+                    }
+                }
+            }
+            sum
+        })
+        .collect()
+}
+
+#[test]
+fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // A wall of boxes two metres wide, red and green by turns, at equal
+    // luminance: smoothing can't tell a red cell's past from a green one
+    // by its jump, so a past read from the wrong surface shows as a hue
+    let mut world = FlintWorld::new();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for i in -12..12 {
+        let id = world.spawn(format!("panel_{i}")).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([i as f64 * 2.0 + 1.0, 0.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-1.0, -12.0, -0.5]));
+        bounds.insert("max".into(), vec3([1.0, 12.0, 0.5]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+        let color = if i % 2 == 0 {
+            [0.8, 0.2, 0.2]
+        } else {
+            [0.2, 0.377, 0.2]
+        };
+        let mut material = toml::Table::new();
+        material.insert(
+            "color".into(),
+            toml::Value::Array(
+                color
+                    .iter()
+                    .map(|&c| c.into())
+                    .chain([1.0.into()])
+                    .collect(),
+            ),
+        );
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
+    }
+
+    // Two frames: the camera trucks one panel to the side between them, so
+    // every cell's surface last frame was in another cell, and the cell
+    // itself last showed the other colour
+    let run = |temporal: &str| -> Vec<Vec<u8>> {
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_option("ascii", "temporal", temporal);
+        config.styles.set_option("ascii", "color", "raw");
+        config.styles.set_param("ascii", "background", 1.0);
+        config.styles.set_param("ascii", "smoothing", 0.95);
+        config.styles.set_param("ascii", "hysteresis", 0.0);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(&gpu.device);
+        [0.0f32, 2.0]
+            .iter()
+            .map(|&x| {
+                let camera = Camera {
+                    position: flint_core::Vec3::new(x, 0.0, 12.0),
+                    target: flint_core::Vec3::new(x, 0.0, 0.0),
+                    ..Camera::default()
+                };
+                renderer.update_from_world(&world, &gpu.device);
+                renderer.render_to(
+                    &gpu.device,
+                    &gpu.queue,
+                    &gpu.depth_view,
+                    &camera,
+                    &gpu.color_view,
+                );
+                gpu.device.poll(wgpu::Maintain::Wait);
+                gpu.pixels()
+            })
+            .collect()
+    };
+    // Cells whose colour is off the stateless frame's by more than 12 levels
+    let wrong = |frames: &[Vec<u8>], truth: &[Vec<u8>]| -> usize {
+        cell_means(&frames[1])
+            .iter()
+            .zip(cell_means(&truth[1]))
+            .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 12.0))
+            .count()
+    };
+    let off = run("off");
+    let on = run("on");
+    let reproject = run("reproject");
+    assert_eq!(reproject[0], off[0], "the first frame differs reprojected");
+    assert_ne!(off[0], off[1], "the camera moved nothing");
+    let (on_wrong, reproject_wrong) = (wrong(&on, &off), wrong(&reproject, &off));
+    eprintln!(
+        "cells off the present after a one-panel truck: on {on_wrong}, reproject {reproject_wrong}"
+    );
+    // Screen-space history smooths most cells towards the other colour
+    assert!(
+        on_wrong >= 24,
+        "screen-space history should show the other panel: {on_wrong}"
+    );
+    // Reprojected, a cell's past is its own panel, but for the column that
+    // came on screen and the cells a panel edge crosses
+    assert!(
+        reproject_wrong * 3 <= on_wrong,
+        "reprojected history should read each surface's own past: on {on_wrong}, reproject {reproject_wrong}"
+    );
+}
+
 /// The GPU objects the application holds: buffers, bind groups, textures
 /// and texture views.
 fn held(gpu: &Gpu) -> [usize; 4] {
