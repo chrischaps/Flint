@@ -2599,6 +2599,66 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // ─── Whole-frame styles (#369) ───
+    //
+    // The same for the scene's [post_process.styles.<name>] tables: any
+    // registered style (kuwahara, invert, watercolor, full-screen ascii, a
+    // user style). Every style takes `blend` 0..1, how much of it shows:
+    // ramp it to cross-fade into a look. Fires `post_style_changed`
+    // #{ style, enabled } on set and reset.
+
+    // set_post_style(style, enabled) — switch a style on or off for the
+    // whole frame; settings it had before are kept
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_post_style", move |style: &str, enabled: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetPostStyle {
+                style: style.to_string(),
+                enabled,
+            });
+        });
+    }
+
+    // set_post_style_param(style, param, value) — a number (`radius`,
+    // `cell`, `blend`...), a string (`ramp`, `palette`...), `enabled`, or a
+    // colour (`tint`: [r, g, b] or "#rrggbb"). Cheap every frame.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_post_style_param",
+            move |style: &str, param: &str, value: Dynamic| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let command = match dynamic_to_toml(&value) {
+                    Some(value) => ScriptCommand::SetPostStyleParam {
+                        style: style.to_string(),
+                        param: param.to_string(),
+                        value,
+                    },
+                    None => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "set_post_style_param: `{param}` can't take a {}",
+                            value.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            },
+        );
+    }
+
+    // reset_post_style(style) — back to what the scene authored for it
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("reset_post_style", move |style: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ResetPostStyle {
+                style: style.to_string(),
+            });
+        });
+    }
+
     // reset_style_history() — the next frame doesn't follow on from this
     // one (a cutscene's new shot, a teleport, a respawn; #343): styles
     // that remember earlier frames, like ASCII's steady glyphs, start over

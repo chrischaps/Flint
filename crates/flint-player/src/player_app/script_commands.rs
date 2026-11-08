@@ -22,6 +22,10 @@ use std::path::Path;
 impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
+            if style_commands::is_post_style_command(&cmd) {
+                self.apply_post_style(&cmd);
+                continue;
+            }
             match style_commands::apply_style_command(&mut self.world, &cmd) {
                 StyleApplied::NotAStyleCommand => {}
                 StyleApplied::Done(event) => {
@@ -39,7 +43,10 @@ impl PlayerApp {
                 // Applied above
                 ScriptCommand::SetEntityStyle { .. }
                 | ScriptCommand::SetStyleParam { .. }
-                | ScriptCommand::ClearEntityStyle { .. } => {}
+                | ScriptCommand::ClearEntityStyle { .. }
+                | ScriptCommand::SetPostStyle { .. }
+                | ScriptCommand::SetPostStyleParam { .. }
+                | ScriptCommand::ResetPostStyle { .. } => {}
                 ScriptCommand::PlaySound {
                     name,
                     volume,
@@ -205,6 +212,33 @@ impl PlayerApp {
                     self.camera_cut.enabled = enabled;
                 }
             }
+        }
+    }
+
+    /// A whole-frame style command (#369): edit the renderer's config and
+    /// hand it back; the next frame builds a style newly switched on.
+    /// Without a renderer there is no frame to style.
+    fn apply_post_style(&mut self, cmd: &ScriptCommand) {
+        // The scene's own settings, read only for a reset
+        let authored = matches!(cmd, ScriptCommand::ResetPostStyle { .. })
+            .then(|| self.scene_post_config().unwrap_or_default());
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        let mut config = renderer.post_process_config().clone();
+        match style_commands::apply_post_style_command(
+            &mut config,
+            || authored.unwrap_or_default(),
+            cmd,
+        ) {
+            StyleApplied::Done(event) => {
+                renderer.set_post_process_config(config);
+                if let Some(event) = event {
+                    self.physics.push_event(event);
+                }
+            }
+            StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
+            StyleApplied::NotAStyleCommand => {}
         }
     }
 

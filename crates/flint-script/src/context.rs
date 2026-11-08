@@ -272,6 +272,23 @@ pub enum ScriptCommand {
     ClearEntityStyle {
         entity_id: i64,
     },
+    /// Switch a style on or off for the whole frame (#369): its
+    /// `[post_process.styles.<name>]` table, any registered style.
+    SetPostStyle {
+        style: String,
+        enabled: bool,
+    },
+    /// Change one setting of a whole-frame style: a parameter (number), an
+    /// option (string), a colour, `enabled`, `blend` (0..1), `order`.
+    SetPostStyleParam {
+        style: String,
+        param: String,
+        value: toml::Value,
+    },
+    /// Put a whole-frame style back to what the scene authored.
+    ResetPostStyle {
+        style: String,
+    },
     /// The picture no longer follows on from the last frame (a camera cut,
     /// #343): styles with frame-to-frame state (ASCII's cell history, #277)
     /// draw the next frame as if it were the first.

@@ -103,7 +103,7 @@ impl StyleSpec {
                 });
                 continue;
             }
-            if key == "order" {
+            if key == "order" || key == "blend" {
                 number(name, key, value)?;
             } else {
                 check(descriptor, key, value)?;
@@ -122,6 +122,10 @@ impl StyleSpec {
             if key == "order" {
                 config.styles.set_order(&self.name, value.parse().ok());
             }
+            // How much of it shows (#369)
+            if key == "blend" {
+                config.styles.set_blend(&self.name, value.parse().ok());
+            }
         }
         if let Some(feeds) = self.feeds_bloom {
             config.styles.set_feeds_bloom(&self.name, Some(feeds));
@@ -129,7 +133,7 @@ impl StyleSpec {
         let descriptor = find(&self.name).expect("checked by parse");
         config.styles.set_enabled(&self.name, self.enabled);
         for (key, value) in &self.settings {
-            if key == "order" {
+            if key == "order" || key == "blend" {
                 continue;
             }
             if descriptor.options.iter().any(|o| o.name == key) {
@@ -255,6 +259,7 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
             .collect()
     };
     keys.push("order=<n>".to_string());
+    keys.push("blend=1".to_string());
     if descriptor.stage == super::StyleStage::Hdr {
         keys.push(format!("feeds_bloom={}", descriptor.feeds_bloom));
     }
