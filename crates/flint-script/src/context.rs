@@ -272,6 +272,16 @@ pub enum ScriptCommand {
     ClearEntityStyle {
         entity_id: i64,
     },
+    /// The picture no longer follows on from the last frame (a camera cut,
+    /// #343): styles with frame-to-frame state (ASCII's cell history, #277)
+    /// draw the next frame as if it were the first.
+    ResetStyleHistory,
+    /// Turn the player's own camera-cut detection on or off (#343). On by
+    /// default: a jump or turn far past the camera's recent motion resets
+    /// style history by itself.
+    SetCameraCutDetection {
+        enabled: bool,
+    },
     LoadScene {
         path: String,
     },

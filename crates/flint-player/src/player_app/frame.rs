@@ -1503,6 +1503,20 @@ impl PlayerApp {
     fn sync_renderer(&mut self) {
         self.poll_user_styles();
 
+        // The camera is final for the frame: a cut (a teleport, a jump to a
+        // new shot) means the picture no longer follows on from the last
+        // one, so styles that keep history start over (#343)
+        let cut = self.camera_cut.observe(
+            self.camera.position_array(),
+            self.camera.forward_vector(),
+            self.clock.delta_time as f32,
+        );
+        if cut {
+            if let Some(renderer) = &mut self.scene_renderer {
+                renderer.reset_style_history();
+            }
+        }
+
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.camera_offset = [self.camera.position.x, self.camera.position.y];

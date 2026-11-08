@@ -70,6 +70,7 @@ impl PlayerApp {
             scene_renderer: None,
             camera: Camera::new(),
             skeletal_entity_assets: HashMap::new(),
+            camera_cut: Default::default(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
