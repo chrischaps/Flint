@@ -314,6 +314,25 @@ Every run writes `index.html` to the out dir (#329): one card a case with the go
 
 A `--bless` still compares before it writes. Its sheet shows each case's old golden as **was** and the diff as what the bless changes: review that page, not the folder.
 
+### Drift
+
+A tolerance lets a case pass when it isn't the golden's exact bytes, and those small differences add up across merges. While #273 was blessed, three cases (`ascii-full-detailed-tint`, `style-mask` and `look-sweep-cell`) were found 0.37% to 1.88% off their goldens, each inside its limit. Some earlier merge had moved them and nobody re-blessed, because they still passed. The next real change then had to be told apart from that old drift (#387).
+
+A case that passes but isn't byte-identical (any pixel or any grid cell moved) now prints a `DRIFT` line under its `PASS`, and its `report.json` entry has `"drift": true`. The run ends with a tally, either way:
+
+```text
+  PASS  ascii-full-detailed-tint       0.70% past 48 (limit 2.00%), mean 0.96 (limit 3.00), max 255, 2720 ms
+  DRIFT ascii-full-detailed-tint     2150 pixel(s) moved (max 255): inside the tolerance, not byte-identical
+  PASS  style-mask                     0.00% past 48 (limit 2.00%), mean 0.00 (limit 3.00), max 0, 1159 ms
+...
+drift: 36 passing case(s) not byte-identical with their golden: ascii-full-detailed-tint, ascii-full-hidpi, ...
+  (--bless-drifted re-blesses only those, for a catch-up commit)
+```
+
+or `drift: none, every passing case is byte-identical with its golden`. The contact sheet's chip reads **pass, drifted** and its filter is **drifted**, and CI's summary marks the row and lists the drifted cases at the end. On an adapter with no variant for a case, drift is measured against the plain golden, so on WARP it mostly reports the gap between adapters.
+
+`--bless-drifted` blesses only those cases. It is meant for one catch-up commit with nothing else in it, so that the next change's diff shows only what that change moved. Failing cases are left alone and still fail the run. Look at the sheet first: each re-blessed case shows its old golden as **was**.
+
 ### One process
 
 Cases run in the `render-suite` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
@@ -323,6 +342,7 @@ The cost is crash isolation. A case that panics is run again in its own `flint r
 | Flag | Description |
 |------|-------------|
 | `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. The contact sheet shows what each replaced. Look at it before committing |
+| `--bless-drifted` | Bless only the cases that pass but aren't byte-identical with their golden ([drift](#drift)); failures still fail |
 | `--case <name>` | Only this case, or every case whose name contains it; repeatable |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level; written when any pixel moved), `report.json` and the `index.html` contact sheet go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
