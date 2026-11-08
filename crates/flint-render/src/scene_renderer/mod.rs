@@ -607,6 +607,12 @@ pub struct SceneRenderer {
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
     pub ocean_time: f64,
+    /// Seconds of game time this frame stepped, for styles whose history
+    /// is a rate (ASCII's smoothing, #342): the player sets it from its
+    /// clock's `delta_time` (so it follows `--frame-step`), the viewer from
+    /// its frame time. Hosts that don't set it get 1/60, which is what a
+    /// per-frame weight always meant.
+    pub style_dt: f32,
     // Particles (ADR 0068)
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -893,6 +899,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             particle_texture_bind_groups: HashMap::new(),
@@ -2389,6 +2396,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             // Headless particles (ADR 0068): zero instances until a caller
             // steps a ParticleSystem, so existing pixel gates are unchanged.
             particle_pipeline: Some(particle_pipeline),

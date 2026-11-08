@@ -1085,6 +1085,10 @@ impl ViewerApp {
         let now = Instant::now();
         let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
+        // ASCII's smoothing is per 60 Hz frame of this (#342)
+        if let Some(renderer) = self.scene_renderer.as_mut() {
+            renderer.style_dt = dt;
+        }
 
         // Keyboard orbit: WASD to orbit, Q/E to zoom
         {

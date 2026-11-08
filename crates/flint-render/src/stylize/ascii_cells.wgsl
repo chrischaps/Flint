@@ -9,7 +9,10 @@
 //
 // - smoothing: the cell keeps part of last frame's colour (an exponential
 //   average), except where the colour jumped (something new came into the
-//   cell), which takes the new colour at once so nothing ghosts.
+//   cell), which takes the new colour at once so nothing ghosts. The
+//   style hands in this frame's weight, `smoothing` per 60 Hz frame raised
+//   to the frame's length in 60 Hz frames (#342), so it settles in the same
+//   time at any frame rate.
 // - hysteresis: the cell keeps last frame's glyph while its tone is within
 //   that many ramp steps of the glyph's band; it changes only when the
 //   tone has clearly moved on.
@@ -82,7 +85,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<u32> {
         let prev = textureLoad(history, index, 0);
         let prev_col = vec3<f32>(prev.rgb) / UNORM16;
         let jump = abs(cell_luma(col) - cell_luma(prev_col));
-        let w = clamp(u.smoothing, 0.0, 0.99) * (1.0 - smoothstep(SNAP_LO, SNAP_HI, jump));
+        let w = clamp(u.smoothing, 0.0, 0.999) * (1.0 - smoothstep(SNAP_LO, SNAP_HI, jump));
         col = mix(col, prev_col, w);
         kept = i32(min(prev.a, n - 1u));
     }

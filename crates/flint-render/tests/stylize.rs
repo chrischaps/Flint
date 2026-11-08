@@ -1752,3 +1752,97 @@ fn five_hundred_anchored_props_each_draw_on_their_own_grid() {
     assert_eq!(renderer.kept_post_binds(), binds);
     assert_eq!(held(&gpu), objects, "the variant table allocated a frame");
 }
+
+/// #342: ASCII's `smoothing` is per 60 Hz frame, so a step in the cells'
+/// colour settles in the same game time at 30 Hz and at 120 Hz (four
+/// times as many frames), within a 30 Hz frame. Under the old per-frame
+/// weight the 120 Hz run settled in a quarter of the 30 Hz run's time.
+#[test]
+fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let world = FlintWorld::new();
+    // The sky, a little brighter after the step: a change under the
+    // snap threshold, so the cells average it in rather than take it
+    const STEP: f32 = 0.3;
+    let config = |renderer: &SceneRenderer, exposure: f32, temporal: &str| {
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_option("ascii", "temporal", temporal);
+        config.styles.set_param("ascii", "smoothing", 0.9);
+        config.styles.set_param("ascii", "hysteresis", 0.0);
+        config.styles.set_param("ascii", "exposure", exposure);
+        // Ink and ground both in the cell's own colour, so the frame
+        // follows the cells' colour smoothly whatever glyph a cell draws
+        config.styles.set_option("ascii", "color", "raw");
+        config.styles.set_param("ascii", "background", 1.0);
+        config
+    };
+    let mean = |pixels: &[u8]| -> f64 {
+        let rgb = pixels.chunks(4).flat_map(|p| &p[..3]);
+        rgb.map(|&b| b as f64).sum::<f64>() / (pixels.len() / 4 * 3) as f64
+    };
+    let renderer = || {
+        let mut r = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        r.ensure_style_resources(&gpu.device);
+        r
+    };
+    // Where each run starts and ends, drawn without history
+    let still = |exposure: f32| {
+        let mut r = renderer();
+        r.set_post_process_config(config(&r, exposure, "off"));
+        mean(&gpu.frame(&mut r, &world))
+    };
+    let (from, to) = (still(0.0), still(STEP));
+    eprintln!("mean byte {from:.2} -> {to:.2}");
+    assert!(
+        (to - from).abs() > 2.0,
+        "the step moved the frame by {:.2} of a byte; the bench tests nothing",
+        to - from
+    );
+    // The game time at which a run of frames `hz` a second is nine tenths
+    // of the way there; the style is told each frame is `style_dt` long
+    let run = |hz: f32, style_dt: f32| -> f32 {
+        let dt = 1.0 / hz;
+        let mut r = renderer();
+        r.style_dt = style_dt;
+        r.set_post_process_config(config(&r, 0.0, "on"));
+        gpu.frame(&mut r, &world);
+        r.set_post_process_config(config(&r, STEP, "on"));
+        let mut trace = Vec::new();
+        for i in 1..=(2.0 * hz) as usize {
+            let gone = (mean(&gpu.frame(&mut r, &world)) - from) / (to - from);
+            trace.push(format!("{:.3}", gone));
+            if gone >= 0.9 {
+                eprintln!("{hz} Hz: {}", trace.join(" "));
+                return i as f32 * dt;
+            }
+        }
+        panic!("{hz} Hz never settled: {}", trace.join(" "));
+    };
+    let settle = |hz: f32| run(hz, 1.0 / hz);
+    let (slow, fast) = (settle(30.0), settle(120.0));
+    eprintln!("settled at 30 Hz in {slow:.3} s, at 120 Hz in {fast:.3} s");
+    assert!(
+        (slow - fast).abs() <= 1.0 / 30.0 + 1e-4,
+        "30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
+    );
+    // The control: told nothing of the rate (every frame a 60 Hz one, the
+    // old per-frame weight), the two runs are far apart, so the bench can
+    // tell. 120 Hz settles in a quarter of 30 Hz's time
+    let (slow, fast) = (run(30.0, 1.0 / 60.0), run(120.0, 1.0 / 60.0));
+    eprintln!("per frame: 30 Hz in {slow:.3} s, 120 Hz in {fast:.3} s");
+    assert!(
+        slow - fast > 3.0 / 30.0,
+        "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
+    );
+}
