@@ -193,6 +193,8 @@ pub fn style_spec_help() -> String {
 fn check(descriptor: &StyleDescriptor, key: &str, value: &str) -> Result<(), String> {
     let name = descriptor.name;
     if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
+        // An option whose choices are found at run time (a palette file,
+        // a font's ramps) is open: the style resolves the name, and warns
         if option.refuses(value) {
             return Err(format!(
                 "{name}: {key} must be one of {}",
@@ -241,7 +243,10 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
         params
             .into_iter()
             .chain(descriptor.options.iter().map(|o| {
-                if o.choices.is_empty() {
+                if o.discover.is_some() {
+                    let found = o.choices_in(&super::ChoiceScope::defaults(None));
+                    format!("{}={}|<name>", o.name, found.join("|"))
+                } else if o.choices.is_empty() {
                     format!("{}=<text>", o.name)
                 } else {
                     format!("{}={}", o.name, o.choices.join("|"))

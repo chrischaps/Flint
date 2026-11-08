@@ -5,8 +5,9 @@
 //! once [`custom::load_dir`](super::custom::load_dir) has run) appears with
 //! no change here.
 
-use super::{is_builtin, registry, StyleDescriptor, StyleStage};
+use super::{is_builtin, registry, ChoiceScope, StyleDescriptor, StyleStage};
 use serde::Serialize;
+use std::path::Path;
 
 /// One registered style, as listed.
 #[derive(Debug, Clone, Serialize)]
@@ -68,20 +69,37 @@ pub struct OptionListing {
     pub name: String,
     pub default: String,
     /// The values offered; empty means any text (a file or set name).
-    /// Only these when `closed` (#318); suggestions otherwise.
     pub choices: Vec<String>,
-    pub closed: bool,
+    /// The choices were found beside the scene (its palettes, its fonts, a
+    /// font's ramps; #322), and a name outside them is still the style's
+    /// to resolve (a file path).
+    pub open: bool,
     pub label: String,
     pub help: String,
 }
 
 /// Every registered style, in registration order.
 pub fn catalog() -> Vec<StyleListing> {
-    registry().iter().map(|d| listing(d)).collect()
+    catalog_for(None)
+}
+
+/// [`catalog`] with the choices found beside the scene in `scene_dir`
+/// (its palettes and glyph sets, #322).
+pub fn catalog_for(scene_dir: Option<&Path>) -> Vec<StyleListing> {
+    registry()
+        .iter()
+        .map(|d| listing_in(d, scene_dir))
+        .collect()
 }
 
 /// One style's listing.
 pub fn listing(d: &StyleDescriptor) -> StyleListing {
+    listing_in(d, None)
+}
+
+/// One style's listing, its found choices looked for beside `scene_dir`.
+pub fn listing_in(d: &StyleDescriptor, scene_dir: Option<&Path>) -> StyleListing {
+    let scope = ChoiceScope::defaults(scene_dir);
     let help = |name: &str| d.hint(name).map(|h| h.help.to_string()).unwrap_or_default();
     StyleListing {
         name: d.name.to_string(),
@@ -119,8 +137,8 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
             .map(|o| OptionListing {
                 name: o.name.to_string(),
                 default: o.default.to_string(),
-                choices: o.choices.iter().map(|c| c.to_string()).collect(),
-                closed: o.closed,
+                choices: o.choices_in(&scope),
+                open: o.discover.is_some(),
                 label: d.label_for(o.name),
                 help: help(o.name),
             })
@@ -141,8 +159,13 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
 
 /// [`catalog`] for a terminal: one block per style.
 pub fn catalog_text() -> String {
+    catalog_text_for(None)
+}
+
+/// [`catalog_for`] for a terminal.
+pub fn catalog_text_for(scene_dir: Option<&Path>) -> String {
     let mut out = String::new();
-    for s in catalog() {
+    for s in catalog_for(scene_dir) {
         let mut tags = vec![s.stage.to_string(), s.source.to_string()];
         if let Some(c) = &s.component {
             tags.push(format!("per-entity: {c}"));
@@ -165,13 +188,10 @@ pub fn catalog_text() -> String {
         for o in &s.options {
             let choices = if o.choices.is_empty() {
                 "<text>".to_string()
+            } else if o.open {
+                format!("{}|<name>", o.choices.join("|"))
             } else {
-                let list = o.choices.join("|");
-                if o.closed {
-                    list
-                } else {
-                    format!("{list}|<text>")
-                }
+                o.choices.join("|")
             };
             out.push_str(&format!(
                 "  {:width$}  \"{}\"  {}{}\n",

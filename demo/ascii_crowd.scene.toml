@@ -1,0 +1,7077 @@
+# ASCII Crowd: 500 pillars, each in glyphs on a grid of its own (#336).
+#
+#   cargo run --bin flint -- render demo/ascii_crowd.scene.toml --output crowd.png --no-grid
+#
+# Every pillar carries `ascii_style { grid = "object" }`, which pins its
+# cells to its own projected origin, so each is a per-entity variant of
+# its own: 500 variants, with style mask ids up to 500. The ASCII pass
+# kept its variant table in a uniform of 64 rows and ids below 256, and
+# drew the rest like the whole frame (here: smooth, since the scene asks
+# only for entities). The table is a storage buffer sized to the frame now.
+# The pillars rise and fall in a slow ripple and turn from gold at the
+# centre through green and cyan to violet at the rim; the ground under
+# them stays smooth. (Generated: 25 x 20 pillars, 1.15 m apart.)
+
+[scene]
+name = "ASCII Crowd"
+version = "1.0"
+description = "500 pillars, each in ASCII on its own object grid (#336)"
+
+[camera]
+position = [0.0, 13.0, 25.0]
+target = [0.0, 1.0, 0.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.2
+vignette_enabled = true
+vignette_intensity = 0.3
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 6
+background = 0.25
+brightness = 0.1
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.10, 0.16, 0.36, 1.0]
+horizon_color = [0.90, 0.58, 0.40, 1.0]
+haze_color = [0.95, 0.70, 0.52, 0.7]
+cloud_tint = [1.0, 0.82, 0.70, 0.8]
+cloud_coverage = 0.25
+sun_glow = 1.6
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.6, -0.45, -0.55]
+color = [1.0, 0.80, 0.60]
+intensity = 2.6
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.4, -0.8, 0.4]
+color = [0.50, 0.60, 0.90]
+intensity = 0.4
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.10, 0.08, 0.06, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.pillar_000]
+archetype = "furniture"
+[entities.pillar_000.transform]
+position = [-13.800, 0, -10.925]
+[entities.pillar_000.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.570, 0.42]
+[entities.pillar_000.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_000.ascii_style]
+grid = "object"
+
+[entities.pillar_001]
+archetype = "furniture"
+[entities.pillar_001.transform]
+position = [-12.650, 0, -10.925]
+[entities.pillar_001.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.165, 0.42]
+[entities.pillar_001.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_001.ascii_style]
+grid = "object"
+
+[entities.pillar_002]
+archetype = "furniture"
+[entities.pillar_002.transform]
+position = [-11.500, 0, -10.925]
+[entities.pillar_002.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.412, 0.42]
+[entities.pillar_002.material]
+color = [0.554, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_002.ascii_style]
+grid = "object"
+
+[entities.pillar_003]
+archetype = "furniture"
+[entities.pillar_003.transform]
+position = [-10.350, 0, -10.925]
+[entities.pillar_003.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.237, 0.42]
+[entities.pillar_003.material]
+color = [0.436, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_003.ascii_style]
+grid = "object"
+
+[entities.pillar_004]
+archetype = "furniture"
+[entities.pillar_004.transform]
+position = [-9.200, 0, -10.925]
+[entities.pillar_004.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.806, 0.42]
+[entities.pillar_004.material]
+color = [0.325, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_004.ascii_style]
+grid = "object"
+
+[entities.pillar_005]
+archetype = "furniture"
+[entities.pillar_005.transform]
+position = [-8.050, 0, -10.925]
+[entities.pillar_005.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.397, 0.42]
+[entities.pillar_005.material]
+color = [0.297, 0.374, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_005.ascii_style]
+grid = "object"
+
+[entities.pillar_006]
+archetype = "furniture"
+[entities.pillar_006.transform]
+position = [-6.900, 0, -10.925]
+[entities.pillar_006.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.207, 0.42]
+[entities.pillar_006.material]
+color = [0.297, 0.468, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_006.ascii_style]
+grid = "object"
+
+[entities.pillar_007]
+archetype = "furniture"
+[entities.pillar_007.transform]
+position = [-5.750, 0, -10.925]
+[entities.pillar_007.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.232, 0.42]
+[entities.pillar_007.material]
+color = [0.297, 0.551, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_007.ascii_style]
+grid = "object"
+
+[entities.pillar_008]
+archetype = "furniture"
+[entities.pillar_008.transform]
+position = [-4.600, 0, -10.925]
+[entities.pillar_008.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.293, 0.42]
+[entities.pillar_008.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_008.ascii_style]
+grid = "object"
+
+[entities.pillar_009]
+archetype = "furniture"
+[entities.pillar_009.transform]
+position = [-3.450, 0, -10.925]
+[entities.pillar_009.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.200, 0.42]
+[entities.pillar_009.material]
+color = [0.297, 0.680, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_009.ascii_style]
+grid = "object"
+
+[entities.pillar_010]
+archetype = "furniture"
+[entities.pillar_010.transform]
+position = [-2.300, 0, -10.925]
+[entities.pillar_010.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.903, 0.42]
+[entities.pillar_010.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_010.ascii_style]
+grid = "object"
+
+[entities.pillar_011]
+archetype = "furniture"
+[entities.pillar_011.transform]
+position = [-1.150, 0, -10.925]
+[entities.pillar_011.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.543, 0.42]
+[entities.pillar_011.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_011.ascii_style]
+grid = "object"
+
+[entities.pillar_012]
+archetype = "furniture"
+[entities.pillar_012.transform]
+position = [0.000, 0, -10.925]
+[entities.pillar_012.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_012.material]
+color = [0.297, 0.757, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_012.ascii_style]
+grid = "object"
+
+[entities.pillar_013]
+archetype = "furniture"
+[entities.pillar_013.transform]
+position = [1.150, 0, -10.925]
+[entities.pillar_013.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.437, 0.42]
+[entities.pillar_013.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_013.ascii_style]
+grid = "object"
+
+[entities.pillar_014]
+archetype = "furniture"
+[entities.pillar_014.transform]
+position = [2.300, 0, -10.925]
+[entities.pillar_014.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.771, 0.42]
+[entities.pillar_014.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_014.ascii_style]
+grid = "object"
+
+[entities.pillar_015]
+archetype = "furniture"
+[entities.pillar_015.transform]
+position = [3.450, 0, -10.925]
+[entities.pillar_015.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.142, 0.42]
+[entities.pillar_015.material]
+color = [0.297, 0.680, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_015.ascii_style]
+grid = "object"
+
+[entities.pillar_016]
+archetype = "furniture"
+[entities.pillar_016.transform]
+position = [4.600, 0, -10.925]
+[entities.pillar_016.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.354, 0.42]
+[entities.pillar_016.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_016.ascii_style]
+grid = "object"
+
+[entities.pillar_017]
+archetype = "furniture"
+[entities.pillar_017.transform]
+position = [5.750, 0, -10.925]
+[entities.pillar_017.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.365, 0.42]
+[entities.pillar_017.material]
+color = [0.297, 0.551, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_017.ascii_style]
+grid = "object"
+
+[entities.pillar_018]
+archetype = "furniture"
+[entities.pillar_018.transform]
+position = [6.900, 0, -10.925]
+[entities.pillar_018.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.312, 0.42]
+[entities.pillar_018.material]
+color = [0.297, 0.468, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_018.ascii_style]
+grid = "object"
+
+[entities.pillar_019]
+archetype = "furniture"
+[entities.pillar_019.transform]
+position = [8.050, 0, -10.925]
+[entities.pillar_019.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.394, 0.42]
+[entities.pillar_019.material]
+color = [0.297, 0.374, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_019.ascii_style]
+grid = "object"
+
+[entities.pillar_020]
+archetype = "furniture"
+[entities.pillar_020.transform]
+position = [9.200, 0, -10.925]
+[entities.pillar_020.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.698, 0.42]
+[entities.pillar_020.material]
+color = [0.325, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_020.ascii_style]
+grid = "object"
+
+[entities.pillar_021]
+archetype = "furniture"
+[entities.pillar_021.transform]
+position = [10.350, 0, -10.925]
+[entities.pillar_021.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.105, 0.42]
+[entities.pillar_021.material]
+color = [0.436, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_021.ascii_style]
+grid = "object"
+
+[entities.pillar_022]
+archetype = "furniture"
+[entities.pillar_022.transform]
+position = [11.500, 0, -10.925]
+[entities.pillar_022.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.356, 0.42]
+[entities.pillar_022.material]
+color = [0.554, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_022.ascii_style]
+grid = "object"
+
+[entities.pillar_023]
+archetype = "furniture"
+[entities.pillar_023.transform]
+position = [12.650, 0, -10.925]
+[entities.pillar_023.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.228, 0.42]
+[entities.pillar_023.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_023.ascii_style]
+grid = "object"
+
+[entities.pillar_024]
+archetype = "furniture"
+[entities.pillar_024.transform]
+position = [13.800, 0, -10.925]
+[entities.pillar_024.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.703, 0.42]
+[entities.pillar_024.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_024.ascii_style]
+grid = "object"
+
+[entities.pillar_025]
+archetype = "furniture"
+[entities.pillar_025.transform]
+position = [-13.800, 0, -9.775]
+[entities.pillar_025.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.167, 0.42]
+[entities.pillar_025.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_025.ascii_style]
+grid = "object"
+
+[entities.pillar_026]
+archetype = "furniture"
+[entities.pillar_026.transform]
+position = [-12.650, 0, -9.775]
+[entities.pillar_026.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.338, 0.42]
+[entities.pillar_026.material]
+color = [0.572, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_026.ascii_style]
+grid = "object"
+
+[entities.pillar_027]
+archetype = "furniture"
+[entities.pillar_027.transform]
+position = [-11.500, 0, -9.775]
+[entities.pillar_027.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.105, 0.42]
+[entities.pillar_027.material]
+color = [0.442, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_027.ascii_style]
+grid = "object"
+
+[entities.pillar_028]
+archetype = "furniture"
+[entities.pillar_028.transform]
+position = [-10.350, 0, -9.775]
+[entities.pillar_028.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.684, 0.42]
+[entities.pillar_028.material]
+color = [0.318, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_028.ascii_style]
+grid = "object"
+
+[entities.pillar_029]
+archetype = "furniture"
+[entities.pillar_029.transform]
+position = [-9.200, 0, -9.775]
+[entities.pillar_029.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.340, 0.42]
+[entities.pillar_029.material]
+color = [0.297, 0.395, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_029.ascii_style]
+grid = "object"
+
+[entities.pillar_030]
+archetype = "furniture"
+[entities.pillar_030.transform]
+position = [-8.050, 0, -9.775]
+[entities.pillar_030.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.203, 0.42]
+[entities.pillar_030.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_030.ascii_style]
+grid = "object"
+
+[entities.pillar_031]
+archetype = "furniture"
+[entities.pillar_031.transform]
+position = [-6.900, 0, -9.775]
+[entities.pillar_031.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.203, 0.42]
+[entities.pillar_031.material]
+color = [0.297, 0.606, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_031.ascii_style]
+grid = "object"
+
+[entities.pillar_032]
+archetype = "furniture"
+[entities.pillar_032.transform]
+position = [-5.750, 0, -9.775]
+[entities.pillar_032.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.157, 0.42]
+[entities.pillar_032.material]
+color = [0.297, 0.697, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_032.ascii_style]
+grid = "object"
+
+[entities.pillar_033]
+archetype = "furniture"
+[entities.pillar_033.transform]
+position = [-4.600, 0, -9.775]
+[entities.pillar_033.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.933, 0.42]
+[entities.pillar_033.material]
+color = [0.297, 0.775, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_033.ascii_style]
+grid = "object"
+
+[entities.pillar_034]
+archetype = "furniture"
+[entities.pillar_034.transform]
+position = [-3.450, 0, -9.775]
+[entities.pillar_034.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.568, 0.42]
+[entities.pillar_034.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_034.ascii_style]
+grid = "object"
+
+[entities.pillar_035]
+archetype = "furniture"
+[entities.pillar_035.transform]
+position = [-2.300, 0, -9.775]
+[entities.pillar_035.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_035.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_035.ascii_style]
+grid = "object"
+
+[entities.pillar_036]
+archetype = "furniture"
+[entities.pillar_036.transform]
+position = [-1.150, 0, -9.775]
+[entities.pillar_036.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_036.material]
+color = [0.297, 0.850, 0.786, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_036.ascii_style]
+grid = "object"
+
+[entities.pillar_037]
+archetype = "furniture"
+[entities.pillar_037.transform]
+position = [0.000, 0, -9.775]
+[entities.pillar_037.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_037.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_037.ascii_style]
+grid = "object"
+
+[entities.pillar_038]
+archetype = "furniture"
+[entities.pillar_038.transform]
+position = [1.150, 0, -9.775]
+[entities.pillar_038.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.651, 0.42]
+[entities.pillar_038.material]
+color = [0.297, 0.850, 0.786, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_038.ascii_style]
+grid = "object"
+
+[entities.pillar_039]
+archetype = "furniture"
+[entities.pillar_039.transform]
+position = [2.300, 0, -9.775]
+[entities.pillar_039.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.858, 0.42]
+[entities.pillar_039.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_039.ascii_style]
+grid = "object"
+
+[entities.pillar_040]
+archetype = "furniture"
+[entities.pillar_040.transform]
+position = [3.450, 0, -9.775]
+[entities.pillar_040.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.836, 0.42]
+[entities.pillar_040.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_040.ascii_style]
+grid = "object"
+
+[entities.pillar_041]
+archetype = "furniture"
+[entities.pillar_041.transform]
+position = [4.600, 0, -9.775]
+[entities.pillar_041.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.656, 0.42]
+[entities.pillar_041.material]
+color = [0.297, 0.775, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_041.ascii_style]
+grid = "object"
+
+[entities.pillar_042]
+archetype = "furniture"
+[entities.pillar_042.transform]
+position = [5.750, 0, -9.775]
+[entities.pillar_042.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.546, 0.42]
+[entities.pillar_042.material]
+color = [0.297, 0.697, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_042.ascii_style]
+grid = "object"
+
+[entities.pillar_043]
+archetype = "furniture"
+[entities.pillar_043.transform]
+position = [6.900, 0, -9.775]
+[entities.pillar_043.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.720, 0.42]
+[entities.pillar_043.material]
+color = [0.297, 0.606, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_043.ascii_style]
+grid = "object"
+
+[entities.pillar_044]
+archetype = "furniture"
+[entities.pillar_044.transform]
+position = [8.050, 0, -9.775]
+[entities.pillar_044.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.213, 0.42]
+[entities.pillar_044.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_044.ascii_style]
+grid = "object"
+
+[entities.pillar_045]
+archetype = "furniture"
+[entities.pillar_045.transform]
+position = [9.200, 0, -9.775]
+[entities.pillar_045.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.836, 0.42]
+[entities.pillar_045.material]
+color = [0.297, 0.395, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_045.ascii_style]
+grid = "object"
+
+[entities.pillar_046]
+archetype = "furniture"
+[entities.pillar_046.transform]
+position = [10.350, 0, -9.775]
+[entities.pillar_046.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.291, 0.42]
+[entities.pillar_046.material]
+color = [0.318, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_046.ascii_style]
+grid = "object"
+
+[entities.pillar_047]
+archetype = "furniture"
+[entities.pillar_047.transform]
+position = [11.500, 0, -9.775]
+[entities.pillar_047.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.363, 0.42]
+[entities.pillar_047.material]
+color = [0.442, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_047.ascii_style]
+grid = "object"
+
+[entities.pillar_048]
+archetype = "furniture"
+[entities.pillar_048.transform]
+position = [12.650, 0, -9.775]
+[entities.pillar_048.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.051, 0.42]
+[entities.pillar_048.material]
+color = [0.572, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_048.ascii_style]
+grid = "object"
+
+[entities.pillar_049]
+archetype = "furniture"
+[entities.pillar_049.transform]
+position = [13.800, 0, -9.775]
+[entities.pillar_049.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.554, 0.42]
+[entities.pillar_049.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_049.ascii_style]
+grid = "object"
+
+[entities.pillar_050]
+archetype = "furniture"
+[entities.pillar_050.transform]
+position = [-13.800, 0, -8.625]
+[entities.pillar_050.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.184, 0.42]
+[entities.pillar_050.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_050.ascii_style]
+grid = "object"
+
+[entities.pillar_051]
+archetype = "furniture"
+[entities.pillar_051.transform]
+position = [-12.650, 0, -8.625]
+[entities.pillar_051.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.977, 0.42]
+[entities.pillar_051.material]
+color = [0.474, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_051.ascii_style]
+grid = "object"
+
+[entities.pillar_052]
+archetype = "furniture"
+[entities.pillar_052.transform]
+position = [-11.500, 0, -8.625]
+[entities.pillar_052.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.650, 0.42]
+[entities.pillar_052.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_052.ascii_style]
+grid = "object"
+
+[entities.pillar_053]
+archetype = "furniture"
+[entities.pillar_053.transform]
+position = [-10.350, 0, -8.625]
+[entities.pillar_053.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.411, 0.42]
+[entities.pillar_053.material]
+color = [0.297, 0.388, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_053.ascii_style]
+grid = "object"
+
+[entities.pillar_054]
+archetype = "furniture"
+[entities.pillar_054.transform]
+position = [-9.200, 0, -8.625]
+[entities.pillar_054.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.313, 0.42]
+[entities.pillar_054.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_054.ascii_style]
+grid = "object"
+
+[entities.pillar_055]
+archetype = "furniture"
+[entities.pillar_055.transform]
+position = [-8.050, 0, -8.625]
+[entities.pillar_055.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.248, 0.42]
+[entities.pillar_055.material]
+color = [0.297, 0.631, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_055.ascii_style]
+grid = "object"
+
+[entities.pillar_056]
+archetype = "furniture"
+[entities.pillar_056.transform]
+position = [-6.900, 0, -8.625]
+[entities.pillar_056.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.068, 0.42]
+[entities.pillar_056.material]
+color = [0.297, 0.740, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_056.ascii_style]
+grid = "object"
+
+[entities.pillar_057]
+archetype = "furniture"
+[entities.pillar_057.transform]
+position = [-5.750, 0, -8.625]
+[entities.pillar_057.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.735, 0.42]
+[entities.pillar_057.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_057.ascii_style]
+grid = "object"
+
+[entities.pillar_058]
+archetype = "furniture"
+[entities.pillar_058.transform]
+position = [-4.600, 0, -8.625]
+[entities.pillar_058.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.373, 0.42]
+[entities.pillar_058.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_058.ascii_style]
+grid = "object"
+
+[entities.pillar_059]
+archetype = "furniture"
+[entities.pillar_059.transform]
+position = [-3.450, 0, -8.625]
+[entities.pillar_059.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_059.material]
+color = [0.297, 0.850, 0.706, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_059.ascii_style]
+grid = "object"
+
+[entities.pillar_060]
+archetype = "furniture"
+[entities.pillar_060.transform]
+position = [-2.300, 0, -8.625]
+[entities.pillar_060.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_060.material]
+color = [0.297, 0.850, 0.653, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_060.ascii_style]
+grid = "object"
+
+[entities.pillar_061]
+archetype = "furniture"
+[entities.pillar_061.transform]
+position = [-1.150, 0, -8.625]
+[entities.pillar_061.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.585, 0.42]
+[entities.pillar_061.material]
+color = [0.297, 0.850, 0.620, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_061.ascii_style]
+grid = "object"
+
+[entities.pillar_062]
+archetype = "furniture"
+[entities.pillar_062.transform]
+position = [0.000, 0, -8.625]
+[entities.pillar_062.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.885, 0.42]
+[entities.pillar_062.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_062.ascii_style]
+grid = "object"
+
+[entities.pillar_063]
+archetype = "furniture"
+[entities.pillar_063.transform]
+position = [1.150, 0, -8.625]
+[entities.pillar_063.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.954, 0.42]
+[entities.pillar_063.material]
+color = [0.297, 0.850, 0.620, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_063.ascii_style]
+grid = "object"
+
+[entities.pillar_064]
+archetype = "furniture"
+[entities.pillar_064.transform]
+position = [2.300, 0, -8.625]
+[entities.pillar_064.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.734, 0.42]
+[entities.pillar_064.material]
+color = [0.297, 0.850, 0.653, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_064.ascii_style]
+grid = "object"
+
+[entities.pillar_065]
+archetype = "furniture"
+[entities.pillar_065.transform]
+position = [3.450, 0, -8.625]
+[entities.pillar_065.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.383, 0.42]
+[entities.pillar_065.material]
+color = [0.297, 0.850, 0.706, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_065.ascii_style]
+grid = "object"
+
+[entities.pillar_066]
+archetype = "furniture"
+[entities.pillar_066.transform]
+position = [4.600, 0, -8.625]
+[entities.pillar_066.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_066.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_066.ascii_style]
+grid = "object"
+
+[entities.pillar_067]
+archetype = "furniture"
+[entities.pillar_067.transform]
+position = [5.750, 0, -8.625]
+[entities.pillar_067.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_067.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_067.ascii_style]
+grid = "object"
+
+[entities.pillar_068]
+archetype = "furniture"
+[entities.pillar_068.transform]
+position = [6.900, 0, -8.625]
+[entities.pillar_068.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.704, 0.42]
+[entities.pillar_068.material]
+color = [0.297, 0.740, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_068.ascii_style]
+grid = "object"
+
+[entities.pillar_069]
+archetype = "furniture"
+[entities.pillar_069.transform]
+position = [8.050, 0, -8.625]
+[entities.pillar_069.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.256, 0.42]
+[entities.pillar_069.material]
+color = [0.297, 0.631, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_069.ascii_style]
+grid = "object"
+
+[entities.pillar_070]
+archetype = "furniture"
+[entities.pillar_070.transform]
+position = [9.200, 0, -8.625]
+[entities.pillar_070.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.687, 0.42]
+[entities.pillar_070.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_070.ascii_style]
+grid = "object"
+
+[entities.pillar_071]
+archetype = "furniture"
+[entities.pillar_071.transform]
+position = [10.350, 0, -8.625]
+[entities.pillar_071.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.867, 0.42]
+[entities.pillar_071.material]
+color = [0.297, 0.388, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_071.ascii_style]
+grid = "object"
+
+[entities.pillar_072]
+archetype = "furniture"
+[entities.pillar_072.transform]
+position = [11.500, 0, -8.625]
+[entities.pillar_072.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.844, 0.42]
+[entities.pillar_072.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_072.ascii_style]
+grid = "object"
+
+[entities.pillar_073]
+archetype = "furniture"
+[entities.pillar_073.transform]
+position = [12.650, 0, -8.625]
+[entities.pillar_073.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.761, 0.42]
+[entities.pillar_073.material]
+color = [0.474, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_073.ascii_style]
+grid = "object"
+
+[entities.pillar_074]
+archetype = "furniture"
+[entities.pillar_074.transform]
+position = [13.800, 0, -8.625]
+[entities.pillar_074.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.722, 0.42]
+[entities.pillar_074.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_074.ascii_style]
+grid = "object"
+
+[entities.pillar_075]
+archetype = "furniture"
+[entities.pillar_075.transform]
+position = [-13.800, 0, -7.475]
+[entities.pillar_075.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.847, 0.42]
+[entities.pillar_075.material]
+color = [0.529, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_075.ascii_style]
+grid = "object"
+
+[entities.pillar_076]
+archetype = "furniture"
+[entities.pillar_076.transform]
+position = [-12.650, 0, -7.475]
+[entities.pillar_076.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.696, 0.42]
+[entities.pillar_076.material]
+color = [0.384, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_076.ascii_style]
+grid = "object"
+
+[entities.pillar_077]
+archetype = "furniture"
+[entities.pillar_077.transform]
+position = [-11.500, 0, -7.475]
+[entities.pillar_077.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.598, 0.42]
+[entities.pillar_077.material]
+color = [0.297, 0.353, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_077.ascii_style]
+grid = "object"
+
+[entities.pillar_078]
+archetype = "furniture"
+[entities.pillar_078.transform]
+position = [-10.350, 0, -7.475]
+[entities.pillar_078.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.520, 0.42]
+[entities.pillar_078.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_078.ascii_style]
+grid = "object"
+
+[entities.pillar_079]
+archetype = "furniture"
+[entities.pillar_079.transform]
+position = [-9.200, 0, -7.475]
+[entities.pillar_079.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.344, 0.42]
+[entities.pillar_079.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_079.ascii_style]
+grid = "object"
+
+[entities.pillar_080]
+archetype = "furniture"
+[entities.pillar_080.transform]
+position = [-8.050, 0, -7.475]
+[entities.pillar_080.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.003, 0.42]
+[entities.pillar_080.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_080.ascii_style]
+grid = "object"
+
+[entities.pillar_081]
+archetype = "furniture"
+[entities.pillar_081.transform]
+position = [-6.900, 0, -7.475]
+[entities.pillar_081.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.575, 0.42]
+[entities.pillar_081.material]
+color = [0.297, 0.850, 0.834, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_081.ascii_style]
+grid = "object"
+
+[entities.pillar_082]
+archetype = "furniture"
+[entities.pillar_082.transform]
+position = [-5.750, 0, -7.475]
+[entities.pillar_082.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_082.material]
+color = [0.297, 0.850, 0.726, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_082.ascii_style]
+grid = "object"
+
+[entities.pillar_083]
+archetype = "furniture"
+[entities.pillar_083.transform]
+position = [-4.600, 0, -7.475]
+[entities.pillar_083.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_083.material]
+color = [0.297, 0.850, 0.631, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_083.ascii_style]
+grid = "object"
+
+[entities.pillar_084]
+archetype = "furniture"
+[entities.pillar_084.transform]
+position = [-3.450, 0, -7.475]
+[entities.pillar_084.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.546, 0.42]
+[entities.pillar_084.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_084.ascii_style]
+grid = "object"
+
+[entities.pillar_085]
+archetype = "furniture"
+[entities.pillar_085.transform]
+position = [-2.300, 0, -7.475]
+[entities.pillar_085.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.990, 0.42]
+[entities.pillar_085.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_085.ascii_style]
+grid = "object"
+
+[entities.pillar_086]
+archetype = "furniture"
+[entities.pillar_086.transform]
+position = [-1.150, 0, -7.475]
+[entities.pillar_086.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.306, 0.42]
+[entities.pillar_086.material]
+color = [0.297, 0.850, 0.455, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_086.ascii_style]
+grid = "object"
+
+[entities.pillar_087]
+archetype = "furniture"
+[entities.pillar_087.transform]
+position = [0.000, 0, -7.475]
+[entities.pillar_087.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.307, 0.42]
+[entities.pillar_087.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_087.ascii_style]
+grid = "object"
+
+[entities.pillar_088]
+archetype = "furniture"
+[entities.pillar_088.transform]
+position = [1.150, 0, -7.475]
+[entities.pillar_088.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.013, 0.42]
+[entities.pillar_088.material]
+color = [0.297, 0.850, 0.455, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_088.ascii_style]
+grid = "object"
+
+[entities.pillar_089]
+archetype = "furniture"
+[entities.pillar_089.transform]
+position = [2.300, 0, -7.475]
+[entities.pillar_089.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.626, 0.42]
+[entities.pillar_089.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_089.ascii_style]
+grid = "object"
+
+[entities.pillar_090]
+archetype = "furniture"
+[entities.pillar_090.transform]
+position = [3.450, 0, -7.475]
+[entities.pillar_090.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.386, 0.42]
+[entities.pillar_090.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_090.ascii_style]
+grid = "object"
+
+[entities.pillar_091]
+archetype = "furniture"
+[entities.pillar_091.transform]
+position = [4.600, 0, -7.475]
+[entities.pillar_091.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.409, 0.42]
+[entities.pillar_091.material]
+color = [0.297, 0.850, 0.631, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_091.ascii_style]
+grid = "object"
+
+[entities.pillar_092]
+archetype = "furniture"
+[entities.pillar_092.transform]
+position = [5.750, 0, -7.475]
+[entities.pillar_092.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.626, 0.42]
+[entities.pillar_092.material]
+color = [0.297, 0.850, 0.726, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_092.ascii_style]
+grid = "object"
+
+[entities.pillar_093]
+archetype = "furniture"
+[entities.pillar_093.transform]
+position = [6.900, 0, -7.475]
+[entities.pillar_093.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.864, 0.42]
+[entities.pillar_093.material]
+color = [0.297, 0.850, 0.834, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_093.ascii_style]
+grid = "object"
+
+[entities.pillar_094]
+archetype = "furniture"
+[entities.pillar_094.transform]
+position = [8.050, 0, -7.475]
+[entities.pillar_094.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.996, 0.42]
+[entities.pillar_094.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_094.ascii_style]
+grid = "object"
+
+[entities.pillar_095]
+archetype = "furniture"
+[entities.pillar_095.transform]
+position = [9.200, 0, -7.475]
+[entities.pillar_095.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.047, 0.42]
+[entities.pillar_095.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_095.ascii_style]
+grid = "object"
+
+[entities.pillar_096]
+archetype = "furniture"
+[entities.pillar_096.transform]
+position = [10.350, 0, -7.475]
+[entities.pillar_096.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.157, 0.42]
+[entities.pillar_096.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_096.ascii_style]
+grid = "object"
+
+[entities.pillar_097]
+archetype = "furniture"
+[entities.pillar_097.transform]
+position = [11.500, 0, -7.475]
+[entities.pillar_097.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.444, 0.42]
+[entities.pillar_097.material]
+color = [0.297, 0.353, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_097.ascii_style]
+grid = "object"
+
+[entities.pillar_098]
+archetype = "furniture"
+[entities.pillar_098.transform]
+position = [12.650, 0, -7.475]
+[entities.pillar_098.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.867, 0.42]
+[entities.pillar_098.material]
+color = [0.384, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_098.ascii_style]
+grid = "object"
+
+[entities.pillar_099]
+archetype = "furniture"
+[entities.pillar_099.transform]
+position = [13.800, 0, -7.475]
+[entities.pillar_099.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.213, 0.42]
+[entities.pillar_099.material]
+color = [0.529, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_099.ascii_style]
+grid = "object"
+
+[entities.pillar_100]
+archetype = "furniture"
+[entities.pillar_100.transform]
+position = [-13.800, 0, -6.325]
+[entities.pillar_100.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.786, 0.42]
+[entities.pillar_100.material]
+color = [0.455, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_100.ascii_style]
+grid = "object"
+
+[entities.pillar_101]
+archetype = "furniture"
+[entities.pillar_101.transform]
+position = [-12.650, 0, -6.325]
+[entities.pillar_101.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.861, 0.42]
+[entities.pillar_101.material]
+color = [0.304, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_101.ascii_style]
+grid = "object"
+
+[entities.pillar_102]
+archetype = "furniture"
+[entities.pillar_102.transform]
+position = [-11.500, 0, -6.325]
+[entities.pillar_102.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.793, 0.42]
+[entities.pillar_102.material]
+color = [0.297, 0.438, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_102.ascii_style]
+grid = "object"
+
+[entities.pillar_103]
+archetype = "furniture"
+[entities.pillar_103.transform]
+position = [-10.350, 0, -6.325]
+[entities.pillar_103.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.481, 0.42]
+[entities.pillar_103.material]
+color = [0.297, 0.583, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_103.ascii_style]
+grid = "object"
+
+[entities.pillar_104]
+archetype = "furniture"
+[entities.pillar_104.transform]
+position = [-9.200, 0, -6.325]
+[entities.pillar_104.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.964, 0.42]
+[entities.pillar_104.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_104.ascii_style]
+grid = "object"
+
+[entities.pillar_105]
+archetype = "furniture"
+[entities.pillar_105.transform]
+position = [-8.050, 0, -6.325]
+[entities.pillar_105.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.445, 0.42]
+[entities.pillar_105.material]
+color = [0.297, 0.850, 0.843, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_105.ascii_style]
+grid = "object"
+
+[entities.pillar_106]
+archetype = "furniture"
+[entities.pillar_106.transform]
+position = [-6.900, 0, -6.325]
+[entities.pillar_106.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_106.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_106.ascii_style]
+grid = "object"
+
+[entities.pillar_107]
+archetype = "furniture"
+[entities.pillar_107.transform]
+position = [-5.750, 0, -6.325]
+[entities.pillar_107.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_107.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_107.ascii_style]
+grid = "object"
+
+[entities.pillar_108]
+archetype = "furniture"
+[entities.pillar_108.transform]
+position = [-4.600, 0, -6.325]
+[entities.pillar_108.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.817, 0.42]
+[entities.pillar_108.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_108.ascii_style]
+grid = "object"
+
+[entities.pillar_109]
+archetype = "furniture"
+[entities.pillar_109.transform]
+position = [-3.450, 0, -6.325]
+[entities.pillar_109.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.359, 0.42]
+[entities.pillar_109.material]
+color = [0.297, 0.850, 0.403, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_109.ascii_style]
+grid = "object"
+
+[entities.pillar_110]
+archetype = "furniture"
+[entities.pillar_110.transform]
+position = [-2.300, 0, -6.325]
+[entities.pillar_110.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.681, 0.42]
+[entities.pillar_110.material]
+color = [0.297, 0.850, 0.334, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_110.ascii_style]
+grid = "object"
+
+[entities.pillar_111]
+archetype = "furniture"
+[entities.pillar_111.transform]
+position = [-1.150, 0, -6.325]
+[entities.pillar_111.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.663, 0.42]
+[entities.pillar_111.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_111.ascii_style]
+grid = "object"
+
+[entities.pillar_112]
+archetype = "furniture"
+[entities.pillar_112.transform]
+position = [0.000, 0, -6.325]
+[entities.pillar_112.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.407, 0.42]
+[entities.pillar_112.material]
+color = [0.319, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_112.ascii_style]
+grid = "object"
+
+[entities.pillar_113]
+archetype = "furniture"
+[entities.pillar_113.transform]
+position = [1.150, 0, -6.325]
+[entities.pillar_113.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.138, 0.42]
+[entities.pillar_113.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_113.ascii_style]
+grid = "object"
+
+[entities.pillar_114]
+archetype = "furniture"
+[entities.pillar_114.transform]
+position = [2.300, 0, -6.325]
+[entities.pillar_114.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.028, 0.42]
+[entities.pillar_114.material]
+color = [0.297, 0.850, 0.334, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_114.ascii_style]
+grid = "object"
+
+[entities.pillar_115]
+archetype = "furniture"
+[entities.pillar_115.transform]
+position = [3.450, 0, -6.325]
+[entities.pillar_115.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.072, 0.42]
+[entities.pillar_115.material]
+color = [0.297, 0.850, 0.403, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_115.ascii_style]
+grid = "object"
+
+[entities.pillar_116]
+archetype = "furniture"
+[entities.pillar_116.transform]
+position = [4.600, 0, -6.325]
+[entities.pillar_116.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.114, 0.42]
+[entities.pillar_116.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_116.ascii_style]
+grid = "object"
+
+[entities.pillar_117]
+archetype = "furniture"
+[entities.pillar_117.transform]
+position = [5.750, 0, -6.325]
+[entities.pillar_117.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.994, 0.42]
+[entities.pillar_117.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_117.ascii_style]
+grid = "object"
+
+[entities.pillar_118]
+archetype = "furniture"
+[entities.pillar_118.transform]
+position = [6.900, 0, -6.325]
+[entities.pillar_118.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.706, 0.42]
+[entities.pillar_118.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_118.ascii_style]
+grid = "object"
+
+[entities.pillar_119]
+archetype = "furniture"
+[entities.pillar_119.transform]
+position = [8.050, 0, -6.325]
+[entities.pillar_119.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.434, 0.42]
+[entities.pillar_119.material]
+color = [0.297, 0.850, 0.843, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_119.ascii_style]
+grid = "object"
+
+[entities.pillar_120]
+archetype = "furniture"
+[entities.pillar_120.transform]
+position = [9.200, 0, -6.325]
+[entities.pillar_120.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.432, 0.42]
+[entities.pillar_120.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_120.ascii_style]
+grid = "object"
+
+[entities.pillar_121]
+archetype = "furniture"
+[entities.pillar_121.transform]
+position = [10.350, 0, -6.325]
+[entities.pillar_121.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.831, 0.42]
+[entities.pillar_121.material]
+color = [0.297, 0.583, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_121.ascii_style]
+grid = "object"
+
+[entities.pillar_122]
+archetype = "furniture"
+[entities.pillar_122.transform]
+position = [11.500, 0, -6.325]
+[entities.pillar_122.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.517, 0.42]
+[entities.pillar_122.material]
+color = [0.297, 0.438, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_122.ascii_style]
+grid = "object"
+
+[entities.pillar_123]
+archetype = "furniture"
+[entities.pillar_123.transform]
+position = [12.650, 0, -6.325]
+[entities.pillar_123.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.167, 0.42]
+[entities.pillar_123.material]
+color = [0.304, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_123.ascii_style]
+grid = "object"
+
+[entities.pillar_124]
+archetype = "furniture"
+[entities.pillar_124.transform]
+position = [13.800, 0, -6.325]
+[entities.pillar_124.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.444, 0.42]
+[entities.pillar_124.material]
+color = [0.455, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_124.ascii_style]
+grid = "object"
+
+[entities.pillar_125]
+archetype = "furniture"
+[entities.pillar_125.transform]
+position = [-13.800, 0, -5.175]
+[entities.pillar_125.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.127, 0.42]
+[entities.pillar_125.material]
+color = [0.391, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_125.ascii_style]
+grid = "object"
+
+[entities.pillar_126]
+archetype = "furniture"
+[entities.pillar_126.transform]
+position = [-12.650, 0, -5.175]
+[entities.pillar_126.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.088, 0.42]
+[entities.pillar_126.material]
+color = [0.297, 0.360, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_126.ascii_style]
+grid = "object"
+
+[entities.pillar_127]
+archetype = "furniture"
+[entities.pillar_127.transform]
+position = [-11.500, 0, -5.175]
+[entities.pillar_127.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.658, 0.42]
+[entities.pillar_127.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_127.ascii_style]
+grid = "object"
+
+[entities.pillar_128]
+archetype = "furniture"
+[entities.pillar_128.transform]
+position = [-10.350, 0, -5.175]
+[entities.pillar_128.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.981, 0.42]
+[entities.pillar_128.material]
+color = [0.297, 0.663, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_128.ascii_style]
+grid = "object"
+
+[entities.pillar_129]
+archetype = "furniture"
+[entities.pillar_129.transform]
+position = [-9.200, 0, -5.175]
+[entities.pillar_129.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.377, 0.42]
+[entities.pillar_129.material]
+color = [0.297, 0.811, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_129.ascii_style]
+grid = "object"
+
+[entities.pillar_130]
+archetype = "furniture"
+[entities.pillar_130.transform]
+position = [-8.050, 0, -5.175]
+[entities.pillar_130.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_130.material]
+color = [0.297, 0.850, 0.746, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_130.ascii_style]
+grid = "object"
+
+[entities.pillar_131]
+archetype = "furniture"
+[entities.pillar_131.transform]
+position = [-6.900, 0, -5.175]
+[entities.pillar_131.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.410, 0.42]
+[entities.pillar_131.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_131.ascii_style]
+grid = "object"
+
+[entities.pillar_132]
+archetype = "furniture"
+[entities.pillar_132.transform]
+position = [-5.750, 0, -5.175]
+[entities.pillar_132.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.988, 0.42]
+[entities.pillar_132.material]
+color = [0.297, 0.850, 0.480, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_132.ascii_style]
+grid = "object"
+
+[entities.pillar_133]
+archetype = "furniture"
+[entities.pillar_133.transform]
+position = [-4.600, 0, -5.175]
+[entities.pillar_133.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.564, 0.42]
+[entities.pillar_133.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_133.ascii_style]
+grid = "object"
+
+[entities.pillar_134]
+archetype = "furniture"
+[entities.pillar_134.transform]
+position = [-3.450, 0, -5.175]
+[entities.pillar_134.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.865, 0.42]
+[entities.pillar_134.material]
+color = [0.335, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_134.ascii_style]
+grid = "object"
+
+[entities.pillar_135]
+archetype = "furniture"
+[entities.pillar_135.transform]
+position = [-2.300, 0, -5.175]
+[entities.pillar_135.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.842, 0.42]
+[entities.pillar_135.material]
+color = [0.415, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_135.ascii_style]
+grid = "object"
+
+[entities.pillar_136]
+archetype = "furniture"
+[entities.pillar_136.transform]
+position = [-1.150, 0, -5.175]
+[entities.pillar_136.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.665, 0.42]
+[entities.pillar_136.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_136.ascii_style]
+grid = "object"
+
+[entities.pillar_137]
+archetype = "furniture"
+[entities.pillar_137.transform]
+position = [0.000, 0, -5.175]
+[entities.pillar_137.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.574, 0.42]
+[entities.pillar_137.material]
+color = [0.486, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_137.ascii_style]
+grid = "object"
+
+[entities.pillar_138]
+archetype = "furniture"
+[entities.pillar_138.transform]
+position = [1.150, 0, -5.175]
+[entities.pillar_138.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.676, 0.42]
+[entities.pillar_138.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_138.ascii_style]
+grid = "object"
+
+[entities.pillar_139]
+archetype = "furniture"
+[entities.pillar_139.transform]
+position = [2.300, 0, -5.175]
+[entities.pillar_139.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.856, 0.42]
+[entities.pillar_139.material]
+color = [0.415, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_139.ascii_style]
+grid = "object"
+
+[entities.pillar_140]
+archetype = "furniture"
+[entities.pillar_140.transform]
+position = [3.450, 0, -5.175]
+[entities.pillar_140.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.872, 0.42]
+[entities.pillar_140.material]
+color = [0.335, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_140.ascii_style]
+grid = "object"
+
+[entities.pillar_141]
+archetype = "furniture"
+[entities.pillar_141.transform]
+position = [4.600, 0, -5.175]
+[entities.pillar_141.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.557, 0.42]
+[entities.pillar_141.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_141.ascii_style]
+grid = "object"
+
+[entities.pillar_142]
+archetype = "furniture"
+[entities.pillar_142.transform]
+position = [5.750, 0, -5.175]
+[entities.pillar_142.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.974, 0.42]
+[entities.pillar_142.material]
+color = [0.297, 0.850, 0.480, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_142.ascii_style]
+grid = "object"
+
+[entities.pillar_143]
+archetype = "furniture"
+[entities.pillar_143.transform]
+position = [6.900, 0, -5.175]
+[entities.pillar_143.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.398, 0.42]
+[entities.pillar_143.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_143.ascii_style]
+grid = "object"
+
+[entities.pillar_144]
+archetype = "furniture"
+[entities.pillar_144.transform]
+position = [8.050, 0, -5.175]
+[entities.pillar_144.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_144.material]
+color = [0.297, 0.850, 0.746, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_144.ascii_style]
+grid = "object"
+
+[entities.pillar_145]
+archetype = "furniture"
+[entities.pillar_145.transform]
+position = [9.200, 0, -5.175]
+[entities.pillar_145.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.388, 0.42]
+[entities.pillar_145.material]
+color = [0.297, 0.811, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_145.ascii_style]
+grid = "object"
+
+[entities.pillar_146]
+archetype = "furniture"
+[entities.pillar_146.transform]
+position = [10.350, 0, -5.175]
+[entities.pillar_146.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.996, 0.42]
+[entities.pillar_146.material]
+color = [0.297, 0.663, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_146.ascii_style]
+grid = "object"
+
+[entities.pillar_147]
+archetype = "furniture"
+[entities.pillar_147.transform]
+position = [11.500, 0, -5.175]
+[entities.pillar_147.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.664, 0.42]
+[entities.pillar_147.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_147.ascii_style]
+grid = "object"
+
+[entities.pillar_148]
+archetype = "furniture"
+[entities.pillar_148.transform]
+position = [12.650, 0, -5.175]
+[entities.pillar_148.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.082, 0.42]
+[entities.pillar_148.material]
+color = [0.297, 0.360, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_148.ascii_style]
+grid = "object"
+
+[entities.pillar_149]
+archetype = "furniture"
+[entities.pillar_149.transform]
+position = [13.800, 0, -5.175]
+[entities.pillar_149.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.113, 0.42]
+[entities.pillar_149.material]
+color = [0.391, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_149.ascii_style]
+grid = "object"
+
+[entities.pillar_150]
+archetype = "furniture"
+[entities.pillar_150.transform]
+position = [-13.800, 0, -4.025]
+[entities.pillar_150.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.332, 0.42]
+[entities.pillar_150.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_150.ascii_style]
+grid = "object"
+
+[entities.pillar_151]
+archetype = "furniture"
+[entities.pillar_151.transform]
+position = [-12.650, 0, -4.025]
+[entities.pillar_151.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.857, 0.42]
+[entities.pillar_151.material]
+color = [0.297, 0.416, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_151.ascii_style]
+grid = "object"
+
+[entities.pillar_152]
+archetype = "furniture"
+[entities.pillar_152.transform]
+position = [-11.500, 0, -4.025]
+[entities.pillar_152.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.094, 0.42]
+[entities.pillar_152.material]
+color = [0.297, 0.575, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_152.ascii_style]
+grid = "object"
+
+[entities.pillar_153]
+archetype = "furniture"
+[entities.pillar_153.transform]
+position = [-10.350, 0, -4.025]
+[entities.pillar_153.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.432, 0.42]
+[entities.pillar_153.material]
+color = [0.297, 0.731, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_153.ascii_style]
+grid = "object"
+
+[entities.pillar_154]
+archetype = "furniture"
+[entities.pillar_154.transform]
+position = [-9.200, 0, -4.025]
+[entities.pillar_154.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_154.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_154.ascii_style]
+grid = "object"
+
+[entities.pillar_155]
+archetype = "furniture"
+[entities.pillar_155.transform]
+position = [-8.050, 0, -4.025]
+[entities.pillar_155.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.460, 0.42]
+[entities.pillar_155.material]
+color = [0.297, 0.850, 0.664, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_155.ascii_style]
+grid = "object"
+
+[entities.pillar_156]
+archetype = "furniture"
+[entities.pillar_156.transform]
+position = [-6.900, 0, -4.025]
+[entities.pillar_156.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.022, 0.42]
+[entities.pillar_156.material]
+color = [0.297, 0.850, 0.517, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_156.ascii_style]
+grid = "object"
+
+[entities.pillar_157]
+archetype = "furniture"
+[entities.pillar_157.transform]
+position = [-5.750, 0, -4.025]
+[entities.pillar_157.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.555, 0.42]
+[entities.pillar_157.material]
+color = [0.297, 0.850, 0.376, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_157.ascii_style]
+grid = "object"
+
+[entities.pillar_158]
+archetype = "furniture"
+[entities.pillar_158.transform]
+position = [-4.600, 0, -4.025]
+[entities.pillar_158.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.824, 0.42]
+[entities.pillar_158.material]
+color = [0.350, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_158.ascii_style]
+grid = "object"
+
+[entities.pillar_159]
+archetype = "furniture"
+[entities.pillar_159.transform]
+position = [-3.450, 0, -4.025]
+[entities.pillar_159.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.821, 0.42]
+[entities.pillar_159.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_159.ascii_style]
+grid = "object"
+
+[entities.pillar_160]
+archetype = "furniture"
+[entities.pillar_160.transform]
+position = [-2.300, 0, -4.025]
+[entities.pillar_160.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.733, 0.42]
+[entities.pillar_160.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_160.ascii_style]
+grid = "object"
+
+[entities.pillar_161]
+archetype = "furniture"
+[entities.pillar_161.transform]
+position = [-1.150, 0, -4.025]
+[entities.pillar_161.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.774, 0.42]
+[entities.pillar_161.material]
+color = [0.630, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_161.ascii_style]
+grid = "object"
+
+[entities.pillar_162]
+archetype = "furniture"
+[entities.pillar_162.transform]
+position = [0.000, 0, -4.025]
+[entities.pillar_162.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.013, 0.42]
+[entities.pillar_162.material]
+color = [0.653, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_162.ascii_style]
+grid = "object"
+
+[entities.pillar_163]
+archetype = "furniture"
+[entities.pillar_163.transform]
+position = [1.150, 0, -4.025]
+[entities.pillar_163.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.305, 0.42]
+[entities.pillar_163.material]
+color = [0.630, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_163.ascii_style]
+grid = "object"
+
+[entities.pillar_164]
+archetype = "furniture"
+[entities.pillar_164.transform]
+position = [2.300, 0, -4.025]
+[entities.pillar_164.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.393, 0.42]
+[entities.pillar_164.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_164.ascii_style]
+grid = "object"
+
+[entities.pillar_165]
+archetype = "furniture"
+[entities.pillar_165.transform]
+position = [3.450, 0, -4.025]
+[entities.pillar_165.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.111, 0.42]
+[entities.pillar_165.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_165.ascii_style]
+grid = "object"
+
+[entities.pillar_166]
+archetype = "furniture"
+[entities.pillar_166.transform]
+position = [4.600, 0, -4.025]
+[entities.pillar_166.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.524, 0.42]
+[entities.pillar_166.material]
+color = [0.350, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_166.ascii_style]
+grid = "object"
+
+[entities.pillar_167]
+archetype = "furniture"
+[entities.pillar_167.transform]
+position = [5.750, 0, -4.025]
+[entities.pillar_167.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.892, 0.42]
+[entities.pillar_167.material]
+color = [0.297, 0.850, 0.376, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_167.ascii_style]
+grid = "object"
+
+[entities.pillar_168]
+archetype = "furniture"
+[entities.pillar_168.transform]
+position = [6.900, 0, -4.025]
+[entities.pillar_168.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.498, 0.42]
+[entities.pillar_168.material]
+color = [0.297, 0.850, 0.517, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_168.ascii_style]
+grid = "object"
+
+[entities.pillar_169]
+archetype = "furniture"
+[entities.pillar_169.transform]
+position = [8.050, 0, -4.025]
+[entities.pillar_169.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.471, 0.42]
+[entities.pillar_169.material]
+color = [0.297, 0.850, 0.664, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_169.ascii_style]
+grid = "object"
+
+[entities.pillar_170]
+archetype = "furniture"
+[entities.pillar_170.transform]
+position = [9.200, 0, -4.025]
+[entities.pillar_170.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.734, 0.42]
+[entities.pillar_170.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_170.ascii_style]
+grid = "object"
+
+[entities.pillar_171]
+archetype = "furniture"
+[entities.pillar_171.transform]
+position = [10.350, 0, -4.025]
+[entities.pillar_171.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.090, 0.42]
+[entities.pillar_171.material]
+color = [0.297, 0.731, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_171.ascii_style]
+grid = "object"
+
+[entities.pillar_172]
+archetype = "furniture"
+[entities.pillar_172.transform]
+position = [11.500, 0, -4.025]
+[entities.pillar_172.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.374, 0.42]
+[entities.pillar_172.material]
+color = [0.297, 0.575, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_172.ascii_style]
+grid = "object"
+
+[entities.pillar_173]
+archetype = "furniture"
+[entities.pillar_173.transform]
+position = [12.650, 0, -4.025]
+[entities.pillar_173.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.546, 0.42]
+[entities.pillar_173.material]
+color = [0.297, 0.416, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_173.ascii_style]
+grid = "object"
+
+[entities.pillar_174]
+archetype = "furniture"
+[entities.pillar_174.transform]
+position = [13.800, 0, -4.025]
+[entities.pillar_174.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.667, 0.42]
+[entities.pillar_174.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_174.ascii_style]
+grid = "object"
+
+[entities.pillar_175]
+archetype = "furniture"
+[entities.pillar_175.transform]
+position = [-13.800, 0, -2.875]
+[entities.pillar_175.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.023, 0.42]
+[entities.pillar_175.material]
+color = [0.298, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_175.ascii_style]
+grid = "object"
+
+[entities.pillar_176]
+archetype = "furniture"
+[entities.pillar_176.transform]
+position = [-12.650, 0, -2.875]
+[entities.pillar_176.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.309, 0.42]
+[entities.pillar_176.material]
+color = [0.297, 0.460, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_176.ascii_style]
+grid = "object"
+
+[entities.pillar_177]
+archetype = "furniture"
+[entities.pillar_177.transform]
+position = [-11.500, 0, -2.875]
+[entities.pillar_177.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.667, 0.42]
+[entities.pillar_177.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_177.ascii_style]
+grid = "object"
+
+[entities.pillar_178]
+archetype = "furniture"
+[entities.pillar_178.transform]
+position = [-10.350, 0, -2.875]
+[entities.pillar_178.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.395, 0.42]
+[entities.pillar_178.material]
+color = [0.297, 0.784, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_178.ascii_style]
+grid = "object"
+
+[entities.pillar_179]
+archetype = "furniture"
+[entities.pillar_179.transform]
+position = [-9.200, 0, -2.875]
+[entities.pillar_179.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.547, 0.42]
+[entities.pillar_179.material]
+color = [0.297, 0.850, 0.756, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_179.ascii_style]
+grid = "object"
+
+[entities.pillar_180]
+archetype = "furniture"
+[entities.pillar_180.transform]
+position = [-8.050, 0, -2.875]
+[entities.pillar_180.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.945, 0.42]
+[entities.pillar_180.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_180.ascii_style]
+grid = "object"
+
+[entities.pillar_181]
+archetype = "furniture"
+[entities.pillar_181.transform]
+position = [-6.900, 0, -2.875]
+[entities.pillar_181.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.338, 0.42]
+[entities.pillar_181.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_181.ascii_style]
+grid = "object"
+
+[entities.pillar_182]
+archetype = "furniture"
+[entities.pillar_182.transform]
+position = [-5.750, 0, -2.875]
+[entities.pillar_182.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.570, 0.42]
+[entities.pillar_182.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_182.ascii_style]
+grid = "object"
+
+[entities.pillar_183]
+archetype = "furniture"
+[entities.pillar_183.transform]
+position = [-4.600, 0, -2.875]
+[entities.pillar_183.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.655, 0.42]
+[entities.pillar_183.material]
+color = [0.450, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_183.ascii_style]
+grid = "object"
+
+[entities.pillar_184]
+archetype = "furniture"
+[entities.pillar_184.transform]
+position = [-3.450, 0, -2.875]
+[entities.pillar_184.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.716, 0.42]
+[entities.pillar_184.material]
+color = [0.585, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_184.ascii_style]
+grid = "object"
+
+[entities.pillar_185]
+archetype = "furniture"
+[entities.pillar_185.transform]
+position = [-2.300, 0, -2.875]
+[entities.pillar_185.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.853, 0.42]
+[entities.pillar_185.material]
+color = [0.703, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_185.ascii_style]
+grid = "object"
+
+[entities.pillar_186]
+archetype = "furniture"
+[entities.pillar_186.transform]
+position = [-1.150, 0, -2.875]
+[entities.pillar_186.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.067, 0.42]
+[entities.pillar_186.material]
+color = [0.788, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_186.ascii_style]
+grid = "object"
+
+[entities.pillar_187]
+archetype = "furniture"
+[entities.pillar_187.transform]
+position = [0.000, 0, -2.875]
+[entities.pillar_187.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.269, 0.42]
+[entities.pillar_187.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_187.ascii_style]
+grid = "object"
+
+[entities.pillar_188]
+archetype = "furniture"
+[entities.pillar_188.transform]
+position = [1.150, 0, -2.875]
+[entities.pillar_188.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.339, 0.42]
+[entities.pillar_188.material]
+color = [0.788, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_188.ascii_style]
+grid = "object"
+
+[entities.pillar_189]
+archetype = "furniture"
+[entities.pillar_189.transform]
+position = [2.300, 0, -2.875]
+[entities.pillar_189.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.192, 0.42]
+[entities.pillar_189.material]
+color = [0.703, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_189.ascii_style]
+grid = "object"
+
+[entities.pillar_190]
+archetype = "furniture"
+[entities.pillar_190.transform]
+position = [3.450, 0, -2.875]
+[entities.pillar_190.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.864, 0.42]
+[entities.pillar_190.material]
+color = [0.585, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_190.ascii_style]
+grid = "object"
+
+[entities.pillar_191]
+archetype = "furniture"
+[entities.pillar_191.transform]
+position = [4.600, 0, -2.875]
+[entities.pillar_191.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.501, 0.42]
+[entities.pillar_191.material]
+color = [0.450, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_191.ascii_style]
+grid = "object"
+
+[entities.pillar_192]
+archetype = "furniture"
+[entities.pillar_192.transform]
+position = [5.750, 0, -2.875]
+[entities.pillar_192.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.229, 0.42]
+[entities.pillar_192.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_192.ascii_style]
+grid = "object"
+
+[entities.pillar_193]
+archetype = "furniture"
+[entities.pillar_193.transform]
+position = [6.900, 0, -2.875]
+[entities.pillar_193.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.069, 0.42]
+[entities.pillar_193.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_193.ascii_style]
+grid = "object"
+
+[entities.pillar_194]
+archetype = "furniture"
+[entities.pillar_194.transform]
+position = [8.050, 0, -2.875]
+[entities.pillar_194.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.951, 0.42]
+[entities.pillar_194.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_194.ascii_style]
+grid = "object"
+
+[entities.pillar_195]
+archetype = "furniture"
+[entities.pillar_195.transform]
+position = [9.200, 0, -2.875]
+[entities.pillar_195.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.823, 0.42]
+[entities.pillar_195.material]
+color = [0.297, 0.850, 0.756, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_195.ascii_style]
+grid = "object"
+
+[entities.pillar_196]
+archetype = "furniture"
+[entities.pillar_196.transform]
+position = [10.350, 0, -2.875]
+[entities.pillar_196.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.733, 0.42]
+[entities.pillar_196.material]
+color = [0.297, 0.784, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_196.ascii_style]
+grid = "object"
+
+[entities.pillar_197]
+archetype = "furniture"
+[entities.pillar_197.transform]
+position = [11.500, 0, -2.875]
+[entities.pillar_197.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.811, 0.42]
+[entities.pillar_197.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_197.ascii_style]
+grid = "object"
+
+[entities.pillar_198]
+archetype = "furniture"
+[entities.pillar_198.transform]
+position = [12.650, 0, -2.875]
+[entities.pillar_198.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.150, 0.42]
+[entities.pillar_198.material]
+color = [0.297, 0.460, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_198.ascii_style]
+grid = "object"
+
+[entities.pillar_199]
+archetype = "furniture"
+[entities.pillar_199.transform]
+position = [13.800, 0, -2.875]
+[entities.pillar_199.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.682, 0.42]
+[entities.pillar_199.material]
+color = [0.298, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_199.ascii_style]
+grid = "object"
+
+[entities.pillar_200]
+archetype = "furniture"
+[entities.pillar_200.transform]
+position = [-13.800, 0, -1.725]
+[entities.pillar_200.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.565, 0.42]
+[entities.pillar_200.material]
+color = [0.297, 0.325, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_200.ascii_style]
+grid = "object"
+
+[entities.pillar_201]
+archetype = "furniture"
+[entities.pillar_201.transform]
+position = [-12.650, 0, -1.725]
+[entities.pillar_201.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.077, 0.42]
+[entities.pillar_201.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_201.ascii_style]
+grid = "object"
+
+[entities.pillar_202]
+archetype = "furniture"
+[entities.pillar_202.transform]
+position = [-11.500, 0, -1.725]
+[entities.pillar_202.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.800, 0.42]
+[entities.pillar_202.material]
+color = [0.297, 0.655, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_202.ascii_style]
+grid = "object"
+
+[entities.pillar_203]
+archetype = "furniture"
+[entities.pillar_203.transform]
+position = [-10.350, 0, -1.725]
+[entities.pillar_203.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.761, 0.42]
+[entities.pillar_203.material]
+color = [0.297, 0.820, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_203.ascii_style]
+grid = "object"
+
+[entities.pillar_204]
+archetype = "furniture"
+[entities.pillar_204.transform]
+position = [-9.200, 0, -1.725]
+[entities.pillar_204.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.857, 0.42]
+[entities.pillar_204.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_204.ascii_style]
+grid = "object"
+
+[entities.pillar_205]
+archetype = "furniture"
+[entities.pillar_205.transform]
+position = [-8.050, 0, -1.725]
+[entities.pillar_205.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.987, 0.42]
+[entities.pillar_205.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_205.ascii_style]
+grid = "object"
+
+[entities.pillar_206]
+archetype = "furniture"
+[entities.pillar_206.transform]
+position = [-6.900, 0, -1.725]
+[entities.pillar_206.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.132, 0.42]
+[entities.pillar_206.material]
+color = [0.297, 0.850, 0.390, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_206.ascii_style]
+grid = "object"
+
+[entities.pillar_207]
+archetype = "furniture"
+[entities.pillar_207.transform]
+position = [-5.750, 0, -1.725]
+[entities.pillar_207.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.348, 0.42]
+[entities.pillar_207.material]
+color = [0.366, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_207.ascii_style]
+grid = "object"
+
+[entities.pillar_208]
+archetype = "furniture"
+[entities.pillar_208.transform]
+position = [-4.600, 0, -1.725]
+[entities.pillar_208.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.658, 0.42]
+[entities.pillar_208.material]
+color = [0.524, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_208.ascii_style]
+grid = "object"
+
+[entities.pillar_209]
+archetype = "furniture"
+[entities.pillar_209.transform]
+position = [-3.450, 0, -1.725]
+[entities.pillar_209.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.979, 0.42]
+[entities.pillar_209.material]
+color = [0.677, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_209.ascii_style]
+grid = "object"
+
+[entities.pillar_210]
+archetype = "furniture"
+[entities.pillar_210.transform]
+position = [-2.300, 0, -1.725]
+[entities.pillar_210.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.148, 0.42]
+[entities.pillar_210.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_210.ascii_style]
+grid = "object"
+
+[entities.pillar_211]
+archetype = "furniture"
+[entities.pillar_211.transform]
+position = [-1.150, 0, -1.725]
+[entities.pillar_211.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.059, 0.42]
+[entities.pillar_211.material]
+color = [0.850, 0.764, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_211.ascii_style]
+grid = "object"
+
+[entities.pillar_212]
+archetype = "furniture"
+[entities.pillar_212.transform]
+position = [0.000, 0, -1.725]
+[entities.pillar_212.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.822, 0.42]
+[entities.pillar_212.material]
+color = [0.850, 0.713, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_212.ascii_style]
+grid = "object"
+
+[entities.pillar_213]
+archetype = "furniture"
+[entities.pillar_213.transform]
+position = [1.150, 0, -1.725]
+[entities.pillar_213.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.673, 0.42]
+[entities.pillar_213.material]
+color = [0.850, 0.764, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_213.ascii_style]
+grid = "object"
+
+[entities.pillar_214]
+archetype = "furniture"
+[entities.pillar_214.transform]
+position = [2.300, 0, -1.725]
+[entities.pillar_214.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.669, 0.42]
+[entities.pillar_214.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_214.ascii_style]
+grid = "object"
+
+[entities.pillar_215]
+archetype = "furniture"
+[entities.pillar_215.transform]
+position = [3.450, 0, -1.725]
+[entities.pillar_215.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.769, 0.42]
+[entities.pillar_215.material]
+color = [0.677, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_215.ascii_style]
+grid = "object"
+
+[entities.pillar_216]
+archetype = "furniture"
+[entities.pillar_216.transform]
+position = [4.600, 0, -1.725]
+[entities.pillar_216.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.875, 0.42]
+[entities.pillar_216.material]
+color = [0.524, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_216.ascii_style]
+grid = "object"
+
+[entities.pillar_217]
+archetype = "furniture"
+[entities.pillar_217.transform]
+position = [5.750, 0, -1.725]
+[entities.pillar_217.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.829, 0.42]
+[entities.pillar_217.material]
+color = [0.366, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_217.ascii_style]
+grid = "object"
+
+[entities.pillar_218]
+archetype = "furniture"
+[entities.pillar_218.transform]
+position = [6.900, 0, -1.725]
+[entities.pillar_218.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.513, 0.42]
+[entities.pillar_218.material]
+color = [0.297, 0.850, 0.390, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_218.ascii_style]
+grid = "object"
+
+[entities.pillar_219]
+archetype = "furniture"
+[entities.pillar_219.transform]
+position = [8.050, 0, -1.725]
+[entities.pillar_219.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.978, 0.42]
+[entities.pillar_219.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_219.ascii_style]
+grid = "object"
+
+[entities.pillar_220]
+archetype = "furniture"
+[entities.pillar_220.transform]
+position = [9.200, 0, -1.725]
+[entities.pillar_220.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.467, 0.42]
+[entities.pillar_220.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_220.ascii_style]
+grid = "object"
+
+[entities.pillar_221]
+archetype = "furniture"
+[entities.pillar_221.transform]
+position = [10.350, 0, -1.725]
+[entities.pillar_221.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_221.material]
+color = [0.297, 0.820, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_221.ascii_style]
+grid = "object"
+
+[entities.pillar_222]
+archetype = "furniture"
+[entities.pillar_222.transform]
+position = [11.500, 0, -1.725]
+[entities.pillar_222.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.597, 0.42]
+[entities.pillar_222.material]
+color = [0.297, 0.655, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_222.ascii_style]
+grid = "object"
+
+[entities.pillar_223]
+archetype = "furniture"
+[entities.pillar_223.transform]
+position = [12.650, 0, -1.725]
+[entities.pillar_223.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.302, 0.42]
+[entities.pillar_223.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_223.ascii_style]
+grid = "object"
+
+[entities.pillar_224]
+archetype = "furniture"
+[entities.pillar_224.transform]
+position = [13.800, 0, -1.725]
+[entities.pillar_224.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.048, 0.42]
+[entities.pillar_224.material]
+color = [0.297, 0.325, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_224.ascii_style]
+grid = "object"
+
+[entities.pillar_225]
+archetype = "furniture"
+[entities.pillar_225.transform]
+position = [-13.800, 0, -0.575]
+[entities.pillar_225.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.557, 0.42]
+[entities.pillar_225.material]
+color = [0.297, 0.339, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_225.ascii_style]
+grid = "object"
+
+[entities.pillar_226]
+archetype = "furniture"
+[entities.pillar_226.transform]
+position = [-12.650, 0, -0.575]
+[entities.pillar_226.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.377, 0.42]
+[entities.pillar_226.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_226.ascii_style]
+grid = "object"
+
+[entities.pillar_227]
+archetype = "furniture"
+[entities.pillar_227.transform]
+position = [-11.500, 0, -0.575]
+[entities.pillar_227.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.163, 0.42]
+[entities.pillar_227.material]
+color = [0.297, 0.672, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_227.ascii_style]
+grid = "object"
+
+[entities.pillar_228]
+archetype = "furniture"
+[entities.pillar_228.transform]
+position = [-10.350, 0, -0.575]
+[entities.pillar_228.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.898, 0.42]
+[entities.pillar_228.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_228.ascii_style]
+grid = "object"
+
+[entities.pillar_229]
+archetype = "furniture"
+[entities.pillar_229.transform]
+position = [-9.200, 0, -0.575]
+[entities.pillar_229.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.662, 0.42]
+[entities.pillar_229.material]
+color = [0.297, 0.850, 0.695, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_229.ascii_style]
+grid = "object"
+
+[entities.pillar_230]
+archetype = "furniture"
+[entities.pillar_230.transform]
+position = [-8.050, 0, -0.575]
+[entities.pillar_230.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.621, 0.42]
+[entities.pillar_230.material]
+color = [0.297, 0.850, 0.529, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_230.ascii_style]
+grid = "object"
+
+[entities.pillar_231]
+archetype = "furniture"
+[entities.pillar_231.transform]
+position = [-6.900, 0, -0.575]
+[entities.pillar_231.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.902, 0.42]
+[entities.pillar_231.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_231.ascii_style]
+grid = "object"
+
+[entities.pillar_232]
+archetype = "furniture"
+[entities.pillar_232.transform]
+position = [-5.750, 0, -0.575]
+[entities.pillar_232.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.464, 0.42]
+[entities.pillar_232.material]
+color = [0.399, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_232.ascii_style]
+grid = "object"
+
+[entities.pillar_233]
+archetype = "furniture"
+[entities.pillar_233.transform]
+position = [-4.600, 0, -0.575]
+[entities.pillar_233.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.061, 0.42]
+[entities.pillar_233.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_233.ascii_style]
+grid = "object"
+
+[entities.pillar_234]
+archetype = "furniture"
+[entities.pillar_234.transform]
+position = [-3.450, 0, -0.575]
+[entities.pillar_234.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.360, 0.42]
+[entities.pillar_234.material]
+color = [0.729, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_234.ascii_style]
+grid = "object"
+
+[entities.pillar_235]
+archetype = "furniture"
+[entities.pillar_235.transform]
+position = [-2.300, 0, -0.575]
+[entities.pillar_235.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.154, 0.42]
+[entities.pillar_235.material]
+color = [0.850, 0.807, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_235.ascii_style]
+grid = "object"
+
+[entities.pillar_236]
+archetype = "furniture"
+[entities.pillar_236.transform]
+position = [-1.150, 0, -0.575]
+[entities.pillar_236.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.519, 0.42]
+[entities.pillar_236.material]
+color = [0.850, 0.650, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_236.ascii_style]
+grid = "object"
+
+[entities.pillar_237]
+archetype = "furniture"
+[entities.pillar_237.transform]
+position = [0.000, 0, -0.575]
+[entities.pillar_237.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.906, 0.42]
+[entities.pillar_237.material]
+color = [0.850, 0.547, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_237.ascii_style]
+grid = "object"
+
+[entities.pillar_238]
+archetype = "furniture"
+[entities.pillar_238.transform]
+position = [1.150, 0, -0.575]
+[entities.pillar_238.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.040, 0.42]
+[entities.pillar_238.material]
+color = [0.850, 0.650, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_238.ascii_style]
+grid = "object"
+
+[entities.pillar_239]
+archetype = "furniture"
+[entities.pillar_239.transform]
+position = [2.300, 0, -0.575]
+[entities.pillar_239.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.559, 0.42]
+[entities.pillar_239.material]
+color = [0.850, 0.807, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_239.ascii_style]
+grid = "object"
+
+[entities.pillar_240]
+archetype = "furniture"
+[entities.pillar_240.transform]
+position = [3.450, 0, -0.575]
+[entities.pillar_240.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.099, 0.42]
+[entities.pillar_240.material]
+color = [0.729, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_240.ascii_style]
+grid = "object"
+
+[entities.pillar_241]
+archetype = "furniture"
+[entities.pillar_241.transform]
+position = [4.600, 0, -0.575]
+[entities.pillar_241.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.331, 0.42]
+[entities.pillar_241.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_241.ascii_style]
+grid = "object"
+
+[entities.pillar_242]
+archetype = "furniture"
+[entities.pillar_242.transform]
+position = [5.750, 0, -0.575]
+[entities.pillar_242.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.062, 0.42]
+[entities.pillar_242.material]
+color = [0.399, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_242.ascii_style]
+grid = "object"
+
+[entities.pillar_243]
+archetype = "furniture"
+[entities.pillar_243.transform]
+position = [6.900, 0, -0.575]
+[entities.pillar_243.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.375, 0.42]
+[entities.pillar_243.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_243.ascii_style]
+grid = "object"
+
+[entities.pillar_244]
+archetype = "furniture"
+[entities.pillar_244.transform]
+position = [8.050, 0, -0.575]
+[entities.pillar_244.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.611, 0.42]
+[entities.pillar_244.material]
+color = [0.297, 0.850, 0.529, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_244.ascii_style]
+grid = "object"
+
+[entities.pillar_245]
+archetype = "furniture"
+[entities.pillar_245.transform]
+position = [9.200, 0, -0.575]
+[entities.pillar_245.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_245.material]
+color = [0.297, 0.850, 0.695, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_245.ascii_style]
+grid = "object"
+
+[entities.pillar_246]
+archetype = "furniture"
+[entities.pillar_246.transform]
+position = [10.350, 0, -0.575]
+[entities.pillar_246.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_246.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_246.ascii_style]
+grid = "object"
+
+[entities.pillar_247]
+archetype = "furniture"
+[entities.pillar_247.transform]
+position = [11.500, 0, -0.575]
+[entities.pillar_247.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.911, 0.42]
+[entities.pillar_247.material]
+color = [0.297, 0.672, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_247.ascii_style]
+grid = "object"
+
+[entities.pillar_248]
+archetype = "furniture"
+[entities.pillar_248.transform]
+position = [12.650, 0, -0.575]
+[entities.pillar_248.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.657, 0.42]
+[entities.pillar_248.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_248.ascii_style]
+grid = "object"
+
+[entities.pillar_249]
+archetype = "furniture"
+[entities.pillar_249.transform]
+position = [13.800, 0, -0.575]
+[entities.pillar_249.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.156, 0.42]
+[entities.pillar_249.material]
+color = [0.297, 0.339, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_249.ascii_style]
+grid = "object"
+
+[entities.pillar_250]
+archetype = "furniture"
+[entities.pillar_250.transform]
+position = [-13.800, 0, 0.575]
+[entities.pillar_250.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.971, 0.42]
+[entities.pillar_250.material]
+color = [0.297, 0.339, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_250.ascii_style]
+grid = "object"
+
+[entities.pillar_251]
+archetype = "furniture"
+[entities.pillar_251.transform]
+position = [-12.650, 0, 0.575]
+[entities.pillar_251.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.705, 0.42]
+[entities.pillar_251.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_251.ascii_style]
+grid = "object"
+
+[entities.pillar_252]
+archetype = "furniture"
+[entities.pillar_252.transform]
+position = [-11.500, 0, 0.575]
+[entities.pillar_252.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.158, 0.42]
+[entities.pillar_252.material]
+color = [0.297, 0.672, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_252.ascii_style]
+grid = "object"
+
+[entities.pillar_253]
+archetype = "furniture"
+[entities.pillar_253.transform]
+position = [-10.350, 0, 0.575]
+[entities.pillar_253.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.563, 0.42]
+[entities.pillar_253.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_253.ascii_style]
+grid = "object"
+
+[entities.pillar_254]
+archetype = "furniture"
+[entities.pillar_254.transform]
+position = [-9.200, 0, 0.575]
+[entities.pillar_254.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_254.material]
+color = [0.297, 0.850, 0.695, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_254.ascii_style]
+grid = "object"
+
+[entities.pillar_255]
+archetype = "furniture"
+[entities.pillar_255.transform]
+position = [-8.050, 0, 0.575]
+[entities.pillar_255.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.445, 0.42]
+[entities.pillar_255.material]
+color = [0.297, 0.850, 0.529, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_255.ascii_style]
+grid = "object"
+
+[entities.pillar_256]
+archetype = "furniture"
+[entities.pillar_256.transform]
+position = [-6.900, 0, 0.575]
+[entities.pillar_256.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.095, 0.42]
+[entities.pillar_256.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_256.ascii_style]
+grid = "object"
+
+[entities.pillar_257]
+archetype = "furniture"
+[entities.pillar_257.transform]
+position = [-5.750, 0, 0.575]
+[entities.pillar_257.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.880, 0.42]
+[entities.pillar_257.material]
+color = [0.399, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_257.ascii_style]
+grid = "object"
+
+[entities.pillar_258]
+archetype = "furniture"
+[entities.pillar_258.transform]
+position = [-4.600, 0, 0.575]
+[entities.pillar_258.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.385, 0.42]
+[entities.pillar_258.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_258.ascii_style]
+grid = "object"
+
+[entities.pillar_259]
+archetype = "furniture"
+[entities.pillar_259.transform]
+position = [-3.450, 0, 0.575]
+[entities.pillar_259.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.348, 0.42]
+[entities.pillar_259.material]
+color = [0.729, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_259.ascii_style]
+grid = "object"
+
+[entities.pillar_260]
+archetype = "furniture"
+[entities.pillar_260.transform]
+position = [-2.300, 0, 0.575]
+[entities.pillar_260.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.815, 0.42]
+[entities.pillar_260.material]
+color = [0.850, 0.807, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_260.ascii_style]
+grid = "object"
+
+[entities.pillar_261]
+archetype = "furniture"
+[entities.pillar_261.transform]
+position = [-1.150, 0, 0.575]
+[entities.pillar_261.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.109, 0.42]
+[entities.pillar_261.material]
+color = [0.850, 0.650, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_261.ascii_style]
+grid = "object"
+
+[entities.pillar_262]
+archetype = "furniture"
+[entities.pillar_262.transform]
+position = [0.000, 0, 0.575]
+[entities.pillar_262.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.736, 0.42]
+[entities.pillar_262.material]
+color = [0.850, 0.547, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_262.ascii_style]
+grid = "object"
+
+[entities.pillar_263]
+archetype = "furniture"
+[entities.pillar_263.transform]
+position = [1.150, 0, 0.575]
+[entities.pillar_263.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.239, 0.42]
+[entities.pillar_263.material]
+color = [0.850, 0.650, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_263.ascii_style]
+grid = "object"
+
+[entities.pillar_264]
+archetype = "furniture"
+[entities.pillar_264.transform]
+position = [2.300, 0, 0.575]
+[entities.pillar_264.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.975, 0.42]
+[entities.pillar_264.material]
+color = [0.850, 0.807, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_264.ascii_style]
+grid = "object"
+
+[entities.pillar_265]
+archetype = "furniture"
+[entities.pillar_265.transform]
+position = [3.450, 0, 0.575]
+[entities.pillar_265.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.418, 0.42]
+[entities.pillar_265.material]
+color = [0.729, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_265.ascii_style]
+grid = "object"
+
+[entities.pillar_266]
+archetype = "furniture"
+[entities.pillar_266.transform]
+position = [4.600, 0, 0.575]
+[entities.pillar_266.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.312, 0.42]
+[entities.pillar_266.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_266.ascii_style]
+grid = "object"
+
+[entities.pillar_267]
+archetype = "furniture"
+[entities.pillar_267.transform]
+position = [5.750, 0, 0.575]
+[entities.pillar_267.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.718, 0.42]
+[entities.pillar_267.material]
+color = [0.399, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_267.ascii_style]
+grid = "object"
+
+[entities.pillar_268]
+archetype = "furniture"
+[entities.pillar_268.transform]
+position = [6.900, 0, 0.575]
+[entities.pillar_268.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.967, 0.42]
+[entities.pillar_268.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_268.ascii_style]
+grid = "object"
+
+[entities.pillar_269]
+archetype = "furniture"
+[entities.pillar_269.transform]
+position = [8.050, 0, 0.575]
+[entities.pillar_269.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.448, 0.42]
+[entities.pillar_269.material]
+color = [0.297, 0.850, 0.529, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_269.ascii_style]
+grid = "object"
+
+[entities.pillar_270]
+archetype = "furniture"
+[entities.pillar_270.transform]
+position = [9.200, 0, 0.575]
+[entities.pillar_270.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.382, 0.42]
+[entities.pillar_270.material]
+color = [0.297, 0.850, 0.695, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_270.ascii_style]
+grid = "object"
+
+[entities.pillar_271]
+archetype = "furniture"
+[entities.pillar_271.transform]
+position = [10.350, 0, 0.575]
+[entities.pillar_271.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.723, 0.42]
+[entities.pillar_271.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_271.ascii_style]
+grid = "object"
+
+[entities.pillar_272]
+archetype = "furniture"
+[entities.pillar_272.transform]
+position = [11.500, 0, 0.575]
+[entities.pillar_272.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.226, 0.42]
+[entities.pillar_272.material]
+color = [0.297, 0.672, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_272.ascii_style]
+grid = "object"
+
+[entities.pillar_273]
+archetype = "furniture"
+[entities.pillar_273.transform]
+position = [12.650, 0, 0.575]
+[entities.pillar_273.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.630, 0.42]
+[entities.pillar_273.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_273.ascii_style]
+grid = "object"
+
+[entities.pillar_274]
+archetype = "furniture"
+[entities.pillar_274.transform]
+position = [13.800, 0, 0.575]
+[entities.pillar_274.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.809, 0.42]
+[entities.pillar_274.material]
+color = [0.297, 0.339, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_274.ascii_style]
+grid = "object"
+
+[entities.pillar_275]
+archetype = "furniture"
+[entities.pillar_275.transform]
+position = [-13.800, 0, 1.725]
+[entities.pillar_275.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.200, 0.42]
+[entities.pillar_275.material]
+color = [0.297, 0.325, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_275.ascii_style]
+grid = "object"
+
+[entities.pillar_276]
+archetype = "furniture"
+[entities.pillar_276.transform]
+position = [-12.650, 0, 1.725]
+[entities.pillar_276.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.581, 0.42]
+[entities.pillar_276.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_276.ascii_style]
+grid = "object"
+
+[entities.pillar_277]
+archetype = "furniture"
+[entities.pillar_277.transform]
+position = [-11.500, 0, 1.725]
+[entities.pillar_277.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.792, 0.42]
+[entities.pillar_277.material]
+color = [0.297, 0.655, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_277.ascii_style]
+grid = "object"
+
+[entities.pillar_278]
+archetype = "furniture"
+[entities.pillar_278.transform]
+position = [-10.350, 0, 1.725]
+[entities.pillar_278.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_278.material]
+color = [0.297, 0.820, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_278.ascii_style]
+grid = "object"
+
+[entities.pillar_279]
+archetype = "furniture"
+[entities.pillar_279.transform]
+position = [-9.200, 0, 1.725]
+[entities.pillar_279.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_279.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_279.ascii_style]
+grid = "object"
+
+[entities.pillar_280]
+archetype = "furniture"
+[entities.pillar_280.transform]
+position = [-8.050, 0, 1.725]
+[entities.pillar_280.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.716, 0.42]
+[entities.pillar_280.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_280.ascii_style]
+grid = "object"
+
+[entities.pillar_281]
+archetype = "furniture"
+[entities.pillar_281.transform]
+position = [-6.900, 0, 1.725]
+[entities.pillar_281.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.428, 0.42]
+[entities.pillar_281.material]
+color = [0.297, 0.850, 0.390, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_281.ascii_style]
+grid = "object"
+
+[entities.pillar_282]
+archetype = "furniture"
+[entities.pillar_282.transform]
+position = [-5.750, 0, 1.725]
+[entities.pillar_282.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.985, 0.42]
+[entities.pillar_282.material]
+color = [0.366, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_282.ascii_style]
+grid = "object"
+
+[entities.pillar_283]
+archetype = "furniture"
+[entities.pillar_283.transform]
+position = [-4.600, 0, 1.725]
+[entities.pillar_283.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.155, 0.42]
+[entities.pillar_283.material]
+color = [0.524, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_283.ascii_style]
+grid = "object"
+
+[entities.pillar_284]
+archetype = "furniture"
+[entities.pillar_284.transform]
+position = [-3.450, 0, 1.725]
+[entities.pillar_284.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.960, 0.42]
+[entities.pillar_284.material]
+color = [0.677, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_284.ascii_style]
+grid = "object"
+
+[entities.pillar_285]
+archetype = "furniture"
+[entities.pillar_285.transform]
+position = [-2.300, 0, 1.725]
+[entities.pillar_285.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.627, 0.42]
+[entities.pillar_285.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_285.ascii_style]
+grid = "object"
+
+[entities.pillar_286]
+archetype = "furniture"
+[entities.pillar_286.transform]
+position = [-1.150, 0, 1.725]
+[entities.pillar_286.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.430, 0.42]
+[entities.pillar_286.material]
+color = [0.850, 0.764, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_286.ascii_style]
+grid = "object"
+
+[entities.pillar_287]
+archetype = "furniture"
+[entities.pillar_287.transform]
+position = [0.000, 0, 1.725]
+[entities.pillar_287.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.562, 0.42]
+[entities.pillar_287.material]
+color = [0.850, 0.713, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_287.ascii_style]
+grid = "object"
+
+[entities.pillar_288]
+archetype = "furniture"
+[entities.pillar_288.transform]
+position = [1.150, 0, 1.725]
+[entities.pillar_288.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.978, 0.42]
+[entities.pillar_288.material]
+color = [0.850, 0.764, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_288.ascii_style]
+grid = "object"
+
+[entities.pillar_289]
+archetype = "furniture"
+[entities.pillar_289.transform]
+position = [2.300, 0, 1.725]
+[entities.pillar_289.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.308, 0.42]
+[entities.pillar_289.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_289.ascii_style]
+grid = "object"
+
+[entities.pillar_290]
+archetype = "furniture"
+[entities.pillar_290.transform]
+position = [3.450, 0, 1.725]
+[entities.pillar_290.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.259, 0.42]
+[entities.pillar_290.material]
+color = [0.677, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_290.ascii_style]
+grid = "object"
+
+[entities.pillar_291]
+archetype = "furniture"
+[entities.pillar_291.transform]
+position = [4.600, 0, 1.725]
+[entities.pillar_291.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.845, 0.42]
+[entities.pillar_291.material]
+color = [0.524, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_291.ascii_style]
+grid = "object"
+
+[entities.pillar_292]
+archetype = "furniture"
+[entities.pillar_292.transform]
+position = [5.750, 0, 1.725]
+[entities.pillar_292.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.301, 0.42]
+[entities.pillar_292.material]
+color = [0.366, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_292.ascii_style]
+grid = "object"
+
+[entities.pillar_293]
+archetype = "furniture"
+[entities.pillar_293.transform]
+position = [6.900, 0, 1.725]
+[entities.pillar_293.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.887, 0.42]
+[entities.pillar_293.material]
+color = [0.297, 0.850, 0.390, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_293.ascii_style]
+grid = "object"
+
+[entities.pillar_294]
+archetype = "furniture"
+[entities.pillar_294.transform]
+position = [8.050, 0, 1.725]
+[entities.pillar_294.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.728, 0.42]
+[entities.pillar_294.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_294.ascii_style]
+grid = "object"
+
+[entities.pillar_295]
+archetype = "furniture"
+[entities.pillar_295.transform]
+position = [9.200, 0, 1.725]
+[entities.pillar_295.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.781, 0.42]
+[entities.pillar_295.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_295.ascii_style]
+grid = "object"
+
+[entities.pillar_296]
+archetype = "furniture"
+[entities.pillar_296.transform]
+position = [10.350, 0, 1.725]
+[entities.pillar_296.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.925, 0.42]
+[entities.pillar_296.material]
+color = [0.297, 0.820, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_296.ascii_style]
+grid = "object"
+
+[entities.pillar_297]
+archetype = "furniture"
+[entities.pillar_297.transform]
+position = [11.500, 0, 1.725]
+[entities.pillar_297.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.080, 0.42]
+[entities.pillar_297.material]
+color = [0.297, 0.655, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_297.ascii_style]
+grid = "object"
+
+[entities.pillar_298]
+archetype = "furniture"
+[entities.pillar_298.transform]
+position = [12.650, 0, 1.725]
+[entities.pillar_298.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.261, 0.42]
+[entities.pillar_298.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_298.ascii_style]
+grid = "object"
+
+[entities.pillar_299]
+archetype = "furniture"
+[entities.pillar_299.transform]
+position = [13.800, 0, 1.725]
+[entities.pillar_299.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.514, 0.42]
+[entities.pillar_299.material]
+color = [0.297, 0.325, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_299.ascii_style]
+grid = "object"
+
+[entities.pillar_300]
+archetype = "furniture"
+[entities.pillar_300.transform]
+position = [-13.800, 0, 2.875]
+[entities.pillar_300.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.949, 0.42]
+[entities.pillar_300.material]
+color = [0.298, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_300.ascii_style]
+grid = "object"
+
+[entities.pillar_301]
+archetype = "furniture"
+[entities.pillar_301.transform]
+position = [-12.650, 0, 2.875]
+[entities.pillar_301.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.250, 0.42]
+[entities.pillar_301.material]
+color = [0.297, 0.460, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_301.ascii_style]
+grid = "object"
+
+[entities.pillar_302]
+archetype = "furniture"
+[entities.pillar_302.transform]
+position = [-11.500, 0, 2.875]
+[entities.pillar_302.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.668, 0.42]
+[entities.pillar_302.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_302.ascii_style]
+grid = "object"
+
+[entities.pillar_303]
+archetype = "furniture"
+[entities.pillar_303.transform]
+position = [-10.350, 0, 2.875]
+[entities.pillar_303.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.455, 0.42]
+[entities.pillar_303.material]
+color = [0.297, 0.784, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_303.ascii_style]
+grid = "object"
+
+[entities.pillar_304]
+archetype = "furniture"
+[entities.pillar_304.transform]
+position = [-9.200, 0, 2.875]
+[entities.pillar_304.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.620, 0.42]
+[entities.pillar_304.material]
+color = [0.297, 0.850, 0.756, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_304.ascii_style]
+grid = "object"
+
+[entities.pillar_305]
+archetype = "furniture"
+[entities.pillar_305.transform]
+position = [-8.050, 0, 2.875]
+[entities.pillar_305.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.977, 0.42]
+[entities.pillar_305.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_305.ascii_style]
+grid = "object"
+
+[entities.pillar_306]
+archetype = "furniture"
+[entities.pillar_306.transform]
+position = [-6.900, 0, 2.875]
+[entities.pillar_306.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.304, 0.42]
+[entities.pillar_306.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_306.ascii_style]
+grid = "object"
+
+[entities.pillar_307]
+archetype = "furniture"
+[entities.pillar_307.transform]
+position = [-5.750, 0, 2.875]
+[entities.pillar_307.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.495, 0.42]
+[entities.pillar_307.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_307.ascii_style]
+grid = "object"
+
+[entities.pillar_308]
+archetype = "furniture"
+[entities.pillar_308.transform]
+position = [-4.600, 0, 2.875]
+[entities.pillar_308.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.597, 0.42]
+[entities.pillar_308.material]
+color = [0.450, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_308.ascii_style]
+grid = "object"
+
+[entities.pillar_309]
+archetype = "furniture"
+[entities.pillar_309.transform]
+position = [-3.450, 0, 2.875]
+[entities.pillar_309.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.718, 0.42]
+[entities.pillar_309.material]
+color = [0.585, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_309.ascii_style]
+grid = "object"
+
+[entities.pillar_310]
+archetype = "furniture"
+[entities.pillar_310.transform]
+position = [-2.300, 0, 2.875]
+[entities.pillar_310.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.914, 0.42]
+[entities.pillar_310.material]
+color = [0.703, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_310.ascii_style]
+grid = "object"
+
+[entities.pillar_311]
+archetype = "furniture"
+[entities.pillar_311.transform]
+position = [-1.150, 0, 2.875]
+[entities.pillar_311.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.140, 0.42]
+[entities.pillar_311.material]
+color = [0.788, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_311.ascii_style]
+grid = "object"
+
+[entities.pillar_312]
+archetype = "furniture"
+[entities.pillar_312.transform]
+position = [0.000, 0, 2.875]
+[entities.pillar_312.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.299, 0.42]
+[entities.pillar_312.material]
+color = [0.820, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_312.ascii_style]
+grid = "object"
+
+[entities.pillar_313]
+archetype = "furniture"
+[entities.pillar_313.transform]
+position = [1.150, 0, 2.875]
+[entities.pillar_313.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.304, 0.42]
+[entities.pillar_313.material]
+color = [0.788, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_313.ascii_style]
+grid = "object"
+
+[entities.pillar_314]
+archetype = "furniture"
+[entities.pillar_314.transform]
+position = [2.300, 0, 2.875]
+[entities.pillar_314.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.118, 0.42]
+[entities.pillar_314.material]
+color = [0.703, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_314.ascii_style]
+grid = "object"
+
+[entities.pillar_315]
+archetype = "furniture"
+[entities.pillar_315.transform]
+position = [3.450, 0, 2.875]
+[entities.pillar_315.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.807, 0.42]
+[entities.pillar_315.material]
+color = [0.585, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_315.ascii_style]
+grid = "object"
+
+[entities.pillar_316]
+archetype = "furniture"
+[entities.pillar_316.transform]
+position = [4.600, 0, 2.875]
+[entities.pillar_316.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.504, 0.42]
+[entities.pillar_316.material]
+color = [0.450, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_316.ascii_style]
+grid = "object"
+
+[entities.pillar_317]
+archetype = "furniture"
+[entities.pillar_317.transform]
+position = [5.750, 0, 2.875]
+[entities.pillar_317.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.291, 0.42]
+[entities.pillar_317.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_317.ascii_style]
+grid = "object"
+
+[entities.pillar_318]
+archetype = "furniture"
+[entities.pillar_318.transform]
+position = [6.900, 0, 2.875]
+[entities.pillar_318.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.142, 0.42]
+[entities.pillar_318.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_318.ascii_style]
+grid = "object"
+
+[entities.pillar_319]
+archetype = "furniture"
+[entities.pillar_319.transform]
+position = [8.050, 0, 2.875]
+[entities.pillar_319.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.980, 0.42]
+[entities.pillar_319.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_319.ascii_style]
+grid = "object"
+
+[entities.pillar_320]
+archetype = "furniture"
+[entities.pillar_320.transform]
+position = [9.200, 0, 2.875]
+[entities.pillar_320.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.786, 0.42]
+[entities.pillar_320.material]
+color = [0.297, 0.850, 0.756, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_320.ascii_style]
+grid = "object"
+
+[entities.pillar_321]
+archetype = "furniture"
+[entities.pillar_321.transform]
+position = [10.350, 0, 2.875]
+[entities.pillar_321.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.658, 0.42]
+[entities.pillar_321.material]
+color = [0.297, 0.784, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_321.ascii_style]
+grid = "object"
+
+[entities.pillar_322]
+archetype = "furniture"
+[entities.pillar_322.transform]
+position = [11.500, 0, 2.875]
+[entities.pillar_322.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.754, 0.42]
+[entities.pillar_322.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_322.ascii_style]
+grid = "object"
+
+[entities.pillar_323]
+archetype = "furniture"
+[entities.pillar_323.transform]
+position = [12.650, 0, 2.875]
+[entities.pillar_323.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.154, 0.42]
+[entities.pillar_323.material]
+color = [0.297, 0.460, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_323.ascii_style]
+grid = "object"
+
+[entities.pillar_324]
+archetype = "furniture"
+[entities.pillar_324.transform]
+position = [13.800, 0, 2.875]
+[entities.pillar_324.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.744, 0.42]
+[entities.pillar_324.material]
+color = [0.298, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_324.ascii_style]
+grid = "object"
+
+[entities.pillar_325]
+archetype = "furniture"
+[entities.pillar_325.transform]
+position = [-13.800, 0, 4.025]
+[entities.pillar_325.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.658, 0.42]
+[entities.pillar_325.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_325.ascii_style]
+grid = "object"
+
+[entities.pillar_326]
+archetype = "furniture"
+[entities.pillar_326.transform]
+position = [-12.650, 0, 4.025]
+[entities.pillar_326.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.321, 0.42]
+[entities.pillar_326.material]
+color = [0.297, 0.416, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_326.ascii_style]
+grid = "object"
+
+[entities.pillar_327]
+archetype = "furniture"
+[entities.pillar_327.transform]
+position = [-11.500, 0, 4.025]
+[entities.pillar_327.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.103, 0.42]
+[entities.pillar_327.material]
+color = [0.297, 0.575, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_327.ascii_style]
+grid = "object"
+
+[entities.pillar_328]
+archetype = "furniture"
+[entities.pillar_328.transform]
+position = [-10.350, 0, 4.025]
+[entities.pillar_328.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.979, 0.42]
+[entities.pillar_328.material]
+color = [0.297, 0.731, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_328.ascii_style]
+grid = "object"
+
+[entities.pillar_329]
+archetype = "furniture"
+[entities.pillar_329.transform]
+position = [-9.200, 0, 4.025]
+[entities.pillar_329.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.867, 0.42]
+[entities.pillar_329.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_329.ascii_style]
+grid = "object"
+
+[entities.pillar_330]
+archetype = "furniture"
+[entities.pillar_330.transform]
+position = [-8.050, 0, 4.025]
+[entities.pillar_330.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.747, 0.42]
+[entities.pillar_330.material]
+color = [0.297, 0.850, 0.664, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_330.ascii_style]
+grid = "object"
+
+[entities.pillar_331]
+archetype = "furniture"
+[entities.pillar_331.transform]
+position = [-6.900, 0, 4.025]
+[entities.pillar_331.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.708, 0.42]
+[entities.pillar_331.material]
+color = [0.297, 0.850, 0.517, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_331.ascii_style]
+grid = "object"
+
+[entities.pillar_332]
+archetype = "furniture"
+[entities.pillar_332.transform]
+position = [-5.750, 0, 4.025]
+[entities.pillar_332.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.878, 0.42]
+[entities.pillar_332.material]
+color = [0.297, 0.850, 0.376, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_332.ascii_style]
+grid = "object"
+
+[entities.pillar_333]
+archetype = "furniture"
+[entities.pillar_333.transform]
+position = [-4.600, 0, 4.025]
+[entities.pillar_333.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.296, 0.42]
+[entities.pillar_333.material]
+color = [0.350, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_333.ascii_style]
+grid = "object"
+
+[entities.pillar_334]
+archetype = "furniture"
+[entities.pillar_334.transform]
+position = [-3.450, 0, 4.025]
+[entities.pillar_334.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.842, 0.42]
+[entities.pillar_334.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_334.ascii_style]
+grid = "object"
+
+[entities.pillar_335]
+archetype = "furniture"
+[entities.pillar_335.transform]
+position = [-2.300, 0, 4.025]
+[entities.pillar_335.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.286, 0.42]
+[entities.pillar_335.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_335.ascii_style]
+grid = "object"
+
+[entities.pillar_336]
+archetype = "furniture"
+[entities.pillar_336.transform]
+position = [-1.150, 0, 4.025]
+[entities.pillar_336.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.441, 0.42]
+[entities.pillar_336.material]
+color = [0.630, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_336.ascii_style]
+grid = "object"
+
+[entities.pillar_337]
+archetype = "furniture"
+[entities.pillar_337.transform]
+position = [0.000, 0, 4.025]
+[entities.pillar_337.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.289, 0.42]
+[entities.pillar_337.material]
+color = [0.653, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_337.ascii_style]
+grid = "object"
+
+[entities.pillar_338]
+archetype = "furniture"
+[entities.pillar_338.transform]
+position = [1.150, 0, 4.025]
+[entities.pillar_338.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.981, 0.42]
+[entities.pillar_338.material]
+color = [0.630, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_338.ascii_style]
+grid = "object"
+
+[entities.pillar_339]
+archetype = "furniture"
+[entities.pillar_339.transform]
+position = [2.300, 0, 4.025]
+[entities.pillar_339.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.714, 0.42]
+[entities.pillar_339.material]
+color = [0.564, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_339.ascii_style]
+grid = "object"
+
+[entities.pillar_340]
+archetype = "furniture"
+[entities.pillar_340.transform]
+position = [3.450, 0, 4.025]
+[entities.pillar_340.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.591, 0.42]
+[entities.pillar_340.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_340.ascii_style]
+grid = "object"
+
+[entities.pillar_341]
+archetype = "furniture"
+[entities.pillar_341.transform]
+position = [4.600, 0, 4.025]
+[entities.pillar_341.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.556, 0.42]
+[entities.pillar_341.material]
+color = [0.350, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_341.ascii_style]
+grid = "object"
+
+[entities.pillar_342]
+archetype = "furniture"
+[entities.pillar_342.transform]
+position = [5.750, 0, 4.025]
+[entities.pillar_342.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.452, 0.42]
+[entities.pillar_342.material]
+color = [0.297, 0.850, 0.376, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_342.ascii_style]
+grid = "object"
+
+[entities.pillar_343]
+archetype = "furniture"
+[entities.pillar_343.transform]
+position = [6.900, 0, 4.025]
+[entities.pillar_343.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.162, 0.42]
+[entities.pillar_343.material]
+color = [0.297, 0.850, 0.517, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_343.ascii_style]
+grid = "object"
+
+[entities.pillar_344]
+archetype = "furniture"
+[entities.pillar_344.transform]
+position = [8.050, 0, 4.025]
+[entities.pillar_344.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.737, 0.42]
+[entities.pillar_344.material]
+color = [0.297, 0.850, 0.664, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_344.ascii_style]
+grid = "object"
+
+[entities.pillar_345]
+archetype = "furniture"
+[entities.pillar_345.transform]
+position = [9.200, 0, 4.025]
+[entities.pillar_345.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.400, 0.42]
+[entities.pillar_345.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_345.ascii_style]
+grid = "object"
+
+[entities.pillar_346]
+archetype = "furniture"
+[entities.pillar_346.transform]
+position = [10.350, 0, 4.025]
+[entities.pillar_346.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.409, 0.42]
+[entities.pillar_346.material]
+color = [0.297, 0.731, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_346.ascii_style]
+grid = "object"
+
+[entities.pillar_347]
+archetype = "furniture"
+[entities.pillar_347.transform]
+position = [11.500, 0, 4.025]
+[entities.pillar_347.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.861, 0.42]
+[entities.pillar_347.material]
+color = [0.297, 0.575, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_347.ascii_style]
+grid = "object"
+
+[entities.pillar_348]
+archetype = "furniture"
+[entities.pillar_348.transform]
+position = [12.650, 0, 4.025]
+[entities.pillar_348.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.590, 0.42]
+[entities.pillar_348.material]
+color = [0.297, 0.416, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_348.ascii_style]
+grid = "object"
+
+[entities.pillar_349]
+archetype = "furniture"
+[entities.pillar_349.transform]
+position = [13.800, 0, 4.025]
+[entities.pillar_349.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.234, 0.42]
+[entities.pillar_349.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_349.ascii_style]
+grid = "object"
+
+[entities.pillar_350]
+archetype = "furniture"
+[entities.pillar_350.transform]
+position = [-13.800, 0, 5.175]
+[entities.pillar_350.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.840, 0.42]
+[entities.pillar_350.material]
+color = [0.391, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_350.ascii_style]
+grid = "object"
+
+[entities.pillar_351]
+archetype = "furniture"
+[entities.pillar_351.transform]
+position = [-12.650, 0, 5.175]
+[entities.pillar_351.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.861, 0.42]
+[entities.pillar_351.material]
+color = [0.297, 0.360, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_351.ascii_style]
+grid = "object"
+
+[entities.pillar_352]
+archetype = "furniture"
+[entities.pillar_352.transform]
+position = [-11.500, 0, 5.175]
+[entities.pillar_352.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.662, 0.42]
+[entities.pillar_352.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_352.ascii_style]
+grid = "object"
+
+[entities.pillar_353]
+archetype = "furniture"
+[entities.pillar_353.transform]
+position = [-10.350, 0, 5.175]
+[entities.pillar_353.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.214, 0.42]
+[entities.pillar_353.material]
+color = [0.297, 0.663, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_353.ascii_style]
+grid = "object"
+
+[entities.pillar_354]
+archetype = "furniture"
+[entities.pillar_354.transform]
+position = [-9.200, 0, 5.175]
+[entities.pillar_354.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.662, 0.42]
+[entities.pillar_354.material]
+color = [0.297, 0.811, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_354.ascii_style]
+grid = "object"
+
+[entities.pillar_355]
+archetype = "furniture"
+[entities.pillar_355.transform]
+position = [-8.050, 0, 5.175]
+[entities.pillar_355.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_355.material]
+color = [0.297, 0.850, 0.746, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_355.ascii_style]
+grid = "object"
+
+[entities.pillar_356]
+archetype = "furniture"
+[entities.pillar_356.transform]
+position = [-6.900, 0, 5.175]
+[entities.pillar_356.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_356.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_356.ascii_style]
+grid = "object"
+
+[entities.pillar_357]
+archetype = "furniture"
+[entities.pillar_357.transform]
+position = [-5.750, 0, 5.175]
+[entities.pillar_357.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.700, 0.42]
+[entities.pillar_357.material]
+color = [0.297, 0.850, 0.480, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_357.ascii_style]
+grid = "object"
+
+[entities.pillar_358]
+archetype = "furniture"
+[entities.pillar_358.transform]
+position = [-4.600, 0, 5.175]
+[entities.pillar_358.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.339, 0.42]
+[entities.pillar_358.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_358.ascii_style]
+grid = "object"
+
+[entities.pillar_359]
+archetype = "furniture"
+[entities.pillar_359.transform]
+position = [-3.450, 0, 5.175]
+[entities.pillar_359.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.874, 0.42]
+[entities.pillar_359.material]
+color = [0.335, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_359.ascii_style]
+grid = "object"
+
+[entities.pillar_360]
+archetype = "furniture"
+[entities.pillar_360.transform]
+position = [-2.300, 0, 5.175]
+[entities.pillar_360.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.077, 0.42]
+[entities.pillar_360.material]
+color = [0.415, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_360.ascii_style]
+grid = "object"
+
+[entities.pillar_361]
+archetype = "furniture"
+[entities.pillar_361.transform]
+position = [-1.150, 0, 5.175]
+[entities.pillar_361.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.949, 0.42]
+[entities.pillar_361.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_361.ascii_style]
+grid = "object"
+
+[entities.pillar_362]
+archetype = "furniture"
+[entities.pillar_362.transform]
+position = [0.000, 0, 5.175]
+[entities.pillar_362.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.692, 0.42]
+[entities.pillar_362.material]
+color = [0.486, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_362.ascii_style]
+grid = "object"
+
+[entities.pillar_363]
+archetype = "furniture"
+[entities.pillar_363.transform]
+position = [1.150, 0, 5.175]
+[entities.pillar_363.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.539, 0.42]
+[entities.pillar_363.material]
+color = [0.468, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_363.ascii_style]
+grid = "object"
+
+[entities.pillar_364]
+archetype = "furniture"
+[entities.pillar_364.transform]
+position = [2.300, 0, 5.175]
+[entities.pillar_364.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.567, 0.42]
+[entities.pillar_364.material]
+color = [0.415, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_364.ascii_style]
+grid = "object"
+
+[entities.pillar_365]
+archetype = "furniture"
+[entities.pillar_365.transform]
+position = [3.450, 0, 5.175]
+[entities.pillar_365.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.650, 0.42]
+[entities.pillar_365.material]
+color = [0.335, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_365.ascii_style]
+grid = "object"
+
+[entities.pillar_366]
+archetype = "furniture"
+[entities.pillar_366.transform]
+position = [4.600, 0, 5.175]
+[entities.pillar_366.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.571, 0.42]
+[entities.pillar_366.material]
+color = [0.297, 0.850, 0.362, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_366.ascii_style]
+grid = "object"
+
+[entities.pillar_367]
+archetype = "furniture"
+[entities.pillar_367.transform]
+position = [5.750, 0, 5.175]
+[entities.pillar_367.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.212, 0.42]
+[entities.pillar_367.material]
+color = [0.297, 0.850, 0.480, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_367.ascii_style]
+grid = "object"
+
+[entities.pillar_368]
+archetype = "furniture"
+[entities.pillar_368.transform]
+position = [6.900, 0, 5.175]
+[entities.pillar_368.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.681, 0.42]
+[entities.pillar_368.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_368.ascii_style]
+grid = "object"
+
+[entities.pillar_369]
+archetype = "furniture"
+[entities.pillar_369.transform]
+position = [8.050, 0, 5.175]
+[entities.pillar_369.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_369.material]
+color = [0.297, 0.850, 0.746, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_369.ascii_style]
+grid = "object"
+
+[entities.pillar_370]
+archetype = "furniture"
+[entities.pillar_370.transform]
+position = [9.200, 0, 5.175]
+[entities.pillar_370.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_370.material]
+color = [0.297, 0.811, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_370.ascii_style]
+grid = "object"
+
+[entities.pillar_371]
+archetype = "furniture"
+[entities.pillar_371.transform]
+position = [10.350, 0, 5.175]
+[entities.pillar_371.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.706, 0.42]
+[entities.pillar_371.material]
+color = [0.297, 0.663, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_371.ascii_style]
+grid = "object"
+
+[entities.pillar_372]
+archetype = "furniture"
+[entities.pillar_372.transform]
+position = [11.500, 0, 5.175]
+[entities.pillar_372.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.446, 0.42]
+[entities.pillar_372.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_372.ascii_style]
+grid = "object"
+
+[entities.pillar_373]
+archetype = "furniture"
+[entities.pillar_373.transform]
+position = [12.650, 0, 5.175]
+[entities.pillar_373.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.100, 0.42]
+[entities.pillar_373.material]
+color = [0.297, 0.360, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_373.ascii_style]
+grid = "object"
+
+[entities.pillar_374]
+archetype = "furniture"
+[entities.pillar_374.transform]
+position = [13.800, 0, 5.175]
+[entities.pillar_374.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.354, 0.42]
+[entities.pillar_374.material]
+color = [0.391, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_374.ascii_style]
+grid = "object"
+
+[entities.pillar_375]
+archetype = "furniture"
+[entities.pillar_375.transform]
+position = [-13.800, 0, 6.325]
+[entities.pillar_375.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.308, 0.42]
+[entities.pillar_375.material]
+color = [0.455, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_375.ascii_style]
+grid = "object"
+
+[entities.pillar_376]
+archetype = "furniture"
+[entities.pillar_376.transform]
+position = [-12.650, 0, 6.325]
+[entities.pillar_376.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.274, 0.42]
+[entities.pillar_376.material]
+color = [0.304, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_376.ascii_style]
+grid = "object"
+
+[entities.pillar_377]
+archetype = "furniture"
+[entities.pillar_377.transform]
+position = [-11.500, 0, 6.325]
+[entities.pillar_377.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.786, 0.42]
+[entities.pillar_377.material]
+color = [0.297, 0.438, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_377.ascii_style]
+grid = "object"
+
+[entities.pillar_378]
+archetype = "furniture"
+[entities.pillar_378.transform]
+position = [-10.350, 0, 6.325]
+[entities.pillar_378.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.059, 0.42]
+[entities.pillar_378.material]
+color = [0.297, 0.583, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_378.ascii_style]
+grid = "object"
+
+[entities.pillar_379]
+archetype = "furniture"
+[entities.pillar_379.transform]
+position = [-9.200, 0, 6.325]
+[entities.pillar_379.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.446, 0.42]
+[entities.pillar_379.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_379.ascii_style]
+grid = "object"
+
+[entities.pillar_380]
+archetype = "furniture"
+[entities.pillar_380.transform]
+position = [-8.050, 0, 6.325]
+[entities.pillar_380.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_380.material]
+color = [0.297, 0.850, 0.843, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_380.ascii_style]
+grid = "object"
+
+[entities.pillar_381]
+archetype = "furniture"
+[entities.pillar_381.transform]
+position = [-6.900, 0, 6.325]
+[entities.pillar_381.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.430, 0.42]
+[entities.pillar_381.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_381.ascii_style]
+grid = "object"
+
+[entities.pillar_382]
+archetype = "furniture"
+[entities.pillar_382.transform]
+position = [-5.750, 0, 6.325]
+[entities.pillar_382.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.861, 0.42]
+[entities.pillar_382.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_382.ascii_style]
+grid = "object"
+
+[entities.pillar_383]
+archetype = "furniture"
+[entities.pillar_383.transform]
+position = [-4.600, 0, 6.325]
+[entities.pillar_383.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.225, 0.42]
+[entities.pillar_383.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_383.ascii_style]
+grid = "object"
+
+[entities.pillar_384]
+archetype = "furniture"
+[entities.pillar_384.transform]
+position = [-3.450, 0, 6.325]
+[entities.pillar_384.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.343, 0.42]
+[entities.pillar_384.material]
+color = [0.297, 0.850, 0.403, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_384.ascii_style]
+grid = "object"
+
+[entities.pillar_385]
+archetype = "furniture"
+[entities.pillar_385.transform]
+position = [-2.300, 0, 6.325]
+[entities.pillar_385.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.254, 0.42]
+[entities.pillar_385.material]
+color = [0.297, 0.850, 0.334, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_385.ascii_style]
+grid = "object"
+
+[entities.pillar_386]
+archetype = "furniture"
+[entities.pillar_386.transform]
+position = [-1.150, 0, 6.325]
+[entities.pillar_386.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.148, 0.42]
+[entities.pillar_386.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_386.ascii_style]
+grid = "object"
+
+[entities.pillar_387]
+archetype = "furniture"
+[entities.pillar_387.transform]
+position = [0.000, 0, 6.325]
+[entities.pillar_387.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.193, 0.42]
+[entities.pillar_387.material]
+color = [0.319, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_387.ascii_style]
+grid = "object"
+
+[entities.pillar_388]
+archetype = "furniture"
+[entities.pillar_388.transform]
+position = [1.150, 0, 6.325]
+[entities.pillar_388.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.388, 0.42]
+[entities.pillar_388.material]
+color = [0.304, 0.850, 0.297, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_388.ascii_style]
+grid = "object"
+
+[entities.pillar_389]
+archetype = "furniture"
+[entities.pillar_389.transform]
+position = [2.300, 0, 6.325]
+[entities.pillar_389.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.553, 0.42]
+[entities.pillar_389.material]
+color = [0.297, 0.850, 0.334, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_389.ascii_style]
+grid = "object"
+
+[entities.pillar_390]
+archetype = "furniture"
+[entities.pillar_390.transform]
+position = [3.450, 0, 6.325]
+[entities.pillar_390.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.475, 0.42]
+[entities.pillar_390.material]
+color = [0.297, 0.850, 0.403, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_390.ascii_style]
+grid = "object"
+
+[entities.pillar_391]
+archetype = "furniture"
+[entities.pillar_391.transform]
+position = [4.600, 0, 6.325]
+[entities.pillar_391.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.089, 0.42]
+[entities.pillar_391.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_391.ascii_style]
+grid = "object"
+
+[entities.pillar_392]
+archetype = "furniture"
+[entities.pillar_392.transform]
+position = [5.750, 0, 6.325]
+[entities.pillar_392.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.561, 0.42]
+[entities.pillar_392.material]
+color = [0.297, 0.850, 0.598, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_392.ascii_style]
+grid = "object"
+
+[entities.pillar_393]
+archetype = "furniture"
+[entities.pillar_393.transform]
+position = [6.900, 0, 6.325]
+[entities.pillar_393.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_393.material]
+color = [0.297, 0.850, 0.716, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_393.ascii_style]
+grid = "object"
+
+[entities.pillar_394]
+archetype = "furniture"
+[entities.pillar_394.transform]
+position = [8.050, 0, 6.325]
+[entities.pillar_394.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_394.material]
+color = [0.297, 0.850, 0.843, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_394.ascii_style]
+grid = "object"
+
+[entities.pillar_395]
+archetype = "furniture"
+[entities.pillar_395.transform]
+position = [9.200, 0, 6.325]
+[entities.pillar_395.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.690, 0.42]
+[entities.pillar_395.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_395.ascii_style]
+grid = "object"
+
+[entities.pillar_396]
+archetype = "furniture"
+[entities.pillar_396.transform]
+position = [10.350, 0, 6.325]
+[entities.pillar_396.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.357, 0.42]
+[entities.pillar_396.material]
+color = [0.297, 0.583, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_396.ascii_style]
+grid = "object"
+
+[entities.pillar_397]
+archetype = "furniture"
+[entities.pillar_397.transform]
+position = [11.500, 0, 6.325]
+[entities.pillar_397.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.913, 0.42]
+[entities.pillar_397.material]
+color = [0.297, 0.438, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_397.ascii_style]
+grid = "object"
+
+[entities.pillar_398]
+archetype = "furniture"
+[entities.pillar_398.transform]
+position = [12.650, 0, 6.325]
+[entities.pillar_398.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.134, 0.42]
+[entities.pillar_398.material]
+color = [0.304, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_398.ascii_style]
+grid = "object"
+
+[entities.pillar_399]
+archetype = "furniture"
+[entities.pillar_399.transform]
+position = [13.800, 0, 6.325]
+[entities.pillar_399.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.006, 0.42]
+[entities.pillar_399.material]
+color = [0.455, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_399.ascii_style]
+grid = "object"
+
+[entities.pillar_400]
+archetype = "furniture"
+[entities.pillar_400.transform]
+position = [-13.800, 0, 7.475]
+[entities.pillar_400.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.412, 0.42]
+[entities.pillar_400.material]
+color = [0.529, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_400.ascii_style]
+grid = "object"
+
+[entities.pillar_401]
+archetype = "furniture"
+[entities.pillar_401.transform]
+position = [-12.650, 0, 7.475]
+[entities.pillar_401.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.146, 0.42]
+[entities.pillar_401.material]
+color = [0.384, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_401.ascii_style]
+grid = "object"
+
+[entities.pillar_402]
+archetype = "furniture"
+[entities.pillar_402.transform]
+position = [-11.500, 0, 7.475]
+[entities.pillar_402.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.591, 0.42]
+[entities.pillar_402.material]
+color = [0.297, 0.353, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_402.ascii_style]
+grid = "object"
+
+[entities.pillar_403]
+archetype = "furniture"
+[entities.pillar_403.transform]
+position = [-10.350, 0, 7.475]
+[entities.pillar_403.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.061, 0.42]
+[entities.pillar_403.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_403.ascii_style]
+grid = "object"
+
+[entities.pillar_404]
+archetype = "furniture"
+[entities.pillar_404.transform]
+position = [-9.200, 0, 7.475]
+[entities.pillar_404.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.781, 0.42]
+[entities.pillar_404.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_404.ascii_style]
+grid = "object"
+
+[entities.pillar_405]
+archetype = "furniture"
+[entities.pillar_405.transform]
+position = [-8.050, 0, 7.475]
+[entities.pillar_405.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.762, 0.42]
+[entities.pillar_405.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_405.ascii_style]
+grid = "object"
+
+[entities.pillar_406]
+archetype = "furniture"
+[entities.pillar_406.transform]
+position = [-6.900, 0, 7.475]
+[entities.pillar_406.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.838, 0.42]
+[entities.pillar_406.material]
+color = [0.297, 0.850, 0.834, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_406.ascii_style]
+grid = "object"
+
+[entities.pillar_407]
+archetype = "furniture"
+[entities.pillar_407.transform]
+position = [-5.750, 0, 7.475]
+[entities.pillar_407.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.829, 0.42]
+[entities.pillar_407.material]
+color = [0.297, 0.850, 0.726, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_407.ascii_style]
+grid = "object"
+
+[entities.pillar_408]
+archetype = "furniture"
+[entities.pillar_408.transform]
+position = [-4.600, 0, 7.475]
+[entities.pillar_408.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.687, 0.42]
+[entities.pillar_408.material]
+color = [0.297, 0.850, 0.631, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_408.ascii_style]
+grid = "object"
+
+[entities.pillar_409]
+archetype = "furniture"
+[entities.pillar_409.transform]
+position = [-3.450, 0, 7.475]
+[entities.pillar_409.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.529, 0.42]
+[entities.pillar_409.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_409.ascii_style]
+grid = "object"
+
+[entities.pillar_410]
+archetype = "furniture"
+[entities.pillar_410.transform]
+position = [-2.300, 0, 7.475]
+[entities.pillar_410.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.525, 0.42]
+[entities.pillar_410.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_410.ascii_style]
+grid = "object"
+
+[entities.pillar_411]
+archetype = "furniture"
+[entities.pillar_411.transform]
+position = [-1.150, 0, 7.475]
+[entities.pillar_411.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.746, 0.42]
+[entities.pillar_411.material]
+color = [0.297, 0.850, 0.455, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_411.ascii_style]
+grid = "object"
+
+[entities.pillar_412]
+archetype = "furniture"
+[entities.pillar_412.transform]
+position = [0.000, 0, 7.475]
+[entities.pillar_412.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.075, 0.42]
+[entities.pillar_412.material]
+color = [0.297, 0.850, 0.442, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_412.ascii_style]
+grid = "object"
+
+[entities.pillar_413]
+archetype = "furniture"
+[entities.pillar_413.transform]
+position = [1.150, 0, 7.475]
+[entities.pillar_413.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.285, 0.42]
+[entities.pillar_413.material]
+color = [0.297, 0.850, 0.455, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_413.ascii_style]
+grid = "object"
+
+[entities.pillar_414]
+archetype = "furniture"
+[entities.pillar_414.transform]
+position = [2.300, 0, 7.475]
+[entities.pillar_414.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.196, 0.42]
+[entities.pillar_414.material]
+color = [0.297, 0.850, 0.493, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_414.ascii_style]
+grid = "object"
+
+[entities.pillar_415]
+archetype = "furniture"
+[entities.pillar_415.transform]
+position = [3.450, 0, 7.475]
+[entities.pillar_415.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.823, 0.42]
+[entities.pillar_415.material]
+color = [0.297, 0.850, 0.552, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_415.ascii_style]
+grid = "object"
+
+[entities.pillar_416]
+archetype = "furniture"
+[entities.pillar_416.transform]
+position = [4.600, 0, 7.475]
+[entities.pillar_416.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.383, 0.42]
+[entities.pillar_416.material]
+color = [0.297, 0.850, 0.631, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_416.ascii_style]
+grid = "object"
+
+[entities.pillar_417]
+archetype = "furniture"
+[entities.pillar_417.transform]
+position = [5.750, 0, 7.475]
+[entities.pillar_417.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_417.material]
+color = [0.297, 0.850, 0.726, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_417.ascii_style]
+grid = "object"
+
+[entities.pillar_418]
+archetype = "furniture"
+[entities.pillar_418.transform]
+position = [6.900, 0, 7.475]
+[entities.pillar_418.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_418.material]
+color = [0.297, 0.850, 0.834, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_418.ascii_style]
+grid = "object"
+
+[entities.pillar_419]
+archetype = "furniture"
+[entities.pillar_419.transform]
+position = [8.050, 0, 7.475]
+[entities.pillar_419.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.773, 0.42]
+[entities.pillar_419.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_419.ascii_style]
+grid = "object"
+
+[entities.pillar_420]
+archetype = "furniture"
+[entities.pillar_420.transform]
+position = [9.200, 0, 7.475]
+[entities.pillar_420.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.328, 0.42]
+[entities.pillar_420.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_420.ascii_style]
+grid = "object"
+
+[entities.pillar_421]
+archetype = "furniture"
+[entities.pillar_421.transform]
+position = [10.350, 0, 7.475]
+[entities.pillar_421.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.729, 0.42]
+[entities.pillar_421.material]
+color = [0.297, 0.490, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_421.ascii_style]
+grid = "object"
+
+[entities.pillar_422]
+archetype = "furniture"
+[entities.pillar_422.transform]
+position = [11.500, 0, 7.475]
+[entities.pillar_422.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.874, 0.42]
+[entities.pillar_422.material]
+color = [0.297, 0.353, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_422.ascii_style]
+grid = "object"
+
+[entities.pillar_423]
+archetype = "furniture"
+[entities.pillar_423.transform]
+position = [12.650, 0, 7.475]
+[entities.pillar_423.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.831, 0.42]
+[entities.pillar_423.material]
+color = [0.384, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_423.ascii_style]
+grid = "object"
+
+[entities.pillar_424]
+archetype = "furniture"
+[entities.pillar_424.transform]
+position = [13.800, 0, 7.475]
+[entities.pillar_424.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.737, 0.42]
+[entities.pillar_424.material]
+color = [0.529, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_424.ascii_style]
+grid = "object"
+
+[entities.pillar_425]
+archetype = "furniture"
+[entities.pillar_425.transform]
+position = [-13.800, 0, 8.625]
+[entities.pillar_425.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.965, 0.42]
+[entities.pillar_425.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_425.ascii_style]
+grid = "object"
+
+[entities.pillar_426]
+archetype = "furniture"
+[entities.pillar_426.transform]
+position = [-12.650, 0, 8.625]
+[entities.pillar_426.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.803, 0.42]
+[entities.pillar_426.material]
+color = [0.474, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_426.ascii_style]
+grid = "object"
+
+[entities.pillar_427]
+archetype = "furniture"
+[entities.pillar_427.transform]
+position = [-11.500, 0, 8.625]
+[entities.pillar_427.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.653, 0.42]
+[entities.pillar_427.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_427.ascii_style]
+grid = "object"
+
+[entities.pillar_428]
+archetype = "furniture"
+[entities.pillar_428.transform]
+position = [-10.350, 0, 8.625]
+[entities.pillar_428.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.588, 0.42]
+[entities.pillar_428.material]
+color = [0.297, 0.388, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_428.ascii_style]
+grid = "object"
+
+[entities.pillar_429]
+archetype = "furniture"
+[entities.pillar_429.transform]
+position = [-9.200, 0, 8.625]
+[entities.pillar_429.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.530, 0.42]
+[entities.pillar_429.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_429.ascii_style]
+grid = "object"
+
+[entities.pillar_430]
+archetype = "furniture"
+[entities.pillar_430.transform]
+position = [-8.050, 0, 8.625]
+[entities.pillar_430.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.341, 0.42]
+[entities.pillar_430.material]
+color = [0.297, 0.631, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_430.ascii_style]
+grid = "object"
+
+[entities.pillar_431]
+archetype = "furniture"
+[entities.pillar_431.transform]
+position = [-6.900, 0, 8.625]
+[entities.pillar_431.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.966, 0.42]
+[entities.pillar_431.material]
+color = [0.297, 0.740, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_431.ascii_style]
+grid = "object"
+
+[entities.pillar_432]
+archetype = "furniture"
+[entities.pillar_432.transform]
+position = [-5.750, 0, 8.625]
+[entities.pillar_432.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.516, 0.42]
+[entities.pillar_432.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_432.ascii_style]
+grid = "object"
+
+[entities.pillar_433]
+archetype = "furniture"
+[entities.pillar_433.transform]
+position = [-4.600, 0, 8.625]
+[entities.pillar_433.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_433.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_433.ascii_style]
+grid = "object"
+
+[entities.pillar_434]
+archetype = "furniture"
+[entities.pillar_434.transform]
+position = [-3.450, 0, 8.625]
+[entities.pillar_434.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_434.material]
+color = [0.297, 0.850, 0.706, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_434.ascii_style]
+grid = "object"
+
+[entities.pillar_435]
+archetype = "furniture"
+[entities.pillar_435.transform]
+position = [-2.300, 0, 8.625]
+[entities.pillar_435.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.455, 0.42]
+[entities.pillar_435.material]
+color = [0.297, 0.850, 0.653, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_435.ascii_style]
+grid = "object"
+
+[entities.pillar_436]
+archetype = "furniture"
+[entities.pillar_436.transform]
+position = [-1.150, 0, 8.625]
+[entities.pillar_436.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.801, 0.42]
+[entities.pillar_436.material]
+color = [0.297, 0.850, 0.620, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_436.ascii_style]
+grid = "object"
+
+[entities.pillar_437]
+archetype = "furniture"
+[entities.pillar_437.transform]
+position = [0.000, 0, 8.625]
+[entities.pillar_437.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.975, 0.42]
+[entities.pillar_437.material]
+color = [0.297, 0.850, 0.609, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_437.ascii_style]
+grid = "object"
+
+[entities.pillar_438]
+archetype = "furniture"
+[entities.pillar_438.transform]
+position = [1.150, 0, 8.625]
+[entities.pillar_438.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.849, 0.42]
+[entities.pillar_438.material]
+color = [0.297, 0.850, 0.620, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_438.ascii_style]
+grid = "object"
+
+[entities.pillar_439]
+archetype = "furniture"
+[entities.pillar_439.transform]
+position = [2.300, 0, 8.625]
+[entities.pillar_439.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.514, 0.42]
+[entities.pillar_439.material]
+color = [0.297, 0.850, 0.653, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_439.ascii_style]
+grid = "object"
+
+[entities.pillar_440]
+archetype = "furniture"
+[entities.pillar_440.transform]
+position = [3.450, 0, 8.625]
+[entities.pillar_440.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_440.material]
+color = [0.297, 0.850, 0.706, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_440.ascii_style]
+grid = "object"
+
+[entities.pillar_441]
+archetype = "furniture"
+[entities.pillar_441.transform]
+position = [4.600, 0, 8.625]
+[entities.pillar_441.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_441.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_441.ascii_style]
+grid = "object"
+
+[entities.pillar_442]
+archetype = "furniture"
+[entities.pillar_442.transform]
+position = [5.750, 0, 8.625]
+[entities.pillar_442.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.457, 0.42]
+[entities.pillar_442.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_442.ascii_style]
+grid = "object"
+
+[entities.pillar_443]
+archetype = "furniture"
+[entities.pillar_443.transform]
+position = [6.900, 0, 8.625]
+[entities.pillar_443.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.919, 0.42]
+[entities.pillar_443.material]
+color = [0.297, 0.740, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_443.ascii_style]
+grid = "object"
+
+[entities.pillar_444]
+archetype = "furniture"
+[entities.pillar_444.transform]
+position = [8.050, 0, 8.625]
+[entities.pillar_444.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.342, 0.42]
+[entities.pillar_444.material]
+color = [0.297, 0.631, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_444.ascii_style]
+grid = "object"
+
+[entities.pillar_445]
+archetype = "furniture"
+[entities.pillar_445.transform]
+position = [9.200, 0, 8.625]
+[entities.pillar_445.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.578, 0.42]
+[entities.pillar_445.material]
+color = [0.297, 0.513, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_445.ascii_style]
+grid = "object"
+
+[entities.pillar_446]
+archetype = "furniture"
+[entities.pillar_446.transform]
+position = [10.350, 0, 8.625]
+[entities.pillar_446.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.647, 0.42]
+[entities.pillar_446.material]
+color = [0.297, 0.388, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_446.ascii_style]
+grid = "object"
+
+[entities.pillar_447]
+archetype = "furniture"
+[entities.pillar_447.transform]
+position = [11.500, 0, 8.625]
+[entities.pillar_447.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.678, 0.42]
+[entities.pillar_447.material]
+color = [0.338, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_447.ascii_style]
+grid = "object"
+
+[entities.pillar_448]
+archetype = "furniture"
+[entities.pillar_448.transform]
+position = [12.650, 0, 8.625]
+[entities.pillar_448.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.776, 0.42]
+[entities.pillar_448.material]
+color = [0.474, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_448.ascii_style]
+grid = "object"
+
+[entities.pillar_449]
+archetype = "furniture"
+[entities.pillar_449.transform]
+position = [13.800, 0, 8.625]
+[entities.pillar_449.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.906, 0.42]
+[entities.pillar_449.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_449.ascii_style]
+grid = "object"
+
+[entities.pillar_450]
+archetype = "furniture"
+[entities.pillar_450.transform]
+position = [-13.800, 0, 9.775]
+[entities.pillar_450.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.484, 0.42]
+[entities.pillar_450.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_450.ascii_style]
+grid = "object"
+
+[entities.pillar_451]
+archetype = "furniture"
+[entities.pillar_451.transform]
+position = [-12.650, 0, 9.775]
+[entities.pillar_451.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.796, 0.42]
+[entities.pillar_451.material]
+color = [0.572, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_451.ascii_style]
+grid = "object"
+
+[entities.pillar_452]
+archetype = "furniture"
+[entities.pillar_452.transform]
+position = [-11.500, 0, 9.775]
+[entities.pillar_452.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.114, 0.42]
+[entities.pillar_452.material]
+color = [0.442, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_452.ascii_style]
+grid = "object"
+
+[entities.pillar_453]
+archetype = "furniture"
+[entities.pillar_453.transform]
+position = [-10.350, 0, 9.775]
+[entities.pillar_453.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.237, 0.42]
+[entities.pillar_453.material]
+color = [0.318, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_453.ascii_style]
+grid = "object"
+
+[entities.pillar_454]
+archetype = "furniture"
+[entities.pillar_454.transform]
+position = [-9.200, 0, 9.775]
+[entities.pillar_454.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.018, 0.42]
+[entities.pillar_454.material]
+color = [0.297, 0.395, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_454.ascii_style]
+grid = "object"
+
+[entities.pillar_455]
+archetype = "furniture"
+[entities.pillar_455.transform]
+position = [-8.050, 0, 9.775]
+[entities.pillar_455.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.493, 0.42]
+[entities.pillar_455.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_455.ascii_style]
+grid = "object"
+
+[entities.pillar_456]
+archetype = "furniture"
+[entities.pillar_456.transform]
+position = [-6.900, 0, 9.775]
+[entities.pillar_456.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.886, 0.42]
+[entities.pillar_456.material]
+color = [0.297, 0.606, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_456.ascii_style]
+grid = "object"
+
+[entities.pillar_457]
+archetype = "furniture"
+[entities.pillar_457.transform]
+position = [-5.750, 0, 9.775]
+[entities.pillar_457.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.472, 0.42]
+[entities.pillar_457.material]
+color = [0.297, 0.697, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_457.ascii_style]
+grid = "object"
+
+[entities.pillar_458]
+archetype = "furniture"
+[entities.pillar_458.transform]
+position = [-4.600, 0, 9.775]
+[entities.pillar_458.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.398, 0.42]
+[entities.pillar_458.material]
+color = [0.297, 0.775, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_458.ascii_style]
+grid = "object"
+
+[entities.pillar_459]
+archetype = "furniture"
+[entities.pillar_459.transform]
+position = [-3.450, 0, 9.775]
+[entities.pillar_459.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.589, 0.42]
+[entities.pillar_459.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_459.ascii_style]
+grid = "object"
+
+[entities.pillar_460]
+archetype = "furniture"
+[entities.pillar_460.transform]
+position = [-2.300, 0, 9.775]
+[entities.pillar_460.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.809, 0.42]
+[entities.pillar_460.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_460.ascii_style]
+grid = "object"
+
+[entities.pillar_461]
+archetype = "furniture"
+[entities.pillar_461.transform]
+position = [-1.150, 0, 9.775]
+[entities.pillar_461.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.837, 0.42]
+[entities.pillar_461.material]
+color = [0.297, 0.850, 0.786, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_461.ascii_style]
+grid = "object"
+
+[entities.pillar_462]
+archetype = "furniture"
+[entities.pillar_462.transform]
+position = [0.000, 0, 9.775]
+[entities.pillar_462.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.624, 0.42]
+[entities.pillar_462.material]
+color = [0.297, 0.850, 0.776, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_462.ascii_style]
+grid = "object"
+
+[entities.pillar_463]
+archetype = "furniture"
+[entities.pillar_463.transform]
+position = [1.150, 0, 9.775]
+[entities.pillar_463.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_463.material]
+color = [0.297, 0.850, 0.786, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_463.ascii_style]
+grid = "object"
+
+[entities.pillar_464]
+archetype = "furniture"
+[entities.pillar_464.transform]
+position = [2.300, 0, 9.775]
+[entities.pillar_464.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_464.material]
+color = [0.297, 0.850, 0.815, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_464.ascii_style]
+grid = "object"
+
+[entities.pillar_465]
+archetype = "furniture"
+[entities.pillar_465.transform]
+position = [3.450, 0, 9.775]
+[entities.pillar_465.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.350, 0.42]
+[entities.pillar_465.material]
+color = [0.297, 0.838, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_465.ascii_style]
+grid = "object"
+
+[entities.pillar_466]
+archetype = "furniture"
+[entities.pillar_466.transform]
+position = [4.600, 0, 9.775]
+[entities.pillar_466.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.689, 0.42]
+[entities.pillar_466.material]
+color = [0.297, 0.775, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_466.ascii_style]
+grid = "object"
+
+[entities.pillar_467]
+archetype = "furniture"
+[entities.pillar_467.transform]
+position = [5.750, 0, 9.775]
+[entities.pillar_467.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.113, 0.42]
+[entities.pillar_467.material]
+color = [0.297, 0.697, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_467.ascii_style]
+grid = "object"
+
+[entities.pillar_468]
+archetype = "furniture"
+[entities.pillar_468.transform]
+position = [6.900, 0, 9.775]
+[entities.pillar_468.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.393, 0.42]
+[entities.pillar_468.material]
+color = [0.297, 0.606, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_468.ascii_style]
+grid = "object"
+
+[entities.pillar_469]
+archetype = "furniture"
+[entities.pillar_469.transform]
+position = [8.050, 0, 9.775]
+[entities.pillar_469.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.482, 0.42]
+[entities.pillar_469.material]
+color = [0.297, 0.505, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_469.ascii_style]
+grid = "object"
+
+[entities.pillar_470]
+archetype = "furniture"
+[entities.pillar_470.transform]
+position = [9.200, 0, 9.775]
+[entities.pillar_470.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.498, 0.42]
+[entities.pillar_470.material]
+color = [0.297, 0.395, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_470.ascii_style]
+grid = "object"
+
+[entities.pillar_471]
+archetype = "furniture"
+[entities.pillar_471.transform]
+position = [10.350, 0, 9.775]
+[entities.pillar_471.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.601, 0.42]
+[entities.pillar_471.material]
+color = [0.318, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_471.ascii_style]
+grid = "object"
+
+[entities.pillar_472]
+archetype = "furniture"
+[entities.pillar_472.transform]
+position = [11.500, 0, 9.775]
+[entities.pillar_472.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.844, 0.42]
+[entities.pillar_472.material]
+color = [0.442, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_472.ascii_style]
+grid = "object"
+
+[entities.pillar_473]
+archetype = "furniture"
+[entities.pillar_473.transform]
+position = [12.650, 0, 9.775]
+[entities.pillar_473.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.096, 0.42]
+[entities.pillar_473.material]
+color = [0.572, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_473.ascii_style]
+grid = "object"
+
+[entities.pillar_474]
+archetype = "furniture"
+[entities.pillar_474.transform]
+position = [13.800, 0, 9.775]
+[entities.pillar_474.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.127, 0.42]
+[entities.pillar_474.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_474.ascii_style]
+grid = "object"
+
+[entities.pillar_475]
+archetype = "furniture"
+[entities.pillar_475.transform]
+position = [-13.800, 0, 10.925]
+[entities.pillar_475.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.423, 0.42]
+[entities.pillar_475.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_475.ascii_style]
+grid = "object"
+
+[entities.pillar_476]
+archetype = "furniture"
+[entities.pillar_476.transform]
+position = [-12.650, 0, 10.925]
+[entities.pillar_476.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.049, 0.42]
+[entities.pillar_476.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_476.ascii_style]
+grid = "object"
+
+[entities.pillar_477]
+archetype = "furniture"
+[entities.pillar_477.transform]
+position = [-11.500, 0, 10.925]
+[entities.pillar_477.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.414, 0.42]
+[entities.pillar_477.material]
+color = [0.554, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_477.ascii_style]
+grid = "object"
+
+[entities.pillar_478]
+archetype = "furniture"
+[entities.pillar_478.transform]
+position = [-10.350, 0, 10.925]
+[entities.pillar_478.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.356, 0.42]
+[entities.pillar_478.material]
+color = [0.436, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_478.ascii_style]
+grid = "object"
+
+[entities.pillar_479]
+archetype = "furniture"
+[entities.pillar_479.transform]
+position = [-9.200, 0, 10.925]
+[entities.pillar_479.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.952, 0.42]
+[entities.pillar_479.material]
+color = [0.325, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_479.ascii_style]
+grid = "object"
+
+[entities.pillar_480]
+archetype = "furniture"
+[entities.pillar_480.transform]
+position = [-8.050, 0, 10.925]
+[entities.pillar_480.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.459, 0.42]
+[entities.pillar_480.material]
+color = [0.297, 0.374, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_480.ascii_style]
+grid = "object"
+
+[entities.pillar_481]
+archetype = "furniture"
+[entities.pillar_481.transform]
+position = [-6.900, 0, 10.925]
+[entities.pillar_481.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.139, 0.42]
+[entities.pillar_481.material]
+color = [0.297, 0.468, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_481.ascii_style]
+grid = "object"
+
+[entities.pillar_482]
+archetype = "furniture"
+[entities.pillar_482.transform]
+position = [-5.750, 0, 10.925]
+[entities.pillar_482.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.084, 0.42]
+[entities.pillar_482.material]
+color = [0.297, 0.551, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_482.ascii_style]
+grid = "object"
+
+[entities.pillar_483]
+archetype = "furniture"
+[entities.pillar_483.transform]
+position = [-4.600, 0, 10.925]
+[entities.pillar_483.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.178, 0.42]
+[entities.pillar_483.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_483.ascii_style]
+grid = "object"
+
+[entities.pillar_484]
+archetype = "furniture"
+[entities.pillar_484.transform]
+position = [-3.450, 0, 10.925]
+[entities.pillar_484.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.204, 0.42]
+[entities.pillar_484.material]
+color = [0.297, 0.680, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_484.ascii_style]
+grid = "object"
+
+[entities.pillar_485]
+archetype = "furniture"
+[entities.pillar_485.transform]
+position = [-2.300, 0, 10.925]
+[entities.pillar_485.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.024, 0.42]
+[entities.pillar_485.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_485.ascii_style]
+grid = "object"
+
+[entities.pillar_486]
+archetype = "furniture"
+[entities.pillar_486.transform]
+position = [-1.150, 0, 10.925]
+[entities.pillar_486.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.689, 0.42]
+[entities.pillar_486.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_486.ascii_style]
+grid = "object"
+
+[entities.pillar_487]
+archetype = "furniture"
+[entities.pillar_487.transform]
+position = [0.000, 0, 10.925]
+[entities.pillar_487.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.403, 0.42]
+[entities.pillar_487.material]
+color = [0.297, 0.757, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_487.ascii_style]
+grid = "object"
+
+[entities.pillar_488]
+archetype = "furniture"
+[entities.pillar_488.transform]
+position = [1.150, 0, 10.925]
+[entities.pillar_488.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.366, 0.42]
+[entities.pillar_488.material]
+color = [0.297, 0.749, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_488.ascii_style]
+grid = "object"
+
+[entities.pillar_489]
+archetype = "furniture"
+[entities.pillar_489.transform]
+position = [2.300, 0, 10.925]
+[entities.pillar_489.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 0.623, 0.42]
+[entities.pillar_489.material]
+color = [0.297, 0.723, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_489.ascii_style]
+grid = "object"
+
+[entities.pillar_490]
+archetype = "furniture"
+[entities.pillar_490.transform]
+position = [3.450, 0, 10.925]
+[entities.pillar_490.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.028, 0.42]
+[entities.pillar_490.material]
+color = [0.297, 0.680, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_490.ascii_style]
+grid = "object"
+
+[entities.pillar_491]
+archetype = "furniture"
+[entities.pillar_491.transform]
+position = [4.600, 0, 10.925]
+[entities.pillar_491.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.361, 0.42]
+[entities.pillar_491.material]
+color = [0.297, 0.623, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_491.ascii_style]
+grid = "object"
+
+[entities.pillar_492]
+archetype = "furniture"
+[entities.pillar_492.transform]
+position = [5.750, 0, 10.925]
+[entities.pillar_492.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.486, 0.42]
+[entities.pillar_492.material]
+color = [0.297, 0.551, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_492.ascii_style]
+grid = "object"
+
+[entities.pillar_493]
+archetype = "furniture"
+[entities.pillar_493.transform]
+position = [6.900, 0, 10.925]
+[entities.pillar_493.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.457, 0.42]
+[entities.pillar_493.material]
+color = [0.297, 0.468, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_493.ascii_style]
+grid = "object"
+
+[entities.pillar_494]
+archetype = "furniture"
+[entities.pillar_494.transform]
+position = [8.050, 0, 10.925]
+[entities.pillar_494.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.452, 0.42]
+[entities.pillar_494.material]
+color = [0.297, 0.374, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_494.ascii_style]
+grid = "object"
+
+[entities.pillar_495]
+archetype = "furniture"
+[entities.pillar_495.transform]
+position = [9.200, 0, 10.925]
+[entities.pillar_495.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.625, 0.42]
+[entities.pillar_495.material]
+color = [0.325, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_495.ascii_style]
+grid = "object"
+
+[entities.pillar_496]
+archetype = "furniture"
+[entities.pillar_496.transform]
+position = [10.350, 0, 10.925]
+[entities.pillar_496.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.957, 0.42]
+[entities.pillar_496.material]
+color = [0.436, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_496.ascii_style]
+grid = "object"
+
+[entities.pillar_497]
+archetype = "furniture"
+[entities.pillar_497.transform]
+position = [11.500, 0, 10.925]
+[entities.pillar_497.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.244, 0.42]
+[entities.pillar_497.material]
+color = [0.554, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_497.ascii_style]
+grid = "object"
+
+[entities.pillar_498]
+archetype = "furniture"
+[entities.pillar_498.transform]
+position = [12.650, 0, 10.925]
+[entities.pillar_498.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 2.237, 0.42]
+[entities.pillar_498.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_498.ascii_style]
+grid = "object"
+
+[entities.pillar_499]
+archetype = "furniture"
+[entities.pillar_499.transform]
+position = [13.800, 0, 10.925]
+[entities.pillar_499.bounds]
+min = [-0.42, 0, -0.42]
+max = [0.42, 1.827, 0.42]
+[entities.pillar_499.material]
+color = [0.574, 0.297, 0.850, 1.0]
+roughness = 0.8
+metallic = 0.0
+[entities.pillar_499.ascii_style]
+grid = "object"

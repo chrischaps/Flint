@@ -36,10 +36,7 @@ fn cell_slot(p: vec2<f32>) -> u32 {
     let msize = vec2<i32>(textureDimensions(cell_mask));
     let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
     let id = textureLoad(cell_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
-    if id >= 256u {
-        return 0u;
-    }
-    return u.slots[id / 4u][id % 4u];
+    return slot_of(id);
 }
 
 struct Entries {
@@ -93,7 +90,7 @@ fn fs_main(in: VertexOutput) -> Entries {
         let q = floor(centre + ((vec2<f32>(f32(k & 3u), f32(k >> 2u)) + 0.5) / 4.0 - 0.5) * foot);
         let s = cell_slot(q);
         // Pass-through variants have no band, so no row of theirs matches
-        if s == 0u || u.variants[s].cell_row != member {
+        if s == 0u || variants[s].cell_row != member {
             continue;
         }
         if first == 0u || first == s {

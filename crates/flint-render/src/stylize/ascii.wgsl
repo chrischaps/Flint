@@ -314,13 +314,6 @@ fn mask_texel(p: vec2<f32>) -> vec2<u32> {
     return textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
 }
 
-fn slot_of(id: u32) -> u32 {
-    if id >= 256u {
-        return 0u;
-    }
-    return u.slots[id / 4u][id % 4u];
-}
-
 fn slot_at(p: vec2<f32>) -> u32 {
     return slot_of(mask_texel(p).x);
 }
@@ -385,7 +378,7 @@ struct Drawn {
 // summed them once for the cell; a variant without a band, or a cell
 // holding more of its band's variants than the pass keeps, sums here.
 fn variant_cell(slot: u32, p: vec2<f32>) -> Drawn {
-    let v = u.variants[slot];
+    let v = variants[slot];
     let rel = p - v.origin;
     let cell = floor(rel / v.cell);
     let cell_min = cell * v.cell + v.origin;
@@ -451,7 +444,7 @@ fn variant_cell(slot: u32, p: vec2<f32>) -> Drawn {
 
 // A per-entity variant's pixel
 fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
-    let v = u.variants[slot];
+    let v = variants[slot];
     let d = variant_cell(slot, p);
     // A feature thinner than a cell holds a sliver of one glyph, mostly
     // ground: at cell 8 a bench's 3 px leg is a dark smudge (#288). Two
@@ -502,7 +495,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     var out: vec3<f32>;
     if slot != 0u {
-        let v = u.variants[slot];
+        let v = variants[slot];
         if (v.flags & 1u) != 0u {
             return passed(p);
         }
@@ -572,7 +565,7 @@ fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
         blend = f32(m.y) / 65535.0;
     }
     if slot != 0u {
-        let v = u.variants[slot];
+        let v = variants[slot];
         if (v.flags & 1u) != 0u || blend <= 0.0 {
             return text_passed(p);
         }

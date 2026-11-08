@@ -37,10 +37,7 @@ fn stats_slot(p: vec2<f32>) -> u32 {
     let msize = vec2<i32>(textureDimensions(stats_mask));
     let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
     let id = textureLoad(stats_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
-    if id >= 256u {
-        return 0u;
-    }
-    return u.slots[id / 4u][id % 4u];
+    return slot_of(id);
 }
 
 @fragment

@@ -107,11 +107,11 @@
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage, StyleTexture,
+    choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
+    StyleParam, StylePass, StyleStage, StyleTexture,
 };
-use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack};
-use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
+use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
+use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,6 +128,37 @@ pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
 
 /// The palette `color = "palette"` uses when the scene names none.
 pub const DEFAULT_PALETTE: &str = "phosphor";
+
+/// The built-in glyph set's ramps, in the order the menu offers them.
+pub const RAMPS: &[&str] = &["classic", "blocks", "minimal", "detailed"];
+
+/// The fonts to offer (#322): the built-in set, then every
+/// `fonts/*.glyphs.toml` beside the scene or in its parent.
+fn font_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(&[BUILTIN_SET], scope.files("fonts", GLYPHS_SUFFIX))
+}
+
+/// The palettes to offer (#322): the built-ins, then every
+/// `palettes/*.palette.toml` beside the scene or in its parent.
+pub(super) fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    choices_with(BUILTIN_PALETTES, scope.files("palettes", PALETTE_SUFFIX))
+}
+
+/// The ramps the chosen font has (#322): a project's set names its own,
+/// which needn't be the built-in four. A font that doesn't load draws with
+/// the built-in set, so that set's ramps are offered then.
+fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
+    // The built-in set's four, in the descriptor's order
+    let builtin = || RAMPS.iter().map(|r| r.to_string()).collect();
+    let font = (scope.option)("font");
+    if font.is_empty() || font == BUILTIN_SET {
+        return builtin();
+    }
+    match GlyphSetCache::new(scope.search()).get(&font) {
+        Ok(set) => set.ramps().map(|r| r.name().to_string()).collect(),
+        Err(_) => builtin(),
+    }
+}
 
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     name: "ascii",
@@ -290,55 +321,55 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             name: "font",
             default: "builtin",
             choices: &[],
-            closed: false,
+            discover: Some(font_choices),
         },
         StyleOption {
             name: "ramp",
             default: "",
-            choices: &["classic", "blocks", "minimal", "detailed"],
-            closed: false,
+            choices: RAMPS,
+            discover: Some(ramp_choices),
         },
         StyleOption {
             name: "color",
             default: "source",
             choices: COLOR_MODES,
-            closed: true,
+            discover: None,
         },
         StyleOption {
             name: "palette",
             default: DEFAULT_PALETTE,
             choices: BUILTIN_PALETTES,
-            closed: false,
+            discover: Some(palette_choices),
         },
         StyleOption {
             name: "ground",
             default: "dim",
             choices: GROUND_MODES,
-            closed: true,
+            discover: None,
         },
         StyleOption {
             name: "temporal",
             default: "on",
             choices: TEMPORAL_MODES,
-            closed: true,
+            discover: None,
         },
         StyleOption {
             name: "scope",
             default: "screen",
             choices: SCOPES,
-            closed: true,
+            discover: None,
         },
         StyleOption {
             name: "grid",
             default: "screen",
             choices: GRIDS,
-            closed: true,
+            discover: None,
         },
         StyleOption {
             name: "transition",
             default: "fade",
             choices: TRANSITIONS,
-            closed: true,
+            discover: None,
         },
     ],
     // The mask gives styled entities their outlines (#267); with no entity
@@ -456,6 +487,18 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
     create: |d| {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");
+        // Group 0 of every pass over ascii_common.wgsl (#336): the uniform,
+        // the variant rows and each mask id's slot
+        let table_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Table BGL"),
+            entries: &[uniform_entry(), storage_entry(1), storage_entry(2)],
+        });
+        // The edge pass's: its uniform and the slots, which say whose ids
+        // draw outlines
+        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ASCII Edge BGL"),
+            entries: &[uniform_entry(), storage_entry(1)],
+        });
         let input_bgl = kit::sampled_layout(device, "ASCII Input BGL");
         let cells_bgl = kit::uint_layout(device, "ASCII Cells BGL");
         let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -611,7 +654,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             device,
             "ASCII Cells Pipeline",
             &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
-            &[&uniform_bgl, &input_bgl, &cells_bgl, &edges_in_bgl],
+            &[&table_bgl, &input_bgl, &cells_bgl, &edges_in_bgl],
             CELL_FORMAT,
         );
         // Tone statistics (#289): per lattice row, then per slot
@@ -619,7 +662,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             device,
             "ASCII Stats Pipeline",
             &kit::shader(device, "ASCII Stats Shader", STATS_SHADER),
-            &[&uniform_bgl, &stats_in_bgl],
+            &[&table_bgl, &stats_in_bgl],
             STATS_FORMAT,
         );
         // Per-entity variant cells (#313): the picture and the mask in, as
@@ -628,14 +671,14 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             device,
             "ASCII Variant Cells Pipeline",
             &kit::shader(device, "ASCII Variant Cells Shader", VARIANT_CELLS_SHADER),
-            &[&uniform_bgl, &stats_in_bgl],
+            &[&table_bgl, &stats_in_bgl],
             &[VARIANT_CELL_FORMAT; 2],
         );
         let stats_resolve_pipeline = kit::fullscreen_pipeline(
             device,
             "ASCII Stats Resolve Pipeline",
             &kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER),
-            &[&uniform_bgl, &edges_in_bgl],
+            &[&table_bgl, &edges_in_bgl],
             STATS_FORMAT,
         );
         let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
@@ -648,7 +691,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                     "ASCII Edge Shader",
                     include_str!("ascii_edges.wgsl"),
                 ),
-                &[&uniform_bgl, &depth_bgl, &mask_bgl],
+                &[&edge_bgl, &depth_bgl, &mask_bgl],
                 EDGE_FORMAT,
             ),
             edge_cell_pipeline: kit::fullscreen_pipeline(
@@ -685,7 +728,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                 device,
                 "ASCII Pipeline",
                 &glyph_module,
-                &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+                &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
                 d.format,
             ),
             text_pipeline: kit::fullscreen_pipeline_entry(
@@ -693,7 +736,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                 "ASCII Text Pipeline",
                 &glyph_module,
                 "fs_text",
-                &[&uniform_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+                &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
                 TEXT_FORMAT,
             ),
             capture: AtomicBool::new(false),
@@ -703,6 +746,9 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             no_mask_view,
             uniforms: kit::uniform_buffer::<AsciiUniforms>(device, "ASCII Uniforms"),
             uniform_bgl,
+            table_bgl,
+            edge_bgl,
+            table: Mutex::new(None),
             input_bgl,
             cells_bgl,
             atlas_bgl,
@@ -764,9 +810,6 @@ struct AsciiUniforms {
     /// x: rows of `variants` in use (1 = the whole frame alone); y: 1 when
     /// the whole frame passes through (only entities asked, #266).
     variant_meta: [u32; 4],
-    variants: [VariantUniform; MAX_VARIANTS],
-    /// The variant slot of each mask id, four ids a vec4.
-    slots: [[u32; 4]; MAX_IDS / 4],
     /// The variant cell state's bands (#313), `variant_meta[2]` of them:
     /// each grid's cell and origin, and its (first row, rows, columns,
     /// footprint's f32 bits).
@@ -774,8 +817,9 @@ struct AsciiUniforms {
     band_rows: [[u32; 4]; MAX_BANDS],
 }
 
-/// One per-entity variant's settings (#266). Row 0 is unused: the whole
-/// frame draws from the uniform's own fields and the cell state.
+/// One per-entity variant's settings (#266), a row of the variant table's
+/// storage buffer (#336). Row 0 is unused: the whole frame draws from the
+/// uniform's own fields and the cell state.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct VariantUniform {
@@ -834,8 +878,10 @@ struct EdgeUniforms {
     _pad: [f32; 2],
     depth_threshold: f32,
     normal_threshold: f32,
-    /// One bit for each mask id below [`MAX_IDS`] drawn in this style.
-    ours: [[u32; 4]; 2],
+    /// The plain `ascii` id (0 = none); the variants' ids are the ones the
+    /// variant table gives a slot (#336).
+    plain_id: u32,
+    _pad1: [u32; 3],
 }
 
 /// The edge cell pass's uniforms (#267), `ascii_edge_cells.wgsl`.
@@ -856,24 +902,92 @@ const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
 const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// The bit set of this style's mask ids for the edge pass: the plain
-/// `ascii` id, and every id the variant table gives a slot of its own.
-fn our_ids(style_id: Option<u16>, slots: &[u32; MAX_IDS]) -> [[u32; 4]; 2] {
-    let mut bits = [[0u32; 4]; 2];
-    let mut set = |id: usize| {
-        if id > 0 && id < MAX_IDS {
-            bits[id / 128][(id / 32) % 4] |= 1 << (id % 32);
-        }
-    };
-    if let Some(id) = style_id {
-        set(id as usize);
+/// How many entries a variant table buffer holds to fit `needed`: what it
+/// holds already when that's enough, else the next power of two (#336).
+fn table_capacity(capacity: usize, needed: usize) -> usize {
+    if needed <= capacity {
+        capacity
+    } else {
+        needed.next_power_of_two().max(MIN_TABLE)
     }
-    for (id, slot) in slots.iter().enumerate() {
-        if *slot != 0 {
-            set(id);
-        }
+}
+
+/// The variant table (#336): every variant's row and every mask id's slot,
+/// in storage buffers that grow with the frame and never shrink.
+/// `generation` keys the bind groups over them.
+struct VariantTable {
+    rows: wgpu::Buffer,
+    slots: wgpu::Buffer,
+    row_capacity: usize,
+    slot_capacity: usize,
+    generation: u64,
+}
+
+impl VariantTable {
+    fn storage(device: &wgpu::Device, label: &str, bytes: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: bytes as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
-    bits
+
+    /// `slot`'s table, remade bigger when `rows` or `slots` don't fit.
+    fn ensure<'s>(
+        slot: &'s mut Option<VariantTable>,
+        device: &wgpu::Device,
+        rows: usize,
+        slots: usize,
+    ) -> &'s VariantTable {
+        let (have_rows, have_slots, generation) = slot.as_ref().map_or((0, 0, 0), |t| {
+            (t.row_capacity, t.slot_capacity, t.generation + 1)
+        });
+        let row_capacity = table_capacity(have_rows, rows);
+        let slot_capacity = table_capacity(have_slots, slots);
+        if slot.is_none() || row_capacity != have_rows || slot_capacity != have_slots {
+            *slot = Some(VariantTable {
+                rows: Self::storage(
+                    device,
+                    "ASCII Variant Rows",
+                    row_capacity * std::mem::size_of::<VariantUniform>(),
+                ),
+                slots: Self::storage(device, "ASCII Variant Slots", slot_capacity * 4),
+                row_capacity,
+                slot_capacity,
+                generation,
+            });
+        }
+        slot.as_ref().expect("made above")
+    }
+}
+
+/// A read-only fragment storage buffer at `binding`.
+fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// A fragment uniform buffer at binding 0.
+fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
 }
 
 /// A fragment-stage texture at binding 0 read with `textureLoad`.
@@ -961,7 +1075,7 @@ const CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("ascii_cells.wgsl")
 );
-const GLYPH_SHADER: &str = concat!(
+pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
     include_str!("ascii.wgsl")
@@ -1088,12 +1202,14 @@ pub const GRIDS: &[&str] = &["screen", "object"];
 pub const TRANSITIONS: &[&str] = &["fade", "dissolve"];
 
 /// Variants one frame can hold, the whole-frame one included; any more
-/// are drawn as the whole frame is (logged once).
-pub const MAX_VARIANTS: usize = 64;
+/// are drawn as the whole frame is (logged once). The table is a storage
+/// buffer sized to the frame (#336), so this is only the tone statistics'
+/// texture width (a column a variant), well inside every backend's limit.
+pub const MAX_VARIANTS: usize = 4096;
 
-/// Mask ids the variant table covers; a variant with a higher id is drawn
-/// as the whole frame is (logged once).
-pub const MAX_IDS: usize = 256;
+/// Rows (and mask id slots) the variant table's buffers start with; they
+/// grow to the next power of two when a frame needs more (#336).
+const MIN_TABLE: usize = 64;
 
 /// A variant's flag: leave its pixels as they are.
 const PASS_THROUGH: u32 = 1;
@@ -1278,6 +1394,10 @@ struct Ascii {
     pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
+    /// The uniform and the variant table (#336), and the edge pass's.
+    table_bgl: wgpu::BindGroupLayout,
+    edge_bgl: wgpu::BindGroupLayout,
+    table: Mutex<Option<VariantTable>>,
     input_bgl: wgpu::BindGroupLayout,
     cells_bgl: wgpu::BindGroupLayout,
     atlas_bgl: wgpu::BindGroupLayout,
@@ -1720,6 +1840,66 @@ impl Ascii {
         })
     }
 
+    /// The variant table's rows and slots written to its buffers (grown to
+    /// fit, #336), and the bind groups over them: the uniform's group 0 of
+    /// every ascii_common.wgsl pass, the edge pass's, and the width the
+    /// tone statistics give a column each row.
+    fn upload_table(
+        &self,
+        frame: &StyleFrame<'_>,
+        rows: &[VariantUniform],
+        slots: &mut Vec<u32>,
+    ) -> (Arc<wgpu::BindGroup>, Arc<wgpu::BindGroup>, u32) {
+        let mut table_slot = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        let table = VariantTable::ensure(&mut table_slot, frame.device, rows.len(), slots.len());
+        // Every slot is written, so an id a past frame held reads 0 again
+        slots.resize(table.slot_capacity, 0);
+        frame
+            .queue
+            .write_buffer(&table.rows, 0, bytemuck::cast_slice(rows));
+        frame
+            .queue
+            .write_buffer(&table.slots, 0, bytemuck::cast_slice(slots));
+        let main = frame.bind("ASCII Table BG", table.generation, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Table BG"),
+                layout: &self.table_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniforms.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: table.rows.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: table.slots.as_entire_binding(),
+                    },
+                ],
+            })
+        });
+        let edge = frame.bind("ASCII Edge Table BG", table.generation, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Edge Table BG"),
+                layout: &self.edge_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.edge_uniforms.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: table.slots.as_entire_binding(),
+                    },
+                ],
+            })
+        });
+        let width = table.row_capacity.min(MAX_VARIANTS) as u32;
+        (main, edge, width)
+    }
+
     /// Row 0 (the whole frame's, drawn from the cell state) and a row for
     /// each per-entity variant (#266), with the slot of every mask id. A
     /// variant naming a font of its own (#335) adds it to `in_use`.
@@ -1731,9 +1911,17 @@ impl Ascii {
         ramps: &mut Ramps,
         palettes: &mut Palettes,
         base_ramp: (u32, u32),
-    ) -> (Vec<VariantUniform>, [u32; MAX_IDS]) {
+    ) -> (Vec<VariantUniform>, Vec<u32>) {
         let mut rows = vec![VariantUniform::zeroed()];
-        let mut slots = [0u32; MAX_IDS];
+        // A slot for every id up to the highest this style's variants hold
+        let mut slots = vec![
+            0u32;
+            frame
+                .variants()
+                .map(|(id, _)| id as usize + 1)
+                .max()
+                .unwrap_or(1)
+        ];
         let base = in_use.sets[0].clone();
         let palette_for = |fonts: &mut Fonts, color: &str, name: &str| -> Option<Arc<Palette>> {
             if color != "palette" {
@@ -1758,13 +1946,13 @@ impl Ascii {
                     tracing::warn!("ascii: {text}");
                 }
             };
-            if rows.len() == MAX_VARIANTS || id as usize >= MAX_IDS {
+            if rows.len() == MAX_VARIANTS {
                 warn_once(
                     fonts,
                     "overflow".into(),
                     format!(
-                        "more per-entity variants than the {} (or ids past {MAX_IDS}) one \
-                         frame holds; the rest are drawn like the whole frame",
+                        "more per-entity variants than the {} one frame holds; the rest \
+                         are drawn like the whole frame",
                         MAX_VARIANTS - 1
                     ),
                 );
@@ -1869,7 +2057,7 @@ impl Ascii {
         edge_cells: &Owned,
         cell: [f32; 2],
         origin: [f32; 2],
-        ours: [[u32; 4]; 2],
+        table: &wgpu::BindGroup,
     ) {
         let edge_uniforms = EdgeUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
@@ -1878,7 +2066,8 @@ impl Ascii {
             _pad: [0.0; 2],
             depth_threshold: frame.param("edge_depth").max(1e-3),
             normal_threshold: frame.param("edge_normal").max(1e-3),
-            ours,
+            plain_id: frame.style_id(STYLE.name).map_or(0, u32::from),
+            _pad1: [0; 3],
         };
         frame
             .queue
@@ -1909,15 +2098,7 @@ impl Ascii {
             "ASCII Edge Pass",
             &edges.view,
             &self.edge_pipeline,
-            &[
-                &frame.uniform(
-                    "ASCII Edge Uniform BG",
-                    &self.uniform_bgl,
-                    &self.edge_uniforms,
-                ),
-                &depth,
-                mask.as_deref().unwrap_or(&self.no_mask_bind),
-            ],
+            &[table, &depth, mask.as_deref().unwrap_or(&self.no_mask_bind)],
         );
 
         let cell_uniforms = EdgeCellUniforms {
@@ -1967,7 +2148,8 @@ impl Ascii {
             frame.device,
             "ASCII Tone Stat Rows",
             STATS_FORMAT,
-            [MAX_VARIANTS as u32, STATS_ROWS],
+            // A column a slot, as wide as the resolved stats
+            [stats.size[0], STATS_ROWS],
             &self.edges_in_bgl,
         );
         let input_bind = self.picture_bind(frame, input, with_mask);
@@ -2144,7 +2326,7 @@ impl StylePass for Ascii {
         let mut palettes = Palettes::default();
         let _ = palettes.place(&palette);
         let mut in_use = FontsInUse::new(set.clone());
-        let (mut variants, slots) = self.variant_table(
+        let (mut variants, mut slots) = self.variant_table(
             frame,
             &mut fonts,
             &mut in_use,
@@ -2180,9 +2362,10 @@ impl StylePass for Ascii {
             grid,
             &self.edges_in_bgl,
         );
+        // The variant table (#336), written before any pass reads it
+        let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &mut slots);
         if edges > 0.0 {
-            let ours = our_ids(frame.style_id(STYLE.name), &slots);
-            self.encode_edges(frame, encoder, edge_cells, cell, origin, ours);
+            self.encode_edges(frame, encoder, edge_cells, cell, origin, &edge_table);
         }
 
         // Last frame's cells and this frame's, ping-ponged (#277)
@@ -2252,8 +2435,6 @@ impl StylePass for Ascii {
                 bands.len() as u32,
                 0,
             ],
-            variants: [VariantUniform::zeroed(); MAX_VARIANTS],
-            slots: [[0; 4]; MAX_IDS / 4],
             bands: [[0.0; 4]; MAX_BANDS],
             band_rows: [[0; 4]; MAX_BANDS],
         };
@@ -2269,10 +2450,6 @@ impl StylePass for Ascii {
         }
         uniforms.palette[..palettes.inks.len()].copy_from_slice(&palettes.inks);
         uniforms.palette_lab[..palettes.lab.len()].copy_from_slice(&palettes.lab);
-        uniforms.variants[..variants.len()].copy_from_slice(&variants);
-        for (i, slot) in slots.iter().enumerate() {
-            uniforms.slots[i / 4][i % 4] = *slot;
-        }
         for (i, b) in bands.iter().enumerate() {
             uniforms.bands[i] = [b.cell[0], b.cell[1], b.origin[0], b.origin[1]];
             uniforms.band_rows[i] = [b.row, b.rows, b.cols, b.footprint.to_bits()];
@@ -2280,7 +2457,6 @@ impl StylePass for Ascii {
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
-        let uniform = frame.uniform("ASCII Uniform BG", &self.uniform_bgl, &self.uniforms);
         let variant = |i: usize| generation * 2 + i as u64;
 
         // Tone statistics (#289): each slot's luminance range, from this
@@ -2291,7 +2467,7 @@ impl StylePass for Ascii {
             frame.device,
             "ASCII Tone Stats",
             STATS_FORMAT,
-            [MAX_VARIANTS as u32, 1],
+            [stats_width, 1],
             &self.edges_in_bgl,
         );
         if uniforms.stretch > 0.0 || variants.iter().any(|v| v.stretch > 0.0) {
@@ -2484,25 +2660,19 @@ mod tests {
         // 160 bytes of scalars (#267's edge strength, #320's palette look), 2
         // vec4<u32> of edge glyphs, 64 vec4<u32> of ramp, 2 x 32 vec4<f32> of
         // palette (inks, then their OKLab), then the variant table's 16-byte
-        // header, its rows of 144 (#288's silhouette floors and #320's
-        // palette look, then #335's glyph cell and edge start) and its 64
-        // vec4<u32> of slots (#266), and the variant cell bands' two vec4
-        // each (#313)
+        // header (its rows, and its slots, are storage buffers since #336:
+        // a row is 144 bytes, #288's silhouette floors and #320's palette
+        // look, then #335's glyph cell and edge start), and the variant cell
+        // bands' two vec4 each (#313)
         assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
-            160 + 2 * 16
-                + 64 * 16
-                + 2 * MAX_COLORS * 16
-                + 16
-                + MAX_VARIANTS * 144
-                + 64 * 16
-                + MAX_BANDS * 32
+            160 + 2 * 16 + 64 * 16 + 2 * MAX_COLORS * 16 + 16 + MAX_BANDS * 32
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
-        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 112);
         assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 48);
     }
 
@@ -2541,15 +2711,15 @@ mod tests {
     }
 
     #[test]
-    fn our_ids_hold_the_plain_id_and_every_variant() {
-        let mut slots = [0u32; MAX_IDS];
-        slots[3] = 1;
-        slots[200] = 2;
-        let bits = our_ids(Some(5), &slots);
-        let has = |id: usize| bits[id / 128][(id / 32) % 4] & (1 << (id % 32)) != 0;
-        assert!(has(3) && has(5) && has(200));
-        assert!(!has(0) && !has(4) && !has(255));
-        assert_eq!(our_ids(None, &[0; MAX_IDS]), [[0; 4]; 2]);
+    fn the_variant_table_grows_to_the_next_power_of_two_and_keeps_it() {
+        // Starts at MIN_TABLE, doubles past it, never shrinks (#336)
+        assert_eq!(table_capacity(0, 1), MIN_TABLE);
+        assert_eq!(table_capacity(MIN_TABLE, MIN_TABLE), MIN_TABLE);
+        assert_eq!(table_capacity(MIN_TABLE, 501), 512);
+        assert_eq!(table_capacity(512, 3), 512);
+        assert_eq!(table_capacity(512, 513), 1024);
+        // The tone statistics' column a row stays inside every backend
+        assert!(MAX_VARIANTS <= 8192 && MAX_VARIANTS.is_power_of_two());
     }
 
     #[test]
@@ -2664,6 +2834,97 @@ mod tests {
         for choice in palette.choices {
             assert!(Palette::builtin(choice).is_some(), "{choice}");
         }
+    }
+
+    /// A game folder in memory, as a bundle gives it on the web: a level
+    /// beside its own palette, and a palette and two fonts one folder up.
+    fn game_files() -> flint_core::vfs::MemorySource {
+        let mut src = flint_core::vfs::MemorySource::new();
+        src.insert("game/levels/a.scene.toml", "[scene]\nname = \"a\"\n");
+        src.insert(
+            "game/levels/palettes/tidepool.palette.toml",
+            "colors = [\"#0a3d62\", \"#3c6382\"]\n",
+        );
+        src.insert(
+            "game/palettes/dusk.palette.toml",
+            "colors = [\"#2d1b3d\", \"#f2a65a\"]\n",
+        );
+        // Not a palette: a stray file in the folder is not offered
+        src.insert("game/palettes/readme.txt", "notes");
+        src.insert(
+            "game/fonts/plain.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n\n[ramps.bars]\nglyphs = \" -=#\"\n",
+        );
+        src.insert(
+            "game/fonts/terminal.glyphs.toml",
+            "[ramps.x]\nglyphs = \" x\"\n",
+        );
+        src
+    }
+
+    fn option(name: &str) -> &'static StyleOption {
+        STYLE.options.iter().find(|o| o.name == name).unwrap()
+    }
+
+    #[test]
+    fn palettes_and_fonts_beside_the_scene_are_offered() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let scope = ChoiceScope::defaults(Some(dir));
+            let palettes = option("palette").choices_in(&scope);
+            let mut want: Vec<String> = BUILTIN_PALETTES.iter().map(|s| s.to_string()).collect();
+            want.extend(["dusk".to_string(), "tidepool".to_string()]);
+            assert_eq!(palettes, want);
+            assert_eq!(
+                option("font").choices_in(&scope),
+                ["builtin", "plain", "terminal"]
+            );
+            // With no scene, the built-ins alone
+            let none = ChoiceScope::defaults(None);
+            assert_eq!(option("palette").choices_in(&none), BUILTIN_PALETTES);
+            assert_eq!(option("font").choices_in(&none), ["builtin"]);
+        });
+    }
+
+    #[test]
+    fn the_ramp_list_follows_the_chosen_font() {
+        flint_core::vfs::scoped(Arc::new(game_files()), || {
+            let dir = Path::new("game/levels");
+            let font = |name: &'static str| {
+                move |o: &str| match o {
+                    "font" => name.to_string(),
+                    _ => String::new(),
+                }
+            };
+            let plain = font("plain");
+            let scope = ChoiceScope {
+                scene_dir: Some(dir),
+                option: &plain,
+            };
+            let mut ramps = option("ramp").choices_in(&scope);
+            ramps.sort();
+            assert_eq!(ramps, ["bars", "dots"]);
+            // The built-in font (or one that won't load) has the built-in four
+            let missing = font("nonesuch");
+            for f in [&font("builtin") as &dyn Fn(&str) -> String, &missing] {
+                let scope = ChoiceScope {
+                    scene_dir: Some(dir),
+                    option: f,
+                };
+                let ramps = option("ramp").choices_in(&scope);
+                for r in option("ramp").choices {
+                    assert!(ramps.iter().any(|x| x == r), "{r} in {ramps:?}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn found_options_stay_open_to_the_command_line() {
+        // `--style ascii:palette=tidepool` names a file the style resolves
+        let mut config = crate::PostProcessConfig::default();
+        assert!(super::super::apply_style_spec(&mut config, "ascii:palette=tidepool").is_ok());
+        assert!(super::super::apply_style_spec(&mut config, "ascii:color=plaid").is_err());
     }
 
     #[test]

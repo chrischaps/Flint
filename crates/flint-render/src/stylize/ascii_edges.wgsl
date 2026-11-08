@@ -25,20 +25,30 @@ struct EdgeUniforms {
     _pad: vec2<f32>,
     depth_threshold: f32,
     normal_threshold: f32,
-    // The mask ids drawn in this style (#266: the plain `ascii` id and
-    // every per-entity variant's), one bit each for ids below 256
-    ours: array<vec4<u32>, 2>,
+    // The plain `ascii` mask id (0 = none)
+    plain_id: u32,
+    // Scalars, not a vec3 (which would align to 16 and grow the struct)
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
 };
 
+@group(0) @binding(0) var<uniform> u: EdgeUniforms;
+// Each mask id's variant slot (#336, the glyph pass's `slots`): non-zero
+// for every per-entity variant's id
+@group(0) @binding(1) var<storage, read> slots: array<u32>;
+
+// A mask id drawn in this style (#266): the plain `ascii` id, or one the
+// variant table gives a slot
 fn is_ours(id: u32) -> bool {
-    if id == 0u || id >= 256u {
+    if id == 0u {
         return false;
     }
-    let word = u.ours[id / 128u][(id / 32u) % 4u];
-    return ((word >> (id % 32u)) & 1u) == 1u;
+    if id == u.plain_id {
+        return true;
+    }
+    return id < arrayLength(&slots) && slots[id] != 0u;
 }
-
-@group(0) @binding(0) var<uniform> u: EdgeUniforms;
 @group(1) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(0) var mask: texture_2d<u32>;
 

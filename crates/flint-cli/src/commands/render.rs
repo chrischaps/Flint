@@ -453,16 +453,21 @@ pub struct RenderArgs {
 /// styles beside the scene when one is given.
 fn list_styles(args: &RenderArgs) -> Result<()> {
     use flint_render::stylize::{catalog, custom};
-    if !args.scene.is_empty() {
-        let scene_dir = Path::new(&args.scene).parent().unwrap_or(Path::new("."));
-        for message in custom::load_dir(scene_dir) {
+    // The scene's user styles, and its palettes and fonts as choices (#322)
+    let scene_dir =
+        (!args.scene.is_empty()).then(|| Path::new(&args.scene).parent().unwrap_or(Path::new(".")));
+    if let Some(dir) = scene_dir {
+        for message in custom::load_dir(dir) {
             eprintln!("warning: {message}");
         }
     }
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&catalog::catalog())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&catalog::catalog_for(scene_dir))?
+        );
     } else {
-        print!("{}", catalog::catalog_text());
+        print!("{}", catalog::catalog_text_for(scene_dir));
     }
     Ok(())
 }
