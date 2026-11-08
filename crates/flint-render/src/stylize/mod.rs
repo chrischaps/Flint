@@ -2044,6 +2044,13 @@ impl StyleSet {
 
     /// The built styles of `stage` that are on this frame (by `config` or
     /// an entity's request in `ids`), in chain order.
+    ///
+    /// A style whose table `blend` is 0 (#399) is left out: all of it
+    /// would be drawn back over by its input, so the chain skips it and
+    /// the frame is the one without it, byte for byte and at no cost. It
+    /// stays built and [`is_on`](StyleDescriptor::is_on), so the mask,
+    /// ownership (#384) and its GPU state are what they were at 0.01, and
+    /// a fade out meets the plain frame with no pop.
     pub fn active(
         &self,
         stage: StyleStage,
@@ -2061,6 +2068,7 @@ impl StyleSet {
             // A pass built from a descriptor since replaced waits for ensure
             .filter(|(((_, d), _), from)| **from == descriptor_id(d))
             .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
+            .filter(|(((_, d), _), _)| config.styles.blend(d.name) > 0.0)
             .filter_map(|(((i, d), built), _)| {
                 built
                     .as_deref()

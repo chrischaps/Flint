@@ -651,7 +651,13 @@ A script ramps it to cross-fade the whole world into a look at a story beat: `se
 *Frames from `flint-player demo/dream_story.scene.toml --frame-step 0.05 --screenshot-every 0.05` at 2, 3, 3.5, 4 and 5 s, cropped.*
 
 - **How.** After a style whose blend is under 1 has drawn, the stage draws the style's input back over its output with the blend constant `1 - blend`. That is one full-screen draw, in the style's own GPU timing scope, and only while the blend is under 1. The mix is in the target's linear values (HDR at the HDR stage, linear light on an sRGB display target).
-- **Cost.** No allocation per frame: one pipeline per target format, made the first time a blend is drawn, and the input's bind group is kept with the chain. A GPU test in `tests/stylize.rs` ramps Kuwahara's and invert's blends for 24 frames and counts the kept bind groups and GPU objects. At blend 0 the style still draws (and is then covered); switch it off when the fade is done.
+- **Cost.** No allocation per frame: one pipeline per target format, made the first time a blend is drawn, and the input's bind group is kept with the chain. A GPU test in `tests/stylize.rs` ramps Kuwahara's and invert's blends for 24 frames and counts the kept bind groups and GPU objects.
+- **At 0 it's gone** (#399). A style whose table blend is 0 leaves its stage's chain: the frame is the one without it, byte for byte, and costs nothing. The style stays built and counts as on, so a fade can end at 0 and start up again later with no rebuild and no pop. Its mask and its claim on its entities' pixels stay too, so a whole-frame pencil still leaves those entities alone. The `ascii-whole-blend-zero` and `kuwahara-blend-zero` goldens compare with a render made without the style, and `ascii-whole-blend-half` pins the half-way fade:
+
+  ```bash
+  flint render demo/stylize_props_plain.scene.toml --no-grid --ascii --style ascii:blend=0.5
+  flint render demo/stylize_props_plain.scene.toml --no-grid --ascii --sweep ascii.blend=0,0.25,0.5,0.75,1
+  ```
 - **Per-entity styles** keep their own `blend` on the component, which rides in the [style mask](#the-entity-style-mask) and mixes per pixel ([Blending in and out](#blending-in-and-out)). The table's `blend` fades the whole stage's result of that style, entities included.
 
 ### Style blends and render-mode tears
