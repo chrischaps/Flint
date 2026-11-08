@@ -632,7 +632,8 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
         locate(
             &composed,
             &file,
-            e.location(&composed.text),
+            e.location(&composed.text)
+                .map(|l| (l.line_number, l.line_position)),
             e.message(),
             source,
         )
@@ -652,7 +653,8 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
         locate(
             &composed,
             &file,
-            e.location(&composed.text),
+            e.location(&composed.text)
+                .map(|l| (l.line_number, l.line_position)),
             &message,
             source,
         )
@@ -663,25 +665,26 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
 /// `file:line:col: message`, with the line remapped into the user's file
 /// and the offending line quoted; a hint when the user called a helper of
 /// an input they didn't declare.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// `at` is the composed module's 1-based (line, column): naga's natively,
+/// the browser compiler's on the web (#415).
 fn locate(
     composed: &Composed,
     file: &str,
-    at: Option<naga::SourceLocation>,
+    at: Option<(u32, u32)>,
     message: &str,
     source: &StyleSource,
 ) -> String {
     let mut out = match at {
-        Some(loc) => match composed.user_line(loc.line_number as usize) {
+        Some((line_number, line_position)) => match composed.user_line(line_number as usize) {
             Some(line) => {
                 let text = composed
                     .text
                     .lines()
-                    .nth(loc.line_number as usize - 1)
+                    .nth(line_number as usize - 1)
                     .unwrap_or("");
                 format!(
-                    "{file}:{line}:{}: {message}\n    {line} | {}",
-                    loc.line_position,
+                    "{file}:{line}:{line_position}: {message}\n    {line} | {}",
                     text.trim_end()
                 )
             }
@@ -689,8 +692,7 @@ fn locate(
                 "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
             ),
             None => format!(
-                "{file}: {message} (in the generated code, line {}; check the parameter names)",
-                loc.line_number
+                "{file}: {message} (in the generated code, line {line_number}; check the parameter names)"
             ),
         },
         None => format!("{file}: {message}"),
@@ -851,11 +853,41 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
     }
 }
 
-/// On the web there is no naga in the player: the browser's own WGSL
-/// compiler reports, through wgpu's error scope.
+/// On the web there is no naga in the player: wgpu builds naga's WGSL front
+/// end for wasm, but only its `webgl` backend calls it, so the linker drops
+/// it and checking here would add it to the download (#415). The browser's
+/// own WGSL compiler reports instead, a frame or two later
+/// ([`compiler_error`], read when the build settles).
 #[cfg(target_arch = "wasm32")]
 pub fn check(_source: &StyleSource, _user: &str) -> Result<Report, String> {
     Ok(Report::default())
+}
+
+/// The first error in a compiler's report on `composed` (the browser's
+/// `getCompilationInfo()` on the web), as `file:line:col: message` with the
+/// line in the user's file, as [`check`] gives natively (#415). `None`
+/// when it reported none.
+pub fn compiler_error(
+    source: &StyleSource,
+    composed: &Composed,
+    info: &wgpu::CompilationInfo,
+) -> Option<String> {
+    let errors: Vec<_> = info
+        .messages
+        .iter()
+        .filter(|m| m.message_type == wgpu::CompilationMessageType::Error)
+        .collect();
+    let first = errors.first()?;
+    let file = source.wgsl_path.display().to_string();
+    let at = first
+        .location
+        .map(|l| (l.line_number, l.line_position))
+        .filter(|(line, _)| *line > 0);
+    let mut out = locate(composed, &file, at, first.message.trim(), source);
+    if errors.len() > 1 {
+        out.push_str(&format!("\n    (and {} more)", errors.len() - 1));
+    }
+    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1276,12 +1308,61 @@ struct FlintFrameUniforms {
 struct Build {
     /// The user's pipeline, or `None` while it has never compiled.
     pipeline: Option<wgpu::RenderPipeline>,
+    /// A build waiting for the compiler's verdict before it draws (#415).
+    pending: Option<Pending>,
     /// The WGSL file's modified time when last read.
     #[cfg(not(target_arch = "wasm32"))]
     modified: Option<std::time::SystemTime>,
     /// Frames since the file was last looked at.
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+}
+
+/// A pipeline made but not yet trusted: it draws once both of the GPU's
+/// answers say it compiled (#415). Natively both are ready as soon as it
+/// is made; on the web they are browser promises, settled a frame or two
+/// later, and polled each frame until then (an invalid pipeline in a pass
+/// would lose the whole frame, so the last good build draws meanwhile).
+struct Pending {
+    pipeline: wgpu::RenderPipeline,
+    composed: Composed,
+    /// The shader compiler's messages, with composed-module lines.
+    info: Settling<wgpu::CompilationInfo>,
+    /// What the validation error scope caught (the shader, or the
+    /// pipeline against its layout).
+    scope: Settling<Option<wgpu::Error>>,
+}
+
+/// A future polled by hand once a frame, never awaited: nothing in a frame
+/// may block on the browser.
+enum Settling<T> {
+    Waiting(std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>),
+    Done(T),
+}
+
+impl<T> Settling<T> {
+    fn new(future: impl std::future::Future<Output = T> + Send + 'static) -> Self {
+        Settling::Waiting(Box::pin(future))
+    }
+
+    /// Poll once if still waiting; whether it has settled.
+    fn poll(&mut self) -> bool {
+        if let Settling::Waiting(future) = self {
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(value) => *self = Settling::Done(value),
+                std::task::Poll::Pending => return false,
+            }
+        }
+        true
+    }
+
+    fn take(self) -> Option<T> {
+        match self {
+            Settling::Done(value) => Some(value),
+            Settling::Waiting(_) => None,
+        }
+    }
 }
 
 struct CustomPass {
@@ -1351,7 +1432,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         bind_group_layouts: &[&frame_bgl, &input_bgl],
         push_constant_ranges: &[],
     });
-    let passthrough = pipeline(
+    let (_, passthrough) = pipeline(
         device,
         &passthrough_layout,
         &compose(&bare, PASSTHROUGH).text,
@@ -1373,6 +1454,7 @@ fn build(d: &StyleDevice) -> CustomPass {
         passthrough,
         build: Mutex::new(Build {
             pipeline: None,
+            pending: None,
             #[cfg(not(target_arch = "wasm32"))]
             modified: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1416,12 +1498,12 @@ fn pipeline(
     layout: &wgpu::PipelineLayout,
     text: &str,
     format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
+) -> (wgpu::ShaderModule, wgpu::RenderPipeline) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("User Style Pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -1445,7 +1527,8 @@ fn pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
-    })
+    });
+    (module, pipeline)
 }
 
 /// How many frames pass between looks at the WGSL file's modified time:
@@ -1490,31 +1573,52 @@ impl CustomPass {
             self.set_error(Some(e));
             return;
         }
-        // naga has passed it; the error scope catches what the backend's own
-        // compiler still refuses (and, on the web, everything)
+        // naga has passed it natively; the compiler's messages and the error
+        // scope catch what the backend's own compiler still refuses (and, on
+        // the web, everything). Neither is awaited: the build waits as
+        // `pending` until both settle (#415)
+        let composed = compose(source, &user);
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let made = pipeline(
-            device,
-            &self.layout,
-            &compose(source, &user).text,
-            self.format,
-        );
-        #[cfg(not(target_arch = "wasm32"))]
-        let refused = pollster::block_on(device.pop_error_scope());
-        #[cfg(target_arch = "wasm32")]
-        let refused: Option<wgpu::Error> = {
-            // No blocking on the web: the browser logs it, and the frame
-            // after shows what it drew
-            drop(device.pop_error_scope());
-            None
+        let (module, made) = pipeline(device, &self.layout, &composed.text, self.format);
+        let scope = Settling::new(device.pop_error_scope());
+        let info = Settling::new(module.get_compilation_info());
+        build.pending = Some(Pending {
+            pipeline: made,
+            composed,
+            info,
+            scope,
+        });
+        self.settle(&mut build);
+    }
+
+    /// Poll a pending build; once the GPU has answered, draw it, or keep
+    /// what was drawing and say why. Natively the answer is in on the
+    /// first poll, inside [`Self::rebuild`].
+    fn settle(&self, build: &mut Build) {
+        let Some(pending) = build.pending.as_mut() else {
+            return;
         };
-        match refused {
-            Some(e) => self.set_error(Some(format!(
+        let info_in = pending.info.poll();
+        if !(pending.scope.poll() && info_in) {
+            return;
+        }
+        let Some(pending) = build.pending.take() else {
+            return;
+        };
+        let source = &self.loaded.source;
+        let info = pending.info.take();
+        let refused = pending.scope.take().flatten();
+        let compiled = info
+            .as_ref()
+            .and_then(|info| compiler_error(source, &pending.composed, info));
+        match (compiled, refused) {
+            (Some(e), _) => self.set_error(Some(e)),
+            (None, Some(e)) => self.set_error(Some(format!(
                 "{}: the GPU refused it: {e}",
                 source.wgsl_path.display()
             ))),
-            None => {
-                build.pipeline = Some(made);
+            (None, None) => {
+                build.pipeline = Some(pending.pipeline);
                 self.set_error(None);
             }
         }
@@ -1634,7 +1738,9 @@ impl StylePass for CustomPass {
         });
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
-        let build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        // A build the browser hasn't answered for yet (#415)
+        self.settle(&mut build);
         // The mask and the edges are there whenever this style is on and
         // reads them; if a host ever draws without one (or the edge pass
         // failed to build), the passthrough keeps the frame whole
@@ -2017,6 +2123,235 @@ fn style(p: StylePixel) -> vec4<f32> {
             pass.poll(&device);
         }
         assert_eq!(error(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn message(
+        message_type: wgpu::CompilationMessageType,
+        text: &str,
+        at: Option<(u32, u32)>,
+    ) -> wgpu::CompilationMessage {
+        wgpu::CompilationMessage {
+            message: text.to_string(),
+            message_type,
+            location: at.map(|(line_number, line_position)| wgpu::SourceLocation {
+                line_number,
+                line_position,
+                offset: 0,
+                length: 1,
+            }),
+        }
+    }
+
+    /// The browser's report names lines of the composed module; the error
+    /// shown names the user's file and line, quoted, as naga's does (#415).
+    #[test]
+    fn browser_messages_point_into_the_users_file() {
+        use wgpu::CompilationMessageType::{Error, Warning};
+        let s = duotone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * glow;\n}\n";
+        let c = compose(&s, user);
+        let line = c.prelude_lines as u32 + 2;
+        let info = wgpu::CompilationInfo {
+            messages: vec![
+                message(Warning, "unused variable", Some((line, 5))),
+                message(Error, "unresolved identifier 'glow'", Some((line, 22))),
+                message(Error, "a second one", Some((line, 1))),
+            ],
+        };
+        let e = compiler_error(&s, &c, &info).unwrap();
+        let file = s.wgsl_path.display().to_string();
+        assert!(
+            e.starts_with(&format!("{file}:2:22: unresolved identifier 'glow'")),
+            "{e}"
+        );
+        assert!(
+            e.contains("2 | ") && e.contains("return p.color * glow;"),
+            "{e}"
+        );
+        assert!(e.contains("(and 1 more)"), "{e}");
+
+        // Warnings alone are no error
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Warning, "unused variable", Some((line, 5)))],
+        };
+        assert_eq!(compiler_error(&s, &c, &info), None);
+
+        // A line in the generated code, and no location at all
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Error, "bad param", Some((3, 1)))],
+        };
+        let e = compiler_error(&s, &c, &info).unwrap();
+        assert!(e.contains("in the generated code, line 3"), "{e}");
+        let info = wgpu::CompilationInfo {
+            messages: vec![message(Error, "Getting compilation info failed", None)],
+        };
+        assert_eq!(
+            compiler_error(&s, &c, &info).unwrap(),
+            format!("{file}: Getting compilation info failed")
+        );
+    }
+
+    /// Which pipeline this is (wgpu hashes resources by identity).
+    fn identity(p: &wgpu::RenderPipeline) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    }
+
+    /// A future that answers on its `polls`th poll, as a browser promise
+    /// settles a frame or two after the pipeline was made.
+    struct Late<T> {
+        polls: u32,
+        value: Option<T>,
+    }
+
+    impl<T: Unpin> std::future::Future for Late<T> {
+        type Output = T;
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<T> {
+            self.polls -= 1;
+            if self.polls == 0 {
+                std::task::Poll::Ready(self.value.take().unwrap())
+            } else {
+                std::task::Poll::Pending
+            }
+        }
+    }
+
+    /// The web's path, driven natively: a build the compiler hasn't
+    /// answered for draws nothing new and reports nothing; when the answer
+    /// comes frames later, an error lands in `errors()` with the user's
+    /// line and the last good build keeps drawing; a clean answer swaps
+    /// the new build in (#415).
+    #[test]
+    fn a_late_compiler_answer_settles_on_a_later_frame() {
+        let Some((device, _queue)) = device() else {
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("flint-user-late-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(
+            styles.join("utest_late.shader.toml"),
+            "version = 1\nname = \"utest_late\"\nshader = \"late.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("late.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_dir(&dir).is_empty());
+        let descriptor = super::super::find("utest_late").unwrap();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let pass = build(&StyleDevice {
+            device: &device,
+            descriptor,
+            format,
+        });
+        let error = || {
+            errors()
+                .into_iter()
+                .find(|(n, _)| n == "utest_late")
+                .map(|(_, e)| e)
+        };
+        assert_eq!(error(), None);
+        let source = pass.loaded.source.clone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * glow;\n}\n";
+        let composed = compose(&source, user);
+        let line = composed.prelude_lines as u32 + 2;
+        let (_, made) = pipeline(
+            &device,
+            &pass.layout,
+            &compose(&source, PASSTHROUGH).text,
+            format,
+        );
+        let first = pass
+            .build
+            .lock()
+            .unwrap()
+            .pipeline
+            .as_ref()
+            .map(identity)
+            .unwrap();
+        let made_id = identity(&made);
+        pass.build.lock().unwrap().pending = Some(Pending {
+            pipeline: made,
+            composed: composed.clone(),
+            info: Settling::new(Late {
+                polls: 3,
+                value: Some(wgpu::CompilationInfo {
+                    messages: vec![message(
+                        wgpu::CompilationMessageType::Error,
+                        "unresolved identifier 'glow'",
+                        Some((line, 22)),
+                    )],
+                }),
+            }),
+            scope: Settling::new(Late {
+                polls: 2,
+                value: Some(None),
+            }),
+        });
+        let settle = || {
+            let mut build = pass.build.lock().unwrap();
+            pass.settle(&mut build);
+            build.pending.is_some()
+        };
+        assert!(settle(), "frame 1: still waiting");
+        assert!(settle(), "frame 2: the scope is in, the report isn't");
+        assert_eq!(error(), None, "nothing to say until both answer");
+        assert!(!settle(), "frame 3: settled");
+        let e = error().expect("the browser's error is reported");
+        assert!(
+            e.contains("late.wgsl:2:22: unresolved identifier 'glow'"),
+            "{e}"
+        );
+        assert_eq!(
+            pass.build
+                .lock()
+                .unwrap()
+                .pipeline
+                .as_ref()
+                .map(identity)
+                .unwrap(),
+            first,
+            "the last good build keeps drawing"
+        );
+
+        // A clean answer, a frame late: the new build draws, the error clears
+        let (_, made) = pipeline(
+            &device,
+            &pass.layout,
+            &compose(&source, PASSTHROUGH).text,
+            format,
+        );
+        let made_id_2 = identity(&made);
+        assert_ne!(made_id, made_id_2);
+        pass.build.lock().unwrap().pending = Some(Pending {
+            pipeline: made,
+            composed,
+            info: Settling::new(Late {
+                polls: 2,
+                value: Some(wgpu::CompilationInfo { messages: vec![] }),
+            }),
+            scope: Settling::new(std::future::ready(None)),
+        });
+        assert!(settle());
+        assert!(error().is_some(), "the old error stands while waiting");
+        assert!(!settle());
+        assert_eq!(error(), None);
+        assert_eq!(
+            pass.build
+                .lock()
+                .unwrap()
+                .pipeline
+                .as_ref()
+                .map(identity)
+                .unwrap(),
+            made_id_2
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
