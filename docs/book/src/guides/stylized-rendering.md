@@ -82,7 +82,7 @@ At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px
 
 | You want | Use |
 |---|---|
-| The whole game in a look | `[post_process.styles.<name>]`, or a [look](../concepts/stylize-passes.md#looks-and-sweeps) such as `--look ascii_noir` |
+| The whole game in a look | `[post_process.styles.<name>]`, or a [look](../concepts/stylize-passes.md#looks-in-scenes-f4-and-scripts): `look = "ascii_noir"` in the scene's `[post_process]`, `--look ascii_noir` to try one, `set_look` from a script |
 | A few things in a style, the world smooth | an `ascii_style` (or `style_mask`) on those entities, scope `entities` |
 | One thing to stay smooth under a whole-frame style | `enabled = false` on it (descendants follow) |
 | Glyphs that don't crawl as a prop slides | `grid = "object"` on that prop only |

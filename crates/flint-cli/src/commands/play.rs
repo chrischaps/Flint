@@ -131,7 +131,8 @@ pub fn run(args: PlayArgs) -> Result<()> {
     app.scene_camera = scene_file.camera.clone();
 
     // Pass post-processing settings from scene
-    app.scene_post_process = scene_file.post_process.clone();
+    // with the look it names laid under its keys (#356)
+    app.set_scene_post_process(scene_file.post_process.clone());
     app.style_specs = args.style.styles.clone();
     app.style_time = args.style.style_time;
 

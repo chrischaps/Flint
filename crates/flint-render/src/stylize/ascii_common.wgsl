@@ -132,6 +132,12 @@ struct AsciiUniforms {
     // The grids of the variants whose silhouettes snap to whole cells
     // (#338), `variant_meta.w` of them: (cell, origin)
     snap_grids: array<vec4<f32>, 8>,
+    // Reprojected history (#344): this frame's clip to world, last frame's
+    // world to clip, and x = 1 when the cell pass reads each cell's past
+    // where its surface was last frame rather than in the same cell
+    inv_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
+    reproject: vec4<u32>,
     // The line glyphs' ink for edge ink color (#351), display rgb
     edge_color: vec4<f32>,
 };
