@@ -43,11 +43,11 @@ fn style_warnings(scene: &str) -> Vec<String> {
     let Ok(file) = toml::from_str::<flint_scene::SceneFile>(&text) else {
         return Vec::new(); // load_scene below says what is wrong with it
     };
-    let Some(post) = file.post_process else {
+    let Some(mut post) = file.post_process else {
         return Vec::new();
     };
     let tables = post.style_tables();
-    if tables.is_empty() {
+    if tables.is_empty() && post.look.is_none() {
         return Vec::new();
     }
     let scene_dir = std::path::Path::new(scene)
@@ -55,6 +55,13 @@ fn style_warnings(scene: &str) -> Vec<String> {
         .unwrap_or(std::path::Path::new("."));
     let mut warnings = flint_render::stylize::custom::load_dir(scene_dir);
     warnings.extend(flint_render::stylize::StyleSettings::from_tables(&tables).1);
+    // The scene's look (#356) must be found and fit under its keys
+    if let Some(name) = post.look.clone() {
+        post.authored = flint_scene::PostProcessDef::authored_table(&text);
+        if let Err(e) = flint_render::look::resolve(&post, Some(&name), scene) {
+            warnings.push(format!("[post_process] look = \"{name}\": {e}"));
+        }
+    }
     warnings
 }
 

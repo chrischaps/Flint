@@ -63,6 +63,8 @@ impl PlayerApp {
     pub(super) fn create_render_debug_panel(&mut self) {
         let authored = self.authored_styles();
         let scene_dir = self.styles_scene_dir();
+        let looks = flint_render::look::list(&self.scene_path);
+        let current = self.current_look().map(str::to_string);
         let existing = self
             .debug_panels
             .iter_mut()
@@ -75,12 +77,31 @@ impl PlayerApp {
             Some(panel) => {
                 panel.set_authored_styles(Some(authored));
                 panel.set_scene_dir(scene_dir);
+                panel.set_looks(&looks, current.as_deref());
             }
             None => {
                 let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
                 panel.set_authored_styles(Some(authored));
                 panel.set_scene_dir(scene_dir);
+                panel.set_looks(&looks, current.as_deref());
                 self.debug_panels.push(Box::new(panel));
+            }
+        }
+    }
+
+    /// After a look changes (#356): F4 shows it as the one in use, and the
+    /// style editors' Authored button and markers follow the scene's keys
+    /// under it, which is what the scene draws with now.
+    pub(super) fn refresh_style_panels_after_look(&mut self) {
+        let authored = self.authored_styles();
+        let current = self.current_look().map(str::to_string);
+        for panel in &mut self.debug_panels {
+            let any = panel.as_any_mut();
+            if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
+                rp.set_authored_styles(Some(authored.clone()));
+                rp.set_current_look(current.as_deref());
+            } else if let Some(sp) = any.downcast_mut::<flint_debug_ui::StylesDebugPanel>() {
+                sp.set_authored(Some(authored.clone()));
             }
         }
     }

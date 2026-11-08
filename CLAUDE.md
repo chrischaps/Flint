@@ -94,7 +94,10 @@ Flint uses an **edit -> validate -> play** loop:
    #                          param's default/range/help; with a scene, its user styles too)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor;
-   #                          `--look help` lists them with their tune sweeps)
+   #                          `--look help` lists them with their tune sweeps. #356: a scene's
+   #                          `[post_process] look = "<name>"` goes UNDER its keys (loader records
+   #                          them in PostProcessDef::authored; flint_render::look::resolve, vfs reads);
+   #                          F4 -> Look and Rhai set_look/clear_look re-resolve; demo/looks.scene.toml)
    #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
    #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b;
    #                          cells 640x360 unless --width/--height. Cells are in points:

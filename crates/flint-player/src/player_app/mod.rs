@@ -342,6 +342,9 @@ pub struct PlayerApp {
     /// the panel each frame (one-frame toggle lag, imperceptible).
     #[cfg(feature = "debug-hud")]
     pp_debug_freeze: bool,
+    /// A look F4's picker chose this frame (#356; `Some(None)`: none),
+    /// laid under the scene's keys at the start of the next render.
+    pending_look: Option<Option<String>>,
 
     // Ladder-driven post params: the scene's authored base, captured at
     // session start and written back after teardown (ADR 0021).

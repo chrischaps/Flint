@@ -204,6 +204,11 @@ impl PlayerApp {
                 ScriptCommand::SetCameraCutDetection { enabled } => {
                     self.camera_cut.enabled = enabled;
                 }
+                ScriptCommand::SetLook { name } => {
+                    if let Err(e) = self.set_look(name.as_deref()) {
+                        tracing::warn!("set_look: {e}");
+                    }
+                }
             }
         }
     }

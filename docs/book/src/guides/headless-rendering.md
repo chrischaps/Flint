@@ -90,7 +90,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
-| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's: `ascii_noir`, `matrix`, `ink_wash`, `graphite`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
+| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
 | `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`; cells default to 640x360 |
 | `--grade-lift <r,g,b>` | `0,0,0` | Color grade lift |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |

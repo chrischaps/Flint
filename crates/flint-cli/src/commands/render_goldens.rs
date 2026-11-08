@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn every_shipped_look_has_a_golden_case() {
         let (_, manifest) = stylize_manifest();
-        for look in crate::commands::look::builtin_names() {
+        for look in flint_render::look::builtin_names() {
             let reached = manifest
                 .cases
                 .iter()

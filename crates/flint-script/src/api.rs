@@ -2622,6 +2622,30 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 .push(ScriptCommand::SetCameraCutDetection { enabled });
         });
     }
+
+    // set_look(name) — a whole post-processing preset (#356): a
+    // styles/<name>.look.toml beside the scene or a built-in ("graphite",
+    // "matrix", ...), laid under the scene's own [post_process] keys in
+    // place of the look it had. "" is no look. Applied after on_update.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_look", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            let name = name.trim();
+            c.commands.push(ScriptCommand::SetLook {
+                name: (!name.is_empty()).then(|| name.to_string()),
+            });
+        });
+    }
+
+    // clear_look() — back to the scene's own keys, without a look
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_look", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetLook { name: None });
+        });
+    }
 }
 
 fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
