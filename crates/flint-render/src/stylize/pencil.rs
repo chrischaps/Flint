@@ -133,7 +133,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             discover: None,
         },
     ],
-    uses_mask: false,
+    uses_mask: super::MaskUse::Never,
     needs: &[],
     hints: &[
         StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
