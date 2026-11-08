@@ -382,6 +382,52 @@ scene = "demo/watercolor.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
+# --- user-authored styles (#274, #417) ---------------------------------------
+#
+# Styles a game writes (demo/styles/*.shader.toml + WGSL), loaded at run time
+# by the same `stylize::custom::load_dir` call as `flint render` (the suite
+# runs `render::run_in`). These pin what the framework writes around a user's
+# function: the prelude's sRGB round trip at the display stage (each reads a
+# display colour and returns one), the `params` layout, and the depth and
+# mask bindings. All three draw over the scene as authored, hologram on.
+
+# Hologram on the barrel and YBot, as the scene authors it: the mask
+# binding and `flint_style_blend`. The two props are about a twentieth of
+# the frame, so the share is a quarter of the glyph styles': with the
+# params uploaded one slot off, the hologram's own pixels move by up to
+# 181 levels yet only 1.25% of the frame passes 48, which 2% let through
+[[case]]
+name = "user-styles"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid"]
+tolerance = { share = 0.005 }
+
+# Risograph over the whole frame: halftone dots by `params.dot`, two inks
+# and the paper from nine more params, so a shifted layout moves the inks
+[[case]]
+name = "user-style-risograph"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "risograph"]
+
+# Contour: lines of equal distance from `flint_view_depth`, the depth binding
+[[case]]
+name = "user-style-contour"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "contour"]
+
+# A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
+# its input unchanged and say where it failed. The passthrough runs the
+# prelude's round trip (to display on the way in, to linear on the way
+# out), so the frame equals the frame without the style only while the two
+# curves are each other's inverse: an exact match against a second render,
+# not a golden, so it holds on any adapter
+[[case]]
+name = "user-style-broken"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "broken"]
+matches = ["--no-grid"]
+error = "broken.wgsl:9:9"
+
 # --- looks (#279) -----------------------------------------------------------
 # Each shipped styles/<name>.look.toml over the plain props bench, so only
 # the look's own styles draw. A new look adds a case here (look.rs checks).

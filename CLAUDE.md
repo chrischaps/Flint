@@ -175,7 +175,10 @@ Flint uses an **edit -> validate -> play** loop:
    --test render_goldens` runs it. Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
    `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own
-   process, `--isolate` spawns every case. A new style adds a case. A case's `text = "<x>.txt"`
+   process, `--isolate` spawns every case. A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
+   made with those flags instead of a golden, exact by default, and `error = "<text>"` needs a user
+   style's error to hold it (`user-style-broken`: `tests/golden/fixtures/styles/broken.*` must draw a
+   passthrough, which runs the prelude's sRGB round trip). A case's `text = "<x>.txt"`
    (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`).
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
