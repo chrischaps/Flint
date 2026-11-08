@@ -163,7 +163,8 @@ prototype; #275 wires the player and viewer.
 | no `fn style`, a binding, an entry point of the user's own | naga IR check | the same as above |
 | the backend's own compiler refuses what naga passed | `push_error_scope` around the pipeline (blocking natively) | the same as above |
 | a later edit breaks it (hot reload) | rebuild | the **last good build keeps drawing**; the error replaces the old one; fixing it logs "compiles again" |
-| a loop that never ends | **not detectable** | warned at check: "N loops: a loop that never ends hangs the GPU until the driver resets it (TDR)"; >32 texture reads written out are warned too |
+| a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the loop runs as written, unguarded |
+| many texture reads | check | >32 reads written out are warned |
 | the shader crashes the driver | `catch_unwind` around `create` (ADR 0111) | the style stays off; the renderer reports a lost device |
 
 `stylize::custom::errors()` lists each style's current error for the host
@@ -185,11 +186,47 @@ considered three mitigations:
   common thing a style does.
 - *Inject a guard counter into every naga `Loop`* and write the module
   back out with naga's WGSL backend. This is sound and invisible to the
-  user, and it costs one compare a loop iteration. It needs naga's
-  `wgsl-out` and an IR rewrite. Filed as a follow-up, recommended before
-  user styles ship in a bundle someone else wrote.
-- *Warn* (chosen for v1). User styles today are written by the game's own
-  author, who sees the warning on the first render.
+  user, and it costs one add and one compare a loop iteration. It needs
+  naga's `wgsl-out` and an IR rewrite. **Chosen in #411** (natively).
+- *Warn* (v1, #274). User styles were written by the game's own author,
+  who saw the warning on the first render. It is still what a check says
+  when the guard is off (`custom::set_loop_guard(false)`, for tests).
+
+**The guard (#411).** After naga parses and validates the composed module,
+`custom::check` walks every `Statement::Loop` in the user's functions (the
+prelude's and the entry points are left alone). Each loop gets a `u32`
+local of its own, stored 0 just before the loop (so a nested loop's count
+starts again each time its outer loop turns), incremented at the end of
+`continuing`, and `break if` that reaches `LOOP_LIMIT` (4096), or-ed with
+the loop's own `break if` when it has one. `continue` goes through
+`continuing`, so every turn counts. The module is validated again and
+written out with `naga::back::wgsl`, and wgpu builds that text
+(`Report::guarded`); a style without loops builds its composed text as
+before. What it costs and shows:
+
+- A loop that ends on its own within the limit runs exactly as written: a
+  9x9 blur draws byte for byte the same guarded as not
+  (`a_bounded_loop_draws_the_same_guarded`, in `tests/stylize.rs`), which
+  also shows naga's written-out module draws what the composed text did.
+- A `loop {}` style draws a frame (`a_loop_that_never_ends_draws_a_frame`,
+  37 ms built and drawn, and `flint render` of such a scene: 0.9 ms of GPU
+  at 960x540, the whole command 1.2 s). Before, it hung the GPU until TDR.
+- The limit is per run of a loop, so nested loops multiply (a 64x64
+  kernel is fine). A loop that needs more than 4096 turns a pixel is far
+  past what a full-screen pass can afford anyway.
+- Errors still point into the user's file: they come from the first
+  parse, before the rewrite. The guard's own failure (re-validation or
+  writing) is reported as a Flint bug and the style draws a passthrough;
+  the unguarded text is never built.
+
+**On the web the guard is not run.** The player has no naga on wasm (§6):
+shipping `wgsl-in`, the validator and `wgsl-out` would put most of naga
+into the web build against the 4 MB gzip line (#123), to guard styles that
+`flint bundle` has already checked natively. The cheaper road is for the
+bundle to carry the guarded module, written at pack time, so the browser
+compiles that with no naga at all (#550). Until then a
+runaway loop in a bundle loses the device in the browser, as before (not
+tried here).
 
 ### 5. Hot reload
 
