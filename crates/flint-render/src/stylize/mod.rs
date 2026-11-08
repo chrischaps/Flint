@@ -93,6 +93,7 @@
 pub mod catalog;
 pub mod custom;
 pub mod edges;
+mod fade;
 pub mod kit;
 mod spec;
 mod targets;
@@ -592,6 +593,16 @@ pub struct StyleDescriptor {
     /// overrides it with `feeds_bloom` in the style's table
     /// ([`StyleDescriptor::feeds_bloom_in`]).
     pub feeds_bloom: bool,
+    /// Whether the style draws its own entities' `blend` (#396). Off (the
+    /// default), the framework cross-fades: after the style's pass, every
+    /// pixel of an entity drawn in this style at a blend below 1 (the
+    /// mask's `.g`, #278) is mixed back toward the style's input by that
+    /// much, so a mask-reading style fades with no blend code of its own.
+    /// A style that does something better than a cross-fade (ASCII's
+    /// `transition = "dissolve"`) sets it with
+    /// [`blends_itself`](StyleDescriptor::blends_itself) and reads `.g`
+    /// itself.
+    pub blends_itself: bool,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -629,6 +640,7 @@ impl StyleDescriptor {
             hints: &[],
             component: None,
             feeds_bloom: false,
+            blends_itself: false,
             create,
         }
     }
@@ -674,6 +686,13 @@ impl StyleDescriptor {
         self.feeds_bloom = feeds_bloom;
         self
     }
+
+    /// It honours its entities' `blend` itself, so the framework's
+    /// cross-fade leaves it alone (#396).
+    pub const fn blends_itself(mut self) -> Self {
+        self.blends_itself = true;
+        self
+    }
 }
 
 impl StyleDescriptor {
@@ -696,6 +715,13 @@ impl StyleDescriptor {
         self.is_on(config, ids)
             && (self.uses_mask.now(config, ids)
                 || (self.component.is_some() && ids.mentions(self.name)))
+    }
+
+    /// Whether the framework cross-fades this style's entities by their
+    /// blend this frame (#396): it reads the mask and doesn't blend
+    /// itself.
+    pub fn framework_fades(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        !self.blends_itself && self.reads_mask(config, ids)
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -1011,6 +1037,11 @@ pub struct StyleFrame<'a> {
     /// [`uses_mask`](StyleDescriptor::uses_mask) is on. It lives with the
     /// chain; bind it with [`mask_bind`](Self::mask_bind).
     pub mask: Option<&'a wgpu::TextureView>,
+    /// Whether some pixel of [`mask`](Self::mask) may hold a blend below 1
+    /// this frame: an entity part-way into its style (#278) or a veil in
+    /// front of one (#290). The framework's cross-fade (#396) runs only
+    /// while it holds.
+    pub mask_fades: bool,
     /// Which id each style name has in [`mask`](Self::mask).
     pub style_ids: &'a crate::style_mask::StyleIds,
     /// The shared geometry edges (#301, [`edges`] says what the channels
@@ -1615,6 +1646,11 @@ pub struct StyleSet {
     /// The edge pass's creation panicked; the styles that need it draw
     /// without (their [`StyleFrame::edges`] is `None`).
     edges_failed: bool,
+    /// The shared cross-fade (#396), built the first time a style that
+    /// gets it is on.
+    fade: Option<fade::FadePass>,
+    /// Its creation panicked: styles draw at full blend.
+    fade_failed: bool,
     /// How many times the edge pass has been drawn, for the test that a
     /// frame draws it once however many styles read it.
     edge_runs: std::sync::atomic::AtomicU64,
@@ -1695,7 +1731,35 @@ impl StyleSet {
                 }
             }
         }
+        if self.fade.is_none()
+            && !self.fade_failed
+            && registry
+                .iter()
+                .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids))
+        {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                fade::FadePass::new(device)
+            })) {
+                Ok(pass) => self.fade = Some(pass),
+                Err(_) => {
+                    tracing::warn!("style cross-fade unavailable: its shader failed to build");
+                    self.fade_failed = true;
+                }
+            }
+        }
         failed
+    }
+
+    /// The shared cross-fade (#396), for [`run_stage`]; `None` until a
+    /// style that gets it has been on.
+    pub(crate) fn fade(&self) -> Option<&fade::FadePass> {
+        self.fade.as_ref()
+    }
+
+    /// How many times the shared cross-fade has been drawn since the
+    /// renderer was made (#396).
+    pub fn fade_runs(&self) -> u64 {
+        self.fade.as_ref().map_or(0, fade::FadePass::runs)
     }
 
     /// Draw the shared edges (#301) if any of `styles` (this frame's
@@ -1926,6 +1990,7 @@ pub(crate) fn run_stage(
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
     to: Option<StyleInput<'_>>,
+    fade: Option<&fade::FadePass>,
     scope: &mut Scope<'_>,
 ) -> Option<(Arc<StyleTexture>, u64)> {
     debug_assert_eq!(styles.len(), steps.len());
@@ -1976,8 +2041,13 @@ pub(crate) fn run_stage(
             }
         };
         let frame = &*frame;
+        // The framework's cross-fade (#396), timed with the style it fades
+        let fade = fade.filter(|_| fade::FadePass::applies(frame, descriptor));
         scope(descriptor.label, encoder, &mut |encoder| {
-            pass.encode(frame, encoder, &src, dst_view)
+            pass.encode(frame, encoder, &src, dst_view);
+            if let Some(fade) = fade {
+                fade.encode(frame, descriptor, encoder, &src, dst_view);
+            }
         });
     }
     result
@@ -2082,7 +2152,9 @@ mod tests {
         let mut pp = PostProcessConfig::default();
         pp.styles.set_enabled("ascii", true);
         // Default colour mode is source: neither tint nor palette is read
-        let tint = ascii.unused_reason(&pp, "tint").expect("tint unused in source");
+        let tint = ascii
+            .unused_reason(&pp, "tint")
+            .expect("tint unused in source");
         assert!(tint.contains("Colour mode is source"), "{tint}");
         assert!(tint.contains("only tint reads it"), "{tint}");
         for name in ["palette", "chroma", "palette_dither"] {
@@ -2104,7 +2176,9 @@ mod tests {
             assert_eq!(ascii.unused_reason(&pp, name), None, "{name}");
         }
         // The palette brings its own ground colour
-        let bg = ascii.unused_reason(&pp, "background").expect("palette ground");
+        let bg = ascii
+            .unused_reason(&pp, "background")
+            .expect("palette ground");
         assert_eq!(bg, "Unused while Colour mode is palette");
 
         pp.styles.set_option("ascii", "color", "mono");
@@ -2124,7 +2198,10 @@ mod tests {
         };
         assert!(first.holds("1") && !first.holds("3"));
         assert!(!second.holds("2") && second.holds("3"));
-        assert!(StyleHint::new("y", "Y", "").conditions.iter().all(Option::is_none));
+        assert!(StyleHint::new("y", "Y", "")
+            .conditions
+            .iter()
+            .all(Option::is_none));
     }
 
     /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz

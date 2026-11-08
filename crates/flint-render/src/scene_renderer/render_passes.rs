@@ -1379,6 +1379,7 @@ impl SceneRenderer {
                     far: camera.far,
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
+                mask_fades: self.style_mask_fades(),
                 style_ids: &self.style_ids,
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
@@ -1420,6 +1421,7 @@ impl SceneRenderer {
                     id: crate::stylize::input_id::HDR,
                 },
                 None,
+                pp.styles.fade(),
                 &mut |label, encoder, run| scoped(label, encoder, run),
             ),
             _ => None,
@@ -1575,6 +1577,7 @@ impl SceneRenderer {
                     view: final_target,
                     id: crate::stylize::input_id::FXAA_IN,
                 }),
+                pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);

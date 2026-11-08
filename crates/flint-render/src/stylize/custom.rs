@@ -860,12 +860,26 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Whether user WGSL calls `flint_style_blend` outside a line comment.
+fn calls_style_blend(user: &str) -> bool {
+    user.lines().any(|line| {
+        let code = line.split("//").next().unwrap_or("");
+        code.contains("flint_style_blend")
+    })
+}
+
 /// Make `source`'s descriptor and register it: appended, or with
 /// `replace`, put where the style of the same name stands (#275).
 fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // A shader that fails registers anyway: it draws a passthrough and its
     // error waits for the host, so a typo never takes a style's settings away
-    let error = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+    let wgsl = flint_core::vfs::read_to_string(&source.wgsl_path);
+    // A shader that reads its own blend draws it (#396): the framework's
+    // cross-fade would apply it twice. Decided when the description is
+    // read, so a shader that starts or stops calling it takes effect at the
+    // next load or `.shader.toml` edit
+    let blends_itself = wgsl.as_ref().is_ok_and(|user| calls_style_blend(user));
+    let error = match wgsl {
         Err(e) => Some(format!("{}: {e}", source.wgsl_path.display())),
         Ok(user) => match check(&source, &user) {
             Ok(report) => {
@@ -903,22 +917,25 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         })
         .collect();
     let name = leak(source.name.clone());
-    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(
-        StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
-            .params(Box::leak(params.into_boxed_slice()))
-            .uses_mask(if source.inputs.mask {
-                MaskUse::Always
-            } else {
-                MaskUse::Never
-            })
-            .needs(if source.inputs.edges {
-                &[StyleNeed::Edges]
-            } else {
-                &[]
-            })
-            .hints(Box::leak(hints.into_boxed_slice()))
-            .feeds_bloom(source.feeds_bloom),
-    ));
+    let built = StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
+        .params(Box::leak(params.into_boxed_slice()))
+        .uses_mask(if source.inputs.mask {
+            MaskUse::Always
+        } else {
+            MaskUse::Never
+        })
+        .needs(if source.inputs.edges {
+            &[StyleNeed::Edges]
+        } else {
+            &[]
+        })
+        .hints(Box::leak(hints.into_boxed_slice()))
+        .feeds_bloom(source.feeds_bloom);
+    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(if blends_itself {
+        built.blends_itself()
+    } else {
+        built
+    }));
     // The chain's bind cache keys on these names, so each install gets its
     // own: a replaced style (#275) builds new buffers and layouts, and a
     // cached group under the old name would bind the old pass's buffers
@@ -1546,6 +1563,18 @@ mod tests {
     fn source(toml_text: &str, file: &str) -> Result<StyleSource, String> {
         let def: ShaderStyleDef = toml::from_str(toml_text).map_err(|e| e.to_string())?;
         def.check(Path::new(file))
+    }
+
+    /// #396: a shader that reads its own blend opts out of the framework's
+    /// cross-fade; a mention in a comment doesn't count.
+    #[test]
+    fn a_shader_calling_flint_style_blend_blends_itself() {
+        assert!(calls_style_blend(
+            "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color * flint_style_blend(p.uv);\n}\n"
+        ));
+        assert!(!calls_style_blend(
+            "// no flint_style_blend here: the framework fades me\nfn style(p: StylePixel) -> vec4<f32> {\n    return p.color;\n}\n"
+        ));
     }
 
     fn duotone() -> StyleSource {
