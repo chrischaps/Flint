@@ -1062,7 +1062,7 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 | Case | What it pins |
 |------|--------------|
 | `ascii-full` | `--style ascii:edges=0` on `pbr_test`: the #265 golden, unchanged with edges off, and its character grid exactly (`ascii_pbr_test.txt`, #317) |
-| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props`, with edges |
+| `ascii-full-detailed-tint` | another ramp and the tint colour mode on `stylize_props_ascii`, with edges |
 | `ascii-full-hidpi` | `--pixels-per-point 2`: cells in points (edges off) |
 | `ascii-full-msaa4` | `--msaa 4` scene passes under the glyph grid (edges off) |
 | `ascii-edges-pbr` | [edges](#edges) on `pbr_test`, grid off |
@@ -1070,11 +1070,12 @@ flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless   
 | `ascii-edges`, `ascii-edges-msaa4`, `ascii-edges-scale05` | the styled sphere and box of `demo/ascii_edges.scene.toml` outlined, at 1x, under MSAA 4 and at `--render-scale 0.5` |
 | `ascii-entity`, `ascii-entity-object` | the spike's per-entity modes (#261), screen and object grids |
 | `style-mask` | the entity style mask the per-entity styles read (`--debug-mode style`) |
+| `styles-mixed` | ASCII and pencil props in one frame, on the mixed bench: each style leaves the other's pixels alone (#386) |
 | `edges-view`, `edges-inkline-scale05` | the [shared edges](#shared-edges) on the props scene, and a user style reading them beside `edges_view` at `--render-scale 0.5` |
 | `invert`, `kuwahara` | the other styles, with a tighter tolerance |
 | `palette-phosphor-dither`, `palette-cga16` | the [palette style](#palette) on the props scene: a ladder dithered in 2-point blocks, and nearest colours flat. Glyph tolerance, since a colour on a boundary flips a whole block |
 
-Cases render single-sample with the post clock at 0 unless they say otherwise. The props cases use `demo/stylize_props.scene.toml`, which loads in a few seconds in a debug build, with the grid off. Glyph styles share #265's tolerance (fail when more than 2% of pixels differ by more than 48 levels, or the mean passes 3), since a cell on a ramp step's border can flip glyph on another GPU; smooth styles take `level = 8, share = 0.003, mean = 0.25`, because Kuwahara at radius 4 against a radius-5 golden is a 0.39 mean the glyph limits would pass. On one machine, every case is byte-identical run to run. **A new style adds a case here.** The manifest format is in [Headless Rendering](../guides/headless-rendering.md#golden-suites).
+Cases render single-sample with the post clock at 0 unless they say otherwise. The props cases share one clearing, `demo/prefabs/stylize_props.prefab.toml`, which loads in a few seconds in a debug build, with the grid off. Each style has a bench of its own on it (#386): `stylize_props_ascii` (the barrel and YBot in glyphs), `stylize_props_pencil` (the cask and crate sketched) and `stylize_props_plain` (nothing styled, for whole-frame styles and looks), so a change to pencil moves only the pencil cases and `look-graphite`. The mixed bench, `stylize_props.scene.toml`, keeps both styles for the mask cases and `styles-mixed`, the one case that moves with either: it holds that each style leaves the other's pixels alone. A new per-entity style adds a bench of its own (a scene placing the prefab, with overrides giving its props a `style_mask`); a whole-frame style or a look goes on the plain one. Glyph styles share #265's tolerance (fail when more than 2% of pixels differ by more than 48 levels, or the mean passes 3), since a cell on a ramp step's border can flip glyph on another GPU; smooth styles take `level = 8, share = 0.003, mean = 0.25`, because Kuwahara at radius 4 against a radius-5 golden is a 0.39 mean the glyph limits would pass. On one machine, every case is byte-identical run to run. **A new style adds a case here.** The manifest format is in [Headless Rendering](../guides/headless-rendering.md#golden-suites).
 
 ## Shared edges
 

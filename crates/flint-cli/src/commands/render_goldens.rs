@@ -1073,6 +1073,33 @@ mod tests {
         }
     }
 
+    /// Each style has a props bench of its own (#386): a case on the mixed
+    /// bench, which carries ASCII and pencil props both, moves with either
+    /// style, so only the mask views and the one deliberately mixed case
+    /// may use it. Anything else picks `stylize_props_<style>` or `_plain`.
+    #[test]
+    fn only_the_mixed_cases_use_the_mixed_props_bench() {
+        let (_, manifest) = stylize_manifest();
+        let mixed = ["style-mask", "style-mask-msaa4", "styles-mixed"];
+        for case in &manifest.cases {
+            if case.scene == "demo/stylize_props.scene.toml" {
+                assert!(
+                    mixed.contains(&case.name.as_str()),
+                    "case '{}' is on the mixed props bench: use the bench of its own \
+                     style (demo/stylize_props_ascii, _pencil or _plain), so another \
+                     style's change doesn't move it",
+                    case.name
+                );
+            }
+        }
+        for name in mixed {
+            assert!(
+                manifest.cases.iter().any(|c| c.name == name),
+                "the mixed case '{name}' is gone"
+            );
+        }
+    }
+
     /// A new look adds a golden case too (#279).
     #[test]
     fn every_shipped_look_has_a_golden_case() {
