@@ -19,6 +19,8 @@ struct PencilRow {
     f: vec4<f32>,
     // origin xy (px), flags (bits: 1 pass through, 2 world grid), darkness
     g: vec4<f32>,
+    // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
+    h: vec4<f32>,
 };
 
 struct PencilUniforms {
@@ -34,6 +36,8 @@ struct PencilUniforms {
     // x: rows in use; y: 1 when slot 0 passes through (only entities
     // asked); z: 1 when the mask is bound
     info: vec4<u32>,
+    // The images' measures (#390): paper mean and spread of luma, stroke ink
+    img: vec4<f32>,
     rows: array<PencilRow, 64>,
     // The row of each mask id, four ids a vec4
     slots: array<vec4<u32>, 64>,
@@ -117,6 +121,9 @@ fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
 
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(1) var style_mask: texture_2d<u32>;
+// The paper and stroke images (#390), a blank texel while none is named
+@group(2) @binding(2) var paper_tex: texture_2d<f32>;
+@group(2) @binding(3) var stroke_tex: texture_2d<f32>;
 
 fn mask_id(p: vec2<i32>) -> u32 {
     let size = vec2<i32>(textureDimensions(style_mask));

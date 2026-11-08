@@ -17,6 +17,10 @@
 //! color = 0.0            # 1 draws over the scene's colour instead of paper
 //! seed = 0               # a different hand; the same seed draws the same picture
 //! boil = 0.0             # redraws a second (0 = still)
+//! paper_image = "papers/cold_press.png"  # a scanned paper (#390); "none" = procedural
+//! paper_scale = 1.0      # points a texel of it covers
+//! stroke_image = "graphite"   # strokes/graphite.png: a strip of real strokes
+//! stroke_rows = 4        # strokes stacked in the strip, one picked a dash
 //! ```
 //!
 //! It runs at the display stage, on the finished picture at output
@@ -40,6 +44,23 @@
 //! `seed` (with `boil`, also the post clock, which `--style-time` sets):
 //! every random choice is an integer hash.
 //!
+//! ## Images (#390)
+//!
+//! `paper_image` names a paper image beside the scene (as glyph sets are
+//! found: the scene's folder, then its parent; a bare name also tries
+//! `papers/<name>.png`), tiled in points from the screen's corner. Its
+//! luma, measured against its own mean and spread, is the paper's height:
+//! the tone under the strokes and the tooth that breaks them, as much as
+//! `grain` says; its hue tints the `paper` colour. `stroke_image` names a
+//! strip of `stroke_rows` strokes stacked top to bottom, each drawn left
+//! to right (`strokes/<name>.png` for a bare name); each dash is one of
+//! them, stretched along the dash, its ink the strip's dark or opaque
+//! texels. Both are read through [`images`](super::images) with no
+//! sampler; with none named the procedural paper and dashes draw exactly
+//! as before. One paper and one strip a frame: the scene table's, else the
+//! first entity's that names one; a row naming another draws procedurally
+//! (warned once).
+//!
 //! ## Per entity
 //!
 //! As ASCII (#266): an entity with a `pencil_style` component, or a
@@ -61,6 +82,7 @@
 //! their size on screen at any distance; `direction` is not used (the sky
 //! keeps the screen's hatching), `angle` turns the strokes in each plane.
 
+use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
@@ -120,12 +142,34 @@ const PARAMS: &[StyleParam] = &[
     StyleParam::new("lead_r", 0.16, 0.0..=1.0),
     StyleParam::new("lead_g", 0.16, 0.0..=1.0),
     StyleParam::new("lead_b", 0.19, 0.0..=1.0),
+    StyleParam::new("paper_scale", 1.0, 0.25..=8.0),
+    StyleParam::new("stroke_rows", 1.0, 1.0..=16.0),
 ];
+
+/// The value of `paper_image` / `stroke_image` that names no image.
+pub const NO_IMAGE: &str = "none";
+
+/// The papers to offer: none, then every `papers/*.png` beside the scene.
+pub(super) fn paper_choices(scope: &super::ChoiceScope<'_>) -> Vec<String> {
+    super::choices_with(&[NO_IMAGE], scope.files(super::images::PAPERS, ".png"))
+}
+
+/// The stroke strips to offer: none, then every `strokes/*.png`.
+fn stroke_choices(scope: &super::ChoiceScope<'_>) -> Vec<String> {
+    super::choices_with(&[NO_IMAGE], scope.files(super::images::STROKES, ".png"))
+}
+
+/// Whether an image option's value names an image.
+pub fn names_image(value: &str) -> bool {
+    !value.is_empty() && value != NO_IMAGE
+}
 
 const OPTIONS: &[StyleOption] = &[
     StyleOption::new("direction", "surface", DIRECTIONS),
     StyleOption::new("scope", "screen", SCOPES),
     StyleOption::new("grid", "screen", GRIDS),
+    StyleOption::new("paper_image", NO_IMAGE, &[]).discovered(paper_choices),
+    StyleOption::new("stroke_image", NO_IMAGE, &[]).discovered(stroke_choices),
 ];
 
 const HINTS: &[StyleHint] = &[
@@ -153,6 +197,10 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("boil", "Boil (per s)", "Redraws a second, for animated lines; 0 = still"),
     StyleHint::new("paper", "Paper", "Paper colour (display values)"),
     StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
+    StyleHint::new("paper_image", "Paper image", "A scanned paper (papers/<name>.png): its relief is the tooth, its hue tints the paper; none = procedural"),
+    StyleHint::new("paper_scale", "Paper scale (pt)", "Points one texel of the paper image covers"),
+    StyleHint::new("stroke_image", "Stroke image", "A strip of real strokes (strokes/<name>.png), one stretched along each dash; none = drawn bars"),
+    StyleHint::new("stroke_rows", "Strokes in strip", "How many strokes the strip stacks, top to bottom").integer(),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
@@ -190,6 +238,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
                 },
                 count: None,
             },
+            image_entry(2),
+            image_entry(3),
         ],
     });
     // Bound while no entity asks for the style: one unstyled pixel
@@ -246,7 +296,26 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         no_mask_view,
         blit,
         warned: Mutex::new(false),
+        images: Mutex::new(Images {
+            paper: ImageSlot::new(ImageUse::Paper, "pencil paper"),
+            stroke: ImageSlot::new(ImageUse::Stroke, "pencil stroke"),
+            warned: false,
+        }),
     })
+}
+
+/// A style image's binding: read with `textureLoad`, no sampler.
+pub(super) fn image_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 
 const PREP_SHADER: &str = concat!(
@@ -255,6 +324,7 @@ const PREP_SHADER: &str = concat!(
 );
 const DRAW_SHADER: &str = concat!(
     include_str!("pencil_common.wgsl"),
+    include_str!("style_image.wgsl"),
     include_str!("pencil.wgsl")
 );
 const FLOW_SHADER: &str = concat!(
@@ -298,11 +368,19 @@ pub fn any_tensor(rows: &[PencilRow]) -> bool {
         .any(|r| r.v[6][2] != PASS_THROUGH && r.v[4][3] == TENSOR)
 }
 
-/// One variant's settings, seven vec4s (see `PencilRow` in the shader).
+/// One variant's settings, eight vec4s (see `PencilRow` in the shader).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq)]
 pub struct PencilRow {
-    pub v: [[f32; 4]; 7],
+    pub v: [[f32; 4]; 8],
+}
+
+/// The paper and stroke images, kept with the style (#390).
+struct Images {
+    paper: ImageSlot,
+    stroke: ImageSlot,
+    /// Whether the two-images-in-one-frame warning has been given.
+    warned: bool,
 }
 
 #[repr(C)]
@@ -317,6 +395,7 @@ struct PencilUniforms {
     forward: [f32; 3],
     _pad1: f32,
     info: [u32; 4],
+    img: [f32; 4],
     rows: [PencilRow; MAX_VARIANTS],
     slots: [[u32; 4]; MAX_IDS / 4],
 }
@@ -425,8 +504,35 @@ pub fn row(
                     },
                 param("darkness").clamp(0.0, 1.0),
             ],
+            [
+                param("paper_scale").clamp(0.05, 64.0),
+                param("stroke_rows").clamp(1.0, 64.0).round(),
+                names_image(&option("paper_image")) as u32 as f32,
+                names_image(&option("stroke_image")) as u32 as f32,
+            ],
         ],
     }
+}
+
+/// The one image a frame draws with in `lane` (2 paper, 3 stroke) of the
+/// rows' last vec4, from each row's name for it: the scene table's (row 0)
+/// when it names one, else the first row's that does. A row naming
+/// another loses its flag and draws procedurally. Returns the name and
+/// whether any row was refused so.
+pub fn choose_image(names: &[String], rows: &mut [PencilRow], lane: usize) -> (String, bool) {
+    let chosen = names
+        .iter()
+        .find(|n| names_image(n))
+        .cloned()
+        .unwrap_or_default();
+    let mut refused = false;
+    for (name, row) in names.iter().zip(rows.iter_mut()) {
+        if row.v[7][lane] > 0.5 && *name != chosen {
+            row.v[7][lane] = 0.0;
+            refused = true;
+        }
+    }
+    (chosen, refused)
 }
 
 /// How far, in pixels, a styled pixel's draw reads the prep texture
@@ -467,13 +573,22 @@ struct Pencil {
     blit: kit::Blit,
     /// Whether the too-many-variants warning has been given.
     warned: Mutex<bool>,
+    images: Mutex<Images>,
 }
 
 impl Pencil {
     /// The depth and the mask (or the one-pixel stand-in).
-    fn geometry_bind(&self, frame: &StyleFrame<'_>, with_mask: bool) -> Arc<wgpu::BindGroup> {
+    fn geometry_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        with_mask: bool,
+        paper: &StyleImage,
+        stroke: &StyleImage,
+    ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
-        frame.depth_bind("Pencil Geometry BG", mask.is_some() as u64, || {
+        // Keyed by both images' uploads, so a new paper gets a new group
+        let key = mask.is_some() as u64 | paper.generation << 1 | stroke.generation << 32;
+        frame.depth_bind("Pencil Geometry BG", key, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Geometry BG"),
                 layout: &self.geometry_bgl,
@@ -488,6 +603,14 @@ impl Pencil {
                             mask.unwrap_or(&self.no_mask_view),
                         ),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&paper.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&stroke.view),
+                    },
                 ],
             })
         })
@@ -495,7 +618,12 @@ impl Pencil {
 
     /// Row 0 (the whole frame's) and a row for each per-entity variant,
     /// with the row of every mask id.
-    fn variant_table(&self, frame: &StyleFrame<'_>) -> (Vec<PencilRow>, [u32; MAX_IDS]) {
+    /// Each row's image names (paper, stroke) come back beside it.
+    #[allow(clippy::type_complexity)]
+    fn variant_table(
+        &self,
+        frame: &StyleFrame<'_>,
+    ) -> (Vec<PencilRow>, [u32; MAX_IDS], Vec<[String; 2]>) {
         let whole = row(
             &|n| frame.param(n),
             &|n| frame.option(n).to_string(),
@@ -504,6 +632,8 @@ impl Pencil {
             0.0,
         );
         let mut rows = vec![whole];
+        let image_names = |o: &dyn Fn(&str) -> String| [o("paper_image"), o("stroke_image")];
+        let mut names = vec![image_names(&|n| frame.option(n).to_string())];
         let mut slots = [0u32; MAX_IDS];
         // Ids another running style draws are that style's pixels (#384:
         // the framework puts the input back there too; the slot keeps
@@ -532,6 +662,7 @@ impl Pencil {
                 .map_or([0.0, 0.0], |at| [at[0].round(), at[1].round()]);
             let flags = if v.off { PASS_THROUGH } else { 0.0 };
             slots[id as usize] = rows.len() as u32;
+            names.push(image_names(&|n| frame.variant_option(v, n).to_string()));
             rows.push(row(
                 &|n| frame.variant_param(v, n),
                 &|n| frame.variant_option(v, n).to_string(),
@@ -540,7 +671,46 @@ impl Pencil {
                 flags,
             ));
         }
-        (rows, slots)
+        (rows, slots, names)
+    }
+
+    /// The frame's paper and stroke images, clearing the flag of any row
+    /// that names another (see [`choose_image`]) or whose image didn't load.
+    fn images(
+        &self,
+        frame: &StyleFrame<'_>,
+        rows: &mut [PencilRow],
+        names: &[[String; 2]],
+    ) -> (Arc<StyleImage>, Arc<StyleImage>) {
+        let papers: Vec<String> = names.iter().map(|n| n[0].clone()).collect();
+        let strokes: Vec<String> = names.iter().map(|n| n[1].clone()).collect();
+        let (paper_name, refused_paper) = choose_image(&papers, rows, 2);
+        let (stroke_name, refused_stroke) = choose_image(&strokes, rows, 3);
+        let search = super::ChoiceScope::defaults(frame.scene_dir).search();
+        let poll = frame.frame.is_multiple_of(15);
+        let mut images = self.images.lock().unwrap_or_else(|e| e.into_inner());
+        if (refused_paper || refused_stroke) && !images.warned {
+            tracing::warn!(
+                "pencil: one paper and one stroke image a frame (\"{paper_name}\", \
+                 \"{stroke_name}\"); entities naming others draw procedurally"
+            );
+            images.warned = true;
+        }
+        let paper = images
+            .paper
+            .get(frame.device, frame.queue, &search, &paper_name, poll);
+        let stroke = images
+            .stroke
+            .get(frame.device, frame.queue, &search, &stroke_name, poll);
+        for row in rows.iter_mut() {
+            if !paper.found {
+                row.v[7][2] = 0.0;
+            }
+            if !stroke.found {
+                row.v[7][3] = 0.0;
+            }
+        }
+        (paper, stroke)
     }
 }
 
@@ -552,7 +722,8 @@ impl StylePass for Pencil {
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
     ) {
-        let (rows, slots) = self.variant_table(frame);
+        let (mut rows, slots, names) = self.variant_table(frame);
+        let (paper, stroke) = self.images(frame, &mut rows, &names);
         let with_mask = (rows.len() > 1 || slots.contains(&FOREIGN)) && frame.mask.is_some();
         let mut uniforms = PencilUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
@@ -574,6 +745,7 @@ impl StylePass for Pencil {
                 with_mask as u32,
                 0,
             ],
+            img: paper.stats.paper_and(stroke.stats),
             rows: [PencilRow::zeroed(); MAX_VARIANTS],
             slots: [[0; 4]; MAX_IDS / 4],
         };
@@ -587,7 +759,7 @@ impl StylePass for Pencil {
 
         let uniform = frame.uniform("Pencil Uniform BG", &self.uniform_bgl, &self.uniforms);
         let input_bind = frame.sampled_input("Pencil Input BG", &self.input_bgl, input);
-        let geometry = self.geometry_bind(frame, with_mask);
+        let geometry = self.geometry_bind(frame, with_mask, &paper, &stroke);
         let prep = frame.target("pencil.prep", PREP_FORMAT);
 
         // Per entity, only the entities' pixels change (#385): the draw
@@ -717,11 +889,11 @@ mod tests {
     }
 
     #[test]
-    fn a_row_is_seven_vec4s() {
-        assert_eq!(std::mem::size_of::<PencilRow>(), 112);
+    fn a_row_is_eight_vec4s() {
+        assert_eq!(std::mem::size_of::<PencilRow>(), 128);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
-            64 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 112 + MAX_IDS * 4
+            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 128 + MAX_IDS * 4
         );
     }
 
@@ -864,5 +1036,37 @@ mod tests {
         assert_eq!(r.v[6][2], PASS_THROUGH, "no world grid by default");
         assert_eq!(&r.v[4][..3], &[0.95, 0.93, 0.88], "paper");
         assert_eq!([r.v[6][0], r.v[6][1], r.v[6][2]], [3.0, 4.0, 1.0]);
+        assert_eq!(r.v[7], [1.0, 1.0, 0.0, 0.0], "no images by default");
+    }
+
+    #[test]
+    fn one_image_a_frame_the_scene_tables_first() {
+        let config = crate::postprocess::PostProcessConfig::default();
+        let p = |n: &str| STYLE.param(&config, n);
+        let named = |paper: &'static str| {
+            let config = crate::postprocess::PostProcessConfig::default();
+            move |n: &str| match n {
+                "paper_image" => paper.to_string(),
+                o => STYLE.option(&config, o).to_string(),
+            }
+        };
+        let mut rows = vec![
+            row(&p, &named("none"), 0.0, [0.0; 2], 0.0),
+            row(&p, &named("cold_press"), 0.0, [0.0; 2], 0.0),
+            row(&p, &named("hot_press"), 0.0, [0.0; 2], 0.0),
+        ];
+        let names: Vec<String> = ["none", "cold_press", "hot_press"].map(String::from).into();
+        let (chosen, refused) = choose_image(&names, &mut rows, 2);
+        assert_eq!(
+            chosen, "cold_press",
+            "the scene names none: the first entity's"
+        );
+        assert!(refused);
+        assert_eq!(
+            rows.iter().map(|r| r.v[7][2]).collect::<Vec<_>>(),
+            vec![0.0, 1.0, 0.0],
+            "the other paper draws procedurally"
+        );
+        assert!(names_image("cold_press") && !names_image("none") && !names_image(""));
     }
 }

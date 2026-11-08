@@ -28,3 +28,7 @@ lead = { type = "vec3", description = "Graphite colour, RGB 0-1 display values; 
 seed = { type = "f32", min = 0.0, max = 9999.0, description = "A different hand: another whole number draws other strokes; the same seed draws the same picture every run" }
 boil = { type = "f32", min = 0.0, max = 24.0, description = "Redraws a second, for animated 'boiling' lines (0 = still)" }
 grid = { type = "enum", values = ["screen", "object", "world"], description = "screen: hatching fixed to the screen. object: pinned to this entity's projected origin, so its strokes travel with it. world: laid on its surfaces, so they hold as the camera moves (#389)" }
+paper_image = { type = "string", description = "A paper image beside the scene (papers/<name>.png, or a path), tiled in points; its relief is the paper's tooth and its hue tints `paper`. \"none\" draws the procedural paper. One paper a frame: the scene table's, else the first entity's (#390)" }
+paper_scale = { type = "f32", min = 0.25, max = 8.0, description = "Points one texel of the paper image covers" }
+stroke_image = { type = "string", description = "A strip of real pencil strokes (strokes/<name>.png, or a path), stroke_rows of them stacked top to bottom, each drawn left to right; one is stretched along each dash. \"none\" draws the analytic dashes (#390)" }
+stroke_rows = { type = "f32", min = 1.0, max = 16.0, description = "How many strokes the stroke image stacks" }

@@ -531,6 +531,32 @@ How it draws:
 
 ![Close up: the crate's faces hatched straight, its outline doubled, the ground cross-hatched in three layers](../images/pencil-closeup.png)
 
+### Paper and strokes from files
+
+A scanned paper and a strip of real pencil strokes can take the place of the procedural paper and the drawn dashes (#390):
+
+```toml
+[post_process.styles.pencil]
+paper_image = "cold_press"   # papers/cold_press.png beside the scene, or any path
+paper_scale = 1.0            # points one texel covers; the image tiles
+stroke_image = "graphite"    # strokes/graphite.png
+stroke_rows = 4              # strokes stacked in the strip, top to bottom
+```
+
+```bash
+flint render demo/stylize_props.scene.toml --no-grid \
+  --style pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4 -o page.png
+```
+
+![stylize_props at 1:1: procedural paper and dashes, the cold-press image, the graphite strip, and both](../images/pencil-images.png)
+
+- **Found like glyph sets.** A name is looked for beside the scene, then in its parent folder, then in `.`; a bare name (no folder or extension) also tries `papers/<name>.png` or `strokes/<name>.png`. Files are read through the vfs, so `flint bundle` carries them to the web. F4 lists the PNGs in the scene's `papers/` and `strokes/`. A name that can't be found or decoded warns once and draws procedurally. Natively an edited file reloads while the viewer is open, as palettes do.
+- **The paper.** Its luma, measured against the image's own mean and spread, is the paper's height. The height shades the paper and is the tooth that breaks the strokes, as strongly as `grain` says. So any scan, dark or light, faint or deep, comes out at the same strength. The scan's overall colour cast is taken out when it loads, so the `paper` colour still decides the paper's colour. The image adds relief and local flecks of hue, not a second tint. It tiles from the screen's corner in points, so the paper holds still as the camera moves.
+- **The strokes.** The strip is `stroke_rows` strokes stacked top to bottom, each drawn left to right. A dash takes one of them by its hash and stretches it along its length. The row spans twice `thickness`, and the stroke grows from thin as the tone passes the layer's threshold. Ink is the strip's dark or opaque texels (`alpha x (1 - luma)`) over the strip's own 99th percentile, so dark on white and dark on transparent both work, and a light scan still draws a full line. The strip's own ends replace the drawn taper. It works on every `grid`: under `grid = "world"` the row is twice the stroke width in metres, as the world strokes are measured.
+- **One paper and one strip a frame.** These come from the scene's table, or else from the first `pencil_style` entity that names one. An entity that names a different file draws procedurally and gets one warning.
+- **No sampler.** Images are `Rgba8Unorm` with a mip chain made on the CPU, and the shader reads them with `textureLoad` at the level it picks. Wrapping the paper is integer arithmetic, and the DX12 sampler heap rule holds. `crates/flint-render/src/stylize/images.rs` holds the loader and `style_image.wgsl` the reader, for any style that wants an image.
+- `demo/papers/cold_press.png` and `demo/strokes/graphite.png` are synthesized by `tools/style-images/make_images.py` (`python tools/style-images/make_images.py demo`; numpy and Pillow), not scanned. A real scan drops in the same way. With no image named, pencil draws exactly what it drew before: its goldens pass unblessed.
+
 It runs at the display stage, at output resolution, with sizes in points (times the pixels-per-point scale), in two passes. The first pass writes each pixel's tone, contour strength and stroke direction into a scratch target. The second blurs the direction into a flow and draws the strokes. Only when a variant hatches by `tensor`, two half-resolution passes between them blur its flow first (`pencil_flow.wgsl`), and the drawing pass reads the result. At 1080p on an RTX 4070 the whole frame costs about 0.49 ms; `tensor` adds about 0.08 ms (0.56 to 0.64 ms on `demo/pencil_sketch.scene.toml`, the mean of six alternating `--gpu-time 240` runs). With only two props asking for it the cost is 0.19 ms, because both full-screen passes still run and only return early on unstyled pixels.
 
 **Strokes that hold to the surfaces.** Hatching is laid in screen space by default, so when the camera moves the strokes stay where they are and the surfaces slide under them (the shower-door effect). `grid = "world"` (#389) lays the strokes on the surfaces instead. Each pixel's world position is rebuilt from the depth and hatched on the three axis planes (triplanar, weighted by the normal the first pass rebuilds), with stripes measured in metres, so the strokes travel with the props as the camera orbits. A fixed spacing in metres would crowd into grey with distance, so spacing comes in octaves: level *k* puts its rows 2^*k* metres apart. Each pixel picks the octave whose spacing on screen is nearest `spacing` and cross-fades it with the next one, as a mip chain does. The on-screen spacing is measured per plane and per stroke direction, from the quad's derivatives, so a floor seen edge-on climbs to wider rows across its depth. Strokes keep their size on screen at any distance, and each one stays where it lies. Every even row of one octave is a row of the next, and a row is hashed by its odd part and the octave that gives it, so a stroke keeps its dashes as it climbs. `angle` turns the strokes within each plane. `direction` isn't used, and the sky keeps screen hatching. The paper and the contours' wobble stay on the page, as a real sheet would.
@@ -705,6 +731,7 @@ grain = 0.35        # the paper's relief, shading even bare paper
 grain_scale = 1.0   # the paper's tooth (bigger = coarser)
 pigment = 1.0       # overall density: below 1 dilutes, above 1 deepens
 paper_r = 0.97      # the paper's colour (paper_g 0.94, paper_b 0.87)
+paper_image = "none"  # or a papers/<name>.png beside the scene (#390)
 scope = "screen"    # or "entities": a preset for watercolor_style entities
 ```
 
@@ -726,6 +753,9 @@ It runs at the **display stage**, after tonemapping, because it paints *on* pape
 
 - **Density.** The colour is treated as the pigment layer's transmittance over white paper, and a layer `d` times as thick transmits `C^d` (Beer–Lambert). White stays the paper and black stays black; a mid-tone moves most. Edges, glaze borders, depth rims, turbulence and granulation all add to `d`.
 - **Paper** lives in screen space, in points, so its grain holds still as the camera moves and is the same size to the eye at any `--pixels-per-point`. The noise is integer-hashed, so a frame is the same on every run.
+- **A paper image** (#390): `paper_image = "cold_press"` paints on `papers/cold_press.png` (found as for [pencil](#paper-and-strokes-from-files)), one texel every `grain_scale` points. Its height, measured against the image's own mean and spread, replaces the noise, so `grain` (the relief) and `granulation` (pigment settling in the valleys) read the scan. Its local hue variations tint `paper`. One paper serves a frame: the scene's, else the first entity's.
+
+![mesh_meadow under watercolor at 1:1, procedural paper and cold_press: the path's wash settles into the scan's nodules](../images/watercolor-paper-image.png)
 - **Per entity.** A `watercolor_style` component (its fields are the keys above, `paper = [r, g, b]` for the paper's colour) or a `style_mask { style = "watercolor" }` paints an entity with no table, the rest of the frame passing through, exactly as [per-entity ASCII](#per-entity-ascii) works: the scene's table (with `scope = "entities"`) is the preset, entities with equal settings share an id, `enabled = false` opts out, descendants inherit. The mask is read at the wobbled position, so a painted prop's silhouette wanders a little over its surroundings, as a real wash's would. One frame holds 15 variants. `demo/watercolor.scene.toml` paints a static mesh, a skinned one, two props with settings of their own and an inherited one, and leaves one out.
 - **One wash radius a frame.** `wash` is the largest any variant (or the scene) asks for; every other key is per entity.
 - **With Kuwahara** they chain: Kuwahara (HDR stage) flattens the scene into brush pools, and watercolor then paints those pools on paper (`--style kuwahara:radius=4 --style watercolor:layers=3`). They share nothing, and neither needs the other.
