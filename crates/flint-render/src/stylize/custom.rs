@@ -65,6 +65,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
+mod template;
+pub use template::{template, Template};
+
 /// The file suffix of a style description.
 pub const SUFFIX: &str = ".shader.toml";
 
@@ -2140,12 +2143,65 @@ pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> 
 }
 
 /// Read and check the description at `path` (not its shader).
-fn read_source(path: &Path) -> Result<StyleSource, String> {
+pub fn read_source(path: &Path) -> Result<StyleSource, String> {
     let text =
         flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    parse_source(&text, path)
+}
+
+/// Check `text` as the description at `path` (which needn't exist yet).
+pub fn parse_source(text: &str, path: &Path) -> Result<StyleSource, String> {
     let def: ShaderStyleDef =
-        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        toml::from_str(text).map_err(|e| format!("{}: {e}", path.display()))?;
     def.check(path)
+}
+
+/// Check the style at `path` the way a host loads it, its description and
+/// then its shader, without a GPU and without registering it (#416:
+/// `flint style check`). `Err` is the message a host would show.
+#[cfg(not(target_arch = "wasm32"))]
+///
+/// Every pass is checked (#412): the errors of all that fail, one after
+/// another, or one report adding up the passes' loops, reads and warnings
+/// (the description's notes among them). `guarded` is `None`: there's no
+/// one module to build.
+pub fn check_file(path: &Path) -> Result<Report, String> {
+    let source = read_source(path)?;
+    let mut total = Report {
+        warnings: source.notes.clone(),
+        ..Report::default()
+    };
+    let mut errors = Vec::new();
+    for (i, pass) in source.passes.iter().enumerate() {
+        let user = match flint_core::vfs::read_to_string(&pass.wgsl_path) {
+            Ok(user) => user,
+            Err(e) => {
+                errors.push(format!("{}: {e}", pass.wgsl_path.display()));
+                continue;
+            }
+        };
+        match check_pass(&source, i, &user) {
+            Ok(report) => {
+                total.loops += report.loops;
+                total.texture_reads += report.texture_reads;
+                total.warnings.extend(report.warnings);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() {
+        if source.passes.len() == 1 {
+            // One pass: its own report, guarded text and all
+            let user = flint_core::vfs::read_to_string(&source.wgsl_path)
+                .map_err(|e| format!("{}: {e}", source.wgsl_path.display()))?;
+            let mut report = check(&source, &user)?;
+            report.warnings.splice(0..0, source.notes.iter().cloned());
+            return Ok(report);
+        }
+        Ok(total)
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 /// The modified time of `path` on disk, for the reload polls (native
@@ -5149,5 +5205,61 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert_eq!(bundled.param(&Default::default(), "k"), 0.5);
         assert!(errors().iter().any(|(n, _)| n == "utest_unpacked"));
         assert!(!errors().iter().any(|(n, _)| n == "utest_bundled"));
+    }
+
+    /// `flint style new` (#416): every stage and set of inputs writes a
+    /// description that checks and a shader that compiles with no warning,
+    /// lists exactly the helpers its inputs give, and runs a check from
+    /// the files on disk.
+    #[test]
+    fn templates_check_for_every_stage_and_input() {
+        for stage in [StyleStage::Display, StyleStage::Hdr] {
+            for bits in 0..8u8 {
+                let inputs = Inputs {
+                    depth: bits & 1 != 0,
+                    mask: bits & 2 != 0,
+                    edges: bits & 4 != 0,
+                };
+                let t = template("utest_new", stage, inputs);
+                let path = Path::new("styles/utest_new.shader.toml");
+                let source = parse_source(&t.toml, path).unwrap();
+                assert_eq!(source.stage, stage);
+                assert_eq!(source.inputs, inputs);
+                assert_eq!(source.params.len(), 1);
+                let report = check(&source, &t.wgsl).unwrap_or_else(|e| panic!("{e}\n{}", t.wgsl));
+                assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+                assert_eq!(t.wgsl.contains("flint_view_depth"), inputs.depth);
+                assert_eq!(t.wgsl.contains("flint_style_blend"), inputs.mask);
+                assert_eq!(t.wgsl.contains("flint_edge("), inputs.edges);
+                // Uncommenting the input lines still compiles
+                let live = t.wgsl.replace("    // let ", "    let ");
+                check(&source, &live).unwrap_or_else(|e| panic!("{e}\n{live}"));
+            }
+        }
+        // From disk, as `flint style check` runs it
+        let dir = std::env::temp_dir().join(format!("flint-style-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = template("utest_disk", StyleStage::Display, Inputs::default());
+        let toml_path = dir.join("utest_disk.shader.toml");
+        std::fs::write(&toml_path, &t.toml).unwrap();
+        std::fs::write(dir.join("utest_disk.wgsl"), &t.wgsl).unwrap();
+        assert!(check_file(&toml_path).unwrap().warnings.is_empty());
+        std::fs::write(
+            dir.join("utest_disk.wgsl"),
+            "fn style(p: StylePixel) -> vec4<f32> {\n    retrun p.color;\n}\n",
+        )
+        .unwrap();
+        let err = check_file(&toml_path).unwrap_err();
+        assert!(err.contains("utest_disk.wgsl:2:"), "{err}");
+        std::fs::remove_file(dir.join("utest_disk.wgsl")).unwrap();
+        assert!(check_file(&toml_path)
+            .unwrap_err()
+            .contains("utest_disk.wgsl"));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A built-in's name is refused before anything is written
+        let t = template("ascii", StyleStage::Display, Inputs::default());
+        assert!(parse_source(&t.toml, Path::new("styles/ascii.shader.toml"))
+            .unwrap_err()
+            .contains("built-in"));
     }
 }

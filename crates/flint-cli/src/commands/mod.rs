@@ -36,6 +36,7 @@ pub mod spike_rumble;
 pub mod style_sheet;
 pub mod sweep;
 pub mod spline_edit;
+pub mod style;
 pub mod terrain_edit;
 pub mod tex_edit;
 pub mod validate;
