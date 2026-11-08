@@ -450,7 +450,7 @@ flint render demo/ascii_entities.scene.toml --ascii-scope screen            # th
 flint render demo/pbr_test.scene.toml --ascii --ascii-grid object           # flags set the preset
 ```
 
-At 1080p on an RTX 4070 the demo's ASCII pass costs about 0.045 ms and its mask 0.013--0.023 ms (DX12, Vulkan); with `--ascii-scope screen` the pass costs about 0.06 ms, and with no styled entities 0.04 ms. In Chrome it is about twice that, and a render scale leaves it unchanged, since the cells are output pixels. The numbers by backend, scale and browser are in `docs/design/web.md` ("Stylize passes", #270). It works under `--msaa 4` and `--render-scale`, where the silhouette follows the scaled mask. F4 → Styles → ASCII offers `scope` and `grid` beside the other settings, and `flint edit --watch` hot-reloads `ascii_style` edits.
+At 1080p on an RTX 4070 the demo's ASCII pass costs about 0.045 ms and its mask 0.013--0.023 ms (DX12, Vulkan); with `--ascii-scope screen` the pass costs about 0.06 ms, and with no styled entities 0.04 ms. In Chrome it is about twice that, and a render scale leaves it unchanged, since the cells are output pixels. A phone is another matter: on a Pixel 8 Pro (Mali-G715) any ASCII, per entity or full screen, with or without edges, takes the web player from about 64 fps to 25--30, while `invert` and `palette` cost nothing visible (#378; the pass is being found in #568). The numbers by backend, scale, browser and phone are in `docs/design/web.md` ("Stylize passes", #270, #378). It works under `--msaa 4` and `--render-scale`, where the silhouette follows the scaled mask. F4 → Styles → ASCII offers `scope` and `grid` beside the other settings, and `flint edit --watch` hot-reloads `ascii_style` edits.
 
 ### Silhouettes
 
