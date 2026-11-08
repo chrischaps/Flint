@@ -398,7 +398,7 @@ There are no longer per-effect function keys. ADR 0053 consolidated every render
 | Fog | Enabled, color, density, start, end, height fog + falloff + origin + density, tint color + strength + start + end |
 | Bloom | Enabled, intensity, threshold, soft threshold |
 | Grade / Grain / FXAA | Lift, gamma, gain, Neutral grade button, film grain, FXAA |
-| Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored and Copy TOML |
+| Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
 | Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater), mix, params |
 | Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |

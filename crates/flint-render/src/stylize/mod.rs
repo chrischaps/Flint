@@ -639,6 +639,18 @@ impl StyleDescriptor {
         keys
     }
 
+    /// Every key a scene's table for this style can hold: `enabled`,
+    /// `order`, `feeds_bloom`, the options, each parameter (colour channels
+    /// one by one) and each colour's own key. A commit to the scene (#364)
+    /// owns these and leaves any other key alone.
+    pub fn table_keys(&self) -> Vec<&'static str> {
+        let mut keys = vec!["enabled", "order", "feeds_bloom"];
+        keys.extend(self.options.iter().map(|o| o.name));
+        keys.extend(self.params.iter().map(|p| p.name));
+        keys.extend(self.colors().iter().map(|c| c.base));
+        keys
+    }
+
     /// The rows of this style's F4 section, in drawing order.
     pub fn controls(&self) -> Vec<StyleControl> {
         let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
