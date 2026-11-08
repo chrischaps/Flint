@@ -1314,6 +1314,140 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #414: a user style that reads the mask is per-entity. Its generated
+/// `<name>_style` component (or a `style_mask` naming it) switches it on
+/// with no `[post_process.styles]` table, and each entity's settings reach
+/// its own pixels as `params`: three boxes, three `glow`s, one frame.
+#[test]
+fn a_user_style_takes_settings_per_entity() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // Paints its entities (r = glow, g = 1, b = 0) and passes the rest
+    let dir = std::env::temp_dir().join(format!("flint-glow-414-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::write(
+        styles.join("utest_glow.shader.toml"),
+        "version = 1\nname = \"utest_glow\"\nshader = \"utest_glow.wgsl\"\ninputs = [\"mask\"]\n\
+         [params.glow]\ndefault = 0.5\nmin = 0.0\nmax = 1.0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_glow.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         if (flint_style_blend(p.uv) <= 0.0) {\n        return p.color;\n    }\n    \
+         return vec4<f32>(params.glow, 1.0, 0.0, 1.0);\n}\n",
+    )
+    .unwrap();
+    let messages = flint_render::stylize::custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let glow = flint_render::stylize::find("utest_glow").expect("the user style registered");
+    assert_eq!(glow.component, Some("utest_glow_style"));
+
+    // Three boxes in a row across the default camera's view
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let mut world = FlintWorld::new();
+    let mut boxes = Vec::new();
+    for (i, a) in [-3.2, 0.0, 3.2].into_iter().enumerate() {
+        let e = world.spawn(format!("box{i}")).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([a * s, -a * s, 0.0]));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-1.0; 3]));
+        bounds.insert("max".into(), vec3([1.0; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        boxes.push(e);
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    let painted = |f: &[u8]| f.chunks(4).filter(|p| p[1] == 255 && p[2] == 0).count();
+    assert_eq!(
+        painted(&plain),
+        0,
+        "the test's colour is in the plain frame"
+    );
+
+    let glow_of = |g: f64| {
+        let mut t = toml::Table::new();
+        t.insert("glow".into(), g.into());
+        toml::Value::Table(t)
+    };
+    world
+        .set_component(boxes[0], "utest_glow_style", glow_of(0.25))
+        .unwrap();
+    world
+        .set_component(boxes[1], "utest_glow_style", glow_of(0.75))
+        .unwrap();
+    let mut mask = toml::Table::new();
+    mask.insert("style".into(), "utest_glow".into());
+    world
+        .set_component(boxes[2], "style_mask", mask.into())
+        .unwrap();
+    assert!(
+        !renderer
+            .post_process_config()
+            .styles
+            .is_enabled("utest_glow"),
+        "the scene has no table for it"
+    );
+    renderer.update_from_world(&world, &gpu.device);
+    renderer.ensure_style_resources(&gpu.device);
+    let styled = gpu.frame(&mut renderer, &world);
+
+    // Each box in its own glow (display values; 6 levels for the sRGB
+    // round trip), the third at the default
+    let quarter = near(&styled, [0.25, 1.0, 0.0]);
+    let three_quarters = near(&styled, [0.75, 1.0, 0.0]);
+    let half = near(&styled, [0.5, 1.0, 0.0]);
+    eprintln!(
+        "glow 0.25: {quarter} px, 0.75: {three_quarters} px, default 0.5: {half} px, all {}",
+        painted(&styled)
+    );
+    for (n, what) in [
+        (quarter, "glow = 0.25"),
+        (three_quarters, "glow = 0.75"),
+        (half, "the style_mask's default"),
+    ] {
+        assert!(n > 40, "only {n} pixels in {what}");
+    }
+    assert_eq!(
+        quarter + three_quarters + half,
+        painted(&styled),
+        "a painted pixel took none of the three settings"
+    );
+    // The rest of the frame is the plain one
+    let changed_off_boxes = plain
+        .chunks(4)
+        .zip(styled.chunks(4))
+        .filter(|(a, b)| a != b && !(b[1] == 255 && b[2] == 0))
+        .count();
+    assert_eq!(changed_off_boxes, 0, "pixels off the boxes changed");
+
+    // An opt-out leaves its box as it was
+    let mut off = toml::Table::new();
+    off.insert("enabled".into(), false.into());
+    world
+        .set_component(boxes[1], "utest_glow_style", off.into())
+        .unwrap();
+    let opted = gpu.frame(&mut renderer, &world);
+    assert_eq!(near(&opted, [0.75, 1.0, 0.0]), 0, "the opt-out was painted");
+    assert!(near(&opted, [0.25, 1.0, 0.0]) > 40);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The pixels within 6 of `rgb` (8-bit display values) in each channel.
 fn near(pixels: &[u8], rgb: [f32; 3]) -> usize {
     let want = rgb.map(|v| (v * 255.0).round() as i32);
