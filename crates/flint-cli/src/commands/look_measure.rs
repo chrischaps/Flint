@@ -334,16 +334,16 @@ mod tests {
                 })
             })
             .collect();
-        let sheet = crate::commands::style_sheet::compose(
-            &cells,
-            &crate::commands::style_sheet::SheetText {
-                title: "t".into(),
-                subtitle: "s".into(),
-                labels: (0..5).map(|i| format!("v{i}  d 1.0 *")).collect(),
-            },
+        let mut text = crate::commands::style_sheet::SheetText::new(
+            "t",
+            "s",
+            (0..5).map(|i| format!("v{i}  d 1.0 *")).collect(),
         );
+        // Notes add a band under each row (#216); the crop still finds the cells
+        text.notes = vec!["note".into(); 5];
+        let sheet = crate::commands::style_sheet::compose(&cells, &text);
         for (i, cell) in cells.iter().enumerate() {
-            let (x, y) = crate::commands::style_sheet::cell_origin(96, 54, i);
+            let (x, y) = crate::commands::style_sheet::cell_origin(96, 54, &text, i);
             let crop = image::imageops::crop_imm(&sheet, x, y, 96, 54).to_image();
             assert_eq!(measure(&crop), measure(cell), "cell {i}");
         }

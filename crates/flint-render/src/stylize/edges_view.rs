@@ -50,7 +50,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     options: &[],
-    uses_mask: false,
+    uses_mask: super::MaskUse::Never,
     needs: &[StyleNeed::Edges],
     hints: &[
         StyleHint::new(

@@ -10,7 +10,7 @@
 //! ```
 //!
 //! It is also the first style that reads the mask, so it doubles as the
-//! example for one that does: `uses_mask: true`, and
+//! example for one that does: `uses_mask: MaskUse::Always`, and
 //! [`StyleFrame::mask_bind`] for the bind group.
 
 use super::kit;
@@ -44,7 +44,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         },
     ],
     options: &[],
-    uses_mask: true,
+    uses_mask: super::MaskUse::Always,
     needs: &[],
     hints: &[
         StyleHint::new(

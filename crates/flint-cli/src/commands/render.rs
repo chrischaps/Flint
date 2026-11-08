@@ -41,11 +41,13 @@ pub struct RenderArgs {
     pub look: Option<String>,
 
     /// Render one setting at several values as one labelled contact sheet
-    /// (#279): `ascii.cell=6,8,12` (any `--style` key), `post.exposure=0.8,1.2`
-    /// (a [post_process] field; split on `|` to sweep a vector), or
-    /// `look=ascii_noir,matrix`. --width/--height size each cell
-    #[arg(long, value_parser = parse_sweep)]
-    pub sweep: Option<super::look::Sweep>,
+    /// (#279, #353): `ascii.cell=6,8,12` (any `--style` key),
+    /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
+    /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
+    /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
+    /// --width/--height size each cell
+    #[arg(long, value_parser = super::sweep::parse_sweep)]
+    pub sweep: Option<super::sweep::Sweep>,
 
     /// Write the frame's (or each --sweep column's) measures as JSON
     /// (#357): mean luminance, near-black / near-white shares, edge
@@ -561,10 +563,6 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
-    super::look::Sweep::parse(s)
-}
-
 /// A GPU kept between renders in one process (#329). `flint render` makes
 /// its own; `render-suite` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
@@ -639,6 +637,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.frames.is_some() && args.sweep.is_some() {
         anyhow::bail!("--frames draws one sequence: drop --sweep");
     }
+    if let Some(knob) = args.sweep.as_ref().and_then(|s| s.wooze_knob()) {
+        anyhow::bail!(
+            "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
+             build doesn't have: it lives on feature/living-props until that merges (#206)"
+        );
+    }
     if let Some(dt) = args.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
             anyhow::bail!("--frame-dt must be a positive number of seconds");
@@ -667,7 +671,8 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
     let (width, height) = if args.sweep.is_some() || args.ai_refine {
-        (args.width.unwrap_or(640), args.height.unwrap_or(360))
+        let (w, h) = super::sweep::CELL_SIZE;
+        (args.width.unwrap_or(w), args.height.unwrap_or(h))
     } else {
         (args.width.unwrap_or(1920), args.height.unwrap_or(1080))
     };
@@ -712,7 +717,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
     let scene_pp = scene_file.post_process.as_ref();
-    let base_pp = super::look::base_def(scene_pp, look.as_ref())?;
+    let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
     let mut configs = Vec::new();
     for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
         let def = match &args.sweep {
@@ -1101,6 +1106,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         frames.push(img);
     }
 
+    // A sweep whose neighbours drew the same showed nothing: say so (#216)
+    if let Some(sweep) = &args.sweep {
+        for i in super::sweep::identical_neighbours(&frames) {
+            eprintln!("Warning: {}", sweep.identical_warning(i));
+        }
+    }
+
     // Measures (#357), from the same pixels the sheet is made of
     let mut columns = Vec::new();
     if args.report.is_some() || reference.is_some() {
@@ -1139,17 +1151,17 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 None => String::new(),
             };
             // With a reference, each label carries its distance and the
-            // nearest is starred
-            let labels = sweep
-                .values
-                .iter()
-                .enumerate()
-                .map(|(i, v)| match columns.get(i).and_then(|c| c.distance) {
-                    Some(d) => {
-                        let star = if nearest == Some(i) { " *" } else { "" };
-                        format!("{v}  d {:.1}{star}", d.score)
+            // nearest is starred (#357)
+            let labels = (0..sweep.values.len())
+                .map(|i| {
+                    let label = sweep.label(i);
+                    match columns.get(i).and_then(|c| c.distance) {
+                        Some(d) => {
+                            let star = if nearest == Some(i) { " *" } else { "" };
+                            format!("{label}  d {:.1}{star}", d.score)
+                        }
+                        None => label,
                     }
-                    None => v.clone(),
                 })
                 .collect();
             let subtitle = match &args.reference {
@@ -1158,11 +1170,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             };
             super::style_sheet::compose(
                 &frames,
-                &super::style_sheet::SheetText {
-                    title: scene_file.scene.name.clone(),
+                &super::style_sheet::SheetText::new(
+                    scene_file.scene.name.clone(),
                     subtitle,
                     labels,
-                },
+                ),
             )
         }
     };
@@ -1274,14 +1286,14 @@ fn refine_look(
     let (labels, cells): (Vec<String>, Vec<image::RgbaImage>) = log.frames.iter().cloned().unzip();
     let sheet = super::style_sheet::compose(
         &cells,
-        &super::style_sheet::SheetText {
-            title: format!("refine {} toward {}", look.name, log.reference),
-            subtitle: format!(
+        &super::style_sheet::SheetText::new(
+            format!("refine {} toward {}", look.name, log.reference),
+            format!(
                 "{}: distance {:.2} -> {:.2}, {} round(s), {} call(s), ${:.4}",
                 log.agent, log.start.score, log.end.score, log.rounds_run, log.calls, log.cost_usd
             ),
             labels,
-        },
+        ),
     );
     sheet
         .save(&args.output)

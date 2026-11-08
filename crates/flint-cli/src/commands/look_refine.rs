@@ -19,8 +19,9 @@
 //! `tune` sweeps, one untried value at a time, so the loop is a measured
 //! coordinate search, the same loop with a simpler proposer.
 
-use super::look::{self, Look, Sweep, SweepKey};
+use super::look::{self, Look};
 use super::look_measure::{self, DistanceReport, ImageMeasures};
+use super::sweep::{parse_value, Sweep, SweepKey};
 use anyhow::{bail, Context, Result};
 use flint_procgen_ai::cost::{CostLedger, CostMeter};
 use flint_procgen_ai::{AgentConfig, AnthropicAgent};
@@ -51,9 +52,12 @@ impl Edit {
         // The sweep parser knows every key and range; one edit is a sweep
         // of a single value, written twice because a sweep takes two.
         let sweep = Sweep::parse(&format!("{}={}|{}", self.key, self.value, self.value))?;
-        let value = look::parse_value(&self.value);
+        let value = parse_value(&self.value);
         match sweep.key {
             SweepKey::Look => return Err("`look` can't be an edit; edit its keys".into()),
+            SweepKey::Wooze { .. } => {
+                return Err("wooze knobs belong to the scene, not a look".into())
+            }
             SweepKey::Post { field } => {
                 table.insert(field, value);
             }
@@ -185,7 +189,7 @@ impl LookAgent for TuneWalker {
                     value: v.clone(),
                 };
                 // The value it has now, or started from, needs no render
-                let v_toml = look::parse_value(v);
+                let v_toml = parse_value(v);
                 let same = [current(s), current_value(&ask.look.post_process, &s.key)]
                     .iter()
                     .flatten()
@@ -216,7 +220,7 @@ fn current_value(table: &toml::Table, key: &SweepKey) -> Option<toml::Value> {
     match key {
         SweepKey::Post { field } => table.get(field).cloned(),
         SweepKey::Style { style, key } => table.get("styles")?.get(style)?.get(key).cloned(),
-        SweepKey::Look => None,
+        SweepKey::Look | SweepKey::Wooze { .. } => None,
     }
 }
 
