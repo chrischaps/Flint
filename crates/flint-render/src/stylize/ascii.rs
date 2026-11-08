@@ -88,7 +88,9 @@
 //! resolution (depth, normals rebuilt from it, and the style mask), and
 //! `ascii_edge_cells.wgsl` reduces each glyph cell to one line glyph by the
 //! summed structure tensor of every edge pixel in it. The glyph pass draws
-//! it over the tone glyph, thinning a line that splits between two cells.
+//! it over the tone glyph in the one cell the line passes within half a
+//! cell of (#352: the cell pass records where the line crosses the cell's
+//! centre column or row; `ascii_edge_thin.wgsl` keeps it there).
 //! A mask outline fires wherever the id changes and either side is one of
 //! this style's ids (the plain `ascii` id or any per-entity variant's), so
 //! it is what separates one styled entity from another, and it is always
@@ -101,8 +103,9 @@
 //! mixed toward the near side's hue by `edge_tint`) or `hue` (the near
 //! side's own colour, inked as the colour mode inks a cell). The edge cell
 //! pass averages the picture under the edge pixels that decided a cell's
-//! line, which lie on the near side, and stores the hue as an exact 24-bit
-//! integer in its texel's w (the texture is `Rgba32Float`).
+//! line, which lie on the near side, and stores the hue, 7 bits a channel,
+//! above the outline and cross-axis bits of its texel's z (the texture is
+//! `Rgba32Float`, so z is an exact integer).
 //!
 //! ## Silhouettes (#288)
 //!
@@ -1079,8 +1082,9 @@ pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> S
 /// (1 crease, 2 depth, 3 outline).
 const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
-/// 32-bit, so w holds the near side's hue as an exact 24-bit integer
-/// (#351); x..z are kept at f16 precision, as they were.
+/// 32-bit, so z holds the outline and cross-axis bits and the near side's hue above
+/// them as an exact integer (#351); x, y and w are kept at f16 precision,
+/// as they were.
 const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// How many entries a variant table buffer holds to fit `needed`: what it

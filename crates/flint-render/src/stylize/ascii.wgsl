@@ -30,8 +30,9 @@
 @group(3) @binding(0) var entity_input: texture_2d<f32>;
 @group(3) @binding(1) var style_mask: texture_2d<u32>;
 // The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
-// line glyph slot + 1 (0 = none), y = its length in cell widths, w = the
-// near side's hue packed 8 bits a channel (#351)
+// line glyph slot + 1 (0 = none), y = its length in cell widths, z = the
+// outline and cross-axis bits plus the near side's hue above them, 7 bits
+// a channel (#351), w = the line's offset (#352)
 @group(3) @binding(2) var edge_cells: texture_2d<f32>;
 // Each slot's tone range (#289, ascii_stats_resolve.wgsl)
 @group(3) @binding(3) var tone_stats: texture_2d<f32>;
@@ -66,8 +67,8 @@ fn edge_slot(cell: vec2<f32>) -> u32 {
 fn edge_hue(cell: vec2<f32>) -> vec3<f32> {
     // Exact: w is a whole number under 2^24 (no +0.5, which f32 spacing
     // of 1 above 2^23 rounds up, carrying red into green)
-    let w = u32(edge_cell_at(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET)).w);
-    return vec3<f32>(f32(w & 255u), f32((w >> 8u) & 255u), f32(w >> 16u)) / 255.0;
+    let w = u32(edge_cell_at(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET)).z) >> 2u;
+    return vec3<f32>(f32(w & 127u), f32((w >> 7u) & 127u), f32(w >> 14u)) / 127.0;
 }
 
 fn ramp_origin(step: u32) -> vec2<u32> {
