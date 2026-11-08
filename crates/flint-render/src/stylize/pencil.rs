@@ -196,6 +196,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_mask_view = no_mask.create_view(&Default::default());
+    let blit = kit::Blit::new(device, "Pencil Blit", &input_bgl, d.format);
     let flow_shader = kit::shader(device, "Pencil Flow Shader", FLOW_SHADER);
     let flow_pipeline = |label: &str, entry: &str| {
         kit::fullscreen_pipeline_entry(
@@ -231,6 +232,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         geometry_bgl,
         _no_mask: no_mask,
         no_mask_view,
+        blit,
         warned: Mutex::new(false),
     })
 }
@@ -406,6 +408,26 @@ pub fn row(
     }
 }
 
+/// How far, in pixels, a styled pixel's draw reads the prep texture
+/// (#385), for the rows `rows`: the surface flow's 5x5 taps over
+/// `1.5 * spacing` points, the tensor flow's blur (#392, `pencil_flow.wgsl`)
+/// over `3 * spacing` along each axis, or a contour's wobble
+/// (`1.5 * wobble`) plus half its width; and four pixels for the bilinear
+/// taps' footprint and the flow's half-resolution texels.
+fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
+    let points = rows
+        .iter()
+        .map(|r| {
+            let [spacing, ..] = r.v[0];
+            let contour_width = r.v[1][3];
+            let wobble = r.v[2][3];
+            let flow = if r.v[4][3] == TENSOR { 3.0 } else { 1.5 };
+            (flow * spacing).max(1.5 * wobble + 0.5 * contour_width.max(1.0))
+        })
+        .fold(0.0f32, f32::max);
+    (points * pixels_per_point).ceil() as u32 + 4
+}
+
 struct Pencil {
     prep_pipeline: wgpu::RenderPipeline,
     /// The tensor flow blur along x, from the prep target (#392)
@@ -420,6 +442,8 @@ struct Pencil {
     geometry_bgl: wgpu::BindGroupLayout,
     _no_mask: wgpu::Texture,
     no_mask_view: wgpu::TextureView,
+    /// The input through, outside the styled entities' rect (#385).
+    blit: kit::Blit,
     /// Whether the too-many-variants warning has been given.
     warned: Mutex<bool>,
 }
@@ -545,12 +569,26 @@ impl StylePass for Pencil {
         let geometry = self.geometry_bind(frame, with_mask);
         let prep = frame.target("pencil.prep", PREP_FORMAT);
 
-        kit::fullscreen_pass(
+        // Per entity, only the entities' pixels change (#385): the draw
+        // pass runs inside their rect, and the prep inside it grown by
+        // how far a styled pixel reads the prep
+        let size = [frame.width, frame.height];
+        let draw_rect = frame.styled_rect(0);
+        let prep_rect = draw_rect.map(|r| {
+            r.padded(
+                prep_reach(&rows, uniforms.pixels_per_point),
+                size[0],
+                size[1],
+            )
+        });
+        kit::fullscreen_pass_in(
             encoder,
             "Pencil Prep",
             &prep.view,
+            size,
             &self.prep_pipeline,
             &[&uniform, &input_bind, &geometry],
+            prep_rect,
         );
         // The tensor flow: blurred wide in two passes (#392), only when a
         // row asks for it. Group 3 holds the prep and the flow, the prep
@@ -605,12 +643,16 @@ impl StylePass for Pencil {
                 ],
             })
         });
-        kit::fullscreen_pass(
+        kit::scissored_pass(
             encoder,
             "Pencil Pass",
             output,
+            size,
             &self.draw_pipeline,
             &[&uniform, &input_bind, &geometry, &prep_bind],
+            draw_rect,
+            &self.blit,
+            &input_bind,
         );
     }
 }

@@ -340,6 +340,120 @@ impl StyleIds {
     }
 }
 
+/// Where one style id's entities can be on screen this frame (#385).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IdBounds {
+    /// None of its draws is in view.
+    Nowhere,
+    /// Inside `[x0, y0, x1, y1]` in UV (0..1, y down).
+    Uv([f32; 4]),
+    /// Anywhere: a draw with no bounds, or one crossing the camera plane.
+    Everywhere,
+}
+
+impl IdBounds {
+    /// The bounds holding both.
+    pub fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Everywhere, _) | (_, Self::Everywhere) => Self::Everywhere,
+            (Self::Nowhere, b) | (b, Self::Nowhere) => b,
+            (Self::Uv(a), Self::Uv(b)) => Self::Uv([
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]),
+        }
+    }
+
+    /// Where world box `min..max` lands under `view_proj` (column-major,
+    /// as [`Camera::view_projection_matrix`](crate::Camera::view_projection_matrix)):
+    /// the projection of its 8 corners, clamped to the screen. A box
+    /// wholly behind the camera is nowhere; one crossing the camera plane
+    /// could be anywhere.
+    pub fn of_box(view_proj: &[[f32; 4]; 4], min: [f32; 3], max: [f32; 3]) -> Self {
+        let m = view_proj;
+        let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        let mut behind = 0;
+        for i in 0..8 {
+            let p = [
+                if i & 1 == 0 { min[0] } else { max[0] },
+                if i & 2 == 0 { min[1] } else { max[1] },
+                if i & 4 == 0 { min[2] } else { max[2] },
+            ];
+            let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
+            let w = row(3);
+            if !w.is_finite() {
+                return Self::Everywhere;
+            }
+            if w <= 1e-6 {
+                behind += 1;
+                continue;
+            }
+            let uv = [row(0) / w * 0.5 + 0.5, 0.5 - row(1) / w * 0.5];
+            for k in 0..2 {
+                lo[k] = lo[k].min(uv[k]);
+                hi[k] = hi[k].max(uv[k]);
+            }
+        }
+        if behind == 8 {
+            return Self::Nowhere;
+        }
+        if behind > 0 || !(lo[0].is_finite() && lo[1].is_finite()) {
+            return Self::Everywhere;
+        }
+        if hi[0] < 0.0 || hi[1] < 0.0 || lo[0] > 1.0 || lo[1] > 1.0 {
+            return Self::Nowhere;
+        }
+        Self::Uv([
+            lo[0].clamp(0.0, 1.0),
+            lo[1].clamp(0.0, 1.0),
+            hi[0].clamp(0.0, 1.0),
+            hi[1].clamp(0.0, 1.0),
+        ])
+    }
+}
+
+/// Each style id's screen bounds this frame (#385), from the world bounds
+/// of the draws the mask draws for it. A table the renderer didn't fill
+/// knows nothing, so every id in it is [`IdBounds::Everywhere`].
+#[derive(Clone, Debug, Default)]
+pub struct StyleBounds {
+    known: bool,
+    /// Index = style id.
+    by_id: Vec<IdBounds>,
+}
+
+impl StyleBounds {
+    /// An empty table that knows its ids are nowhere until told otherwise.
+    pub fn known() -> Self {
+        Self {
+            known: true,
+            by_id: Vec::new(),
+        }
+    }
+
+    /// Widen id `id`'s bounds by `b`.
+    pub fn add(&mut self, id: u16, b: IdBounds) {
+        let i = id as usize;
+        if self.by_id.len() <= i {
+            self.by_id.resize(i + 1, IdBounds::Nowhere);
+        }
+        self.by_id[i] = self.by_id[i].union(b);
+    }
+
+    /// Where id `id`'s entities can be.
+    pub fn get(&self, id: u16) -> IdBounds {
+        if !self.known {
+            return IdBounds::Everywhere;
+        }
+        self.by_id
+            .get(id as usize)
+            .copied()
+            .unwrap_or(IdBounds::Nowhere)
+    }
+}
+
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
 pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
@@ -1498,6 +1612,56 @@ fn record_draws(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_box_projects_to_its_screen_rect_and_behind_the_camera_to_nothing() {
+        let camera = crate::Camera {
+            position: flint_core::Vec3::new(0.0, 0.0, 10.0),
+            target: flint_core::Vec3::ZERO,
+            ..Default::default()
+        };
+        let vp = camera.view_projection_matrix();
+        // A unit box at the origin, straight ahead: around the centre
+        let IdBounds::Uv([x0, y0, x1, y1]) = IdBounds::of_box(&vp, [-0.5; 3], [0.5; 3]) else {
+            panic!("in view");
+        };
+        assert!(x0 < 0.5 && x1 > 0.5 && y0 < 0.5 && y1 > 0.5);
+        assert!(x1 - x0 < 0.3 && y1 - y0 < 0.3, "small at 10 m");
+        // Above the centre is up the screen, which is y down
+        let IdBounds::Uv([_, _, _, top_y1]) =
+            IdBounds::of_box(&vp, [-0.5, 2.0, -0.5], [0.5, 3.0, 0.5])
+        else {
+            panic!("in view");
+        };
+        assert!(top_y1 < 0.5);
+        // Behind the camera, off to the side, and around the camera
+        assert_eq!(
+            IdBounds::of_box(&vp, [-0.5, -0.5, 20.0], [0.5, 0.5, 21.0]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [100.0, -0.5, -0.5], [101.0, 0.5, 0.5]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [-1.0, -1.0, 9.0], [1.0, 1.0, 11.0]),
+            IdBounds::Everywhere
+        );
+    }
+
+    #[test]
+    fn style_bounds_union_per_id_and_know_nothing_unfilled() {
+        assert_eq!(StyleBounds::default().get(1), IdBounds::Everywhere);
+        let mut b = StyleBounds::known();
+        assert_eq!(b.get(3), IdBounds::Nowhere);
+        b.add(2, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(2, IdBounds::Uv([0.0, 0.3, 0.2, 0.5]));
+        b.add(2, IdBounds::Nowhere);
+        assert_eq!(b.get(2), IdBounds::Uv([0.0, 0.2, 0.3, 0.5]));
+        b.add(1, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(1, IdBounds::Everywhere);
+        assert_eq!(b.get(1), IdBounds::Everywhere);
+    }
 
     #[test]
     fn ids_follow_name_order_and_survive_repeats() {
