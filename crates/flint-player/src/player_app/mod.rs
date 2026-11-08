@@ -279,6 +279,10 @@ pub struct PlayerApp {
     /// it off). On by default natively; off for a bundle, whose files are
     /// not on the disk, and always off on the web.
     pub procgen_disk_cache: bool,
+    /// Whether `scene_path` names a file on the disk the player may write
+    /// (#364: the style editors' Commit to scene). On natively; off for a
+    /// bundle and on the web.
+    pub scene_file_writable: bool,
     dynamic_scale: render_scale::DynamicScale,
     /// `key=value,...` quality settings applied over `msaa_sample_count`,
     /// `render_scale` and the `FLINT_SHADOW*` switches at startup

@@ -758,6 +758,13 @@ impl ViewerApp {
             if let Some(look) = state.scene_post.as_ref().and_then(|d| d.look.as_deref()) {
                 println!("Scene look: {look} (F4 -> Look switches it)");
             }
+            // ...and writes a style back into the file (#364)
+            self.render_panel.set_scene_file(
+                state
+                    .scene_doc
+                    .is_some()
+                    .then(|| std::path::PathBuf::from(&state.scene_path)),
+            );
         }
 
         // Run initial constraint evaluation
@@ -1066,6 +1073,13 @@ impl ViewerApp {
     /// into the widgets so the panel always displays the truth.
     fn sync_render_panel(&mut self) {
         use flint_debug_ui::DebugPanel as _;
+        // Commit to scene (#364) writes the file, and the watcher reloads
+        // it, which would drop entity edits not yet saved
+        self.render_panel.set_commit_blocked(self.dirty.then(|| {
+            "Save the scene first (Ctrl+S): committing reloads the file, \
+             and the unsaved entity edits would be lost"
+                .to_string()
+        }));
         let Some(renderer) = self.scene_renderer.as_mut() else {
             return;
         };

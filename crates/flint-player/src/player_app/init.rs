@@ -94,6 +94,7 @@ impl PlayerApp {
             scene_ambient: None,
             msaa_sample_count: 1,
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
+            scene_file_writable: cfg!(not(target_arch = "wasm32")),
             procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),

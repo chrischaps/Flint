@@ -78,6 +78,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
    #                          (#267 line glyphs on depth/crease/mask edges; the editor grid is a
    #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
+   #                          (#351 their ink: --style ascii:edge_ink=cell|color|hue,
+   #                           edge_color=#rrggbb,edge_tint=0..1; hue = the near side's own colour)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
    #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
    #                          against its descriptor; repeatable; `--style help`;
@@ -103,7 +105,9 @@ Flint uses an **edit -> validate -> play** loop:
    #                          wooze.<knob> (Living Props builds; one Sweep type in
    #                          commands/sweep.rs, one sheet in style_sheet.rs, #353);
    #                          cells 640x360 unless --width/--height. Cells are in points:
-   #                          confirm a winner at the final size)
+   #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
+   #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
+   #                          two --sweep flags make a grid, first across, second down, #358)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
    #   --ascii-edge-normal 2.5   (tone bands, tone footprint, edge sensitivity)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction

@@ -77,6 +77,23 @@ impl StylesDebugPanel {
         self
     }
 
+    /// The scene file the editor's Commit to scene writes (#364); `None`
+    /// hides the button (a scene from a bundle has no file).
+    pub fn with_scene_file(mut self, scene_file: Option<std::path::PathBuf>) -> Self {
+        self.editor.set_scene_file(scene_file);
+        self
+    }
+
+    /// The scene's authored style settings, as given or last committed.
+    pub fn authored_styles(&self) -> Option<&StyleSettings> {
+        self.authored.as_ref()
+    }
+
+    /// Replace the authored settings (another editor committed, #364).
+    pub fn set_authored_styles(&mut self, authored: Option<StyleSettings>) {
+        self.authored = authored;
+    }
+
     /// What the last edit asks of the host.
     pub fn take_edit(&mut self) -> StylesEdit {
         std::mem::take(&mut self.edit)
@@ -99,6 +116,13 @@ impl DebugPanel for StylesDebugPanel {
             self.edit.changed = true;
             self.edit.needs_resources |= edit.needs_resources;
             self.dirty = true;
+        }
+        if let Some(name) = edit.committed {
+            // The scene now says what the config says of the style
+            self.authored
+                .get_or_insert_with(StyleSettings::default)
+                .restore(name, &self.pp.styles);
+            self.edit.committed = Some(name);
         }
         ui.separator();
         egui::CollapsingHeader::new(format!("Styled entities ({})", self.entities.len()))
