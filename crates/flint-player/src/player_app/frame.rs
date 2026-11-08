@@ -1537,6 +1537,9 @@ impl PlayerApp {
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;
+            // History styles decay by game time (#342), so a --frame-step
+            // capture settles alike at any step
+            renderer.style_dt = self.clock.delta_time as f32;
             // --style-time holds the post time, as `flint render`'s does (#328)
             if let Some(t) = self.style_time {
                 renderer.ocean_time = t as f64;

@@ -36,7 +36,8 @@
 //! cell's colour and its ramp step) into a small state texture; the glyph
 //! pass draws each cell's glyph from it. The state is kept from frame to
 //! frame for temporal stability (#277): a cell keeps part of last frame's
-//! colour (`smoothing`) and last frame's glyph while its tone stays within
+//! colour (`smoothing`, per 60 Hz frame: [`StyleFrame::dt`] scales it so a
+//! change settles in the same game time at any rate, #342) and last frame's glyph while its tone stays within
 //! `hysteresis` ramp steps of it, and an optional grid-fixed ordered
 //! `dither` breaks gradients into a stable pattern. `temporal = "off"`
 //! draws every frame as if it were the first. History counts only when
@@ -407,7 +408,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         StyleHint::new(
             "smoothing",
             "Smoothing",
-            "How much of last frame's colour a cell keeps; a cell whose colour jumps takes the new one at once",
+            "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once",
         ),
         StyleHint::new(
             "hysteresis",
@@ -1069,6 +1070,12 @@ impl Owned {
 
 /// The cell pass's output: one texel a cell, the cell's colour as 16-bit
 /// unorm in RGB and its ramp step in A.
+/// The most of last frame's cell colour one frame may keep (#342): a
+/// 0.95 `smoothing` at 240 Hz is 0.987 a frame, and at 0.999 a 16-bit
+/// channel still moves by a level for a change over ~0.008. The cells
+/// shader holds the same cap.
+const SMOOTHING_MAX: f32 = 0.999;
+
 pub const CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 
 const CELLS_SHADER: &str = concat!(
@@ -2414,7 +2421,11 @@ impl StylePass for Ascii {
             palette_match: palette.matching().index(),
             palette_bg: palette.background(),
             _pad: 0,
-            smoothing: frame.param("smoothing").clamp(0.0, 0.99),
+            // `smoothing` is per 60 Hz frame; this frame keeps it raised to
+            // the number of 60 Hz frames it stands for (#342). The cap keeps
+            // a high rate's weight from parking the 16-bit history for good
+            smoothing: super::per_60hz(frame.param("smoothing").clamp(0.0, 0.99), frame.dt)
+                .min(SMOOTHING_MAX),
             hysteresis: frame.param("hysteresis").max(0.0),
             dither: frame.param("dither").max(0.0),
             history: past as u32,

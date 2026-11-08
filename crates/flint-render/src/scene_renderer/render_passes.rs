@@ -1366,6 +1366,7 @@ impl SceneRenderer {
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
+                dt: self.style_dt,
                 frame: self
                     .style_frame_serial
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
