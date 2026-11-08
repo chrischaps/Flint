@@ -46,6 +46,12 @@ dither = 0.0         # grid-fixed ordered dither before the ramp
 [entities.camera_rig]
 [entities.camera_rig.script]
 source = "ascii_orbit.rhai"
+# Radians a second. 0.12 is the slow orbit shimmer is measured on (#277);
+# 1.2 with pan = true (turn in place) is the fast pan reprojected history
+# is measured on (#344)
+[entities.camera_rig.orbit]
+speed = 0.12
+pan = false
 
 [entities.sky]
 [entities.sky.sky]

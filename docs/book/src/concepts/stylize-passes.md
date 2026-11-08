@@ -161,7 +161,7 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `edge_normal` | `2.5` | The normal change, as a Sobel over normals rebuilt from depth, that counts as a crease (lower finds more) |
 | `outline` | `1` | Per-entity only: ink a styled entity's own pixels this many points from its silhouette (0--4, at least one pixel when on; 0 = off), so features thinner than a cell keep their shape ([Silhouettes](#silhouettes), #288) |
 | `min_coverage` | `0.5` | Per-entity only: the least ink of the pixels in a cell the entity only grazes (0--1) |
-| `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first |
+| `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first. `reproject` reads each cell's past where its surface was last frame ([Reprojected history](#reprojected-history), #344) |
 | `smoothing` | `0.6` | How much of last frame's colour a cell keeps, per 60 Hz frame (0--0.95): at 120 Hz each frame keeps its square root, at 30 Hz its square, so a change settles in the same game time at any frame rate (#342). A cell whose colour jumps takes the new one at once, so nothing trails |
 | `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1) |
 | `dither` | `0` | Ordered (4x4 Bayer) dither before the ramp, fixed to the grid: gradients break into a still pattern instead of one hard edge (0--1, `--ascii-dither`) |
@@ -178,6 +178,8 @@ On `demo/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captured 
 | `temporal = "on"` | 118.3 (0.82%) | 0.1 (0.00%) |
 
 Reversals, where a glyph changes and changes back two frames later, are the shimmer itself, and they are gone. The flips that remain are the scene really moving.
+
+Those counts were made when #277 landed. On main at b3448e5 the same capture counts more: 3.53% flips and 0.82% reversals with `off`, and 1.90% and 0.25% (35.5 a frame) with `on`. History still halves the flips and cuts reversals by two thirds, but some shimmer has come back since. Main's own build gives the same numbers, so it isn't #344's doing (#481).
 
 The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. The player's captures can still differ from run to run by one level in a few pixels, with the history on or off (#341). The history absorbs those differences rather than carrying them forward. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up, and on a [camera cut](#camera-cuts).
 
@@ -197,6 +199,30 @@ After a cut (a cutscene's new shot, a teleport, a respawn) the history belongs t
 | `"none"` | 0 | 1,006 (7.0%) | 493 (3.4%) | 45,800 |
 
 The carry-over is mostly in mid tones: `-` where the new shot has `=`, `.` and `:` in the grass. Half of it is still there when the shot ends, because cells that clear the hysteresis band have no reason to change.
+
+#### Reprojected history
+
+The history is kept in screen space: a cell's past is whatever was in that cell last frame. When the camera moves, that is another piece of the world. `temporal = "reproject"` (#344) follows the surface instead. The cell pass unprojects each cell's centre through the scene depth, projects it with last frame's camera, and reads the past from the cell that point fell in. Each cell also stores its centre's view depth. A past whose depth is more than 10% off where the surface should have been is something the surface was behind (a disocclusion), and the cell starts fresh. Only the camera's motion is followed: Flint writes no motion vectors, so a moving object's cells read the past of whatever was there, and the depth test turns most of that away.
+
+It is correct: `reprojected_history_reads_the_past_of_the_surface_now_in_the_cell` (in `crates/flint-render/tests/stylize.rs`) trucks the camera one panel along a wall of red and green panels of equal luminance. With screen-space history, all 64 cells blend towards the other colour; reprojected, 16 do (the column that came on screen and the cells a panel edge crosses).
+
+On the meadow it doesn't help, so it is an option and `on` stays the default. Set `[entities.camera_rig.orbit]` in `demo/ascii_motion.scene.toml` to `speed = 1.2` and `pan = true`, and the camera turns in place, sliding the picture about two cells a frame. These are 3 s captures at 1280x720 (181 frames, 14,400 cells), counted with `tools/ascii_flips.py`. `--track 8` counts flips along the picture's motion: for each 8x8 block of cells it finds the shift that best matches last frame. Without it, a glyph that travels with its surface would count as a flip in two cells. *Travel* is that tracker's mean shift in cells per frame, which shows whether glyphs move with the world:
+
+| fast pan (1.2 rad/s) | flips | reversals | tracked flips | tracked reversals | travel |
+|---|---|---|---|---|---|
+| `off` | 16.34% | 4.20% | 10.23% | 1.67% | 1.10 |
+| `on` | 7.19% | 1.09% | 6.28% | 0.91% | 0.30 |
+| `reproject` | 15.75% | 3.56% | 8.80% | 1.61% | 1.19 |
+
+| slow orbit (0.12 rad/s) | flips | reversals |
+|---|---|---|
+| `off` | 3.53% | 0.82% |
+| `on` | 1.90% | 0.25% |
+| `reproject` | 2.12% | 0.29% |
+
+Reprojected glyphs do travel with the world (1.19 cells a frame, the same as the stateless style's 1.10). But flips along the motion fall only from 10.2% to 8.8%. The grid can't move, so a surface that slides 2.3 cells lands at a new place inside its cells. Each cell then averages a different patch of it, and the grass and ground really do change from one patch to the next. Screen-space history wins on every count because it does something else: it holds glyphs to the screen (0.30 cells a frame of travel) while the colours slide underneath. That doesn't read as lag. Each frame's cell colours are closer to the stateless frame's with `on` (3.01 levels in 255) than with `reproject` (3.54).
+
+Reach for `reproject` when a scene has large flat surfaces whose colours differ in hue but not brightness. Smoothing lets go only on a jump in luminance, so screen-space history smears one such surface's colour into the next under a pan, as in the test above. It costs about 0.05 ms more than `on` at 1080p (0.46 against 0.41 ms for the whole style, `--gpu-time 240`).
 
 It is a display-stage style: it reads the finished, tonemapped picture at output resolution, after the render-scale upscale, so glyphs stay sharp at `--render-scale 0.5`. The grid is centred on the frame, so the part cells at the borders match. At a whole-number scale (8 px glyphs in 8, 16 or 24 px cells) glyphs are drawn exactly; at a fractional one, such as 12 px cells on a 1.5x display, each glyph pixel keeps one width and only its borders blend. It costs about 0.04 ms at 1080p on an RTX 4070 (`--gpu-time 240`), down from about 0.15 ms before #277 split it in two: the cell pass averages each cell's colour once, where the old single pass did it for every pixel. That is with `edges = 0`. The [edge passes](#edges) add about 0.4 ms (measured on the tavern before #277, as 0.15 against 0.53--0.67 ms).
 

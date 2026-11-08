@@ -124,6 +124,12 @@ struct AsciiUniforms {
     // f32 bits)
     bands: array<vec4<f32>, 8>,
     band_rows: array<vec4<u32>, 8>,
+    // Reprojected history (#344): this frame's clip to world, last frame's
+    // world to clip, and x = 1 when the cell pass reads each cell's past
+    // where its surface was last frame rather than in the same cell
+    inv_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
+    reproject: vec4<u32>,
 };
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
