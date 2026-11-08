@@ -14,6 +14,7 @@ pub mod draw2d;
 pub mod engine;
 pub mod module_resolver;
 pub mod projector;
+pub mod style_reader;
 pub mod sync;
 pub mod ui;
 
@@ -26,6 +27,7 @@ use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
+pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
 
 /// Post-processing overrides set by scripts this frame; each field is `Some`
@@ -211,6 +213,12 @@ impl ScriptSystem {
     /// last frame drew them.
     pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_core::ray_mesh::RayScene>) {
         crate::lock_or_recover(&self.engine.ctx).ray_scene = scene;
+    }
+
+    /// What scripts' `get_entity_style` and `get_style_param` ask (#372);
+    /// see [`StyleReader`].
+    pub fn set_style_reader(&mut self, reader: std::sync::Arc<dyn StyleReader>) {
+        self.engine.set_style_reader(reader);
     }
 
     /// Drain commands produced by scripts this frame

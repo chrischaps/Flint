@@ -1,29 +1,19 @@
 // Fading props into text (#278): both props are given their ASCII look
-// once, at blend 0, so nothing shows; then every frame only the blend
-// moves. The barrel dissolves, its cells turning to glyphs in patches
-// that spread; the bench cross-fades, every pixel a mix. Ten seconds,
-// looping, on game time, so a --frame-step capture shows the same frames
-// every run.
+// once, at blend 0, so nothing shows; then only the blend moves. The
+// barrel dissolves, its cells turning to glyphs in patches that spread;
+// the bench cross-fades, every pixel a mix. Ten seconds, looping, on game
+// time, so a --frame-step capture shows the same frames every run.
 //
 //   0 s    everything smooth
 //   1-4 s  barrel dissolves into green phosphor glyphs
 //   3-6 s  bench fades into amber blocks
 //   7.5 s  both go back the way they came, smooth again by 9.5 s
 //
-// A blend rides in the style mask beside the entity's id, so ramping it
-// keeps one variant and makes no GPU allocation.
+// The engine eases each blend (tween_style_param, #370); the script only
+// says when. A blend rides in the style mask beside the entity's id, so
+// ramping it keeps one variant and makes no GPU allocation.
 
 let period = 10.0;
-
-fn smooth(x) {
-    let t = if x < 0.0 { 0.0 } else if x > 1.0 { 1.0 } else { x };
-    t * t * (3.0 - 2.0 * t)
-}
-
-// 0 -> 1 over [rise, rise + len], then 1 -> 0 over [fall, fall + len]
-fn ramp(t, rise, fall, len) {
-    smooth((t - rise) / len) - smooth((t - fall) / len)
-}
 
 fn on_init() {
     let barrel = get_entity("barrel");
@@ -53,7 +43,19 @@ fn on_update() {
     set_camera_position(-1.8 + 0.6 * drift.sin(), 1.6, 8.6);
     set_camera_target(1.4, 0.4, 4.0);
 
+    // This frame crossed second `at` of the loop
     let t = total_time() % period;
-    set_style_param(get_entity("barrel"), "blend", ramp(t, 1.0, 7.5, 3.0));
-    set_style_param(get_entity("bench"), "blend", ramp(t, 3.0, 7.5, 2.5));
+    let was = t - delta_time();
+    let barrel = get_entity("barrel");
+    let bench = get_entity("bench");
+    if was < 1.0 && t >= 1.0 {
+        tween_style_param(barrel, "blend", 1.0, 3.0);
+    }
+    if was < 3.0 && t >= 3.0 {
+        tween_style_param(bench, "blend", 1.0, 2.5);
+    }
+    if was < 7.5 && t >= 7.5 {
+        tween_style_param(barrel, "blend", 0.0, 2.0);
+        tween_style_param(bench, "blend", 0.0, 2.0);
+    }
 }

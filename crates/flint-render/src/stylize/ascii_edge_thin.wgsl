@@ -42,13 +42,20 @@ fn edge_turn(e: vec4<f32>) -> f32 {
 // leans to into account, if that neighbour sees the same line there, and
 // judges the pair's centroid, which the neighbour judges too, so exactly
 // one of them draws.
+// Whether an edge cell's line runs nearer vertical (its cross axis is x):
+// bit 1 of z, which also carries the outline bit and the near side's hue
+// above them (#351)
+fn edge_crosses_x(e: vec4<f32>) -> bool {
+    return (u32(e.z) & 2u) != 0u;
+}
+
 fn thinned_slot(c: vec2<i32>) -> u32 {
     let e = edge_cell_at(c);
     if e.x < 0.5 {
         return 4u;
     }
     let slot = min(u32(e.x - 0.5), 3u);
-    let cross_x = e.z > 1.5;
+    let cross_x = edge_crosses_x(e);
     var offset = e.w;
     let side = select(-1, 1, offset >= 0.0);
     let step = select(vec2<i32>(0, side), vec2<i32>(side, 0), cross_x);
@@ -63,7 +70,7 @@ fn thinned_slot(c: vec2<i32>) -> u32 {
     // cell apart
     var turn_apart = abs(edge_turn(e) - edge_turn(n));
     turn_apart = min(turn_apart, 1.0 - turn_apart);
-    if n.y > 0.0 && (n.z > 1.5) == cross_x && turn_apart < SAME_TURN
+    if n.y > 0.0 && edge_crosses_x(n) == cross_x && turn_apart < SAME_TURN
         && abs(theirs - offset) < 0.75 {
         offset = (e.y * offset + n.y * theirs) / (e.y + n.y);
     }

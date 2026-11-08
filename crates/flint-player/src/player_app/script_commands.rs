@@ -26,7 +26,20 @@ impl PlayerApp {
                 self.apply_post_style(&cmd);
                 continue;
             }
-            match style_commands::apply_style_command(&mut self.world, &cmd) {
+            // Style commands, and tweens (#370), which start from the
+            // scene's style table where an entity has no value of its own
+            let applied = {
+                let fallback;
+                let config = match self.scene_renderer.as_ref() {
+                    Some(r) => r.post_process_config(),
+                    None => {
+                        fallback = flint_render::PostProcessConfig::default();
+                        &fallback
+                    }
+                };
+                self.style_tweens.apply(&mut self.world, config, &cmd)
+            };
+            match applied {
                 StyleApplied::NotAStyleCommand => {}
                 StyleApplied::Done(event) => {
                     if let Some(event) = event {
@@ -43,6 +56,7 @@ impl PlayerApp {
                 // Applied above
                 ScriptCommand::SetEntityStyle { .. }
                 | ScriptCommand::SetStyleParam { .. }
+                | ScriptCommand::TweenStyleParam { .. }
                 | ScriptCommand::ClearEntityStyle { .. }
                 | ScriptCommand::SetPostStyle { .. }
                 | ScriptCommand::SetPostStyleParam { .. }
@@ -210,6 +224,11 @@ impl PlayerApp {
                 }
                 ScriptCommand::SetCameraCutDetection { enabled } => {
                     self.camera_cut.enabled = enabled;
+                }
+                ScriptCommand::SetLook { name } => {
+                    if let Err(e) = self.set_look(name.as_deref()) {
+                        tracing::warn!("set_look: {e}");
+                    }
                 }
             }
         }

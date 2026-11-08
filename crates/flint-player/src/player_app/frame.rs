@@ -39,6 +39,11 @@ impl PlayerApp {
             return;
         }
         self.update_render_scale();
+        if let Some(look) = self.pending_look.take() {
+            if let Err(e) = self.set_look(look.as_deref()) {
+                tracing::warn!("look: {e}");
+            }
+        }
         let Some(context) = &self.render_context else {
             return;
         };
@@ -231,6 +236,11 @@ impl PlayerApp {
             }
         }
 
+        // A style the F4 or F3 editor just wrote into the scene file (#364):
+        // the scene's authored settings after it, for the other editor too
+        #[cfg(feature = "debug-hud")]
+        let mut committed_styles: Option<flint_render::stylize::StyleSettings> = None;
+
         // Rendering & Effects panel (ADR 0053): live-mirror renderer state
         // while the panel is clean; write edits through when dirty, routing
         // expensive operations by the per-group flags.
@@ -249,6 +259,12 @@ impl PlayerApp {
             self.pp_debug_freeze = rp.freeze_scripts;
             if flint_debug_ui::DebugPanel::is_dirty(rp) {
                 let flags = rp.take_flags();
+                if flags.look_changed {
+                    self.pending_look = Some(rp.look.clone());
+                }
+                if flags.styles_committed {
+                    committed_styles = rp.authored_styles().cloned();
+                }
                 if flags.pp_changed {
                     renderer.set_post_process_config(rp.pp.clone());
                     if flags.style_needs_resources {
@@ -316,6 +332,9 @@ impl PlayerApp {
                 };
                 if flint_debug_ui::DebugPanel::is_dirty(sp) {
                     let edit = sp.take_edit();
+                    if edit.committed.is_some() {
+                        committed_styles = sp.authored_styles().cloned();
+                    }
                     if edit.changed {
                         let mut config = renderer.post_process_config().clone();
                         config.styles = sp.pp.styles.clone();
@@ -330,6 +349,10 @@ impl PlayerApp {
                     sp.refresh(renderer.post_process_config(), entities);
                 }
             }
+        }
+        #[cfg(feature = "debug-hud")]
+        if let Some(authored) = committed_styles {
+            super::debug_panels::set_panels_authored_styles(&mut self.debug_panels, &authored);
         }
 
         // Push ocean panel edits into the world's `ocean` component — the
@@ -1158,7 +1181,24 @@ impl PlayerApp {
     }
 
     #[profiling::function]
+    /// Hand scripts' style reads (#372) the settings the renderer draws
+    /// with, copied only when they've changed since the last hand-over.
+    fn publish_style_reader(&mut self) {
+        let Some(renderer) = &self.scene_renderer else {
+            return;
+        };
+        let generation = renderer.post_config_generation();
+        if self.style_reader_generation != Some(generation) {
+            self.style_reader_generation = Some(generation);
+            let config = renderer.effective_post_process_config().clone();
+            self.script.set_style_reader(std::sync::Arc::new(
+                super::style_commands::SceneStyles::new(config),
+            ));
+        }
+    }
+
     fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
+        self.publish_style_reader();
         // Set transition state for script access
         match &self.transition_phase {
             TransitionPhase::Idle => {
@@ -1294,6 +1334,22 @@ impl PlayerApp {
     fn drive_script_ui(&mut self) {
         // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
         self.script.call_draw_uis(&mut self.world);
+
+        // Style tweens (#370) move on with game time, and pause with the
+        // scripts that started them. Stepped before this frame's commands,
+        // so a tween asked for now starts moving next frame, and a
+        // set_style_param this frame overrides (and stops) it.
+        if self.state_machine.active_config().scripts == SystemPolicy::Run {
+            let step = self
+                .style_tweens
+                .step(&mut self.world, self.clock.delta_time);
+            for event in step.events {
+                self.physics.push_event(event);
+            }
+            for message in step.failures {
+                tracing::warn!(target: "script", "{message}");
+            }
+        }
 
         let script_commands = self.script.drain_commands();
         self.process_script_commands(script_commands);

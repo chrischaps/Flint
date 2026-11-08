@@ -60,7 +60,7 @@ One consolidated home for every render and post-effect control. Its groups, top 
 - **Fog**: enabled, colour, density, start, end, height fog on/off, height falloff, height origin.
 - **Bloom**: enabled, intensity, threshold, soft threshold.
 - **Grade / Grain / FXAA**: lift, gamma, gain, a "Neutral grade" reset, film grain, FXAA.
-- **Styles**: a section per registered style (Kuwahara, watercolor, ASCII, pencil, invert, mask view, and any added later), drawn from its declaration, with Defaults, Authored and Copy TOML buttons. See [Stylize Passes](../concepts/stylize-passes.md).
+- **Styles**: a section per registered style (Kuwahara, watercolor, ASCII, pencil, invert, mask view, and any added later), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene buttons. See [Stylize Passes](../concepts/stylize-passes.md).
 - **Render mode**: mode combo (none, matrix, blood, drunk, tron, underwater), mix, the four mode params.
 - **Dither / Volumetric**: dither on/off and intensity, volumetric on/off, samples, density, decay.
 - **Shadows**: enabled, resolution combo (512, 1024, 2048, 4096). Changing resolution rebuilds the shadow pass.

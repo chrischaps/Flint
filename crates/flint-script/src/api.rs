@@ -2589,6 +2589,59 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // tween_style_param(entity_id, param, target, seconds[, easing]) — let
+    // the engine ease a number, `blend` or a colour to `target` over
+    // `seconds` of game time (#370), instead of a set_style_param every
+    // frame. Easing: "linear", "smooth" (default), "ease_in", "ease_out",
+    // "ease_in_out". Fires `style_tween_done` #{ entity, param } at the end;
+    // a set_style_param of the same setting, or clear_entity_style, stops it.
+    for with_easing in [false, true] {
+        let ctx = ctx.clone();
+        let tween =
+            move |entity_id: i64, param: &str, target: Dynamic, seconds: Dynamic, easing: &str| {
+                let mut c = crate::lock_or_recover(&ctx);
+                // Seconds as a float or an integer (a web script has i64 only)
+                let secs = seconds
+                    .as_float()
+                    .ok()
+                    .or_else(|| seconds.as_int().ok().map(|i| i as f64));
+                let command = match (dynamic_to_toml(&target), secs) {
+                    (Some(target), Some(seconds)) => ScriptCommand::TweenStyleParam {
+                        entity_id,
+                        param: param.to_string(),
+                        target,
+                        seconds,
+                        easing: easing.to_string(),
+                    },
+                    (None, _) => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "tween_style_param: `{param}` can't ease to a {}",
+                            target.type_name()
+                        ),
+                    },
+                    (_, None) => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "tween_style_param: seconds must be a number, not a {}",
+                            seconds.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            };
+        if with_easing {
+            engine.register_fn("tween_style_param", tween);
+        } else {
+            engine.register_fn(
+                "tween_style_param",
+                move |entity_id: i64, param: &str, target: Dynamic, seconds: Dynamic| {
+                    tween(entity_id, param, target, seconds, "smooth")
+                },
+            );
+        }
+    }
+
     // clear_entity_style(entity_id) — take the entity's own style off
     {
         let ctx = ctx.clone();
@@ -2597,6 +2650,72 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.commands
                 .push(ScriptCommand::ClearEntityStyle { entity_id });
         });
+    }
+
+    // Reading a style back (#372). These see the world as the script finds
+    // it: a style set this frame is still a queued command, and reads back
+    // from the next frame on. The host's StyleReader answers; without one
+    // every entity is unstyled.
+    fn read_style<T>(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        entity_id: i64,
+        f: impl FnOnce(
+            &dyn crate::style_reader::StyleReader,
+            &flint_ecs::FlintWorld,
+            EntityId,
+        ) -> Option<T>,
+    ) -> Option<T> {
+        if entity_id < 0 {
+            return None;
+        }
+        let c = crate::lock_or_recover(ctx);
+        let reader = c.style_reader.clone()?;
+        let world = unsafe { c.world_ref() };
+        f(reader.as_ref(), world, EntityId::from_raw(entity_id as u64))
+    }
+
+    // get_entity_style(entity_id) -> String — the style the entity is drawn
+    // in: its own, one it inherits from an ancestor, or the scene's
+    // whole-frame style; "" for none
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_entity_style", move |entity_id: i64| -> String {
+            read_style(&ctx, entity_id, |r, w, id| r.entity_style(w, id))
+                .map(|s| s.style)
+                .unwrap_or_default()
+        });
+    }
+
+    // get_entity_style_variant(entity_id) -> String — the same style's
+    // variant, named for the settings that set it apart
+    // ("ascii{ramp=blocks}", "ascii@barrel"); "" for none
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "get_entity_style_variant",
+            move |entity_id: i64| -> String {
+                read_style(&ctx, entity_id, |r, w, id| r.entity_style(w, id))
+                    .map(|s| s.variant)
+                    .unwrap_or_default()
+            },
+        );
+    }
+
+    // get_style_param(entity_id, param) — the value in effect: the entity's
+    // (or the ancestor's it inherits), else the scene's, else the style's
+    // default. A number (`cell`), a string (`ramp`), a colour as
+    // [r, g, b] (`tint`), `blend` 0..1, `enabled` true. () when the entity
+    // is drawn in no style or the style has no such setting
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "get_style_param",
+            move |entity_id: i64, param: &str| -> Dynamic {
+                read_style(&ctx, entity_id, |r, w, id| r.style_param(w, id, param))
+                    .map(toml_to_dynamic)
+                    .unwrap_or(Dynamic::UNIT)
+            },
+        );
     }
 
     // ─── Whole-frame styles (#369) ───
@@ -2680,6 +2799,30 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             let mut c = crate::lock_or_recover(&ctx);
             c.commands
                 .push(ScriptCommand::SetCameraCutDetection { enabled });
+        });
+    }
+
+    // set_look(name) — a whole post-processing preset (#356): a
+    // styles/<name>.look.toml beside the scene or a built-in ("graphite",
+    // "matrix", ...), laid under the scene's own [post_process] keys in
+    // place of the look it had. "" is no look. Applied after on_update.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_look", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            let name = name.trim();
+            c.commands.push(ScriptCommand::SetLook {
+                name: (!name.is_empty()).then(|| name.to_string()),
+            });
+        });
+    }
+
+    // clear_look() — back to the scene's own keys, without a look
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_look", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetLook { name: None });
         });
     }
 }

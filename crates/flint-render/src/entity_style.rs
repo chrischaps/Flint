@@ -19,8 +19,9 @@
 //! `[post_process.styles]` table and refuse with a message naming the ones
 //! that can.
 
-use crate::style_mask::{BLEND_FIELD, STYLE_MASK_COMPONENT};
-use crate::stylize::{self, StyleDescriptor};
+use crate::postprocess::PostProcessConfig;
+use crate::style_mask::{self, StyleVariant, BLEND_FIELD, STYLE_MASK_COMPONENT};
+use crate::stylize::{self, StyleDescriptor, StyleStage};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 
@@ -154,6 +155,84 @@ pub fn set_style_param(
     Ok(style)
 }
 
+/// Where a tween of one of `id`'s style settings starts and ends (#370):
+/// its style, then the current value and the target, each one number or
+/// a colour's three channels (`tint`). The current value is the entity's
+/// own field, else the scene's `[post_process.styles.<name>]` table in
+/// `config`, else the style's default (`blend`: 1). The target is checked
+/// and clamped as [`set_style_param`] would. Only numbers, `blend` and
+/// colours ease; options and `enabled` refuse with a message.
+pub fn tween_endpoints(
+    world: &FlintWorld,
+    id: EntityId,
+    param: &str,
+    target: &toml::Value,
+    config: &crate::postprocess::PostProcessConfig,
+) -> Result<(&'static str, Vec<f64>, Vec<f64>), String> {
+    let style = entity_style(world, id).ok_or_else(|| {
+        format!(
+            "entity {} has no style of its own; call set_entity_style first",
+            id.0
+        )
+    })?;
+    let d = stylize::find(style).expect("entity_style found it registered");
+    let component = d.component.expect("entity_style found its component");
+    let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+    let own = world
+        .get_component(id, component)
+        .and_then(|c| c.get(param).cloned());
+    let wrong = |want: &str| {
+        Err(format!(
+            "`{style}` setting `{param}` eases to {want}, not {}",
+            target.type_str()
+        ))
+    };
+    if param == BLEND_FIELD {
+        let Some(to) = number(target) else {
+            return wrong("a number from 0 to 1");
+        };
+        let from = own.as_ref().and_then(number).unwrap_or(1.0);
+        return Ok((style, vec![from.clamp(0.0, 1.0)], vec![to.clamp(0.0, 1.0)]));
+    }
+    if let Some(p) = d.params.iter().find(|p| p.name == param) {
+        let Some(to) = number(target) else {
+            return wrong("a number");
+        };
+        let (lo, hi) = (p.min as f64, p.max as f64);
+        let from = own
+            .as_ref()
+            .and_then(number)
+            .unwrap_or_else(|| d.param(config, param) as f64);
+        return Ok((style, vec![from.clamp(lo, hi)], vec![to.clamp(lo, hi)]));
+    }
+    if let Some(color) = d.color_setting(param) {
+        let Some(to) = stylize::color_from_toml(target) else {
+            return wrong("a colour: [r, g, b] or \"#rrggbb\"");
+        };
+        let from = own
+            .as_ref()
+            .and_then(stylize::color_from_toml)
+            .unwrap_or_else(|| d.color(config, param));
+        let clamp = |rgb: [f32; 3]| -> Vec<f64> {
+            rgb.iter()
+                .zip(color.channels)
+                .map(|(v, p)| v.clamp(p.min, p.max) as f64)
+                .collect()
+        };
+        return Ok((style, clamp(from), clamp(to)));
+    }
+    if param == "enabled" || d.options.iter().any(|o| o.name == param) {
+        return Err(format!(
+            "`{style}` setting `{param}` can't ease (it isn't a number or a colour); \
+             set it with set_style_param"
+        ));
+    }
+    Err(format!(
+        "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
+        d.setting_keys().join(", ")
+    ))
+}
+
 /// Take `id`'s own style off (any per-entity style component and any
 /// `style_mask`). Returns whether it had one. A style it inherits from an
 /// ancestor, or the scene's whole-frame style, still reaches it; to keep it
@@ -168,6 +247,118 @@ pub fn clear_entity_style(world: &mut FlintWorld, id: EntityId) -> bool {
         had |= matches!(world.remove_component(id, c), Ok(Some(_)));
     }
     had
+}
+
+// ---------------------------------------------------------------------------
+// Reading it back (#372)
+// ---------------------------------------------------------------------------
+
+/// The style an entity is drawn in, as [`drawn_style`] finds it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnStyle {
+    /// The style's name (`ascii`, `kuwahara`, or whatever a `style_mask`
+    /// names).
+    pub style: String,
+    /// The variant's name, the one the mask's id stands for
+    /// (`ascii{ramp=blocks}`, `ascii@barrel`); for a whole-frame style,
+    /// the style's name.
+    pub variant: String,
+    /// The entity the style comes from: the entity itself, or the ancestor
+    /// it inherits from. `None` for the scene's whole-frame style.
+    pub root: Option<EntityId>,
+    /// The settings the root's style component gives (empty for a
+    /// whole-frame style), which [`StyleVariant::param`] falls back from.
+    pub settings: StyleVariant,
+}
+
+/// What `id` is drawn in under `config` (#372): its own style or the one it
+/// inherits from its nearest styled ancestor (a style component or a
+/// `style_mask`, the same rule the mask is drawn by), else the scene's
+/// whole-frame style. Where several whole-frame styles run, the last in the
+/// chain (display after HDR, then `order`) is the one named: it draws over
+/// the rest. An entity opted out (`enabled = false` on its style component)
+/// isn't drawn in that style, even where it covers the frame; a
+/// `style_mask` opt-out only takes it out of the per-entity style.
+///
+/// `None` when nothing styles it, or post-processing is off.
+pub fn drawn_style(
+    world: &FlintWorld,
+    config: &PostProcessConfig,
+    id: EntityId,
+) -> Option<DrawnStyle> {
+    if !config.enabled || world.get_components(id).is_none() {
+        return None;
+    }
+    let mut opted_out: Option<String> = None;
+    if let Some(root) = style_mask::style_root(world, id) {
+        if let Some((variant, settings)) = style_mask::request(world, config, root) {
+            if !settings.off {
+                return Some(DrawnStyle {
+                    style: settings.style.clone(),
+                    variant,
+                    root: Some(root),
+                    settings,
+                });
+            }
+            opted_out = Some(settings.style);
+        }
+    }
+    [StyleStage::Hdr, StyleStage::Display]
+        .into_iter()
+        .flat_map(|stage| stylize::stage_chain(stage, config))
+        .map(|(d, _)| d)
+        .rfind(|d| {
+            d.is_enabled(config)
+                && d.option(config, "scope") != "entities"
+                && opted_out.as_deref() != Some(d.name)
+        })
+        .map(|d| DrawnStyle {
+            style: d.name.to_string(),
+            variant: d.name.to_string(),
+            root: None,
+            settings: StyleVariant::plain(d.name),
+        })
+}
+
+/// The value setting `param` of `id`'s style has in effect (#372): the
+/// entity's (or the ancestor's it inherits), else the scene's
+/// `[post_process.styles.<name>]` table, else the style's default. A
+/// parameter is a float, an option a string, a colour (`tint`) a 3-array,
+/// `blend` the root's 0..1 (1 for a whole-frame style) and `enabled` true.
+/// `None` when the entity is drawn in no style, the style isn't registered,
+/// or it has no such setting.
+pub fn style_setting(
+    world: &FlintWorld,
+    config: &PostProcessConfig,
+    id: EntityId,
+    param: &str,
+) -> Option<toml::Value> {
+    let drawn = drawn_style(world, config, id)?;
+    let d = stylize::find(&drawn.style)?;
+    let v = &drawn.settings;
+    if param == "enabled" {
+        return Some(true.into());
+    }
+    if param == BLEND_FIELD {
+        let blend = drawn
+            .root
+            .map_or(1.0, |r| style_mask::requested_blend(world, r));
+        return Some(toml::Value::Float(blend as f64));
+    }
+    if d.params.iter().any(|p| p.name == param) {
+        return Some(toml::Value::Float(v.param(d, config, param) as f64));
+    }
+    if d.options.iter().any(|o| o.name == param) {
+        return Some(v.option(d, config, param).into());
+    }
+    let color = d.color_setting(param)?;
+    Some(toml::Value::Array(
+        color
+            .channels
+            .iter()
+            .map(|p| toml::Value::Float(v.param(d, config, p.name) as f64))
+            .collect(),
+    ))
 }
 
 #[cfg(test)]
@@ -342,5 +533,83 @@ mod tests {
         set_entity_style(&mut world, bench, "ascii").unwrap();
         assert!(world.get_component(bench, STYLE_MASK_COMPONENT).is_none());
         assert_eq!(entity_style(&world, bench), Some("ascii"));
+    }
+
+    fn drawn(world: &FlintWorld, config: &PostProcessConfig, id: EntityId) -> Option<String> {
+        drawn_style(world, config, id).map(|d| d.style)
+    }
+
+    #[test]
+    fn reads_back_own_inherited_and_whole_frame_styles() {
+        let mut world = FlintWorld::new();
+        let barrel = world.spawn("barrel").unwrap();
+        let hoop = world.spawn("hoop").unwrap();
+        let bench = world.spawn("bench").unwrap();
+        world.set_parent(hoop, barrel).unwrap();
+        let mut config = PostProcessConfig::default();
+        assert_eq!(drawn(&world, &config, barrel), None);
+
+        set_entity_style(&mut world, barrel, "ascii").unwrap();
+        set_style_param(&mut world, barrel, "ramp", "blocks".into()).unwrap();
+        let own = drawn_style(&world, &config, barrel).unwrap();
+        assert_eq!(own.variant, "ascii{ramp=blocks}");
+        assert_eq!(own.root, Some(barrel));
+        // The hoop inherits the barrel's style and its settings
+        let inherited = drawn_style(&world, &config, hoop).unwrap();
+        assert_eq!(inherited.root, Some(barrel));
+        assert_eq!(inherited.variant, own.variant);
+        assert_eq!(drawn(&world, &config, bench), None);
+
+        // The scene's whole-frame style reaches the rest; an opt-out
+        // keeps its entity out of it, and a scope of entities draws nothing
+        config.styles.set_enabled("kuwahara", true);
+        assert_eq!(drawn(&world, &config, bench).as_deref(), Some("kuwahara"));
+        config.styles.set_enabled("ascii", true);
+        assert_eq!(drawn(&world, &config, bench).as_deref(), Some("ascii"));
+        set_style_param(&mut world, barrel, "enabled", false.into()).unwrap();
+        assert_eq!(drawn(&world, &config, hoop).as_deref(), Some("kuwahara"));
+        config.styles.set_option("ascii", "scope", "entities");
+        config.styles.set_enabled("kuwahara", false);
+        assert_eq!(drawn(&world, &config, bench), None);
+        config.enabled = false;
+        set_entity_style(&mut world, barrel, "ascii").unwrap();
+        assert_eq!(drawn(&world, &config, barrel), None, "post is off");
+    }
+
+    #[test]
+    fn a_setting_reads_entity_then_scene_then_default() {
+        let mut world = FlintWorld::new();
+        let barrel = world.spawn("barrel").unwrap();
+        let hoop = world.spawn("hoop").unwrap();
+        world.set_parent(hoop, barrel).unwrap();
+        let mut config = PostProcessConfig::default();
+        let read = |world: &FlintWorld, config: &PostProcessConfig, p: &str| {
+            style_setting(world, config, hoop, p)
+        };
+        assert_eq!(read(&world, &config, "cell"), None, "no style");
+
+        set_entity_style(&mut world, barrel, "ascii").unwrap();
+        assert_eq!(read(&world, &config, "cell"), Some(8.0.into()), "default");
+        config.styles.set_param("ascii", "cell", 10.0);
+        assert_eq!(read(&world, &config, "cell"), Some(10.0.into()), "scene");
+        set_style_param(&mut world, barrel, "cell", 99_i64.into()).unwrap();
+        assert_eq!(read(&world, &config, "cell"), Some(32.0.into()), "clamped");
+        set_style_param(&mut world, barrel, "ramp", "blocks".into()).unwrap();
+        assert_eq!(read(&world, &config, "ramp"), Some("blocks".into()));
+        set_style_param(&mut world, barrel, "tint", "#ff8000".into()).unwrap();
+        let tint = read(&world, &config, "tint").unwrap();
+        let tint: Vec<f64> = tint
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_float().unwrap())
+            .collect();
+        assert_eq!(tint.len(), 3);
+        assert!(tint[0] > tint[1] && tint[1] > tint[2], "{tint:?}");
+        assert_eq!(read(&world, &config, "blend"), Some(1.0.into()));
+        set_style_param(&mut world, barrel, "blend", 0.25.into()).unwrap();
+        assert_eq!(read(&world, &config, "blend"), Some(0.25.into()));
+        assert_eq!(read(&world, &config, "enabled"), Some(true.into()));
+        assert_eq!(read(&world, &config, "colour"), None, "no such setting");
     }
 }

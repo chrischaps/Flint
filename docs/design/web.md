@@ -723,6 +723,29 @@ RTX 4070 laptop, release build, 1920x1080 output, `flint render
 | per entity at `--render-scale 0.5`, Vulkan / DX12 | 0.018 / 0.012 | 0.047 / 0.043 | |
 | full screen at `--pixels-per-point 2` (16 px cells) | | 0.043 / 0.040 | |
 
+Re-measured for #337 after edges (#267) and tone normalisation (#289)
+were on by default and in the demo. Same machine, Vulkan, `--ascii-scope
+screen`, best of 3 alternated with main:
+
+| | main (b9aabc3) | #337 |
+|---|---|---|
+| edges on (default), no styled entities | 0.39--0.43 | 0.43 ms |
+| edges on, over the demo's props | 0.518 | 0.447 ms |
+| `--ascii-edges 0`, no styled entities | 0.049 | 0.048 ms |
+| `--ascii-edges 0`, over the props (barrel normalised) | 0.150 | 0.094 ms |
+| `--ascii-edges 0`, over the props, no `normalize` | 0.075 | 0.074 ms |
+
+Most of the gap was the statistics: one fragment a lattice row walked
+320 samples, 180 threads in all, latency-bound. Summed in runs of 20,
+then rows, then each slot, they cost 0.02 ms (half of it the three
+passes' fixed cost) instead of 0.075. Edges-off still runs about 2x the
+plain case: the mask read on every pixel (~0.008 ms) and the styled
+props' own pixels (~0.018 ms for 3% of the frame). That's in the
+follow-up, #507.
+Re-checked after merging main at 980676a (#351): edges off over the
+props 0.193 ms on main against 0.102 ms, pixels identical; the edges-on
+pair was inside the shared GPU's noise that day (0.41--0.48 ms both).
+
 That is under 0.1 ms of a 16.7 ms frame: SSAO (0.9 ms) costs ten times
 as much. The browser, Chrome 156 over CDP on the same machine, read from
 `?perf=1` with the canvas fixed at 1920x1080 device pixels, the bundle

@@ -17,6 +17,9 @@
 //! edge_max = 3.0        # more than this is texture (grass), not a line
 //! edge_depth = 0.6      # relative view-distance step that is an edge
 //! edge_normal = 2.5     # normal change (Sobel) that is a crease
+//! edge_ink = "cell"     # cell | color | hue: the line glyphs' ink (#351)
+//! edge_color = [0.85, 0.82, 0.74]  # for edge_ink = "color"; or "#d9d1bd"
+//! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
 //! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
 //! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
 //! silhouette = "pixel"  # per-entity: pixel | cell (whole glyphs at the edge, #338)
@@ -94,6 +97,16 @@
 //! drawn. Edges follow the screen grid: per-entity variants on an object
 //! grid keep their tone glyphs.
 //!
+//! Line glyphs are inked as the cell's tone glyph by default. Along a
+//! silhouette that colour is a mix of the object and what's behind it, so
+//! `edge_ink` (#351) gives them an ink of their own: `color` (one colour,
+//! mixed toward the near side's hue by `edge_tint`) or `hue` (the near
+//! side's own colour, inked as the colour mode inks a cell). The edge cell
+//! pass averages the picture under the edge pixels that decided a cell's
+//! line, which lie on the near side, and stores the hue, 7 bits a channel,
+//! above the outline and cross-axis bits of its texel's z (the texture is
+//! `Rgba32Float`, so z is an exact integer).
+//!
 //! ## Silhouettes (#288)
 //!
 //! A per-entity variant cuts its silhouette to the pixel but fills it
@@ -124,8 +137,8 @@
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleFrame, StyleHint, StyleInput,
-    StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
+    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint,
+    StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
@@ -139,6 +152,15 @@ pub const MAX_RAMP: usize = 128;
 
 /// The colour modes, by their option spelling.
 pub const COLOR_MODES: &[&str] = &["source", "tint", "raw", "mono", "palette"];
+
+/// What inks the edges' line glyphs (#351), by their option spelling:
+/// as the cell's tone glyph, one colour, or the near side's hue.
+pub const EDGE_INKS: &[&str] = &["cell", "color", "hue"];
+
+/// The edge ink's index in [`EDGE_INKS`] (0, `cell`, for an unknown one).
+fn edge_ink_mode(name: &str) -> u32 {
+    EDGE_INKS.iter().position(|m| *m == name).unwrap_or(0) as u32
+}
 
 /// The ground (background fill) modes, by their option spelling.
 pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
@@ -177,372 +199,239 @@ fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
     }
 }
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "ascii",
-    label: "ASCII",
-    stage: StyleStage::Display,
-    params: &[
-        StyleParam {
-            name: "cell",
-            default: 8.0,
-            min: 4.0,
-            max: 32.0,
-        },
-        StyleParam {
-            name: "brightness",
-            default: 0.0,
-            min: -1.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "contrast",
-            default: 1.0,
-            min: 0.0,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "background",
-            default: 0.15,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "ink",
-            default: 1.0,
-            min: 0.0,
-            max: 2.0,
-        },
-        StyleParam {
-            name: "levels",
-            default: 0.0,
-            min: 0.0,
-            max: 16.0,
-        },
-        StyleParam {
-            name: "footprint",
-            default: 1.0,
-            min: 1.0,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "smoothing",
-            default: 0.6,
-            min: 0.0,
-            max: 0.95,
-        },
-        StyleParam {
-            name: "hysteresis",
-            default: 0.35,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "dither",
-            default: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "chroma",
-            default: 1.0,
-            min: 0.0,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "palette_dither",
-            default: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "exposure",
-            default: 0.0,
-            min: -4.0,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "normalize",
-            default: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "tint_r",
-            default: 0.35,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "tint_g",
-            default: 1.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "tint_b",
-            default: 0.45,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "glow",
-            default: 0.0,
-            min: 0.0,
-            max: 2.0,
-        },
-        StyleParam {
-            name: "edges",
-            default: 1.0,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "edge_threshold",
-            default: 0.5,
-            min: 0.05,
-            max: 2.0,
-        },
-        StyleParam {
-            name: "edge_max",
-            default: 3.0,
-            min: 0.5,
-            max: 8.0,
-        },
-        StyleParam {
-            name: "edge_depth",
-            default: 0.6,
-            min: 0.05,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "edge_normal",
-            default: 2.5,
-            min: 0.2,
-            max: 8.0,
-        },
-        StyleParam {
-            name: "outline",
-            default: 1.0,
-            min: 0.0,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "min_coverage",
-            default: 0.5,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "cell_share",
-            default: 0.5,
-            min: 0.0625,
-            max: 1.0,
-        },
-    ],
-    options: &[
-        StyleOption {
-            name: "font",
-            default: "builtin",
-            choices: &[],
-            discover: Some(font_choices),
-        },
-        StyleOption {
-            name: "ramp",
-            default: "",
-            choices: RAMPS,
-            discover: Some(ramp_choices),
-        },
-        StyleOption {
-            name: "color",
-            default: "source",
-            choices: COLOR_MODES,
-            discover: None,
-        },
-        StyleOption {
-            name: "palette",
-            default: DEFAULT_PALETTE,
-            choices: BUILTIN_PALETTES,
-            discover: Some(palette_choices),
-        },
-        StyleOption {
-            name: "ground",
-            default: "dim",
-            choices: GROUND_MODES,
-            discover: None,
-        },
-        StyleOption {
-            name: "temporal",
-            default: "on",
-            choices: TEMPORAL_MODES,
-            discover: None,
-        },
-        StyleOption {
-            name: "scope",
-            default: "screen",
-            choices: SCOPES,
-            discover: None,
-        },
-        StyleOption {
-            name: "grid",
-            default: "screen",
-            choices: GRIDS,
-            discover: None,
-        },
-        StyleOption {
-            name: "transition",
-            default: "fade",
-            choices: TRANSITIONS,
-            discover: None,
-        },
-        StyleOption {
-            name: "silhouette",
-            default: "pixel",
-            choices: SILHOUETTES,
-            discover: None,
-        },
-    ],
-    // The mask gives styled entities their outlines (#267), so only while
-    // edges are on and something is styled (#350)
-    uses_mask: MaskUse::When(reads_mask),
-    needs: &[],
-    hints: &[
-        StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
-        StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
-        StyleHint::new("color", "Colour mode", "source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
-        StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml"),
-        StyleHint::new("ground", "Ground", "Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
-        StyleHint::new("cell", "Cell size (pt)", "Cell width in points; the height follows the font").integer(),
-        StyleHint::new("brightness", "Brightness", "Shifts the tone before a glyph is picked"),
-        StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
-        StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)"),
-        StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
-        StyleHint::new(
-            "exposure",
-            "Exposure (stops)",
-            "Brightens (or darkens) the cell's colour before its glyph is picked: +1 doubles it in linear light",
-        ),
-        StyleHint::new(
-            "normalize",
-            "Normalize",
-            "Stretches this style's own tone range (the whole frame's, or each styled entity's) over the glyph ramp, so a dark prop draws its full ramp; 0 off, 1 full",
-        ),
-        StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
-        StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
-        StyleHint::new(
-            "temporal",
-            "Temporal",
-            "on: cells keep part of last frame so glyphs don't shimmer in motion; off: every frame stands alone",
-        ),
-        StyleHint::new(
-            "smoothing",
-            "Smoothing",
-            "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once",
-        ),
-        StyleHint::new(
-            "hysteresis",
-            "Hysteresis",
-            "How far, in ramp steps, a cell's tone may stray before its glyph changes",
-        ),
-        StyleHint::new(
-            "dither",
-            "Dither",
-            "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
-        ),
-        StyleHint::new(
-            "chroma",
-            "Palette chroma",
-            "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
-        ),
-        StyleHint::new(
-            "palette_dither",
-            "Palette dither",
-            "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
-        ),
-        StyleHint::new(
-            "scope",
-            "Scope",
-            "screen: the whole frame in glyphs; entities: only ascii_style entities, starting from this table",
-        ),
-        StyleHint::new(
-            "grid",
-            "Grid",
-            "screen: one grid centred on the frame; object: cells pinned to each styled entity's origin",
-        ),
-        StyleHint::new(
-            "transition",
-            "Transition",
-            "How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches",
-        ),
-        StyleHint::new("tint", "Tint", "The ink for colour mode tint"),
-        StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
-        StyleHint::new(
-            "edges",
-            "Edges",
-            "Line glyphs along silhouettes, creases and styled outlines, over the tone glyph; 0 = off",
-        ),
-        StyleHint::new(
-            "edge_threshold",
-            "Edge threshold",
-            "Cell widths of edge a cell needs to draw a line glyph; lower finds more",
-        ),
-        StyleHint::new(
-            "edge_max",
-            "Edge max",
-            "More edge than this (in cell widths) is texture, like grass, and keeps its tone glyph",
-        ),
-        StyleHint::new(
-            "edge_depth",
-            "Edge depth",
-            "The relative view-distance step that counts as a silhouette; lower finds more",
-        ),
-        StyleHint::new(
-            "edge_normal",
-            "Edge crease",
-            "The normal change that counts as a crease; lower finds more",
-        ),
-        StyleHint::new(
-            "outline",
-            "Silhouette (pt)",
-            "Per-entity: inks the entity's own pixels this wide along its silhouette, so legs and rails thinner than a cell keep their shape; 0 = off",
-        ),
-        StyleHint::new(
-            "min_coverage",
-            "Min coverage",
-            "Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1",
-        ),
-        StyleHint::new(
-            "silhouette",
-            "Silhouette",
-            "Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers",
-        ),
-        StyleHint::new(
-            "cell_share",
-            "Cell share",
-            "Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features",
-        ),
-    ],
-    component: Some("ascii_style"),
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");
-        // Group 0 of every pass over ascii_common.wgsl (#336): the uniform,
-        // the variant rows and each mask id's slot
-        let table_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Table BGL"),
-            entries: &[uniform_entry(), storage_entry(1), storage_entry(2)],
-        });
-        // The edge pass's: its uniform and the slots, which say whose ids
-        // draw outlines
-        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Edge BGL"),
-            entries: &[uniform_entry(), storage_entry(1)],
-        });
-        let input_bgl = kit::sampled_layout(device, "ASCII Input BGL");
-        let cells_bgl = kit::uint_layout(device, "ASCII Cells BGL");
-        let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Atlas BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+const PARAMS: &[StyleParam] = &[
+    StyleParam::new("cell", 8.0, 4.0..=32.0),
+    StyleParam::new("brightness", 0.0, -1.0..=1.0),
+    StyleParam::new("contrast", 1.0, 0.0..=4.0),
+    StyleParam::new("background", 0.15, 0.0..=1.0),
+    StyleParam::new("ink", 1.0, 0.0..=2.0),
+    StyleParam::new("levels", 0.0, 0.0..=16.0),
+    StyleParam::new("footprint", 1.0, 1.0..=4.0),
+    StyleParam::new("smoothing", 0.6, 0.0..=0.95),
+    StyleParam::new("hysteresis", 0.35, 0.0..=1.0),
+    StyleParam::new("dither", 0.0, 0.0..=1.0),
+    StyleParam::new("chroma", 1.0, 0.0..=4.0),
+    StyleParam::new("palette_dither", 0.0, 0.0..=1.0),
+    StyleParam::new("exposure", 0.0, -4.0..=4.0),
+    StyleParam::new("normalize", 0.0, 0.0..=1.0),
+    StyleParam::new("tint_r", 0.35, 0.0..=1.0),
+    StyleParam::new("tint_g", 1.0, 0.0..=1.0),
+    StyleParam::new("tint_b", 0.45, 0.0..=1.0),
+    StyleParam::new("glow", 0.0, 0.0..=2.0),
+    StyleParam::new("edges", 1.0, 0.0..=1.0),
+    StyleParam::new("edge_threshold", 0.5, 0.05..=2.0),
+    StyleParam::new("edge_max", 3.0, 0.5..=8.0),
+    StyleParam::new("edge_depth", 0.6, 0.05..=4.0),
+    StyleParam::new("edge_normal", 2.5, 0.2..=8.0),
+    // The edge ink (#351): `edge_ink = "color"` inks line glyphs in
+    // this colour (the ASCII spike's warm off-white), mixed toward the
+    // near side's hue by `edge_tint`
+    StyleParam::new("edge_color_r", 0.85, 0.0..=1.0),
+    StyleParam::new("edge_color_g", 0.82, 0.0..=1.0),
+    StyleParam::new("edge_color_b", 0.74, 0.0..=1.0),
+    StyleParam::new("edge_tint", 0.0, 0.0..=1.0),
+    StyleParam::new("outline", 1.0, 0.0..=4.0),
+    StyleParam::new("min_coverage", 0.5, 0.0..=1.0),
+    StyleParam::new("cell_share", 0.5, 0.0625..=1.0),
+];
+
+const OPTIONS: &[StyleOption] = &[
+    StyleOption::new("font", "builtin", &[]).discovered(font_choices),
+    StyleOption::new("ramp", "", RAMPS).discovered(ramp_choices),
+    StyleOption::new("color", "source", COLOR_MODES),
+    StyleOption::new("palette", DEFAULT_PALETTE, BUILTIN_PALETTES).discovered(palette_choices),
+    StyleOption::new("ground", "dim", GROUND_MODES),
+    StyleOption::new("temporal", "on", TEMPORAL_MODES),
+    StyleOption::new("scope", "screen", SCOPES),
+    StyleOption::new("grid", "screen", GRIDS),
+    StyleOption::new("transition", "fade", TRANSITIONS),
+    StyleOption::new("edge_ink", "cell", EDGE_INKS),
+    StyleOption::new("silhouette", "pixel", SILHOUETTES),
+];
+
+const HINTS: &[StyleHint] = &[
+    StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
+    StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
+    StyleHint::new("color", "Colour mode", "source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
+    StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml")
+        .when("color", &["palette"]),
+    StyleHint::new("ground", "Ground", "Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
+    StyleHint::new("cell", "Cell size (pt)", "Cell width in points; the height follows the font").integer(),
+    StyleHint::new("brightness", "Brightness", "Shifts the tone before a glyph is picked"),
+    StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
+    StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)")
+        .when("ground", &["dim", "inverse"])
+        .unless("color", &["palette"]),
+    StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
+    StyleHint::new(
+        "exposure",
+        "Exposure (stops)",
+        "Brightens (or darkens) the cell's colour before its glyph is picked: +1 doubles it in linear light",
+    ),
+    StyleHint::new(
+        "normalize",
+        "Normalize",
+        "Stretches this style's own tone range (the whole frame's, or each styled entity's) over the glyph ramp, so a dark prop draws its full ramp; 0 off, 1 full",
+    ),
+    StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
+    StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
+    StyleHint::new(
+        "temporal",
+        "Temporal",
+        "on: cells keep part of last frame so glyphs don't shimmer in motion; off: every frame stands alone",
+    ),
+    StyleHint::new(
+        "smoothing",
+        "Smoothing",
+        "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once",
+    ),
+    StyleHint::new(
+        "hysteresis",
+        "Hysteresis",
+        "How far, in ramp steps, a cell's tone may stray before its glyph changes",
+    ),
+    StyleHint::new(
+        "dither",
+        "Dither",
+        "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
+    ),
+    StyleHint::new(
+        "chroma",
+        "Palette chroma",
+        "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
+    )
+    .when("color", &["palette"]),
+    StyleHint::new(
+        "palette_dither",
+        "Palette dither",
+        "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
+    )
+    .when("color", &["palette"]),
+    StyleHint::new(
+        "scope",
+        "Scope",
+        "screen: the whole frame in glyphs; entities: only ascii_style entities, starting from this table",
+    ),
+    StyleHint::new(
+        "grid",
+        "Grid",
+        "screen: one grid centred on the frame; object: cells pinned to each styled entity's origin",
+    ),
+    StyleHint::new(
+        "transition",
+        "Transition",
+        "How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches",
+    ),
+    StyleHint::new("tint", "Tint", "The ink for colour mode tint").when("color", &["tint"]),
+    StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
+    StyleHint::new(
+        "edges",
+        "Edges",
+        "Line glyphs along silhouettes, creases and styled outlines, over the tone glyph; 0 = off",
+    ),
+    StyleHint::new(
+        "edge_threshold",
+        "Edge threshold",
+        "Cell widths of edge a cell needs to draw a line glyph; lower finds more",
+    ),
+    StyleHint::new(
+        "edge_max",
+        "Edge max",
+        "More edge than this (in cell widths) is texture, like grass, and keeps its tone glyph",
+    ),
+    StyleHint::new(
+        "edge_depth",
+        "Edge depth",
+        "The relative view-distance step that counts as a silhouette; lower finds more",
+    ),
+    StyleHint::new(
+        "edge_normal",
+        "Edge crease",
+        "The normal change that counts as a crease; lower finds more",
+    ),
+    StyleHint::new(
+        "edge_ink",
+        "Edge ink",
+        "What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)",
+    ),
+    StyleHint::new(
+        "edge_color",
+        "Edge colour",
+        "The line glyphs' ink for edge ink color",
+    ),
+    StyleHint::new(
+        "edge_tint",
+        "Edge tint",
+        "For edge ink color: mixes the colour toward the near side's hue; 0 = the colour alone, 1 = the hue",
+    ),
+    StyleHint::new(
+        "outline",
+        "Silhouette (pt)",
+        "Per-entity: inks the entity's own pixels this wide along its silhouette, so legs and rails thinner than a cell keep their shape; 0 = off",
+    ),
+    StyleHint::new(
+        "min_coverage",
+        "Min coverage",
+        "Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1",
+    ),
+    StyleHint::new(
+        "silhouette",
+        "Silhouette",
+        "Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers",
+    ),
+    StyleHint::new(
+        "cell_share",
+        "Cell share",
+        "Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features",
+    ),
+];
+
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("ascii", "ASCII", StyleStage::Display, create)
+        .params(PARAMS)
+        .options(OPTIONS)
+        // The mask gives styled entities their outlines (#267), so only while
+        // edges are on and something is styled (#350)
+        .uses_mask(MaskUse::When(reads_mask))
+        .hints(HINTS)
+        .component("ascii_style");
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "ASCII Uniform BGL");
+    // Group 0 of every pass over ascii_common.wgsl (#336): the uniform,
+    // the variant rows and each mask id's slot
+    let table_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Table BGL"),
+        entries: &[uniform_entry(), storage_entry(1), storage_entry(2)],
+    });
+    // The edge pass's: its uniform and the slots, which say whose ids
+    // draw outlines
+    let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Edge BGL"),
+        entries: &[uniform_entry(), storage_entry(1)],
+    });
+    let input_bgl = kit::sampled_layout(device, "ASCII Input BGL");
+    let cells_bgl = kit::uint_layout(device, "ASCII Cells BGL");
+    let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Atlas BGL"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    });
+    // The glyph pass's per-entity inputs (#266): the picture, for the
+    // per-pixel variants and the pixels that pass through, and the mask
+    let entity_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Entity BGL"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
@@ -551,264 +440,262 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
                     multisampled: false,
                 },
                 count: None,
-            }],
-        });
-        // The glyph pass's per-entity inputs (#266): the picture, for the
-        // per-pixel variants and the pixels that pass through, and the mask
-        let entity_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Entity BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // The edge cells (#267): every bind group is taken, so they
-                // ride with the entity inputs
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Each slot's tone range (#289), likewise
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // The variant cells' two entries (#313), likewise
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        // The tone statistics' inputs (#289): the picture and the mask
-        let stats_in_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Stats In BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
-        let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ASCII Depth BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
+                    sample_type: wgpu::TextureSampleType::Uint,
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
                 count: None,
-            }],
-        });
-        let mask_bgl = kit::mask_layout(device, "ASCII Mask BGL");
-        // Bound while no entity asks for the style: one unstyled pixel
-        let no_mask = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ASCII No Mask"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::style_mask::STYLE_MASK_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let no_mask_view = no_mask.create_view(&Default::default());
-        let no_mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ASCII No Mask BG"),
-            layout: &mask_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            // The edge cells (#267): every bind group is taken, so they
+            // ride with the entity inputs
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Each slot's tone range (#289), likewise
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // The variant cells' two entries (#313), likewise
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    // The tone statistics' inputs (#289): the picture and the mask
+    let stats_in_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Stats In BGL"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&no_mask_view),
-            }],
-        });
-        let cells_pipeline = kit::fullscreen_pipeline(
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
+    let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Depth BGL"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    });
+    let mask_bgl = kit::mask_layout(device, "ASCII Mask BGL");
+    // Bound while no entity asks for the style: one unstyled pixel
+    let no_mask = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ASCII No Mask"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: crate::style_mask::STYLE_MASK_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let no_mask_view = no_mask.create_view(&Default::default());
+    let no_mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ASCII No Mask BG"),
+        layout: &mask_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&no_mask_view),
+        }],
+    });
+    let cells_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Cells Pipeline",
+        &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
+        &[&table_bgl, &input_bgl, &cells_bgl, &edges_in_bgl],
+        CELL_FORMAT,
+    );
+    // Tone statistics (#289): per lattice row, then per slot
+    let stats_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Stats Pipeline",
+        &kit::shader(device, "ASCII Stats Shader", STATS_SHADER),
+        &[&table_bgl, &stats_in_bgl],
+        STATS_FORMAT,
+    );
+    // Per-entity variant cells (#313): the picture and the mask in, as
+    // the tone statistics read them
+    let variant_cells_pipeline = kit::fullscreen_pipeline_targets(
+        device,
+        "ASCII Variant Cells Pipeline",
+        &kit::shader(device, "ASCII Variant Cells Shader", VARIANT_CELLS_SHADER),
+        &[&table_bgl, &stats_in_bgl],
+        &[VARIANT_CELL_FORMAT; 2],
+    );
+    let stats_resolve_module =
+        kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER);
+    let stats_resolve_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Stats Resolve Pipeline",
+        &stats_resolve_module,
+        &[&table_bgl, &edges_in_bgl],
+        STATS_FORMAT,
+    );
+    // Each row's runs summed into the row (#337)
+    let stats_rows_pipeline = kit::fullscreen_pipeline_with(
+        device,
+        "ASCII Stats Rows Pipeline",
+        &stats_resolve_module,
+        "fs_rows",
+        &[&table_bgl, &edges_in_bgl],
+        STATS_FORMAT,
+        None,
+    );
+    let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
+    // The edge debug view (#349): the edge pixels and the edge cells in
+    let edge_view_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Edge View Pipeline",
+        &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
+        &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edges_in_bgl],
+        d.format,
+    );
+    Box::new(Ascii {
+        edge_pipeline: kit::fullscreen_pipeline(
             device,
-            "ASCII Cells Pipeline",
-            &kit::shader(device, "ASCII Cells Shader", CELLS_SHADER),
-            &[&table_bgl, &input_bgl, &cells_bgl, &edges_in_bgl],
-            CELL_FORMAT,
-        );
-        // Tone statistics (#289): per lattice row, then per slot
-        let stats_pipeline = kit::fullscreen_pipeline(
+            "ASCII Edge Pipeline",
+            &kit::shader(
+                device,
+                "ASCII Edge Shader",
+                include_str!("ascii_edges.wgsl"),
+            ),
+            &[&edge_bgl, &depth_bgl, &mask_bgl],
+            EDGE_FORMAT,
+        ),
+        edge_cell_pipeline: kit::fullscreen_pipeline(
             device,
-            "ASCII Stats Pipeline",
-            &kit::shader(device, "ASCII Stats Shader", STATS_SHADER),
-            &[&table_bgl, &stats_in_bgl],
-            STATS_FORMAT,
-        );
-        // Per-entity variant cells (#313): the picture and the mask in, as
-        // the tone statistics read them
-        let variant_cells_pipeline = kit::fullscreen_pipeline_targets(
+            "ASCII Edge Cell Pipeline",
+            &kit::shader(
+                device,
+                "ASCII Edge Cell Shader",
+                include_str!("ascii_edge_cells.wgsl"),
+            ),
+            // The picture too (#351): the near side's hue
+            &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl],
+            EDGE_CELL_FORMAT,
+        ),
+        edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
+        edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
             device,
-            "ASCII Variant Cells Pipeline",
-            &kit::shader(device, "ASCII Variant Cells Shader", VARIANT_CELLS_SHADER),
-            &[&table_bgl, &stats_in_bgl],
-            &[VARIANT_CELL_FORMAT; 2],
-        );
-        let stats_resolve_pipeline = kit::fullscreen_pipeline(
+            "ASCII Edge Cell Uniforms",
+        ),
+        edge_view_pipeline,
+        edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
             device,
-            "ASCII Stats Resolve Pipeline",
-            &kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER),
-            &[&table_bgl, &edges_in_bgl],
-            STATS_FORMAT,
-        );
-        let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
-        // The edge debug view (#349): the edge pixels and the edge cells in
-        let edge_view_pipeline = kit::fullscreen_pipeline(
+            "ASCII Edge View Uniforms",
+        ),
+        edges_in_bgl,
+        depth_bgl,
+        mask_bgl,
+        no_mask_bind,
+        edges: Mutex::new(None),
+        edge_cells: Mutex::new(None),
+        cells_pipeline,
+        variant_cells_pipeline,
+        variant_cells: Mutex::new([None, None]),
+        stats_pipeline,
+        stats_resolve_pipeline,
+        stats_rows_pipeline,
+        stats_in_bgl,
+        stats_runs: Mutex::new(None),
+        stats_rows: Mutex::new(None),
+        stats: Mutex::new(None),
+        pipeline: kit::fullscreen_pipeline(
             device,
-            "ASCII Edge View Pipeline",
-            &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
-            &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edges_in_bgl],
+            "ASCII Pipeline",
+            &glyph_module,
+            &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
             d.format,
-        );
-        Box::new(Ascii {
-            edge_pipeline: kit::fullscreen_pipeline(
-                device,
-                "ASCII Edge Pipeline",
-                &kit::shader(
-                    device,
-                    "ASCII Edge Shader",
-                    include_str!("ascii_edges.wgsl"),
-                ),
-                &[&edge_bgl, &depth_bgl, &mask_bgl],
-                EDGE_FORMAT,
-            ),
-            edge_cell_pipeline: kit::fullscreen_pipeline(
-                device,
-                "ASCII Edge Cell Pipeline",
-                &kit::shader(
-                    device,
-                    "ASCII Edge Cell Shader",
-                    include_str!("ascii_edge_cells.wgsl"),
-                ),
-                &[&uniform_bgl, &edges_in_bgl],
-                EDGE_CELL_FORMAT,
-            ),
-            edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
-            edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
-                device,
-                "ASCII Edge Cell Uniforms",
-            ),
-            edge_view_pipeline,
-            edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
-                device,
-                "ASCII Edge View Uniforms",
-            ),
-            edges_in_bgl,
-            depth_bgl,
-            mask_bgl,
-            no_mask_bind,
-            edges: Mutex::new(None),
-            edge_cells: Mutex::new(None),
-            cells_pipeline,
-            variant_cells_pipeline,
-            variant_cells: Mutex::new([None, None]),
-            stats_pipeline,
-            stats_resolve_pipeline,
-            stats_in_bgl,
-            stats_rows: Mutex::new(None),
-            stats: Mutex::new(None),
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "ASCII Pipeline",
-                &glyph_module,
-                &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
-                d.format,
-            ),
-            text_pipeline: kit::fullscreen_pipeline_entry(
-                device,
-                "ASCII Text Pipeline",
-                &glyph_module,
-                "fs_text",
-                &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
-                TEXT_FORMAT,
-            ),
-            capture: AtomicBool::new(false),
-            text: Mutex::new(None),
-            entity_bgl,
-            _no_mask: no_mask,
-            no_mask_view,
-            uniforms: kit::uniform_buffer::<AsciiUniforms>(device, "ASCII Uniforms"),
-            uniform_bgl,
-            table_bgl,
-            edge_bgl,
-            table: Mutex::new(None),
-            input_bgl,
-            cells_bgl,
-            atlas_bgl,
-            fonts: Mutex::new(Fonts::default()),
-            history: Mutex::new(History::default()),
-        })
-    },
-};
+        ),
+        text_pipeline: kit::fullscreen_pipeline_entry(
+            device,
+            "ASCII Text Pipeline",
+            &glyph_module,
+            "fs_text",
+            &[&table_bgl, &cells_bgl, &atlas_bgl, &entity_bgl],
+            TEXT_FORMAT,
+        ),
+        capture: AtomicBool::new(false),
+        text: Mutex::new(None),
+        entity_bgl,
+        _no_mask: no_mask,
+        no_mask_view,
+        uniforms: kit::uniform_buffer::<AsciiUniforms>(device, "ASCII Uniforms"),
+        uniform_bgl,
+        table_bgl,
+        edge_bgl,
+        table: Mutex::new(None),
+        input_bgl,
+        cells_bgl,
+        atlas_bgl,
+        fonts: Mutex::new(Fonts::default()),
+        history: Mutex::new(History::default()),
+    })
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -832,7 +719,8 @@ struct AsciiUniforms {
     palette_len: u32,
     palette_match: u32,
     palette_bg: [f32; 3],
-    _pad: u32,
+    /// What inks the line glyphs (#351): 0 cell, 1 color, 2 hue.
+    edge_ink: u32,
     smoothing: f32,
     hysteresis: f32,
     dither: f32,
@@ -847,7 +735,10 @@ struct AsciiUniforms {
     /// The whole frame's palette chroma and ink dither (#320).
     chroma: f32,
     palette_dither: f32,
-    _pad_palette: [u32; 2],
+    /// For edge ink color: how far the colour mixes toward the near
+    /// side's hue (#351).
+    edge_tint: f32,
+    _pad_palette: u32,
     /// The four edge glyphs' atlas origins, in `EdgeGlyphs::all()` order,
     /// two a vec4.
     edge_glyphs: [[u32; 4]; 2],
@@ -871,6 +762,8 @@ struct AsciiUniforms {
     /// The grids of the variants whose silhouettes snap to whole cells
     /// (#338), `variant_meta[3]` of them: (cell, origin).
     snap_grids: [[f32; 4]; MAX_SNAP_GRIDS],
+    /// The line glyphs' ink for edge ink color (#351), display rgb, unused w.
+    edge_color: [f32; 4],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -952,7 +845,10 @@ struct EdgeCellUniforms {
     threshold: f32,
     max_len: f32,
     edge_size: [f32; 2],
-    _pad: [f32; 2],
+    /// Whether the picture arrives linear, to be read as display values
+    /// for the near side's hue (#351).
+    srgb: u32,
+    _pad: f32,
 }
 
 /// The edge debug view's uniforms (#349), `ascii_edge_view.wgsl`.
@@ -1002,7 +898,10 @@ pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> S
 /// (1 crease, 2 depth, 3 outline).
 const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
-const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// 32-bit, so z holds the outline and cross-axis bits and the near side's hue above
+/// them as an exact integer (#351); x, y and w are kept at f16 precision,
+/// as they were.
+const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// How many entries a variant table buffer holds to fit `needed`: what it
 /// holds already when that's enough, else the next power of two (#336).
@@ -1297,6 +1196,10 @@ const STATS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// The tone statistics lattice's rows; `STATS_ROWS` in ascii_common.wgsl.
 pub const STATS_ROWS: u32 = 180;
 
+/// The runs each lattice row is summed in, a texel each (#337);
+/// `STATS_CHUNKS` in ascii_common.wgsl.
+pub const STATS_CHUNKS: u32 = 16;
+
 /// The `temporal` option's spellings: `off` draws every frame as if it
 /// were the first.
 pub const TEMPORAL_MODES: &[&str] = &["on", "off"];
@@ -1536,8 +1439,11 @@ struct Ascii {
     variant_cells: Mutex<[Option<Owned>; 2]>,
     stats_pipeline: wgpu::RenderPipeline,
     stats_resolve_pipeline: wgpu::RenderPipeline,
+    stats_rows_pipeline: wgpu::RenderPipeline,
     stats_in_bgl: wgpu::BindGroupLayout,
-    /// Tone statistics (#289): per (slot, lattice row), then per slot.
+    /// Tone statistics (#289): per (slot, run of a lattice row, #337), per
+    /// (slot, row), then per slot.
+    stats_runs: Mutex<Option<Owned>>,
     stats_rows: Mutex<Option<Owned>>,
     stats: Mutex<Option<Owned>>,
     pipeline: wgpu::RenderPipeline,
@@ -2215,11 +2121,12 @@ impl Ascii {
         &self,
         frame: &StyleFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
         edge_cells: &Owned,
         cell: [f32; 2],
-        origin: [f32; 2],
         table: &wgpu::BindGroup,
     ) {
+        let origin = grid_origin([frame.width, frame.height], cell);
         let edge_uniforms = EdgeUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
             camera_pos: frame.camera.position,
@@ -2269,7 +2176,8 @@ impl Ascii {
             threshold: frame.param("edge_threshold").max(0.01),
             max_len: frame.param("edge_max"),
             edge_size: [edges.size[0] as f32, edges.size[1] as f32],
-            _pad: [0.0; 2],
+            srgb: frame.srgb() as u32,
+            _pad: 0.0,
         };
         frame.queue.write_buffer(
             &self.edge_cell_uniforms,
@@ -2288,6 +2196,7 @@ impl Ascii {
                     &self.edge_cell_uniforms,
                 ),
                 &edges.bind,
+                &self.picture_bind(frame, input, false),
             ],
         );
     }
@@ -2353,23 +2262,39 @@ impl Ascii {
         with_mask: bool,
         stats: &Owned,
     ) {
+        let mut runs_slot = self.stats_runs.lock().unwrap_or_else(|e| e.into_inner());
+        let runs = Owned::ensure(
+            &mut runs_slot,
+            frame.device,
+            "ASCII Tone Stat Runs",
+            STATS_FORMAT,
+            // A column a slot, as wide as the resolved stats
+            [stats.size[0], STATS_ROWS * STATS_CHUNKS],
+            &self.edges_in_bgl,
+        );
         let mut rows_slot = self.stats_rows.lock().unwrap_or_else(|e| e.into_inner());
         let rows = Owned::ensure(
             &mut rows_slot,
             frame.device,
             "ASCII Tone Stat Rows",
             STATS_FORMAT,
-            // A column a slot, as wide as the resolved stats
             [stats.size[0], STATS_ROWS],
             &self.edges_in_bgl,
         );
         let input_bind = self.picture_bind(frame, input, with_mask);
         kit::fullscreen_pass(
             encoder,
-            "ASCII Tone Stat Rows",
-            &rows.view,
+            "ASCII Tone Stat Runs",
+            &runs.view,
             &self.stats_pipeline,
             &[uniform, &input_bind],
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Tone Stat Rows",
+            &rows.view,
+            &self.stats_rows_pipeline,
+            &[uniform, &runs.bind],
         );
         kit::fullscreen_pass(
             encoder,
@@ -2580,7 +2505,7 @@ impl StylePass for Ascii {
         // glyphs' edges off, and draws them in place of the glyphs
         let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
         if edges > 0.0 || edge_view {
-            self.encode_edges(frame, encoder, edge_cells, cell, origin, &edge_table);
+            self.encode_edges(frame, encoder, input, edge_cells, cell, &edge_table);
         }
         if edge_view {
             self.encode_edge_view(frame, encoder, input, output, edge_cells, cell, origin);
@@ -2632,7 +2557,7 @@ impl StylePass for Ascii {
             palette_len: palette.colors().len() as u32,
             palette_match: palette.matching().index(),
             palette_bg: palette.background(),
-            _pad: 0,
+            edge_ink: edge_ink_mode(frame.option("edge_ink")),
             // `smoothing` is per 60 Hz frame; this frame keeps it raised to
             // the number of 60 Hz frames it stands for (#342). The cap keeps
             // a high rate's weight from parking the 16-bit history for good
@@ -2647,7 +2572,8 @@ impl StylePass for Ascii {
             stretch: frame.param("normalize").clamp(0.0, 1.0),
             chroma: frame.param("chroma").clamp(0.0, 8.0),
             palette_dither: frame.param("palette_dither").clamp(0.0, 1.0),
-            _pad_palette: [0; 2],
+            edge_tint: frame.param("edge_tint").clamp(0.0, 1.0),
+            _pad_palette: 0,
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],
@@ -2661,6 +2587,10 @@ impl StylePass for Ascii {
             bands: [[0.0; 4]; MAX_BANDS],
             band_rows: [[0; 4]; MAX_BANDS],
             snap_grids: [[0.0; 4]; MAX_SNAP_GRIDS],
+            edge_color: {
+                let [r, g, b] = frame.color("edge_color");
+                [r, g, b, 0.0]
+            },
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -2905,7 +2835,7 @@ mod tests {
         // header (its rows, and its slots, are storage buffers since #336:
         // a row is 144 bytes, #288's silhouette floors and #320's palette
         // look, then #335's glyph cell and edge start), and the variant cell
-        // bands' two vec4 each (#313)
+        // bands' two vec4 each (#313), and #351's edge colour
         assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
@@ -2916,6 +2846,12 @@ mod tests {
                 + 16
                 + MAX_BANDS * 32
                 + MAX_SNAP_GRIDS * 16
+                + 16
+        );
+        // #351's edge colour, last
+        assert_eq!(
+            std::mem::offset_of!(AsciiUniforms, edge_color),
+            std::mem::size_of::<AsciiUniforms>() - 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
@@ -3247,6 +3183,8 @@ mod tests {
         // The lattice's rows are one constant in two languages
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const STATS_ROWS: u32 = {STATS_ROWS}u;")));
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const STATS_CHUNKS: u32 = {STATS_CHUNKS}u;")));
         // And so are the variant cell state's bands (#313)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_BANDS: u32 = {MAX_BANDS}u;")));

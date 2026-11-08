@@ -882,12 +882,7 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     let params: Vec<StyleParam> = source
         .params
         .iter()
-        .map(|(name, p)| StyleParam {
-            name: leak(name.clone()),
-            default: p.default,
-            min: p.min,
-            max: p.max,
-        })
+        .map(|(name, p)| StyleParam::new(leak(name.clone()), p.default, p.min..=p.max))
         .collect();
     let hints: Vec<StyleHint> = source
         .params
@@ -908,27 +903,22 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         })
         .collect();
     let name = leak(source.name.clone());
-    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(StyleDescriptor {
-        name,
-        label: leak(source.label.clone()),
-        stage: source.stage,
-        params: Box::leak(params.into_boxed_slice()),
-        options: &[],
-        uses_mask: if source.inputs.mask {
-            MaskUse::Always
-        } else {
-            MaskUse::Never
-        },
-        needs: if source.inputs.edges {
-            &[StyleNeed::Edges]
-        } else {
-            &[]
-        },
-        hints: Box::leak(hints.into_boxed_slice()),
-        component: None,
-        feeds_bloom: source.feeds_bloom,
-        create,
-    }));
+    let descriptor: &'static StyleDescriptor = Box::leak(Box::new(
+        StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create)
+            .params(Box::leak(params.into_boxed_slice()))
+            .uses_mask(if source.inputs.mask {
+                MaskUse::Always
+            } else {
+                MaskUse::Never
+            })
+            .needs(if source.inputs.edges {
+                &[StyleNeed::Edges]
+            } else {
+                &[]
+            })
+            .hints(Box::leak(hints.into_boxed_slice()))
+            .feeds_bloom(source.feeds_bloom),
+    ));
     // The chain's bind cache keys on these names, so each install gets its
     // own: a replaced style (#275) builds new buffers and layouts, and a
     // cached group under the old name would bind the old pass's buffers
