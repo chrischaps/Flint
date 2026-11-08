@@ -170,7 +170,8 @@ Flint uses an **edit -> validate -> play** loop:
    **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact
-   sheet of golden | render | diff, failures first, #329); `cargo test -p flint-cli
+   sheet of golden | render | diff, failures first, #329; `--case` with an exact name picks that case
+   alone, otherwise every name containing it, #388); `cargo test -p flint-cli
    --test render_goldens` runs it. Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
    `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own

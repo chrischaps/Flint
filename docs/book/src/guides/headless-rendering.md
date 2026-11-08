@@ -323,7 +323,7 @@ The cost is crash isolation. A case that panics is run again in its own `flint r
 | Flag | Description |
 |------|-------------|
 | `--bless` | Write each render (and each `text` grid) over its golden instead of comparing. The contact sheet shows what each replaced. Look at it before committing |
-| `--case <name>` | Only this case, or every case whose name contains it; repeatable |
+| `--case <name>` | Only this case. A name that is exactly a case's picks that case alone (`--case ascii-silhouette-cell` skips `ascii-silhouette-cell-object`); one that names no case picks every case whose name contains it (`--case ascii-silhouette` runs both). Repeatable: a case runs when any filter picks it |
 | `--out-dir <dir>` | Where renders, `<case>.diff.png` (the golden dimmed, amber where a pixel moved, red past the level; written when any pixel moved), `report.json` and the `index.html` contact sheet go; default a folder in the system temp dir |
 | `--require-gpu` | Fail instead of skipping when there is no GPU adapter (also `FLINT_REQUIRE_GPU=1`) |
 | `--bless-variant` | Write each render as this adapter's variant of its golden, `<stem>.<key>.png` |
