@@ -1016,7 +1016,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 &ctx.device,
                 &ctx.queue,
                 &mut encoder,
-                &ctx.depth_view,
+                ctx.depth_target(),
                 &camera,
                 &ctx.color_view,
             );
@@ -1285,7 +1285,7 @@ fn draw_pixels(
     renderer.render_to(
         &ctx.device,
         &ctx.queue,
-        &ctx.depth_view,
+        ctx.depth_target(),
         camera,
         &ctx.color_view,
     );
@@ -1446,7 +1446,7 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         renderer.render_to(
             &ctx.device,
             &ctx.queue,
-            &ctx.depth_view,
+            ctx.depth_target(),
             &camera,
             &ctx.color_view,
         );

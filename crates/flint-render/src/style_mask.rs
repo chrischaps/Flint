@@ -1162,10 +1162,10 @@ impl StyleMaskPass {
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
         veil: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_if(
-            depth_owned,
+        binds.get_over(
+            depth_key,
             "Style Mask Draw BG",
             self.draw_buffer_id,
             || {
@@ -1339,7 +1339,7 @@ impl StyleMaskPass {
         mask: &crate::stylize::StyleTexture,
         veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
         veil: &Veil<'_>,
@@ -1402,7 +1402,7 @@ impl StyleMaskPass {
         }
 
         let draw_bg = (!draws.is_empty())
-            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_owned));
+            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_key));
         let mut pass = clear_pass(encoder, "Style Mask Pass", &mask.view);
         if let Some(draw_bg) = &draw_bg {
             record_draws(

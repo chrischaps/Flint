@@ -745,7 +745,11 @@ another job, not the mask. The style adds three render passes (mask,
 cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
-a render scale the chain owns its depth and all of them are kept.
+a render scale the chain owns its depth and all of them are kept. Since
+#379 the player passes its depth view with an id
+(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
+context makes the texture again) and those groups are kept at scale 1
+too (measured below the table, "Bind groups over the caller's depth").
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
