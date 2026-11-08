@@ -21,6 +21,23 @@
 //! of a step. The trunk and the leaves' placement come from the lineage seed;
 //! each pose regrows only the branches, from its own fork of that seed. With
 //! several glides, one GLB per glide per frame (`g<i>_f<nnn>.glb`).
+//!
+//! ```text
+//! cargo run -p flint-procgen --example living_spike -- noise <spec> --out DIR
+//!     [--source noise|regrow] [--lineage N] [--fps F] [--frames N]
+//!     [--turn DEG] [--wavelength M] [--stretch S] [--amount A] [--steady S]
+//!     [--step S] [--glide G] [--stagger none|per_level|per_branch] [--poses N]
+//! ```
+//!
+//! `noise` (#252) is the prototype of a pose source that doesn't regrow: each
+//! pose turns every rest segment by smooth 3D noise sampled at its midpoint,
+//! seeded by the shape seed, so neighbouring twigs bend together. It runs as a
+//! `LivingGenerator` of its own through the engine's `PoseStream`, variance
+//! and blending, so any tree the generator bakes can live, space colonization
+//! and grammars included. `--source regrow` runs the same frames through the
+//! tree's own regrowth instead, to compare the two on an L-system tree. Writes
+//! `f<nnn>.glb` per frame (`--poses N` also writes `pose<k>.glb`, the ring's
+//! first N poses held).
 
 use flint_core::Vec3;
 use flint_procgen::algorithms::mesh_builder::MeshBuilder;
@@ -44,8 +61,9 @@ fn main() -> Res<()> {
         Some("counts") => counts(&args[1..]),
         Some("drift") => drift(&args[1..]),
         Some("frames") => frames(&args[1..]),
+        Some("noise") => noise::run(&args[1..]),
         _ => {
-            eprintln!("usage: living_spike counts|drift|frames ... (see the file's header)");
+            eprintln!("usage: living_spike counts|drift|frames|noise ... (see the file's header)");
             std::process::exit(2);
         }
     }
@@ -497,4 +515,348 @@ fn frames(args: &[String]) -> Res<()> {
         }
     }
     Ok(())
+}
+
+// ─── Noise poses (#252) ─────────────────────────────────────────────────────
+
+mod noise {
+    use super::{opt, Res};
+    use flint_core::quat::quat_from_axis_angle;
+    use flint_core::Vec3;
+    use flint_procgen::algorithms::mesh_builder::MeshBuilder;
+    use flint_procgen::generators::tree::branches::{extract_tips, segments_to_mesh};
+    use flint_procgen::generators::tree::leaves::card_index_count;
+    use flint_procgen::generators::tree::{
+        generate_leaves, generate_tree, generate_trunk, join_bark_and_leaves, BranchParams,
+        LeafParams, TrunkParams,
+    };
+    use flint_procgen::{
+        mesh_to_glb, BranchSegment, LeafBinding, LivingClock, LivingGenerator, LivingPose,
+        LivingRig, LivingSkeleton, MeshData, PoseStream, ProcGenError, ProcGenSpec, SeededRng,
+        SegmentPose, Stagger, TreeGenerator,
+    };
+
+    /// Plane waves summed per channel. Four is enough to stop the field
+    /// reading as one stripe, and few enough to stay smooth.
+    const WAVES: usize = 4;
+
+    /// The knobs of a noise pose.
+    #[derive(Clone, Copy)]
+    struct Noise {
+        /// Degrees a segment turns at one standard deviation of the noise.
+        turn: f32,
+        /// Metres between swells: well above a limb's length and the limb
+        /// turns whole, near it and the limb bends along its length.
+        wavelength: f32,
+        /// How much a segment's length can change, at one standard deviation.
+        stretch: f32,
+    }
+
+    /// A tree that lives by noise instead of regrowing. Its structure is
+    /// exactly what `generate` bakes from the lineage seed, whatever the
+    /// branch method, since a pose never asks the generator again.
+    struct NoiseTree(Noise);
+
+    impl LivingGenerator for NoiseTree {
+        fn check_living(&self, _spec: &ProcGenSpec) -> flint_procgen::Result<()> {
+            Ok(())
+        }
+
+        fn structure(
+            &self,
+            spec: &ProcGenSpec,
+            lineage_seed: u64,
+        ) -> flint_procgen::Result<LivingSkeleton> {
+            let trunk = TrunkParams::from_toml(&spec.params)?;
+            let branch = BranchParams::from_toml(&spec.params)?;
+            let leaf = LeafParams::from_toml(&spec.params)?;
+            // `generate_tree` takes the "trunk" and "branches" forks, as
+            // `generate` does, and links the segments.
+            let mut lineage = SeededRng::new(lineage_seed);
+            let tree = generate_tree(&trunk, &branch, &mut lineage)?;
+            let segments = tree.branch_segments;
+            let (tips, directions) = extract_tips(&segments);
+            let leaf_mesh = generate_leaves(
+                &tips,
+                &directions,
+                &segments,
+                &leaf,
+                &mut lineage.fork("leaves"),
+            )?;
+            let card_indices = card_index_count(leaf.style);
+            let leaf_bindings = bind_cards(&leaf_mesh, card_indices, &segments);
+            Ok(LivingSkeleton {
+                lineage_seed,
+                segments,
+                leaf_mesh,
+                card_index_count: card_indices,
+                leaf_bindings,
+            })
+        }
+
+        fn rig(&self, _spec: &ProcGenSpec, _lineage_seed: u64) -> flint_procgen::Result<LivingRig> {
+            Err(ProcGenError::LivingUnsupported(
+                "the noise pose is an offline prototype: no skinned rig".into(),
+            ))
+        }
+
+        fn full_pose(
+            &self,
+            _spec: &ProcGenSpec,
+            skeleton: &LivingSkeleton,
+            shape_seed: u64,
+        ) -> flint_procgen::Result<LivingPose> {
+            let field = Field::new(skeleton.lineage_seed, shape_seed, self.0.wavelength);
+            let turn = self.0.turn.to_radians();
+            let segments = skeleton
+                .segments
+                .iter()
+                .map(|s| {
+                    let mid = (s.start + s.end) * 0.5;
+                    let dir = s.direction();
+                    if dir.length() < 0.5 {
+                        return SegmentPose::IDENTITY;
+                    }
+                    // A bend, never a twist: a tube turned about its own axis
+                    // only spins its leaves.
+                    let raw = Vec3::new(field.at(0, mid), field.at(1, mid), field.at(2, mid));
+                    let bend = (raw - dir * raw.dot(&dir)) * turn;
+                    let angle = bend.length();
+                    let rotation = if angle < 1e-6 {
+                        SegmentPose::IDENTITY.rotation
+                    } else {
+                        quat_from_axis_angle((bend * (1.0 / angle)).to_array(), angle)
+                    };
+                    SegmentPose {
+                        rotation,
+                        length_scale: (1.0 + self.0.stretch * field.at(3, mid)).clamp(0.5, 1.5),
+                        radius_scale: 1.0,
+                    }
+                })
+                .collect();
+            Ok(LivingPose {
+                shape_seed,
+                segments,
+            })
+        }
+
+        fn posed_mesh(
+            &self,
+            spec: &ProcGenSpec,
+            skeleton: &LivingSkeleton,
+            pose: &LivingPose,
+        ) -> flint_procgen::Result<MeshData> {
+            posed_tree(spec, skeleton, pose)
+        }
+    }
+
+    /// The tree's own `posed_mesh`: the lineage's trunk, the posed branches
+    /// and the posed leaf cards.
+    fn posed_tree(
+        spec: &ProcGenSpec,
+        skeleton: &LivingSkeleton,
+        pose: &LivingPose,
+    ) -> flint_procgen::Result<MeshData> {
+        let trunk = generate_trunk(
+            &TrunkParams::from_toml(&spec.params)?,
+            &mut SeededRng::new(skeleton.lineage_seed).fork("trunk"),
+        )?;
+        let radial = BranchParams::from_toml(&spec.params)?.radial_segments;
+        let mut bark = MeshBuilder::new();
+        bark.merge(&trunk.mesh);
+        bark.merge(&segments_to_mesh(&skeleton.posed_segments(pose)?, radial)?);
+        bark.compute_normals();
+        bark.compute_tangents();
+        let mut bark = bark.build();
+        bark.materials = trunk.mesh.materials.clone();
+        Ok(join_bark_and_leaves(
+            &bark,
+            &skeleton.posed_leaf_mesh(pose)?,
+        ))
+    }
+
+    /// Four channels of smooth noise with unit variance, each a sum of plane
+    /// waves whose directions, frequencies and phases come from the shape
+    /// seed's own fork of the lineage. One pose, one field: the next pose is a
+    /// new field, not the same one moved on, so poses don't drift one way.
+    struct Field {
+        waves: [[(Vec3, f32); WAVES]; 4],
+    }
+
+    impl Field {
+        fn new(lineage_seed: u64, shape_seed: u64, wavelength: f32) -> Self {
+            let mut rng = SeededRng::new(lineage_seed).fork(&format!("noise{shape_seed}"));
+            let k = std::f32::consts::TAU / wavelength.max(0.05);
+            let waves = std::array::from_fn(|_| {
+                std::array::from_fn(|_| {
+                    let d = Vec3::from_array(rng.next_vec3_unit());
+                    let f = k * rng.next_range(0.7, 1.3);
+                    (d * f, rng.next_range(0.0, std::f32::consts::TAU))
+                })
+            });
+            Self { waves }
+        }
+
+        fn at(&self, channel: usize, p: Vec3) -> f32 {
+            let sum: f32 = self.waves[channel]
+                .iter()
+                .map(|(w, phase)| (w.dot(&p) + phase).sin())
+                .sum();
+            // A sine has variance one half, so the sum's is WAVES / 2.
+            sum / (WAVES as f32 * 0.5).sqrt()
+        }
+    }
+
+    /// The tree's own card binding: each card rides the segment nearest it.
+    fn bind_cards(
+        leaves: &MeshData,
+        card_indices: usize,
+        segments: &[BranchSegment],
+    ) -> Vec<LeafBinding> {
+        if card_indices == 0 || segments.is_empty() {
+            return Vec::new();
+        }
+        leaves
+            .indices
+            .chunks(card_indices)
+            .map(|card| {
+                let mut verts = card.to_vec();
+                verts.sort_unstable();
+                verts.dedup();
+                let centre = verts
+                    .iter()
+                    .map(|&v| Vec3::from_array(leaves.vertices[v as usize].position))
+                    .fold(Vec3::ZERO, |sum, p| sum + p)
+                    * (1.0 / verts.len() as f32);
+                let (segment, along, at) = segments
+                    .iter()
+                    .map(|s| {
+                        let ab = s.end - s.start;
+                        let along =
+                            ((centre - s.start).dot(&ab) / ab.dot(&ab).max(1e-9)).clamp(0.0, 1.0);
+                        (s.id, along, s.start + ab * along)
+                    })
+                    .min_by(|a, b| (centre - a.2).length().total_cmp(&(centre - b.2).length()))
+                    .expect("segments is not empty");
+                LeafBinding {
+                    segment,
+                    along,
+                    offset: centre - at,
+                }
+            })
+            .collect()
+    }
+
+    pub fn run(args: &[String]) -> Res<()> {
+        let path = args.first().ok_or("noise needs a spec")?;
+        let out = std::path::PathBuf::from(opt(args, "--out").ok_or("noise needs --out DIR")?);
+        let source = opt(args, "--source").unwrap_or("noise");
+        let fps: f64 = opt(args, "--fps").unwrap_or("12").parse()?;
+        let nframes: usize = opt(args, "--frames").unwrap_or("48").parse()?;
+        let held: u64 = opt(args, "--poses").unwrap_or("0").parse()?;
+        let noise = Noise {
+            turn: opt(args, "--turn").unwrap_or("12").parse()?,
+            wavelength: opt(args, "--wavelength").unwrap_or("3").parse()?,
+            stretch: opt(args, "--stretch").unwrap_or("0.08").parse()?,
+        };
+        std::fs::create_dir_all(&out)?;
+
+        // A spec with no [living] table gets one from the lineage alone, so
+        // the defaults are the engine's.
+        let mut text = std::fs::read_to_string(path)?;
+        let lineage: u64 = opt(args, "--lineage").unwrap_or("7").parse()?;
+        if !text.contains("\n[living]") {
+            text.push_str(&format!("\n[living]\nlineage_seed = {lineage}\n"));
+        }
+        let mut spec = ProcGenSpec::parse(&text)?;
+        spec.lod = None;
+        let living = spec.living.as_mut().ok_or("no [living] table")?;
+        living.lineage_seed = lineage;
+        if let Some(a) = opt(args, "--amount") {
+            living.variance.amount = a.parse()?;
+        }
+        if let Some(s) = opt(args, "--steady") {
+            living.variance.steady = s.parse()?;
+        }
+        if let Some(s) = opt(args, "--step") {
+            living.step = s.parse()?;
+        }
+        if let Some(g) = opt(args, "--glide") {
+            living.glide = g.parse()?;
+        }
+        // Space colonization's depth counts growth steps along a limb, not
+        // branch levels, so per-level stagger spreads a pine over many beats.
+        if let Some(s) = opt(args, "--stagger") {
+            living.stagger = match s {
+                "none" => Stagger::None,
+                "per_level" => Stagger::PerLevel,
+                "per_branch" => Stagger::PerBranch,
+                other => {
+                    return Err(format!("--stagger: none|per_level|per_branch, not {other}").into())
+                }
+            };
+        }
+        let clock = LivingClock::from(&*living);
+
+        let noisy = NoiseTree(noise);
+        let generator: &dyn LivingGenerator = match source {
+            "noise" => &noisy,
+            "regrow" => &TreeGenerator,
+            other => return Err(format!("--source is noise or regrow, not {other}").into()),
+        };
+        let started = std::time::Instant::now();
+        let skeleton = generator.structure(&spec, lineage)?;
+        let mut depths = std::collections::BTreeMap::<u32, usize>::new();
+        for s in &skeleton.segments {
+            *depths.entry(s.depth).or_default() += 1;
+        }
+        eprintln!(
+            "{source}: lineage {lineage}, {} segments (depths {}..={}, {} levels), {} leaf cards, \
+             step {} glide {} variance {:.2}/{:.2}",
+            skeleton.segments.len(),
+            depths.keys().next().unwrap_or(&0),
+            skeleton.max_depth(),
+            depths.len(),
+            skeleton.leaf_bindings.len(),
+            clock.step,
+            clock.glide,
+            spec.living.as_ref().map_or(0.0, |l| l.variance.amount),
+            spec.living.as_ref().map_or(0.0, |l| l.variance.steady),
+        );
+
+        for k in 0..held {
+            let pose = generator.pose(&spec, &skeleton, k)?;
+            let mesh = generator.posed_mesh(&spec, &skeleton, &pose)?;
+            std::fs::write(out.join(format!("pose{k}.glb")), mesh_to_glb(&mesh)?)?;
+        }
+
+        let mut stream = PoseStream::new(generator, &spec, &skeleton, clock);
+        let mut tip_moves = Vec::with_capacity(nframes);
+        let mut last: Option<Vec<BranchSegment>> = None;
+        for f in 0..nframes {
+            let pose = stream.at(f as f64 / fps)?;
+            let posed = skeleton.posed_segments(&pose)?;
+            if let Some(prev) = &last {
+                let moved = posed
+                    .iter()
+                    .zip(prev)
+                    .map(|(a, b)| (a.end - b.end).length())
+                    .fold(0.0f32, f32::max);
+                tip_moves.push(moved);
+            }
+            last = Some(posed);
+            let mesh = generator.posed_mesh(&spec, &skeleton, &pose)?;
+            std::fs::write(out.join(format!("f{f:03}.glb")), mesh_to_glb(&mesh)?)?;
+        }
+        let pattern: String = tip_moves
+            .iter()
+            .map(|&m| if m > 1e-4 { '#' } else { '.' })
+            .collect();
+        let most = tip_moves.iter().copied().fold(0.0f32, f32::max);
+        eprintln!(
+            "{nframes} frames in {:.1} s; the farthest any segment end moves in a frame: {most:.3} m\n{pattern}",
+            started.elapsed().as_secs_f32()
+        );
+        Ok(())
+    }
 }
