@@ -717,9 +717,10 @@ flint render scene.toml --look ink_wash --style kuwahara:radius=3 -o sharper.png
 
 - any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;
 - any `[post_process]` field, written `post.<field>`: `post.exposure=0.8,1.2`. Use `|` between values to sweep a vector: `post.fog_color=0,0,0|0.7,0.75,0.82`;
-- `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks.
+- `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks;
+- a Living Props wooze knob, written `wooze.<knob>`: `wooze.glide=0,0.25,0.5,1`, `wooze.preset=boil,morph` (knobs `amplitude`, `step`, `glide`, `jitter`, `preset`). This needs a build with the wooze field, which is on `feature/living-props` until it merges; elsewhere the flag parses the key and then refuses it.
 
-Each cell is 640x360 unless you pass `--width` and `--height`. The scene loads once and every column re-renders the same frame, so four columns of `stylize_props` take about 13 s in a debug build. A sweep goes over `--look` and every other flag.
+Each family is one key prefix on the one flag, parsed by one type (`commands/sweep.rs`, #353), and every family lands on the same sheet. Each cell is 640x360 unless you pass `--width` and `--height`. The scene loads once and every column re-renders the same frame, so four columns of `stylize_props` take about 13 s in a debug build. A sweep goes over `--look` and every other flag. When two neighbouring columns come out pixel-identical, `flint render` warns that the sweep showed nothing between them: the style was off, nothing on screen read the key, or both values clamped to one.
 
 The ASCII looks set no `edges` key, so they draw the [edge glyphs](#edges) by default; add `edges = 0` to a look's `[post_process.styles.ascii]` for tone alone. The two sweeps below were captured before edges landed, so the props in them aren't outlined.
 

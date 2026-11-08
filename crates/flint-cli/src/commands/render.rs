@@ -41,11 +41,13 @@ pub struct RenderArgs {
     pub look: Option<String>,
 
     /// Render one setting at several values as one labelled contact sheet
-    /// (#279): `ascii.cell=6,8,12` (any `--style` key), `post.exposure=0.8,1.2`
-    /// (a [post_process] field; split on `|` to sweep a vector), or
-    /// `look=ascii_noir,matrix`. --width/--height size each cell
-    #[arg(long, value_parser = parse_sweep)]
-    pub sweep: Option<super::look::Sweep>,
+    /// (#279, #353): `ascii.cell=6,8,12` (any `--style` key),
+    /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
+    /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
+    /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
+    /// --width/--height size each cell
+    #[arg(long, value_parser = super::sweep::parse_sweep)]
+    pub sweep: Option<super::sweep::Sweep>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -514,10 +516,6 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_sweep(s: &str) -> Result<super::look::Sweep, String> {
-    super::look::Sweep::parse(s)
-}
-
 /// A GPU kept between renders in one process (#329). `flint render` makes
 /// its own; `render-suite` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
@@ -592,6 +590,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.frames.is_some() && args.sweep.is_some() {
         anyhow::bail!("--frames draws one sequence: drop --sweep");
     }
+    if let Some(knob) = args.sweep.as_ref().and_then(|s| s.wooze_knob()) {
+        anyhow::bail!(
+            "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
+             build doesn't have: it lives on feature/living-props until that merges (#206)"
+        );
+    }
     if let Some(dt) = args.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
             anyhow::bail!("--frame-dt must be a positive number of seconds");
@@ -620,7 +624,10 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
     let (width, height) = match args.sweep {
-        Some(_) => (args.width.unwrap_or(640), args.height.unwrap_or(360)),
+        Some(_) => {
+            let (w, h) = super::sweep::CELL_SIZE;
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
         None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
     };
     flint_render::set_gpu_override(args.gpu.clone());
@@ -656,7 +663,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
     let scene_pp = scene_file.post_process.as_ref();
-    let base_pp = super::look::base_def(scene_pp, look.as_ref())?;
+    let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
     let mut configs = Vec::new();
     for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
         let def = match &args.sweep {
@@ -1044,6 +1051,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         frames.push(img);
     }
 
+    // A sweep whose neighbours drew the same showed nothing: say so (#216)
+    if let Some(sweep) = &args.sweep {
+        for i in super::sweep::identical_neighbours(&frames) {
+            eprintln!("Warning: {}", sweep.identical_warning(i));
+        }
+    }
+
     let img = match &args.sweep {
         None => frames.swap_remove(0),
         Some(sweep) => {
@@ -1051,13 +1065,14 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 Some(look) => format!("  over {}", look.name),
                 None => String::new(),
             };
+            let labels = (0..sweep.values.len()).map(|i| sweep.label(i)).collect();
             super::style_sheet::compose(
                 &frames,
-                &super::style_sheet::SheetText {
-                    title: scene_file.scene.name.clone(),
-                    subtitle: format!("sweep {}{over}", sweep.name()),
-                    labels: sweep.values.clone(),
-                },
+                &super::style_sheet::SheetText::new(
+                    scene_file.scene.name.clone(),
+                    format!("sweep {}{over}", sweep.name()),
+                    labels,
+                ),
             )
         }
     };
