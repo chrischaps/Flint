@@ -495,6 +495,17 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
                 },
                 count: None,
             },
+            // The dissolving variants' cell ranks (#398), likewise
+            wgpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
     // The tone statistics' inputs (#289): the picture and the mask
@@ -586,6 +597,21 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         &[&table_bgl, &stats_in_bgl],
         &[VARIANT_CELL_FORMAT; 2],
     );
+    // The dissolve's order and rank (#398): the mask in, then the orders
+    let dissolve_order_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Dissolve Order Pipeline",
+        &kit::shader(device, "ASCII Dissolve Order Shader", DISSOLVE_ORDER_SHADER),
+        &[&table_bgl, &stats_in_bgl],
+        DISSOLVE_FORMAT,
+    );
+    let dissolve_rank_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Dissolve Rank Pipeline",
+        &kit::shader(device, "ASCII Dissolve Rank Shader", DISSOLVE_RANK_SHADER),
+        &[&table_bgl, &edges_in_bgl],
+        DISSOLVE_FORMAT,
+    );
     let stats_resolve_module =
         kit::shader(device, "ASCII Stats Resolve Shader", STATS_RESOLVE_SHADER);
     let stats_resolve_pipeline = kit::fullscreen_pipeline(
@@ -657,6 +683,9 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         cells_pipeline,
         variant_cells_pipeline,
         variant_cells: Mutex::new([None, None]),
+        dissolve_order_pipeline,
+        dissolve_rank_pipeline,
+        dissolve: Mutex::new([None, None]),
         stats_pipeline,
         stats_resolve_pipeline,
         stats_rows_pipeline,
@@ -764,6 +793,10 @@ struct AsciiUniforms {
     snap_grids: [[f32; 4]; MAX_SNAP_GRIDS],
     /// The line glyphs' ink for edge ink color (#351), display rgb, unused w.
     edge_color: [f32; 4],
+    /// The dissolving variants' bands (#398): x = how many.
+    dissolve_meta: [u32; 4],
+    /// Each one's (slot, first row, rows, columns).
+    dissolve: [[u32; 4]; MAX_DISSOLVE],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -813,6 +846,10 @@ struct VariantUniform {
     /// With [`SNAP`], the least share of a cell's 16 samples the variant
     /// must cover to draw the cell whole (#338).
     cell_share: f32,
+    /// The first row + 1 of the variant's band in the dissolve rank state
+    /// (#398); 0 when it has none and its cells take their order as it is.
+    dissolve_row: u32,
+    _pad_dissolve: [u32; 3],
 }
 
 /// A variant whose edge glyphs are the uniform's own; `NO_EDGE_START` in
@@ -1085,12 +1122,23 @@ const CELLS_SHADER: &str = concat!(
 pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
+    include_str!("ascii_dissolve.wgsl"),
     include_str!("ascii.wgsl"),
     include_str!("ascii_edge_thin.wgsl")
 );
 const EDGE_VIEW_SHADER: &str = concat!(
     include_str!("ascii_edge_view.wgsl"),
     include_str!("ascii_edge_thin.wgsl")
+);
+const DISSOLVE_ORDER_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_dissolve.wgsl"),
+    include_str!("ascii_dissolve_order.wgsl")
+);
+const DISSOLVE_RANK_SHADER: &str = concat!(
+    include_str!("ascii_common.wgsl"),
+    include_str!("ascii_dissolve.wgsl"),
+    include_str!("ascii_dissolve_rank.wgsl")
 );
 const VARIANT_CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
@@ -1179,6 +1227,59 @@ fn assign_bands(rows: &mut [VariantUniform], size: [u32; 2]) -> Vec<Band> {
         next += grid[1];
     }
     bands
+}
+
+/// Variants whose dissolve is ranked among their own cells (#398); a
+/// dissolving variant past them takes its cells' order as it is.
+/// `MAX_DISSOLVE` in ascii_common.wgsl.
+pub const MAX_DISSOLVE: usize = 8;
+
+/// The dissolve state's texel: a cell's order, then its rank (#398).
+const DISSOLVE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+
+/// Gives each drawn per-entity variant (rows past 0) that dissolves a band
+/// of rows of its own in the dissolve state (#398), on its own grid: the
+/// rank pass counts only the variant's cells, so variants never share one.
+/// Returns each band's (slot, first row, rows, columns).
+fn assign_dissolve(rows: &mut [VariantUniform], size: [u32; 2]) -> Vec<[u32; 4]> {
+    let mut bands: Vec<[u32; 4]> = Vec::new();
+    let mut next = 0u32;
+    for (slot, row) in rows.iter_mut().enumerate().skip(1) {
+        row.dissolve_row = 0;
+        if row.flags & (DISSOLVE | PASS_THROUGH) != DISSOLVE || bands.len() == MAX_DISSOLVE {
+            continue;
+        }
+        let grid = cell_grid(size, row.cell, row.origin);
+        if grid[0] > MAX_BAND_TEXELS || next + grid[1] > MAX_BAND_TEXELS {
+            continue;
+        }
+        bands.push([slot as u32, next, grid[1], grid[0]]);
+        row.dissolve_row = next + 1;
+        next += grid[1];
+    }
+    bands
+}
+
+/// The dissolve state's size for `bands`: a texel a cell across the
+/// widest, every band's rows stacked, and never less than `held` (the
+/// size it has): a frame without a dissolve keeps the textures, so a
+/// dissolve toggled on and off doesn't remake them each time.
+fn dissolve_texture_size(bands: &[[u32; 4]], held: Option<[u32; 2]>) -> [u32; 2] {
+    let wide = bands.iter().map(|b| b[3]).max().unwrap_or(0);
+    let tall = bands.last().map_or(0, |b| b[1] + b[2]);
+    let [w, h] = held.unwrap_or([1, 1]);
+    [wide.max(w).max(1), tall.max(h).max(1)]
+}
+
+/// One bind-cache key from the generations and ids a bind group is made
+/// over (FNV-1a over their bytes).
+fn bind_key(parts: &[u64]) -> u64 {
+    parts
+        .iter()
+        .flat_map(|p| p.to_le_bytes())
+        .fold(0xcbf2_9ce4_8422_2325, |k, b| {
+            (k ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
 }
 
 /// The variant cell state's size for `bands`: a texel a cell across the
@@ -1437,6 +1538,11 @@ struct Ascii {
     /// Per-entity variant cells (#313): their pass and its two entries.
     variant_cells_pipeline: wgpu::RenderPipeline,
     variant_cells: Mutex<[Option<Owned>; 2]>,
+    /// The dissolve's order and rank state (#398), a band of rows per
+    /// dissolving variant.
+    dissolve_order_pipeline: wgpu::RenderPipeline,
+    dissolve_rank_pipeline: wgpu::RenderPipeline,
+    dissolve: Mutex<[Option<Owned>; 2]>,
     stats_pipeline: wgpu::RenderPipeline,
     stats_resolve_pipeline: wgpu::RenderPipeline,
     stats_rows_pipeline: wgpu::RenderPipeline,
@@ -1640,6 +1746,8 @@ fn variant_uniform(
         glyph: [0.0; 2],
         edge_start: NO_EDGE_START,
         cell_share: param("cell_share").clamp(1.0 / 16.0, 1.0),
+        dissolve_row: 0,
+        _pad_dissolve: [0; 3],
     }
 }
 
@@ -1846,6 +1954,7 @@ fn cells_bind(
 impl Ascii {
     /// The glyph pass's picture and mask: the mask while any per-entity
     /// variant is in the table, else the one-pixel stand-in.
+    #[allow(clippy::too_many_arguments)]
     fn entity_bind(
         &self,
         frame: &StyleFrame<'_>,
@@ -1854,6 +1963,7 @@ impl Ascii {
         edge_cells: &Owned,
         stats: &Owned,
         variant_cells: [&Owned; 2],
+        dissolve_ranks: &Owned,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let make = |mask: &wgpu::TextureView| {
@@ -1885,15 +1995,25 @@ impl Ascii {
                         binding: 5,
                         resource: wgpu::BindingResource::TextureView(&variant_cells[1].view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&dissolve_ranks.view),
+                    },
                 ],
             })
         };
         // The edge cells are remade when the grid changes size: their
-        // generation is part of the key
-        let key = (edge_cells.generation << 40)
-            ^ (stats.generation << 33)
-            ^ (variant_cells[0].generation << 52)
-            ^ (input.id * 2 + mask.is_some() as u64);
+        // generation is part of the key. Hashed, not shifted into fields: a
+        // generation that outgrew its field wrapped onto an old key and
+        // bound the texture that one had (#398's ranks did after 32
+        // dissolves toggled on and off)
+        let key = bind_key(&[
+            edge_cells.generation,
+            stats.generation,
+            variant_cells[0].generation,
+            dissolve_ranks.generation,
+            input.id * 2 + mask.is_some() as u64,
+        ]);
         frame.bind("ASCII Entity BG", key, || {
             make(mask.unwrap_or(&self.no_mask_view))
         })
@@ -2477,6 +2597,8 @@ impl StylePass for Ascii {
         // Each per-entity variant's band of cells (#313)
         let bands = assign_bands(&mut variants, size);
         let snapping = snap_grids(&variants);
+        // Each dissolving variant's band of cells (#398)
+        let dissolving = assign_dissolve(&mut variants, size);
 
         // Edges (#267): line glyphs from geometry, one texel a cell on the
         // same grid as the cell state
@@ -2591,6 +2713,8 @@ impl StylePass for Ascii {
                 let [r, g, b] = frame.color("edge_color");
                 [r, g, b, 0.0]
             },
+            dissolve_meta: [dissolving.len() as u32, 0, 0, 0],
+            dissolve: [[0; 4]; MAX_DISSOLVE],
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -2609,6 +2733,7 @@ impl StylePass for Ascii {
             uniforms.band_rows[i] = [b.row, b.rows, b.cols, b.footprint.to_bits()];
         }
         uniforms.snap_grids[..snapping.len()].copy_from_slice(&snapping);
+        uniforms.dissolve[..dissolving.len()].copy_from_slice(&dissolving);
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -2683,6 +2808,44 @@ impl StylePass for Ascii {
             );
         }
 
+        // The dissolve (#398): each dissolving variant's cells' order, then
+        // each one's rank among the variant's cells near it
+        let mut dissolve_slot = self.dissolve.lock().unwrap_or_else(|e| e.into_inner());
+        let [order_slot, rank_slot] = &mut *dissolve_slot;
+        let dissolve_size = dissolve_texture_size(&dissolving, rank_slot.as_ref().map(|o| o.size));
+        let dissolve_order = Owned::ensure(
+            order_slot,
+            frame.device,
+            "ASCII Dissolve Order",
+            DISSOLVE_FORMAT,
+            dissolve_size,
+            &self.edges_in_bgl,
+        );
+        let dissolve_ranks = Owned::ensure(
+            rank_slot,
+            frame.device,
+            "ASCII Dissolve Ranks",
+            DISSOLVE_FORMAT,
+            dissolve_size,
+            &self.edges_in_bgl,
+        );
+        if !dissolving.is_empty() {
+            kit::fullscreen_pass(
+                encoder,
+                "ASCII Dissolve Order",
+                &dissolve_order.view,
+                &self.dissolve_order_pipeline,
+                &[&uniform, &self.picture_bind(frame, input, true)],
+            );
+            kit::fullscreen_pass(
+                encoder,
+                "ASCII Dissolve Rank",
+                &dissolve_ranks.view,
+                &self.dissolve_rank_pipeline,
+                &[&uniform, &dissolve_order.bind],
+            );
+        }
+
         // Glyph pass: draw the cells
         let font = fonts.stack.as_ref().expect("stacked above");
         let cells = cells_bind(
@@ -2701,7 +2864,15 @@ impl StylePass for Ascii {
             Vec::new()
         };
         let with_mask = variants.len() > 1 || !overdrawn.is_empty();
-        let entity = self.entity_bind(frame, input, with_mask, edge_cells, stats, variant_cells);
+        let entity = self.entity_bind(
+            frame,
+            input,
+            with_mask,
+            edge_cells,
+            stats,
+            variant_cells,
+            dissolve_ranks,
+        );
         let groups = [&*uniform, &*cells, &font.bind, &*entity];
         kit::fullscreen_pass(encoder, "ASCII Pass", output, &self.pipeline, &groups);
 
@@ -2836,7 +3007,8 @@ mod tests {
         // a row is 144 bytes, #288's silhouette floors and #320's palette
         // look, then #335's glyph cell and edge start), and the variant cell
         // bands' two vec4 each (#313), and #351's edge colour
-        assert_eq!(std::mem::size_of::<VariantUniform>(), 144);
+        // #398's dissolve row, padded to 16
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 160);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
@@ -2847,11 +3019,13 @@ mod tests {
                 + MAX_BANDS * 32
                 + MAX_SNAP_GRIDS * 16
                 + 16
+                + 16
+                + MAX_DISSOLVE * 16
         );
-        // #351's edge colour, last
+        // #351's edge colour, then #398's dissolve bands, last
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, edge_color),
-            std::mem::size_of::<AsciiUniforms>() - 16
+            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
@@ -3171,6 +3345,8 @@ mod tests {
             ("ascii_stats.wgsl", STATS_SHADER),
             ("ascii_stats_resolve.wgsl", STATS_RESOLVE_SHADER),
             ("ascii_variant_cells.wgsl", VARIANT_CELLS_SHADER),
+            ("ascii_dissolve_order.wgsl", DISSOLVE_ORDER_SHADER),
+            ("ascii_dissolve_rank.wgsl", DISSOLVE_RANK_SHADER),
         ] {
             let module = naga::front::wgsl::parse_str(src).expect(name);
             naga::valid::Validator::new(
@@ -3188,6 +3364,9 @@ mod tests {
         // And so are the variant cell state's bands (#313)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_BANDS: u32 = {MAX_BANDS}u;")));
+        // And the dissolving variants (#398)
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const MAX_DISSOLVE: u32 = {MAX_DISSOLVE}u;")));
         // And the snapping grids and flag (#338)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_SNAP_GRIDS: u32 = {MAX_SNAP_GRIDS}u;")));
@@ -3238,6 +3417,55 @@ mod tests {
             flags,
             ..VariantUniform::zeroed()
         }
+    }
+
+    #[test]
+    fn each_dissolving_variant_gets_its_own_band_up_to_the_cap() {
+        let size = [1280, 720];
+        let mut rows = vec![
+            VariantUniform::zeroed(),
+            variant_row(8.0, [0.0, 0.0], 1.0, DISSOLVE),
+            // Fades, and one that passes through: no band
+            variant_row(8.0, [0.0, 0.0], 1.0, 0),
+            variant_row(8.0, [0.0, 0.0], 1.0, DISSOLVE | PASS_THROUGH),
+            // Same grid as row 1, but its own band: ranks count one slot
+            variant_row(8.0, [0.0, 0.0], 1.0, DISSOLVE | SNAP),
+            variant_row(16.0, [3.0, 5.0], 1.0, DISSOLVE),
+        ];
+        let bands = assign_dissolve(&mut rows, size);
+        let grid = cell_grid(size, [8.0, 8.0], [0.0, 0.0]);
+        let wide = cell_grid(size, [16.0, 16.0], [3.0, 5.0]);
+        assert_eq!(
+            bands,
+            vec![
+                [1, 0, grid[1], grid[0]],
+                [4, grid[1], grid[1], grid[0]],
+                [5, 2 * grid[1], wide[1], wide[0]],
+            ]
+        );
+        let at: Vec<u32> = rows.iter().map(|r| r.dissolve_row).collect();
+        assert_eq!(at, vec![0, 1, 0, 0, grid[1] + 1, 2 * grid[1] + 1]);
+        assert_eq!(
+            dissolve_texture_size(&bands, None),
+            [grid[0], 2 * grid[1] + wide[1]]
+        );
+        // A frame without a dissolve keeps the textures it has
+        assert_eq!(dissolve_texture_size(&[], Some([90, 46])), [90, 46]);
+        assert_eq!(dissolve_texture_size(&[], None), [1, 1]);
+
+        let mut many = vec![VariantUniform::zeroed()];
+        many.extend((0..MAX_DISSOLVE + 2).map(|_| variant_row(8.0, [0.0, 0.0], 1.0, DISSOLVE)));
+        assert_eq!(assign_dissolve(&mut many, size).len(), MAX_DISSOLVE);
+        assert!(many[MAX_DISSOLVE + 1..].iter().all(|r| r.dissolve_row == 0));
+    }
+
+    #[test]
+    fn bind_keys_never_wrap_onto_each_other() {
+        // A generation shifted into a 6-bit field wrapped after 64 (#398)
+        let keys: std::collections::HashSet<u64> = (0..4096u64)
+            .flat_map(|g| [bind_key(&[0, 0, 0, g, 7]), bind_key(&[0, 0, g, 0, 7])])
+            .collect();
+        assert_eq!(keys.len(), 2 * 4096 - 1);
     }
 
     #[test]
