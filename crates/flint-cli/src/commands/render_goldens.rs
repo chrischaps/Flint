@@ -67,6 +67,14 @@
 //! with; `--bless-variant` writes this adapter's variant. Each report
 //! names the adapter, the golden compared and where a variant would go.
 //!
+//! Drift (#387): a case that passes but isn't byte-identical with its
+//! golden (a pixel moved, or a grid cell) prints a `DRIFT` line, carries
+//! `"drift": true` in `report.json`, and the run ends naming every such
+//! case, or saying there are none. Drift inside the tolerance is how
+//! stale goldens pile up: the next real change then has to be told apart
+//! from it. `--bless-drifted` re-blesses only those cases (passing ones
+//! that moved), for a deliberate catch-up commit; failures still fail.
+//!
 //! Every case runs in this process, on one GPU device (#329): it parses
 //! the case's flags as `flint render` would and calls the same function.
 //! `--isolate` spawns a `flint render` per case instead.
@@ -88,6 +96,12 @@ pub struct GoldenArgs {
     /// `<stem>.<adapter>.png`, for a case another adapter draws differently
     #[arg(long)]
     pub bless_variant: bool,
+
+    /// Goldens: re-bless only the cases that pass but aren't byte-identical
+    /// with their golden (#387), for a deliberate catch-up commit. Failing
+    /// cases are left alone and still fail the run
+    #[arg(long, conflicts_with_all = ["bless", "bless_variant"])]
+    pub bless_drifted: bool,
 
     /// Goldens: run only this case. A name that is exactly a case's picks
     /// that case alone (`ascii-silhouette-cell` skips
@@ -314,6 +328,10 @@ pub(crate) struct CaseReport {
     pub args: Vec<String>,
     /// pass, fail, error, missing, blessed or skip.
     pub status: &'static str,
+    /// Passed, but not byte-identical with its golden (#387): some pixel
+    /// or grid cell moved inside the tolerance. A `--bless-drifted` blesses
+    /// exactly these, and keeps the flag on the `blessed` report.
+    pub drift: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<Comparison>,
     pub tolerance: Tolerance,
@@ -345,6 +363,14 @@ pub(crate) struct CaseReport {
     /// copied into the out dir for the contact sheet.
     #[serde(skip)]
     pub had_golden: bool,
+}
+
+impl CaseReport {
+    /// Whether any pixel, or any cell of the grid, differs from the golden.
+    pub fn moved(&self) -> bool {
+        self.comparison.is_some_and(|c| c.changed > 0)
+            || self.text.as_ref().is_some_and(|t| t.cells > 0)
+    }
 }
 
 /// The key an adapter's golden variants carry (#314): `warp` for the
@@ -654,6 +680,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             scene: case.scene.clone(),
             args: case.args.clone(),
             status: "skip",
+            drift: false,
             comparison: None,
             tolerance,
             render: render.display().to_string(),
@@ -859,9 +886,12 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             report.text = Some(tc);
         }
 
+        // Inside the tolerance but not the golden's bytes (#387). A case
+        // matching its own reference has no golden to go stale, so no drift
+        report.drift = pass && report.moved() && case.matches.is_none();
         // A case matching its own reference has no golden to bless: it is
         // compared as ever, and a bless doesn't fail on it
-        if blessing && case.matches.is_none() {
+        if (blessing || (args.bless_drifted && report.drift)) && case.matches.is_none() {
             if let Some(parent) = golden.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -923,6 +953,22 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 report.message.as_deref().unwrap_or("")
             ),
         }
+        if report.drift {
+            let text = report
+                .text
+                .as_ref()
+                .filter(|t| t.cells > 0)
+                .map(|t| format!(", {} grid cell(s)", t.cells))
+                .unwrap_or_default();
+            let pixels = report
+                .comparison
+                .map(|c| format!("{} pixel(s) moved (max {})", c.changed, c.max))
+                .unwrap_or_default();
+            println!(
+                "  DRIFT {:<28} {pixels}{text}: inside the tolerance, not byte-identical",
+                case.name
+            );
+        }
         if report.status == "skip" {
             report.status = if pass { "pass" } else { "fail" };
         }
@@ -933,6 +979,41 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     flint_import::memoize_imports(false);
     flint_render::memoize_mip_chains(false);
 
+    // The drift tally (#387): zero, or the cases that have it
+    let drifted: Vec<&str> = reports
+        .iter()
+        .filter(|r| r.drift && r.status == "pass")
+        .map(|r| r.name.as_str())
+        .collect();
+    let rebless: Vec<&str> = reports
+        .iter()
+        .filter(|r| r.drift && r.status == "blessed")
+        .map(|r| r.name.as_str())
+        .collect();
+    let compared = reports.iter().filter(|r| r.comparison.is_some()).count();
+    if args.bless_drifted {
+        println!(
+            "re-blessed {} drifted case(s){}",
+            rebless.len(),
+            if rebless.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", rebless.join(", "))
+            }
+        );
+    } else if !blessing && compared > 0 {
+        if drifted.is_empty() {
+            println!("drift: none, every passing case is byte-identical with its golden");
+        } else {
+            println!(
+                "drift: {} passing case(s) not byte-identical with their golden: {}
+                   (--bless-drifted re-blesses only those, for a catch-up commit)",
+                drifted.len(),
+                drifted.join(", ")
+            );
+        }
+    }
+
     let seconds = started_suite.elapsed().as_secs_f64();
     let report_path = out_dir.join("report.json");
     std::fs::write(&report_path, serde_json::to_string_pretty(&reports)?)
@@ -940,7 +1021,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     let sheet = super::golden_sheet::Sheet {
         suite: &manifest.suite.name,
         manifest: &manifest_path.display().to_string(),
-        bless: blessing,
+        bless: blessing || args.bless_drifted,
         isolate: args.isolate,
         seconds,
         no_gpu,

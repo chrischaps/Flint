@@ -1169,7 +1169,10 @@ Every registered style is pinned by a golden image in `crates/flint-cli/tests/go
 flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
 flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --case ascii-silhouette-cell
 flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless    # after a deliberate change
+flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless-drifted  # catch up passes that moved
 ```
+
+A run names every case that passes without being byte-identical with its golden, or says there are none ([drift](../guides/headless-rendering.md#drift), #387).
 
 | Case | What it pins |
 |------|--------------|

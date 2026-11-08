@@ -171,7 +171,9 @@ Flint uses an **edit -> validate -> play** loop:
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact
    sheet of golden | render | diff, failures first, #329; `--case` with an exact name picks that case
-   alone, otherwise every name containing it, #388); `cargo test -p flint-cli
+   alone, otherwise every name containing it, #388); a pass that isn't byte-identical with its golden
+   prints `DRIFT`, is `"drift": true` in the report, and the run ends naming every drifted case
+   or saying none; `--bless-drifted` re-blesses only those, for a catch-up commit (#387); `cargo test -p flint-cli
    --test render_goldens` runs it. Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
    `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own
