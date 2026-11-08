@@ -83,7 +83,9 @@ struct AsciiUniforms {
     // 0 nearest ink to the cell's hue, 1 a ladder picked by tone
     palette_match: u32,
     palette_bg: vec3<f32>,
-    _pad: u32,
+    // What inks the line glyphs (#351): 0 cell (as the tone glyph),
+    // 1 color (`edge_color`, toward the near hue by `edge_tint`), 2 hue
+    edge_ink: u32,
     // Temporal stability (#277): how much of last frame's cell colour a
     // cell keeps, how far (in ramp steps) its tone may stray before its
     // glyph changes, the ordered dither's strength, and whether last
@@ -102,7 +104,8 @@ struct AsciiUniforms {
     // The whole frame's palette chroma and ink dither (#320)
     chroma: f32,
     palette_dither: f32,
-    _pad_palette: vec2<u32>,
+    edge_tint: f32,
+    _pad_palette: u32,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -124,6 +127,8 @@ struct AsciiUniforms {
     // f32 bits)
     bands: array<vec4<f32>, 8>,
     band_rows: array<vec4<u32>, 8>,
+    // The line glyphs' ink for edge ink color (#351), display rgb
+    edge_color: vec4<f32>,
 };
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.

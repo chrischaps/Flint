@@ -21,7 +21,8 @@
 @group(3) @binding(0) var entity_input: texture_2d<f32>;
 @group(3) @binding(1) var style_mask: texture_2d<u32>;
 // The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
-// line glyph slot + 1 (0 = none), y = its length in cell widths
+// line glyph slot + 1 (0 = none), y = its length in cell widths, w = the
+// near side's hue packed 8 bits a channel (#351)
 @group(3) @binding(2) var edge_cells: texture_2d<f32>;
 // Each slot's tone range (#289, ascii_stats_resolve.wgsl)
 @group(3) @binding(3) var tone_stats: texture_2d<f32>;
@@ -100,6 +101,16 @@ fn edge_slot(cell: vec2<f32>) -> u32 {
         }
     }
     return slot;
+}
+
+// The near side's hue along screen-grid cell `cell`'s edge (#351), at full
+// value: the object's own colour where the cell's is a mix of it and what's
+// behind
+fn edge_hue(cell: vec2<f32>) -> vec3<f32> {
+    // Exact: w is a whole number under 2^24 (no +0.5, which f32 spacing
+    // of 1 above 2^23 rounds up, carrying red into green)
+    let w = u32(edge_cell_at(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET)).w);
+    return vec3<f32>(f32(w & 255u), f32((w >> 8u) & 255u), f32(w >> 16u)) / 255.0;
 }
 
 fn ramp_origin(step: u32) -> vec2<u32> {
@@ -240,35 +251,46 @@ struct Inks {
     ground: vec3<f32>,
 }
 
-fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
-    let lum = luma(col);
-    // Ink and ground
+// The glyph ink look `v`'s colour mode gives colour `col` at tone `t`, in
+// cell `cell`. Density carries brightness and the ink carries hue at full
+// value, so a dark object's sparse glyphs still read as its colour.
+fn mode_ink(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
     let hue = col / max(max(col.r, max(col.g, col.b)), 1e-4);
-    var ink = vec3<f32>(0.0);
-    var ground = col * v.background;
-    // Density carries brightness and the ink carries hue at full value, so
-    // a dark object's sparse glyphs still read as its colour
+    var ink = hue;
     switch v.color_mode {
         case 1u: {
             ink = v.tint;
-            ground = v.tint * lum * v.background;
         }
         case 2u: {
             ink = col;
         }
         case 3u: {
             ink = vec3<f32>(1.0);
-            ground = vec3<f32>(lum * v.background);
         }
         case 4u: {
             ink = cell_ink(v, hue, t, cell);
+        }
+        default: {}
+    }
+    return clamp(ink * v.ink, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
+    let lum = luma(col);
+    let ink = mode_ink(v, col, t, cell);
+    var ground = col * v.background;
+    switch v.color_mode {
+        case 1u: {
+            ground = v.tint * lum * v.background;
+        }
+        case 3u: {
+            ground = vec3<f32>(lum * v.background);
+        }
+        case 4u: {
             ground = v.palette_bg;
         }
-        default: {
-            ink = hue;
-        }
+        default: {}
     }
-    ink = clamp(ink * v.ink, vec3<f32>(0.0), vec3<f32>(1.0));
     if v.ground == 1u {
         ground = vec3<f32>(0.0);
     }
@@ -283,8 +305,34 @@ fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
     return out;
 }
 
+// Whether cell `edge`'s line glyph takes an ink of its own (#351)
+fn own_edge_ink(edge: u32) -> bool {
+    return edge < 4u && u.edge_ink != 0u;
+}
+
+// The line glyph's own ink (#351) in look `v`, for the cell `cell` of colour
+// `col` and tone `t`: the near side's hue at the cell's value, inked as the
+// colour mode inks a cell (hue); or `edge_color` mixed toward that by
+// `edge_tint` (color). `cell` is on the screen grid, as the edges are.
+fn edge_ink(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
+    let near = edge_hue(cell) * max(max(col.r, max(col.g, col.b)), 1e-4);
+    return line_ink(v, near, t, cell);
+}
+
+// The edge ink for a line whose near side is colour `near`
+fn line_ink(v: Variant, near: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
+    let own = mode_ink(v, near, t, cell);
+    if u.edge_ink == 1u {
+        return mix(u.edge_color.rgb, own, u.edge_tint);
+    }
+    return own;
+}
+
 fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
     let inverse = v.ground == 2u;
+    if own_edge_ink(edge) {
+        return shade_edge(v, col, t, step, cell, local, edge, floor_in);
+    }
     var coverage = glyph_coverage(tone_origin(v, step), local, v.cell, v.glyph);
     // On an edge, the line glyph over the tone glyph; the glow follows
     // whichever glyph mostly shows
@@ -302,6 +350,29 @@ fn shade(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: 
     var out = mix(ground, ink, coverage);
     if v.glow > 0.0 && !inverse {
         out += ink * (v.glow * (0.35 + 0.65 * t)) * glyph_halo(origin, local, coverage, v.cell, v.glyph);
+    }
+    return clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// An edge cell whose line glyph has its own ink (#351): the tone glyph
+// fades out under the line as `edges` rises (as in `shade`), in the cell's
+// ink, and the line glyph is laid over it in the edge ink, on either
+// ground (inverse: over the ink-filled cell).
+fn shade_edge(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, local: vec2<f32>, edge: u32, floor_in: f32) -> vec3<f32> {
+    let inverse = v.ground == 2u;
+    var tone_c = glyph_coverage(tone_origin(v, step), local, v.cell, v.glyph) * (1.0 - u.edges);
+    if !inverse {
+        tone_c = max(tone_c, floor_in);
+    }
+    let line_c = glyph_coverage(edge_origin(v, edge), local, v.cell, v.glyph) * u.edges;
+    let inks = cell_inks(v, col, t, cell);
+    let line_ink = edge_ink(v, col, t, cell);
+    var out = mix(mix(inks.ground, inks.ink, tone_c), line_ink, line_c);
+    if v.glow > 0.0 && !inverse {
+        let line_shows = u.edges >= 0.5;
+        let glow_ink = select(inks.ink, line_ink, line_shows);
+        out += glow_ink * (v.glow * (0.35 + 0.65 * t))
+            * glyph_halo(shown_origin(v, step, edge), local, max(tone_c, line_c), v.cell, v.glyph);
     }
     return clamp(out, vec3<f32>(0.0), vec3<f32>(1.0));
 }
@@ -454,6 +525,11 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
     // five eighths) inks its pixels at least `min_coverage`.
     var floor_ink = v.min_coverage * (1.0 - smoothstep(0.25, 0.625, d.share));
     if v.outline > 0.0 && on_silhouette(slot, p, v.outline) {
+        // The silhouette is an outline too (#351): with an edge ink of its
+        // own it takes that, the pixel being the near side itself
+        if u.edge_ink != 0u && v.ground != 2u {
+            return line_ink(v, d.col, d.t, d.cell);
+        }
         floor_ink = 1.0;
     }
     return shade(v, d.col, d.t, d.step, d.cell, d.local, d.edge, floor_ink);
@@ -551,7 +627,12 @@ fn text_passed(p: vec2<f32>) -> vec4<u32> {
 fn text_cell(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, edge: u32) -> vec4<u32> {
     let o = shown_origin(v, step, edge);
     let inks = cell_inks(v, col, t, cell);
-    return vec4<u32>(o.x | (o.y << 16u), pack_rgb(inks.ink), pack_rgb(inks.ground), 0u);
+    var ink = inks.ink;
+    // The line glyph shows, in its own ink (#351)
+    if own_edge_ink(edge) && u.edges >= 0.5 {
+        ink = edge_ink(v, col, t, cell);
+    }
+    return vec4<u32>(o.x | (o.y << 16u), pack_rgb(ink), pack_rgb(inks.ground), 0u);
 }
 
 // What fs_main draws at pixel `p` of the cell whose cell state texel is

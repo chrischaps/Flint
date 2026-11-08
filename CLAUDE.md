@@ -70,6 +70,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
    #                          (#267 line glyphs on depth/crease/mask edges; capture with --no-grid,
    #                           the editor grid writes depth and gets traced)
+   #                          (#351 their ink: --style ascii:edge_ink=cell|color|hue,
+   #                           edge_color=#rrggbb,edge_tint=0..1; hue = the near side's own colour)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
    #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
    #                          against its descriptor; repeatable; `--style help`;

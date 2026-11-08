@@ -18,7 +18,12 @@
 // Output: x = the edge glyph's slot + 1 (0 = no edge; slots in
 // `EdgeGlyphs::all()` order: horizontal, vertical, diagonal,
 // antidiagonal), y = the edge length in cell widths that decided it (the
-// outline's, for an outline), z = 1 for an outline.
+// outline's, for an outline), z = 1 for an outline, w = the near side's
+// hue (#351): the mean display colour of the picture under the edge pixels
+// that decided it, at full value, as an exact 24-bit integer
+// (r | g << 8 | b << 16). Edge pixels lie on the near side of a step, so
+// this is the object's own colour, not the cell's mix of it and what's
+// behind. x..z are rounded to f16, as when the target was Rgba16Float.
 
 struct CellUniforms {
     cell: vec2<f32>,
@@ -29,11 +34,40 @@ struct CellUniforms {
     // The edge texture's size: the depth's, smaller than `size` under a
     // render scale
     edge_size: vec2<f32>,
-    _pad: vec2<f32>,
+    // 1: the picture arrives linear (an sRGB target)
+    srgb: u32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: CellUniforms;
 @group(1) @binding(0) var edges: texture_2d<f32>;
+// The style's input picture, at output resolution
+@group(2) @binding(0) var picture: texture_2d<f32>;
+
+fn to_display(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+// The picture at output pixel `p` in display values, 0..1
+fn shown(p: vec2<i32>) -> vec3<f32> {
+    let c = clamp(textureLoad(picture, p, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(c, to_display(c), u.srgb == 1u);
+}
+
+// `x` rounded to f16, as the old Rgba16Float target stored it, so the
+// glyph pass's length comparisons between neighbours tie as they did
+fn as_f16(x: f32) -> f32 {
+    return unpack2x16float(pack2x16float(vec2<f32>(x, 0.0))).x;
+}
+
+// A colour sum's hue at full value, packed 8 bits a channel
+fn packed_hue(sum: vec3<f32>) -> f32 {
+    let hue = sum / max(max(sum.r, max(sum.g, sum.b)), 1e-6);
+    let b = vec3<u32>(round(clamp(hue, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0));
+    return f32(b.r | (b.g << 8u) | (b.b << 16u));
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -82,6 +116,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var all_n = 0.0;
     var out_j = vec3<f32>(0.0);
     var out_n = 0.0;
+    var all_c = vec3<f32>(0.0);
+    var out_c = vec3<f32>(0.0);
     for (var y = 0.5 * stride; y < u.cell.y; y += stride) {
         for (var x = 0.5 * stride; x < u.cell.x; x += stride) {
             let p = vec2<i32>(floor(cell_min + vec2<f32>(x, y)));
@@ -94,11 +130,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let q = min(vec2<i32>((vec2<f32>(p) + 0.5) * to_edge), edge_max_px);
             let e = textureLoad(edges, q, 0);
             if e.w > 0.5 {
+                let c = shown(p);
                 all_j += e.xyz;
                 all_n += weight;
+                all_c += c;
                 if e.w > 1.5 {
                     out_j += e.xyz;
                     out_n += weight;
+                    out_c += c;
                 }
             }
         }
@@ -108,14 +147,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let out_len = out_n * stride / width;
 
     var j = vec3<f32>(0.0);
+    var near = vec3<f32>(0.0);
     var outline = 0.0;
     if out_len >= u.threshold {
         j = out_j;
+        near = out_c;
         outline = 1.0;
     } else if all_len >= u.threshold && all_len <= u.max_len {
         j = all_j;
+        near = all_c;
     } else {
-        return vec4<f32>(0.0, all_len, 0.0, 0.0);
+        return vec4<f32>(0.0, as_f16(all_len), 0.0, 0.0);
     }
     // The gradient's dominant angle (screen space, y down); the line runs
     // across it. In y-up terms the gradient's angle is the negation.
@@ -123,5 +165,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let slot = slot_for(PI * 0.5 - grad);
     // y = the length that decided it, which the glyph pass compares with
     // its neighbours' to thin a line that splits between two cells
-    return vec4<f32>(f32(slot) + 1.0, select(all_len, out_len, outline > 0.5), outline, 0.0);
+    let len = as_f16(select(all_len, out_len, outline > 0.5));
+    return vec4<f32>(f32(slot) + 1.0, len, outline, packed_hue(near));
 }

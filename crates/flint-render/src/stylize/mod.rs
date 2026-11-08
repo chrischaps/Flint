@@ -1876,7 +1876,17 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(colors, vec![("tint", ["tint_r", "tint_g", "tint_b"])]);
+        assert_eq!(
+            colors,
+            vec![
+                ("tint", ["tint_r", "tint_g", "tint_b"]),
+                // #351
+                (
+                    "edge_color",
+                    ["edge_color_r", "edge_color_g", "edge_color_b"]
+                ),
+            ]
+        );
         // Every param is reachable exactly once
         for d in registry() {
             let mut seen: Vec<&str> = Vec::new();
@@ -1900,8 +1910,10 @@ mod tests {
     fn a_colour_is_one_key_in_a_scene() {
         let ascii = find("ascii").unwrap();
         let colors = ascii.colors();
-        assert_eq!(colors.len(), 1);
+        // The tint, and the edge ink's colour (#351)
+        assert_eq!(colors.len(), 2);
         assert_eq!(colors[0].base, "tint");
+        assert_eq!(colors[1].base, "edge_color");
         assert_eq!(colors[0].default_rgb(), [0.35, 1.0, 0.45]);
         assert_eq!(ascii.color_of("tint_g").unwrap().base, "tint");
         assert!(ascii.color_of("glow").is_none());
