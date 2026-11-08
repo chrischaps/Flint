@@ -2598,6 +2598,30 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 .push(ScriptCommand::ClearEntityStyle { entity_id });
         });
     }
+
+    // reset_style_history() — the next frame doesn't follow on from this
+    // one (a cutscene's new shot, a teleport, a respawn; #343): styles
+    // that remember earlier frames, like ASCII's steady glyphs, start over
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("reset_style_history", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ResetStyleHistory);
+        });
+    }
+
+    // set_camera_cut_detection(enabled) — the player resets style history
+    // by itself when the camera jumps or turns far past its recent motion
+    // (on by default); a script that calls reset_style_history() at its
+    // own cuts can turn that off
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_cut_detection", move |enabled: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands
+                .push(ScriptCommand::SetCameraCutDetection { enabled });
+        });
+    }
 }
 
 fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
