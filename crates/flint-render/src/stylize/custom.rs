@@ -2397,10 +2397,17 @@ fn style(p: StylePixel) -> vec4<f32> {
         let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_good", "k"), Some(0.25));
-        // Loading again is a no-op
-        let before = super::super::registry().len();
+        // Loading again is a no-op. Counted by name: tests running beside
+        // this one register styles of their own in the same registry
+        let copies = || {
+            super::super::registry()
+                .iter()
+                .filter(|d| d.name.starts_with("utest_good") || d.name.starts_with("utest_bad"))
+                .count()
+        };
+        let before = copies();
         assert!(load_dir(&dir).is_empty());
-        assert_eq!(super::super::registry().len(), before);
+        assert_eq!(copies(), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
