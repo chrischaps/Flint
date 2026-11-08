@@ -2007,3 +2007,139 @@ fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
         "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
     );
 }
+
+/// User styles `names`, each drawing `wgsl`, in a fresh folder of their own.
+fn user_styles(tag: &str, names: &[&str], wgsl: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("flint-{tag}-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    for name in names {
+        std::fs::write(
+            styles.join(format!("{name}.shader.toml")),
+            format!("version = 1\nname = \"{name}\"\nshader = \"{name}.wgsl\"\n"),
+        )
+        .unwrap();
+        std::fs::write(styles.join(format!("{name}.wgsl")), wgsl).unwrap();
+    }
+    dir
+}
+
+/// Draw `world` with only the user styles in `on` switched on (of `all`).
+fn with_styles(
+    gpu: &Gpu,
+    renderer: &mut SceneRenderer,
+    world: &FlintWorld,
+    all: &[&str],
+    on: &[&str],
+) -> Vec<u8> {
+    let mut config = renderer.post_process_config().clone();
+    for name in all {
+        config.styles.set_enabled(name, on.contains(name));
+    }
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(&gpu.device);
+    gpu.frame(renderer, world)
+}
+
+/// #411: a user style whose loop never ends draws a frame (each pixel what
+/// the guard let it reach) instead of hanging the device.
+#[test]
+fn a_loop_that_never_ends_draws_a_frame() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::stylize::custom;
+    // Counts forever; guarded, it stops at LOOP_LIMIT, so n / LIMIT is white
+    let wgsl = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                var n = 0u;\n    \
+                loop {\n        n = n + 1u;\n    }\n    \
+                return vec4<f32>(vec3<f32>(f32(n) / 4096.0), 1.0);\n}\n";
+    let dir = user_styles("loop-411", &["utest_forever"], wgsl);
+    let messages = custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    assert_eq!(custom::LOOP_LIMIT, 4096);
+
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let all = ["utest_forever"];
+    with_styles(&gpu, &mut renderer, &world, &all, &[]);
+    let start = std::time::Instant::now();
+    let pixels = with_styles(&gpu, &mut renderer, &world, &all, &all);
+    let took = start.elapsed();
+    eprintln!("a never-ending loop's frame, built and drawn: {took:?}");
+    assert!(
+        custom::errors().iter().all(|(n, _)| n != "utest_forever"),
+        "{:?}",
+        custom::errors()
+    );
+    assert!(took.as_secs_f32() < 1.0, "the frame took {took:?}");
+    assert!(
+        pixels
+            .chunks(4)
+            .all(|p| p[0] == 255 && p[1] == 255 && p[2] == 255),
+        "not every pixel reached the limit; the first is {:?}",
+        &pixels[..4]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #411: a loop that ends on its own (a 9x9 blur) draws byte for byte the
+/// same guarded as not, though the guarded module is naga's rewrite of the
+/// composed text.
+#[test]
+fn a_bounded_loop_draws_the_same_guarded() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::stylize::custom;
+    let wgsl = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                var acc = vec4<f32>(0.0);\n    \
+                for (var y = -4; y <= 4; y++) {\n        \
+                for (var x = -4; x <= 4; x++) {\n            \
+                acc += flint_sample(p.uv + vec2<f32>(f32(x), f32(y)) * flint.texel * 2.0);\n        \
+                }\n    }\n    \
+                return vec4<f32>(acc.rgb / 81.0, 1.0);\n}\n";
+    let all = ["utest_blur_raw", "utest_blur_guarded"];
+    let raw_dir = user_styles("blur-raw-411", &all[..1], wgsl);
+    let guarded_dir = user_styles("blur-guarded-411", &all[1..], wgsl);
+    // The raw one is checked and built with the guard off (on this thread)
+    custom::set_loop_guard(false);
+    let messages = custom::load_dir(&raw_dir);
+    assert!(
+        messages.len() == 1 && messages[0].contains("loop guard is off"),
+        "{messages:?}"
+    );
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = with_styles(&gpu, &mut renderer, &world, &all[..1], &[]);
+    let raw = with_styles(&gpu, &mut renderer, &world, &all[..1], &all[..1]);
+    custom::set_loop_guard(true);
+    let messages = custom::load_dir(&guarded_dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let guarded = with_styles(&gpu, &mut renderer, &world, &all, &all[1..]);
+    assert_ne!(
+        plain, raw,
+        "the blur changed nothing: the test proves nothing"
+    );
+    let differ = raw.iter().zip(&guarded).filter(|(a, b)| a != b).count();
+    eprintln!("9x9 blur: {differ} bytes differ guarded");
+    assert_eq!(differ, 0, "{differ} bytes differ guarded");
+    let _ = std::fs::remove_dir_all(&raw_dir);
+    let _ = std::fs::remove_dir_all(&guarded_dir);
+}

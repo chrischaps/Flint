@@ -6,6 +6,10 @@
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --output holo.png
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --style risograph
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --style contour
+#   cargo run --bin flint -- render demo/user_styles.scene.toml --style radial_blur
+#
+# radial_blur's loop runs a parameter's count of times; every user loop is
+# guarded (#411), so even one that never ends stops after 4096 turns.
 #
 # Break a .wgsl on purpose and render again: the style draws its input
 # unchanged and the error names the file, line and column.

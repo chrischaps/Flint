@@ -504,27 +504,53 @@ pub fn params_size(count: usize) -> usize {
 // Checking with naga (native)
 // ---------------------------------------------------------------------------
 
-/// What a check found: warnings about a shader that compiles.
+/// What a check found: warnings about a shader that compiles, and the
+/// text to build.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Report {
-    /// Loops in the user's code: each can hang the GPU if it never ends.
+    /// Loops in the user's code: each is guarded ([`LOOP_LIMIT`]) unless
+    /// the guard is off ([`set_loop_guard`]).
     pub loops: usize,
     /// Texture reads in the user's code (the helpers' own not counted).
     pub texture_reads: usize,
     pub warnings: Vec<String>,
+    /// The WGSL to give wgpu when it isn't the composed text: the module
+    /// written back out by naga with every user loop guarded (#411).
+    /// `None` when there is no loop to guard, the guard is off, or on the
+    /// web (no naga there).
+    pub guarded: Option<String>,
 }
 
 /// Texture reads a pixel may make before the check warns (a 9x9 blur is
 /// 81): past it, a full-screen pass gets expensive fast.
 pub const TEXTURE_READ_WARN: usize = 32;
 
+/// The iterations one run of a user loop may make before the guard breaks
+/// out of it (#411). Each loop has its own counter, reset where the loop
+/// starts, so nested loops multiply: a 64x64 kernel is fine, a `loop {}`
+/// stops after 4096 turns and its pixel draws whatever it reached.
+pub const LOOP_LIMIT: u32 = 4096;
+
+thread_local! {
+    static LOOP_GUARD: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Turn the loop guard off (or back on) for styles checked and built on
+/// this thread from now on. It is on by default; off exists so a test can
+/// show a guarded build draws what the unguarded one does.
+#[doc(hidden)]
+pub fn set_loop_guard(on: bool) {
+    LOOP_GUARD.with(|g| g.set(on));
+}
+
 /// Parse and validate `user` as `source`'s shader, the way it will be
-/// built. `Err` is the message to show, lines in the user's file.
+/// built, and guard its loops. `Err` is the message to show, lines in the
+/// user's file.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
     let composed = compose(source, user);
     let file = source.wgsl_path.display().to_string();
-    let module = naga::front::wgsl::parse_str(&composed.text).map_err(|e| {
+    let mut module = naga::front::wgsl::parse_str(&composed.text).map_err(|e| {
         locate(
             &composed,
             &file,
@@ -553,7 +579,191 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
             source,
         )
     })?;
-    inspect(&module, &composed, &file)
+    let mut report = inspect(&module, &composed, &file)?;
+    if report.loops > 0 && LOOP_GUARD.with(|g| g.get()) {
+        let user = user_range(&composed);
+        guard_loops(&mut module, |span| in_range(&user, span));
+        // The guard is ours, so a failure here is a framework bug: say so
+        // rather than build the unguarded text
+        let info = validator.validate(&module).map_err(|e| {
+            format!("{file}: the loop guard made an invalid module (a Flint bug, #411): {e}")
+        })?;
+        let text =
+            naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
+                .map_err(|e| {
+                    format!("{file}: writing the guarded module failed (a Flint bug, #411): {e}")
+                })?;
+        report.guarded = Some(text);
+    } else if report.loops > 0 {
+        report.warnings.push(format!(
+            "{file}: warning: {} loop{} and the loop guard is off: a loop that never ends hangs \
+             the GPU until the driver resets it (TDR)",
+            report.loops,
+            if report.loops == 1 { "" } else { "s" }
+        ));
+    }
+    Ok(report)
+}
+
+/// The byte range of the user's code in the composed text.
+#[cfg(not(target_arch = "wasm32"))]
+fn user_range(composed: &Composed) -> std::ops::Range<usize> {
+    let prelude_end = composed
+        .text
+        .match_indices('\n')
+        .nth(composed.prelude_lines.saturating_sub(1))
+        .map_or(0, |(i, _)| i + 1);
+    let user_end = composed
+        .text
+        .match_indices('\n')
+        .nth(composed.prelude_lines + composed.user_lines - 1)
+        .map_or(composed.text.len(), |(i, _)| i + 1);
+    prelude_end..user_end
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn in_range(range: &std::ops::Range<usize>, span: naga::Span) -> bool {
+    span.to_range()
+        .is_some_and(|r| r.start >= range.start && r.start < range.end)
+}
+
+/// Give every loop in the functions `in_user` picks a counter of its own,
+/// so none runs more than [`LOOP_LIMIT`] times (#411):
+///
+/// ```text
+/// guard = 0u;                      // before the loop: every run starts at 0
+/// loop {
+///     ...body...
+///     continuing {
+///         ...its own continuing...
+///         guard = guard + 1u;
+///         break if (its own break_if) || guard >= LOOP_LIMIT;
+///     }
+/// }
+/// ```
+///
+/// `continue` jumps to `continuing`, so every turn counts. A loop that
+/// ends on its own within the limit runs exactly as written. Returns the
+/// number of loops guarded.
+#[cfg(not(target_arch = "wasm32"))]
+fn guard_loops(module: &mut naga::Module, in_user: impl Fn(naga::Span) -> bool) -> usize {
+    let u32_ty = module.types.insert(
+        naga::Type {
+            name: None,
+            inner: naga::TypeInner::Scalar(naga::Scalar::U32),
+        },
+        naga::Span::UNDEFINED,
+    );
+    let mut guarded = 0;
+    let handles: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|(h, _)| in_user(module.functions.get_span(*h)))
+        .map(|(h, _)| h)
+        .collect();
+    for h in handles {
+        let f = &mut module.functions[h];
+        let mut body = std::mem::take(&mut f.body);
+        guard_block(&mut body, f, u32_ty, &mut guarded);
+        f.body = body;
+    }
+    guarded
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn guard_block(
+    block: &mut naga::Block,
+    f: &mut naga::Function,
+    u32_ty: naga::Handle<naga::Type>,
+    count: &mut usize,
+) {
+    use naga::{BinaryOperator as B, Expression as E, Literal, Statement as S};
+    let old = std::mem::take(block);
+    for (mut statement, span) in old.span_into_iter() {
+        match &mut statement {
+            S::Loop {
+                body,
+                continuing,
+                break_if,
+            } => {
+                guard_block(body, f, u32_ty, count);
+                guard_block(continuing, f, u32_ty, count);
+                let var = f.local_variables.append(
+                    naga::LocalVariable {
+                        name: Some(format!("flint_loop_guard_{count}")),
+                        ty: u32_ty,
+                        init: None,
+                    },
+                    span,
+                );
+                *count += 1;
+                // Literals and the variable's pointer need no Emit
+                let pointer = f.expressions.append(E::LocalVariable(var), span);
+                let zero = f.expressions.append(E::Literal(Literal::U32(0)), span);
+                let one = f.expressions.append(E::Literal(Literal::U32(1)), span);
+                let limit = f
+                    .expressions
+                    .append(E::Literal(Literal::U32(LOOP_LIMIT)), span);
+                block.push(
+                    S::Store {
+                        pointer,
+                        value: zero,
+                    },
+                    span,
+                );
+                let load = f.expressions.append(E::Load { pointer }, span);
+                let next = f.expressions.append(
+                    E::Binary {
+                        op: B::Add,
+                        left: load,
+                        right: one,
+                    },
+                    span,
+                );
+                continuing.push(S::Emit(naga::Range::new_from_bounds(load, next)), span);
+                continuing.push(
+                    S::Store {
+                        pointer,
+                        value: next,
+                    },
+                    span,
+                );
+                let done = f.expressions.append(
+                    E::Binary {
+                        op: B::GreaterEqual,
+                        left: next,
+                        right: limit,
+                    },
+                    span,
+                );
+                let last = match *break_if {
+                    Some(own) => f.expressions.append(
+                        E::Binary {
+                            op: B::LogicalOr,
+                            left: own,
+                            right: done,
+                        },
+                        span,
+                    ),
+                    None => done,
+                };
+                continuing.push(S::Emit(naga::Range::new_from_bounds(done, last)), span);
+                *break_if = Some(last);
+            }
+            S::Block(b) => guard_block(b, f, u32_ty, count),
+            S::If { accept, reject, .. } => {
+                guard_block(accept, f, u32_ty, count);
+                guard_block(reject, f, u32_ty, count);
+            }
+            S::Switch { cases, .. } => {
+                for case in cases {
+                    guard_block(&mut case.body, f, u32_ty, count);
+                }
+            }
+            _ => {}
+        }
+        block.push(statement, span);
+    }
 }
 
 /// `file:line:col: message`, with the line remapped into the user's file
@@ -609,20 +819,8 @@ fn locate(
 /// reads their code has.
 #[cfg(not(target_arch = "wasm32"))]
 fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Report, String> {
-    let prelude_end = composed
-        .text
-        .match_indices('\n')
-        .nth(composed.prelude_lines.saturating_sub(1))
-        .map_or(0, |(i, _)| i + 1);
-    let user_end = composed
-        .text
-        .match_indices('\n')
-        .nth(composed.prelude_lines + composed.user_lines - 1)
-        .map_or(composed.text.len(), |(i, _)| i + 1);
-    let in_user = |span: naga::Span| {
-        span.to_range()
-            .is_some_and(|r| r.start >= prelude_end && r.start < user_end)
-    };
+    let user = user_range(composed);
+    let in_user = |span: naga::Span| in_range(&user, span);
     let line_of = |span: naga::Span| {
         let at = span.location(&composed.text);
         composed
@@ -678,14 +876,6 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
             .iter()
             .map(|s| count_helper_calls(s, module))
             .sum::<usize>();
-    }
-    if report.loops > 0 {
-        report.warnings.push(format!(
-            "{file}: warning: {} loop{}: a loop that never ends hangs the GPU until the driver resets it \
-             (TDR); keep its bound a constant or a clamped parameter",
-            report.loops,
-            if report.loops == 1 { "" } else { "s" }
-        ));
     }
     if report.texture_reads > TEXTURE_READ_WARN {
         report.warnings.push(format!(
@@ -1357,19 +1547,22 @@ impl CustomPass {
         {
             build.modified = modified;
         }
-        if let Err(e) = check(source, &user) {
-            self.set_error(Some(e));
-            return;
-        }
+        let report = match check(source, &user) {
+            Ok(report) => report,
+            Err(e) => {
+                self.set_error(Some(e));
+                return;
+            }
+        };
+        // The guarded module when it has loops (#411), else the text as
+        // composed
+        let text = report
+            .guarded
+            .unwrap_or_else(|| compose(source, &user).text);
         // naga has passed it; the error scope catches what the backend's own
         // compiler still refuses (and, on the web, everything)
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let made = pipeline(
-            device,
-            &self.layout,
-            &compose(source, &user).text,
-            self.format,
-        );
+        let made = pipeline(device, &self.layout, &text, self.format);
         #[cfg(not(target_arch = "wasm32"))]
         let refused = pollster::block_on(device.pop_error_scope());
         #[cfg(target_arch = "wasm32")]
@@ -1709,8 +1902,65 @@ fn style(p: StylePixel) -> vec4<f32> {
         let report = check(&s, user).unwrap();
         assert_eq!(report.loops, 2);
         assert_eq!(report.texture_reads, 1, "one call site, written out once");
+        assert!(report.warnings.is_empty(), "guarded: {:?}", report.warnings);
+        assert!(report.guarded.is_some());
+
+        // With the guard off the loops are only warned about
+        set_loop_guard(false);
+        let report = check(&s, user).unwrap();
+        set_loop_guard(true);
+        assert_eq!(report.guarded, None);
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("2 loops"));
+    }
+
+    /// #411: every user loop gets a counter of its own (reset where it
+    /// starts) and a `break if` at [`LOOP_LIMIT`], the module still
+    /// validates, and the prelude's own code is left alone.
+    #[test]
+    fn every_user_loop_is_guarded() {
+        let s = duotone();
+        let user = r#"
+fn spin(x: f32) -> f32 {
+    var y = x;
+    loop {
+        y = y + 1.0;
+    }
+    return y;
+}
+fn style(p: StylePixel) -> vec4<f32> {
+    var acc = 0.0;
+    var k = 0;
+    while (true) {
+        k += 1;
+        if (k > 3) { continue; }
+        for (var i = 0; i < 9; i++) { acc += 1.0; }
+    }
+    loop {
+        acc += 1.0;
+        continuing { break if acc > 2.0; }
+    }
+    return p.color * spin(acc);
+}
+"#;
+        let report = check(&s, user).unwrap();
+        assert_eq!(report.loops, 4);
+        let text = report.guarded.expect("guarded");
+        // It parses and validates as naga wrote it
+        let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap();
+        let limit = format!(">= {LOOP_LIMIT}u");
+        assert_eq!(text.matches(&limit).count(), 4, "{text}");
+        assert_eq!(text.matches("break if").count(), 4, "{text}");
+        // The user's own break_if is kept, or-ed with the guard
+        assert!(text.contains("> 2f) || ("), "{text}");
+        // The prelude has no loops; the written module none we didn't add
+        assert_eq!(text.matches("loop {").count(), 4, "{text}");
     }
 
     #[test]
