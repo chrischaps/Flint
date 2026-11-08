@@ -17,7 +17,7 @@ struct PencilRow {
     e: vec4<f32>,
     // lead rgb (display values), shade
     f: vec4<f32>,
-    // origin xy (px), flags (1 = pass through), darkness
+    // origin xy (px), flags (bits: 1 pass through, 2 world grid), darkness
     g: vec4<f32>,
     // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
     h: vec4<f32>,
@@ -154,7 +154,12 @@ fn passes_through(slot: u32) -> bool {
     if slot == 0u {
         return u.info.y == 1u;
     }
-    return u.rows[slot].g.z > 0.5;
+    return (u32(u.rows[slot].g.z + 0.5) & 1u) != 0u;
+}
+
+// Whether the row's hatching is laid on the world's surfaces (#389)
+fn world_grid(row: PencilRow) -> bool {
+    return (u32(row.g.z + 0.5) & 2u) != 0u;
 }
 
 // --- depth --------------------------------------------------------------------
@@ -171,4 +176,34 @@ fn world_at(q: vec2<i32>) -> vec3<f32> {
     let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
     let w = u.inv_view_proj * ndc;
     return w.xyz / w.w;
+}
+
+// The world position under an exact uv (not a texel centre), from the
+// depth texel it falls in: w = 0 where nothing was drawn (the sky)
+fn world_uv(uv: vec2<f32>) -> vec4<f32> {
+    let size = depth_size();
+    let q = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
+    let d = textureLoad(scene_depth, q, 0);
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    let w = u.inv_view_proj * ndc;
+    return vec4<f32>(w.xyz / w.w, select(1.0, 0.0, d >= 1.0));
+}
+
+// A unit normal folded into two numbers (octahedral), and back
+fn oct_encode(n: vec3<f32>) -> vec2<f32> {
+    let m = n / (abs(n.x) + abs(n.y) + abs(n.z));
+    if m.z >= 0.0 {
+        return m.xy;
+    }
+    let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), m.xy >= vec2<f32>(0.0));
+    return (1.0 - abs(m.yx)) * s;
+}
+
+fn oct_decode(e: vec2<f32>) -> vec3<f32> {
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if n.z < 0.0 {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((1.0 - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
 }

@@ -33,7 +33,8 @@ pub struct RenderArgs {
     pub height: Option<u32>,
 
     /// A look over the scene's post-processing (#279): a built-in
-    /// (ascii_noir, matrix, ink_wash, graphite), a
+    /// (ascii_noir, matrix, ink_wash, graphite, watercolor,
+    /// coloured_pencil, blueprint, charcoal), a
     /// `styles/<name>.look.toml` beside the scene, or a path. Merged over
     /// the scene's [post_process] key by key; the other flags apply over
     /// it. `--look help` lists every look and what to tune
@@ -739,7 +740,16 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Create headless context
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
-    let scene_pp = scene_file.post_process.as_ref();
+    // A scene's own look (#356) goes under its keys first; --look then
+    // goes over the result
+    let scene_pp = scene_file
+        .post_process
+        .as_ref()
+        .map(|def| flint_render::look::resolve_scene(def, &args.scene));
+    let scene_pp = scene_pp.as_ref();
+    if let Some(name) = scene_pp.and_then(|d| d.look.as_deref()) {
+        println!("Scene look: {name}");
+    }
     let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
     let cells = grid.as_ref().map_or(vec![(0, 0)], |g| g.cells());
     let mut configs = Vec::new();

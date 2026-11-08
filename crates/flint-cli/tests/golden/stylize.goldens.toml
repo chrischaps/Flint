@@ -10,14 +10,20 @@
 # index.html (#329) shows every case's old golden, render and diff side by
 # side, the ones that moved first.
 #
-# Per-entity ASCII (#266) has cases of its own below. The props scene's
-# barrel and YBot carry `style_mask { style = "ascii" }`, so since #266
-# they are glyphs in every props case, the Kuwahara one included.
+# The props cases use one clearing (demo/prefabs/stylize_props.prefab.toml),
+# which loads in a few seconds in a debug build (style_mask.scene.toml's
+# grass and 32 MB bench took 20-90 s), and turn the grid off: its far-off
+# moire is the part of a frame most likely to shade differently on another
+# GPU. Each style has a bench of its own on that clearing (#386), so a
+# change to one style moves only its own goldens:
 #
-# The props cases use demo/stylize_props.scene.toml, which loads in a few
-# seconds in a debug build (style_mask.scene.toml's grass and 32 MB bench
-# took 20-90 s), and turn the grid off: its far-off moire is the part of
-# a frame most likely to shade differently on another GPU.
+#   demo/stylize_props_ascii.scene.toml    barrel and YBot style_mask "ascii"
+#   demo/stylize_props_pencil.scene.toml   cask and crate style_mask "pencil"
+#   demo/stylize_props_plain.scene.toml    nothing styled: whole-frame styles, looks
+#   demo/stylize_props.scene.toml          both, for the mask and styles-mixed only
+#
+# A new per-entity style gets a bench of its own; a new whole-frame style
+# or look goes on the plain one.
 
 # Across adapters (#314): goldens are blessed on an RTX 4070 under Vulkan,
 # and CI compares on WARP. The glyph tolerance below held for 29 of the 31
@@ -66,7 +72,7 @@ text = "ascii_pbr_test.txt"
 
 [[case]]
 name = "ascii-full-detailed-tint"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:ramp=detailed,color=tint,cell=10"]
 
 # Cells are in points: at 2x each one is twice the pixels. Edges off here
@@ -149,7 +155,7 @@ args = ["--no-grid", "--style", "ascii:edge_ink=hue"]
 # single frame shows (smoothing and hysteresis need a frame before)
 [[case]]
 name = "ascii-full-dither"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:dither=1"]
 
 # Exposure and normalisation (#289): the whole frame's tones stretched over
@@ -157,12 +163,12 @@ args = ["--no-grid", "--style", "ascii:dither=1"]
 # each stretched over its own range after half a stop of exposure
 [[case]]
 name = "ascii-full-normalize"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:normalize=1"]
 
 [[case]]
 name = "ascii-entities-normalize"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
 
 # --- per-entity ASCII -----------------------------------------------------
@@ -177,7 +183,7 @@ args = ["--no-grid", "--debug-mode", "style"]
 # the direction across the edge, silhouettes solid, creases softer
 [[case]]
 name = "edges-view"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "edges_view"]
 
 # A user style reading them (demo/styles/inkline.*, inputs = ["edges"])
@@ -195,25 +201,42 @@ name = "style-mask-msaa4"
 scene = "demo/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 
-# Per-entity ASCII (#266): the props scene as authored (its two
+# Two styles in one frame, as the mixed bench authors them: the barrel and
+# YBot in glyphs, the cask and crate sketched, the tag on the crate plain.
+# Each style leaves the other's pixels alone. The one props case that moves
+# with both ASCII and pencil, on purpose (#386)
+[[case]]
+name = "styles-mixed"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid"]
+
+# Per-entity ASCII (#266): the ASCII bench as authored (its two
 # style_mask "ascii" props in glyphs, a static mesh and a skinned one), the
 # whole frame with those props as variants, and the props on object grids
 [[case]]
 name = "ascii-style-entities"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid"]
 # Per entity (#317): the barrel and YBot are glyphs, every other cell is a
-# space (the picture passes through, and the pencil props draw over theirs)
+# space (the picture passes through)
 text = "ascii-style-entities.txt"
+
+# Each pixel one style's (#384): whole-frame ASCII leaves the pencil cask,
+# crate and lid sketched (pencil draws them from the scene, not from the
+# glyphs); the tag, opted out of pencil, is ASCII's
+[[case]]
+name = "ascii-full-yields-to-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii"]
 
 [[case]]
 name = "ascii-style-screen"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "screen"]
 
 [[case]]
 name = "ascii-style-object"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
 # Whole-cell silhouettes (#338): every edge cell of the glyph props is drawn
@@ -225,7 +248,7 @@ args = ["--no-grid", "--style", "ascii:silhouette=cell"]
 
 [[case]]
 name = "ascii-silhouette-cell-object"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:silhouette=cell,edges=0"]
 
 # The variant cell pre-pass (#313) sums a variant's cells once, but only at
@@ -233,16 +256,17 @@ args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--s
 # binary from before #313, so they say the pre-pass draws the same pixels
 [[case]]
 name = "ascii-style-footprint2"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:footprint=2"]
 
 [[case]]
 name = "ascii-style-object-footprint3"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
 
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
-# both carried in the mask's .g beside their ids
+# both carried in the mask's .g beside their ids (on the ASCII props alone
+# since #386: demo/stylize_blend.scene.toml styles no pencil props)
 [[case]]
 name = "ascii-blend"
 scene = "demo/stylize_blend.scene.toml"
@@ -266,26 +290,33 @@ args = ["--no-grid", "--particle-time", "2"]
 #
 # Strokes are thin, hard-edged and everywhere, so a GPU that rounds one
 # hash's float differently moves a stroke a pixel: the glyph tolerance.
-# The props bench's cask and crate carry style_mask "pencil", so since
-# #273 they are sketched in every props case.
+# The pencil bench's cask and crate carry style_mask "pencil"; the other
+# benches leave them plain (#386).
 
-# The whole frame: surface hatching, contours, paper; the ASCII props
-# stay glyphs (pencil leaves another style's pixels alone)
+# The whole frame: surface hatching, contours, paper (styles-mixed holds
+# that pencil leaves another style's pixels alone)
 [[case]]
 name = "pencil-full"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil"]
 
 # Another hand: a seed and screen hatching at one angle, at 2x (sizes in points)
 [[case]]
 name = "pencil-screen-seed-hidpi"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=screen,seed=7,angle=35", "--pixels-per-point", "2"]
 
 [[case]]
 name = "pencil-tensor"
 scene = "demo/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
+
+# Strokes laid on the surfaces (#389): triplanar stripes in octaves of
+# metres, each picked by its on-screen spacing; the sky keeps the screen's
+[[case]]
+name = "pencil-world"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
 
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them
@@ -306,13 +337,20 @@ args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1
 # procedural paper is unchanged when none is named"
 [[case]]
 name = "pencil-paper-image"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil:paper_image=cold_press,grain=0.8"]
 
 [[case]]
 name = "pencil-stroke-image"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+
+# The strip on surfaces (#389 x #390): world strokes draw it too, the row
+# twice the stroke width in metres
+[[case]]
+name = "pencil-world-stroke-image"
+scene = "demo/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
 
 # --- the other registered styles ------------------------------------------
 #
@@ -337,7 +375,7 @@ tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
 [[case]]
 name = "kuwahara"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
@@ -346,22 +384,21 @@ tolerance = { level = 8, share = 0.003, mean = 0.25 }
 # step, so these take the glyph styles' tolerance, not the smooth one
 [[case]]
 name = "palette-phosphor-dither"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "palette:palette=phosphor,dither=1,pixel=2"]
 
 [[case]]
 name = "palette-cga16"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "palette:palette=cga16"]
 
-# Watercolor (#272): the whole frame painted (the props' style_mask
-# "ascii" and "pencil" props drawn over the paint, since both follow it), over
-# Kuwahara, and per entity. Its paper and glaze edges are fine detail
+# Watercolor (#272): the whole frame painted (on the plain bench, so every
+# prop is paint), over Kuwahara, and per entity. Its paper and glaze edges are fine detail
 # everywhere, so it takes the smooth styles' tolerance with a little more
 # share
 [[case]]
 name = "watercolor"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
@@ -369,14 +406,14 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 # points, its relief the grain the pigment settles in
 [[case]]
 name = "watercolor-paper-image"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "watercolor:paper_image=cold_press,grain_scale=1.5,grain=0.6"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)
 [[case]]
 name = "watercolor-kuwahara"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "watercolor:layers=3"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
@@ -389,42 +426,105 @@ scene = "demo/watercolor.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
+# --- user-authored styles (#274, #417) ---------------------------------------
+#
+# Styles a game writes (demo/styles/*.shader.toml + WGSL), loaded at run time
+# by the same `stylize::custom::load_dir` call as `flint render` (the suite
+# runs `render::run_in`). These pin what the framework writes around a user's
+# function: the prelude's sRGB round trip at the display stage (each reads a
+# display colour and returns one), the `params` layout, and the depth and
+# mask bindings. All three draw over the scene as authored, hologram on.
+
+# Hologram on the barrel and YBot, as the scene authors it: the mask
+# binding and `flint_style_blend`. The two props are about a twentieth of
+# the frame, so the share is a quarter of the glyph styles': with the
+# params uploaded one slot off, the hologram's own pixels move by up to
+# 181 levels yet only 1.25% of the frame passes 48, which 2% let through
+[[case]]
+name = "user-styles"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid"]
+tolerance = { share = 0.005 }
+
+# Risograph over the whole frame: halftone dots by `params.dot`, two inks
+# and the paper from nine more params, so a shifted layout moves the inks.
+# The YBot and barrel are hologram's, so risograph leaves them (#384)
+[[case]]
+name = "user-style-risograph"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "risograph"]
+
+# Contour: lines of equal distance from `flint_view_depth`, the depth binding
+[[case]]
+name = "user-style-contour"
+scene = "demo/user_styles.scene.toml"
+args = ["--no-grid", "--style", "contour"]
+
+# A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
+# its input unchanged and say where it failed. The passthrough runs the
+# prelude's round trip (to display on the way in, to linear on the way
+# out), so the frame equals the frame without the style only while the two
+# curves are each other's inverse: an exact match against a second render,
+# not a golden, so it holds on any adapter
+[[case]]
+name = "user-style-broken"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "broken"]
+matches = ["--no-grid"]
+error = "broken.wgsl:9:9"
+
 # --- looks (#279) -----------------------------------------------------------
-# Each shipped styles/<name>.look.toml over the props bench. A new look adds
-# a case here (look.rs checks).
+# Each shipped styles/<name>.look.toml over the plain props bench, so only
+# the look's own styles draw. A new look adds a case here (look.rs checks).
 
 [[case]]
 name = "look-ascii-noir"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "ascii_noir"]
 
 [[case]]
 name = "look-matrix"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "matrix"]
 
 # Kuwahara under it: the smooth styles' tolerance
 [[case]]
 name = "look-ink-wash"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "ink_wash"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
 [[case]]
 name = "look-graphite"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "graphite"]
 
 [[case]]
 name = "look-watercolor"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# The pencil style's other hands (#391)
+[[case]]
+name = "look-coloured-pencil"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "coloured_pencil"]
+
+[[case]]
+name = "look-blueprint"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "blueprint"]
+
+[[case]]
+name = "look-charcoal"
+scene = "demo/stylize_props.scene.toml"
+args = ["--no-grid", "--look", "charcoal"]
 
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
@@ -433,7 +533,7 @@ args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
 # column and row labels, and glyphs drawn at the frame's own size
 [[case]]
 name = "look-sweep-grid-crop"
-scene = "demo/stylize_props.scene.toml"
+scene = "demo/stylize_props_plain.scene.toml"
 width = 640
 height = 360
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",

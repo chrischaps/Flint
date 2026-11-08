@@ -28,7 +28,10 @@
 //! points (times [`StyleFrame::pixels_per_point`]). Two passes: the first
 //! writes each pixel's tone, contour strength and local stroke direction
 //! into a scratch target; the second blurs the direction into a flow and
-//! draws strokes, outlines and paper from it.
+//! draws strokes, outlines and paper from it. While a variant hatches by
+//! `tensor`, two more passes between them (`pencil_flow.wgsl`, #392) blur
+//! its direction wide, separably and at half resolution, each pixel
+//! weighted by its contour strength; the second pass then reads that.
 //!
 //! Stroke direction (`direction`): `surface` runs strokes along the
 //! surface's iso-depth lines (round a barrel, across a floor), taken from
@@ -67,6 +70,17 @@
 //! keeps a scene table as those entities' preset, and `grid = "object"`
 //! pins an entity's hatching to its projected origin, so its strokes
 //! travel with it rather than swimming over it.
+//!
+//! ## On the surfaces
+//!
+//! `grid = "world"` (#389) lays the hatching on the surfaces: each pixel's
+//! world position, rebuilt from the depth, is hatched on the three axis
+//! planes (triplanar, weighted by the normal), so as the camera moves the
+//! strokes stay on the props instead of the props sliding under them.
+//! Spacing comes in octaves of metres (2^k), the one nearest `spacing` on
+//! screen cross-faded with the next as a mip chain does, so strokes keep
+//! their size on screen at any distance; `direction` is not used (the sky
+//! keeps the screen's hatching), `angle` turns the strokes in each plane.
 
 use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
@@ -83,8 +97,9 @@ pub const DIRECTIONS: &[&str] = &["surface", "screen", "tensor"];
 /// What a `[post_process.styles.pencil]` table covers (as ASCII's).
 pub const SCOPES: &[&str] = &["screen", "entities"];
 
-/// Where a variant's hatching is anchored (as ASCII's grids).
-pub const GRIDS: &[&str] = &["screen", "object"];
+/// Where a variant's hatching is anchored: ASCII's two grids, and `world`,
+/// strokes laid on the surfaces themselves (#389).
+pub const GRIDS: &[&str] = &["screen", "object", "world"];
 
 /// Rows one frame's variant table holds, the whole frame's included.
 pub const MAX_VARIANTS: usize = 64;
@@ -94,6 +109,12 @@ pub const MAX_IDS: usize = 256;
 
 /// The scratch target pass 1 writes: tone, contour, flow.
 pub const PREP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The tensor flow blur's two targets (#392): the blurred double angle.
+pub const FLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+
+/// The direction mode the flow blur runs for.
+const TENSOR: f32 = 2.0;
 
 const PARAMS: &[StyleParam] = &[
     StyleParam::new("spacing", 6.0, 2.0..=24.0),
@@ -154,7 +175,7 @@ const OPTIONS: &[StyleOption] = &[
 const HINTS: &[StyleHint] = &[
     StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
     StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
-    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity, so strokes travel with it"),
+    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
     StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
     StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
     StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
@@ -193,7 +214,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;
     let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");
     let input_bgl = kit::sampled_layout(device, "Pencil Input BGL");
-    let prep_bgl = kit::sampled_layout(device, "Pencil Prep BGL");
+    let prep_bgl = prep_layout(device);
     let geometry_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Pencil Geometry BGL"),
         entries: &[
@@ -237,7 +258,21 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_mask_view = no_mask.create_view(&Default::default());
+    let blit = kit::Blit::new(device, "Pencil Blit", &input_bgl, d.format);
+    let flow_shader = kit::shader(device, "Pencil Flow Shader", FLOW_SHADER);
+    let flow_pipeline = |label: &str, entry: &str| {
+        kit::fullscreen_pipeline_entry(
+            device,
+            label,
+            &flow_shader,
+            entry,
+            &[&uniform_bgl, &input_bgl, &geometry_bgl],
+            FLOW_FORMAT,
+        )
+    };
     Box::new(Pencil {
+        flow_across: flow_pipeline("Pencil Flow Across Pipeline", "fs_across"),
+        flow_down: flow_pipeline("Pencil Flow Down Pipeline", "fs_down"),
         prep_pipeline: kit::fullscreen_pipeline(
             device,
             "Pencil Prep Pipeline",
@@ -259,6 +294,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         geometry_bgl,
         _no_mask: no_mask,
         no_mask_view,
+        blit,
         warned: Mutex::new(false),
         images: Mutex::new(Images {
             paper: ImageSlot::new(ImageUse::Paper, "pencil paper"),
@@ -291,6 +327,46 @@ const DRAW_SHADER: &str = concat!(
     include_str!("style_image.wgsl"),
     include_str!("pencil.wgsl")
 );
+const FLOW_SHADER: &str = concat!(
+    include_str!("pencil_common.wgsl"),
+    include_str!("pencil_flow.wgsl")
+);
+
+/// The drawing pass's group 3: the prep target and its sampler, and the
+/// blurred tensor flow (#392; the prep again while no row hatches by
+/// tensor, which the shader then never reads).
+fn prep_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let texture = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Pencil Prep BGL"),
+        entries: &[
+            texture(0),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            texture(2),
+        ],
+    })
+}
+
+/// Whether any row in use hatches along the picture's edges, so the flow
+/// blur has to run.
+pub fn any_tensor(rows: &[PencilRow]) -> bool {
+    rows.iter()
+        .any(|r| r.v[6][2] != PASS_THROUGH && r.v[4][3] == TENSOR)
+}
 
 /// One variant's settings, eight vec4s (see `PencilRow` in the shader).
 #[repr(C)]
@@ -326,6 +402,10 @@ struct PencilUniforms {
 
 /// A row's flag: leave its pixels as they are.
 const PASS_THROUGH: f32 = 1.0;
+
+/// A row's flag (added to the others): its hatching is on the world's
+/// surfaces, `grid = "world"` (#389).
+const WORLD_GRID: f32 = 2.0;
 
 /// The slot of a mask id another registered style owns: its pixels are
 /// that style's (an ASCII prop in a pencil frame), so pencil leaves them.
@@ -416,7 +496,12 @@ pub fn row(
             [
                 origin[0],
                 origin[1],
-                flags,
+                flags
+                    + if option("grid") == "world" {
+                        WORLD_GRID
+                    } else {
+                        0.0
+                    },
                 param("darkness").clamp(0.0, 1.0),
             ],
             [
@@ -450,8 +535,32 @@ pub fn choose_image(names: &[String], rows: &mut [PencilRow], lane: usize) -> (S
     (chosen, refused)
 }
 
+/// How far, in pixels, a styled pixel's draw reads the prep texture
+/// (#385), for the rows `rows`: the surface flow's 5x5 taps over
+/// `1.5 * spacing` points, the tensor flow's blur (#392, `pencil_flow.wgsl`)
+/// over `3 * spacing` along each axis, or a contour's wobble
+/// (`1.5 * wobble`) plus half its width; and four pixels for the bilinear
+/// taps' footprint and the flow's half-resolution texels.
+fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
+    let points = rows
+        .iter()
+        .map(|r| {
+            let [spacing, ..] = r.v[0];
+            let contour_width = r.v[1][3];
+            let wobble = r.v[2][3];
+            let flow = if r.v[4][3] == TENSOR { 3.0 } else { 1.5 };
+            (flow * spacing).max(1.5 * wobble + 0.5 * contour_width.max(1.0))
+        })
+        .fold(0.0f32, f32::max);
+    (points * pixels_per_point).ceil() as u32 + 4
+}
+
 struct Pencil {
     prep_pipeline: wgpu::RenderPipeline,
+    /// The tensor flow blur along x, from the prep target (#392)
+    flow_across: wgpu::RenderPipeline,
+    /// And along y, from the across pass's result
+    flow_down: wgpu::RenderPipeline,
     draw_pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
@@ -460,6 +569,8 @@ struct Pencil {
     geometry_bgl: wgpu::BindGroupLayout,
     _no_mask: wgpu::Texture,
     no_mask_view: wgpu::TextureView,
+    /// The input through, outside the styled entities' rect (#385).
+    blit: kit::Blit,
     /// Whether the too-many-variants warning has been given.
     warned: Mutex<bool>,
     images: Mutex<Images>,
@@ -524,16 +635,11 @@ impl Pencil {
         let image_names = |o: &dyn Fn(&str) -> String| [o("paper_image"), o("stroke_image")];
         let mut names = vec![image_names(&|n| frame.option(n).to_string())];
         let mut slots = [0u32; MAX_IDS];
-        // Ids another style draws are that style's pixels
-        for (id, _) in frame.style_ids.iter() {
-            let Some(v) = frame.style_ids.variant(id) else {
-                continue;
-            };
-            if (id as usize) < MAX_IDS
-                && v.style != STYLE.name
-                && !v.off
-                && super::find(&v.style).is_some()
-            {
+        // Ids another running style draws are that style's pixels (#384:
+        // the framework puts the input back there too; the slot keeps
+        // pencil's contours and hatching from reading them as its own)
+        for id in frame.foreign_ids() {
+            if (id as usize) < MAX_IDS {
                 slots[id as usize] = FOREIGN;
             }
         }
@@ -656,24 +762,90 @@ impl StylePass for Pencil {
         let geometry = self.geometry_bind(frame, with_mask, &paper, &stroke);
         let prep = frame.target("pencil.prep", PREP_FORMAT);
 
-        kit::fullscreen_pass(
+        // Per entity, only the entities' pixels change (#385): the draw
+        // pass runs inside their rect, and the prep inside it grown by
+        // how far a styled pixel reads the prep
+        let size = [frame.width, frame.height];
+        let draw_rect = frame.styled_rect(0);
+        let prep_rect = draw_rect.map(|r| {
+            r.padded(
+                prep_reach(&rows, uniforms.pixels_per_point),
+                size[0],
+                size[1],
+            )
+        });
+        kit::fullscreen_pass_in(
             encoder,
             "Pencil Prep",
             &prep.view,
+            size,
             &self.prep_pipeline,
             &[&uniform, &input_bind, &geometry],
+            prep_rect,
         );
-        kit::fullscreen_pass(
+        // The tensor flow: blurred wide in two passes (#392), only when a
+        // row asks for it. Group 3 holds the prep and the flow, the prep
+        // twice while no row does.
+        let flow = any_tensor(&rows).then(|| {
+            // At half resolution: the flow is smooth over a dozen pixels
+            let (w, h) = (frame.width.div_ceil(2), frame.height.div_ceil(2));
+            let across = frame.target_sized("pencil.flow_across", FLOW_FORMAT, w, h);
+            let flow = frame.target_sized("pencil.flow", FLOW_FORMAT, w, h);
+            kit::fullscreen_pass(
+                encoder,
+                "Pencil Flow Across",
+                &across.view,
+                &self.flow_across,
+                &[
+                    &uniform,
+                    &frame.sampled("Pencil Flow Prep BG", &self.input_bgl, &prep.view),
+                    &geometry,
+                ],
+            );
+            kit::fullscreen_pass(
+                encoder,
+                "Pencil Flow Down",
+                &flow.view,
+                &self.flow_down,
+                &[
+                    &uniform,
+                    &frame.sampled("Pencil Flow Across BG", &self.input_bgl, &across.view),
+                    &geometry,
+                ],
+            );
+            flow
+        });
+        let flow_view = flow.as_ref().map_or(&prep.view, |f| &f.view);
+        let prep_bind = frame.bind("Pencil Prep BG", flow.is_some() as u64, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Pencil Prep BG"),
+                layout: &self.prep_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&prep.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(frame.linear_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(flow_view),
+                    },
+                ],
+            })
+        });
+        kit::scissored_pass(
             encoder,
             "Pencil Pass",
             output,
+            size,
             &self.draw_pipeline,
-            &[
-                &uniform,
-                &input_bind,
-                &geometry,
-                &frame.sampled("Pencil Prep BG", &self.prep_bgl, &prep.view),
-            ],
+            &[&uniform, &input_bind, &geometry, &prep_bind],
+            draw_rect,
+            &self.blit,
+            &input_bind,
         );
     }
 }
@@ -696,7 +868,11 @@ mod tests {
 
     #[test]
     fn both_shaders_validate_and_their_uniforms_match_rust() {
-        for (source, name) in [(PREP_SHADER, "prep"), (DRAW_SHADER, "draw")] {
+        for (source, name) in [
+            (PREP_SHADER, "prep"),
+            (DRAW_SHADER, "draw"),
+            (FLOW_SHADER, "flow"),
+        ] {
             let module = validate(source, name);
             let (_, u) = module
                 .global_variables
@@ -787,6 +963,56 @@ mod tests {
         }
     }
 
+    /// The flow blur (#392) runs only for a drawn row that hatches by tensor.
+    #[test]
+    fn the_flow_blur_runs_only_for_tensor_rows() {
+        let config = crate::postprocess::PostProcessConfig::default();
+        let p = |n: &str| STYLE.param(&config, n);
+        let with = |dir: &'static str, flags: f32| {
+            row(
+                &p,
+                &|n: &str| {
+                    if n == "direction" {
+                        dir.into()
+                    } else {
+                        STYLE.option(&config, n).to_string()
+                    }
+                },
+                0.0,
+                [0.0, 0.0],
+                flags,
+            )
+        };
+        let surface = with("surface", 0.0);
+        let screen = with("screen", 0.0);
+        let tensor = with("tensor", 0.0);
+        let tensor_off = with("tensor", PASS_THROUGH);
+        assert!(!any_tensor(&[surface, screen]));
+        assert!(any_tensor(&[surface, tensor]));
+        assert!(
+            !any_tensor(&[surface, tensor_off]),
+            "an opt-out row draws nothing"
+        );
+    }
+
+    #[test]
+    fn a_world_grid_sets_its_flag_beside_pass_through() {
+        let p = |n: &str| STYLE.params.iter().find(|q| q.name == n).unwrap().default;
+        let world = |n: &str| {
+            if n == "grid" {
+                "world".to_string()
+            } else {
+                String::new()
+            }
+        };
+        assert_eq!(row(&p, &world, 0.0, [0.0, 0.0], 0.0).v[6][2], WORLD_GRID);
+        assert_eq!(
+            row(&p, &world, 0.0, [0.0, 0.0], PASS_THROUGH).v[6][2],
+            PASS_THROUGH + WORLD_GRID
+        );
+        assert!(GRIDS.contains(&"world"));
+    }
+
     #[test]
     fn directions_parse_and_fall_back_to_surface() {
         assert_eq!(direction_mode("surface"), 0.0);
@@ -807,6 +1033,7 @@ mod tests {
             "angle in radians"
         );
         assert_eq!(r.v[4][3], 0.0, "surface by default");
+        assert_eq!(r.v[6][2], PASS_THROUGH, "no world grid by default");
         assert_eq!(&r.v[4][..3], &[0.95, 0.93, 0.88], "paper");
         assert_eq!([r.v[6][0], r.v[6][1], r.v[6][2]], [3.0, 4.0, 1.0]);
         assert_eq!(r.v[7], [1.0, 1.0, 0.0, 0.0], "no images by default");
