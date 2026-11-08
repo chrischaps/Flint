@@ -20,77 +20,56 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleNeed, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed, StyleParam,
+    StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "edges_view",
-    label: "Edges view",
-    stage: StyleStage::Display,
-    params: &[
-        StyleParam {
-            name: "dim",
-            default: 0.3,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "threshold",
-            default: 1.0,
-            min: 0.1,
-            max: 4.0,
-        },
-        StyleParam {
-            name: "ghost",
-            default: 0.5,
-            min: 0.0,
-            max: 1.0,
-        },
-    ],
-    options: &[],
-    uses_mask: super::MaskUse::Never,
-    needs: &[StyleNeed::Edges],
-    hints: &[
-        StyleHint::new(
-            "dim",
-            "Scene dim",
-            "Brightness of the grey scene under the edges",
-        ),
-        StyleHint::new(
-            "threshold",
-            "Threshold",
-            "Strength that counts as an edge; 1 is the shared edge_depth / edge_normal",
-        ),
-        StyleHint::new(
-            "ghost",
-            "Near misses",
-            "How much a strength under the threshold shows",
-        ),
-    ],
-    component: None,
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Edges View Uniform BGL");
-        let input_bgl = kit::sampled_layout(device, "Edges View Input BGL");
-        let edges_bgl = kit::texture_layout(device, "Edges View Edges BGL");
-        Box::new(EdgesView {
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "Edges View Pipeline",
-                &kit::shader(device, "Edges View Shader", include_str!("edges_view.wgsl")),
-                &[&uniform_bgl, &input_bgl, &edges_bgl],
-                d.format,
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("edges_view", "Edges view", StyleStage::Display, create)
+        .params(&[
+            StyleParam::new("dim", 0.3, 0.0..=1.0),
+            StyleParam::new("threshold", 1.0, 0.1..=4.0),
+            StyleParam::new("ghost", 0.5, 0.0..=1.0),
+        ])
+        .needs(&[StyleNeed::Edges])
+        .hints(&[
+            StyleHint::new(
+                "dim",
+                "Scene dim",
+                "Brightness of the grey scene under the edges",
             ),
-            uniforms: kit::uniform_buffer::<EdgesViewUniforms>(device, "Edges View Uniforms"),
-            uniform_bgl,
-            input_bgl,
-            edges_bgl,
-        })
-    },
-};
+            StyleHint::new(
+                "threshold",
+                "Threshold",
+                "Strength that counts as an edge; 1 is the shared edge_depth / edge_normal",
+            ),
+            StyleHint::new(
+                "ghost",
+                "Near misses",
+                "How much a strength under the threshold shows",
+            ),
+        ]);
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Edges View Uniform BGL");
+    let input_bgl = kit::sampled_layout(device, "Edges View Input BGL");
+    let edges_bgl = kit::texture_layout(device, "Edges View Edges BGL");
+    Box::new(EdgesView {
+        pipeline: kit::fullscreen_pipeline(
+            device,
+            "Edges View Pipeline",
+            &kit::shader(device, "Edges View Shader", include_str!("edges_view.wgsl")),
+            &[&uniform_bgl, &input_bgl, &edges_bgl],
+            d.format,
+        ),
+        uniforms: kit::uniform_buffer::<EdgesViewUniforms>(device, "Edges View Uniforms"),
+        uniform_bgl,
+        input_bgl,
+        edges_bgl,
+    })
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

@@ -154,6 +154,84 @@ pub fn set_style_param(
     Ok(style)
 }
 
+/// Where a tween of one of `id`'s style settings starts and ends (#370):
+/// its style, then the current value and the target, each one number or
+/// a colour's three channels (`tint`). The current value is the entity's
+/// own field, else the scene's `[post_process.styles.<name>]` table in
+/// `config`, else the style's default (`blend`: 1). The target is checked
+/// and clamped as [`set_style_param`] would. Only numbers, `blend` and
+/// colours ease; options and `enabled` refuse with a message.
+pub fn tween_endpoints(
+    world: &FlintWorld,
+    id: EntityId,
+    param: &str,
+    target: &toml::Value,
+    config: &crate::postprocess::PostProcessConfig,
+) -> Result<(&'static str, Vec<f64>, Vec<f64>), String> {
+    let style = entity_style(world, id).ok_or_else(|| {
+        format!(
+            "entity {} has no style of its own; call set_entity_style first",
+            id.0
+        )
+    })?;
+    let d = stylize::find(style).expect("entity_style found it registered");
+    let component = d.component.expect("entity_style found its component");
+    let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+    let own = world
+        .get_component(id, component)
+        .and_then(|c| c.get(param).cloned());
+    let wrong = |want: &str| {
+        Err(format!(
+            "`{style}` setting `{param}` eases to {want}, not {}",
+            target.type_str()
+        ))
+    };
+    if param == BLEND_FIELD {
+        let Some(to) = number(target) else {
+            return wrong("a number from 0 to 1");
+        };
+        let from = own.as_ref().and_then(number).unwrap_or(1.0);
+        return Ok((style, vec![from.clamp(0.0, 1.0)], vec![to.clamp(0.0, 1.0)]));
+    }
+    if let Some(p) = d.params.iter().find(|p| p.name == param) {
+        let Some(to) = number(target) else {
+            return wrong("a number");
+        };
+        let (lo, hi) = (p.min as f64, p.max as f64);
+        let from = own
+            .as_ref()
+            .and_then(number)
+            .unwrap_or_else(|| d.param(config, param) as f64);
+        return Ok((style, vec![from.clamp(lo, hi)], vec![to.clamp(lo, hi)]));
+    }
+    if let Some(color) = d.color_setting(param) {
+        let Some(to) = stylize::color_from_toml(target) else {
+            return wrong("a colour: [r, g, b] or \"#rrggbb\"");
+        };
+        let from = own
+            .as_ref()
+            .and_then(stylize::color_from_toml)
+            .unwrap_or_else(|| d.color(config, param));
+        let clamp = |rgb: [f32; 3]| -> Vec<f64> {
+            rgb.iter()
+                .zip(color.channels)
+                .map(|(v, p)| v.clamp(p.min, p.max) as f64)
+                .collect()
+        };
+        return Ok((style, clamp(from), clamp(to)));
+    }
+    if param == "enabled" || d.options.iter().any(|o| o.name == param) {
+        return Err(format!(
+            "`{style}` setting `{param}` can't ease (it isn't a number or a colour); \
+             set it with set_style_param"
+        ));
+    }
+    Err(format!(
+        "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
+        d.setting_keys().join(", ")
+    ))
+}
+
 /// Take `id`'s own style off (any per-entity style component and any
 /// `style_mask`). Returns whether it had one. A style it inherits from an
 /// ancestor, or the scene's whole-frame style, still reaches it; to keep it

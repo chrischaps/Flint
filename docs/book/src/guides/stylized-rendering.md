@@ -101,7 +101,7 @@ flint render demo/ascii_entities.scene.toml --sweep ascii.cell=6,8,12 -o cells.p
 flint render demo/stylize_props.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
 ```
 
-Then confirm the winner with one render at the final size, since cells are in points. In the player or viewer, **F4 → Styles** tunes the same keys live. Its **Copy TOML** puts the block that reproduces the picture on the clipboard. See [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) and the reference's advice on [cell size and ramps](../concepts/stylize-passes.md#choosing-cell-size-and-ramp).
+Then confirm the winner with one render at the final size, since cells are in points. In the player or viewer, **F4 → Styles** tunes the same keys live. Its **Copy TOML** puts the block that reproduces the picture on the clipboard, and **Commit to scene** writes it into the scene file. See [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) and the reference's advice on [cell size and ramps](../concepts/stylize-passes.md#choosing-cell-size-and-ramp).
 
 ## Adding a style
 

@@ -135,6 +135,7 @@ impl StyleStage {
 /// A value outside it is refused by `--style` and warned about in a scene
 /// table (#355): a style clamps it or draws it badly.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleParam {
     pub name: &'static str,
     pub default: f32,
@@ -143,6 +144,23 @@ pub struct StyleParam {
 }
 
 impl StyleParam {
+    /// A parameter with its default and the range the menu offers:
+    /// `StyleParam::new("cell", 8.0, 4.0..=32.0)`. Build every parameter
+    /// through this (#366): a field added later gets its default here, so
+    /// no style has to change.
+    pub const fn new(
+        name: &'static str,
+        default: f32,
+        range: std::ops::RangeInclusive<f32>,
+    ) -> Self {
+        Self {
+            name,
+            default,
+            min: *range.start(),
+            max: *range.end(),
+        }
+    }
+
     /// Why `value` won't draw as written, when it lies outside
     /// `min..=max`: "cell=400 is outside its range 4..32". `None` inside.
     pub fn range_error(&self, value: f32) -> Option<String> {
@@ -158,6 +176,7 @@ impl StyleParam {
 /// One named choice a style takes (a font, a ramp, a colour mode): a
 /// string in `[post_process.styles.<name>]`, where a parameter is a number.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleOption {
     pub name: &'static str,
     pub default: &'static str,
@@ -297,6 +316,7 @@ pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
 /// menu folds them into one colour picker, and its hint is the base's
 /// (`tint`). See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StyleHint {
     /// The parameter, option or colour base the hint is for.
     pub name: &'static str,
@@ -305,6 +325,27 @@ pub struct StyleHint {
     pub help: &'static str,
     /// Whole numbers only (a cell size, a count): the slider steps by 1.
     pub integer: bool,
+    /// When the setting matters (#365): up to two conditions on options,
+    /// from [`when`](Self::when) and [`unless`](Self::unless), all of
+    /// which must hold for the style to read it. While one fails the F4
+    /// menu greys the row out and says why. None: always read.
+    pub conditions: [Option<StyleWhen>; 2],
+}
+
+/// One condition of a [`StyleHint`]: the setting is read only while option
+/// `option` is one of `values` (or, with `unless`, none of them).
+#[derive(Clone, Copy, Debug)]
+pub struct StyleWhen {
+    pub option: &'static str,
+    pub values: &'static [&'static str],
+    pub unless: bool,
+}
+
+impl StyleWhen {
+    /// Whether the setting is read while the option is `current`.
+    pub fn holds(&self, current: &str) -> bool {
+        self.values.contains(&current) != self.unless
+    }
 }
 
 impl StyleHint {
@@ -314,7 +355,37 @@ impl StyleHint {
             label,
             help,
             integer: false,
+            conditions: [None, None],
         }
+    }
+
+    /// The same hint, for a setting that only matters while option
+    /// `option` is one of `values` (#365): `.when("color", &["tint"])`.
+    pub const fn when(self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.condition(StyleWhen {
+            option,
+            values,
+            unless: false,
+        })
+    }
+
+    /// The same hint, for a setting that does nothing while option
+    /// `option` is one of `values` (#365): `.unless("color", &["palette"])`.
+    pub const fn unless(self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.condition(StyleWhen {
+            option,
+            values,
+            unless: true,
+        })
+    }
+
+    const fn condition(self, c: StyleWhen) -> Self {
+        let conditions = match self.conditions {
+            [None, b] => [Some(c), b],
+            [a @ Some(_), None] => [a, Some(c)],
+            [Some(_), Some(_)] => panic!("a StyleHint holds at most two conditions"),
+        };
+        Self { conditions, ..self }
     }
 
     /// The same hint, stepping by whole numbers.
@@ -481,6 +552,9 @@ impl std::fmt::Debug for MaskUse {
 }
 
 /// A registered style: what it is called, where it runs and how to make it.
+/// Built with [`StyleDescriptor::new`] and its setters, never as a literal
+/// (#366); `non_exhaustive` holds other crates to that.
+#[non_exhaustive]
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
     pub name: &'static str,
@@ -521,6 +595,85 @@ pub struct StyleDescriptor {
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
+}
+
+/// Building a descriptor (#366): `StyleDescriptor::new` with what every
+/// style has, then a setter for each thing it differs in, all `const` so
+/// the result is a `static`:
+///
+/// ```ignore
+/// pub(super) static STYLE: StyleDescriptor =
+///     StyleDescriptor::new("invert", "Invert", StyleStage::Hdr, create)
+///         .params(&[StyleParam::new("amount", 1.0, 0.0..=1.0)]);
+/// ```
+///
+/// A field added to the descriptor gets its default in `new`, so no style
+/// module has to change; build descriptors only this way.
+impl StyleDescriptor {
+    /// A style with no parameters, options, mask, needs or hints, not
+    /// per-entity, not feeding bloom.
+    pub const fn new(
+        name: &'static str,
+        label: &'static str,
+        stage: StyleStage,
+        create: fn(&StyleDevice) -> Box<dyn StylePass>,
+    ) -> Self {
+        Self {
+            name,
+            label,
+            stage,
+            params: &[],
+            options: &[],
+            uses_mask: MaskUse::Never,
+            needs: &[],
+            hints: &[],
+            component: None,
+            feeds_bloom: false,
+            create,
+        }
+    }
+
+    /// Its parameters ([`StyleParam::new`]).
+    pub const fn params(mut self, params: &'static [StyleParam]) -> Self {
+        self.params = params;
+        self
+    }
+
+    /// Its named choices ([`StyleOption::new`]).
+    pub const fn options(mut self, options: &'static [StyleOption]) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Whether and when it reads the style mask.
+    pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
+        self.uses_mask = uses_mask;
+        self
+    }
+
+    /// The framework-made inputs it reads.
+    pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
+        self.needs = needs;
+        self
+    }
+
+    /// How the F4 menu labels its settings.
+    pub const fn hints(mut self, hints: &'static [StyleHint]) -> Self {
+        self.hints = hints;
+        self
+    }
+
+    /// Per-entity, through `component` (`ascii_style`).
+    pub const fn component(mut self, component: &'static str) -> Self {
+        self.component = Some(component);
+        self
+    }
+
+    /// Whether bloom reads its result by default.
+    pub const fn feeds_bloom(mut self, feeds_bloom: bool) -> Self {
+        self.feeds_bloom = feeds_bloom;
+        self
+    }
 }
 
 impl StyleDescriptor {
@@ -587,6 +740,34 @@ impl StyleDescriptor {
         self.hints.iter().find(|h| h.name == name)
     }
 
+    /// Why setting `name` does nothing under `config`, or `None` while it
+    /// is read (#365): its hint's [`when`](StyleHint::when) names an
+    /// option whose current value isn't one of those that read it. The
+    /// line is what the F4 menu shows on the greyed-out row.
+    pub fn unused_reason(&self, config: &PostProcessConfig, name: &str) -> Option<String> {
+        let hint = self.hint(name)?;
+        hint.conditions.iter().flatten().find_map(|c| {
+            let current = self.option(config, c.option);
+            if c.holds(current) {
+                return None;
+            }
+            let label = self.label_for(c.option);
+            let shown = if current.is_empty() {
+                "(default)"
+            } else {
+                current
+            };
+            Some(if c.unless {
+                format!("Unused while {label} is {shown}")
+            } else {
+                format!(
+                    "Unused while {label} is {shown}: only {} reads it",
+                    c.values.join(" or ")
+                )
+            })
+        })
+    }
+
     /// What the F4 menu calls setting `name`: its hint's label, or the
     /// name made readable (`tint_r` -> `Tint r`).
     pub fn label_for(&self, name: &str) -> String {
@@ -651,6 +832,18 @@ impl StyleDescriptor {
                 None => keys.push(p.name),
             }
         }
+        keys
+    }
+
+    /// Every key a scene's table for this style can hold: `enabled`,
+    /// `order`, `feeds_bloom`, the options, each parameter (colour channels
+    /// one by one) and each colour's own key. A commit to the scene (#364)
+    /// owns these and leaves any other key alone.
+    pub fn table_keys(&self) -> Vec<&'static str> {
+        let mut keys = vec!["enabled", "order", "feeds_bloom"];
+        keys.extend(self.options.iter().map(|o| o.name));
+        keys.extend(self.params.iter().map(|p| p.name));
+        keys.extend(self.colors().iter().map(|c| c.base));
         keys
     }
 
@@ -1879,6 +2072,60 @@ pub fn names() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #365: ASCII's tint and palette settings say they're unused outside
+    /// their colour modes, and background outside the grounds and the
+    /// colour mode that read it.
+    #[test]
+    fn hints_say_when_a_setting_is_unused() {
+        let ascii = find("ascii").expect("ascii registered");
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("ascii", true);
+        // Default colour mode is source: neither tint nor palette is read
+        let tint = ascii.unused_reason(&pp, "tint").expect("tint unused in source");
+        assert!(tint.contains("Colour mode is source"), "{tint}");
+        assert!(tint.contains("only tint reads it"), "{tint}");
+        for name in ["palette", "chroma", "palette_dither"] {
+            assert!(ascii.unused_reason(&pp, name).is_some(), "{name}");
+        }
+        // Settings without conditions are always read
+        for name in ["cell", "glow", "color", "ground", "font"] {
+            assert_eq!(ascii.unused_reason(&pp, name), None, "{name}");
+        }
+        assert_eq!(ascii.unused_reason(&pp, "background"), None);
+
+        pp.styles.set_option("ascii", "color", "tint");
+        assert_eq!(ascii.unused_reason(&pp, "tint"), None);
+        assert!(ascii.unused_reason(&pp, "palette").is_some());
+
+        pp.styles.set_option("ascii", "color", "palette");
+        assert!(ascii.unused_reason(&pp, "tint").is_some());
+        for name in ["palette", "chroma", "palette_dither"] {
+            assert_eq!(ascii.unused_reason(&pp, name), None, "{name}");
+        }
+        // The palette brings its own ground colour
+        let bg = ascii.unused_reason(&pp, "background").expect("palette ground");
+        assert_eq!(bg, "Unused while Colour mode is palette");
+
+        pp.styles.set_option("ascii", "color", "mono");
+        pp.styles.set_option("ascii", "ground", "black");
+        assert!(ascii.unused_reason(&pp, "background").is_some());
+        pp.styles.set_option("ascii", "ground", "inverse");
+        assert_eq!(ascii.unused_reason(&pp, "background"), None);
+    }
+
+    #[test]
+    fn a_hint_holds_its_conditions_in_order() {
+        const H: StyleHint = StyleHint::new("x", "X", "")
+            .when("a", &["1"])
+            .unless("b", &["2"]);
+        let [Some(first), Some(second)] = H.conditions else {
+            panic!("two conditions");
+        };
+        assert!(first.holds("1") && !first.holds("3"));
+        assert!(!second.holds("2") && second.holds("3"));
+        assert!(StyleHint::new("y", "Y", "").conditions.iter().all(Option::is_none));
+    }
 
     /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz
     /// frame what two do, and a dt that says nothing reads as 1/60.

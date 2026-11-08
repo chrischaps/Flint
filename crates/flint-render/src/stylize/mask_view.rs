@@ -15,76 +15,56 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass, StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "mask_view",
-    label: "Mask view",
-    stage: StyleStage::Display,
-    params: &[
-        StyleParam {
-            name: "shading",
-            default: 0.8,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "dim",
-            default: 0.35,
-            min: 0.0,
-            max: 1.0,
-        },
-        StyleParam {
-            name: "outline",
-            default: 1.0,
-            min: 0.0,
-            max: 4.0,
-        },
-    ],
-    options: &[],
-    uses_mask: super::MaskUse::Always,
-    needs: &[],
-    hints: &[
-        StyleHint::new(
-            "shading",
-            "Shading",
-            "How much of the scene's light shows under each style's hue",
-        ),
-        StyleHint::new(
-            "dim",
-            "Unstyled dim",
-            "Brightness of the grey unstyled pixels fade to",
-        ),
-        StyleHint::new(
-            "outline",
-            "Outline (px)",
-            "Width of the white line where two style ids meet",
-        ),
-    ],
-    component: None,
-    feeds_bloom: false,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Mask View Uniform BGL");
-        let input_bgl = kit::sampled_layout(device, "Mask View Input BGL");
-        let mask_bgl = kit::mask_layout(device, "Mask View Mask BGL");
-        Box::new(MaskView {
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "Mask View Pipeline",
-                &kit::shader(device, "Mask View Shader", include_str!("mask_view.wgsl")),
-                &[&uniform_bgl, &input_bgl, &mask_bgl],
-                d.format,
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("mask_view", "Mask view", StyleStage::Display, create)
+        .params(&[
+            StyleParam::new("shading", 0.8, 0.0..=1.0),
+            StyleParam::new("dim", 0.35, 0.0..=1.0),
+            StyleParam::new("outline", 1.0, 0.0..=4.0),
+        ])
+        .uses_mask(super::MaskUse::Always)
+        .hints(&[
+            StyleHint::new(
+                "shading",
+                "Shading",
+                "How much of the scene's light shows under each style's hue",
             ),
-            uniforms: kit::uniform_buffer::<MaskViewUniforms>(device, "Mask View Uniforms"),
-            uniform_bgl,
-            input_bgl,
-            mask_bgl,
-        })
-    },
-};
+            StyleHint::new(
+                "dim",
+                "Unstyled dim",
+                "Brightness of the grey unstyled pixels fade to",
+            ),
+            StyleHint::new(
+                "outline",
+                "Outline (px)",
+                "Width of the white line where two style ids meet",
+            ),
+        ]);
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Mask View Uniform BGL");
+    let input_bgl = kit::sampled_layout(device, "Mask View Input BGL");
+    let mask_bgl = kit::mask_layout(device, "Mask View Mask BGL");
+    Box::new(MaskView {
+        pipeline: kit::fullscreen_pipeline(
+            device,
+            "Mask View Pipeline",
+            &kit::shader(device, "Mask View Shader", include_str!("mask_view.wgsl")),
+            &[&uniform_bgl, &input_bgl, &mask_bgl],
+            d.format,
+        ),
+        uniforms: kit::uniform_buffer::<MaskViewUniforms>(device, "Mask View Uniforms"),
+        uniform_bgl,
+        input_bgl,
+        mask_bgl,
+    })
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

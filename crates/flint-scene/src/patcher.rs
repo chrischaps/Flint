@@ -90,6 +90,110 @@ impl SceneDocument {
         errors
     }
 
+    /// Rewrite style `name`'s `[post_process.styles.<name>]` table to say
+    /// what `block` says (#364). `block` is a style's TOML as
+    /// `flint_render::stylize::style_toml` writes it: the table header and
+    /// only the values that differ from the defaults. `owned` names every
+    /// key the style can take (its options, params, colour keys, `enabled`,
+    /// `order`, `feeds_bloom`).
+    ///
+    /// Key by key, so the table's comments and the order of the keys that
+    /// stay survive: a key in `block` replaces the table's value in place
+    /// (its comments kept), an owned key `block` leaves out is back at its
+    /// default and is removed, and a key the style doesn't own (a typo the
+    /// loader warns about) is left alone. A style that is off with nothing
+    /// else set needs no table, so its table goes. Old `[post_process]`
+    /// keys that fold into this style (`kuwahara_radius`) are removed, or
+    /// they would fill back in a value the table now leaves at its default.
+    pub fn set_style_table(
+        &mut self,
+        name: &str,
+        block: &str,
+        owned: &[&str],
+    ) -> Result<(), String> {
+        let parsed: toml_edit::DocumentMut = block
+            .parse()
+            .map_err(|e| format!("Style block doesn't parse: {e}"))?;
+        let fresh = parsed
+            .get("post_process")
+            .and_then(|p| p.get("styles"))
+            .and_then(|s| s.get(name))
+            .and_then(|t| t.as_table_like())
+            .ok_or_else(|| format!("The block has no [post_process.styles.{name}] table"))?;
+        let entries: Vec<(String, toml_edit::Value)> = fresh
+            .iter()
+            .filter_map(|(k, v)| Some((k.to_string(), v.as_value()?.clone())))
+            .collect();
+        // Off and nothing else: the same as no table at all
+        let needs_table = !(entries.len() == 1
+            && entries[0].0 == "enabled"
+            && entries[0].1.as_bool() == Some(false));
+
+        let root = self.doc.as_table_mut();
+        if root.get("post_process").is_none() {
+            if !needs_table {
+                return Ok(());
+            }
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            root.insert("post_process", toml_edit::Item::Table(table));
+        }
+        let post = root
+            .get_mut("post_process")
+            .and_then(|p| p.as_table_like_mut())
+            .ok_or_else(|| "post_process in the scene is not a table".to_string())?;
+        for &(old, style, _) in crate::format::LEGACY_STYLE_KEYS {
+            if style == name {
+                post.remove(old);
+            }
+        }
+        if post.get("styles").is_none() {
+            if !needs_table {
+                return Ok(());
+            }
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            post.insert("styles", toml_edit::Item::Table(table));
+        }
+        let styles = post
+            .get_mut("styles")
+            .and_then(|s| s.as_table_like_mut())
+            .ok_or_else(|| "post_process.styles in the scene is not a table".to_string())?;
+        if !needs_table {
+            styles.remove(name);
+            return Ok(());
+        }
+        if styles.get(name).is_none() {
+            styles.insert(name, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        let table = styles
+            .get_mut(name)
+            .and_then(|t| t.as_table_like_mut())
+            .ok_or_else(|| format!("post_process.styles.{name} in the scene is not a table"))?;
+
+        let stale: Vec<String> = table
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .filter(|k| owned.contains(&k.as_str()) && !entries.iter().any(|(e, _)| e == k))
+            .collect();
+        for key in stale {
+            table.remove(&key);
+        }
+        for (key, mut value) in entries {
+            match table.get_mut(&key).and_then(|item| item.as_value_mut()) {
+                Some(existing) => {
+                    // The new value in the old one's place, with its comments
+                    *value.decor_mut() = existing.decor().clone();
+                    *existing = value;
+                }
+                None => {
+                    table.insert(&key, toml_edit::Item::Value(value));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Serialize the document back to a string (preserving formatting)
     pub fn to_string(&self) -> String {
         self.doc.to_string()
@@ -243,5 +347,165 @@ roughness = 0.8
         assert!(result.contains("0.3"));
         // Other fields should still be present
         assert!(result.contains("color = [0.5, 0.5, 0.5, 1.0]"));
+    }
+
+    const ASCII_KEYS: &[&str] = &[
+        "enabled",
+        "order",
+        "feeds_bloom",
+        "ramp",
+        "palette",
+        "cell",
+        "glow",
+        "tint",
+        "tint_r",
+        "tint_g",
+        "tint_b",
+    ];
+
+    const COMMENTED: &str = r#"# The lantern room
+[scene]
+name = "Lantern"
+
+# How it looks
+[post_process]
+bloom_intensity = 0.1 # soft
+kuwahara_radius = 4
+
+# The glyph look
+[post_process.styles.ascii]
+# big cells read from across the room
+cell = 12 # tuned by eye
+ramp = "blocks"
+glow = 0.6
+mystery = 3
+
+[entities.lamp]
+archetype = "light"
+"#;
+
+    #[test]
+    fn a_style_table_is_rewritten_key_by_key_keeping_comments() {
+        let mut doc = SceneDocument::from_str(COMMENTED).unwrap();
+        // cell changed, ramp unchanged, glow back at its default, tint new
+        let block =
+            "[post_process.styles.ascii]\ncell = 16\nramp = \"blocks\"\ntint = [0.35, 1.0, 0.45]\n";
+        doc.set_style_table("ascii", block, ASCII_KEYS).unwrap();
+        let out = doc.to_string();
+        assert!(out.contains("# The lantern room"), "{out}");
+        assert!(out.contains("# How it looks"), "{out}");
+        assert!(out.contains("bloom_intensity = 0.1 # soft"), "{out}");
+        assert!(out.contains("# The glyph look"), "{out}");
+        assert!(
+            out.contains("# big cells read from across the room\ncell = 16 # tuned by eye"),
+            "{out}"
+        );
+        assert!(out.contains("ramp = \"blocks\""), "{out}");
+        assert!(!out.contains("glow"), "back at its default: {out}");
+        assert!(out.contains("tint = [0.35, 1.0, 0.45]"), "{out}");
+        assert!(
+            out.contains("mystery = 3"),
+            "a key the style doesn't own stays: {out}"
+        );
+        assert!(
+            out.contains("kuwahara_radius = 4"),
+            "another style's old keys stay: {out}"
+        );
+        // Still parses, and the entities came through
+        let reread: toml::Table = toml::from_str(&out).unwrap();
+        assert!(reread["entities"]["lamp"].is_table());
+        assert_eq!(
+            reread["post_process"]["styles"]["ascii"]["cell"].as_integer(),
+            Some(16)
+        );
+    }
+
+    #[test]
+    fn a_new_style_table_lands_with_the_post_process_tables() {
+        let mut doc = SceneDocument::from_str(COMMENTED).unwrap();
+        doc.set_style_table(
+            "pencil",
+            "[post_process.styles.pencil]\nspacing = 5.0\n",
+            &["enabled", "spacing"],
+        )
+        .unwrap();
+        let out = doc.to_string();
+        let pencil = out.find("[post_process.styles.pencil]").expect(&out);
+        let lamp = out.find("[entities.lamp]").unwrap();
+        assert!(
+            pencil < lamp,
+            "beside the other styles, not after the entities:\n{out}"
+        );
+        assert!(
+            out.contains("[post_process.styles.pencil]\nspacing = 5.0"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_scene_without_post_process_gets_only_the_style_header() {
+        let mut doc = SceneDocument::from_str("[scene]\nname = \"Bare\"\n").unwrap();
+        doc.set_style_table(
+            "ascii",
+            "[post_process.styles.ascii]\ncell = 6\n",
+            ASCII_KEYS,
+        )
+        .unwrap();
+        let out = doc.to_string();
+        assert!(!out.contains("[post_process]\n"), "{out}");
+        assert!(!out.contains("[post_process.styles]\n"), "{out}");
+        assert!(
+            out.contains("[post_process.styles.ascii]\ncell = 6"),
+            "{out}"
+        );
+        // An on style with nothing changed is an empty table: it switches on
+        let mut doc = SceneDocument::from_str("[scene]\nname = \"Bare\"\n").unwrap();
+        doc.set_style_table("ascii", "[post_process.styles.ascii]\n", ASCII_KEYS)
+            .unwrap();
+        let reread: toml::Table = toml::from_str(&doc.to_string()).unwrap();
+        assert!(reread["post_process"]["styles"]["ascii"]
+            .as_table()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn an_off_style_with_nothing_set_loses_its_table() {
+        let mut doc = SceneDocument::from_str(COMMENTED).unwrap();
+        doc.set_style_table(
+            "ascii",
+            "[post_process.styles.ascii]\nenabled = false\n",
+            ASCII_KEYS,
+        )
+        .unwrap();
+        let out = doc.to_string();
+        assert!(!out.contains("styles.ascii"), "{out}");
+        assert!(out.contains("bloom_intensity = 0.1 # soft"), "{out}");
+        // Nothing to remove and no table to make: the file is untouched
+        let mut bare = SceneDocument::from_str("[scene]\nname = \"Bare\"\n").unwrap();
+        bare.set_style_table(
+            "ascii",
+            "[post_process.styles.ascii]\nenabled = false\n",
+            ASCII_KEYS,
+        )
+        .unwrap();
+        assert_eq!(bare.to_string(), "[scene]\nname = \"Bare\"\n");
+    }
+
+    #[test]
+    fn committing_kuwahara_drops_its_old_keys() {
+        let mut doc = SceneDocument::from_str(COMMENTED).unwrap();
+        doc.set_style_table(
+            "kuwahara",
+            "[post_process.styles.kuwahara]\nsharpness = 9.0\n",
+            &["enabled", "radius", "sharpness"],
+        )
+        .unwrap();
+        let out = doc.to_string();
+        assert!(!out.contains("kuwahara_radius"), "{out}");
+        assert!(
+            out.contains("[post_process.styles.kuwahara]\nsharpness = 9.0"),
+            "{out}"
+        );
     }
 }

@@ -10,7 +10,9 @@
 #   6 s  both cleared; the loop starts again at 8 s
 #
 # The calls are set_entity_style, set_style_param and clear_entity_style;
-# each set or clear fires `style_changed` to on_event, which logs it.
+# each set or clear fires `style_changed` to on_event, which logs it. The
+# cells and the glow are eased by the engine (tween_style_param, #370),
+# whose `style_tween_done` turns the bench's breathing around.
 
 [scene]
 name = "ASCII Story"
@@ -44,6 +46,7 @@ brightness = 0.15
 [entities.director]
 [entities.director.story]
 beat = 0
+inhale = false
 [entities.director.script]
 source = "ascii_story.rhai"
 

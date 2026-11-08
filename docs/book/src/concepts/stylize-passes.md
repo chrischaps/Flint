@@ -79,7 +79,7 @@ The keys are checked against the style's declaration: a number for a parameter, 
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
-- **A row per setting.** A combo per option with a list of choices, a text field per option that takes any name (it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)).
+- **A row per setting.** A combo per option with a list of choices, a text field per option that takes any name (it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)). A setting the current options don't read is greyed out, and its hover line says why: in ASCII's `source` colour mode, Tint and Palette are both idle until `color` is `tint` or `palette`.
 - **The scene's own files** (#322). An option can find its choices at run time (`StyleOption::discovered`), and ASCII's do: `palette` offers the built-ins, then every `palettes/*.palette.toml` beside the scene or in its parent; `font` offers `builtin`, then every `fonts/*.glyphs.toml` there; and `ramp` offers the ramps the chosen font has, so a project's set lists its own names rather than the built-in four. The folders are read through the vfs, so a bundle on the web lists the same files. The list is found when the scene loads (and reloads) and when another option it depends on changes, not every frame. A value the scene names that isn't listed (a palette by its path) still shows, selected. `flint render <scene> --list-styles` lists the same choices.
 - **↺** beside a value that isn't the default puts it back.
 - **Defaults** clears the style's values. **Authored** puts back what the scene says, on and off included. **Copy TOML** puts the `[post_process.styles.<name>]` block that reproduces what's on screen on the clipboard, with only the values that differ from the defaults, so a look tuned by eye goes back into the scene in one paste:
@@ -93,6 +93,7 @@ In the player and the scene viewer, **F4 → Styles** lists every style that rea
   glow = 0.77
   ```
 
+- **Commit to scene** (#364) writes that same block into the scene file, as the Grass, Ocean and Camera panels' Commit to File do for theirs. It works key by key through `toml_edit` (`SceneDocument::set_style_table`). A changed value is rewritten in place and keeps its comments. A key back at its default is removed, and a comment on its own line above that key goes with it. A key the style doesn't know is left alone. Comments and key order elsewhere in the file survive. A style that is off with nothing else set loses its table, and on Kuwahara the old `kuwahara_*` keys in `[post_process]` are removed. After the write the editor's authored settings are the committed ones, so the *edited* marker and the dots clear. The viewer reloads the file as it does any scene edit. Because that reload would drop entity edits not yet saved, the button is greyed out until Ctrl+S. A scene played from a bundle (`flint-player --bundle`, the web) has no file to write, so the button isn't drawn there.
 - **Against the scene.** The header says *edited* while the style differs from the scene's own table, and a dot marks each value that does (hover it for the scene's value).
 
 ![F4's Styles section in the player: the meadow under an authored amber ASCII look, with cell size, tone bands and glow tuned by eye. Each tuned value has a dot because it now differs from the scene, and Copy TOML has just copied the block above](../images/f4-styles-editor.png)
@@ -413,7 +414,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
 - **Edges between entities** come from [edges](#edges) (#267). Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap would run together. The edge passes draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from one of the style's ids to any other: the plain `ascii` id or any variant's, so a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask. Variants on `grid = "object"` don't draw edges yet, because the edge cells are on the screen grid.
 - **Temporal stability** (#277's `smoothing`, `hysteresis` and `dither`) applies to the whole frame's cells. A per-entity variant is drawn per pixel on its own grid and keeps no history yet, so a styled prop can still shimmer in motion.
-- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
+- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. `tween_style_param(id, "cell", 7.0, 1.5)` lets the engine ease one (#370). See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
 - **Fonts** (#335). An entity's `font` names its own glyph set, so props can draw in different fonts in one frame. Every set in use is stacked into one atlas texture (`GpuGlyphStack`, uploaded again only when the frame's sets change), and each variant's row carries its font's glyph cell and where its ramp and its four edge glyphs sit, so the cell's height follows that font's aspect and the edges are drawn in its own line glyphs. A frame holds up to 8 fonts and an atlas stack up to 8192 pixels tall. A font that doesn't fit, or whose ramp and edges don't fit in the frame's 128 ramp steps, draws in the scene's font, with a warning. `demo/ascii_fonts.scene.toml` draws a YBot and a barrel in a hand-drawn halftone set (`demo/fonts/halftone.glyphs.toml`, 8x12 cells) beside props in the built-in letters.
 - **Not yet:** ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
@@ -543,13 +544,11 @@ fn on_init() {
     set_entity_style(barrel, "ascii");
     set_style_param(barrel, "blend", 0.0);          // styled, but nothing shows yet
     set_style_param(barrel, "transition", "dissolve");
-}
-fn on_update() {
-    let k = (total_time() - 1.0) / 3.0;             // 0 -> 1 from 1 s to 4 s
-    let k = if k < 0.0 { 0.0 } else if k > 1.0 { 1.0 } else { k };
-    set_style_param(get_entity("barrel"), "blend", k);
+    tween_style_param(barrel, "blend", 1.0, 3.0);   // the engine eases it in (#370)
 }
 ```
+
+A tween is the engine easing the blend for you ([Scripting → Tweens](scripting.md#tweens)); `set_style_param(id, "blend", k)` in `on_update` still works for a curve of your own.
 
 ![The barrel dissolving into green phosphor glyphs at blend 0, 0.25, 0.5, 0.75 and 1: its cells turn whole, in ragged patches that spread](../images/ascii-blend-dissolve.png)
 
@@ -792,6 +791,32 @@ flint render demo/stylize_props.scene.toml --look ascii_noir \
 
 Rendering at full size costs more: each cell is a whole 1080p frame. The pixel-identical check compares the full frames before they're cropped, so a crop can't hide a difference elsewhere in the frame.
 
+### Measuring and refining a look
+
+A sheet is judged by eye. **`--report FILE.json`** (#357) also measures each column, from the same pixels the sheet is made of: mean luminance, the share of near-black (luma ≤ 24) and near-white (≥ 232) pixels, edge density (the share of pixels whose right + down luma step passes 24), and, when the ASCII style drew, the grid's size, its share of blank cells and the share of cells on each step of the ramp, darkest first. Edge glyphs are counted in `off_ramp`. The same sweep prints a line per column:
+
+```text
+$ flint render demo/stylize_props.scene.toml --look ascii_noir \
+    --sweep ascii.brightness=0,0.15,0.3,0.45 --report brightness.json -o brightness.png
+  [0] luma 0.10  black 82%  white 1%  edges 24%  blank cells 29%
+  [0.15] luma 0.18  black 69%  white 2%  edges 42%  blank cells 5%
+  ...
+```
+
+**`--reference ref.png`** adds each column's distance to a target image, using the metric `flint gen --ai-refine` uses (#183): mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100 where 0 is the reference itself. It's a ruler, not a judge. It can say whether one column is closer than another, but it doesn't measure taste. On a sheet each label gets `d <score>`, the nearest column is starred, and `nearest` in the report names it. Under `--sweep-crop` or `--sweep-scale full` the image measures and distance are taken from the cell as the sheet shows it, while the ASCII section still counts the whole drawn frame's grid. A two-key grid reports every cell, each `value` naming both keys, but its labels carry no distances.
+
+**`--ai-refine`** closes the loop: `flint render scene --look <x> --reference ref.png --ai-refine`. Each round an agent sees the reference, the current render, the look's block, every key it may change (with ranges) and every edit tried so far with its score. It proposes up to `--refine-candidates` (4) candidates in `--sweep` key syntax. Each candidate is checked like a sweep value, then rendered and measured. The best is kept if it lowers the distance by more than 0.05. The loop stops after `--refine-rounds` (4), or after two rounds in a row with no gain, or when the agent has nothing left to propose. It writes:
+
+- `<look>_refined.look.toml` beside `-o` (or `--refine-out`): the kept block, plus a note of what was kept and what it cost;
+- the same path with `.json`: the log of every candidate, its score and image measures, and whether it was kept;
+- `-o`: a sheet showing the reference, the start, and each kept round.
+
+`--ai-provider anthropic` (the default) asks Claude (`ANTHROPIC_API_KEY`, `--ai-model`). Every call goes through the procgen `CostMeter`: it's priced, appended to `.flint/procgen_costs.json`, and refused before sending when it could pass `--max-cost`. `--ai-provider mock` is free and offline. It walks the look's own `tune` sweeps one untried value at a time, which turns the loop into a measured coordinate search. Toward a hidden target (ascii_noir at cell 12, brightness 0.3, contrast 1.2), the mock went 7.68 → 0.00 in five rounds. Contrast 1.2 scored *worse* than the start on its own, and only helped once the other two had moved.
+
+Toward the `matrix` look's render, with Claude (four calls, $0.115), ascii_noir went 25.66 → 15.09. Claude turned the colour to `tint` and the ramp to `detailed`, then found that `glow` was the strongest lever. It also learned from the log that whitening the tint and turning off the vignette both scored worse:
+
+![Refining ascii_noir toward the matrix look: reference, start 25.7, then rounds at 25.0, 19.2, 15.2, 15.1](../images/look-refine-noir-to-matrix.png)
+
 ### Choosing cell size and ramp
 
 - **The cell is in points, not image pixels.** A 640-wide sweep cell at `cell = 8` is 80 glyphs across, while the same look at 1920 is 240. Glow and fine ramps in particular read differently at full size. Add `--sweep-crop` or `--sweep-scale full` (see [Cells at the final scale](#cells-at-the-final-scale)) to sweep at the final size, or confirm the winner with one render at that size.
@@ -865,29 +890,39 @@ Kuwahara's default is unchanged: off.
 
 ## Writing a style
 
-A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`:
+A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
 
 ```rust
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "invert",                // the [post_process.styles.<name>] key
-    label: "Invert",               // F4 and --gpu-time
-    stage: StyleStage::Display,
-    params: &[StyleParam { name: "strength", default: 1.0, min: 0.0, max: 1.0 }],
-    options: &[],                  // named strings: StyleOption::new(name, default, choices),
-                                   //   .discovered(fn) to find choices beside the scene (#322)
-    uses_mask: MaskUse::Never,     // Always: the renderer draws the entity style mask for it;
-                                   //   When(fn(&config, &ids) -> bool): only while it says so (#350)
-    needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
-    hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
-    component: None,               // Some("ascii_style"): entities take the style per entity (#266)
-    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
-    create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
-};
+pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
+    "invert",                      // the [post_process.styles.<name>] key
+    "Invert",                      // F4 and --gpu-time
+    StyleStage::Display,
+    create,                        // fn(&StyleDevice) -> Box<dyn StylePass>: pipelines in d.format
+)
+.params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
+.hints(&[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")]);
+// Everything else has a default, and a setter for a style that differs:
+//   .options(&[StyleOption::new(name, default, choices)])   named strings;
+//       .discovered(fn) finds choices beside the scene (#322)
+//   .uses_mask(MaskUse::Always)    the renderer draws the entity style mask for it;
+//       MaskUse::When(fn(&config, &ids) -> bool): only while it says so (#350)
+//   .needs(&[StyleNeed::Edges])    the shared geometry edges (#301)
+//   .component("ascii_style")      entities take the style per entity (#266)
+//   .feeds_bloom(true)             bloom reads this (hdr) style's result (#300)
 ```
 
 An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files("palettes", ".palette.toml")` (names in the scene's folder, its parent and `.`, through the vfs) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.
 
-`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`edge_max` becomes "Edge max") on a plain slider. A hint gives a setting (or a colour, by its key) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size).
+`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`edge_max` becomes "Edge max") on a plain slider. A hint gives a setting (or a colour, by its key) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size). `.when(option, &[values])` says the setting is read only while that option has one of those values, and `.unless(option, &[values])` that it is idle while it does; F4 greys the row out while a condition fails (a hint holds up to two). ASCII's are
+
+```rust
+StyleHint::new("tint", "Tint", "The ink for colour mode tint").when("color", &["tint"]),
+StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)")
+    .when("ground", &["dim", "inverse"])
+    .unless("color", &["palette"]),
+```
+
+A greyed row's reset button stays live, and the value is kept: it only stops mattering. `StyleDescriptor::unused_reason(config, name)` gives the hover line, or `None` while the setting is read.
 
 ### Colours
 

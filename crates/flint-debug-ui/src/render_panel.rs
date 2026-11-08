@@ -40,6 +40,10 @@ pub struct RenderPanelFlags {
     /// A stylize pass (Kuwahara or a registered style) was just enabled —
     /// host must call `ensure_style_resources`.
     pub style_needs_resources: bool,
+    /// The style editor wrote a style into the scene file (#364); the
+    /// panel's authored settings already match it. A host with another
+    /// editor (the player's F3 Styles) passes [`RenderDebugPanel::authored_styles`] on.
+    pub styles_committed: bool,
     /// FXAA was just enabled — host must call ensure_fxaa_resources.
     pub fxaa_needs_resources: bool,
 }
@@ -137,6 +141,23 @@ impl RenderDebugPanel {
     /// or `None` when the host has no scene to compare against.
     pub fn set_authored_styles(&mut self, authored: Option<StyleSettings>) {
         self.authored_styles = authored;
+    }
+
+    /// The scene's authored style settings, as last set or committed.
+    pub fn authored_styles(&self) -> Option<&StyleSettings> {
+        self.authored_styles.as_ref()
+    }
+
+    /// The scene file the style editor's Commit to scene writes (#364);
+    /// `None` hides the button (a scene from a bundle has no file).
+    pub fn set_scene_file(&mut self, scene_file: Option<std::path::PathBuf>) {
+        self.styles_editor.set_scene_file(scene_file);
+    }
+
+    /// Grey out Commit to scene, with the reason on hover (#364); `None`
+    /// allows it.
+    pub fn set_commit_blocked(&mut self, reason: Option<String>) {
+        self.styles_editor.set_commit_blocked(reason);
     }
 
     /// The scene's folder, where the style editor finds the scene's own
@@ -338,6 +359,13 @@ impl RenderDebugPanel {
                 .ui(ui, &mut self.pp, self.authored_styles.as_ref());
             f.pp_changed |= edit.changed;
             f.style_needs_resources |= edit.needs_resources;
+            if let Some(name) = edit.committed {
+                // The scene now says what the config says of the style
+                self.authored_styles
+                    .get_or_insert_with(StyleSettings::default)
+                    .restore(name, &self.pp.styles);
+                f.styles_committed = true;
+            }
             // The shared geometry edges' thresholds (#301): one pair for
             // every style that reads them (edges_view shows what they find)
             ui.separator();

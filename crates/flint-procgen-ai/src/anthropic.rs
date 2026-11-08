@@ -205,6 +205,27 @@ impl AnthropicAgent {
         &self.config
     }
 
+    /// One call for a task this crate doesn't know (a look refine, #357):
+    /// `system` (prompt-cached) and `messages` as given, through the same
+    /// retries and the same [`CostMeter`] as every other call, the ledger
+    /// naming `subject` and `operation`. The caller parses the reply.
+    pub fn ask(
+        &self,
+        subject: &str,
+        operation: &str,
+        system: &str,
+        messages: &[Json],
+    ) -> Result<Reply> {
+        self.set_meter_context(subject, operation);
+        self.call(system, messages)
+    }
+
+    /// An image content block for [`Self::ask`]: PNG, JPEG, GIF or WebP,
+    /// refused past the API's 5 MB.
+    pub fn image_content(bytes: &[u8]) -> Result<Json> {
+        image_block(bytes)
+    }
+
     /// The request body for one call.
     fn body(&self, system: &str, messages: &[Json], max_tokens: u32) -> Json {
         let mut body = json!({
