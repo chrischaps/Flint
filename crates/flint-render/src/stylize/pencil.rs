@@ -49,6 +49,17 @@
 //! keeps a scene table as those entities' preset, and `grid = "object"`
 //! pins an entity's hatching to its projected origin, so its strokes
 //! travel with it rather than swimming over it.
+//!
+//! ## On the surfaces
+//!
+//! `grid = "world"` (#389) lays the hatching on the surfaces: each pixel's
+//! world position, rebuilt from the depth, is hatched on the three axis
+//! planes (triplanar, weighted by the normal), so as the camera moves the
+//! strokes stay on the props instead of the props sliding under them.
+//! Spacing comes in octaves of metres (2^k), the one nearest `spacing` on
+//! screen cross-faded with the next as a mip chain does, so strokes keep
+//! their size on screen at any distance; `direction` is not used (the sky
+//! keeps the screen's hatching), `angle` turns the strokes in each plane.
 
 use super::kit;
 use super::{
@@ -64,8 +75,9 @@ pub const DIRECTIONS: &[&str] = &["surface", "screen", "tensor"];
 /// What a `[post_process.styles.pencil]` table covers (as ASCII's).
 pub const SCOPES: &[&str] = &["screen", "entities"];
 
-/// Where a variant's hatching is anchored (as ASCII's grids).
-pub const GRIDS: &[&str] = &["screen", "object"];
+/// Where a variant's hatching is anchored: ASCII's two grids, and `world`,
+/// strokes laid on the surfaces themselves (#389).
+pub const GRIDS: &[&str] = &["screen", "object", "world"];
 
 /// Rows one frame's variant table holds, the whole frame's included.
 pub const MAX_VARIANTS: usize = 64;
@@ -119,7 +131,7 @@ const OPTIONS: &[StyleOption] = &[
 const HINTS: &[StyleHint] = &[
     StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
     StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
-    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity, so strokes travel with it"),
+    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
     StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
     StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
     StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
@@ -312,6 +324,10 @@ struct PencilUniforms {
 /// A row's flag: leave its pixels as they are.
 const PASS_THROUGH: f32 = 1.0;
 
+/// A row's flag (added to the others): its hatching is on the world's
+/// surfaces, `grid = "world"` (#389).
+const WORLD_GRID: f32 = 2.0;
+
 /// The slot of a mask id another registered style owns: its pixels are
 /// that style's (an ASCII prop in a pencil frame), so pencil leaves them.
 pub const FOREIGN: u32 = 255;
@@ -401,7 +417,12 @@ pub fn row(
             [
                 origin[0],
                 origin[1],
-                flags,
+                flags
+                    + if option("grid") == "world" {
+                        WORLD_GRID
+                    } else {
+                        0.0
+                    },
                 param("darkness").clamp(0.0, 1.0),
             ],
         ],
@@ -803,6 +824,24 @@ mod tests {
     }
 
     #[test]
+    fn a_world_grid_sets_its_flag_beside_pass_through() {
+        let p = |n: &str| STYLE.params.iter().find(|q| q.name == n).unwrap().default;
+        let world = |n: &str| {
+            if n == "grid" {
+                "world".to_string()
+            } else {
+                String::new()
+            }
+        };
+        assert_eq!(row(&p, &world, 0.0, [0.0, 0.0], 0.0).v[6][2], WORLD_GRID);
+        assert_eq!(
+            row(&p, &world, 0.0, [0.0, 0.0], PASS_THROUGH).v[6][2],
+            PASS_THROUGH + WORLD_GRID
+        );
+        assert!(GRIDS.contains(&"world"));
+    }
+
+    #[test]
     fn directions_parse_and_fall_back_to_surface() {
         assert_eq!(direction_mode("surface"), 0.0);
         assert_eq!(direction_mode("screen"), 1.0);
@@ -822,6 +861,7 @@ mod tests {
             "angle in radians"
         );
         assert_eq!(r.v[4][3], 0.0, "surface by default");
+        assert_eq!(r.v[6][2], PASS_THROUGH, "no world grid by default");
         assert_eq!(&r.v[4][..3], &[0.95, 0.93, 0.88], "paper");
         assert_eq!([r.v[6][0], r.v[6][1], r.v[6][2]], [3.0, 4.0, 1.0]);
     }

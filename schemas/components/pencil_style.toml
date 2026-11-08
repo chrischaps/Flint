@@ -27,4 +27,4 @@ paper = { type = "vec3", description = "Paper colour, RGB 0-1 display values; se
 lead = { type = "vec3", description = "Graphite colour, RGB 0-1 display values; sets lead_r, lead_g and lead_b" }
 seed = { type = "f32", min = 0.0, max = 9999.0, description = "A different hand: another whole number draws other strokes; the same seed draws the same picture every run" }
 boil = { type = "f32", min = 0.0, max = 24.0, description = "Redraws a second, for animated 'boiling' lines (0 = still)" }
-grid = { type = "enum", values = ["screen", "object"], description = "screen: hatching fixed to the screen. object: pinned to this entity's projected origin, so its strokes travel with it" }
+grid = { type = "enum", values = ["screen", "object", "world"], description = "screen: hatching fixed to the screen. object: pinned to this entity's projected origin, so its strokes travel with it. world: laid on its surfaces, so they hold as the camera moves (#389)" }

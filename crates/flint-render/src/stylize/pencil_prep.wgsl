@@ -11,6 +11,8 @@
 //      surface: strokes run along the surface's iso-depth lines (round a
 //      barrel, across a floor); tensor: along the luminance's edges;
 //      screen: nothing here, the drawing pass uses the base angle.
+//      A world grid (#389) needs no flow: zw hold the surface normal,
+//      octahedral, for the drawing pass's triplanar strokes.
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
@@ -105,6 +107,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let luma_edge = smoothstep(0.2, 0.6, length(vec2<f32>(gx, gy)) * row.c.z);
 
     let edge = max(max(depth_edge, crease_edge), max(id_edge, luma_edge));
+
+    if world_grid(row) {
+        return vec4<f32>(tone, edge, oct_encode(nc));
+    }
 
     // The stroke direction, perpendicular to a gradient, as a double angle
     var flow = vec2<f32>(0.0);

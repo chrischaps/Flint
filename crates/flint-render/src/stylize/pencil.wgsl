@@ -58,9 +58,87 @@ fn strokes(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, grow: 
     return cov * mix(0.5, 1.0, taper) * (0.7 + 0.3 * hs.y);
 }
 
+// --- strokes on the world's surfaces (#389) ---------------------------------
+//
+// With `grid = "world"` the strokes are laid on the surfaces themselves, so
+// they travel with the props as the camera moves instead of the surfaces
+// sliding under a sheet of screen hatching. Each pixel's world position
+// (from the depth) is projected onto the three axis planes, triplanar,
+// weighted by its normal, and each plane is hatched with stripes measured
+// in metres.
+//
+// Stripes a fixed number of metres apart would crowd together into grey
+// with distance, so the spacing comes in octaves: level k puts its rows
+// 2^k metres apart. A pixel picks the level whose spacing on screen is
+// nearest the `spacing` asked for, and cross-fades between that level and
+// the next as a mip chain does, so the strokes keep their size on screen
+// while each one stays where it lies on the surface. Every even row of
+// level k is a row of level k+1 too, and hashes a row by its odd part and
+// the level where that becomes odd, so a stroke keeps its hand (its dashes,
+// its jitter's seed) as it climbs the octaves.
+
+// The identity of row `r` at level `k`, the same at every level it is a
+// row of: its odd part and the level that gives it.
+fn row_identity(r: i32, k: i32) -> vec2<i32> {
+    if r == 0 {
+        return vec2<i32>(0, 1024);
+    }
+    let tz = i32(countTrailingZeros(bitcast<u32>(r)));
+    return vec2<i32>(r >> u32(tz), k + tz);
+}
+
+// One layer's strokes at one level on one plane: coverage 0..1 at `q`
+// (metres in the plane). `s` is the level's spacing, `k` its number;
+// `width` and `wob` are metres; `aa` is how far `across` moves in a
+// pixel, metres.
+fn world_strokes(q: vec2<f32>, ang: f32, layer: u32, seed: u32, s: f32, k: i32, width: f32, wob: f32, grow: f32, aa: f32) -> f32 {
+    let spacing = s * (1.0 - 0.08 * f32(layer));
+    let dir = vec2<f32>(cos(ang), sin(ang));
+    let along = dot(q, dir);
+    var across = dot(q, vec2<f32>(-dir.y, dir.x));
+    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ pcg(bitcast<u32>(k)));
+    across += (bend - 0.5) * 2.0 * wob;
+
+    let r = floor(across / spacing);
+    let id = row_identity(i32(r), k);
+    let salt = pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
+    let h = hash3(id.x, i32(layer), seed ^ salt);
+    let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
+
+    let len = spacing * (8.0 + 16.0 * h.y);
+    let t = (along + h.z * len) / len;
+    let seg = floor(t);
+    let x = t - seg;
+    let hs = hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
+    if hs.x < 0.1 {
+        return 0.0;
+    }
+    let taper = smoothstep(0.0, 0.15, x) * smoothstep(1.0, 0.85, x);
+    let w = width * (0.45 + 0.55 * taper) * sqrt(grow);
+    let a = clamp(aa, 1e-6, spacing * 0.35);
+    let cov = 1.0 - smoothstep(w * 0.5 - a, w * 0.5 + a, abs(off));
+    return cov * mix(0.5, 1.0, taper) * (0.7 + 0.3 * hs.y);
+}
+
+// The plane coordinates of a world point on axis plane `axis`
+fn plane_coords(w: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return w.zy;
+    }
+    if axis == 1u {
+        return w.xz;
+    }
+    return w.xy;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.pos.xy);
+    // The surface's world position and how it moves across a pixel, taken
+    // before anything branches (derivatives need every pixel of a quad)
+    let wp = world_uv(in.uv);
+    let wdx = dpdx(wp.xyz);
+    let wdy = dpdy(wp.xyz);
     let src = textureLoad(input_texture, px, 0);
     let id = mask_id(mask_px(in.uv));
     let slot = slot_of(id);
@@ -86,9 +164,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let screen = vec2<f32>(cos(2.0 * base), sin(2.0 * base));
     var v = screen;
     let direction = u32(row.e.w + 0.5);
-    if direction == 2u {
+    // World strokes on a surface need no flow; the sky keeps the screen's
+    let on_world = world_grid(row) && wp.w > 0.5;
+    if direction == 2u && !on_world {
         v = textureSampleLevel(flow_texture, prep_sampler, in.uv, 0.0).xy + screen * 0.12;
-    } else if direction == 0u {
+    } else if direction == 0u && !on_world {
         let reach = row.a.x * ppp * 1.5;
         var sum = vec2<f32>(0.0);
         for (var j = -2; j <= 2; j++) {
@@ -121,15 +201,56 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Each layer crosses the last off the square, so no two make a grid
     var offsets = array<f32, 4>(0.0, 0.36 * PI, -0.22 * PI, 0.14 * PI);
     var light = 1.0;
+
+    // A world grid's plane weights, from the surface's normal
+    var weights = vec3<f32>(0.0);
+    if on_world {
+        let n = oct_decode(textureLoad(prep_texture, px, 0).zw);
+        let an = pow(abs(n), vec3<f32>(6.0));
+        weights = an / max(an.x + an.y + an.z, 1e-6);
+    }
+
     for (var i = 0u; i < layers; i++) {
         let threshold = 0.12 + f32(i) * 0.8 / f32(layers);
         let grow = clamp((dark - threshold) / 0.2, 0.0, 1.0);
         if grow <= 0.0 {
             continue;
         }
-        let c0 = strokes(p, a0 + offsets[i], i, seed, row, grow, aa);
-        let c1 = strokes(p, a1 + offsets[i], i, seed, row, grow, aa);
-        let cov = mix(c0, c1, blend);
+        var cov = 0.0;
+        if on_world {
+            let ang = base + offsets[i];
+            let dir = vec2<f32>(cos(ang), sin(ang));
+            let perp = vec2<f32>(-dir.y, dir.x);
+            for (var axis = 0u; axis < 3u; axis++) {
+                let wt = weights[axis];
+                if wt < 0.02 {
+                    continue;
+                }
+                let q = plane_coords(wp.xyz, axis);
+                // Metres `across` moves per point on screen, from the
+                // quad's derivatives: the octave is picked per plane and
+                // per stroke direction, so a floor seen edge-on climbs to
+                // wider rows across its depth (an anisotropic mip)
+                let rate = max(length(vec2<f32>(
+                    dot(plane_coords(wdx, axis), perp),
+                    dot(plane_coords(wdy, axis), perp),
+                )) * ppp, 1e-7);
+                let lvl = log2(row.a.x * rate);
+                let octave = floor(lvl);
+                let fade = lvl - octave;
+                let s0 = exp2(octave);
+                let width = row.a.y * rate;
+                let wob0 = row.c.w * 0.6 / row.a.x * s0;
+                let aa_w = 0.7 * rate / ppp;
+                let c0 = world_strokes(q, ang, i, seed, s0, i32(octave), width, wob0, grow, aa_w);
+                let c1 = world_strokes(q, ang, i, seed, s0 * 2.0, i32(octave) + 1, width, wob0 * 2.0, grow, aa_w);
+                cov += wt * mix(c0, c1, fade);
+            }
+        } else {
+            let c0 = strokes(p, a0 + offsets[i], i, seed, row, grow, aa);
+            let c1 = strokes(p, a1 + offsets[i], i, seed, row, grow, aa);
+            cov = mix(c0, c1, blend);
+        }
         light *= 1.0 - cov * row.g.w * mix(0.6, 1.0, dark);
     }
     // Rubbed graphite under the strokes: soft tone for the darks
