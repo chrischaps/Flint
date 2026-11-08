@@ -2007,3 +2007,116 @@ fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
         "per frame, 30 Hz settled in {slow:.3} s, 120 Hz in {fast:.3} s"
     );
 }
+
+#[test]
+fn a_script_cross_fades_whole_frame_styles_without_allocating_and_clears_exactly() {
+    // What set_post_style / set_post_style_param do (#369): edit the
+    // renderer's [post_process.styles] table, here a lit cube under
+    // Kuwahara (HDR) and invert (display), each faded by its `blend`
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::post_style::{reset_post_style, set_post_style, set_post_style_param};
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let authored = renderer.post_process_config().clone();
+    let plain = gpu.frame(&mut renderer, &world);
+    let edit = |renderer: &mut SceneRenderer, f: &dyn Fn(&mut flint_render::PostProcessConfig)| {
+        let mut config = renderer.post_process_config().clone();
+        f(&mut config);
+        renderer.set_post_process_config(config);
+    };
+
+    // Invert on at blend 0 shows none of it, at 1 all of it
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "invert", true).unwrap();
+        set_post_style_param(c, "invert", "blend", 0.0.into()).unwrap();
+    });
+    let none = gpu.frame(&mut renderer, &world);
+    let worst = plain.iter().zip(&none).map(|(a, b)| a.abs_diff(*b)).max();
+    assert!(
+        worst <= Some(1),
+        "blend 0 should be the plain frame, off by {worst:?}"
+    );
+    edit(&mut renderer, &|c| {
+        set_post_style_param(c, "invert", "blend", 1.0.into()).unwrap()
+    });
+    let full = gpu.frame(&mut renderer, &world);
+    for (i, (a, b)) in plain.iter().zip(&full).enumerate() {
+        if i % 4 != 3 {
+            assert!(
+                (255 - *a).abs_diff(*b) <= 1,
+                "byte {i}: plain {a}, inverted {b}"
+            );
+        }
+    }
+
+    // A cross-fade: Kuwahara and invert ramp in together every frame, as a
+    // script tweening them would. Warm up (Kuwahara's first build, the
+    // blend pipelines and binds), then count what is held.
+    let fade = |renderer: &mut SceneRenderer, i: usize| {
+        let t = i as f64 / 24.0;
+        edit(renderer, &|c| {
+            set_post_style(c, "kuwahara", true).unwrap();
+            set_post_style_param(c, "kuwahara", "blend", t.into()).unwrap();
+            set_post_style_param(c, "kuwahara", "radius", (2.0 + 4.0 * t).into()).unwrap();
+            set_post_style_param(c, "invert", "blend", (0.5 * t).into()).unwrap();
+        });
+        gpu.frame(renderer, &world)
+    };
+    fade(&mut renderer, 0);
+    fade(&mut renderer, 1);
+    let (binds, objects) = (renderer.kept_post_binds(), held(&gpu));
+    let mut seen = std::collections::BTreeSet::new();
+    for i in 1..=24 {
+        seen.insert(fade(&mut renderer, i));
+    }
+    eprintln!(
+        "24 faded frames: {} distinct, post binds {binds} -> {}, held {objects:?} -> {:?}",
+        seen.len(),
+        renderer.kept_post_binds(),
+        held(&gpu)
+    );
+    assert!(seen.len() > 12, "the fade changed little on screen");
+    assert!(!seen.contains(&plain), "a faded frame was the plain one");
+    assert_eq!(
+        renderer.kept_post_binds(),
+        binds,
+        "a fade step kept a new bind group"
+    );
+    assert_eq!(held(&gpu), objects, "a fade step left GPU objects behind");
+
+    // Clear: both off gives back the plain frame byte for byte, and so
+    // does putting the scene's own settings back
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", false).unwrap();
+        set_post_style(c, "invert", false).unwrap();
+    });
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+    edit(&mut renderer, &|c| {
+        set_post_style(c, "kuwahara", true).unwrap();
+        reset_post_style(c, &authored, "kuwahara").unwrap();
+        reset_post_style(c, &authored, "invert").unwrap();
+    });
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}

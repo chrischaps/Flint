@@ -73,7 +73,7 @@ invert (Invert) [display, builtin]
   strength  1  [0 .. 1]  — How far toward the negative: 0 = none, 1 = full
 ```
 
-Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: `--style` refuses a value outside it, and a scene's table warns and keeps it (#355). Every table also takes `enabled` and `order`. The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
+Each JSON entry has `name`, `label`, `stage` (`hdr` or `display`), `source` (`builtin` or `user`), `table`, `component` (the per-entity component, or null), `uses_mask`, `params` (`name`, `key` as the scene writes it, `default`, `min`, `max`, `integer`, `color` (the colour it is a channel of, or null), `label`, `help`), `options` (`name`, `default`, `choices`, `open`, `label`, `help`; empty choices take any text, and `open` marks choices found beside the scene, which any other name a style can resolve, a file path, may join) and `colors` (`key`, `default` as `[r, g, b]`, `channels`, `label`, `help`; #315). The text form lists a colour once, by its key. A range is the F4 menu's: `--style` refuses a value outside it, and a scene's table warns and keeps it (#355). Every table also takes `enabled`, `order` and `blend` ([Blending a whole-frame style](#blending-a-whole-frame-style)). The list is read from the same declarations as F4 and `--style`, so a new style appears in it with nothing added (`flint_render::stylize::catalog`).
 
 The keys are checked against the style's declaration: a number for a parameter, text for an option (one of its choices when the list is closed), a [colour](#colours) as `#rrggbb` or `r/g/b` (`tint=0.3/1/0.4`: commas split the keys, so not `r,g,b`), `off` or `enabled=false`. A mistake names what would have worked (`--style ascii has no key 'colour'; it takes: cell=8, ..., color=source|tint|raw, off`). `--style-time <s>` fixes the post time animated styles read (headless captures default to 0).
 
@@ -414,7 +414,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
 - **Edges between entities** come from [edges](#edges) (#267). Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap would run together. The edge passes draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from one of the style's ids to any other: the plain `ascii` id or any variant's, so a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask. Variants on `grid = "object"` don't draw edges yet, because the edge cells are on the screen grid.
 - **Temporal stability** (#277's `smoothing`, `hysteresis` and `dither`) applies to the whole frame's cells. A per-entity variant is drawn per pixel on its own grid and keeps no history yet, so a styled prop can still shimmer in motion.
-- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. `tween_style_param(id, "cell", 7.0, 1.5)` lets the engine ease one (#370), and `get_entity_style(id)` / `get_style_param(id, "cell")` read back what an entity is drawn in, inherited or whole-frame (#372). See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
+- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. `tween_style_param(id, "cell", 7.0, 1.5)` lets the engine ease one (#370), and `get_entity_style(id)` / `get_style_param(id, "cell")` read back what an entity is drawn in, inherited or whole-frame (#372). See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`. Whole-frame styles have their own calls, `set_post_style` and `set_post_style_param` (#369; [Scripting → Whole-frame styles](scripting.md#whole-frame-styles)).
 - **Fonts** (#335). An entity's `font` names its own glyph set, so props can draw in different fonts in one frame. Every set in use is stacked into one atlas texture (`GpuGlyphStack`, uploaded again only when the frame's sets change), and each variant's row carries its font's glyph cell and where its ramp and its four edge glyphs sit, so the cell's height follows that font's aspect and the edges are drawn in its own line glyphs. A frame holds up to 8 fonts and an atlas stack up to 8192 pixels tall. A font that doesn't fit, or whose ramp and edges don't fit in the frame's 128 ramp steps, draws in the scene's font, with a warning. `demo/ascii_fonts.scene.toml` draws a YBot and a barrel in a hand-drawn halftone set (`demo/fonts/halftone.glyphs.toml`, 8x12 cells) beside props in the built-in letters.
 - **Not yet:** ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
@@ -565,6 +565,30 @@ A tween is the engine easing the blend for you ([Scripting → Tweens](scripting
 - **Cost.** The blend costs one more channel in the mask (`Rg16Uint`, 4 bytes a pixel) and no extra texture read. Pixels a blend leaves plain skip the glyph work: at 1080p `demo/stylize_blend.scene.toml`'s ASCII pass took 0.31 ms, against 0.39 ms for the same props fully styled.
 
 `demo/ascii_reveal.scene.toml` is a 10-second loop: the barrel dissolves into phosphor glyphs, the bench fades into amber blocks, and both go back. The `ascii-blend` golden pins a half-way dissolve and a 40% fade.
+
+### Blending a whole-frame style
+
+Every style's table also takes `blend` (#369): how much of the style's result shows over the picture it read, from 0 (none) to 1 (all of it, the default). It is the framework's, not the style's, so Kuwahara, watercolor, palette, the full-screen ASCII look and user styles all take it with no code of their own:
+
+```toml
+[post_process.styles.kuwahara]
+radius = 6
+blend = 0.5               # half paint, half the scene as it was
+```
+
+```bash
+flint render demo/dream_story.scene.toml --style kuwahara:radius=7,blend=0.5
+```
+
+A script ramps it to cross-fade the whole world into a look at a story beat: `set_post_style("kuwahara", true)`, then `set_post_style_param("kuwahara", "blend", k)` every frame ([Scripting → Whole-frame styles](scripting.md#whole-frame-styles)). `demo/dream_story.scene.toml` falls asleep into Kuwahara and wakes again.
+
+![The clearing falling asleep into Kuwahara at blend 0, about 0.25, 0.5, 0.75 and 1, the brush growing from radius 3 to 7 as it goes: the bench's legs and the barrel's hoops soften into strokes](../images/kuwahara-dream-fade.png)
+
+*Frames from `flint-player demo/dream_story.scene.toml --frame-step 0.05 --screenshot-every 0.05` at 2, 3, 3.5, 4 and 5 s, cropped.*
+
+- **How.** After a style whose blend is under 1 has drawn, the stage draws the style's input back over its output with the blend constant `1 - blend`. That is one full-screen draw, in the style's own GPU timing scope, and only while the blend is under 1. The mix is in the target's linear values (HDR at the HDR stage, linear light on an sRGB display target).
+- **Cost.** No allocation per frame: one pipeline per target format, made the first time a blend is drawn, and the input's bind group is kept with the chain. A GPU test in `tests/stylize.rs` ramps Kuwahara's and invert's blends for 24 frames and counts the kept bind groups and GPU objects. At blend 0 the style still draws (and is then covered); switch it off when the fade is done.
+- **Per-entity styles** keep their own `blend` on the component, which rides in the [style mask](#the-entity-style-mask) and mixes per pixel ([Blending in and out](#blending-in-and-out)). The table's `blend` fades the whole stage's result of that style, entities included.
 
 ### Style blends and render-mode tears
 
