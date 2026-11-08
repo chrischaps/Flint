@@ -58,7 +58,7 @@ fn rank(r: &CaseReport) -> u8 {
 }
 
 fn moved(r: &CaseReport) -> bool {
-    r.comparison.is_some_and(|c| c.changed > 0) || r.text.as_ref().is_some_and(|t| t.cells > 0)
+    r.moved()
 }
 
 /// The filter a case belongs to.
@@ -110,7 +110,12 @@ fn frame(kind: &str, src: Option<String>, empty: &str, name: &str) -> String {
 fn case_html(r: &CaseReport, bless: bool) -> String {
     let name = esc(&r.name);
     let rendered = r.status != "skip" && r.status != "error";
-    let golden_label = if bless { "was" } else { "golden" };
+    // A --bless-drifted blesses some cases: only theirs is "was"
+    let golden_label = if bless && r.status == "blessed" {
+        "was"
+    } else {
+        "golden"
+    };
     let golden = frame(
         golden_label,
         r.had_golden.then(|| format!("golden/{}.png", r.name)),
@@ -203,6 +208,8 @@ fn case_html(r: &CaseReport, bless: bool) -> String {
     };
     let status = match r.status {
         "blessed" if !moved(r) && r.had_golden => "blessed, unchanged",
+        "blessed" if r.drift => "drift, blessed",
+        "pass" if r.drift => "pass, drifted",
         s => s,
     };
     format!(
@@ -232,11 +239,17 @@ pub fn html(sheet: &Sheet, reports: &[CaseReport]) -> String {
     let verdict = if sheet.no_gpu {
         "skipped: no GPU adapter".to_string()
     } else if sheet.bless {
-        format!("blessed {} case(s)", reports.len())
+        let blessed = reports.iter().filter(|r| r.status == "blessed").count();
+        format!("blessed {blessed} case(s)")
     } else if failed > 0 {
         format!("{failed} failed")
     } else {
-        "every case holds".to_string()
+        let drifted = reports.iter().filter(|r| r.drift).count();
+        if drifted == 0 {
+            "every case holds, byte-identical".to_string()
+        } else {
+            format!("every case holds; {drifted} drifted inside the tolerance")
+        }
     };
     let mode = if sheet.isolate {
         "a process a case"
@@ -402,7 +415,7 @@ footer {{ color: var(--dim); font-size: 12px; margin-top: 30px; }}
         seconds = sheet.seconds,
         f_all = filter("all", "all", reports.len()),
         f_failed = filter("failed", "failed", failed),
-        f_moved = filter("moved", "moved", moved_n),
+        f_moved = filter("moved", "drifted", moved_n),
         f_identical = filter("identical", "identical", identical),
         f_skipped = if skipped > 0 {
             filter("skipped", "skipped", skipped)
@@ -424,6 +437,7 @@ mod tests {
             scene: "demo/x.scene.toml".into(),
             args: vec!["--style".into(), "ascii".into()],
             status,
+            drift: status == "pass" && changed > 0,
             comparison: Some(Comparison {
                 changed,
                 far_share: if status == "fail" { 0.5 } else { 0.0 },
@@ -480,5 +494,25 @@ mod tests {
             "an identical case writes no diff"
         );
         assert!(page.contains("1 failed") && page.contains("show('failed')"));
+        assert!(
+            page.contains("pass, drifted"),
+            "a passing case that moved says so"
+        );
+    }
+
+    #[test]
+    fn a_clean_run_says_byte_identical_and_a_drifted_one_counts() {
+        let sheet = Sheet {
+            suite: "stylize",
+            manifest: "m.goldens.toml",
+            bless: false,
+            isolate: false,
+            seconds: 1.0,
+            no_gpu: false,
+        };
+        let clean = html(&sheet, &[case("a", "pass", 0), case("b", "pass", 0)]);
+        assert!(clean.contains("every case holds, byte-identical"));
+        let drifted = html(&sheet, &[case("a", "pass", 0), case("b", "pass", 7)]);
+        assert!(drifted.contains("1 drifted inside the tolerance"));
     }
 }

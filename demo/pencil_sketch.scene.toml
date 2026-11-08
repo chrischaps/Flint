@@ -14,7 +14,12 @@
 #   cargo run --bin flint -- render demo/pencil_sketch.scene.toml --schemas schemas --no-grid --style pencil:scope=screen -o page.png
 #
 # The second command draws the whole frame in pencil, the props keeping
-# their own settings as variants. Book: concepts/stylize-passes.md
+# their own settings as variants. With grid=world (#389) the strokes lie on
+# the surfaces and hold as the camera moves:
+#
+#   cargo run --bin flint -- render demo/pencil_sketch.scene.toml --schemas schemas --no-grid --style pencil:grid=world,scope=screen --frames 72 --frame-dt 0.0333 --orbit 25 -o orbit.png
+#
+# Book: concepts/stylize-passes.md
 
 [scene]
 name = "Pencil Sketch"
