@@ -42,6 +42,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_screen_ui_api(engine, ctx.clone());
     register_conducted_api(engine, ctx.clone());
     register_ocean_api(engine, ctx.clone());
+    register_expression_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -3796,6 +3797,21 @@ fn toml_token_to_dynamic(v: &toml::Value) -> Dynamic {
         }
         _ => Dynamic::UNIT,
     }
+}
+
+// ─── Expression API (Flint#518) ───────────────────────────
+//
+// State from outside the process: a timeline played on the game clock
+// (`--expression-timeline`) or newline-delimited JSON on a localhost socket
+// (`--expression-listen`). Flint doesn't know the fields; any JSON object
+// arrives as a map, numbers as floats. The host delivers each new state before
+// on_update, calling `on_expression(state)` on every script that defines it.
+
+fn register_expression_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // expression() -> Map: the latest state, #{} before the first arrives
+    engine.register_fn("expression", move || -> Map {
+        crate::lock_or_recover(&ctx).expression.clone()
+    });
 }
 
 // ─── State Machine API ────────────────────────────────────

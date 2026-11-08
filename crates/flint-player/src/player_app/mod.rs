@@ -5,6 +5,7 @@
 mod debug_panels;
 mod egui_input;
 mod events;
+pub mod expression_feed;
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(test)]
@@ -363,6 +364,10 @@ pub struct PlayerApp {
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame
     /// (scene + egui HUD) right before `present()`.
     pub capture: CaptureConfig,
+    /// State from outside the process for scripts' `expression()` and
+    /// `on_expression` (`--expression-timeline`, `--expression-listen`;
+    /// Flint#518). `None` when neither was given.
+    pub expression_feed: Option<expression_feed::ExpressionFeed>,
     /// Set once `--exit-after` elapses; the redraw handler exits the loop.
     exit_requested: bool,
 

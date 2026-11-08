@@ -21,6 +21,9 @@ pub use flint_core::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use player_app::fonts::project_font_definitions;
+pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 pub use player_app::scene_loading::{load_scene_grass_ground, post_process_config_from_def};
 #[cfg(target_arch = "wasm32")]

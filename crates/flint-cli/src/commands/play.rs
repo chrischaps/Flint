@@ -41,6 +41,18 @@ pub struct PlayArgs {
     /// List available GPU adapters and exit
     #[arg(long)]
     pub list_gpus: bool,
+
+    /// Play expression states from a JSON timeline on the game clock:
+    /// `{"events": [{..., "t": secs}, ...]}`. Scripts read the latest with
+    /// `expression()` and hear each in `on_expression(state)` (Flint#518)
+    #[arg(long, value_name = "FILE")]
+    pub expression_timeline: Option<String>,
+
+    /// Take expression states as newline-delimited JSON objects over TCP at
+    /// this loopback address (e.g. 127.0.0.1:7777). Off unless given; only
+    /// 127.0.0.1 or ::1 can listen (Flint#518)
+    #[arg(long, value_name = "IP:PORT")]
+    pub expression_listen: Option<String>,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -73,6 +85,13 @@ pub fn run(args: PlayArgs) -> Result<()> {
         SchemaRegistry::new()
     };
 
+    // Expression sources first, so a bad timeline or a taken port fails
+    // before a window opens
+    let expression_feed = flint_player::ExpressionFeed::open(
+        args.expression_timeline.as_deref(),
+        args.expression_listen.as_deref(),
+    )?;
+
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
 
@@ -103,6 +122,7 @@ pub fn run(args: PlayArgs) -> Result<()> {
     );
 
     app.scene_preload_audio = scene_file.scene.preload_audio;
+    app.expression_feed = expression_feed;
 
     // Apply initial mixer bus volumes from CLI
     app.audio

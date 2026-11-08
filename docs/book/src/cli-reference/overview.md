@@ -58,6 +58,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
+| `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
+| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).

@@ -134,6 +134,7 @@ impl PlayerApp {
             audio_vfs_generation: flint_core::vfs::generation(),
             window_size: (1280, 720),
             capture: CaptureConfig::default(),
+            expression_feed: None,
             exit_requested: false,
             input_config_override,
             scene_input_config,
