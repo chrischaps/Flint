@@ -140,7 +140,9 @@ const MAX_BANDS: u32 = 8u;
 
 // The variant slot of mask id `id`: 0 (the whole frame) past the table
 fn slot_of(id: u32) -> u32 {
-    if id >= arrayLength(&slots) {
+    // Id 0 is no styled entity, the whole frame's: most of a frame's
+    // pixels, spared the table read (#337)
+    if id == 0u || id >= arrayLength(&slots) {
         return 0u;
     }
     return slots[id];
@@ -188,6 +190,10 @@ fn banded(tone_in: f32) -> f32 {
 // Tone normalisation (#289). The tone statistics lattice (ascii_stats*.wgsl)
 const STATS_COLS: u32 = 320u;
 const STATS_ROWS: u32 = 180u;
+// Each lattice row is summed in this many runs of STATS_COLS / STATS_CHUNKS
+// samples, a fragment each (#337): one fragment walking all 320 left a
+// prop's statistics to 180 threads, latency-bound at ~0.07 ms
+const STATS_CHUNKS: u32 = 16u;
 // The range a slot normalises onto: its mean -/+ this many deviations
 const STATS_SPREAD: f32 = 2.0;
 // The narrowest range a slot is stretched from, so a flat wall's noise

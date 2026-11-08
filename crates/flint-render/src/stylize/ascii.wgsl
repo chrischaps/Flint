@@ -485,6 +485,13 @@ fn on_silhouette(slot: u32, p: vec2<f32>, width: f32) -> bool {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.position.xy;
+    // The whole frame's cell, and its state as the cell pass left it, read
+    // before the mask is: the two loads are in flight together rather
+    // than one after the other, which is what a whole-frame pixel paid for
+    // per-entity variants being on screen (#337)
+    let rel = p - u.origin;
+    let cell = floor(rel / u.cell);
+    let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
     var slot = 0u;
     // How much of the style the pixel's entity asks for, 0..1 (mask .g)
     var blend = 1.0;
@@ -503,8 +510,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return passed(p);
         }
         if blend < 1.0 && (v.flags & 2u) != 0u {
-            let cell = floor((p - v.origin) / v.cell);
-            if dissolve_order(cell) >= blend {
+            if dissolve_order(floor((p - v.origin) / v.cell)) >= blend {
                 return passed(p);
             }
         }
@@ -516,12 +522,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if u.variant_meta.y == 1u {
             return passed(p);
         }
-        let rel = p - u.origin;
-        let cell = floor(rel / u.cell);
         let local = rel - cell * u.cell;
-
-        // The cell's colour and glyph, as the cell pass left them
-        let state = textureLoad(cells, vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), 0);
         let col = vec3<f32>(state.rgb) / UNORM16;
         let t = banded(tone(slot_luma(col, 0u)));
         out = shade(frame_look(), col, t, state.a, cell, local, edge_slot(cell), 0.0);
