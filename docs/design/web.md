@@ -768,7 +768,11 @@ another job, not the mask. The style adds three render passes (mask,
 cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
-a render scale the chain owns its depth and all of them are kept.
+a render scale the chain owns its depth and all of them are kept. Since
+#379 the player passes its depth view with an id
+(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
+context makes the texture again) and those groups are kept at scale 1
+too (measured below the table, "Bind groups over the caller's depth").
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
@@ -782,6 +786,24 @@ style targets when only the scale moved (the surface is the same size,
 so the display-stage ones are too), and HDR-stage ones are remade at the
 new size on next use (`a_render_scale_step_keeps_the_style_targets`).
 
+**Per-entity styles draw only near their entities (#385).** Since edges
+(#267) became the default, a per-entity ASCII's cost was its edge pass
+over every pixel, styled or not. Its passes, and pencil's, are now
+scissored to the styled entities' projected bounds (book: Stylize Passes,
+"Drawn only where the entities are"), with the frame byte-identical.
+Desktop, 1920x1080, RTX 4070 laptop, best of five alternating runs:
+
+| scene | style | before | after |
+|---|---|---|---|
+| `stylize_props` (barrel, Y Bot in ASCII; cask, crate in pencil) | ASCII | 0.419 | 0.223 ms |
+| | Pencil | 0.072 | 0.048 ms |
+| `ascii_entities` (six props) | ASCII | 0.450 | 0.166 ms |
+| `stylize_props --style ascii` (whole frame, control) | ASCII | 0.484 | 0.440 ms |
+
+The control isn't scissored and moved within this machine's run-to-run
+spread. The saving scales with the share of the screen the props leave
+untouched, which is what a phone pays for. The browser is unmeasured.
+
 **DX12.** The ASCII and mask passes read every texture with
 `textureLoad` and bind no sampler of their own (the chain's one linear
 sampler is in the input group bound once a pass), so they add nothing to
@@ -793,9 +815,53 @@ GPU clocks down at 60 fps; `FLINT_VSYNC=0` gave ASCII 0.06--0.07 ms and
 the mask 0.01 ms. Compare passes with vsync off, or with `flint render
 --gpu-time`.
 
-**Not done:** a phone. The Pixel 8 Pro (the shared phone, behind
-`C:/Users/chris/dev/.pixel-lock`) wasn't measured; a tile GPU's
-bandwidth is where a full-screen pass would show first.
+### On a phone (#378)
+
+**ASCII halves the phone's frame rate.** Pixel 8 Pro (Tensor G3,
+Mali-G715, Chrome 157), DPR 2.25, a 1008x2005--2257 canvas with the
+scene at the web's 0.67 cap (672x1496), the same bundle and variants as
+above plus each with `edges = 1` (#267), played through `adb reverse`
+under the pixel lock. `?perf=1&fps=native`, so frames aren't paced and
+show what each costs; read 25--30 s after Begin, three 10 s windows a
+scene, the five scenes there and back (2026-11-08, `tools/phone-perf/`):
+
+| scene | p50 | p90 | frames / 10 s | passes |
+|---|---|---|---|---|
+| no style | 8.4 ms | 16.8 | 641--653 | 18 |
+| per entity | 25.0 | 67--117 | 249--299 | 26 |
+| full screen | 25.0--33.2 | 67--117 | 248--295 | 26 |
+| per entity, edges | 24.9--33.3 | 100--125 | 224--291 | 26 |
+| full screen, edges | 25.0 | 67--125 | 233--308 | 26 |
+| no style, at the end of the run (thermal status 1, skin 43 °C) | 16.6 | 17--33 | 542--611 | 18 |
+
+A second run bisected it on the no-style scene with `?style=`
+(thermal status 1, skin 39--43 °C, so 60 Hz is its ceiling):
+
+| added | p50 | p90 | frames / 10 s |
+|---|---|---|---|
+| nothing | 16.6 ms | 17--25 | 580--632 |
+| `invert` | 16.7 | 16.7 | 599 |
+| `palette` | 16.7 | 16.8 | 579--597 |
+| `ascii`, full screen, no styled entities (no mask) | 25.0 | 100 | 289--299 |
+| `ascii:cell=16` | 16.7--25.0 | 108 | 293 |
+
+- **It is ASCII's own passes**, not the mask (it costs the same with
+  nothing styled) and not the display stage (invert and palette hold
+  60). Four times the cell area barely helps, so it doesn't follow the
+  cell count, and a p90 near 100 ms says about one frame in ten stalls
+  rather than every frame paying the same. Edges add little on top.
+- **The CPU isn't it:** 2.3 ms a frame without, 3.6--5.7 with. No bind
+  groups a frame at the 0.67 cap, as on the desktop under a scale.
+- **The pass timings can't say which.** Chrome exposes
+  `timestamp-query` on the phone, but Mali reads 0.00 for every pass
+  after `Scene` (SSAO, Bloom, Composite and ASCII alike), so `?perf=1`'s
+  GPU list is only good for Grass, Shadows (0.7--2.3 ms) and Scene
+  (0.6--0.8 ms) here. Compare frame times against a control, unpaced.
+- Paced (the phone's default `fps=auto`), the per-entity scene holds 30
+  fps, one refresh in four at 120 Hz, with p99 117 ms.
+
+Finding and fixing the pass is #568. The suspects are the cell pass's
+ping-ponged `Rgba16Uint` history (#277) and the glyph pass.
 
 ## Touch (#132)
 

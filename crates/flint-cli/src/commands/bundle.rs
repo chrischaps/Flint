@@ -967,4 +967,35 @@ mod tests {
             "{problems:?}"
         );
     }
+
+    /// #413: an image a user style reads must be packed: its `file` is a
+    /// reference, and loading from the bundle reports it missing.
+    #[test]
+    fn user_style_images_are_checked_from_the_bundle() {
+        let files = pack(&[
+            (
+                "styles/bundle_paper.shader.toml",
+                "version = 1\nname = \"bundle_paper\"\nshader = \"paper.wgsl\"\n\
+                 [images.paper]\nfile = \"papers/gone.png\"\n\
+                 [options.grade]\nkind = \"image\"\ndefault = \"luts/a.png\"\n",
+            ),
+            (
+                "styles/paper.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 return flint_image_paper(p.uv) * vec4<f32>(flint_lut_grade(p.color.rgb), 1.0);\n}\n",
+            ),
+            ("styles/luts/a.png", "png bytes"),
+            ("levels/a.scene.toml", "[scene]\nname = \"a\"\n"),
+        ]);
+        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
+        let problems = vfs::scoped(Arc::new(source), || {
+            check_user_styles(&["levels/a.scene.toml".into()])
+        });
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].from.ends_with("papers/gone.png")
+                && problems[0].what.contains("image not found"),
+            "{problems:?}"
+        );
+    }
 }

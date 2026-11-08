@@ -57,6 +57,8 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     StyleStage::Display,
     create,
 )
+// Glow over the finished frame, crossing styles as light does (#384)
+.draws_over_entities()
 .params(&[
     StyleParam::new("intensity", 1.5, 0.0..=4.0),
     StyleParam::new("threshold", 0.55, 0.0..=1.0),

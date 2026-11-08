@@ -13,8 +13,8 @@
 //
 // Blend (#278): the mask's .g says how much of the style a pixel's entity
 // asks for. Below 1 the glyph pixel is mixed with the picture as it came
-// (fade), or the cell is drawn whole or not at all, by its patch noise
-// (dissolve, flag 2).
+// (fade), or the cell is drawn whole or not at all, by its rank in the
+// patch noise among its prop's cells (dissolve, flag 2; #398).
 //
 // Cell silhouettes (#338): a variant with flag 4 (`silhouette = "cell"`)
 // draws a cell whole or not at all. A cell of its grid is its when at least
@@ -41,6 +41,9 @@
 // the cell, one texture each
 @group(3) @binding(4) var variant_cells_a: texture_2d<u32>;
 @group(3) @binding(5) var variant_cells_b: texture_2d<u32>;
+// Each dissolving variant's cells' ranks in its dissolve order (#398,
+// ascii_dissolve_rank.wgsl)
+@group(3) @binding(6) var dissolve_ranks: texture_2d<f32>;
 
 // The tone luminance of a colour in `slot`: stretched over the slot's range
 fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
@@ -504,34 +507,25 @@ fn resolve(p: vec2<f32>) -> Owner {
     return o;
 }
 
-fn cell_hash(c: vec2<f32>) -> f32 {
-    return fract(sin(dot(c, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
-
-fn value_noise(q: vec2<f32>) -> f32 {
-    let i = floor(q);
-    let f = fract(q);
-    let s = f * f * (3.0 - 2.0 * f);
-    return mix(
-        mix(cell_hash(i), cell_hash(i + vec2<f32>(1.0, 0.0)), s.x),
-        mix(cell_hash(i + vec2<f32>(0.0, 1.0)), cell_hash(i + vec2<f32>(1.0, 1.0)), s.x),
-        s.y,
-    );
-}
-
-// A cell's place in the dissolve order, 0..1: half patch noise a few cells
-// across (so glyphs arrive in patches that grow, like a tear spreading),
-// half per-cell hash (so a patch's edge is ragged and a small prop, which
-// holds only a few noise lattice points, still turns about `blend` of its
-// cells). The sum of two near-uniform values is triangular; its CDF maps
-// it back to uniform, so the share of turned cells follows the blend.
-fn dissolve_order(cell: vec2<f32>) -> f32 {
-    let n = value_noise(cell * 0.3) * 0.65 + value_noise(cell * 0.6 + vec2<f32>(31.0, 7.0)) * 0.35;
-    // Value noise piles up in the middle; spread it back toward 0..1
-    let patches = clamp((n - 0.5) * 2.0 + 0.5, 0.0, 1.0);
-    let s = 0.5 * (patches + cell_hash(cell + vec2<f32>(17.0, 5.0)));
-    let u = select(1.0 - 2.0 * (1.0 - s) * (1.0 - s), 2.0 * s * s, s < 0.5);
-    return clamp(u, 0.0, 0.9999);
+// Where a pixel's cell stands in its variant's dissolve (#398): the cell's
+// rank among the variant's cells nearby (ascii_dissolve_rank.wgsl), so a
+// prop turns `blend` of its cells however few it has. A cell the rank
+// pass didn't see as the variant's (a sliver between lattice samples), or
+// a variant past MAX_DISSOLVE, takes its place in the order itself.
+fn dissolve_place(slot: u32, p: vec2<f32>) -> f32 {
+    let v = variants[slot];
+    let cell = floor((p - v.origin) / v.cell);
+    if v.dissolve_row > 0u {
+        let at = vec2<i32>(cell) + vec2<i32>(CELL_OFFSET, i32(v.dissolve_row - 1u) + CELL_OFFSET);
+        let size = vec2<i32>(textureDimensions(dissolve_ranks));
+        if all(at >= vec2<i32>(0)) && all(at < size) {
+            let r = textureLoad(dissolve_ranks, at, 0).r;
+            if r >= 0.0 {
+                return r;
+            }
+        }
+    }
+    return dissolve_order(cell);
 }
 
 fn shown_entity(p: vec2<i32>) -> vec3<f32> {
@@ -699,7 +693,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return passed(p);
         }
         if blend < 1.0 && (v.flags & 2u) != 0u {
-            if dissolve_order(floor((p - v.origin) / v.cell)) >= blend {
+            if dissolve_place(slot, p) >= blend {
                 return passed(p);
             }
         }
@@ -761,7 +755,7 @@ fn text_at(p: vec2<f32>, index: vec2<i32>, cell: vec2<f32>) -> vec4<u32> {
             return text_passed(p);
         }
         if blend < 1.0 && (v.flags & 2u) != 0u {
-            if dissolve_order(floor((p - v.origin) / v.cell)) >= blend {
+            if dissolve_place(slot, p) >= blend {
                 return text_passed(p);
             }
         }

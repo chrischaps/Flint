@@ -1,0 +1,45 @@
+# A radial blur (#411): every pixel averages `samples` reads along the line
+# toward a point on screen, so the frame streaks out from it like a lens
+# zooming during the exposure. Its loop's bound is a parameter, the kind of
+# loop a user style is most likely to get wrong; every user loop is guarded
+# (at most 4096 turns a run, ADR 0112), so a bad bound draws a wrong pixel
+# instead of hanging the GPU.
+#
+#   flint render demo/user_styles.scene.toml --style radial_blur
+#   flint render demo/user_styles.scene.toml --style radial_blur:samples=48,strength=0.2
+version = 1
+name = "radial_blur"
+label = "Radial blur"
+stage = "display"
+shader = "radial_blur.wgsl"
+
+[params.samples]
+default = 24
+min = 1
+max = 64
+integer = true
+help = "Reads a pixel makes along its streak"
+
+[params.strength]
+default = 0.08
+min = 0.0
+max = 0.5
+help = "How far the streak reaches, as a share of the way to the centre"
+
+[params.center_x]
+default = 0.5
+min = 0.0
+max = 1.0
+label = "Centre x"
+
+[params.center_y]
+default = 0.45
+min = 0.0
+max = 1.0
+label = "Centre y"
+
+[params.clear]
+default = 0.12
+min = 0.0
+max = 1.0
+help = "The radius around the centre left sharp"

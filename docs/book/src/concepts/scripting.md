@@ -463,7 +463,7 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 
 Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.
 
-Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity.
+Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity; switch them with [`set_post_style`](#whole-frame-styles).
 
 A clear only removes the entity's own style. One it inherits from an ancestor, or the scene's whole-frame ASCII, still reaches it: to keep it smooth under those, use `set_style_param(id, "enabled", false)`.
 
@@ -505,6 +505,36 @@ A tween starts where the setting is now: the entity's own value, else the scene'
 `blend` is the cheapest setting to tween: it rides in the style mask beside the entity's id, so it never makes a variant. A tween of `cell` or `glow` makes a new variant row every frame it moves.
 
 `demo/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `demo/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
+
+#### Whole-frame styles
+
+The same for the scene's `[post_process.styles.<name>]` tables (#369): any registered style, for the whole frame. Kuwahara, invert, watercolor, palette, the full-screen ASCII look and [user styles](stylize-passes.md#user-authored-styles) all work.
+
+| Function | Description |
+|----------|-------------|
+| `set_post_style(style, enabled)` | Switch `style` on or off for the whole frame. Settings it had before are kept |
+| `set_post_style_param(style, param, value)` | Change one setting: a number (`radius`, `cell`, `strength`, ...; clamped to the style's range), a string option (`ramp`, `palette`, ...; one of its choices when the list is closed), a [colour](stylize-passes.md#colours) (`tint`), `enabled`, `order`, `feeds_bloom` (HDR styles), or `blend`, 0--1: how much of the style shows over what it read. Setting a param doesn't switch the style on |
+| `reset_post_style(style)` | Put the style back to what the scene authored (with any `--style` words over it): on or off, and every value |
+
+`set_post_style` and `reset_post_style` fire `post_style_changed` to every script's `on_event`, with `#{ style, enabled }`; a param change fires nothing. A param change every frame is a uniform write in a pass that already exists, and `blend` is one more draw with a blend constant, so neither allocates. A style switched on is built the first frame it draws. Mistakes are logged as warnings and change nothing. A scene load or transition puts the new scene's own settings in place.
+
+`blend` is how a script cross-fades into a look ([Blending a whole-frame style](stylize-passes.md#blending-a-whole-frame-style)):
+
+```rust
+// Fall asleep into paint over 3 s, starting at 2 s
+fn on_init() {
+    set_post_style("kuwahara", true);
+    set_post_style_param("kuwahara", "blend", 0.0);   // on, but none of it shows yet
+}
+fn on_update() {
+    let k = (total_time() - 2.0) / 3.0;
+    k = if k < 0.0 { 0.0 } else if k > 1.0 { 1.0 } else { k };
+    set_post_style_param("kuwahara", "blend", k);
+    set_post_style_param("kuwahara", "radius", 3.0 + 4.0 * k);
+}
+```
+
+`demo/dream_story.scene.toml` tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
 
 ### Post-Processing API
 

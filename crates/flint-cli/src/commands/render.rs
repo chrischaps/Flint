@@ -33,7 +33,8 @@ pub struct RenderArgs {
     pub height: Option<u32>,
 
     /// A look over the scene's post-processing (#279): a built-in
-    /// (ascii_noir, matrix, ink_wash, graphite), a
+    /// (ascii_noir, matrix, ink_wash, graphite, watercolor,
+    /// coloured_pencil, blueprint, charcoal), a
     /// `styles/<name>.look.toml` beside the scene, or a path. Merged over
     /// the scene's [post_process] key by key; the other flags apply over
     /// it. `--look help` lists every look and what to tune
@@ -1025,7 +1026,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 &ctx.device,
                 &ctx.queue,
                 &mut encoder,
-                &ctx.depth_view,
+                ctx.depth_target(),
                 &camera,
                 &ctx.color_view,
             );
@@ -1316,7 +1317,7 @@ fn draw_pixels(
     renderer.render_to(
         &ctx.device,
         &ctx.queue,
-        &ctx.depth_view,
+        ctx.depth_target(),
         camera,
         &ctx.color_view,
     );
@@ -1477,7 +1478,7 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         renderer.render_to(
             &ctx.device,
             &ctx.queue,
-            &ctx.depth_view,
+            ctx.depth_target(),
             &camera,
             &ctx.color_view,
         );
