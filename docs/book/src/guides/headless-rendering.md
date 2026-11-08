@@ -146,7 +146,7 @@ flint render scene.toml --debug-mode wireframe --output wireframe.png
 # Surface normals
 flint render scene.toml --debug-mode normals --output normals.png
 
-# Other modes: depth, uv, unlit, metalrough, style
+# Other modes: depth, uv, unlit, metalrough, style, edges
 flint render scene.toml --debug-mode depth --output depth.png
 
 # Wireframe overlay on solid geometry
@@ -161,7 +161,7 @@ flint render scene.toml --no-tonemapping --output linear.png
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Draw wireframe edges over solid shading |
 | `--show-normals` | `false` | Draw face-normal direction arrows |
 | `--no-tonemapping` | `false` | Disable tonemapping for raw linear output |

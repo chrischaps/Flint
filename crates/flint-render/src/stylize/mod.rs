@@ -98,6 +98,7 @@ mod spec;
 mod targets;
 pub mod text;
 
+pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
@@ -796,6 +797,10 @@ pub struct StyleFrame<'a> {
     /// The scene's folder, for styles that load files (a glyph set from
     /// `fonts/`), when the host knows it.
     pub scene_dir: Option<&'a std::path::Path>,
+    /// The renderer's debug shading mode: a style with a debug view of its
+    /// own draws it under its mode (ASCII's edges under
+    /// [`DebugMode::StyleEdges`](crate::DebugMode::StyleEdges), #349).
+    pub debug_mode: crate::DebugMode,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
 }

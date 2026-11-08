@@ -1321,6 +1321,9 @@ impl SceneRenderer {
         // The `style` debug view shows the mask over the plain scene (#334):
         // mask_view runs alone, so no other style's output speckles its hues
         let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        // and the `edges` view (#349) shows the ASCII style's edge passes
+        // over the plain scene: ASCII alone, drawing its edge view
+        let solo = solo.or((self.debug_state.mode == DebugMode::StyleEdges).then_some("ascii"));
         let hdr_styles = crate::stylize::solo(
             pp.styles
                 .active(crate::stylize::StyleStage::Hdr, config, ids),
@@ -1373,6 +1376,7 @@ impl SceneRenderer {
                 history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
+                debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,
             }

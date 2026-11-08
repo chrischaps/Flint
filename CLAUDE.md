@@ -30,10 +30,13 @@ Flint uses an **edit -> validate -> play** loop:
    flint render levels/demo.scene.toml --output test.png --schemas schemas \
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
    # Debug/post-processing flags:
-   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style
+   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style|edges
    #                          (style = the entity style mask, #263: needs post-processing;
    #                          prints and draws a legend of each id's hue, #309; runs mask_view
    #                          alone, the scene's other styles suspended, #334)
+   #                          (edges = ASCII's edge passes, #349: pixels by source, cells by
+   #                          decision + length bar; ascii alone, on at defaults if absent;
+   #                          ascii_edge_view.wgsl; StyleFrame::debug_mode carries the mode)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0

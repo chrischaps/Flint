@@ -1314,6 +1314,71 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The pixels within 6 of `rgb` (8-bit display values) in each channel.
+fn near(pixels: &[u8], rgb: [f32; 3]) -> usize {
+    let want = rgb.map(|v| (v * 255.0).round() as i32);
+    pixels
+        .chunks(4)
+        .filter(|p| (0..3).all(|c| (i32::from(p[c]) - want[c]).abs() <= 6))
+        .count()
+}
+
+/// #349: `DebugMode::StyleEdges` draws the ASCII style's edge view, ASCII
+/// switched on for it in a scene that has none: the box's silhouette in the
+/// depth step's colour, its cells' line glyphs in green, and no glyphs.
+/// Leaving the mode gives the plain frame back exactly.
+#[test]
+fn the_edges_debug_view_shows_sources_and_cells_and_lets_go() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let plain = gpu.frame(&mut renderer, &world);
+    assert!(!renderer
+        .effective_post_process_config()
+        .styles
+        .is_enabled("ascii"));
+
+    renderer.set_debug_mode(flint_render::DebugMode::StyleEdges);
+    let viewed = gpu.frame(&mut renderer, &world);
+    assert!(
+        renderer
+            .effective_post_process_config()
+            .styles
+            .is_enabled("ascii"),
+        "the view switched ASCII on"
+    );
+    let legend = flint_render::stylize::EDGE_VIEW_LEGEND;
+    let colour = |name: &str| legend.iter().find(|(_, n)| n.starts_with(name)).unwrap().0;
+    let depth = near(&viewed, colour("depth"));
+    let crease = near(&viewed, colour("crease"));
+    let line = near(&viewed, colour("cell draws"));
+    eprintln!("depth {depth}, crease {crease}, line glyph {line} pixels");
+    assert!(depth > 20, "only {depth} depth-step pixels around the box");
+    assert!(crease > 5, "only {crease} crease pixels on a turned box");
+    assert!(line > 20, "only {line} pixels of line glyphs");
+
+    renderer.set_debug_mode(flint_render::DebugMode::Pbr);
+    let after = gpu.frame(&mut renderer, &world);
+    assert!(
+        !renderer
+            .effective_post_process_config()
+            .styles
+            .is_enabled("ascii"),
+        "ASCII stayed on after the view"
+    );
+    assert_eq!(after, plain, "the frame changed after the view let go");
+}
+
 /// A transparent pane in front of a styled entity takes back the share of
 /// each pixel it covers (#290): nearly opaque glass gives the unstyled
 /// pixels back exactly, half-clear glass leaves the style showing through
