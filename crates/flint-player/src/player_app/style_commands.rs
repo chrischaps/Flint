@@ -6,8 +6,10 @@
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_render::entity_style;
+use flint_render::PostProcessConfig;
 use flint_runtime::GameEvent;
 use flint_script::context::ScriptCommand;
+use flint_script::{EntityStyle, StyleReader};
 
 /// The event a style change fires to scripts' `on_event`, with
 /// `#{ entity, style }` (`style` is `""` once cleared).
@@ -32,6 +34,36 @@ fn changed(entity_id: i64, style: &str) -> GameEvent {
     GameEvent::Custom {
         name: STYLE_CHANGED.into(),
         data: toml::Value::Table(data),
+    }
+}
+
+/// What scripts' `get_entity_style`, `get_entity_style_variant` and
+/// `get_style_param` read (#372): the renderer's own rules
+/// ([`entity_style::drawn_style`], [`entity_style::style_setting`]) over a
+/// copy of the post-process settings the frame is drawn with. The player
+/// installs a fresh one whenever the renderer's settings change
+/// ([`flint_render::SceneRenderer::post_config_generation`]).
+pub struct SceneStyles {
+    config: PostProcessConfig,
+}
+
+impl SceneStyles {
+    /// A reader over `config`, the settings the frame is drawn with.
+    pub fn new(config: PostProcessConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl StyleReader for SceneStyles {
+    fn entity_style(&self, world: &FlintWorld, id: EntityId) -> Option<EntityStyle> {
+        entity_style::drawn_style(world, &self.config, id).map(|d| EntityStyle {
+            style: d.style,
+            variant: d.variant,
+        })
+    }
+
+    fn style_param(&self, world: &FlintWorld, id: EntityId, param: &str) -> Option<toml::Value> {
+        entity_style::style_setting(world, &self.config, id, param)
     }
 }
 

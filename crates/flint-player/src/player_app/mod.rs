@@ -213,6 +213,9 @@ pub struct PlayerApp {
     camera_cut: camera_cut::CameraCutDetector,
     /// Style settings the engine is easing for scripts (#370)
     style_tweens: style_commands::StyleTweens,
+    /// The renderer's `post_config_generation` scripts' style reads were
+    /// last handed (#372); `None` until the first.
+    style_reader_generation: Option<u64>,
 
     // Skeletal animation: entity_id → asset name for bone matrix updates
     skeletal_entity_assets: HashMap<flint_core::EntityId, String>,

@@ -2652,6 +2652,72 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // Reading a style back (#372). These see the world as the script finds
+    // it: a style set this frame is still a queued command, and reads back
+    // from the next frame on. The host's StyleReader answers; without one
+    // every entity is unstyled.
+    fn read_style<T>(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        entity_id: i64,
+        f: impl FnOnce(
+            &dyn crate::style_reader::StyleReader,
+            &flint_ecs::FlintWorld,
+            EntityId,
+        ) -> Option<T>,
+    ) -> Option<T> {
+        if entity_id < 0 {
+            return None;
+        }
+        let c = crate::lock_or_recover(ctx);
+        let reader = c.style_reader.clone()?;
+        let world = unsafe { c.world_ref() };
+        f(reader.as_ref(), world, EntityId::from_raw(entity_id as u64))
+    }
+
+    // get_entity_style(entity_id) -> String — the style the entity is drawn
+    // in: its own, one it inherits from an ancestor, or the scene's
+    // whole-frame style; "" for none
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_entity_style", move |entity_id: i64| -> String {
+            read_style(&ctx, entity_id, |r, w, id| r.entity_style(w, id))
+                .map(|s| s.style)
+                .unwrap_or_default()
+        });
+    }
+
+    // get_entity_style_variant(entity_id) -> String — the same style's
+    // variant, named for the settings that set it apart
+    // ("ascii{ramp=blocks}", "ascii@barrel"); "" for none
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "get_entity_style_variant",
+            move |entity_id: i64| -> String {
+                read_style(&ctx, entity_id, |r, w, id| r.entity_style(w, id))
+                    .map(|s| s.variant)
+                    .unwrap_or_default()
+            },
+        );
+    }
+
+    // get_style_param(entity_id, param) — the value in effect: the entity's
+    // (or the ancestor's it inherits), else the scene's, else the style's
+    // default. A number (`cell`), a string (`ramp`), a colour as
+    // [r, g, b] (`tint`), `blend` 0..1, `enabled` true. () when the entity
+    // is drawn in no style or the style has no such setting
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "get_style_param",
+            move |entity_id: i64, param: &str| -> Dynamic {
+                read_style(&ctx, entity_id, |r, w, id| r.style_param(w, id, param))
+                    .map(toml_to_dynamic)
+                    .unwrap_or(Dynamic::UNIT)
+            },
+        );
+    }
+
     // reset_style_history() — the next frame doesn't follow on from this
     // one (a cutscene's new shot, a teleport, a respawn; #343): styles
     // that remember earlier frames, like ASCII's steady glyphs, start over
