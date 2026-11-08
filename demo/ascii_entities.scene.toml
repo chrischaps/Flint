@@ -12,7 +12,8 @@
 #   crate          phosphor green, inherited by the lantern on it
 #   lantern_glass  stays smooth                   enabled = false
 # Delete scope = "entities" and the whole frame is glyphs, the lantern's
-# glass still smooth.
+# glass still smooth. Add silhouette = "cell" to the table (or render with
+# --style ascii:silhouette=cell) and every prop's edge is whole glyphs (#338).
 
 [scene]
 name = "ASCII Entities"

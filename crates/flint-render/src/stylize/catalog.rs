@@ -115,7 +115,7 @@ pub fn listing_in(d: &StyleDescriptor, scene_dir: Option<&Path>) -> StyleListing
         },
         table: format!("[post_process.styles.{}]", d.name),
         component: d.component.map(str::to_string),
-        uses_mask: d.uses_mask,
+        uses_mask: d.uses_mask.ever(),
         params: d
             .params
             .iter()

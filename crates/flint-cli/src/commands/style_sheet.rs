@@ -2,6 +2,11 @@
 //! setting, side by side, each labelled with what it was given. The letters
 //! are the ASCII style's own built-in 8x8 glyphs (#264), so the sheet speaks
 //! in the same type the styles draw with.
+//!
+//! It is every sweep's sheet (#353): a style, post or look sweep's, and a
+//! Living Props `wooze.*` sweep's (#216), which also writes the game time in
+//! the top right and a note under a label when a column didn't take its value
+//! everywhere.
 
 use flint_render::glyph_atlas::GlyphAtlas;
 use image::{Rgba, RgbaImage};
@@ -25,8 +30,26 @@ pub struct SheetText {
     pub title: String,
     /// Under it: what was swept, and over what.
     pub subtitle: String,
+    /// Top right, or nothing when empty: the moment the cells show (`T 3.50S`).
+    pub time: String,
     /// One per cell: the value it took.
     pub labels: Vec<String>,
+    /// One per cell, or none: anything a reader has to know to believe the
+    /// label, dim under it. Empty notes take no room.
+    pub notes: Vec<String>,
+}
+
+impl SheetText {
+    /// A sheet with a title, a subtitle and a label a cell, and nothing else.
+    pub fn new(title: impl Into<String>, subtitle: impl Into<String>, labels: Vec<String>) -> Self {
+        Self {
+            title: title.into(),
+            subtitle: subtitle.into(),
+            time: String::new(),
+            labels,
+            notes: Vec::new(),
+        }
+    }
 }
 
 /// How big the letters are: a glyph pixel per `scale` image pixels.
@@ -45,7 +68,9 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
     let line = GLYPH * scale;
 
     let head = GLYPH * title_scale + 6 * scale + line + 10 * scale;
-    let label_band = 6 * scale + line + 4 * scale;
+    let noted = text.notes.iter().any(|note| !note.is_empty());
+    let note_band = if noted { 3 * scale + line } else { 0 };
+    let label_band = 6 * scale + line + note_band + 4 * scale;
     let row_h = cell_h + 2 + label_band;
     let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
     let height = MARGIN * 2 + head + rows * row_h + (rows - 1) * GUTTER;
@@ -62,6 +87,14 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
         TITLE,
         &text.title,
     );
+    if !text.time.is_empty() {
+        // Right-aligned on the title's line, clipped at the left margin
+        let advance = GLYPH * title_scale;
+        let fit = fit_text(&text.time, width - 2 * MARGIN, title_scale);
+        let w = fit.chars().count() as u32 * advance;
+        let x = (width - MARGIN).saturating_sub(w).max(MARGIN);
+        draw_text(&mut sheet, &font, x, y, title_scale, LABEL, &fit);
+    }
     y += GLYPH * title_scale + 6 * scale;
     draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, &text.subtitle);
     let top = MARGIN + head;
@@ -83,6 +116,11 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
                 LABEL,
                 &fit,
             );
+        }
+        if let Some(note) = text.notes.get(i).filter(|n| !n.is_empty()) {
+            let fit = fit_text(note, cell_w, scale);
+            let below = y + cell_h + 2 + 6 * scale + line + 3 * scale;
+            draw_text(&mut sheet, &font, x + 1, below, scale, DIM, &fit);
         }
     }
     sheet
@@ -154,11 +192,6 @@ pub fn draw_text(
 /// Nothing styled still gets a card saying so, so an empty mask reads as
 /// empty rather than broken.
 pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::LegendEntry]) {
-    let (w, h) = img.dimensions();
-    let scale = (w / 640).clamp(1, 3);
-    let line = GLYPH * scale;
-    let pad = 6 * scale;
-    let gap = 4 * scale;
     let rows: Vec<(Option<[f32; 3]>, String)> = if entries.is_empty() {
         vec![(None, "no styled entities".to_string())]
     } else {
@@ -167,6 +200,24 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
             .map(|e| (Some(e.color), format!("{} {}", e.id, e.name)))
             .collect()
     };
+    let scale = (img.width() / 640).clamp(1, 3);
+    draw_card(img, "style mask", &rows, scale);
+}
+
+/// A legend card in the image's lower left: `title`, then a row each of
+/// a swatch (display values) and its text, or the text alone. The style
+/// mask view's (#309) and the ASCII edge view's (#349). `scale` is image
+/// pixels a font pixel.
+pub fn draw_card(
+    img: &mut RgbaImage,
+    title: &str,
+    rows: &[(Option<[f32; 3]>, String)],
+    scale: u32,
+) {
+    let (w, h) = img.dimensions();
+    let line = GLYPH * scale;
+    let pad = 6 * scale;
+    let gap = 4 * scale;
     let longest = rows
         .iter()
         .map(|(_, t)| t.chars().count())
@@ -186,7 +237,7 @@ pub fn draw_legend(img: &mut RgbaImage, entries: &[flint_render::style_mask::Leg
         }
     }
     let font = GlyphAtlas::builtin();
-    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, "style mask");
+    draw_text(img, &font, x0 + pad, y0 + pad, scale, DIM, title);
     for (i, (color, text)) in rows.iter().enumerate() {
         let y = y0 + pad + header + i as u32 * (line + gap);
         let mut tx = x0 + pad;
@@ -223,11 +274,49 @@ mod tests {
     const BLUE: Rgba<u8> = Rgba([10, 10, 200, 255]);
 
     fn text(labels: &[&str]) -> SheetText {
-        SheetText {
-            title: "A Scene".into(),
-            subtitle: "ascii.cell".into(),
-            labels: labels.iter().map(|l| l.to_string()).collect(),
-        }
+        SheetText::new(
+            "A Scene",
+            "ascii.cell",
+            labels.iter().map(|l| l.to_string()).collect(),
+        )
+    }
+
+    /// #216's sheets say the moment, top right, in the label's ink.
+    #[test]
+    fn a_time_prints_top_right() {
+        let cells = vec![RgbaImage::from_pixel(240, 120, RED); 2];
+        let plain = compose(&cells, &text(&["0", "1"]));
+        let mut timed = text(&["0", "1"]);
+        timed.time = "T 3.50S".into();
+        let timed = compose(&cells, &timed);
+        assert_eq!(plain.dimensions(), timed.dimensions(), "no extra room");
+        let ink_right = |s: &RgbaImage| {
+            (s.width() / 2..s.width())
+                .flat_map(|x| (0..MARGIN + 24).map(move |y| (x, y)))
+                .filter(|&(x, y)| *s.get_pixel(x, y) != PAPER)
+                .count()
+        };
+        assert_eq!(ink_right(&plain), 0);
+        assert!(ink_right(&timed) > 0);
+    }
+
+    /// #216's notes: dim, under their own label, and only room when one is set.
+    #[test]
+    fn a_note_prints_under_its_label() {
+        let cells = vec![RgbaImage::from_pixel(240, 120, RED); 2];
+        let plain = compose(&cells, &text(&["0", "1"]));
+        let mut noted = text(&["0", "1"]);
+        noted.notes = vec![String::new(), "props read 0.3".into()];
+        let noted = compose(&cells, &noted);
+        assert!(noted.height() > plain.height(), "a note gets a line");
+        let dim_under_second = (MARGIN + 242 + GUTTER..noted.width())
+            .flat_map(|x| (plain.height() - MARGIN..noted.height()).map(move |y| (x, y)))
+            .filter(|&(x, y)| *noted.get_pixel(x, y) != PAPER)
+            .count();
+        assert!(dim_under_second > 0, "the note is under the second cell");
+        let mut empty = text(&["0", "1"]);
+        empty.notes = vec![String::new(); 2];
+        assert_eq!(compose(&cells, &empty).dimensions(), plain.dimensions());
     }
 
     fn count(sheet: &RgbaImage, color: Rgba<u8>) -> usize {

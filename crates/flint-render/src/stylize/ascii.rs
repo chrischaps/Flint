@@ -22,6 +22,8 @@
 //! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
 //! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
 //! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
+//! silhouette = "pixel"  # per-entity: pixel | cell (whole glyphs at the edge, #338)
+//! cell_share = 0.5      # per-entity, cell silhouette: share of a cell that is the entity's
 //! ```
 //!
 //! It runs at the display stage: on the finished picture at output
@@ -116,12 +118,24 @@
 //! glyph is, so a palette or tint holds; the whole frame's cells (slot 0)
 //! have no silhouette and are untouched. `ground = "inverse"` already
 //! fills the cell with ink and ignores them.
+//!
+//! `silhouette = "cell"` (#338) is the other reading: the silhouette made
+//! of whole glyphs, a cell all glyph or all scene. A cell of the variant's
+//! grid is the variant's when at least `cell_share` of its 16 lattice
+//! samples are; then every pixel of it draws as the variant, the scene's
+//! pixels in it included, and the variant's own pixels in a cell it
+//! doesn't hold draw as the whole frame (or pass through). The glyph pass
+//! asks it per pixel of each cell, over the grids of the snapping variants
+//! (up to [`MAX_SNAP_GRIDS`]; a variant on a grid past them still drops
+//! its own minority cells, but fills no others). The pixel `outline` is
+//! off on a snapped variant: its edge is the cells'. A variant that cuts
+//! to the pixel keeps its own pixels inside a snapped neighbour's cell.
 
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    choices_with, ChoiceScope, StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption,
-    StyleParam, StylePass, StyleStage, StyleTexture,
+    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleFrame, StyleHint, StyleInput,
+    StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
@@ -364,6 +378,12 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             min: 0.0,
             max: 1.0,
         },
+        StyleParam {
+            name: "cell_share",
+            default: 0.5,
+            min: 0.0625,
+            max: 1.0,
+        },
     ],
     options: &[
         StyleOption {
@@ -426,10 +446,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             choices: EDGE_INKS,
             discover: None,
         },
+        StyleOption {
+            name: "silhouette",
+            default: "pixel",
+            choices: SILHOUETTES,
+            discover: None,
+        },
     ],
-    // The mask gives styled entities their outlines (#267); with no entity
-    // asking for a style it is one cleared target and an empty pass
-    uses_mask: true,
+    // The mask gives styled entities their outlines (#267), so only while
+    // edges are on and something is styled (#350)
+    uses_mask: MaskUse::When(reads_mask),
     needs: &[],
     hints: &[
         StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
@@ -550,6 +576,16 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             "min_coverage",
             "Min coverage",
             "Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1",
+        ),
+        StyleHint::new(
+            "silhouette",
+            "Silhouette",
+            "Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers",
+        ),
+        StyleHint::new(
+            "cell_share",
+            "Cell share",
+            "Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features",
         ),
     ],
     component: Some("ascii_style"),
@@ -752,6 +788,14 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             STATS_FORMAT,
         );
         let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
+        // The edge debug view (#349): the edge pixels and the edge cells in
+        let edge_view_pipeline = kit::fullscreen_pipeline(
+            device,
+            "ASCII Edge View Pipeline",
+            &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
+            &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edges_in_bgl],
+            d.format,
+        );
         Box::new(Ascii {
             edge_pipeline: kit::fullscreen_pipeline(
                 device,
@@ -780,6 +824,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
             edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
                 device,
                 "ASCII Edge Cell Uniforms",
+            ),
+            edge_view_pipeline,
+            edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
+                device,
+                "ASCII Edge View Uniforms",
             ),
             edges_in_bgl,
             depth_bgl,
@@ -883,13 +932,17 @@ struct AsciiUniforms {
     /// The same inks in OKLab (#320; L, a, b, unused w), for matching.
     palette_lab: [[f32; 4]; MAX_COLORS],
     /// x: rows of `variants` in use (1 = the whole frame alone); y: 1 when
-    /// the whole frame passes through (only entities asked, #266).
+    /// the whole frame passes through (only entities asked, #266); z:
+    /// bands (#313); w: grids in `snap_grids` (#338).
     variant_meta: [u32; 4],
     /// The variant cell state's bands (#313), `variant_meta[2]` of them:
     /// each grid's cell and origin, and its (first row, rows, columns,
     /// footprint's f32 bits).
     bands: [[f32; 4]; MAX_BANDS],
     band_rows: [[u32; 4]; MAX_BANDS],
+    /// The grids of the variants whose silhouettes snap to whole cells
+    /// (#338), `variant_meta[3]` of them: (cell, origin).
+    snap_grids: [[f32; 4]; MAX_SNAP_GRIDS],
     /// The line glyphs' ink for edge ink color (#351), display rgb, unused w.
     edge_color: [f32; 4],
 }
@@ -938,7 +991,9 @@ struct VariantUniform {
     /// Where the variant's four edge glyphs sit in the ramp table, or
     /// [`NO_EDGE_START`] for the whole frame's (a variant in its font).
     edge_start: u32,
-    _pad_font: u32,
+    /// With [`SNAP`], the least share of a cell's 16 samples the variant
+    /// must cover to draw the cell whole (#338).
+    cell_share: f32,
 }
 
 /// A variant whose edge glyphs are the uniform's own; `NO_EDGE_START` in
@@ -977,7 +1032,51 @@ struct EdgeCellUniforms {
     _pad: f32,
 }
 
-/// Edge pixels: the unit gradient's structure tensor and the edge's kind.
+/// The edge debug view's uniforms (#349), `ascii_edge_view.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct EdgeViewUniforms {
+    cell: [f32; 2],
+    origin: [f32; 2],
+    size: [f32; 2],
+    edge_size: [f32; 2],
+    threshold: f32,
+    max_len: f32,
+    srgb: f32,
+    dim: f32,
+    thick: f32,
+    _pad: [f32; 3],
+}
+
+/// The edge debug view's colours (#349), as `ascii_edge_view.wgsl` paints
+/// them (display values), each with what it marks: the legend `flint
+/// render --debug-mode edges` draws and F4 lists.
+pub const EDGE_VIEW_LEGEND: &[([f32; 3], &str)] = &[
+    ([0.25, 0.85, 1.0], "depth step"),
+    ([1.0, 0.68, 0.2], "crease"),
+    ([1.0, 0.35, 0.85], "styled outline"),
+    ([0.4, 1.0, 0.45], "cell draws a line glyph"),
+    ([0.25, 0.55, 0.3], "cell yields its line (dashed)"),
+    ([1.0, 0.25, 0.2], "past edge_max: texture"),
+    ([0.55, 0.55, 0.55], "under edge_threshold"),
+];
+
+/// The four edge keys the view (#349) is read against, as `config` sets
+/// them: `edge_threshold 0.5, edge_max 3 (cell widths); edge_depth 0.6,
+/// edge_normal 2.5`.
+pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> String {
+    let p = |name: &str| STYLE.param(config, name);
+    format!(
+        "edge_threshold {}, edge_max {} (cell widths); edge_depth {}, edge_normal {}",
+        p("edge_threshold"),
+        p("edge_max"),
+        p("edge_depth"),
+        p("edge_normal")
+    )
+}
+
+/// Edge pixels: the unit gradient's structure tensor and the edge's source
+/// (1 crease, 2 depth, 3 outline).
 const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
 /// 32-bit, so w holds the near side's hue as an exact 24-bit integer
@@ -1166,7 +1265,12 @@ const CELLS_SHADER: &str = concat!(
 pub(crate) const GLYPH_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
     include_str!("../palette.wgsl"),
-    include_str!("ascii.wgsl")
+    include_str!("ascii.wgsl"),
+    include_str!("ascii_edge_thin.wgsl")
+);
+const EDGE_VIEW_SHADER: &str = concat!(
+    include_str!("ascii_edge_view.wgsl"),
+    include_str!("ascii_edge_thin.wgsl")
 );
 const VARIANT_CELLS_SHADER: &str = concat!(
     include_str!("ascii_common.wgsl"),
@@ -1304,6 +1408,42 @@ const PASS_THROUGH: u32 = 1;
 
 /// A variant's flag: a blend below 1 turns whole cells (#278).
 const DISSOLVE: u32 = 2;
+
+/// A variant's flag: its silhouette snaps to whole cells (#338); `SNAP` in
+/// ascii.wgsl.
+const SNAP: u32 = 4;
+
+/// How a per-entity variant's silhouette meets the scene (#338): cut to the
+/// mask's pixel, or whole cells, each drawn or not by how much of it the
+/// entity covers.
+pub const SILHOUETTES: &[&str] = &["pixel", "cell"];
+
+/// Grids the glyph pass asks for a snapped cell (#338); `MAX_SNAP_GRIDS`
+/// in ascii_common.wgsl.
+pub const MAX_SNAP_GRIDS: usize = 8;
+
+/// The distinct grids, (cell, origin), of the drawn variants (rows past 0)
+/// with [`SNAP`], first met first, at most [`MAX_SNAP_GRIDS`] (#338).
+fn snap_grids(rows: &[VariantUniform]) -> Vec<[f32; 4]> {
+    let mut grids: Vec<[f32; 4]> = Vec::new();
+    for row in rows.iter().skip(1) {
+        if row.flags & (SNAP | PASS_THROUGH) != SNAP {
+            continue;
+        }
+        let grid = [row.cell[0], row.cell[1], row.origin[0], row.origin[1]];
+        if grids
+            .iter()
+            .any(|g| g.map(f32::to_bits) == grid.map(f32::to_bits))
+        {
+            continue;
+        }
+        if grids.len() == MAX_SNAP_GRIDS {
+            break;
+        }
+        grids.push(grid);
+    }
+    grids
+}
 
 /// The cell state texture's size for a `size` frame: every whole and part
 /// cell, plus the one texel left of (above) the origin the shaders offset
@@ -1498,6 +1638,10 @@ struct Ascii {
     edge_cell_pipeline: wgpu::RenderPipeline,
     edge_uniforms: wgpu::Buffer,
     edge_cell_uniforms: wgpu::Buffer,
+    /// The edge debug view (#349), drawn instead of the glyphs under
+    /// `DebugMode::StyleEdges`.
+    edge_view_pipeline: wgpu::RenderPipeline,
+    edge_view_uniforms: wgpu::Buffer,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -1668,7 +1812,7 @@ fn variant_uniform(
         // The caller's, from the variant's font (#335)
         glyph: [0.0; 2],
         edge_start: NO_EDGE_START,
-        _pad_font: 0,
+        cell_share: param("cell_share").clamp(1.0 / 16.0, 1.0),
     }
 }
 
@@ -2119,10 +2263,18 @@ impl Ascii {
             );
             let flags = if v.off {
                 PASS_THROUGH
-            } else if option("transition") == "dissolve" {
-                DISSOLVE
             } else {
-                0
+                let dissolve = if option("transition") == "dissolve" {
+                    DISSOLVE
+                } else {
+                    0
+                };
+                let snap = if option("silhouette") == "cell" {
+                    SNAP
+                } else {
+                    0
+                };
+                dissolve | snap
             };
             slots[id as usize] = rows.len() as u32;
             let mut row = variant_uniform(&param, &option, cell, origin, ramp, &palette, flags);
@@ -2218,6 +2370,56 @@ impl Ascii {
                 ),
                 &edges.bind,
                 &self.picture_bind(frame, input, false),
+            ],
+        );
+    }
+
+    /// The edge debug view (#349): the edge pixels by source and each
+    /// cell's decision, over the picture in grey.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_edge_view(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
+        output: &wgpu::TextureView,
+        edge_cells: &Owned,
+        cell: [f32; 2],
+        origin: [f32; 2],
+    ) {
+        let edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(edges) = edges_slot.as_ref() else {
+            return;
+        };
+        let uniforms = EdgeViewUniforms {
+            cell,
+            origin,
+            size: [frame.width as f32, frame.height as f32],
+            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
+            threshold: frame.param("edge_threshold").max(0.01),
+            max_len: frame.param("edge_max"),
+            srgb: if frame.srgb() { 1.0 } else { 0.0 },
+            dim: 0.3,
+            thick: frame.pixels_per_point.max(1.0).round(),
+            _pad: [0.0; 3],
+        };
+        frame
+            .queue
+            .write_buffer(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge View Pass",
+            output,
+            &self.edge_view_pipeline,
+            &[
+                &frame.uniform(
+                    "ASCII Edge View Uniform BG",
+                    &self.uniform_bgl,
+                    &self.edge_view_uniforms,
+                ),
+                &frame.sampled_input("ASCII Edge View Input BG", &self.input_bgl, input),
+                &edges.bind,
+                &edge_cells.bind,
             ],
         );
     }
@@ -2431,6 +2633,7 @@ impl StylePass for Ascii {
         let grid = cell_grid(size, cell, origin);
         // Each per-entity variant's band of cells (#313)
         let bands = assign_bands(&mut variants, size);
+        let snapping = snap_grids(&variants);
 
         // Edges (#267): line glyphs from geometry, one texel a cell on the
         // same grid as the cell state
@@ -2455,8 +2658,15 @@ impl StylePass for Ascii {
         );
         // The variant table (#336), written before any pass reads it
         let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &mut slots);
-        if edges > 0.0 {
+        // The edge debug view (#349) runs the edge passes even with the
+        // glyphs' edges off, and draws them in place of the glyphs
+        let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
+        if edges > 0.0 || edge_view {
             self.encode_edges(frame, encoder, input, edge_cells, cell, &edge_table);
+        }
+        if edge_view {
+            self.encode_edge_view(frame, encoder, input, output, edge_cells, cell, origin);
+            return;
         }
 
         // Last frame's cells and this frame's, ping-ponged (#277)
@@ -2529,10 +2739,11 @@ impl StylePass for Ascii {
                 variants.len() as u32,
                 !(frame.whole_frame() && frame.option("scope") != "entities") as u32,
                 bands.len() as u32,
-                0,
+                snapping.len() as u32,
             ],
             bands: [[0.0; 4]; MAX_BANDS],
             band_rows: [[0; 4]; MAX_BANDS],
+            snap_grids: [[0.0; 4]; MAX_SNAP_GRIDS],
             edge_color: {
                 let [r, g, b] = frame.color("edge_color");
                 [r, g, b, 0.0]
@@ -2554,6 +2765,7 @@ impl StylePass for Ascii {
             uniforms.bands[i] = [b.cell[0], b.cell[1], b.origin[0], b.origin[1]];
             uniforms.band_rows[i] = [b.row, b.rows, b.cols, b.footprint.to_bits()];
         }
+        uniforms.snap_grids[..snapping.len()].copy_from_slice(&snapping);
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -2719,6 +2931,23 @@ impl StylePass for Ascii {
     }
 }
 
+/// Whether ASCII reads the style mask under `config` (#350), beside the
+/// per-entity case every style with a component gets (an entity naming
+/// ASCII: its variants are looked up by mask id). With no id there is no
+/// boundary to outline and no entity to pass through; past that the mask
+/// is read for its outlines while `edges > 0`, and for the pixels of
+/// another style's entities, which a later style draws over (#317).
+fn reads_mask(
+    config: &crate::postprocess::PostProcessConfig,
+    ids: &crate::style_mask::StyleIds,
+) -> bool {
+    !ids.is_empty()
+        && (STYLE.param(config, "edges") > 0.0
+            || ids
+                .iter()
+                .any(|(id, _)| ids.variant(id).is_some_and(|v| v.style != STYLE.name)))
+}
+
 /// The style mask ids whose pixels a display style that runs after ASCII
 /// draws over (#317): an entity of another style that's on this frame.
 fn overdrawn_ids(frame: &StyleFrame<'_>) -> Vec<u32> {
@@ -2768,7 +2997,13 @@ mod tests {
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
-            160 + 2 * 16 + 64 * 16 + 2 * MAX_COLORS * 16 + 16 + MAX_BANDS * 32 + 16
+            160 + 2 * 16
+                + 64 * 16
+                + 2 * MAX_COLORS * 16
+                + 16
+                + MAX_BANDS * 32
+                + MAX_SNAP_GRIDS * 16
+                + 16
         );
         // #351's edge colour, last
         assert_eq!(
@@ -2793,6 +3028,11 @@ mod tests {
                 "ascii_edge_cells.wgsl",
                 include_str!("ascii_edge_cells.wgsl"),
                 std::mem::size_of::<EdgeCellUniforms>(),
+            ),
+            (
+                "ascii_edge_view.wgsl",
+                EDGE_VIEW_SHADER,
+                std::mem::size_of::<EdgeViewUniforms>(),
             ),
         ] {
             let module = naga::front::wgsl::parse_str(src).expect(name);
@@ -2841,7 +3081,7 @@ mod tests {
         }
         let edges = STYLE.params.iter().find(|p| p.name == "edges").unwrap();
         assert_eq!(edges.default, 1.0);
-        assert!(STYLE.uses_mask, "outlines read the style mask");
+        assert!(STYLE.uses_mask.ever(), "outlines read the style mask");
     }
 
     #[test]
@@ -3103,6 +3343,46 @@ mod tests {
         // And so are the variant cell state's bands (#313)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_BANDS: u32 = {MAX_BANDS}u;")));
+        // And the snapping grids and flag (#338)
+        assert!(include_str!("ascii_common.wgsl")
+            .contains(&format!("const MAX_SNAP_GRIDS: u32 = {MAX_SNAP_GRIDS}u;")));
+        assert!(include_str!("ascii.wgsl").contains(&format!("const SNAP: u32 = {SNAP}u;")));
+    }
+
+    #[test]
+    fn snapping_variants_list_each_grid_once_and_skip_the_rest() {
+        let rows = vec![
+            VariantUniform::zeroed(),
+            variant_row(8.0, [0.0, 0.0], 1.0, SNAP),
+            // The same grid: listed once
+            variant_row(8.0, [0.0, 0.0], 2.0, SNAP | DISSOLVE),
+            // Cut to the pixel: not listed
+            variant_row(12.0, [0.0, 0.0], 1.0, 0),
+            // Passes through: nothing to snap
+            variant_row(16.0, [0.0, 0.0], 1.0, SNAP | PASS_THROUGH),
+            // An object grid
+            variant_row(8.0, [3.0, 5.0], 1.0, SNAP),
+        ];
+        assert_eq!(
+            snap_grids(&rows),
+            vec![[8.0, 8.0, 0.0, 0.0], [8.0, 8.0, 3.0, 5.0]]
+        );
+        let many: Vec<_> = std::iter::once(VariantUniform::zeroed())
+            .chain((0..MAX_SNAP_GRIDS + 3).map(|i| variant_row(8.0, [i as f32, 0.0], 1.0, SNAP)))
+            .collect();
+        assert_eq!(snap_grids(&many).len(), MAX_SNAP_GRIDS);
+    }
+
+    #[test]
+    fn silhouette_is_an_option_and_cell_share_a_param() {
+        assert_eq!(option("silhouette").default, "pixel");
+        assert_eq!(option("silhouette").choices, SILHOUETTES);
+        let share = STYLE
+            .params
+            .iter()
+            .find(|p| p.name == "cell_share")
+            .unwrap();
+        assert_eq!(share.default, 0.5);
     }
 
     fn variant_row(cell: f32, origin: [f32; 2], footprint: f32, flags: u32) -> VariantUniform {

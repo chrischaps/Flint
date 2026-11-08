@@ -26,7 +26,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
         param("anisotropy", 1.0, 0.0, 2.0),
     ],
     options: &[],
-    uses_mask: false,
+    uses_mask: super::MaskUse::Never,
     needs: &[],
     hints: &[
         StyleHint::new("radius", "Radius (px)", "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more").integer(),

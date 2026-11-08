@@ -49,8 +49,8 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed, StyleParam,
-    StylePass, StyleStage,
+    MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed,
+    StyleParam, StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeMap;
@@ -914,7 +914,11 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         stage: source.stage,
         params: Box::leak(params.into_boxed_slice()),
         options: &[],
-        uses_mask: source.inputs.mask,
+        uses_mask: if source.inputs.mask {
+            MaskUse::Always
+        } else {
+            MaskUse::Never
+        },
         needs: if source.inputs.edges {
             &[StyleNeed::Edges]
         } else {

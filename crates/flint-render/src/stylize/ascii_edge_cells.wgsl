@@ -134,7 +134,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 all_j += e.xyz;
                 all_n += weight;
                 all_c += c;
-                if e.w > 1.5 {
+                // w: 1 crease, 2 depth, 3 outline (ascii_edges.wgsl)
+                if e.w > 2.5 {
                     out_j += e.xyz;
                     out_n += weight;
                     out_c += c;
