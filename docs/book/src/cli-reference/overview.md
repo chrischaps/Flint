@@ -327,6 +327,8 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
 | `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
 | `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
+| `--scripts` | `false` | Run the scene's scripts, one tick a clock step in the player's frame order, deterministically (seeded `random()`, no wall clock). What isn't drawn headless is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
+| `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
 | `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it. Everything else moves to stderr |
@@ -344,11 +346,13 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
-> **`flint render` runs no scripts.** Anything your game drives from a script —
-> a render mode, a time of day, a floating hull, an animated character — will
-> not happen. The render-mode flags exist precisely so a stylized frame can be
-> captured without one. For script-driven world state, bake a fixture scene
-> with the values you want; for animation, note that skinned meshes render at
+> **`flint render` runs no scripts unless you pass `--scripts`.** Without it,
+> anything your game drives from a script — a render mode, a time of day, a
+> floating hull, an animated character — will not happen. With it, what scripts
+> write to the world, Living Props and the wooze field is drawn, but physics,
+> particles, render modes and the HUD still aren't (a warning names them). The
+> render-mode flags exist so a stylized frame can be captured without a script.
+> For animation, note that skinned meshes render at
 > **bind pose** headlessly. To capture a posed frame of a rigged model, use the
 > model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
 > (optionally with `--clip`, `--layer` or `--sequence`). Particles are the

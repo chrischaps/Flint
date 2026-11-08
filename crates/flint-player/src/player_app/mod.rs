@@ -21,6 +21,7 @@ mod vfs_tests;
 pub mod fonts;
 mod frame;
 pub mod frame_rate;
+pub mod headless_scripts;
 mod hud_render;
 mod init;
 mod input_config;

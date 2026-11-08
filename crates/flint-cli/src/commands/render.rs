@@ -5,6 +5,11 @@
 //! stage captured once. A sweep is a stage a column, each with its own clocks,
 //! since a prop's state is the whole of its history. A span is the stages captured
 //! again and again as their clocks move on.
+//!
+//! With `--scripts` (#8) each stage also runs its scene's Rhai scripts, a tick a
+//! fixed step, in the player's frame order (`flint_player::HeadlessScripts`), and
+//! `--expression-timeline` feeds `expression()` from a file on that clock. Same
+//! scene, same timeline, same pixels.
 
 use super::gif_writer;
 use super::render_plan::{self, Sweep, TimeSpec};
@@ -14,7 +19,10 @@ use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3;
-use flint_player::{spline_gen, GpuSink, LivingRun, WoozeClocks};
+use flint_player::{
+    spline_gen, CameraView, ExpressionTimeline, GpuSink, HeadlessScripts, LivingRun, ScriptLook,
+    WoozeClocks,
+};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
@@ -296,10 +304,24 @@ pub struct RenderArgs {
 
     /// The game time to capture: living props, the wooze field and everything else
     /// a clock drives, as the player has them at that time. Seconds (3.5), or a span
-    /// (0..4) for an animated --output x.gif. Scripts, physics and animation clips
-    /// don't run. Same value, same pixels
+    /// (0..4) for an animated --output x.gif. Physics and animation clips don't
+    /// run, and scripts only with --scripts. Same value, same pixels
     #[arg(long, value_parser = render_plan::parse_time)]
     pub time: Option<TimeSpec>,
+
+    /// Run the scene's scripts as flint-player does, one tick a --frame-step, so
+    /// what they write to the world, the wooze field and Living Props is in the
+    /// picture. random() is seeded and scripts run in the order of their entities'
+    /// names: same scene, same pixels. Sound, physics, the HUD and scene changes
+    /// don't run, and are named on stderr when a script asks for them
+    #[arg(long)]
+    pub scripts: bool,
+
+    /// An expression timeline (`{"events": [{"t": 0, ...}, ...]}`, as
+    /// flint-player's flag) whose states scripts hear through expression() and
+    /// on_expression(state), each once the clock reaches its t. Implies --scripts
+    #[arg(long, value_name = "FILE")]
+    pub expression_timeline: Option<String>,
 
     /// With --time: the seconds each clock tick moves, as flint-player's
     /// --frame-step, to reproduce a player run to the bit [default: 1/60]
@@ -413,9 +435,24 @@ pub fn run(args: RenderArgs) -> Result<()> {
     let ctx = pollster::block_on(HeadlessContext::new(width, height))
         .context("Failed to create headless render context")?;
 
+    let timeline = match &args.expression_timeline {
+        Some(path) => Some(ExpressionTimeline::load(path)?),
+        None => None,
+    };
+    if let Some(timeline) = &timeline {
+        say!("Expression timeline: {} states", timeline.len());
+    }
+
     let mut stages = Vec::with_capacity(columns);
     for (column, (world, scene_file)) in scenes.into_iter().enumerate() {
-        stages.push(Stage::load(&args, &ctx, world, scene_file, column)?);
+        stages.push(Stage::load(
+            &args,
+            &ctx,
+            world,
+            scene_file,
+            column,
+            timeline.clone(),
+        )?);
     }
 
     let times = render_plan::capture_times(args.time, args.fps);
@@ -437,6 +474,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
                 captures.push(CaptureReport {
                     time: t,
                     column: args.sweep.as_ref().map(|s| s.values[column].clone()),
+                    expression: stage.scripts.as_ref().and_then(|scripts| {
+                        let state = scripts.expression().get("state")?.clone();
+                        state.into_string().ok()
+                    }),
                     props: stage
                         .living
                         .as_ref()
@@ -462,6 +503,12 @@ pub fn run(args: RenderArgs) -> Result<()> {
             }
             None => still = Some(cells.remove(0)),
         }
+    }
+
+    // What the scripts asked for that isn't in the picture, said once as it
+    // happened, and kept for the report.
+    if let Some(scripts) = &stages[0].scripts {
+        warnings.extend(scripts.notes());
     }
 
     if let Some(sweep) = &args.sweep {
@@ -576,9 +623,9 @@ fn stage_warnings(args: &RenderArgs, stage: &Stage) -> Vec<String> {
             .collect()
     };
     let scripts = with(comp::SCRIPT);
-    if !scripts.is_empty() {
+    if !scripts.is_empty() && stage.scripts.is_none() {
         warnings.push(format!(
-            "scripts don't run here, so what {} would do to this scene isn't in it",
+            "scripts don't run without --scripts, so what {} would do to this scene isn't in it",
             scripts.join(", ")
         ));
     }
@@ -691,6 +738,12 @@ struct Stage {
     particles: Option<flint_particles::ParticleSystem>,
     /// How many fixed steps the particles have taken.
     particle_steps: u32,
+    /// The scene's scripts, with `--scripts` (#8).
+    scripts: Option<HeadlessScripts>,
+    /// What the scripts' look was when it last went to the renderer.
+    look_applied: ScriptLook,
+    /// Whether this is a capture of a moment, which draws shallow wooze.
+    moment: bool,
 }
 
 impl Stage {
@@ -702,6 +755,7 @@ impl Stage {
         mut world: flint_ecs::FlintWorld,
         scene_file: flint_scene::SceneFile,
         column: usize,
+        timeline: Option<ExpressionTimeline>,
     ) -> Result<Self> {
         // Configure camera — scene-level first, then CLI overrides take precedence
         let mut camera = Camera::new();
@@ -1112,6 +1166,26 @@ impl Stage {
         renderer.ortho_height = camera.ortho_height;
         renderer.aspect_ratio = camera.aspect;
 
+        // Scripts (#8), as the player starts them once its models are loaded, and
+        // its first frame of them: no time passes, the timeline's states at 0 are
+        // heard, and what the scripts ask for is done before the clocks are read.
+        let mut scripts = (args.scripts || timeline.is_some()).then(|| {
+            HeadlessScripts::load(
+                &args.scene,
+                &mut world,
+                timeline,
+                (ctx.width as f32, ctx.height as f32),
+            )
+        });
+        if let Some(scripts) = &mut scripts {
+            let commands = scripts.tick(&mut world, 0.0, 0.0, view_of(&camera));
+            scripts.apply(commands, living.as_mut(), &mut wooze, moment);
+            follow_script_camera(&mut camera, scripts);
+            if let Some(run) = &mut living {
+                run.step(0.0);
+            }
+        }
+
         // Two-bone IK (ADR 0070): pose authored chains before the single frame.
         flint_animation::IkPass::new().run(&mut world);
 
@@ -1130,6 +1204,9 @@ impl Stage {
             clock: 0.0,
             particles: None,
             particle_steps: 0,
+            scripts,
+            look_applied: ScriptLook::default(),
+            moment,
         })
     }
 
@@ -1150,6 +1227,16 @@ impl Stage {
         }
         if let Some(run) = &mut self.living {
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
+        }
+        // The scripts' post-processing, as sticky as the player's.
+        if let Some(scripts) = &self.scripts {
+            let look = scripts.look();
+            if look != self.look_applied {
+                let mut config = self.renderer.post_process_config().clone();
+                flint_player::apply_look(&mut config, &look);
+                self.renderer.set_post_process_config(config);
+                self.look_applied = look;
+            }
         }
         if let (Some(clocks), None) = (&self.wooze, args.boil_time) {
             let on = self.renderer.post_process_config().boil_on;
@@ -1195,9 +1282,21 @@ impl Stage {
             .context("Failed to create image from pixel data")
     }
 
-    /// One step of everything on the wooze clock, in the order of the player's frame.
+    /// One step of everything on the clock, in the order of the player's frame:
+    /// scripts and what they ask for, then the wooze field and living props.
     fn step_clocks(&mut self, dt: f64) {
         self.clock += dt;
+        let mut dt_living = dt;
+        if let Some(scripts) = &mut self.scripts {
+            let commands = scripts.tick(&mut self.world, self.clock, dt, view_of(&self.camera));
+            scripts.apply(commands, self.living.as_mut(), &mut self.wooze, self.moment);
+            follow_script_camera(&mut self.camera, scripts);
+            // freeze_living stops the clock the field and the props run on.
+            if scripts.frozen() {
+                dt_living = 0.0;
+            }
+        }
+        let dt = dt_living;
         if let Some(clocks) = &mut self.wooze {
             let draws = clocks.step(&self.world, self.camera.position_array(), dt);
             self.renderer.set_shallow_wooze(draws.iter().copied());
@@ -1256,6 +1355,36 @@ impl Stage {
             );
         }
         Ok(())
+    }
+}
+
+/// Where `camera` is, for the scripts' `world_to_screen` and the like.
+fn view_of(camera: &Camera) -> CameraView {
+    CameraView {
+        position: camera.position_array(),
+        forward: camera.forward_vector(),
+        view_proj: camera.view_projection_matrix(),
+    }
+}
+
+/// Move the camera where the scripts' last tick asked (`set_camera_position`,
+/// `set_camera_target`, `set_camera_fov`, ...), as the player's frame does.
+fn follow_script_camera(camera: &mut Camera, scripts: &HeadlessScripts) {
+    let asked = scripts.camera();
+    if let Some([x, y, z]) = asked.position {
+        camera.position = Vec3::new(x, y, z);
+    }
+    if let Some([x, y, z]) = asked.target {
+        camera.target = Vec3::new(x, y, z);
+    }
+    if let Some(fov) = asked.fov {
+        camera.fov = fov;
+    }
+    if let Some(orthographic) = asked.orthographic {
+        camera.orthographic = orthographic;
+    }
+    if let Some(height) = asked.ortho_height {
+        camera.ortho_height = height;
     }
 }
 

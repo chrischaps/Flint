@@ -33,6 +33,9 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::frame_rate::FrameRateSetting;
+pub use player_app::headless_scripts::{
+    apply_look, CameraView, HeadlessScripts, ScriptLook, SCRIPT_SEED,
+};
 pub use player_app::living_props::import_of as living_import;
 pub use player_app::living_props::{species_problems, LivingRun, WoozeClocks};
 pub use player_app::procgen_assets::{GpuSink, ProcGenMode};

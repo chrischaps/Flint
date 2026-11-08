@@ -167,7 +167,29 @@ flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
 
 It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
 
-Scripts, physics and animation clips don't run, and that's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+
+## Scripts and an Expression Timeline
+
+`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--expression-timeline` feeds them [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
+
+```bash
+flint render scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json \
+  --time 0..12 --fps 12 -o one-turn.gif
+```
+
+Scripts start once the models are loaded, as in the player, and tick once per clock step (1/60 s, or `--frame-step`), in the player's frame order: the timeline's states that have come due, `on_expression` then `on_update`, `on_draw_ui`, then what the scripts asked for, then the wooze field and living props. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
+
+It's deterministic, so a review can diff two renders:
+
+- The clock is the step, and it is the only one: `timestamp()`, Rhai's wall clock, fails and says to use `total_time()`.
+- `random()` and `random_range()` draw from a seeded sequence, the same every run. The player's are unchanged.
+- Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
+- There is no input.
+
+What changes the picture runs: everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material), `tune_living`, `freeze_living`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, `fire_event` between scripts, the `set_camera_*` overrides and the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...). Sound is dropped quietly. Everything else a script asks for (physics, particles, a scene change, `tune_living`'s boil, the HUD, render modes) is named once on stderr and in the report's `warnings`, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
+
+`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, and a tune and a freeze reach living props.
 
 A scene with `living_prop` entities draws them in any `flint render`, at time 0 without `--time`. Procgen assets resolve as in the player only in those scenes. Other scenes draw exactly as they did.
 
@@ -231,7 +253,7 @@ flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
     }]
   }],
   "still_props": [],
-  "warnings": ["scripts don't run here, so what director would do to this scene isn't in it"]
+  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it"]
 }
 ```
 

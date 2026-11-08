@@ -306,6 +306,17 @@ impl LivingRun {
         self.field.as_ref()
     }
 
+    /// Where the field is kept, for a script's change to it (#8). A change that
+    /// gives a scene with none a field puts it here.
+    pub(crate) fn field_slot(&mut self) -> &mut Option<WoozeField> {
+        &mut self.field
+    }
+
+    /// The props, for a script's tune (#8).
+    pub(crate) fn props_mut(&mut self) -> &mut LivingProps {
+        self.resolver.living_props_mut()
+    }
+
     /// Move the clocks on by `dt` and make whatever poses that calls for. A step of
     /// 0, as the player's first frame is, reads the field without moving.
     pub fn step(&mut self, dt: f64) {
@@ -369,6 +380,29 @@ impl WoozeClocks {
             shallow: shallow.then(Default::default),
             grass: Default::default(),
         }))
+    }
+
+    /// The clocks of `field` as it stands at `time`: the field a script gave a
+    /// scene that had none (#8).
+    pub(crate) fn of_field(field: WoozeField, time: f64, shallow: bool) -> Self {
+        Self {
+            field,
+            time,
+            boil: Default::default(),
+            shallow: shallow.then(Default::default),
+            grass: Default::default(),
+        }
+    }
+
+    /// Change the field at the time its clock has reached, as a script's
+    /// command does (#8). `change` gets the field in the slot shape
+    /// [`LivingRun::field_slot`] has, so one change goes to both the same way.
+    pub(crate) fn change_field(&mut self, change: impl FnOnce(&mut Option<WoozeField>, f64)) {
+        let mut slot = Some(self.field.clone());
+        change(&mut slot, self.time);
+        if let Some(field) = slot {
+            self.field = field;
+        }
     }
 
     /// Move on by `dt`, with the viewer at `viewer`. Returns what shallow wooze draws
