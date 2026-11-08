@@ -393,6 +393,16 @@ width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
 
+# Two keys as one grid, each cell a 1:1 crop of the full frame (#358): the
+# column and row labels, and glyphs drawn at the frame's own size
+[[case]]
+name = "look-sweep-grid-crop"
+scene = "demo/stylize_props.scene.toml"
+width = 640
+height = 360
+args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
+        "--sweep", "ascii.contrast=1,2.2", "--sweep-crop", "220,130,240,135"]
+
 # Terrain and styled transparents in the mask (#310): ASCII hills cut
 # around smooth props, and a styled glass pane drawing what's behind it in
 # glyphs; then the mask itself

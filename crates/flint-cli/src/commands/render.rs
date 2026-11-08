@@ -45,9 +45,23 @@ pub struct RenderArgs {
     /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
     /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
     /// `wooze.glide=0,0.5,1` (in builds with the wooze field, #216).
-    /// --width/--height size each cell
-    #[arg(long, value_parser = super::sweep::parse_sweep)]
-    pub sweep: Option<super::sweep::Sweep>,
+    /// --width/--height size each cell. Give it twice for a grid (#358):
+    /// the first key across, the second down
+    #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append)]
+    pub sweep: Vec<super::sweep::Sweep>,
+
+    /// A sweep's cells at the final render's scale (#358): draw each at
+    /// --width/--height (default 1920x1080) and keep this region pixel for
+    /// pixel, X,Y,W,H. Point-sized styles (ASCII cells) then draw as many
+    /// glyphs across it as the final render does there
+    #[arg(long, value_parser = super::sweep::parse_crop, conflicts_with = "sweep_scale")]
+    pub sweep_crop: Option<super::sweep::CellView>,
+
+    /// `full`: draw each sweep cell at --width/--height (default 1920x1080)
+    /// and shrink it to 640 wide, so the whole frame is composed as the final
+    /// render is (glyphs blur); `cell` (default): each cell a 640x360 frame
+    #[arg(long, value_parser = ["cell", "full"])]
+    pub sweep_scale: Option<String>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -584,13 +598,18 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
-    if wants_text && args.sweep.is_some() {
+    let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
+    let view = super::sweep::CellView::from_args(args.sweep_crop, args.sweep_scale.as_deref());
+    if grid.is_none() && (args.sweep_crop.is_some() || args.sweep_scale.is_some()) {
+        anyhow::bail!("--sweep-crop and --sweep-scale shape a sweep's cells: add a --sweep");
+    }
+    if wants_text && grid.is_some() {
         anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
     }
-    if args.frames.is_some() && args.sweep.is_some() {
+    if args.frames.is_some() && grid.is_some() {
         anyhow::bail!("--frames draws one sequence: drop --sweep");
     }
-    if let Some(knob) = args.sweep.as_ref().and_then(|s| s.wooze_knob()) {
+    if let Some(knob) = grid.as_ref().and_then(|g| g.wooze_knob()) {
         anyhow::bail!(
             "--sweep wooze.{knob} turns the Living Props wooze field (#216), which this \
              build doesn't have: it lives on feature/living-props until that merges (#206)"
@@ -623,13 +642,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .as_deref()
         .map(|name| super::look::find(name, &args.scene))
         .transpose()?;
-    let (width, height) = match args.sweep {
-        Some(_) => {
-            let (w, h) = super::sweep::CELL_SIZE;
-            (args.width.unwrap_or(w), args.height.unwrap_or(h))
-        }
+    let (width, height) = match grid {
+        Some(_) => view.render_size(args.width, args.height),
         None => (args.width.unwrap_or(1920), args.height.unwrap_or(1080)),
     };
+    view.check(width, height).map_err(|e| anyhow::anyhow!(e))?;
     flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
@@ -664,14 +681,15 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // GPU work: the scene's block, under the look, under the column.
     let scene_pp = scene_file.post_process.as_ref();
     let base_pp = super::sweep::base_def(scene_pp, look.as_ref())?;
+    let cells = grid.as_ref().map_or(vec![(0, 0)], |g| g.cells());
     let mut configs = Vec::new();
-    for i in 0..args.sweep.as_ref().map_or(1, |s| s.values.len()) {
-        let def = match &args.sweep {
-            Some(sweep) => sweep.column_def(i, scene_pp, look.as_ref(), &args.scene)?,
+    for &(c, r) in &cells {
+        let def = match &grid {
+            Some(grid) => grid.cell_def(c, r, scene_pp, look.as_ref(), &args.scene)?,
             None => base_pp.clone(),
         };
         let mut config = post_process_config(&args, def.as_ref())?;
-        if let Some(spec) = args.sweep.as_ref().and_then(|s| s.column_style(i)) {
+        for spec in grid.as_ref().map_or(Vec::new(), |g| g.cell_styles(c, r)) {
             flint_render::stylize::apply_style_spec(&mut config, &spec)
                 .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
         }
@@ -1045,35 +1063,56 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             let scale = (img.width() / 1280).clamp(1, 3);
             super::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
         }
-        if let Some(sweep) = &args.sweep {
-            println!("  {} = {}", sweep.name(), sweep.values[i]);
+        if let Some(grid) = &grid {
+            let (c, r) = cells[i];
+            println!("  {}", grid.describe(c, r));
         }
         frames.push(img);
     }
 
-    // A sweep whose neighbours drew the same showed nothing: say so (#216)
-    if let Some(sweep) = &args.sweep {
-        for i in super::sweep::identical_neighbours(&frames) {
-            eprintln!("Warning: {}", sweep.identical_warning(i));
+    // A sweep whose neighbours drew the same showed nothing: say so (#216).
+    // Judged on the frames as drawn, before a crop could hide a difference.
+    if let Some(grid) = &grid {
+        for warning in grid.identical_warnings(&frames) {
+            eprintln!("Warning: {warning}");
         }
     }
 
-    let img = match &args.sweep {
+    let img = match &grid {
         None => frames.swap_remove(0),
-        Some(sweep) => {
+        Some(grid) => {
             let over = match &look {
                 Some(look) => format!("  over {}", look.name),
                 None => String::new(),
             };
-            let labels = (0..sweep.values.len()).map(|i| sweep.label(i)).collect();
-            super::style_sheet::compose(
-                &frames,
-                &super::style_sheet::SheetText::new(
-                    scene_file.scene.name.clone(),
-                    format!("sweep {}{over}", sweep.name()),
-                    labels,
+            // Only a sheet that isn't of small frames says how big they were
+            let scale = match view {
+                super::sweep::CellView::Small => String::new(),
+                _ => format!("  {}", view.describe(width, height)),
+            };
+            let subtitle = format!("sweep {}{over}{scale}", grid.name());
+            let cells: Vec<_> = frames.into_iter().map(|f| view.cell(f)).collect();
+            let label = |s: &super::sweep::Sweep| (0..s.values.len()).map(|i| s.label(i)).collect();
+            match &grid.rows {
+                None => super::style_sheet::compose(
+                    &cells,
+                    &super::style_sheet::SheetText::new(
+                        scene_file.scene.name.clone(),
+                        subtitle,
+                        label(&grid.columns),
+                    ),
                 ),
-            )
+                Some(rows) => super::style_sheet::compose_grid(
+                    &cells,
+                    &super::style_sheet::GridText {
+                        title: scene_file.scene.name.clone(),
+                        subtitle,
+                        row_key: rows.name(),
+                        column_labels: label(&grid.columns),
+                        row_labels: label(rows),
+                    },
+                ),
+            }
         }
     };
     img.save(&args.output)
