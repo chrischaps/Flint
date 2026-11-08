@@ -2589,6 +2589,59 @@ fn register_style_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // tween_style_param(entity_id, param, target, seconds[, easing]) — let
+    // the engine ease a number, `blend` or a colour to `target` over
+    // `seconds` of game time (#370), instead of a set_style_param every
+    // frame. Easing: "linear", "smooth" (default), "ease_in", "ease_out",
+    // "ease_in_out". Fires `style_tween_done` #{ entity, param } at the end;
+    // a set_style_param of the same setting, or clear_entity_style, stops it.
+    for with_easing in [false, true] {
+        let ctx = ctx.clone();
+        let tween =
+            move |entity_id: i64, param: &str, target: Dynamic, seconds: Dynamic, easing: &str| {
+                let mut c = crate::lock_or_recover(&ctx);
+                // Seconds as a float or an integer (a web script has i64 only)
+                let secs = seconds
+                    .as_float()
+                    .ok()
+                    .or_else(|| seconds.as_int().ok().map(|i| i as f64));
+                let command = match (dynamic_to_toml(&target), secs) {
+                    (Some(target), Some(seconds)) => ScriptCommand::TweenStyleParam {
+                        entity_id,
+                        param: param.to_string(),
+                        target,
+                        seconds,
+                        easing: easing.to_string(),
+                    },
+                    (None, _) => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "tween_style_param: `{param}` can't ease to a {}",
+                            target.type_name()
+                        ),
+                    },
+                    (_, None) => ScriptCommand::Log {
+                        level: LogLevel::Warn,
+                        message: format!(
+                            "tween_style_param: seconds must be a number, not a {}",
+                            seconds.type_name()
+                        ),
+                    },
+                };
+                c.commands.push(command);
+            };
+        if with_easing {
+            engine.register_fn("tween_style_param", tween);
+        } else {
+            engine.register_fn(
+                "tween_style_param",
+                move |entity_id: i64, param: &str, target: Dynamic, seconds: Dynamic| {
+                    tween(entity_id, param, target, seconds, "smooth")
+                },
+            );
+        }
+    }
+
     // clear_entity_style(entity_id) — take the entity's own style off
     {
         let ctx = ctx.clone();

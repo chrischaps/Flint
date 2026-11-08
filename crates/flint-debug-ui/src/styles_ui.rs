@@ -926,19 +926,11 @@ mod tests {
 
     /// A style with a free-text option (no choices, none found), as a
     /// file-named setting is. Registered nowhere; drawn by hand.
-    static TEXT_STYLE: StyleDescriptor = StyleDescriptor {
-        name: "text_test",
-        label: "Text test",
-        stage: StyleStage::Display,
-        params: &[],
-        options: &[StyleOption::new("file", "", &[])],
-        uses_mask: flint_render::stylize::MaskUse::Never,
-        needs: &[],
-        hints: &[],
-        component: None,
-        feeds_bloom: false,
-        create: |_| unreachable!("never drawn"),
-    };
+    static TEXT_STYLE: StyleDescriptor =
+        StyleDescriptor::new("text_test", "Text test", StyleStage::Display, |_| {
+            unreachable!("never drawn")
+        })
+        .options(&[StyleOption::new("file", "", &[])]);
 
     #[test]
     fn typing_a_file_name_survives_frames_and_commits_on_enter() {

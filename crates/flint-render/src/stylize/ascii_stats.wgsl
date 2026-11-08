@@ -9,12 +9,13 @@
 // Two passes, both in the frame they serve, so a headless `flint render`
 // is as deterministic as before (nothing is read back a frame late):
 //
-// - this one: one texel per (slot, lattice row). It walks one row of a
-//   fixed STATS_COLS x STATS_ROWS lattice over the picture, and for each
-//   sample whose mask slot is the texel's slot adds the sample's display
-//   luminance (after the slot's exposure) to a count, a sum and a sum of
-//   squares.
-// - ascii_stats_resolve.wgsl: one texel per slot, the rows summed into
+// - this one: one texel per (slot, lattice row, run of the row), the run
+//   at y = run * STATS_ROWS + row (#337). It walks STATS_COLS /
+//   STATS_CHUNKS samples of one row of a fixed STATS_COLS x STATS_ROWS
+//   lattice over the picture, and for each sample whose mask slot is the
+//   texel's slot adds the sample's display luminance (after the slot's
+//   exposure) to a count, a sum and a sum of squares.
+// - ascii_stats_resolve.wgsl: one texel per slot, the runs summed into
 //   the range the slot normalises onto.
 //
 // Slots past the variant table's rows, and slots that don't normalise,
@@ -48,11 +49,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let gain = exp2(slot_exposure(slot));
-    let y = (f32(texel.y) + 0.5) / f32(STATS_ROWS) * u.size.y;
+    let row = texel.y % STATS_ROWS;
+    let run = STATS_COLS / STATS_CHUNKS;
+    let first = (texel.y / STATS_ROWS) * run;
+    let y = (f32(row) + 0.5) / f32(STATS_ROWS) * u.size.y;
     var n = 0.0;
     var sum = 0.0;
     var sq = 0.0;
-    for (var i = 0u; i < STATS_COLS; i++) {
+    for (var i = first; i < first + run; i++) {
         let p = vec2<f32>((f32(i) + 0.5) / f32(STATS_COLS) * u.size.x, y);
         if stats_slot(p) == slot {
             let l = luma(exposed(stats_shown(vec2<i32>(floor(p))), gain));

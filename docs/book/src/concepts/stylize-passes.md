@@ -289,7 +289,7 @@ Under `cga16` the red box now takes `#ff5555` rather than `#aa0000`, the cube's 
 
 The CPU reference is `Palette::pick(colour, chroma, dither, cell)`, and the shader's is `pal_pick` in `crates/flint-render/src/palette.wgsl`, which the glyph pass includes. Inks are converted to OKLab once a frame on the CPU. A GPU test (`the_palette_matcher_agrees_with_its_cpu_reference`) holds the two to the same ink over a grid of 4096 colours with chroma and dither on. A `luminance` palette ignores both keys. Matching in OKLab costs about 0.03 ms at 1080p for `cga16`'s 15 inks (0.076 ms before, 0.103 ms after, `--gpu-time 240` on an RTX 4070 with edges off). Dither adds about 0.003 ms.
 
-On an RTX 4070 at 1080p the pass costs 0.143 ms in `source`, 0.152 ms matching `cga16`'s 15 inks, 0.144 ms with `ground = "inverse"` and 0.220 ms with `glow` on (24 more glyph reads a pixel).
+Since #277 split the style into a cell pass and a glyph pass, most colour choices cost nothing extra. On an RTX 4070 at 1080p with edges off, the ASCII pass takes 0.047 ms in `source`, `tint`, `raw` and `mono`, with the `phosphor` ladder (0.048 ms), and with `ground = "black"` or `"inverse"`. All of these are the same as plain ASCII. Two settings cost more. Matching `cga16`'s 15 inks in OKLab takes 0.099 ms, and `glow = 0.6` takes 0.154 ms, because the glyph pass makes 24 more glyph reads a pixel. Before the split these were 0.143 ms (`source`), 0.152 ms (`cga16`), 0.144 ms (`inverse`) and 0.220 ms (`glow`). With the [edge passes](#edges) on, every mode measures 0.36--0.49 ms. The roughly 0.35 ms of edge work varies from run to run by more than the colour modes differ, so it hides them. To measure: `flint render demo/pbr_test.scene.toml --ascii --ascii-no-edges --width 1920 --height 1080 --gpu-time 240`, adding each mode's flag. The figures are the best of 5 alternating processes per mode, with SSAO steady at 0.150 ms across all of them as a control (#383).
 
 ### Edges
 
@@ -378,7 +378,7 @@ exposure = 0.5      # optional: half a stop first
 
 *`demo/ascii_dark_props.scene.toml`: plain, `exposure = 1.5` and `normalize = 1`, side by side.*
 
-The range is measured from the same frame, so `flint render` stays deterministic and nothing lags a frame behind: two small passes before the cell pass walk a fixed 320x180 lattice over the picture, sum each slot's samples (count, luminance, luminance squared) row by row, and resolve each slot's range as its mean -/+ 2 standard deviations. The range maps linearly onto 0..1, then a gamma (0.35 to 2.5) puts the slot's mean at mid-grey, since a lit top and a shadowed side are often both in range and the linear stretch alone leaves the shadow blank. That is a percentile without a histogram: a highlight or a crack moves it far less than it would a min and max. A range narrower than 0.08 is widened around its middle, so a flat wall's noise doesn't fill the ramp. The passes run only when some slot asks for `normalize`; brightness and contrast then apply to the stretched tone as before. On an RTX 4070 at 1080p, `demo/ascii_dark_props.scene.toml`'s ASCII pass took 0.37--0.43 ms without a normalised barrel and 0.45--0.54 ms with one (`--gpu-time 240`, two runs each): about 0.1 ms for the statistics.
+The range is measured from the same frame, so `flint render` stays deterministic and nothing lags a frame behind: three small passes before the cell pass walk a fixed 320x180 lattice over the picture, sum each slot's samples (count, luminance, luminance squared) in runs of 20, add the runs into rows, and add the rows into each slot's range: its mean -/+ 2 standard deviations. The range maps linearly onto 0..1, then a gamma (0.35 to 2.5) puts the slot's mean at mid-grey, since a lit top and a shadowed side are often both in range and the linear stretch alone leaves the shadow blank. That is a percentile without a histogram: a highlight or a crack moves it far less than it would a min and max. A range narrower than 0.08 is widened around its middle, so a flat wall's noise doesn't fill the ramp. The passes run only when some slot asks for `normalize`; brightness and contrast then apply to the stretched tone as before. The statistics cost about 0.02 ms on an RTX 4070 at 1080p (`demo/ascii_entities.scene.toml` with `--ascii-edges 0 --gpu-time 240`: 0.094 ms with the barrel normalised, 0.074 ms without). About half of that is the three passes' fixed cost. Before #337 the lattice rows were summed by one fragment each, 180 threads walking 320 samples apiece, and the statistics cost about 0.075 ms.
 
 ## Per-entity ASCII
 
@@ -414,7 +414,7 @@ enabled = false               # stays smooth, even under a whole-frame ASCII
 - **Colour modes** (`color`, `palette`, `ground`, `glow`) are per entity too: a frame packs up to 32 palette inks in all, and a palette that doesn't fit beside the others uses the scene's, with a warning.
 - **Edges between entities** come from [edges](#edges) (#267). Without them a styled prop's edge is only where its glyph field stops, so two styled props that overlap would run together. The edge passes draw line glyphs along depth steps and creases, and an outline wherever the style mask changes from one of the style's ids to any other: the plain `ascii` id or any variant's, so a change between two variants is an outline too. Ids are per variant, not per entity, so two props with the same settings that touch on one surface are told apart by the depth and crease edges, not the mask. Variants on `grid = "object"` don't draw edges yet, because the edge cells are on the screen grid.
 - **Temporal stability** (#277's `smoothing`, `hysteresis` and `dither`) applies to the whole frame's cells. A per-entity variant is drawn per pixel on its own grid and keeps no history yet, so a styled prop can still shimmer in motion.
-- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
+- **From scripts** (#269): `set_entity_style(id, "ascii")`, `set_style_param(id, "cell", 12.0)` and `clear_entity_style(id)` edit the component at runtime, and changing a param every frame makes no GPU allocation. `tween_style_param(id, "cell", 7.0, 1.5)` lets the engine ease one (#370). See [Scripting → Style API](scripting.md#style-api) and `demo/ascii_story.scene.toml`.
 - **Fonts** (#335). An entity's `font` names its own glyph set, so props can draw in different fonts in one frame. Every set in use is stacked into one atlas texture (`GpuGlyphStack`, uploaded again only when the frame's sets change), and each variant's row carries its font's glyph cell and where its ramp and its four edge glyphs sit, so the cell's height follows that font's aspect and the edges are drawn in its own line glyphs. A frame holds up to 8 fonts and an atlas stack up to 8192 pixels tall. A font that doesn't fit, or whose ramp and edges don't fit in the frame's 128 ramp steps, draws in the scene's font, with a warning. `demo/ascii_fonts.scene.toml` draws a YBot and a barrel in a hand-drawn halftone set (`demo/fonts/halftone.glyphs.toml`, 8x12 cells) beside props in the built-in letters.
 - **Not yet:** ramps beyond 128 steps in all across the frame's variants (a ramp that doesn't fit uses the scene's, with a warning).
 
@@ -544,13 +544,11 @@ fn on_init() {
     set_entity_style(barrel, "ascii");
     set_style_param(barrel, "blend", 0.0);          // styled, but nothing shows yet
     set_style_param(barrel, "transition", "dissolve");
-}
-fn on_update() {
-    let k = (total_time() - 1.0) / 3.0;             // 0 -> 1 from 1 s to 4 s
-    let k = if k < 0.0 { 0.0 } else if k > 1.0 { 1.0 } else { k };
-    set_style_param(get_entity("barrel"), "blend", k);
+    tween_style_param(barrel, "blend", 1.0, 3.0);   // the engine eases it in (#370)
 }
 ```
+
+A tween is the engine easing the blend for you ([Scripting → Tweens](scripting.md#tweens)); `set_style_param(id, "blend", k)` in `on_update` still works for a curve of your own.
 
 ![The barrel dissolving into green phosphor glyphs at blend 0, 0.25, 0.5, 0.75 and 1: its cells turn whole, in ragged patches that spread](../images/ascii-blend-dissolve.png)
 
@@ -817,6 +815,32 @@ flint render demo/stylize_props.scene.toml --look ascii_noir \
 
 Rendering at full size costs more: each cell is a whole 1080p frame. The pixel-identical check compares the full frames before they're cropped, so a crop can't hide a difference elsewhere in the frame.
 
+### Measuring and refining a look
+
+A sheet is judged by eye. **`--report FILE.json`** (#357) also measures each column, from the same pixels the sheet is made of: mean luminance, the share of near-black (luma ≤ 24) and near-white (≥ 232) pixels, edge density (the share of pixels whose right + down luma step passes 24), and, when the ASCII style drew, the grid's size, its share of blank cells and the share of cells on each step of the ramp, darkest first. Edge glyphs are counted in `off_ramp`. The same sweep prints a line per column:
+
+```text
+$ flint render demo/stylize_props.scene.toml --look ascii_noir \
+    --sweep ascii.brightness=0,0.15,0.3,0.45 --report brightness.json -o brightness.png
+  [0] luma 0.10  black 82%  white 1%  edges 24%  blank cells 29%
+  [0.15] luma 0.18  black 69%  white 2%  edges 42%  blank cells 5%
+  ...
+```
+
+**`--reference ref.png`** adds each column's distance to a target image, using the metric `flint gen --ai-refine` uses (#183): mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100 where 0 is the reference itself. It's a ruler, not a judge. It can say whether one column is closer than another, but it doesn't measure taste. On a sheet each label gets `d <score>`, the nearest column is starred, and `nearest` in the report names it. Under `--sweep-crop` or `--sweep-scale full` the image measures and distance are taken from the cell as the sheet shows it, while the ASCII section still counts the whole drawn frame's grid. A two-key grid reports every cell, each `value` naming both keys, but its labels carry no distances.
+
+**`--ai-refine`** closes the loop: `flint render scene --look <x> --reference ref.png --ai-refine`. Each round an agent sees the reference, the current render, the look's block, every key it may change (with ranges) and every edit tried so far with its score. It proposes up to `--refine-candidates` (4) candidates in `--sweep` key syntax. Each candidate is checked like a sweep value, then rendered and measured. The best is kept if it lowers the distance by more than 0.05. The loop stops after `--refine-rounds` (4), or after two rounds in a row with no gain, or when the agent has nothing left to propose. It writes:
+
+- `<look>_refined.look.toml` beside `-o` (or `--refine-out`): the kept block, plus a note of what was kept and what it cost;
+- the same path with `.json`: the log of every candidate, its score and image measures, and whether it was kept;
+- `-o`: a sheet showing the reference, the start, and each kept round.
+
+`--ai-provider anthropic` (the default) asks Claude (`ANTHROPIC_API_KEY`, `--ai-model`). Every call goes through the procgen `CostMeter`: it's priced, appended to `.flint/procgen_costs.json`, and refused before sending when it could pass `--max-cost`. `--ai-provider mock` is free and offline. It walks the look's own `tune` sweeps one untried value at a time, which turns the loop into a measured coordinate search. Toward a hidden target (ascii_noir at cell 12, brightness 0.3, contrast 1.2), the mock went 7.68 → 0.00 in five rounds. Contrast 1.2 scored *worse* than the start on its own, and only helped once the other two had moved.
+
+Toward the `matrix` look's render, with Claude (four calls, $0.115), ascii_noir went 25.66 → 15.09. Claude turned the colour to `tint` and the ramp to `detailed`, then found that `glow` was the strongest lever. It also learned from the log that whitening the tint and turning off the vignette both scored worse:
+
+![Refining ascii_noir toward the matrix look: reference, start 25.7, then rounds at 25.0, 19.2, 15.2, 15.1](../images/look-refine-noir-to-matrix.png)
+
 ### Choosing cell size and ramp
 
 - **The cell is in points, not image pixels.** A 640-wide sweep cell at `cell = 8` is 80 glyphs across, while the same look at 1920 is 240. Glow and fine ramps in particular read differently at full size. Add `--sweep-crop` or `--sweep-scale full` (see [Cells at the final scale](#cells-at-the-final-scale)) to sweep at the final size, or confirm the winner with one render at that size.
@@ -890,24 +914,25 @@ Kuwahara's default is unchanged: off.
 
 ## Writing a style
 
-A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`:
+A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
 
 ```rust
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "invert",                // the [post_process.styles.<name>] key
-    label: "Invert",               // F4 and --gpu-time
-    stage: StyleStage::Display,
-    params: &[StyleParam { name: "strength", default: 1.0, min: 0.0, max: 1.0 }],
-    options: &[],                  // named strings: StyleOption::new(name, default, choices),
-                                   //   .discovered(fn) to find choices beside the scene (#322)
-    uses_mask: MaskUse::Never,     // Always: the renderer draws the entity style mask for it;
-                                   //   When(fn(&config, &ids) -> bool): only while it says so (#350)
-    needs: &[],                    // &[StyleNeed::Edges]: the shared geometry edges (#301)
-    hints: &[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")],
-    component: None,               // Some("ascii_style"): entities take the style per entity (#266)
-    feeds_bloom: false,            // true: bloom reads this (hdr) style's result (#300)
-    create: |d| Box::new(Invert::new(d)),   // build pipelines in d.format
-};
+pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
+    "invert",                      // the [post_process.styles.<name>] key
+    "Invert",                      // F4 and --gpu-time
+    StyleStage::Display,
+    create,                        // fn(&StyleDevice) -> Box<dyn StylePass>: pipelines in d.format
+)
+.params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
+.hints(&[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")]);
+// Everything else has a default, and a setter for a style that differs:
+//   .options(&[StyleOption::new(name, default, choices)])   named strings;
+//       .discovered(fn) finds choices beside the scene (#322)
+//   .uses_mask(MaskUse::Always)    the renderer draws the entity style mask for it;
+//       MaskUse::When(fn(&config, &ids) -> bool): only while it says so (#350)
+//   .needs(&[StyleNeed::Edges])    the shared geometry edges (#301)
+//   .component("ascii_style")      entities take the style per entity (#266)
+//   .feeds_bloom(true)             bloom reads this (hdr) style's result (#300)
 ```
 
 An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files("palettes", ".palette.toml")` (names in the scene's folder, its parent and `.`, through the vfs) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.

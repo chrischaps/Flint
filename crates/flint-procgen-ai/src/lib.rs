@@ -37,7 +37,7 @@ pub use anthropic::AnthropicAgent;
 pub use config::AgentConfig;
 pub use cost::{CostEntry, CostLedger, CostMeter, CostSummary};
 pub use error::{ProcGenAiError, Result};
-pub use http::{HttpRequest, HttpResponse, ScriptedTransport, Transport, Usage};
+pub use http::{HttpRequest, HttpResponse, Reply, ScriptedTransport, Transport, Usage};
 pub use measure::Distance;
 pub use mock::MockAgent;
 pub use preview::Previewer;

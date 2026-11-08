@@ -7,7 +7,7 @@
 use super::music_guide_panel;
 use super::music_session;
 use super::scene_loading;
-use super::style_commands::{self, StyleApplied};
+use super::style_commands::StyleApplied;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -22,7 +22,20 @@ use std::path::Path;
 impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
-            match style_commands::apply_style_command(&mut self.world, &cmd) {
+            // Style commands, and tweens (#370), which start from the
+            // scene's style table where an entity has no value of its own
+            let applied = {
+                let fallback;
+                let config = match self.scene_renderer.as_ref() {
+                    Some(r) => r.post_process_config(),
+                    None => {
+                        fallback = flint_render::PostProcessConfig::default();
+                        &fallback
+                    }
+                };
+                self.style_tweens.apply(&mut self.world, config, &cmd)
+            };
+            match applied {
                 StyleApplied::NotAStyleCommand => {}
                 StyleApplied::Done(event) => {
                     if let Some(event) = event {
@@ -39,6 +52,7 @@ impl PlayerApp {
                 // Applied above
                 ScriptCommand::SetEntityStyle { .. }
                 | ScriptCommand::SetStyleParam { .. }
+                | ScriptCommand::TweenStyleParam { .. }
                 | ScriptCommand::ClearEntityStyle { .. } => {}
                 ScriptCommand::PlaySound {
                     name,
