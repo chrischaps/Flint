@@ -105,6 +105,13 @@ Flint uses an **edit -> validate -> play** loop:
    #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
    #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
    #                          two --sweep flags make a grid, first across, second down, #358)
+   #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
+   #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
+   #   --look x --reference ref.png --ai-refine [--ai-provider anthropic|mock --max-cost 0.5
+   #                          --refine-rounds 4 --refine-candidates 4 --refine-out f.look.toml]
+   #                          (agent proposes sweep-key edits, each rendered + measured, best kept
+   #                          while the distance falls; writes <look>_refined.look.toml + .json log
+   #                          + rounds sheet; calls via CostMeter; mock walks the look's tune)
    #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
    #   --ascii-edge-normal 2.5   (tone bands, tone footprint, edge sensitivity)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction

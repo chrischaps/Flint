@@ -149,6 +149,8 @@ flint render levels/dungeon.scene.toml --look ascii_noir --no-grid \
 
 Read the sheet, pick a value, and write it into the scene's `[post_process.styles.<name>]` table, or into a `styles/<name>.look.toml` of the game's own. Then sweep the next key. To compare whole looks, use `--sweep look=a,b,c`. Each look's `tune` list names the sweeps worth running first. [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) covers the format and how to choose a cell size and ramp.
 
+Read numbers rather than guess. `--report sheet.json` gives each column's luminance, near-black and near-white shares, edge density and ASCII ramp histogram. With a target picture, `--reference ref.png` scores each column's distance to it. `--ai-refine` then runs the loop for you: it proposes edits, renders them, keeps whatever lowers the distance, and writes a refined `.look.toml` with a log. Every call is metered, and `--ai-provider mock` costs nothing. See [Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look).
+
 ## AI Asset Generation
 
 Agents can generate assets alongside scene construction:
