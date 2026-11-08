@@ -296,7 +296,9 @@ mod tests {
     #[test]
     fn a_colour_is_listed_once_by_its_key() {
         let ascii = listing(super::super::find("ascii").unwrap());
-        assert_eq!(ascii.colors.len(), 1);
+        // The tint, and the edge ink's colour (#351)
+        assert_eq!(ascii.colors.len(), 2);
+        assert_eq!(ascii.colors[1].key, "edge_color");
         let tint = &ascii.colors[0];
         assert_eq!(tint.key, "tint");
         assert_eq!(tint.default, [0.35, 1.0, 0.45]);

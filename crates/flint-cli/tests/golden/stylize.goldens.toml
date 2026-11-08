@@ -131,6 +131,20 @@ name = "ascii-edges-view"
 scene = "demo/ascii_edges.scene.toml"
 args = ["--no-grid", "--debug-mode", "edges"]
 
+# Edges in an ink of their own (#351): amber outlines over a green tint
+# fill, never the fill's colour
+[[case]]
+name = "ascii-edge-ink-color"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--style", "ascii:color=tint,edge_ink=color,edge_color=#ffb347"]
+
+# ...and in the near side's hue: each prop outlined in its own colour, not
+# a mix of it and the floor behind (the edge cell pass's packed hue)
+[[case]]
+name = "ascii-edge-ink-hue"
+scene = "demo/pbr_test.scene.toml"
+args = ["--no-grid", "--style", "ascii:edge_ink=hue"]
+
 # The grid-fixed ordered dither (#277): the one temporal-stability knob a
 # single frame shows (smoothing and hysteresis need a frame before)
 [[case]]
@@ -392,6 +406,16 @@ scene = "demo/stylize_props.scene.toml"
 width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
+
+# Two keys as one grid, each cell a 1:1 crop of the full frame (#358): the
+# column and row labels, and glyphs drawn at the frame's own size
+[[case]]
+name = "look-sweep-grid-crop"
+scene = "demo/stylize_props.scene.toml"
+width = 640
+height = 360
+args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
+        "--sweep", "ascii.contrast=1,2.2", "--sweep-crop", "220,130,240,135"]
 
 # Terrain and styled transparents in the mask (#310): ASCII hills cut
 # around smooth props, and a styled glass pane drawing what's behind it in

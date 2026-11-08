@@ -29,6 +29,14 @@
 // (ascii_edge_thin.wgsl) keeps it only there. z and w are written for a
 // cell holding any edge pixels, so a sliver of a line its neighbour holds
 // most of still says where it is.
+// z also carries the near side's hue (#351) above those two bits:
+// z = outline + 2 * cross_x + 4 * hue, the hue being the mean display
+// colour of the picture under the edge pixels that decided the cell, at
+// full value, 7 bits a channel (r | g << 7 | b << 14). Edge pixels lie on
+// the near side of a step, so it is the object's own colour, not the
+// cell's mix of it and what's behind. z stays a whole number under 2^23,
+// exact in the Rgba32Float target. x, y and w are rounded to f16, as the
+// Rgba16Float target stored them before.
 
 struct CellUniforms {
     cell: vec2<f32>,
@@ -39,11 +47,40 @@ struct CellUniforms {
     // The edge texture's size: the depth's, smaller than `size` under a
     // render scale
     edge_size: vec2<f32>,
-    _pad: vec2<f32>,
+    // 1: the picture arrives linear (an sRGB target)
+    srgb: u32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: CellUniforms;
 @group(1) @binding(0) var edges: texture_2d<f32>;
+// The style's input picture, at output resolution (#351)
+@group(2) @binding(0) var picture: texture_2d<f32>;
+
+fn to_display(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+// The picture at output pixel `p` in display values, 0..1
+fn shown(p: vec2<i32>) -> vec3<f32> {
+    let c = clamp(textureLoad(picture, p, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(c, to_display(c), u.srgb == 1u);
+}
+
+// A colour sum's hue at full value, packed 7 bits a channel
+fn packed_hue(sum: vec3<f32>) -> f32 {
+    let hue = sum / max(max(sum.r, max(sum.g, sum.b)), 1e-6);
+    let b = vec3<u32>(round(clamp(hue, vec3<f32>(0.0), vec3<f32>(1.0)) * 127.0));
+    return f32(b.r | (b.g << 7u) | (b.b << 14u));
+}
+
+// `x` rounded to f16, as the old Rgba16Float target stored it, so the
+// glyph pass's comparisons between neighbours behave as they did
+fn as_f16(x: f32) -> f32 {
+    return unpack2x16float(pack2x16float(vec2<f32>(x, 0.0))).x;
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -101,6 +138,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var out_cx = vec2<f32>(0.0);
     var out_cy = vec2<f32>(0.0);
     var out_cz = vec2<f32>(0.0);
+    var all_c = vec3<f32>(0.0);
+    var out_c = vec3<f32>(0.0);
     for (var y = 0.5 * stride; y < u.cell.y; y += stride) {
         for (var x = 0.5 * stride; x < u.cell.x; x += stride) {
             let p = vec2<i32>(floor(cell_min + vec2<f32>(x, y)));
@@ -117,6 +156,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let at = vec2<f32>(x, y) / u.cell - 0.5;
                 all_j += e.xyz;
                 all_n += weight;
+                let c = shown(p);
+                all_c += c;
                 all_cx += e.x * at;
                 all_cy += e.y * at;
                 all_cz += e.z * at;
@@ -124,6 +165,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 if e.w > 2.5 {
                     out_j += e.xyz;
                     out_n += weight;
+                    out_c += c;
                     out_cx += e.x * at;
                     out_cy += e.y * at;
                     out_cz += e.z * at;
@@ -139,6 +181,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var cx = all_cx;
     var cy = all_cy;
     var cz = all_cz;
+    var near = all_c;
     var outline = 0.0;
     var slot_plus = 0.0;
     var len = all_len;
@@ -147,6 +190,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         cx = out_cx;
         cy = out_cy;
         cz = out_cz;
+        near = out_c;
         outline = 1.0;
         len = out_len;
     } else if all_len < u.threshold || all_len > u.max_len {
@@ -180,9 +224,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let offset = dot(centroid, n) / select(across, 1e-6, abs(across) < 1e-6);
     // y = the length that decided it
     return vec4<f32>(
-        select(f32(slot) + 1.0 + turn, -0.25 - turn, slot_plus < 0.0),
-        len,
-        outline + select(0.0, 2.0, cross_x),
-        offset,
+        as_f16(select(f32(slot) + 1.0 + turn, -0.25 - turn, slot_plus < 0.0)),
+        as_f16(len),
+        outline + select(0.0, 2.0, cross_x) + 4.0 * packed_hue(near),
+        as_f16(offset),
     );
 }
