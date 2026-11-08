@@ -75,9 +75,11 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
         );
 
         // Textures at 128 px: every op and key still runs, at a sixteenth
-        // of the pixels (a 512 px pipeline takes ~17 s in a debug build).
+        // of the pixels (a 512 px pipeline takes ~17 s in a debug build). Only
+        // images: a mesh generator's `height` is metres (`form_v1`).
         let mut spec = spec;
-        if let Some(t) = spec.params.as_table_mut() {
+        let image = generator.output_kind() == flint_procgen::OutputKind::Image;
+        if let Some(t) = spec.params.as_table_mut().filter(|_| image) {
             for side in ["width", "height"] {
                 if t.contains_key(side) {
                     t.insert(side.into(), toml::Value::Integer(128));
@@ -121,7 +123,7 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
             output,
             "{file} is not deterministic"
         );
-        if generator.output_kind() == OutputKind::Mesh {
+        if generator.output_kind() == OutputKind::Mesh && spec.generator == "tree_v1" {
             assert!(
                 spec.lod.is_some(),
                 "{file}: the tree examples show LOD chains"

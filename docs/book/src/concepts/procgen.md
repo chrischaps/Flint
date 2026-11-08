@@ -154,6 +154,18 @@ A skinned mesh from a data-driven skeleton. Everything anatomical is in the spec
 
 The output is a skinned GLB with a skeleton the [animation](animation.md) system can drive.
 
+### `form_v1`
+
+One abstract [living](#living-props) form that isn't a tree: a held flame, a folded ribbon, a standing stone. It was built for the Embodiment project, which needed a silhouette that holds while its details keep shifting, and it's the second `LivingGenerator` after `tree_v1`. Every `form_v1` spec is living. Example: `specs/examples/form_living.procgen.toml`.
+
+- **The spine.** A smooth curve of `segments` bones from the base, `height` long. It can `lean`, curl through `curl_deg` toward `facing_deg` (`curl_bias` puts the curl toward the tip or the base), and wander on a `coil`. `lift` floats the base off the ground. A frame is carried up the spine by parallel transport, so the section never spins where the curve bends.
+- **The section.** An ellipse swept along the spine. Its radius is `radius` times the `profile` (fractions from base to tip, joined smoothly; end on 0 for a point), with `round_base` and `round_tip` closing the ends. `aspect` thins it (0.1 is a ribbon), `section_deg` turns its broad axis out of the curl's plane, and `twist_turns` twists it along the length. The lineage adds slow `lobes`.
+- **The cards.** Small two-sided quads on the surface, front and back faces like a tree's leaf cards, so the jitter layer boils them. `card_tilt` stands them up toward the tip: flat ones boil inside the outline, upright ones boil its edge. `card_aspect` below 1 makes short strokes across the surface, `card_rise` crowds them toward the tip, and `card_from`/`card_to` bound them.
+- **The poses.** Drawn from a smooth seeded curve along the spine rather than regrown, so the vocabulary is the params': `bend_deg` (a slow lean), `ripple` and `ripple_waves` (a wave up it), `swell` (the section breathing), `turn_deg` (the section turning about the spine, which is what a flat form shows) and `stretch`. They're full size at `[living] drift.amplitude = 1`, and the drift amplitude and the wooze field's `amplitude` scale them together. `form_v1` reads `drift.amplitude` only; `drift.params` names a tree's params and is ignored.
+- **`waves`** puts the segments in that many depth bands: per-level stagger ripples up the form in that many waves, and `[living] variance.steady` holds the low bands steadier than the tip.
+
+The lineage seed fixes everything that makes the form itself: the spine's facing (within ±15° of `facing_deg`), the lobes, the coil's phase and every card. `flint gen` bakes its skinned rest, as for a living tree.
+
 ## Determinism and Seeds
 
 All randomness flows through a `SeededRng` forked by name per stage (`"pattern"`, `"pipeline"`, and so on), so adding a stage never disturbs the numbers an earlier one draws. A `fixed` seed reproduces the asset bit for bit; `derived` hashes a string so a spec can be reseeded by, say, an entity name; `random` is for variants. `flint gen --seed N` overrides whatever the spec says, and `--batch N --seed-start S` writes N sequential-seed variants with the seed inserted into each filename.
