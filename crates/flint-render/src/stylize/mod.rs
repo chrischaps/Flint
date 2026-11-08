@@ -1061,9 +1061,9 @@ pub struct StyleFrame<'a> {
     /// the scene's, so smaller than `width` x `height` at the display stage
     /// under a render scale. The style mask is this size too.
     pub depth_size: [u32; 2],
-    /// Whether `depth` is the chain's own, so bind groups over it may be
-    /// kept ([`StyleFrame::depth_bind`]).
-    pub depth_owned: bool,
+    /// Who vouches for `depth`, so bind groups over it may be kept
+    /// ([`StyleFrame::depth_bind`], #379).
+    pub depth_key: crate::bind_cache::DepthKey,
     pub camera: StyleCamera,
     /// The entity style mask (#263): one style id a pixel
     /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
@@ -1207,15 +1207,16 @@ impl StyleFrame<'_> {
         self.binds.get(name, variant, make)
     }
 
-    /// A bind group over [`depth`](Self::depth): kept when the chain owns
-    /// the depth, made for this frame alone when it doesn't.
+    /// A bind group over [`depth`](Self::depth): kept while the chain owns
+    /// the depth or the caller's depth id holds, made for this frame alone
+    /// when nothing vouches for it (#379).
     pub fn depth_bind(
         &self,
         name: &'static str,
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get_if(self.depth_owned, name, variant, make)
+        self.binds.get_over(self.depth_key, name, variant, make)
     }
 
     /// True the first time it's asked about `name` while the chain lives:

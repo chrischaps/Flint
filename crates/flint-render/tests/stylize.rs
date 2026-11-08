@@ -918,6 +918,114 @@ fn held(gpu: &Gpu) -> [usize; 4] {
     ]
 }
 
+/// #379: at render scale 1 the scene draws into the caller's depth view,
+/// which wgpu 23 can't key. Given with an id, the bind groups over it
+/// (SSAO's, the composite's, the style mask's) are kept from frame to
+/// frame instead of made every frame, and a new id remakes them once.
+#[test]
+fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let mut world = FlintWorld::new();
+    let cube = world.spawn("cube").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+    world
+        .set_component(cube, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-1.0, -1.0, -1.0]));
+    bounds.insert("max".into(), vec3([1.0, 1.0, 1.0]));
+    world.set_component(cube, "bounds", bounds.into()).unwrap();
+    // The cube in glyphs, outlined: the style mask runs (#350)
+    flint_render::entity_style::set_entity_style(&mut world, cube, "ascii").unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        &gpu.device,
+        &gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut config = renderer.post_process_config().clone();
+    config.ssao_enabled = true;
+    renderer.set_post_process_config(config);
+
+    let frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
+        renderer.update_from_world(&world, &gpu.device);
+        renderer.render_to(
+            &gpu.device,
+            &gpu.queue,
+            depth,
+            &Camera::default(),
+            &gpu.color_view,
+        );
+        gpu.device.poll(wgpu::Maintain::Wait);
+        gpu.pixels()
+    };
+    let per_frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
+        let before = renderer.post_binds_made();
+        let pixels = frame(renderer, depth);
+        (renderer.post_binds_made() - before, pixels)
+    };
+
+    // No id: what every host did before, warmed up first
+    let bare = flint_render::DepthTarget::from(&gpu.depth_view);
+    frame(&mut renderer, bare);
+    assert!(
+        renderer.style_mask_draws().is_some_and(|(_, n)| n > 0),
+        "the test needs the style mask on"
+    );
+    let (made_bare, bare_pixels) = per_frame(&mut renderer, bare);
+
+    // An id: the first frame makes them, the next ones none
+    let id = flint_render::new_depth_id();
+    let keyed = flint_render::DepthTarget::new(&gpu.depth_view, id);
+    let (made_first, _) = per_frame(&mut renderer, keyed);
+    let kept = renderer.kept_post_binds();
+    let steady: Vec<u64> = (0..8).map(|_| per_frame(&mut renderer, keyed).0).collect();
+    let (_, keyed_pixels) = per_frame(&mut renderer, keyed);
+
+    // A new depth texture (a resize, say) comes with a new id: made once
+    // again, and the old id's groups dropped rather than piled up
+    let next = flint_render::DepthTarget::new(&gpu.depth_view, flint_render::new_depth_id());
+    let (made_next, _) = per_frame(&mut renderer, next);
+    let (made_after, _) = per_frame(&mut renderer, next);
+    eprintln!(
+        "bind groups a frame: bare {made_bare}, keyed first {made_first} then {steady:?}, \
+         new id {made_next} then {made_after}; kept {kept} -> {}",
+        renderer.kept_post_binds()
+    );
+    assert!(
+        made_bare >= 3,
+        "a bare view should cost SSAO's, the composite's and the mask's groups every frame, made {made_bare}"
+    );
+    // A bare frame makes a group at each use, and some are used twice
+    assert!(
+        (1..=made_bare).contains(&made_first),
+        "the first keyed frame makes each group once"
+    );
+    assert!(
+        steady.iter().all(|&n| n == 0),
+        "a steady keyed frame made bind groups: {steady:?}"
+    );
+    assert_eq!(made_next, made_first, "a new id remakes each group once");
+    assert_eq!(made_after, 0);
+    assert_eq!(
+        renderer.kept_post_binds(),
+        kept,
+        "the old id's groups were kept"
+    );
+    assert_eq!(
+        keyed_pixels, bare_pixels,
+        "kept groups drew a different frame"
+    );
+}
+
 #[test]
 fn a_script_set_style_animates_without_allocating_and_clears_exactly() {
     let Some(gpu) = gpu() else {

@@ -1337,8 +1337,9 @@ impl SceneRenderer {
 
     /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
     #[profiling::function]
-    /// `depth_owned`: `depth_view` is the scaled scene's own, made with the
-    /// HDR chain, so bind groups over it can be kept with the chain (#139).
+    /// `depth_key`: who vouches for `depth_view` (the HDR chain for the
+    /// scaled scene's own, the caller's id for theirs), so bind groups over
+    /// it can be kept (#139, #379).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_postprocess(
         &self,
@@ -1346,7 +1347,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         target_view: &wgpu::TextureView,
         camera: &Camera,
         mut timer: Option<&mut crate::gpu_timer::GpuTimer>,
@@ -1421,7 +1422,7 @@ impl SceneRenderer {
                 format: crate::postprocess::HDR_FORMAT,
                 depth: depth_view,
                 depth_size: [resources.width, resources.height],
-                depth_owned,
+                depth_key,
                 camera: crate::stylize::StyleCamera {
                     view_proj: camera.view_projection_matrix(),
                     inv_view_proj: camera.inverse_view_projection_matrix(),
@@ -1492,7 +1493,7 @@ impl SceneRenderer {
                     resources,
                     config,
                     depth_view,
-                    depth_owned,
+                    depth_key,
                     camera,
                 )
             });
@@ -1510,7 +1511,7 @@ impl SceneRenderer {
                             resources,
                             config,
                             depth_view,
-                            depth_owned,
+                            depth_key,
                             camera,
                             crate::postprocess::VolumetricShadow {
                                 id: shadow_pass.id,
@@ -1598,7 +1599,7 @@ impl SceneRenderer {
             &self.postprocess_config,
             composite_target,
             depth_view,
-            depth_owned,
+            depth_key,
             camera,
             // Same f64 phase wrap as the ocean upload — keeps mode animation
             // precise over long sessions. Headless render leaves this 0.0.
