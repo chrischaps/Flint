@@ -134,7 +134,7 @@ written to the same list and change on every cut. Then:
 
 ```bash
 python tools/showcase/capture.py --cut reel   # the takes the cut uses, at its size
-python tools/showcase/edit.py reel            # the MP4s
+python tools/showcase/cut.py reel            # the MP4s
 ```
 
 `capture.py --cut` captures only the takes the cut's shots use, each only
@@ -146,7 +146,7 @@ an 8-point ASCII cell 4.5 pixels, too fine for a phone. The reel uses 720
 ascii.cell=4.5,8,12,16 --sweep-crop ...` at the cut's size shows the
 choice side by side.
 
-`edit.py` reads the frames, lays each shot's caption over it inside
+`cut.py` reads the frames, lays each shot's caption over it inside
 `safe` (a serif line and a monospaced label under it; consecutive shots
 with the same caption share one), adds the `[cut.end]` card over the last
 bars, and pipes every frame once to ffmpeg. It writes the whole cut and,

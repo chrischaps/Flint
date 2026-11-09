@@ -123,7 +123,7 @@ changed in it, and what didn't:
 
 The Instagram reel and its stories: `tools/showcase/cuts/reel.toml`,
 captured with `capture.py --cut reel` at 1080x1920 and cut by
-`tools/showcase/edit.py reel` into `reel.mp4` and four story pieces.
+`tools/showcase/cut.py reel` into `reel.mp4` and four story pieces.
 
 **Length.** 24 bars at 100 bpm (2.4 s a bar, the clock beat 02 already
 changes on), 57.6 s, inside the 30 to 60 s asked for. Every cut is on a
@@ -172,7 +172,7 @@ the table. Pencil spacing, outlines and edge widths scale with it.
 1480: the intersection of the story safe area (the central 1080x1420) and
 the reel's (clear of about 210 px of top bar, 440 px of caption and
 buttons at the bottom and 120 px of buttons down the right). Captions sit
-at the top of it, the still life in its middle. `edit.py --guides` shades
+at the top of it, the still life in its middle. `cut.py --guides` shades
 the rest.
 
 **Instagram, as checked on 2026-11-08.** Sources disagree, and Meta's own
@@ -186,13 +186,13 @@ sequence either way. Safe-zone figures range from 250 px top and bottom
 (stories) to 210 top, 440 bottom and 120 right (reels); the cut uses the
 tighter of each. Check again before posting.
 
-**Encoding.** `edit.py` pipes each composed frame once to ffmpeg for the
+**Encoding.** `cut.py` pipes each composed frame once to ffmpeg for the
 whole cut and for the story piece it falls in: libx264 High at level 4.2,
 CRF 16 capped at 24 Mb/s, yuv420p tagged BT.709 limited range, a keyframe
 a second (Instagram recompresses; a clean, high-bitrate upload loses
 least), AAC 192 kb/s at 48 kHz, `+faststart`. The soundtrack is the cut's
 `audio`, #438's `many-hands-reel.wav`, written to the same 24 bars; until
-it is built the cut is silent and `edit.py` says so.
+it is built the cut is silent and `cut.py` says so.
 
 **Checked (2026-11-09, RTX 4070, Vulkan).** `reel.mp4` is 1080x1920, 1728
 frames, 57.600 s of video and audio, -14.0 LUFS integrated after AAC;

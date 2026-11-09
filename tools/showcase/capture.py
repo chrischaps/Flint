@@ -11,7 +11,7 @@ A cut (`tools/showcase/cuts/<name>.toml`, #437) can be captured on its own
 terms: `--cut reel` takes the cut's frame size and point canvas
 (`points_wide`), captures only the takes its shots use, each only as far
 as its last shot reaches, and lands them in `<out>/<cut>/`, so a 1080x1920
-take never overwrites the master's. `edit.py` cuts them together.
+take never overwrites the master's. `cut.py` cuts them together.
 
 Each take is one run of `flint-player` on the beat's scene with the clock
 stepped exactly 1/fps a frame (`--frame-step`) and every frame written

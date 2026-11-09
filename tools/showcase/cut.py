@@ -1,10 +1,10 @@
 """Cut the showcase film together from its captured takes (#437).
 
     python tools/showcase/capture.py --cut reel    # the takes, 1080x1920
-    python tools/showcase/edit.py reel             # reel.mp4 and its stories
-    python tools/showcase/edit.py reel --audio track.wav   # with the music (#438)
-    python tools/showcase/edit.py reel --guides    # draw the safe area, for review
-    python tools/showcase/edit.py reel --stills 6  # also a few frames as PNG
+    python tools/showcase/cut.py reel             # reel.mp4 and its stories
+    python tools/showcase/cut.py reel --audio track.wav   # with the music (#438)
+    python tools/showcase/cut.py reel --guides    # draw the safe area, for review
+    python tools/showcase/cut.py reel --stills 6  # also a few frames as PNG
 
 A cut is `tools/showcase/cuts/<name>.toml`: a [cut] table (size, fps, the
 bar grid, where captions may go) and its [[shot]]s in order, each a take
