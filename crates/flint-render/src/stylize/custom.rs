@@ -99,7 +99,10 @@ pub struct ShaderStyleDef {
     pub label: Option<String>,
     #[serde(default = "default_stage")]
     pub stage: String,
-    pub shader: String,
+    /// The one pass's WGSL, for a style of one pass; a style of several
+    /// lists [`passes`](Self::passes) instead.
+    #[serde(default)]
+    pub shader: Option<String>,
     #[serde(default)]
     pub inputs: Vec<String>,
     #[serde(default)]
@@ -114,7 +117,146 @@ pub struct ShaderStyleDef {
     /// Bloom reads this style's result (#300); hdr styles only.
     #[serde(default)]
     pub feeds_bloom: bool,
+    /// `[[passes]]` (#412): each a WGSL `fn style` of its own, run in
+    /// order. Every pass but the last writes a target of the style's own;
+    /// the last writes the stage's output.
+    #[serde(default)]
+    pub passes: Vec<PassDef>,
 }
+
+/// One `[[passes]]` entry (#412).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PassDef {
+    /// For errors, F4 and logs; `pass1`, `pass2`... when absent.
+    #[serde(default)]
+    pub name: Option<String>,
+    pub shader: String,
+    /// The target this pass writes; none on the last pass.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// `rgba16f` (the default), `rgba8` or `r32f`.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// The target's size as a fraction of the stage's (1/16..1, default 1).
+    #[serde(default)]
+    pub scale: Option<f32>,
+    /// Keep the target from frame to frame (ping-ponged): a pass that reads
+    /// it at or before the one writing it reads last frame's.
+    #[serde(default)]
+    pub history: bool,
+    /// The targets this pass reads, by name.
+    #[serde(default)]
+    pub reads: Vec<String>,
+}
+
+/// The formats a target can be (#412).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetFormat {
+    /// Four half floats: HDR colour, signed values. Filtered.
+    Rgba16f,
+    /// Four bytes, 0..1, stored as written (not sRGB). Filtered.
+    Rgba8,
+    /// One float, full precision. Read unfiltered (nearest).
+    R32f,
+}
+
+impl TargetFormat {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "rgba16f" => Some(Self::Rgba16f),
+            "rgba8" => Some(Self::Rgba8),
+            "r32f" => Some(Self::R32f),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rgba16f => "rgba16f",
+            Self::Rgba8 => "rgba8",
+            Self::R32f => "r32f",
+        }
+    }
+
+    pub fn wgpu(self) -> wgpu::TextureFormat {
+        match self {
+            Self::Rgba16f => wgpu::TextureFormat::Rgba16Float,
+            Self::Rgba8 => wgpu::TextureFormat::Rgba8Unorm,
+            Self::R32f => wgpu::TextureFormat::R32Float,
+        }
+    }
+
+    pub fn bytes(self) -> u32 {
+        match self {
+            Self::Rgba16f => 8,
+            Self::Rgba8 | Self::R32f => 4,
+        }
+    }
+
+    /// Whether the linear sampler may read it (`R32Float` isn't filterable
+    /// without a feature most web GPUs lack).
+    pub fn filterable(self) -> bool {
+        self != Self::R32f
+    }
+}
+
+/// A target of the style's own, checked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetSource {
+    pub name: String,
+    pub format: TargetFormat,
+    pub scale: f32,
+    pub history: bool,
+    /// The pass that writes it.
+    pub writer: usize,
+}
+
+impl TargetSource {
+    /// Its size at a stage of `width` x `height`.
+    pub fn size(&self, width: u32, height: u32) -> [u32; 2] {
+        let s = |v: u32| ((v as f32 * self.scale).round() as u32).max(1);
+        [s(width), s(height)]
+    }
+
+    /// Bytes for each pixel of the stage: its texel times its area, twice
+    /// with history.
+    pub fn bytes_per_stage_pixel(&self) -> f32 {
+        self.format.bytes() as f32 * self.scale * self.scale * if self.history { 2.0 } else { 1.0 }
+    }
+}
+
+/// A target a pass reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadSource {
+    /// Index into [`StyleSource::targets`].
+    pub target: usize,
+    /// It reads last frame's: a history target read at or before the pass
+    /// that writes it.
+    pub previous: bool,
+}
+
+/// A pass, checked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PassSource {
+    pub name: String,
+    pub wgsl_path: PathBuf,
+    /// Index into [`StyleSource::targets`]; `None` writes the output.
+    pub target: Option<usize>,
+    pub reads: Vec<ReadSource>,
+}
+
+/// How many passes a style may have.
+pub const MAX_PASSES: usize = 8;
+
+/// How many targets a style may have: each costs memory at every
+/// resolution. With [`MAX_IMAGES`], the input and the three optional
+/// buffers, a pass binds at most 16 sampled textures, every backend's limit.
+pub const MAX_TARGETS: usize = 4;
+
+/// What a style's targets may cost together, in bytes for each pixel of
+/// its stage: four full-size `rgba16f` targets (66 MB at 1080p).
+pub const TARGET_BUDGET: f32 = 32.0;
 
 /// One `[images.<name>]` table (#413): a file beside the `.shader.toml`,
 /// read in the shader with `flint_image_<name>(uv)`.
@@ -291,11 +433,35 @@ pub struct StyleSource {
     pub images: Vec<ImageSource>,
     /// The `.shader.toml`.
     pub toml_path: PathBuf,
-    /// The WGSL file it names, beside it.
+    /// The WGSL file it names, beside it: the last pass's, the one that
+    /// writes the output (a style of one pass has only that).
     pub wgsl_path: PathBuf,
+    /// Its passes in the order they run (#412; one for a style with a
+    /// top-level `shader`); the last writes the stage's output.
+    pub passes: Vec<PassSource>,
+    /// The targets the passes write, in pass order.
+    pub targets: Vec<TargetSource>,
+    /// What the check found that doesn't stop the style (a target nothing
+    /// reads), one line each.
+    pub notes: Vec<String>,
 }
 
 impl StyleSource {
+    /// The WGSL files, one a pass.
+    pub fn wgsl_paths(&self) -> impl Iterator<Item = &Path> {
+        self.passes.iter().map(|p| p.wgsl_path.as_path())
+    }
+
+    /// Whether any target keeps history.
+    pub fn has_history(&self) -> bool {
+        self.targets.iter().any(|t| t.history)
+    }
+
+    /// The index of the last pass, which writes the output.
+    pub fn last_pass(&self) -> usize {
+        self.passes.len().saturating_sub(1)
+    }
+
     /// The folder the description is in: its shader and images are here.
     pub fn dir(&self) -> &Path {
         self.toml_path.parent().unwrap_or(Path::new("."))
@@ -305,6 +471,281 @@ impl StyleSource {
     pub fn uniform_fields(&self) -> usize {
         self.params.len() + self.options.len()
     }
+}
+
+/// Check the `[[passes]]` of a description: names, targets, reads, the
+/// order they're written in and what they cost (#412).
+fn check_passes(
+    at: &dyn std::fmt::Display,
+    dir: &Path,
+    shader: Option<String>,
+    defs: Vec<PassDef>,
+) -> Result<(Vec<PassSource>, Vec<TargetSource>, Vec<String>), String> {
+    let beside = |file: &str| -> Result<PathBuf, String> {
+        let p = Path::new(file);
+        if p.is_absolute() || p.components().any(|c| c.as_os_str() == "..") {
+            return Err(format!(
+                "{at}: shader = \"{file}\" must be a file beside it"
+            ));
+        }
+        Ok(dir.join(p))
+    };
+    let defs = match (shader, defs.is_empty()) {
+        (Some(_), false) => {
+            return Err(format!(
+                "{at}: a style has a top-level shader or [[passes]], not both"
+            ))
+        }
+        (None, true) => {
+            return Err(format!(
+                "{at}: no shader: name one (shader = \"x.wgsl\") or list [[passes]]"
+            ))
+        }
+        (Some(shader), true) => {
+            return Ok((
+                vec![PassSource {
+                    name: "style".into(),
+                    wgsl_path: beside(&shader)?,
+                    target: None,
+                    reads: Vec::new(),
+                }],
+                Vec::new(),
+                Vec::new(),
+            ))
+        }
+        (None, false) => defs,
+    };
+    if defs.len() > MAX_PASSES {
+        return Err(format!("{at}: at most {MAX_PASSES} passes"));
+    }
+    let last = defs.len() - 1;
+    let names: Vec<String> = defs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| d.name.clone().unwrap_or_else(|| format!("pass{}", i + 1)))
+        .collect();
+    for (i, name) in names.iter().enumerate() {
+        if !is_identifier(name) {
+            return Err(format!(
+                "{at}: pass \"{name}\": a name is lowercase letters, digits and _"
+            ));
+        }
+        if names[..i].contains(name) {
+            return Err(format!("{at}: two passes are named \"{name}\""));
+        }
+    }
+    // Targets, each written by one pass
+    let mut targets: Vec<TargetSource> = Vec::new();
+    let mut writes: Vec<Option<usize>> = Vec::new();
+    for (i, d) in defs.iter().enumerate() {
+        let pass = &names[i];
+        let Some(target) = &d.target else {
+            if i != last {
+                return Err(format!(
+                    "{at}: pass \"{pass}\" writes nothing: every pass but the last names a target"
+                ));
+            }
+            if d.format.is_some() || d.scale.is_some() || d.history {
+                return Err(format!(
+                    "{at}: pass \"{pass}\" has format, scale or history but no target"
+                ));
+            }
+            writes.push(None);
+            continue;
+        };
+        if i == last {
+            return Err(format!(
+                "{at}: pass \"{pass}\" is the last: it writes the stage's output, not target \"{target}\""
+            ));
+        }
+        if !is_identifier(target) {
+            return Err(format!(
+                "{at}: target \"{target}\": a name is lowercase letters, digits and _"
+            ));
+        }
+        if let Some(other) = targets.iter().find(|t| &t.name == target) {
+            return Err(format!(
+                "{at}: passes \"{}\" and \"{pass}\" both write target \"{target}\"; give each its own",
+                names[other.writer]
+            ));
+        }
+        let format = match d.format.as_deref() {
+            None => TargetFormat::Rgba16f,
+            Some(f) => TargetFormat::parse(f).ok_or_else(|| {
+                format!("{at}: pass \"{pass}\": format = \"{f}\"; it is rgba16f, rgba8 or r32f")
+            })?,
+        };
+        let scale = d.scale.unwrap_or(1.0);
+        if !(1.0 / 16.0..=1.0).contains(&scale) {
+            return Err(format!(
+                "{at}: pass \"{pass}\": scale = {scale}; it is 0.0625..1 of the stage's size"
+            ));
+        }
+        writes.push(Some(targets.len()));
+        targets.push(TargetSource {
+            name: target.clone(),
+            format,
+            scale,
+            history: d.history,
+            writer: i,
+        });
+    }
+    if targets.len() > MAX_TARGETS {
+        return Err(format!(
+            "{at}: {} targets; a style has at most {MAX_TARGETS}",
+            targets.len()
+        ));
+    }
+    let cost: f32 = targets
+        .iter()
+        .map(TargetSource::bytes_per_stage_pixel)
+        .sum();
+    if cost > TARGET_BUDGET {
+        let each: Vec<String> = targets
+            .iter()
+            .map(|t| format!("{} {}", t.name, t.bytes_per_stage_pixel()))
+            .collect();
+        return Err(format!(
+            "{at}: the targets cost {cost} bytes a pixel ({}); the budget is {TARGET_BUDGET} \
+             (four full-size rgba16f): lower a scale, use rgba8 or r32f, or drop a history",
+            each.join(", ")
+        ));
+    }
+    // Reads: every one names a target; a target is read only after it is
+    // written, unless it keeps history (then a read at or before its
+    // writer is last frame's)
+    let mut reads: Vec<Vec<ReadSource>> = Vec::new();
+    for (i, d) in defs.iter().enumerate() {
+        let pass = &names[i];
+        let mut list = Vec::new();
+        for (k, name) in d.reads.iter().enumerate() {
+            if d.reads[..k].contains(name) {
+                return Err(format!("{at}: pass \"{pass}\" reads \"{name}\" twice"));
+            }
+            let Some(t) = targets.iter().position(|t| &t.name == name) else {
+                let known: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+                return Err(format!(
+                    "{at}: pass \"{pass}\" reads \"{name}\", which no pass writes (targets: {})",
+                    if known.is_empty() {
+                        "none".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                ));
+            };
+            let writer = targets[t].writer;
+            let previous = writer >= i;
+            if previous && !targets[t].history {
+                return Err(read_before_write(at, &names, &targets, &defs, i, t));
+            }
+            list.push(ReadSource {
+                target: t,
+                previous,
+            });
+        }
+        reads.push(list);
+    }
+    let mut notes = Vec::new();
+    for t in &targets {
+        let read = reads
+            .iter()
+            .flatten()
+            .any(|r| targets[r.target].name == t.name);
+        if !read {
+            notes.push(format!(
+                "{at}: warning: pass \"{}\" writes target \"{}\" and no pass reads it",
+                names[t.writer], t.name
+            ));
+        }
+    }
+    let passes = defs
+        .iter()
+        .zip(names)
+        .zip(writes.into_iter().zip(reads))
+        .map(|((d, name), (target, reads))| {
+            Ok(PassSource {
+                name,
+                wgsl_path: beside(&d.shader)?,
+                target,
+                reads,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((passes, targets, notes))
+}
+
+/// The message for pass `reader` reading target `t` before it is written:
+/// a cycle when the writer depends, through what it reads, on the reader.
+fn read_before_write(
+    at: &dyn std::fmt::Display,
+    names: &[String],
+    targets: &[TargetSource],
+    defs: &[PassDef],
+    reader: usize,
+    t: usize,
+) -> String {
+    let writer = targets[t].writer;
+    let target = &targets[t].name;
+    if writer == reader {
+        return format!(
+            "{at}: pass \"{}\" reads target \"{target}\", which it writes: a cycle \
+             (add history = true to read last frame's)",
+            names[reader]
+        );
+    }
+    // Walk back from the writer through the passes whose targets it reads:
+    // reaching the reader is a cycle
+    let depends = |p: usize| -> Vec<usize> {
+        defs[p]
+            .reads
+            .iter()
+            .filter_map(|n| targets.iter().find(|t| &t.name == n))
+            .filter(|t| !t.history || t.writer < p)
+            .map(|t| t.writer)
+            .collect()
+    };
+    let mut path = vec![writer];
+    let mut seen = vec![false; defs.len()];
+    fn walk(
+        p: usize,
+        goal: usize,
+        depends: &dyn Fn(usize) -> Vec<usize>,
+        seen: &mut [bool],
+        path: &mut Vec<usize>,
+    ) -> bool {
+        if p == goal {
+            return true;
+        }
+        if std::mem::replace(&mut seen[p], true) {
+            return false;
+        }
+        for q in depends(p) {
+            path.push(q);
+            if walk(q, goal, depends, seen, path) {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+    if walk(writer, reader, &depends, &mut seen, &mut path) {
+        let mut chain: Vec<&str> = vec![names[reader].as_str()];
+        chain.extend(path.iter().map(|&p| names[p].as_str()));
+        return format!(
+            "{at}: a cycle: passes {} each read what the next writes (\"{}\" reads target \"{target}\")",
+            chain
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(" -> "),
+            names[reader]
+        );
+    }
+    format!(
+        "{at}: pass \"{}\" reads target \"{target}\" before pass \"{}\" writes it; \
+         move \"{}\" after \"{}\" (or add history = true to read last frame's)",
+        names[reader], names[writer], names[reader], names[writer]
+    )
 }
 
 impl ShaderStyleDef {
@@ -393,14 +834,8 @@ impl ShaderStyleDef {
                 "{at}: at most {MAX_PARAMS} parameters and options together"
             ));
         }
-        let shader = Path::new(&self.shader);
-        if shader.is_absolute() || shader.components().any(|c| c.as_os_str() == "..") {
-            return Err(format!(
-                "{at}: shader = \"{}\" must be a file beside it",
-                self.shader
-            ));
-        }
         let dir = toml_path.parent().unwrap_or(Path::new("."));
+        let (passes, targets, notes) = check_passes(&at, dir, self.shader, self.passes)?;
 
         // Options and images share the parameters' names: one table key,
         // one `params` field or one `flint_image_` helper each
@@ -530,7 +965,14 @@ impl ShaderStyleDef {
             options,
             images,
             toml_path: toml_path.to_path_buf(),
-            wgsl_path: dir.join(shader),
+            wgsl_path: passes
+                .last()
+                .expect("check_passes gives a pass")
+                .wgsl_path
+                .clone(),
+            passes,
+            targets,
+            notes,
         })
     }
 }
@@ -596,6 +1038,13 @@ struct FlintFrame {
     pixels_per_point: f32,
     camera_pos: vec3<f32>,
     mask_id: u32,
+    // the size in pixels of what this pass draws: its target, or the output
+    pass_size: vec2<f32>,
+    // 1 when last frame's history targets are this picture's past; 0 on a
+    // first frame, after a cut, a resize or a frame drawn without the style
+    history: f32,
+    // this pass's index, 0 first (#412)
+    pass_index: u32,
 };
 
 struct StylePixel {
@@ -742,14 +1191,63 @@ fn flint_edge(uv: vec2<f32>) -> f32 {
 }
 "#;
 
-fn epilogue(source: &StyleSource) -> String {
+/// The group 3 bindings and helpers of the targets pass `pass` reads
+/// (#412), after the style's images: `flint_target_<name>(uv)` (filtered,
+/// or nearest for `r32f`), `flint_target_<name>_load(texel)` and
+/// `flint_target_<name>_size()`.
+fn prelude_targets(source: &StyleSource, pass: usize) -> String {
+    let mut text = String::new();
+    let first = source.images.len();
+    for (i, read) in source.passes[pass].reads.iter().enumerate() {
+        let binding = first + i;
+        let t = &source.targets[read.target];
+        let n = &t.name;
+        let when = if read.previous {
+            "last frame's (it keeps history; mind flint.history)"
+        } else {
+            "as this frame's earlier pass wrote it"
+        };
+        let sample = if t.format.filterable() {
+            format!("return textureSampleLevel(flint_target_{n}_texture, flint_sampler, uv, 0.0);")
+        } else {
+            format!("return flint_target_{n}_load(vec2<i32>(uv * flint_target_{n}_size()));")
+        };
+        text.push_str(&format!(
+            r#"
+// Target "{n}" ({format}, {scale} of the stage), {when}
+@group(3) @binding({binding}) var flint_target_{n}_texture: texture_2d<f32>;
+
+fn flint_target_{n}_size() -> vec2<f32> {{
+    return vec2<f32>(textureDimensions(flint_target_{n}_texture));
+}}
+
+fn flint_target_{n}_load(texel: vec2<i32>) -> vec4<f32> {{
+    let dims = vec2<i32>(textureDimensions(flint_target_{n}_texture));
+    return textureLoad(flint_target_{n}_texture, clamp(texel, vec2<i32>(0), dims - 1), 0);
+}}
+
+fn flint_target_{n}(uv: vec2<f32>) -> vec4<f32> {{
+    {sample}
+}}
+"#,
+            format = t.format.name(),
+            scale = t.scale,
+        ));
+    }
+    text
+}
+
+fn epilogue(source: &StyleSource, last: bool) -> String {
     let stage = source.stage;
     let own = if source.inputs.mask {
         "params = flint_params_at(in.uv);"
     } else {
         "params = flint_params.rows[0];"
     };
-    let out = if stage == StyleStage::Display {
+    let out = if !last {
+        // A target holds what the pass returns, unchanged (#412)
+        "return style(p);"
+    } else if stage == StyleStage::Display {
         "let c = style(p);\n    \
          let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
          return vec4<f32>(select(rgb, flint_to_linear(rgb), flint.srgb > 0.5), c.a);"
@@ -786,8 +1284,14 @@ fn fs_main(in: FlintVertexOut) -> @location(0) vec4<f32> {{
     )
 }
 
-/// The prelude for `source`: everything before the user's first line.
+/// The prelude for `source`'s last pass (its only one, for a style of one
+/// pass): everything before the user's first line.
 pub fn prelude(source: &StyleSource) -> String {
+    prelude_pass(source, source.last_pass())
+}
+
+/// The prelude for pass `pass` of `source` (#412).
+pub fn prelude_pass(source: &StyleSource, pass: usize) -> String {
     let mut text = String::from(PRELUDE_FRAME);
     text.push_str("\nstruct Params {\n");
     for (name, _) in &source.params {
@@ -828,6 +1332,7 @@ pub fn prelude(source: &StyleSource) -> String {
     for (binding, image) in source.images.iter().enumerate() {
         text.push_str(&prelude_image(binding, image));
     }
+    text.push_str(&prelude_targets(source, pass));
     text.push_str("\n// ---- user style ----\n");
     text
 }
@@ -911,16 +1416,24 @@ fn flint_lut_{n}(c: vec3<f32>) -> vec3<f32> {{
     )
 }
 
-/// `user` (the style's WGSL) inside its prelude and entry points.
+/// `user` (the WGSL of the style's last pass, its only one for a style of
+/// one pass) inside its prelude and entry points.
 pub fn compose(source: &StyleSource, user: &str) -> Composed {
-    let prelude = prelude(source);
+    compose_pass(source, source.last_pass(), user)
+}
+
+/// `user` (the WGSL of pass `pass`) inside its prelude and entry points
+/// (#412).
+pub fn compose_pass(source: &StyleSource, pass: usize, user: &str) -> Composed {
+    let prelude = prelude_pass(source, pass);
+    let last = pass == source.last_pass();
     let prelude_lines = prelude.matches('\n').count();
     let mut user = user.to_string();
     if !user.ends_with('\n') {
         user.push('\n');
     }
     let user_lines = user.matches('\n').count();
-    let text = format!("{prelude}{user}{}", epilogue(source));
+    let text = format!("{prelude}{user}{}", epilogue(source, last));
     Composed {
         text,
         prelude_lines,
@@ -1018,10 +1531,15 @@ pub fn set_loop_guard(on: bool) {
 /// Parse and validate `user` as `source`'s shader, the way it will be
 /// built, and guard its loops. `Err` is the message to show, lines in the
 /// user's file.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
-    let composed = compose(source, user);
-    let file = source.wgsl_path.display().to_string();
+    check_pass(source, source.last_pass(), user)
+}
+
+/// [`check`] for pass `pass` of `source` (#412).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Report, String> {
+    let composed = compose_pass(source, pass, user);
+    let file = source.passes[pass].wgsl_path.display().to_string();
     let mut module = naga::front::wgsl::parse_str(&composed.text).map_err(|e| {
         locate(
             &composed,
@@ -1030,6 +1548,7 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
                 .map(|l| (l.line_number, l.line_position)),
             e.message(),
             source,
+            pass,
         )
     })?;
     let mut validator = naga::valid::Validator::new(
@@ -1051,6 +1570,7 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
                 .map(|l| (l.line_number, l.line_position)),
             &message,
             source,
+            pass,
         )
     })?;
     let mut report = inspect(&module, &composed, &file)?;
@@ -1252,6 +1772,7 @@ fn locate(
     at: Option<(u32, u32)>,
     message: &str,
     source: &StyleSource,
+    pass: usize,
 ) -> String {
     let mut out = match at {
         Some((line_number, line_position)) => match composed.user_line(line_number as usize) {
@@ -1297,6 +1818,29 @@ fn locate(
             }
         ));
     }
+    // A helper of a target this pass doesn't read (#412)
+    if let Some(at) = message.find("flint_target_") {
+        let rest = &message[at + "flint_target_".len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let name = ["_size", "_load"]
+            .iter()
+            .find_map(|s| name.strip_suffix(s))
+            .unwrap_or(&name);
+        let reads = &source.passes[pass].reads;
+        if !reads.iter().any(|r| source.targets[r.target].name == name) {
+            let pass_name = &source.passes[pass].name;
+            if source.targets.iter().any(|t| t.name == name) {
+                out.push_str(&format!(
+                    "\n    hint: add \"{name}\" to reads of pass \"{pass_name}\" in the .shader.toml"
+                ));
+            } else {
+                out.push_str(&format!("\n    hint: no pass writes a target \"{name}\""));
+            }
+        }
+    }
     out
 }
 
@@ -1328,7 +1872,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
         if var.binding.is_some() && in_user(module.global_variables.get_span(h)) {
             return Err(format!(
                 "{file}{}: `{}` declares a binding; a style reads only the prelude's \
-                 (flint_input, params, depth, mask, edges, images)",
+                 (flint_input, params, depth, mask, edges, images, and the targets in reads)",
                 line_of(module.global_variables.get_span(h)),
                 var.name.as_deref().unwrap_or("?")
             ));
@@ -1400,7 +1944,9 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
     match statement {
         S::Call { function, .. } => {
             let name = module.functions[*function].name.as_deref().unwrap_or("");
-            if name.starts_with("flint_image_size_") {
+            if name.starts_with("flint_image_size_")
+                || (name.starts_with("flint_target_") && name.ends_with("_size"))
+            {
                 return 0;
             }
             // A tiled read is four loads, a LUT two samples
@@ -1412,6 +1958,7 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
             }
             usize::from(
                 name.starts_with("flint_image_")
+                    || name.starts_with("flint_target_")
                     || matches!(
                         name,
                         "flint_sample"
@@ -1442,7 +1989,7 @@ fn count_helper_calls(statement: &naga::Statement, module: &naga::Module) -> usi
 /// own WGSL compiler reports instead, a frame or two later
 /// ([`compiler_error`], read when the build settles).
 #[cfg(target_arch = "wasm32")]
-pub fn check(_source: &StyleSource, _user: &str) -> Result<Report, String> {
+pub fn check_pass(_source: &StyleSource, _pass: usize, _user: &str) -> Result<Report, String> {
     Ok(Report::default())
 }
 
@@ -1455,18 +2002,28 @@ pub fn compiler_error(
     composed: &Composed,
     info: &wgpu::CompilationInfo,
 ) -> Option<String> {
+    compiler_error_pass(source, source.last_pass(), composed, info)
+}
+
+/// [`compiler_error`] for pass `pass` of `source` (#412).
+pub fn compiler_error_pass(
+    source: &StyleSource,
+    pass: usize,
+    composed: &Composed,
+    info: &wgpu::CompilationInfo,
+) -> Option<String> {
     let errors: Vec<_> = info
         .messages
         .iter()
         .filter(|m| m.message_type == wgpu::CompilationMessageType::Error)
         .collect();
     let first = errors.first()?;
-    let file = source.wgsl_path.display().to_string();
+    let file = source.passes[pass].wgsl_path.display().to_string();
     let at = first
         .location
         .map(|l| (l.line_number, l.line_position))
         .filter(|(line, _)| *line > 0);
-    let mut out = locate(composed, &file, at, first.message.trim(), source);
+    let mut out = locate(composed, &file, at, first.message.trim(), source, pass);
     if errors.len() > 1 {
         out.push_str(&format!("\n    (and {} more)", errors.len() - 1));
     }
@@ -1492,12 +2049,31 @@ struct Loaded {
     toml_modified: Mutex<Option<std::time::SystemTime>>,
 }
 
-#[derive(Clone, Copy)]
+/// Names leaked once a style's install: bind cache keys, pass labels and
+/// target names.
+#[derive(Clone)]
 struct BindNames {
-    frame: &'static str,
     input: &'static str,
     extra: &'static str,
+    passes: Vec<PassNames>,
+    /// Each target's texture names (#412): two for history (ping-ponged),
+    /// else the same one twice.
+    targets: Vec<[&'static str; 2]>,
+}
+
+#[derive(Clone, Copy)]
+struct PassNames {
+    frame: &'static str,
+    /// Group 3 of a pass that reads targets: the images, then its targets.
+    targets: &'static str,
+    /// The render pass label (`--gpu-time` reads the style's own).
     pass: &'static str,
+}
+
+/// One message from the passes' errors, or `None` when every pass builds.
+fn join_errors(errors: &[Option<String>]) -> Option<String> {
+    let all: Vec<&str> = errors.iter().flatten().map(String::as_str).collect();
+    (!all.is_empty()).then(|| all.join("\n"))
 }
 
 static LOADED: RwLock<Vec<Arc<Loaded>>> = RwLock::new(Vec::new());
@@ -1584,11 +2160,48 @@ pub fn parse_source(text: &str, path: &Path) -> Result<StyleSource, String> {
 /// then its shader, without a GPU and without registering it (#416:
 /// `flint style check`). `Err` is the message a host would show.
 #[cfg(not(target_arch = "wasm32"))]
+///
+/// Every pass is checked (#412): the errors of all that fail, one after
+/// another, or one report adding up the passes' loops, reads and warnings
+/// (the description's notes among them). `guarded` is `None`: there's no
+/// one module to build.
 pub fn check_file(path: &Path) -> Result<Report, String> {
     let source = read_source(path)?;
-    let user = flint_core::vfs::read_to_string(&source.wgsl_path)
-        .map_err(|e| format!("{}: {e}", source.wgsl_path.display()))?;
-    check(&source, &user)
+    let mut total = Report {
+        warnings: source.notes.clone(),
+        ..Report::default()
+    };
+    let mut errors = Vec::new();
+    for (i, pass) in source.passes.iter().enumerate() {
+        let user = match flint_core::vfs::read_to_string(&pass.wgsl_path) {
+            Ok(user) => user,
+            Err(e) => {
+                errors.push(format!("{}: {e}", pass.wgsl_path.display()));
+                continue;
+            }
+        };
+        match check_pass(&source, i, &user) {
+            Ok(report) => {
+                total.loops += report.loops;
+                total.texture_reads += report.texture_reads;
+                total.warnings.extend(report.warnings);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() {
+        if source.passes.len() == 1 {
+            // One pass: its own report, guarded text and all
+            let user = flint_core::vfs::read_to_string(&source.wgsl_path)
+                .map_err(|e| format!("{}: {e}", source.wgsl_path.display()))?;
+            let mut report = check(&source, &user)?;
+            report.warnings.splice(0..0, source.notes.iter().cloned());
+            return Ok(report);
+        }
+        Ok(total)
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 /// The modified time of `path` on disk, for the reload polls (native
@@ -1612,25 +2225,35 @@ fn calls_style_blend(user: &str) -> bool {
 fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // A shader that fails registers anyway: it draws a passthrough and its
     // error waits for the host, so a typo never takes a style's settings away
-    let wgsl = flint_core::vfs::read_to_string(&source.wgsl_path);
+    messages.extend(source.notes.iter().cloned());
+    let wgsl: Vec<_> = source
+        .passes
+        .iter()
+        .map(|p| flint_core::vfs::read_to_string(&p.wgsl_path))
+        .collect();
     // A shader that reads its own blend draws it (#396): the framework's
     // cross-fade would apply it twice. Decided when the description is
     // read, so a shader that starts or stops calling it takes effect at the
-    // next load or `.shader.toml` edit
-    let blends_itself = wgsl.as_ref().is_ok_and(|user| calls_style_blend(user));
-    let error = match wgsl {
-        Err(e) => Some(format!("{}: {e}", source.wgsl_path.display())),
-        Ok(user) => match check(&source, &user) {
-            Ok(report) => {
-                messages.extend(report.warnings);
-                None
-            }
-            Err(e) => Some(e),
-        },
-    };
-    if let Some(e) = &error {
-        messages.push(e.clone());
-    }
+    // next load or `.shader.toml` edit. Any pass of several may (#412)
+    let blends_itself = wgsl
+        .iter()
+        .any(|w| w.as_ref().is_ok_and(|user| calls_style_blend(user)));
+    let pass_errors: Vec<Option<String>> = wgsl
+        .into_iter()
+        .enumerate()
+        .map(|(i, w)| match w {
+            Err(e) => Some(format!("{}: {e}", source.passes[i].wgsl_path.display())),
+            Ok(user) => match check_pass(&source, i, &user) {
+                Ok(report) => {
+                    messages.extend(report.warnings);
+                    None
+                }
+                Err(e) => Some(e),
+            },
+        })
+        .collect();
+    let error = join_errors(&pass_errors);
+    messages.extend(pass_errors.into_iter().flatten());
     // Every image it may bind is there to read (a bundle that didn't pack
     // one is refused, #413); the pass decodes them when it first draws
     let mut missing_images = Vec::new();
@@ -1741,11 +2364,42 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     // (frozen at the old values, or the wrong size for a new param count)
     static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let several = source.passes.len() > 1;
     let names = BindNames {
-        frame: leak(format!("{name} style frame BG #{generation}")),
         input: leak(format!("{name} style input BG #{generation}")),
         extra: leak(format!("{name} style depth/mask BG #{generation}")),
-        pass: leak(format!("{name} style pass")),
+        passes: source
+            .passes
+            .iter()
+            .map(|p| PassNames {
+                frame: leak(if several {
+                    format!("{name} style {} frame BG #{generation}", p.name)
+                } else {
+                    format!("{name} style frame BG #{generation}")
+                }),
+                targets: leak(format!("{name} style {} targets BG #{generation}", p.name)),
+                pass: leak(if several {
+                    format!("{name} style {}", p.name)
+                } else {
+                    format!("{name} style pass")
+                }),
+            })
+            .collect(),
+        // Not by generation: a target is keyed by name and format, and one
+        // asked for again at the same size is the same texture (#412)
+        targets: source
+            .targets
+            .iter()
+            .map(|t| {
+                let base = format!("{name}.{}", t.name);
+                if t.history {
+                    [leak(format!("{base}.a")), leak(format!("{base}.b"))]
+                } else {
+                    let one = leak(base);
+                    [one, one]
+                }
+            })
+            .collect(),
     };
     let loaded = Arc::new(Loaded {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1971,6 +2625,9 @@ struct FlintFrameUniforms {
     pixels_per_point: f32,
     camera_pos: [f32; 3],
     mask_id: u32,
+    pass_size: [f32; 2],
+    history: f32,
+    pass_index: u32,
 }
 
 struct Build {
@@ -2033,23 +2690,55 @@ impl<T> Settling<T> {
     }
 }
 
+/// One pass of a user style on the GPU (#412).
+struct PassGpu {
+    /// What it writes: its target's format, or the stage's.
+    format: wgpu::TextureFormat,
+    /// Group 3 of a pass that reads targets: the style's images, then the
+    /// targets it reads. A pass that reads none binds the images' own group.
+    targets_bgl: Option<wgpu::BindGroupLayout>,
+    layout: wgpu::PipelineLayout,
+    /// Its own frame uniform: `pass_size` and `pass_index` differ by pass,
+    /// and a buffer holds one value a frame.
+    frame_buffer: wgpu::Buffer,
+    build: Mutex<Build>,
+    error: Mutex<Option<String>>,
+}
+
+/// What the last frame drew, for history targets (#277's rule): trusted
+/// only on the frame after, in the same epoch, into the same textures.
+#[derive(Default)]
+struct History {
+    /// Which of each history target's two textures this frame writes.
+    parity: usize,
+    last: Option<LastFrame>,
+}
+
+struct LastFrame {
+    frame: u64,
+    epoch: u64,
+    /// Every target texture it used; held, so an address can't be reused.
+    textures: Vec<Arc<super::StyleTexture>>,
+}
+
 struct CustomPass {
     loaded: Arc<Loaded>,
-    format: wgpu::TextureFormat,
     frame_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     extra_bgl: Option<wgpu::BindGroupLayout>,
-    layout: wgpu::PipelineLayout,
-    frame_buffer: wgpu::Buffer,
+    /// The settings table, shared by every pass.
     params_buffer: wgpu::Buffer,
-    /// Draws the input unchanged, while the user's shader can't.
+    /// The passes in order (one for a style with a top-level `shader`).
+    passes: Vec<PassGpu>,
+    /// Draws the input unchanged, while a pass can't.
     passthrough: wgpu::RenderPipeline,
-    build: Mutex<Build>,
     /// The style's images (#413), group 3.
     images: Option<Mutex<ImageSet>>,
-    /// Group 2 when a style binds images but reads none of the optional
-    /// buffers: an empty group keeps the images at group 3.
+    /// Group 2 when a style binds images or reads targets but reads none of
+    /// the optional buffers: an empty group keeps group 3 at 3.
     empty: Option<wgpu::BindGroup>,
+    /// The history targets' parity and what the last frame drew (#412).
+    history: Mutex<History>,
     /// Whether the variant overflow has been warned about.
     warned: std::sync::atomic::AtomicBool,
 }
@@ -2068,7 +2757,8 @@ fn build(d: &StyleDevice) -> CustomPass {
     });
     let input_bgl = kit::sampled_layout(device, "User Style Input BGL");
     let images = ImageSet::new(device, source);
-    let extra_bgl = (source.inputs.any() || images.is_some()).then(|| {
+    let reads_targets = source.passes.iter().any(|p| !p.reads.is_empty());
+    let extra_bgl = (source.inputs.any() || images.is_some() || reads_targets).then(|| {
         let mut entries = Vec::new();
         if source.inputs.depth {
             entries.push(texture_entry(0, wgpu::TextureSampleType::Depth));
@@ -2087,13 +2777,6 @@ fn build(d: &StyleDevice) -> CustomPass {
             entries: &entries,
         })
     });
-    let mut layouts = vec![&frame_bgl, &input_bgl];
-    if let Some(extra) = &extra_bgl {
-        layouts.push(extra);
-    }
-    if let Some(images) = &images {
-        layouts.push(&images.layout);
-    }
     let empty = extra_bgl
         .as_ref()
         .filter(|_| !source.inputs.any())
@@ -2104,15 +2787,80 @@ fn build(d: &StyleDevice) -> CustomPass {
                 entries: &[],
             })
         });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("User Style Layout"),
-        bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
-    });
-    // The passthrough is the same prelude with no inputs: always compiles
+    let passes: Vec<PassGpu> = source
+        .passes
+        .iter()
+        .map(|p| {
+            // The images first (bindings 0..n, as #413 laid them out), then
+            // the targets this pass reads
+            let targets_bgl = (!p.reads.is_empty()).then(|| {
+                let image_entries = (0..source.images.len()).map(|i| {
+                    texture_entry(
+                        i as u32,
+                        wgpu::TextureSampleType::Float { filterable: true },
+                    )
+                });
+                let target_entries = p.reads.iter().enumerate().map(|(b, r)| {
+                    texture_entry(
+                        (source.images.len() + b) as u32,
+                        wgpu::TextureSampleType::Float {
+                            filterable: source.targets[r.target].format.filterable(),
+                        },
+                    )
+                });
+                let entries: Vec<wgpu::BindGroupLayoutEntry> =
+                    image_entries.chain(target_entries).collect();
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("User Style Images + Targets BGL"),
+                    entries: &entries,
+                })
+            });
+            let mut layouts = vec![&frame_bgl, &input_bgl];
+            let group3 = targets_bgl.as_ref().or(images.as_ref().map(|i| &i.layout));
+            if let Some(extra) = &extra_bgl {
+                if source.inputs.any() || group3.is_some() {
+                    layouts.push(extra);
+                }
+            }
+            if let Some(g) = group3 {
+                layouts.push(g);
+            }
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("User Style Layout"),
+                bind_group_layouts: &layouts,
+                push_constant_ranges: &[],
+            });
+            PassGpu {
+                format: p
+                    .target
+                    .map_or(d.format, |t| source.targets[t].format.wgpu()),
+                targets_bgl,
+                layout,
+                frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
+                build: Mutex::new(Build {
+                    pipeline: None,
+                    pending: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    modified: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    since_poll: 0,
+                }),
+                error: Mutex::new(None),
+            }
+        })
+        .collect();
+    // The passthrough is the last pass's prelude with no inputs, images or
+    // targets: always compiles
+    let last = source.passes[source.last_pass()].clone();
     let bare = StyleSource {
         inputs: Inputs::default(),
         images: Vec::new(),
+        passes: vec![PassSource {
+            reads: Vec::new(),
+            target: None,
+            ..last
+        }],
+        targets: Vec::new(),
         ..source.clone()
     };
     let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2127,8 +2875,6 @@ fn build(d: &StyleDevice) -> CustomPass {
         d.format,
     );
     let pass = CustomPass {
-        format: d.format,
-        frame_buffer: kit::uniform_buffer::<FlintFrameUniforms>(device, "User Style Frame"),
         params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("User Style Params"),
             size: table_size(source.uniform_fields(), source.inputs.mask) as u64,
@@ -2138,22 +2884,17 @@ fn build(d: &StyleDevice) -> CustomPass {
         frame_bgl,
         input_bgl,
         extra_bgl,
-        layout,
+        passes,
         passthrough,
-        build: Mutex::new(Build {
-            pipeline: None,
-            pending: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            modified: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            since_poll: 0,
-        }),
         images: images.map(Mutex::new),
         empty,
+        history: Mutex::new(History::default()),
         warned: Default::default(),
         loaded,
     };
-    pass.rebuild(device);
+    for i in 0..pass.passes.len() {
+        pass.rebuild(device, i);
+    }
     pass
 }
 
@@ -2253,6 +2994,9 @@ struct ImageSet {
     layout: wgpu::BindGroupLayout,
     /// Made again whenever a slot's view changes.
     bind: Option<wgpu::BindGroup>,
+    /// Bumped whenever a slot's view changes: the key of the bind groups a
+    /// pass that reads targets makes over the images and its targets (#412).
+    generation: u64,
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
 }
@@ -2306,6 +3050,7 @@ impl ImageSet {
             slots,
             layout,
             bind: None,
+            generation: 0,
             #[cfg(not(target_arch = "wasm32"))]
             since_poll: 0,
         })
@@ -2372,6 +3117,7 @@ impl ImageSet {
                     }
                     slot.failed = None;
                     self.bind = None;
+                    self.generation += 1;
                     update.loaded.push(want);
                 }
                 Err(e) => slot.failed = Some((want, now, e)),
@@ -2471,43 +3217,84 @@ fn upload_image(
     Ok(texture.create_view(&wgpu::TextureViewDescriptor::default()))
 }
 
+/// Clear `view` to transparent black: a history target whose past isn't
+/// this picture's reads as nothing (#412).
+fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("User Style History Clear"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    });
+}
+
 impl CustomPass {
-    fn set_error(&self, error: Option<String>) {
-        let mut slot = self.loaded.error.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = &error {
-            if slot.as_ref() != Some(e) {
-                tracing::warn!("style '{}': {e}", self.loaded.source.name);
+    /// Record pass `pass`'s error (or that it builds), and the style's
+    /// error as all of its passes' together.
+    fn set_error(&self, pass: usize, error: Option<String>) {
+        let name = &self.loaded.source.name;
+        {
+            let mut slot = self.passes[pass]
+                .error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = &error {
+                if slot.as_ref() != Some(e) {
+                    tracing::warn!("style '{name}': {e}");
+                }
+            } else if slot.is_some() {
+                if self.passes.len() > 1 {
+                    tracing::info!(
+                        "style '{name}': pass '{}' compiles again",
+                        self.loaded.source.passes[pass].name
+                    );
+                } else {
+                    tracing::info!("style '{name}' compiles again");
+                }
             }
-        } else if slot.is_some() {
-            tracing::info!("style '{}' compiles again", self.loaded.source.name);
+            *slot = error;
         }
-        *slot = error;
+        let all: Vec<Option<String>> = self
+            .passes
+            .iter()
+            .map(|p| p.error.lock().unwrap_or_else(|e| e.into_inner()).clone())
+            .collect();
+        *self.loaded.error.lock().unwrap_or_else(|e| e.into_inner()) = join_errors(&all);
     }
 
-    /// Read, check and build the user's shader; on failure keep what was
-    /// drawing (the last good build, or the passthrough).
-    fn rebuild(&self, device: &wgpu::Device) {
+    /// Read, check and build pass `i`'s shader; on failure keep what was
+    /// drawing (its last good build, or the passthrough).
+    fn rebuild(&self, device: &wgpu::Device, i: usize) {
         let source = &self.loaded.source;
+        let path = &source.passes[i].wgsl_path;
+        let gpu = &self.passes[i];
         #[cfg(not(target_arch = "wasm32"))]
-        let modified = std::fs::metadata(&source.wgsl_path)
-            .and_then(|m| m.modified())
-            .ok();
-        let user = match flint_core::vfs::read_to_string(&source.wgsl_path) {
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let user = match flint_core::vfs::read_to_string(path) {
             Ok(user) => user,
             Err(e) => {
-                self.set_error(Some(format!("{}: {e}", source.wgsl_path.display())));
+                self.set_error(i, Some(format!("{}: {e}", path.display())));
                 return;
             }
         };
-        let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
+        let mut build = gpu.build.lock().unwrap_or_else(|e| e.into_inner());
         #[cfg(not(target_arch = "wasm32"))]
         {
             build.modified = modified;
         }
-        let report = match check(source, &user) {
+        let report = match check_pass(source, i, &user) {
             Ok(report) => report,
             Err(e) => {
-                self.set_error(Some(e));
+                drop(build);
+                self.set_error(i, Some(e));
                 return;
             }
         };
@@ -2525,10 +3312,10 @@ impl CustomPass {
                 prelude_lines: 0,
                 user_lines: 0,
             },
-            None => compose(source, &user),
+            None => compose_pass(source, i, &user),
         };
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let (module, made) = pipeline(device, &self.layout, &composed.text, self.format);
+        let (module, made) = pipeline(device, &gpu.layout, &composed.text, gpu.format);
         let scope = Settling::new(device.pop_error_scope());
         let info = Settling::new(module.get_compilation_info());
         build.pending = Some(Pending {
@@ -2537,13 +3324,13 @@ impl CustomPass {
             info,
             scope,
         });
-        self.settle(&mut build);
+        self.settle(i, &mut build);
     }
 
-    /// Poll a pending build; once the GPU has answered, draw it, or keep
-    /// what was drawing and say why. Natively the answer is in on the
-    /// first poll, inside [`Self::rebuild`].
-    fn settle(&self, build: &mut Build) {
+    /// Poll pass `i`'s pending build; once the GPU has answered, draw it,
+    /// or keep what was drawing and say why. Natively the answer is in on
+    /// the first poll, inside [`Self::rebuild`].
+    fn settle(&self, i: usize, build: &mut Build) {
         let Some(pending) = build.pending.as_mut() else {
             return;
         };
@@ -2559,16 +3346,19 @@ impl CustomPass {
         let refused = pending.scope.take().flatten();
         let compiled = info
             .as_ref()
-            .and_then(|info| compiler_error(source, &pending.composed, info));
+            .and_then(|info| compiler_error_pass(source, i, &pending.composed, info));
         match (compiled, refused) {
-            (Some(e), _) => self.set_error(Some(e)),
-            (None, Some(e)) => self.set_error(Some(format!(
-                "{}: the GPU refused it: {e}",
-                source.wgsl_path.display()
-            ))),
+            (Some(e), _) => self.set_error(i, Some(e)),
+            (None, Some(e)) => self.set_error(
+                i,
+                Some(format!(
+                    "{}: the GPU refused it: {e}",
+                    source.passes[i].wgsl_path.display()
+                )),
+            ),
             (None, None) => {
                 build.pipeline = Some(pending.pipeline);
-                self.set_error(None);
+                self.set_error(i, None);
             }
         }
     }
@@ -2618,24 +3408,107 @@ impl CustomPass {
         update.ready
     }
 
-    /// Rebuild when the WGSL file changed on disk (native only).
+    /// Rebuild each pass whose WGSL file changed on disk (native only).
     #[cfg(not(target_arch = "wasm32"))]
     fn poll(&self, device: &wgpu::Device) {
-        let changed = {
-            let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
-            build.since_poll += 1;
-            if build.since_poll < POLL_FRAMES {
-                return;
+        for (i, pass) in self.loaded.source.passes.iter().enumerate() {
+            let changed = {
+                let mut build = self.passes[i]
+                    .build
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                build.since_poll += 1;
+                if build.since_poll < POLL_FRAMES {
+                    continue;
+                }
+                build.since_poll = 0;
+                let now = std::fs::metadata(&pass.wgsl_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+                now.is_some() && now != build.modified
+            };
+            if changed {
+                self.rebuild(device, i);
             }
-            build.since_poll = 0;
-            let now = std::fs::metadata(&self.loaded.source.wgsl_path)
-                .and_then(|m| m.modified())
-                .ok();
-            now.is_some() && now != build.modified
-        };
-        if changed {
-            self.rebuild(device);
         }
+    }
+
+    /// The frame uniform of pass `i`, drawing `size`.
+    fn uniforms(
+        &self,
+        frame: &StyleFrame<'_>,
+        i: usize,
+        size: [u32; 2],
+        history: bool,
+    ) -> FlintFrameUniforms {
+        let camera = frame.camera;
+        FlintFrameUniforms {
+            inv_view_proj: camera.inv_view_proj,
+            resolution: [frame.width as f32, frame.height as f32],
+            texel: frame.texel_size(),
+            depth_size: [frame.depth_size[0] as f32, frame.depth_size[1] as f32],
+            time: frame.time,
+            frame: frame.frame as u32,
+            near: camera.near,
+            far: camera.far,
+            srgb: if frame.srgb() { 1.0 } else { 0.0 },
+            pixels_per_point: frame.pixels_per_point,
+            camera_pos: camera.position,
+            mask_id: u32::from(
+                frame
+                    .style_id(self.loaded.source.name.as_str())
+                    .unwrap_or(0),
+            ),
+            pass_size: [size[0] as f32, size[1] as f32],
+            history: if history { 1.0 } else { 0.0 },
+            pass_index: i as u32,
+        }
+    }
+
+    /// Pass `i`'s group 0: its frame uniform and the shared settings table.
+    fn frame_bind(&self, frame: &StyleFrame<'_>, i: usize) -> Arc<wgpu::BindGroup> {
+        let name = self.loaded.names.passes[i].frame;
+        frame.bind(name, 0, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout: &self.frame_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.passes[i].frame_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        })
+    }
+
+    /// The input unchanged, through the last pass's frame uniform.
+    fn draw_passthrough(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input_bg: &wgpu::BindGroup,
+        output: &wgpu::TextureView,
+    ) {
+        let last = self.passes.len() - 1;
+        let uniforms = self.uniforms(frame, last, [frame.width, frame.height], false);
+        frame.queue.write_buffer(
+            &self.passes[last].frame_buffer,
+            0,
+            bytemuck::cast_slice(&[uniforms]),
+        );
+        let frame_bg = self.frame_bind(frame, last);
+        kit::fullscreen_pass(
+            encoder,
+            self.loaded.names.passes[last].pass,
+            output,
+            &self.passthrough,
+            &[&frame_bg, input_bg],
+        );
     }
 }
 
@@ -2651,25 +3524,7 @@ impl StylePass for CustomPass {
         self.poll(frame.device);
 
         let source = &self.loaded.source;
-        let names = self.loaded.names;
-        let camera = frame.camera;
-        let uniforms = FlintFrameUniforms {
-            inv_view_proj: camera.inv_view_proj,
-            resolution: [frame.width as f32, frame.height as f32],
-            texel: frame.texel_size(),
-            depth_size: [frame.depth_size[0] as f32, frame.depth_size[1] as f32],
-            time: frame.time,
-            frame: frame.frame as u32,
-            near: camera.near,
-            far: camera.far,
-            srgb: if frame.srgb() { 1.0 } else { 0.0 },
-            pixels_per_point: frame.pixels_per_point,
-            camera_pos: camera.position,
-            mask_id: u32::from(frame.style_id(source.name.as_str()).unwrap_or(0)),
-        };
-        frame
-            .queue
-            .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        let names = &self.loaded.names;
         // The settings table (#414): row 0 the scene's, then one a variant
         // Each row is the params, then the options (#413) as u32 indices
         // written as their bits
@@ -2731,45 +3586,29 @@ impl StylePass for CustomPass {
         frame
             .queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&words));
-
-        let frame_bg = frame.bind(names.frame, 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(names.frame),
-                layout: &self.frame_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.frame_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.params_buffer.as_entire_binding(),
-                    },
-                ],
-            })
-        });
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
-        let mut build = self.build.lock().unwrap_or_else(|e| e.into_inner());
-        // A build the browser hasn't answered for yet (#415)
-        self.settle(&mut build);
-        let passthrough = |encoder: &mut wgpu::CommandEncoder| {
-            kit::fullscreen_pass(
-                encoder,
-                names.pass,
-                output,
-                &self.passthrough,
-                &[&frame_bg, &input_bg],
-            )
-        };
-        let Some(pipeline) = &build.pipeline else {
-            passthrough(encoder);
+        // Every pass must have built once (a build the browser hasn't
+        // answered for yet settles here, #415): a chain missing a link draws
+        // nothing meaningful, so the style passes its input through
+        let mut builds: Vec<std::sync::MutexGuard<'_, Build>> = self
+            .passes
+            .iter()
+            .map(|p| p.build.lock().unwrap_or_else(|e| e.into_inner()))
+            .collect();
+        for (i, build) in builds.iter_mut().enumerate() {
+            self.settle(i, build);
+        }
+        if builds.iter().any(|b| b.pipeline.is_none()) {
+            drop(builds);
+            self.draw_passthrough(frame, encoder, &input_bg, output);
             return;
-        };
+        }
         // An image that never read (a missing file) leaves the style a
         // passthrough with its error, as a shader that doesn't compile does
         if !images_ready {
-            passthrough(encoder);
+            drop(builds);
+            self.draw_passthrough(frame, encoder, &input_bg, output);
             return;
         }
         // The mask and the edges are there whenever this style is on and
@@ -2810,24 +3649,155 @@ impl StylePass for CustomPass {
                 }))
             }
             Some(_) => {
-                passthrough(encoder);
+                drop(builds);
+                self.draw_passthrough(frame, encoder, &input_bg, output);
                 return;
             }
         };
-        let mut groups: Vec<&wgpu::BindGroup> = vec![&frame_bg, &input_bg];
-        if let Some(extra) = &extra_bg {
-            groups.push(extra);
-        } else if let Some(empty) = &self.empty {
-            groups.push(empty);
+
+        // This frame's targets (#412): each history target's pair, the
+        // others once
+        let sizes: Vec<[u32; 2]> = source
+            .targets
+            .iter()
+            .map(|t| t.size(frame.width, frame.height))
+            .collect();
+        let textures: Vec<[Arc<super::StyleTexture>; 2]> = source
+            .targets
+            .iter()
+            .enumerate()
+            .map(|(k, t)| {
+                let [a, b] = names.targets[k];
+                let [w, h] = sizes[k];
+                let first = frame.target_sized(a, t.format.wgpu(), w, h);
+                let second = if t.history {
+                    frame.target_sized(b, t.format.wgpu(), w, h)
+                } else {
+                    first.clone()
+                };
+                [first, second]
+            })
+            .collect();
+        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        let used: Vec<Arc<super::StyleTexture>> = textures.iter().flatten().cloned().collect();
+        let trusted = history.last.as_ref().is_some_and(|last| {
+            last.frame.wrapping_add(1) == frame.frame
+                && last.epoch == frame.history_epoch
+                && last.textures.len() == used.len()
+                && last
+                    .textures
+                    .iter()
+                    .zip(&used)
+                    .all(|(a, b)| Arc::ptr_eq(a, b))
+        });
+        let write = history.parity;
+        let previous = 1 - write;
+        if !trusted {
+            for (k, t) in source.targets.iter().enumerate() {
+                if t.history {
+                    clear(encoder, &textures[k][previous].view);
+                }
+            }
         }
+
         let mut images = self
             .images
             .as_ref()
             .map(|i| i.lock().unwrap_or_else(|e| e.into_inner()));
-        if let Some(images) = images.as_mut() {
-            groups.push(images.bind_group(frame.device));
+        for (i, pass) in source.passes.iter().enumerate() {
+            let size = pass
+                .target
+                .map_or([frame.width, frame.height], |t| sizes[t]);
+            let uniforms = self.uniforms(frame, i, size, trusted);
+            frame.queue.write_buffer(
+                &self.passes[i].frame_buffer,
+                0,
+                bytemuck::cast_slice(&[uniforms]),
+            );
+            let frame_bg = self.frame_bind(frame, i);
+            let pick = |r: &ReadSource| if r.previous { previous } else { write };
+            // Group 3: the images and the targets this pass reads, keyed by
+            // what changes the views (each read's size, which of a history
+            // pair it is this frame, and the images' generation); or the
+            // images' own group for a pass that reads no target
+            let targets_bg = self.passes[i].targets_bgl.as_ref().map(|bgl| {
+                let start = images.as_ref().map_or(0, |im| im.generation);
+                let key = pass.reads.iter().fold(
+                    0xcbf2_9ce4_8422_2325u64 ^ start.wrapping_mul(0x9e37_79b9_7f4a_7c15),
+                    |h, r| {
+                        let [w, ht] = sizes[r.target];
+                        let side = if source.targets[r.target].history {
+                            pick(r) as u64 + 1
+                        } else {
+                            0
+                        };
+                        let v = (u64::from(w) << 34) ^ (u64::from(ht) << 4) ^ side;
+                        (h ^ v).wrapping_mul(0x0100_0000_01b3)
+                    },
+                );
+                frame.bind(names.passes[i].targets, key, || {
+                    let mut entries: Vec<wgpu::BindGroupEntry> = images
+                        .as_ref()
+                        .map(|im| {
+                            im.slots
+                                .iter()
+                                .enumerate()
+                                .map(|(b, s)| wgpu::BindGroupEntry {
+                                    binding: b as u32,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &s.loaded.as_ref().expect("every image is loaded").1,
+                                    ),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let first = source.images.len();
+                    entries.extend(pass.reads.iter().enumerate().map(|(b, r)| {
+                        wgpu::BindGroupEntry {
+                            binding: (first + b) as u32,
+                            resource: wgpu::BindingResource::TextureView(
+                                &textures[r.target][pick(r)].view,
+                            ),
+                        }
+                    }));
+                    frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(names.passes[i].targets),
+                        layout: bgl,
+                        entries: &entries,
+                    })
+                })
+            });
+            let images_bg: Option<&wgpu::BindGroup> = match (&targets_bg, images.as_mut()) {
+                (None, Some(im)) => Some(im.bind_group(frame.device)),
+                _ => None,
+            };
+            let group3: Option<&wgpu::BindGroup> = targets_bg.as_deref().or(images_bg);
+            let mut groups: Vec<&wgpu::BindGroup> = vec![&frame_bg, &input_bg];
+            if let Some(extra) = &extra_bg {
+                groups.push(extra);
+            } else if group3.is_some() {
+                if let Some(empty) = &self.empty {
+                    groups.push(empty);
+                }
+            }
+            if let Some(g) = group3 {
+                groups.push(g);
+            }
+            let out = match pass.target {
+                Some(t) => &textures[t][write].view,
+                None => output,
+            };
+            let pipeline = builds[i].pipeline.as_ref().expect("checked above");
+            kit::fullscreen_pass(encoder, names.passes[i].pass, out, pipeline, &groups);
         }
-        kit::fullscreen_pass(encoder, names.pass, output, pipeline, &groups);
+        if source.has_history() {
+            history.parity = previous;
+        }
+        history.last = Some(LastFrame {
+            frame: frame.frame,
+            epoch: frame.history_epoch,
+            textures: used,
+        });
     }
 }
 
@@ -2959,13 +3929,241 @@ mod tests {
         assert_eq!(report.texture_reads, 1, "flint_params_at reads the mask");
     }
 
+    const HEAD: &str = "version = 1\nname = \"x\"\n";
+    const FILE: &str = "styles/x.shader.toml";
+
+    fn passes(body: &str) -> Result<StyleSource, String> {
+        source(&format!("{HEAD}{body}"), FILE)
+    }
+
+    /// #412: `[[passes]]` are checked when the description is read, and
+    /// each error names the passes.
+    #[test]
+    fn passes_are_checked_and_errors_name_them() {
+        let ok = passes(
+            r#"
+            [[passes]]
+            name = "down"
+            shader = "down.wgsl"
+            target = "small"
+            scale = 0.5
+            [[passes]]
+            shader = "blur.wgsl"
+            target = "blurred"
+            format = "rgba8"
+            scale = 0.5
+            reads = ["small"]
+            [[passes]]
+            name = "out"
+            shader = "out.wgsl"
+            reads = ["blurred", "small"]
+            "#,
+        )
+        .unwrap();
+        let names: Vec<&str> = ok.passes.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["down", "pass2", "out"], "a default name by place");
+        assert_eq!(ok.targets.len(), 2);
+        assert_eq!(ok.targets[1].format, TargetFormat::Rgba8);
+        assert_eq!(ok.targets[0].size(1920, 1080), [960, 540]);
+        assert_eq!(ok.passes[2].reads.len(), 2);
+        assert!(ok.passes[2].reads.iter().all(|r| !r.previous));
+        assert!(ok.notes.is_empty(), "{:?}", ok.notes);
+        let files: Vec<_> = ok.wgsl_paths().collect();
+        assert_eq!(files[1], Path::new("styles").join("blur.wgsl"));
+
+        let err = |body: &str| passes(body).unwrap_err();
+        let pass = |name: &str, extra: &str| {
+            format!("[[passes]]\nname = \"{name}\"\nshader = \"{name}.wgsl\"\n{extra}\n")
+        };
+        // A read before the write names both passes
+        let e = err(&format!(
+            "{}{}{}",
+            pass("a", "target = \"ta\"\nreads = [\"tb\"]"),
+            pass("b", "target = \"tb\""),
+            pass("c", "reads = [\"ta\", \"tb\"]"),
+        ));
+        assert!(
+            e.contains("pass \"a\" reads target \"tb\" before pass \"b\" writes it"),
+            "{e}"
+        );
+        // A cycle names its passes in order
+        let e = err(&format!(
+            "{}{}{}",
+            pass("a", "target = \"ta\"\nreads = [\"tb\"]"),
+            pass("b", "target = \"tb\"\nreads = [\"ta\"]"),
+            pass("c", "reads = [\"tb\"]"),
+        ));
+        assert!(
+            e.contains("a cycle") && e.contains("\"a\" -> \"b\" -> \"a\""),
+            "{e}"
+        );
+        // A pass reading its own target without history
+        let e = err(&format!(
+            "{}{}",
+            pass("a", "target = \"ta\"\nreads = [\"ta\"]"),
+            pass("b", "reads = [\"ta\"]"),
+        ));
+        assert!(e.contains("which it writes: a cycle"), "{e}");
+        // ... is last frame's with history
+        let h = passes(&format!(
+            "{}{}",
+            pass("a", "target = \"ta\"\nhistory = true\nreads = [\"ta\"]"),
+            pass("b", "reads = [\"ta\"]"),
+        ))
+        .unwrap();
+        assert!(h.passes[0].reads[0].previous && !h.passes[1].reads[0].previous);
+        assert!(h.has_history());
+        // Shape: targets on every pass but the last, none on it
+        assert!(err(&pass("a", "target = \"t\"")).contains("is the last"));
+        assert!(err(&format!("{}{}", pass("a", ""), pass("b", ""))).contains("writes nothing"));
+        assert!(err(&pass("a", "scale = 0.5")).contains("but no target"));
+        assert!(err(&format!(
+            "{}{}",
+            pass("a", "target = \"t\"\nformat = \"rgb565\""),
+            pass("b", "")
+        ))
+        .contains("rgba16f, rgba8 or r32f"));
+        assert!(err(&format!(
+            "{}{}",
+            pass("a", "target = \"t\"\nscale = 2"),
+            pass("b", "")
+        ))
+        .contains("0.0625..1"));
+        assert!(err(&format!(
+            "{}{}",
+            pass("a", "target = \"t\""),
+            pass("b", "reads = [\"u\"]")
+        ))
+        .contains("which no pass writes"));
+        assert!(err(&format!(
+            "{}{}{}",
+            pass("a", "target = \"t\""),
+            pass("b", "target = \"t\""),
+            pass("c", "")
+        ))
+        .contains("both write target \"t\""));
+        assert!(err(&format!("{}{}", pass("a", ""), pass("a", ""))).contains("two passes"));
+        assert!(err("shader = \"x.wgsl\"\n[[passes]]\nshader = \"y.wgsl\"\n").contains("not both"));
+        assert!(err("").contains("no shader"));
+        assert!(err(&pass("a", "").replace("a.wgsl", "../a.wgsl")).contains("beside it"));
+        assert!(
+            err(&format!("{}reads = [\"t\"]\nwobble = 1\n", pass("a", "")))
+                .contains("unknown field")
+        );
+        // A target nothing reads is a note, not an error
+        let unread = passes(&format!("{}{}", pass("a", "target = \"t\""), pass("b", ""))).unwrap();
+        assert!(
+            unread.notes[0].contains("no pass reads it"),
+            "{:?}",
+            unread.notes
+        );
+    }
+
+    /// #412: at most four targets, and together no more than four
+    /// full-size rgba16f (history counting twice).
+    #[test]
+    fn targets_are_capped_in_count_and_memory() {
+        let chain = |targets: &[&str]| {
+            let mut body = String::new();
+            for (i, t) in targets.iter().enumerate() {
+                body.push_str(&format!(
+                    "[[passes]]\nshader = \"p{i}.wgsl\"\ntarget = \"t{i}\"\n{t}\n"
+                ));
+            }
+            let reads: Vec<String> = (0..targets.len()).map(|i| format!("\"t{i}\"")).collect();
+            body.push_str(&format!(
+                "[[passes]]\nshader = \"last.wgsl\"\nreads = [{}]\n",
+                reads.join(", ")
+            ));
+            passes(&body)
+        };
+        assert!(
+            chain(&[""; 4]).is_ok(),
+            "four full-size rgba16f: the budget"
+        );
+        assert!(chain(&[""; 5]).unwrap_err().contains("at most 4"));
+        assert!(
+            chain(&["history = true", "", ""]).is_ok(),
+            "16 + 8 + 8: on the line"
+        );
+        let e = chain(&["history = true", "", "", "format = \"rgba8\""]).unwrap_err();
+        assert!(e.contains("budget is 32"), "{e}");
+        assert!(chain(&[
+            "history = true",
+            "",
+            "scale = 0.5",
+            "format = \"r32f\"\nscale = 0.5"
+        ])
+        .is_ok());
+    }
+
+    /// #412: every pass's prelude validates, whatever it reads: each
+    /// format, this frame's or last frame's, with and without other inputs.
+    #[test]
+    fn pass_preludes_validate_for_every_read() {
+        for inputs in ["[]", "[\"depth\", \"mask\", \"edges\"]"] {
+            for stage in ["display", "hdr"] {
+                let s = passes(&format!(
+                    "stage = \"{stage}\"\ninputs = {inputs}\n\
+                     [[passes]]\nshader = \"a.wgsl\"\ntarget = \"h\"\nhistory = true\nreads = [\"h\"]\n\
+                     [[passes]]\nshader = \"b.wgsl\"\ntarget = \"f\"\nformat = \"r32f\"\nscale = 0.5\nreads = [\"h\"]\n\
+                     [[passes]]\nshader = \"c.wgsl\"\ntarget = \"e\"\nformat = \"rgba8\"\nreads = [\"f\", \"h\"]\n\
+                     [[passes]]\nshader = \"d.wgsl\"\nreads = [\"e\", \"f\", \"h\"]\n"
+                ))
+                .unwrap();
+                for i in 0..s.passes.len() {
+                    check_pass(&s, i, PASSTHROUGH)
+                        .unwrap_or_else(|e| panic!("{stage} {inputs} pass {i}: {e}"));
+                }
+                // The helpers of what the last pass reads
+                let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                            return flint_target_e(p.uv) + flint_target_f(p.uv) \
+                            + flint_target_h_load(vec2<i32>(p.pos)) \
+                            + vec4<f32>(flint_target_f_size(), flint.pass_size) * flint.history;\n}\n";
+                let report = check_pass(&s, 3, user).unwrap();
+                assert_eq!(report.texture_reads, 3, "the size isn't a read");
+                // A target the pass doesn't read gets a hint
+                let e = check_pass(&s, 0, user).unwrap_err();
+                assert!(e.contains("add \"e\" to reads of pass \"pass1\""), "{e}");
+            }
+        }
+    }
+
+    /// #412 with #413: a style's images and the targets a pass reads share
+    /// group 3, the images first, so neither moves the other.
+    #[test]
+    fn images_and_targets_share_group_three() {
+        let s = passes(
+            "[images.paper]\nfile = \"paper.png\"\n\
+             [[passes]]\nshader = \"a.wgsl\"\ntarget = \"t\"\n\
+             [[passes]]\nshader = \"b.wgsl\"\nreads = [\"t\"]\n",
+        )
+        .unwrap();
+        let first = prelude_pass(&s, 0);
+        assert!(first.contains("@group(3) @binding(0) var flint_image_texture_paper"));
+        assert!(
+            !first.contains("flint_target_t"),
+            "the first pass reads no target"
+        );
+        let last = prelude_pass(&s, 1);
+        assert!(last.contains("@group(3) @binding(0) var flint_image_texture_paper"));
+        assert!(
+            last.contains("@group(3) @binding(1) var flint_target_t_texture"),
+            "the target after the image"
+        );
+        let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                    return flint_image_paper(p.uv) * flint_target_t(p.uv);\n}\n";
+        check_pass(&s, 1, user).unwrap();
+        check_pass(&s, 0, PASSTHROUGH).unwrap();
+    }
+
     #[test]
     fn params_round_up_to_vec4s_and_a_pad() {
         assert_eq!(params_size(0), 16);
         assert_eq!(params_size(1), 32);
         assert_eq!(params_size(4), 32);
         assert_eq!(params_size(5), 48);
-        assert_eq!(std::mem::size_of::<FlintFrameUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<FlintFrameUniforms>(), 144);
     }
 
     #[test]
@@ -3171,7 +4369,7 @@ fn style(p: StylePixel) -> vec4<f32> {
                 .map(|(_, e)| e)
         };
         assert_eq!(error(), None);
-        assert!(pass.build.lock().unwrap().pipeline.is_some());
+        assert!(pass.passes[0].build.lock().unwrap().pipeline.is_some());
 
         // Break it on disk; the poll notices within POLL_FRAMES frames
         std::thread::sleep(std::time::Duration::from_millis(30));
@@ -3186,7 +4384,7 @@ fn style(p: StylePixel) -> vec4<f32> {
         let e = error().expect("the broken edit is reported");
         assert!(e.contains("reload.wgsl:"), "{e}");
         assert!(
-            pass.build.lock().unwrap().pipeline.is_some(),
+            pass.passes[0].build.lock().unwrap().pipeline.is_some(),
             "last good build kept"
         );
 
@@ -3341,11 +4539,11 @@ fn style(p: StylePixel) -> vec4<f32> {
         let line = composed.prelude_lines as u32 + 2;
         let (_, made) = pipeline(
             &device,
-            &pass.layout,
+            &pass.passes[0].layout,
             &compose(&source, PASSTHROUGH).text,
             format,
         );
-        let first = pass
+        let first = pass.passes[0]
             .build
             .lock()
             .unwrap()
@@ -3354,7 +4552,7 @@ fn style(p: StylePixel) -> vec4<f32> {
             .map(identity)
             .unwrap();
         let made_id = identity(&made);
-        pass.build.lock().unwrap().pending = Some(Pending {
+        pass.passes[0].build.lock().unwrap().pending = Some(Pending {
             pipeline: made,
             composed: composed.clone(),
             info: Settling::new(Late {
@@ -3373,8 +4571,8 @@ fn style(p: StylePixel) -> vec4<f32> {
             }),
         });
         let settle = || {
-            let mut build = pass.build.lock().unwrap();
-            pass.settle(&mut build);
+            let mut build = pass.passes[0].build.lock().unwrap();
+            pass.settle(0, &mut build);
             build.pending.is_some()
         };
         assert!(settle(), "frame 1: still waiting");
@@ -3387,7 +4585,8 @@ fn style(p: StylePixel) -> vec4<f32> {
             "{e}"
         );
         assert_eq!(
-            pass.build
+            pass.passes[0]
+                .build
                 .lock()
                 .unwrap()
                 .pipeline
@@ -3401,13 +4600,13 @@ fn style(p: StylePixel) -> vec4<f32> {
         // A clean answer, a frame late: the new build draws, the error clears
         let (_, made) = pipeline(
             &device,
-            &pass.layout,
+            &pass.passes[0].layout,
             &compose(&source, PASSTHROUGH).text,
             format,
         );
         let made_id_2 = identity(&made);
         assert_ne!(made_id, made_id_2);
-        pass.build.lock().unwrap().pending = Some(Pending {
+        pass.passes[0].build.lock().unwrap().pending = Some(Pending {
             pipeline: made,
             composed,
             info: Settling::new(Late {
@@ -3421,7 +4620,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert!(!settle());
         assert_eq!(error(), None);
         assert_eq!(
-            pass.build
+            pass.passes[0]
+                .build
                 .lock()
                 .unwrap()
                 .pipeline
@@ -3516,7 +4716,7 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert!(load_dir(&dir).is_empty());
         let index = index_of("utest_edit");
         let old = super::super::find("utest_edit").unwrap();
-        let old_bind = loaded("utest_edit").unwrap().names.frame;
+        let old_bind = loaded("utest_edit").unwrap().names.passes[0].frame;
         assert!(
             reload_changed(&dir).replaced.is_empty(),
             "nothing changed yet"
@@ -3539,7 +4739,10 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert_eq!(index_of("utest_edit"), index, "at the same index");
         // Its bind groups are cached under new names: the old ones hold the
         // old pass's buffers
-        assert_ne!(loaded("utest_edit").unwrap().names.frame, old_bind);
+        assert_ne!(
+            loaded("utest_edit").unwrap().names.passes[0].frame,
+            old_bind
+        );
         assert_eq!(new.label, "Edited");
         assert_eq!(new.param(&Default::default(), "b"), 2.0);
         assert_eq!(super::source("utest_edit").unwrap().params.len(), 2);

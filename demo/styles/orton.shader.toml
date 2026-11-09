@@ -1,0 +1,71 @@
+# A user style of four passes (#412): the Orton effect, a photographer's
+# trick from slide film. Two exposures of one scene, one sharp and one
+# overexposed and out of focus, sandwiched: the light blooms softly
+# while the edges stay crisp. Here the soft copy is a half-size target
+# blurred in two passes, one across and one down, and the last pass
+# screens it over the frame.
+#
+#   flint render demo/user_styles.scene.toml --style orton --output orton.png
+#   flint render demo/user_styles.scene.toml --style orton --gpu-time 120
+#       (each target's size and bytes are listed after the pass times)
+#
+# Each pass is a WGSL `fn style` of its own. A pass writes the target it
+# names; the passes after it read that target with flint_target_<name>(uv).
+version = 1
+name = "orton"
+label = "Orton glow"
+stage = "display"
+
+[params.radius]
+default = 9.0
+min = 1.0
+max = 24.0
+label = "Blur radius (pt)"
+help = "How far the soft copy spreads, in points of the finished frame"
+
+[params.exposure]
+default = 1.5
+min = 0.5
+max = 3.0
+help = "How overexposed the soft copy is before it's blurred"
+
+[params.amount]
+default = 0.45
+min = 0.0
+max = 1.0
+help = "How much of the soft copy is screened over the sharp one"
+
+[params.saturation]
+default = 1.2
+min = 0.0
+max = 2.0
+help = "The soft copy's colour: above 1 the glow is richer than the scene"
+
+# 1. The soft copy's exposure, at half size
+[[passes]]
+name = "expose"
+shader = "orton_expose.wgsl"
+target = "exposed"
+scale = 0.5
+
+# 2. Blurred across
+[[passes]]
+name = "blur_x"
+shader = "orton_blur_x.wgsl"
+target = "wide"
+scale = 0.5
+reads = ["exposed"]
+
+# 3. And down: a separable Gaussian, 13 taps a direction instead of 169
+[[passes]]
+name = "blur_y"
+shader = "orton_blur_y.wgsl"
+target = "soft"
+scale = 0.5
+reads = ["wide"]
+
+# 4. Screened over the sharp frame: writes the stage's output
+[[passes]]
+name = "sandwich"
+shader = "orton.wgsl"
+reads = ["soft"]

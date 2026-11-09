@@ -439,6 +439,66 @@ bundled and played from the bundle with `flint-player --bundle`, the same
   frame: it shows the scene's file, and an entity's value changes only
   its index in `params`.
 
+## Built in #412: passes and targets
+
+The "TOML-described pass graph" this ADR set aside is built, kept as a
+list, not a graph. Still format `version = 1`: a description with a
+top-level `shader` reads as before.
+
+- **`[[passes]]` in order, not sorted.** Each pass names its WGSL (a
+  `fn style` of its own), the `target` it writes (`format` rgba16f /
+  rgba8 / r32f, `scale` 1/16..1 of the stage), and the targets it `reads`.
+  Every pass but the last writes a target; the last writes the output.
+  Running passes in the order written keeps the file the explanation: a
+  topological sort would accept a file whose order says something else.
+- **Checked at load, naming the passes.** A read before its writer is an
+  error that says which pass to move; when the writer depends back on the
+  reader it is reported as a cycle with the chain (`"a" -> "b" -> "a"`).
+  One writer a target, no target on the last pass, a target nobody reads
+  is a warning.
+- **Targets in group 3, after the images** (#413 put a style's images
+  there first, at bindings 0..n). A pass that reads targets gets a group 3
+  layout of its own: the images, then its reads at binding `n + i` in
+  `reads` order, so neither feature moves the other's bindings. A pass
+  that reads none binds the images' own group. Its bind group is keyed by
+  each read's size, which half of a history pair it is this frame, and the
+  images' generation (bumped when an image is decoded again). With 8
+  images and 4 targets, plus the input and the three optional buffers, a
+  pass binds at most 16 sampled textures, every backend's limit. Helpers:
+  `flint_target_<name>(uv)` / `_load(texel)` / `_size()`. `r32f` reads
+  nearest, since `R32Float` isn't filterable without a feature most web
+  GPUs lack. Group 2 gets an empty layout when a pass reads targets or
+  images but no depth, mask or edges (wgpu numbers groups by place). A
+  target holds what its pass returns, with no sRGB encode; only the last
+  pass's result is encoded.
+- **Per pass, on #415's path.** Each pass has its own `Build` (a pending
+  pipeline settled from the compiler's report and the error scope), its
+  own frame uniform and its own error; the style's error joins them. The
+  settings table (#414), the images and the loop guard (#411) are the
+  style's, shared by every pass. `check`, `compose` and `compiler_error`
+  mean the last pass (the only one, for a style of one pass); the
+  `_pass` variants take a pass index.
+- **Targets come from `StyleFrame::target_sized`** as `<style>.<target>`,
+  so they live with the chain, are rebuilt on resize and show up in
+  `StyleTargets::entries()`, which `flint render --gpu-time` lists with
+  size, format and bytes. Not keyed by install generation: the same name,
+  format and size is the same texture after a reload.
+- **Caps:** 8 passes, 4 targets, and 32 bytes a stage pixel in all (four
+  full-size rgba16f; 66 MB at 1080p), a history target counting twice.
+- **History** (`history = true`): a pair swapped each frame. Reads at or
+  before the writer get last frame's, later ones this frame's. Trusted only
+  on the frame after, in the same `history_epoch`, into the same textures
+  (held, so their addresses can't be reused); otherwise the past is cleared
+  to transparent black and `flint.history` is 0.
+- **Failure:** each pass is checked and built alone and keeps its last good
+  build; until every pass has built once the style draws the passthrough.
+  `FlintFrame` grew `pass_size`, `history` and `pass_index` (144 bytes, one
+  buffer a pass, since a buffer holds one value a frame).
+
+Measured: `demo/styles/orton.*` (expose, blur across, blur down at half
+size, screen over the frame) costs 0.032 ms for all four passes at
+1280x720 on an RTX 4070, with 5.3 MB of targets.
+
 ## Follow-ups
 
 Filed from this spike (numbers in the PR): the loop guard (naga IR
