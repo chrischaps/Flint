@@ -608,9 +608,11 @@ pub struct RenderArgs {
     pub particle_time: Option<f32>,
 
     /// The game time to capture: living props, the wooze field and everything else
-    /// a clock drives, as the player has them at that time. Seconds (3.5), or a span
-    /// (0..4) for an animated --output x.gif. Physics and animation clips don't
-    /// run, and scripts only with --scripts. Same value, same pixels
+    /// a clock drives, as the player has them at that time. Seconds (3.5), a span
+    /// (0..4) for an animated --output x.gif, or a list (2,5,9.5) of moments of one
+    /// run, each written as a still beside --output (x.png gives x_0000.png...).
+    /// Physics and animation clips don't run, and scripts only with --scripts.
+    /// Same value, same pixels
     #[arg(long, value_parser = render_plan::parse_time)]
     pub time: Option<TimeSpec>,
 
@@ -777,7 +779,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let report_json = args.report.as_deref() == Some(REPORT_TO_STDOUT);
     HUMAN_TO_STDERR.store(report_json, Ordering::Relaxed);
-    render_plan::check_output(&args.output, args.time)?;
+    render_plan::check_output(&args.output, args.time.as_ref())?;
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
     let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
@@ -2100,7 +2102,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         )?);
     }
 
-    let times = render_plan::capture_times(args.time, args.fps);
+    let times = render_plan::capture_times(args.time.as_ref(), args.fps);
     let mut warnings = stage_warnings(args, sweep, &stages[0]);
     for warning in &warnings {
         eprintln!("Warning: {warning}");
@@ -2172,6 +2174,27 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             args.fps,
             args.output,
             std::fs::metadata(output).map_or(0.0, |m| m.len() as f64 / 1e6),
+        );
+    } else if matches!(args.time, Some(TimeSpec::List(_))) {
+        // A still a moment (#614), numbered in the order the moments were given.
+        let count = frames.len();
+        for (i, frame) in frames.iter().enumerate() {
+            let path = render_plan::numbered_still(&args.output, i, count);
+            frame
+                .save(&path)
+                .context(format!("Failed to save image to {}", path.display()))?;
+        }
+        say!(
+            "Rendered {count} moments ({}) as {}x{} to {} .. {}",
+            times
+                .iter()
+                .map(|t| format!("{t}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            frames[0].width(),
+            frames[0].height(),
+            render_plan::numbered_still(&args.output, 0, count).display(),
+            render_plan::numbered_still(&args.output, count - 1, count).display()
         );
     } else {
         frames[0]

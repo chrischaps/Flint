@@ -265,6 +265,14 @@ flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
 
 It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
 
+Several moments of one run are a list, each later than the one before:
+
+```bash
+flint render demo/living_props.scene.toml --time 2,5,9.5 -o at.png
+```
+
+That writes a still a moment beside `--output`, numbered as a [`--frames`](#frame-sequences) sequence is (`at_0000.png`, `at_0001.png`, `at_0002.png`). It's one run: the scene loads once and the clocks step through the moments in order, so it simulates to the last moment once, where three renders would simulate to each. A moment that falls on the step (1/60 s, or `--frame-step`) gets the same bytes it gets rendered alone. Between moments off the step, the clocks take one short step to land on each, as a span's frames do. `--report json` has a capture a moment, and a `--sweep` writes a sheet a moment.
+
 Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
 
 ## Scripts and an Expression Timeline

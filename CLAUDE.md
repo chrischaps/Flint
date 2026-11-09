@@ -132,6 +132,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                           warned. flint_player::HeadlessScripts, #8)
    #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers)
+   #   --time 2,5,9.5 -o x.png   (#614: moments of one run, simulated once, a still each as
+   #                           x_0000.png...; each byte-identical to --time <moment> alone on the step)
    #   --sweep wooze.glide=0,0.25,0.5,1  (labelled columns; also .step .amplitude .jitter .preset;
    #                           a preset is a wooze/<name>.wooze.toml first, species tables and all, #249)
    #   --report json          (stdout: each living prop's lineage seed, pose indices, wooze values,
