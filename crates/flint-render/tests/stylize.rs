@@ -982,22 +982,28 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
     );
     let (made_bare, bare_pixels) = per_frame(&mut renderer, bare);
 
-    // An id: the first frame makes them, the next ones none
+    // An id: the first two frames make them, the next ones none. Two, not
+    // one: ASCII's cell history (#277) ping-pongs a pair of textures, and
+    // its group over the depth binds the side it reads, so the second side
+    // is first bound on the second frame (#572)
     let id = flint_render::new_depth_id();
     let keyed = flint_render::DepthTarget::new(&gpu.depth_view, id);
     let (made_first, _) = per_frame(&mut renderer, keyed);
+    let (made_second, _) = per_frame(&mut renderer, keyed);
+    let made_warm = made_first + made_second;
     let kept = renderer.kept_post_binds();
     let steady: Vec<u64> = (0..8).map(|_| per_frame(&mut renderer, keyed).0).collect();
     let (_, keyed_pixels) = per_frame(&mut renderer, keyed);
 
     // A new depth texture (a resize, say) comes with a new id: made once
-    // again, and the old id's groups dropped rather than piled up
+    // again over the same two frames, and the old id's groups dropped
+    // rather than piled up
     let next = flint_render::DepthTarget::new(&gpu.depth_view, flint_render::new_depth_id());
-    let (made_next, _) = per_frame(&mut renderer, next);
+    let made_next = per_frame(&mut renderer, next).0 + per_frame(&mut renderer, next).0;
     let (made_after, _) = per_frame(&mut renderer, next);
     eprintln!(
-        "bind groups a frame: bare {made_bare}, keyed first {made_first} then {steady:?}, \
-         new id {made_next} then {made_after}; kept {kept} -> {}",
+        "bind groups a frame: bare {made_bare}, keyed first {made_first} + {made_second} then \
+         {steady:?}, new id {made_next} then {made_after}; kept {kept} -> {}",
         renderer.kept_post_binds()
     );
     assert!(
@@ -1006,14 +1012,18 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
     );
     // A bare frame makes a group at each use, and some are used twice
     assert!(
-        (1..=made_bare).contains(&made_first),
-        "the first keyed frame makes each group once"
+        (1..=made_bare).contains(&made_warm),
+        "the first two keyed frames make each group once, made {made_first} + {made_second}"
+    );
+    assert!(
+        made_second <= 1,
+        "only the history's second side waits for the second frame, made {made_second}"
     );
     assert!(
         steady.iter().all(|&n| n == 0),
         "a steady keyed frame made bind groups: {steady:?}"
     );
-    assert_eq!(made_next, made_first, "a new id remakes each group once");
+    assert_eq!(made_next, made_warm, "a new id remakes each group once");
     assert_eq!(made_after, 0);
     assert_eq!(
         renderer.kept_post_binds(),
