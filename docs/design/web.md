@@ -1724,6 +1724,25 @@ glue is credited to the first crate in its type arguments):
 | flint_render | 0.35 | | image | 0.15 |
 | rapier3d | 0.29 | | image_webp + tiff | 0.23 |
 
+### Media beside the page (#436)
+
+The showcase film is not part of the wasm or any bundle, so the 4 MB gzip
+line above doesn't count it. It is a click-to-play film on the Flint page,
+loaded on its own (`preload="none"` with its poster), and these are its
+sizes, recorded so the next cut can be held to them. The storyboard
+(`docs/design/showcase-film.md`, "The 16:9 cut") has the whole table.
+
+| File | Size | |
+|---|---|---|
+| `many-hands-web.mp4` (1920x1080, 30 fps, H.264 crf 32, 2:06) | 36.4 MB | 2.3 Mbit/s |
+| `many-hands-web.webm` (the same, VP9 two-pass at 2.1 Mbit/s) | 33.1 MB | 2.1 Mbit/s |
+| `many-hands-poster.jpg` (1920x1080) | 0.23 MB | |
+
+ASCII glyphs are fine detail in every frame and cost bits accordingly: the
+same cut at crf 27 and 60 fps was 80 MB, and 720p blurs 8-point cells into
+texture. The Flint page's current hero films are 1 to 6 MB; this one is
+for watching, not for a looping hero.
+
 ### The trims (#123)
 
 Each row adds one lever to the row above it. `flint-web` as

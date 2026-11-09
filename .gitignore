@@ -54,3 +54,6 @@ arch-data.json
 
 # Procgen outputs kept between runs (#181); rebuilt on demand
 **/.flint/procgen-cache/
+
+# Python bytecode (tools/showcase)
+__pycache__/

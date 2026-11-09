@@ -231,6 +231,9 @@ def main():
         # The point canvas scales with the frame, so a --scale preview keeps
         # the cut's layout (cells, captions' room) and is just smaller
         points_wide = cut["cut"].get("points_wide", POINTS_WIDE) * width / cut["cut"]["width"]
+        # A cut keeps its own frame rate (the reel is 30 fps, the master 60):
+        # its takes step the clock 1/fps of the cut, never a resampled master
+        film = {**film, "fps": cut["cut"].get("fps", film["fps"])}
         needs = cut_needs(cut, film, beats)
         if not args.out:
             out = out / cut["cut"]["name"]
@@ -252,8 +255,9 @@ def main():
     def seconds_of(beat, take):
         return None if needs is None else needs[(beat["id"], take["name"])]
 
-    # A 4K PNG of these scenes is ~14 MB; refuse to start a run that can't fit
-    per_frame = 14e6 * (width * height) / (3840 * 2160)
+    # A 4K PNG of these scenes averaged 7.0 MB at 60 fps (#436; up to 18 MB
+    # for the busiest); estimate 8 MB and refuse a run that can't fit
+    per_frame = 8e6 * (width * height) / (3840 * 2160)
     frames = sum(frame_count(film, b, seconds_of(b, t)) for b, t in runs)
     frames *= 2 if args.verify else 1
     need = frames * per_frame

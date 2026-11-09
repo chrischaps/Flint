@@ -75,6 +75,16 @@ def build_timeline(cut, film_out):
         if missing:
             raise SystemExit(
                 f"shot {i} needs {missing[0]}: python tools/showcase/capture.py --cut {c['name']}")
+        # A take stepped at another rate would play at the wrong speed
+        record = folder / "take.json"
+        if record.exists():
+            made = json.loads(record.read_text(encoding="utf-8"))
+            if made.get("fps") != fps or (made.get("width"), made.get("height")) != (
+                    c["width"], c["height"]):
+                raise SystemExit(
+                    f"{folder} was captured {made.get('width')}x{made.get('height')} at "
+                    f"{made.get('fps')} fps; the cut is {c['width']}x{c['height']} at {fps}: "
+                    f"python tools/showcase/capture.py --cut {c['name']}")
         shots.append({**shot, "take": take, "index": i, "first": len(frames), "frames": n})
         frames += [(p, i) for p in paths]
     return frames, shots
@@ -333,8 +343,6 @@ def main():
     cut = load_cut(args.cut)
     c = cut["cut"]
     fps = c["fps"]
-    if fps != film["fps"]:
-        raise SystemExit(f"the cut is {fps} fps and its captures {film['fps']}")
     film_out = Path(os.path.expanduser(args.frames or Path(film["out"]) / c["name"])).resolve()
     out_dir = Path(args.out).resolve() if args.out else film_out / "edit"
     audio = args.audio or c.get("audio")
