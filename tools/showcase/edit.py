@@ -21,9 +21,7 @@ encodes the whole cut and, at the same time, each story-length piece
 
 H.264 High, yuv420p (BT.709), 30 fps, a keyframe a second, AAC audio: the
 track given with --audio (or the cut's `audio`), else silence, so the file
-is the H.264/AAC MP4 a phone and Instagram expect. Nothing is
-nondeterministic here: the same frames and fonts give the same MP4 bytes
-from the same ffmpeg.
+is the H.264/AAC MP4 a phone and Instagram expect.
 
 Needs Python 3.11+, Pillow, numpy and ffmpeg on PATH.
 """
@@ -102,30 +100,64 @@ def stories(cut, shots):
 
 # --- Type ------------------------------------------------------------------
 
-def find_font(names, size):
+def find_font(names):
+    """The first of `names` found in the usual font folders, or None."""
     for name in names:
         for d in FONT_DIRS:
             p = d / name
             if p.exists():
-                return ImageFont.truetype(str(p), size), p
+                return p
     print(f"  no font of {names}; using Pillow's default", file=sys.stderr)
-    return ImageFont.load_default(size), None
+    return None
+
+
+class Face:
+    """A typeface that gives itself at any size, cached."""
+
+    def __init__(self, path):
+        self.path = path
+        self.sizes = {}
+
+    def at(self, size):
+        size = max(8, int(round(size)))
+        if size not in self.sizes:
+            self.sizes[size] = (ImageFont.truetype(str(self.path), size) if self.path
+                                else ImageFont.load_default(size))
+        return self.sizes[size]
 
 
 class Type:
-    """The cut's three faces at sizes for its frame width."""
+    """The cut's faces and its sizes, in pixels of a 1080-wide frame scaled
+    to the cut's width. A line wider than the safe area shrinks to fit."""
+
+    CAPTION = 72
+    TITLE = 112
+    LABEL = 32
+    CARD = 156
+    CARD_LINE = 50
+    SMALL = 30
 
     def __init__(self, cut):
         c = cut["cut"]
-        u = c["width"] / 1080.0
-        serif = c.get("caption_font", ["georgiai.ttf"])
-        mono = c.get("label_font", ["CascadiaMono.ttf"])
-        self.caption, self.caption_path = find_font(serif, int(64 * u))
-        self.title, _ = find_font(serif, int(104 * u))
-        self.label, self.label_path = find_font(mono, int(27 * u))
-        self.card, _ = find_font(serif, int(150 * u))
-        self.card_line, _ = find_font(serif, int(46 * u))
-        self.u = u
+        self.u = c["width"] / 1080.0
+        x0, _, x1, _ = c["safe"]
+        self.room = x1 - x0
+        self.serif = Face(find_font(c.get("caption_font", ["georgiai.ttf"])))
+        self.mono = Face(find_font(c.get("label_font", ["CascadiaMono.ttf"])))
+
+    def fit(self, face, size, text, tracking=0.0):
+        """`face` at `size` (1080-wide pixels), smaller if `text` would be
+        wider than the safe area; and the tracking it was measured with."""
+        px = size * self.u
+        while True:
+            font = face.at(px)
+            if line_width(font, text, tracking * self.u) <= self.room or px <= 8:
+                return font, tracking * self.u
+            px *= 0.96
+
+
+def line_width(font, text, tracking):
+    return sum(font.getlength(ch) for ch in text) + tracking * max(0, len(text) - 1)
 
 
 def soft_shadow(size, draw_fn, radius, strength):
@@ -144,50 +176,58 @@ def soft_shadow(size, draw_fn, radius, strength):
 
 def centred(draw, font, text, cx, y, fill, tracking=0.0):
     """Text centred on cx with its top at y; `tracking` spaces letters."""
+    x = cx - line_width(font, text, tracking) / 2
     if not tracking:
-        w = draw.textlength(text, font=font)
-        draw.text((cx - w / 2, y), text, font=font, fill=fill)
+        draw.text((x, y), text, font=font, fill=fill)
         return
-    widths = [draw.textlength(ch, font=font) for ch in text]
-    total = sum(widths) + tracking * (len(text) - 1)
-    x = cx - total / 2
-    for ch, w in zip(text, widths):
+    for ch in text:
         draw.text((x, y), ch, font=font, fill=fill)
-        x += w + tracking
+        x += font.getlength(ch) + tracking
 
 
 def caption_layer(cut, ty, caption, label, title=False):
+    """A caption at the top of the safe area, its label under it."""
     c = cut["cut"]
     size = (c["width"], c["height"])
     x0, y0, x1, _ = c["safe"]
     cx = (x0 + x1) / 2
     u = ty.u
-    font = ty.title if title else ty.caption
+    font, _ = ty.fit(ty.serif, ty.TITLE if title else ty.CAPTION, caption)
+    small, track = ty.fit(ty.mono, ty.LABEL, label or "", tracking=1.5)
     top = y0 + 26 * u
 
     def draw(d, a):
         centred(d, font, caption, cx, top, a)
         if label:
-            ly = top + (font.size * 1.22) + 10 * u
-            centred(d, ty.label, label, cx, ly, a, tracking=1.5 * u)
+            centred(d, small, label, cx, top + font.size * 1.22 + 12 * u, a, track)
 
     return premultiplied(soft_shadow(size, draw, radius=14 * u, strength=1.7))
 
 
 def end_card_layer(cut, ty):
+    """The title in the middle of the safe area, its line under it, and
+    the small lines (a string or a list, one a line) at the safe area's foot."""
     c = cut["cut"]
     e = c["end"]
     size = (c["width"], c["height"])
     x0, y0, x1, y1 = c["safe"]
     cx = (x0 + x1) / 2
     u = ty.u
-    mid = (y0 + y1) / 2 - 150 * u
+    mid = (y0 + y1) / 2 - 160 * u
+    title, title_track = ty.fit(ty.serif, ty.CARD, e["title"], tracking=6)
+    line, _ = ty.fit(ty.serif, ty.CARD_LINE, e["line"])
+    smalls = e.get("small", [])
+    smalls = [smalls] if isinstance(smalls, str) else smalls
+    small_fonts = [ty.fit(ty.mono, ty.SMALL, s, tracking=1.0) for s in smalls]
 
     def draw(d, a):
-        centred(d, ty.card, e["title"], cx, mid, a, tracking=6 * u)
-        centred(d, ty.card_line, e["line"], cx, mid + ty.card.size * 1.25, a)
-        if e.get("small"):
-            centred(d, ty.label, e["small"], cx, y1 - 70 * u, a, tracking=1.0 * u)
+        centred(d, title, e["title"], cx, mid, a, title_track)
+        centred(d, line, e["line"], cx, mid + title.size * 1.25, a)
+        step = ty.SMALL * u * 1.5
+        y = y1 - 40 * u - step * len(smalls)
+        for text, (font, track) in zip(smalls, small_fonts):
+            centred(d, font, text, cx, y, a, track)
+            y += step
 
     return premultiplied(soft_shadow(size, draw, radius=22 * u, strength=1.9))
 
@@ -303,7 +343,12 @@ def main():
         if not audio.is_absolute():
             audio = (ROOT / audio).resolve()
         if not audio.exists():
-            raise SystemExit(f"no soundtrack at {audio}")
+            if args.audio:
+                raise SystemExit(f"no soundtrack at {audio}")
+            # The cut's own track may not be built yet: say so, cut silent
+            print(f"  no soundtrack at {audio} (python tools/showcase/music.py "
+                  f"{c['name']} builds it); the cut will be silent", file=sys.stderr)
+            audio = None
 
     frames, shots = build_timeline(cut, film_out)
     total = len(frames)
@@ -313,7 +358,7 @@ def main():
     print(f"{c['name']}: {len(shots)} shots, {total} frames, {seconds:.2f} s "
           f"({seconds / bar:g} bars) at {c['width']}x{c['height']}, {fps} fps")
     for s in shots:
-        print(f"  {s['first'] / fps:6.2f} s  {s['beat']}/{s['take']:<16} "
+        print(f"  {s['first'] / fps:6.2f} s  {s['beat'] + '/' + s['take']:<28} "
               f"from {s['start_s']:.2f} s, {s['bars']:g} bars  {s.get('caption', '')}")
     for k, (a, b) in enumerate(pieces, 1):
         print(f"  story {k}: {a / fps:.2f}-{b / fps:.2f} s ({(b - a) / fps:.2f} s)")
@@ -325,7 +370,7 @@ def main():
         raise SystemExit("ffmpeg isn't on PATH")
 
     ty = Type(cut)
-    print(f"  type: {ty.caption_path} / {ty.label_path}")
+    print(f"  type: {ty.serif.path} / {ty.mono.path}")
     layers = {}
 
     def layer_for(caption, label, title):

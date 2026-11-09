@@ -190,7 +190,17 @@ tighter of each. Check again before posting.
 whole cut and for the story piece it falls in: libx264 High at level 4.2,
 CRF 16 capped at 24 Mb/s, yuv420p tagged BT.709 limited range, a keyframe
 a second (Instagram recompresses; a clean, high-bitrate upload loses
-least), AAC 192 kb/s at 48 kHz, `+faststart`.
+least), AAC 192 kb/s at 48 kHz, `+faststart`. The soundtrack is the cut's
+`audio`, #438's `many-hands-reel.wav`, written to the same 24 bars; until
+it is built the cut is silent and `edit.py` says so.
+
+**Checked (2026-11-09, RTX 4070, Vulkan).** `reel.mp4` is 1080x1920, 1728
+frames, 57.600 s of video and audio, -14.0 LUFS integrated after AAC;
+each story is 432 frames, 14.400 s. Two portrait captures of 07 and of the
+blueprint look (`capture.py --cut reel --verify --scale 0.5`) were
+byte-identical, every frame. The portrait branch never runs in a landscape
+window: 01, 04, 06 and 07 at 960x540 with these scripts and with main's
+were byte-identical, so the master's takes are unchanged.
 
 ## Capture
 

@@ -39,13 +39,17 @@ safe = [120, 250, 960, 1480]
 # edit.py says what it couldn't find and which it used instead)
 caption_font = ["georgiai.ttf", "DejaVuSerif-Italic.ttf"]
 label_font = ["CascadiaMono.ttf", "consola.ttf", "DejaVuSansMono.ttf"]
+# The soundtrack, written to this cut's bars by `python tools/showcase/music.py
+# reel` (#438); edit.py cuts silent, and says so, until it exists
+audio = "~/flint-film/music/many-hands-reel.wav"
 
 # The last shot ends on a card: the title over the evening, then black
 [cut.end]
 bars = 2.0
 title = "Flint"
 line = "a game engine built for AI agents"
-small = "every frame captured from the engine  ·  chaps.dev/projects/flint"
+# One line each, at the foot of the safe area
+small = ["every frame captured from the engine", "chaps.dev/projects/flint"]
 fade_out_s = 1.2
 
 # --- story 1 -------------------------------------------------------------

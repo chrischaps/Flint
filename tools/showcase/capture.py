@@ -161,7 +161,7 @@ def capture(film, beat, take, width, height, folder, points_wide=POINTS_WIDE, se
     log = folder / "player.log"
     with open(log, "w", encoding="utf-8") as out:
         result = subprocess.run(args, cwd=ROOT, stdout=out, stderr=subprocess.STDOUT)
-    seconds = time.time() - started
+    wall = time.time() - started
     frames = sorted(folder.glob("frame_*.png"))
     record = {
         "beat": beat["id"],
@@ -174,7 +174,7 @@ def capture(film, beat, take, width, height, folder, points_wide=POINTS_WIDE, se
         "frames": len(frames),
         "expected_frames": frame_count(film, beat, seconds),
         "points_wide": round(points_wide, 3),
-        "wall_seconds": round(seconds, 1),
+        "wall_seconds": round(wall, 1),
         "exit_code": result.returncode,
         "command": [Path(args[0]).name] + args[1:],
     }
@@ -182,7 +182,7 @@ def capture(film, beat, take, width, height, folder, points_wide=POINTS_WIDE, se
     status = "ok" if result.returncode == 0 and frames else f"FAILED (exit {result.returncode})"
     print(
         f"  {beat['id']}/{take['name']}: {len(frames)} frames "
-        f"({record['expected_frames']} expected) in {seconds:.0f} s  {status}"
+        f"({record['expected_frames']} expected) in {wall:.0f} s  {status}"
     )
     if result.returncode != 0 or not frames:
         print(f"    see {log}")
