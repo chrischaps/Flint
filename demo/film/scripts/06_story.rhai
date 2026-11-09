@@ -17,8 +17,15 @@ fn step_at(t) {
 
 fn on_update() {
     let t = total_time();
-    film::dolly([3.3, 1.55, 3.9], [2.6, 1.4, 3.1], [-0.1, 0.75, -0.2], [-0.3, 0.8, -0.4],
-        film::ease(t / 9.0));
+    if film::portrait() {
+        // From the barrel's far side, where the three it changes stand
+        // closest together across the narrow frame; a slow push
+        film::orbit_portrait(0.0, 0.6, -0.3, film::lerp(8.2, 7.2, film::ease(t / 9.0)), 2.1,
+            1.76, 44.0);
+    } else {
+        film::dolly([3.3, 1.55, 3.9], [2.6, 1.4, 3.1], [-0.1, 0.75, -0.2], [-0.3, 0.8, -0.4],
+            film::ease(t / 9.0));
+    }
 
     let barrel = get_entity("barrel");
     let figure = get_entity("figure");

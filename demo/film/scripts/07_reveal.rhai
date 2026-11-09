@@ -8,7 +8,13 @@ import "film" as film;
 
 fn on_update() {
     let t = total_time();
-    film::orbit(0.0, 0.75, -0.2, 4.2, 1.35, film::lerp(0.62, 0.92, t / 10.0));
+    if film::portrait() {
+        // From the barrel's far side: the barrel near, the figure beyond
+        // the table, both inside the narrow frame
+        film::orbit_portrait(0.0, 0.6, -0.3, 7.4, 2.0, film::lerp(1.68, 1.9, t / 10.0), 44.0);
+    } else {
+        film::orbit(0.0, 0.75, -0.2, 4.2, 1.35, film::lerp(0.62, 0.92, t / 10.0));
+    }
     set_style_param(get_entity("barrel"), "blend", film::pulse(t, 0.8, 3.0, 9.4, 2.8));
     set_style_param(get_entity("figure"), "blend", film::pulse(t, 2.6, 2.4, 9.4, 2.4));
 }

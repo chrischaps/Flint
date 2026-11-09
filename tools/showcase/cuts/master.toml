@@ -1,160 +1,233 @@
-# The 16:9 master's cut list (#436), shared with its music (#438).
+# The 16:9 master (#436, #593): Many Hands for the chaps.dev YouTube channel,
+# and a lighter copy of it for the Flint page.
 #
-# One [[shot]] per piece of a take, in screen order. The film's clock is the
-# music's: 100 bpm in 4/4, so a bar is 2.4 s, 72 frames at 30 fps, 144 at
-# 60. Every cut sits on a bar or half-bar line, so the music changes where
-# the picture does. `bars` is the shot's length on screen; `start_s` is where
-# in the take it starts (seconds of game time). The music
-# (`python tools/showcase/music.py`, #438) is arranged to this list: each
-# shot's instruments come in on its first bar, and the cues inside a shot
-# (02's tables, 03's edges, 08/09's switches at 5.0 s, 05/12's clicks) are
-# placed by `start_s`, so they follow an in-point when it moves. Rebuild the
-# music after changing anything here.
+#   python tools/showcase/capture.py --cut master    # the takes it uses, 3840x2160, 60 fps
+#   python tools/showcase/music.py master            # its score, to this list
+#   python tools/showcase/cut.py master              # master MP4, web MP4 + WebM, poster
+#   python tools/showcase/check_cut.py master        # every frame, the sound, the music's frames
 #
-# Drafted by #438 against the storyboard (docs/design/showcase-film.md);
-# #436 owns the edit and may change any of it. 48 bars of picture and a
-# 2-bar tail (the last frame held under the title as the music rings out):
-# 50 bars, 120.0 s.
+# One file per cut, read by the picture and the music alike (the reel is
+# cuts/reel.toml). The film's clock is the music's: 100 bpm in 4/4, so a bar
+# is 2.4 s, 144 frames at 60 fps, and every cut sits on a bar or half-bar
+# line, so the music changes where the picture does. `bars` is a shot's
+# length on screen; `start_s` is where in its take it starts (seconds of the
+# beat's own game time, frame 1 at t = 0). The music places the cues inside
+# a shot (02's tables, 03's edges, 08/09's switches at 5.0 s, 05/12's clicks)
+# by `start_s`, so they follow an in-point when it moves: rebuild the music
+# after changing a shot, and cut.py refuses a track scored to another list.
+#
+# 48 bars of picture and a 2-bar tail, where the last take runs on (beat
+# 13's camera comes to rest in the evening) under the end card as the music
+# rings out: 50 bars, 120.0 s, 7,200 frames.
 
 [cut]
 name = "master"
 bpm = 100
 beats_per_bar = 4
+fps = 60
+width = 3840
+height = 2160
+# Point-sized things (ASCII cells, pencil spacing, egui, the titles) are laid
+# out on a canvas this many points wide: pixels_per_point = 3840 / 1920 = 2.
+points_wide = 1920
+# Bars after the last shot in which its take keeps running (the end card's).
+tail_bars = 2
+# Lower thirds, title cards and look tags (the reel's are "caption")
+titles = "lower_third"
+fade_in_s = 0.6
+# The soundtrack, written to this list by `python tools/showcase/music.py master`
+audio = "~/flint-film/music/many-hands-master.wav"
+
+# The last bars: the evening darkens a little and the card comes up, then black
+[cut.end]
+bars = 2
+title = "Flint"
+line = "a game engine built for AI agents"
+small = ["every frame captured from the engine",
+         "github.com/chrischaps/Flint  ·  docs.chaps.dev/flint"]
+darken = 0.2
+fade_out_s = 1.2
+
+[fonts]
+# The first file found wins; looked up as given, then in the system's font
+# folders. Georgia for titles, Cascadia (SIL OFL) for numbers and tags.
+title = ["georgia.ttf", "DejaVuSerif.ttf"]
+title_italic = ["georgiai.ttf", "DejaVuSerif-Italic.ttf"]
+body = ["segoeui.ttf", "DejaVuSans.ttf"]
+mono = ["CascadiaMono.ttf", "consola.ttf", "DejaVuSansMono.ttf"]
+
+[lower_third]
+# A beat's lower third: its number of 13, its title (film.toml's, unless the
+# shot gives `title`) and the shot's `caption`. Seconds from the beat's
+# first shot (`lower_third_at` / `lower_third_hold` on that shot move it);
+# shots of one beat in a row share one.
+at = 0.6
+hold = 4.2
+fade = 0.45
+slide = 14.0   # points it travels while fading in
+
+[encode]
+# The master, piped from the composed frames. YouTube: H.264 High, yuv420p,
+# BT.709, closed half-second GOPs, faststart, AAC.
+file = "many-hands-16x9-master.mp4"
+crf = 14
+preset = "slow"
+gop_s = 0.5
+audio_bitrate = "320k"
+
+[web]
+# The Flint page: the same cut, smaller, from the master's picture and the
+# WAV. 1080p, because at 720p ASCII's 8-point cells blur into texture; 30
+# fps (every other frame), because glyphs are fine detail that costs bits in
+# every frame. H.264 at crf 32 and a VP9 WebM held to about the same rate.
 width = 1920
 height = 1080
-# Bars after the last shot that hold its final frame (title card, end).
-tail_bars = 2
+fps = 30
+mp4 = "many-hands-web.mp4"
+mp4_crf = 32
+webm = "many-hands-web.webm"
+webm_bitrate = "2100k"
+audio_bitrate = "160k"
+poster = "many-hands-poster.jpg"
+# A clean frame of a take, titles left off
+poster_beat = "13_hands"
+poster_take = "main"
+poster_time = 3.0
+
+# ---------------------------------------------------------------- the cut
 
 [[shot]]
 beat = "01_plain"
-take = "main"
-start_s = 1.2
-bars = 2
-caption = "Flint, as it renders"
+start_s = 0.0          # the whole push, out of black
+bars = 2.5
+caption = "Flint's own render: PBR, shadows, ambient occlusion, bloom, grass"
+lower_third_at = 3.0
+lower_third_hold = 2.6
+card = { title = "Many Hands", line = "Every stylize feature in Flint, drawn by the engine itself", at = 0.6, hold = 2.0 }
 
 [[shot]]
 beat = "02_type"
-take = "main"
 start_s = 0.0          # its table changes every 2.4 s: each change on a bar line
 bars = 5
-caption = "The world in type"
+caption = "Full-screen ASCII, its colour modes and palettes, glyphs that hold still as the camera moves"
+lower_third_hold = 5.4
 
 [[shot]]
 beat = "03_edges"
-take = "main"
 start_s = 0.1          # the edges come up at 2.5 s, the shot's second bar
 bars = 3
-caption = "Edges"
+caption = "Silhouettes and creases traced in line glyphs; a mask keeps the ball's outline against the sky"
 
 [[shot]]
 beat = "04_entities"
-take = "main"
 start_s = 0.5
 bars = 3.5
-caption = "Some things in type"
+caption = "Per-entity ASCII: each prop its own ramp, palette and grid"
 
 [[shot]]
 beat = "05_mask"
-take = "main"
 start_s = 1.6          # Style Mask goes on at 3.4 s and off at 7.1 s
 bars = 3
-caption = "The style mask"
+caption = "Which style owns each pixel, seen through the F4 menu"
 
 [[shot]]
 beat = "06_story"
-take = "main"
 start_s = 0.6
 bars = 3.5
-caption = "A story in styles"
+caption = "Scripts set, tune and clear styles on cue"
 
 [[shot]]
 beat = "07_reveal"
-take = "main"
 start_s = 0.2
 bars = 4
-caption = "Fade and dissolve"
+caption = "Per-prop blends: a cross-fade, and a dissolve that turns cell by cell"
 
 [[shot]]
 beat = "08_pencil"
-take = "main"
 start_s = 0.2          # the whole page at 5.0 s, on the shot's third bar
 bars = 4
-caption = "Pencil"
+caption = "Hatching, contours, paper and boil, a prop at a time, then the whole page"
 
 [[shot]]
 beat = "09_watercolor"
-take = "main"
 start_s = 0.2          # the paint lifts at 5.0 s, on the shot's third bar
 bars = 3
-caption = "Watercolor"
+caption = "Washes and pooled edges; one figure left standing outside the painting"
 
-# Looks: one orbit, a half bar per look, cut on the move.
+# Looks: one orbit, eight takes, a half bar of each, cut on the move. The
+# lower third runs across all eight; each shot's tag names its look.
 [[shot]]
 beat = "10_looks"
 take = "ascii_noir"
 start_s = 0.0
 bars = 0.5
-caption = "Looks"
+caption = "Named presets laid over a scene: one camera move, eight takes"
+lower_third_hold = 7.8
+tag = "--look ascii_noir"
 
 [[shot]]
 beat = "10_looks"
 take = "matrix"
 start_s = 0.85
 bars = 0.5
+tag = "--look matrix"
 
 [[shot]]
 beat = "10_looks"
 take = "ink_wash"
 start_s = 1.7
 bars = 0.5
+tag = "--look ink_wash"
 
 [[shot]]
 beat = "10_looks"
 take = "graphite"
 start_s = 2.55
 bars = 0.5
+tag = "--look graphite"
 
 [[shot]]
 beat = "10_looks"
 take = "watercolor"
 start_s = 3.4
 bars = 0.5
+tag = "--look watercolor"
 
 [[shot]]
 beat = "10_looks"
 take = "coloured_pencil"
 start_s = 4.25
 bars = 0.5
+tag = "--look coloured_pencil"
 
 [[shot]]
 beat = "10_looks"
 take = "blueprint"
 start_s = 5.1
 bars = 0.5
+tag = "--look blueprint"
 
 [[shot]]
 beat = "10_looks"
 take = "charcoal"
 start_s = 5.95
 bars = 0.5
+tag = "--look charcoal"
 
 [[shot]]
 beat = "11_user"
-take = "main"
 start_s = 0.2
 bars = 4
-caption = "Styles you write"
+caption = "WGSL beside the scene, loaded at run time: a hologram, a risograph, survey contours"
 
 [[shot]]
 beat = "12_menu"
-take = "main"
 start_s = 2.2          # the cell-size drag at 2.8 s, palettes from 6.0 s
 bars = 4
-caption = "Tuning by hand"
+caption = "The F4 Styles editor: every parameter of every style, live"
 
 [[shot]]
 beat = "13_hands"
-take = "main"
-start_s = 0.0
-bars = 5
-caption = "Many hands"
+start_s = 0.0          # the rise; it comes to rest at 12 s, in the tail
+bars = 4.5
+caption = "Type, pencil, paint and a user style, one screen, one frame"

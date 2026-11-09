@@ -85,16 +85,113 @@ story's beats, the reveal's ramps, the mask's colours).
 - **UI beats** (05, 12) are the only ones with egui on screen. In the
   vertical cut the menu falls outside a centre crop: crop right for the
   menu half of those beats, or keep them to the 16:9 master.
-- **The vertical cut** starts from a crop of the 16:9 master: a 9:16
-  window is a third of its width, and the moves were framed for 16:9, so
-  check each beat's subject stays inside the crop (the barrel and figure
-  sit either side of the table and drift toward the edges in 04 and 07).
-  A native vertical take is `capture.py --width 1080 --height 1920`, which
-  needs the moves reframed for it (#437).
+- **The vertical cut** is captured at 1080x1920, not cropped from the
+  master: see [The vertical cut](#the-vertical-cut-437) below.
 - **Music** (#438) is on the beats' own clock, 100 bpm in 4/4 (02 changes
   every 2.4 s, a bar), and it is arranged to the cut lists in
   `tools/showcase/cuts/`: cut on bar or half-bar lines and the music
   changes with the picture. See [Music](#music) below.
+
+### The 16:9 cut (#436, #593)
+
+One landscape film for the chaps.dev YouTube channel and the Flint page:
+every beat in the table's order, 2 min 0 s (50 bars) at 3840x2160 and 60
+fps, under its score. It opens on beat 01 out of black under the film's
+title card and closes on 13's rise into the sky; the music's last two bars
+are a tail in which 13's take runs on, the camera come to rest in the
+evening, under the end card (the engine, the repo, the book). Each beat
+gets a lower third (its number of 13, its name, one line on what it
+shows); the looks beat is eight half-bar shots, one per take, cut on the
+same orbit, under one lower third and a tag naming each look. Cuts are
+hard and fall on the music's bar and half-bar lines: every beat is the same
+clearing, so a cut reads as the place being redrawn, and the tune changes
+instrument where the picture changes hand.
+
+**Tools.** ffmpeg does the encode (8.0, the gyan.dev full build:
+`winget install Gyan.FFmpeg`; it is not in the repo, and a rebuild needs it
+on the PATH). The edit is `tools/showcase/cut.py` (Python, Pillow, numpy),
+the reel's editor too: it composes each film frame from its source PNG,
+draws the titles over it and pipes raw RGB to ffmpeg with the WAV, so no
+editor project file has to be kept in step with the takes, and the film
+rebuilds after a beat is recaptured:
+
+```bash
+python tools/showcase/capture.py --cut master 08_pencil   # reshoot a beat after a style ticket lands
+python tools/showcase/music.py master                     # the score, if a shot moved
+python tools/showcase/cut.py master                       # master, web, poster, with the score
+python tools/showcase/check_cut.py master                 # every frame, the sound, the bars
+```
+
+The cut is a file, `tools/showcase/cuts/master.toml`, and the music is
+scored to the same file: shots (a take, where in it to start, how many
+bars), the titles, `[encode]` and `[web]`. Titles are drawn in the edit
+rather than by the beats' `hud.rhai`, so the takes stay clean for the
+vertical cut (#437), which is its own cut file over the same beats.
+
+**Two lists, one film (#593).** #436 first cut this film from a list of its
+own, `cut_16x9.toml`, timed in seconds (126 s), by an editor of its own,
+`edit.py`, with no sound; #438 had scored `cuts/master.toml` (120 s). Every
+ticket passed its own checks, and by beat 13 the picture came 10.8 s after its
+music. #593 moved the titles onto `cuts/master.toml`, folded `edit.py` into
+`cut.py` and deleted both. `cut.py` now refuses a track whose report says
+it was scored to another list, and `check_cut.py` holds every shot's first
+frame against the music's after the encode. The new list differs from the
+draft #438 left in two places: 01 runs its whole 6 s push (2.5 bars, room
+for the title card and its lower third) and 13 gives that half bar back
+(4.5 bars), its camera settling in the tail rather than freezing there.
+
+**What #436's first master made** (2026-11-08, silent, from `cut_16x9.toml`):
+
+| File | For | Format | Size |
+|---|---|---|---|
+| `many-hands-16x9-master.mp4` | YouTube | 3840x2160, 60 fps, H.264 High 5.2, crf 14, yuv420p, BT.709, 0.5 s closed GOPs, 81 Mbit/s | 1,276 MB |
+| `many-hands-web.mp4` | the Flint page | 1920x1080, 30 fps, H.264 High, crf 32, BT.709 | 36.4 MB |
+| `many-hands-web.webm` | the Flint page | 1920x1080, 30 fps, VP9 two-pass 2.1 Mbit/s, BT.709 | 33.1 MB |
+| `many-hands-poster.jpg` | the Flint page | 1920x1080, beat 13 at 3 s, no titles | 0.23 MB |
+
+They landed in `~/flint-film/cuts/many-hands-16x9/` (now `~/flint-film/master/edit/`) beside `<name>.json`
+(sizes), `<name>.check.json` (the frame checks), `<name>.frames.json` (which
+source frame each film frame is) and the thumbnails; none is in the repo.
+The 20 takes behind them, captured at 4K and 60 fps, are 10,940 frames and
+77 GB; the capture took about 22 minutes of player time, the edit and
+master encode 23 minutes (5.6 frames a second, x264 `slow` the bottleneck),
+the web files about 16 (11 of them the VP9 passes).
+
+Every frame of all three passed `check_cut.py` (in place, not repeated, the
+right picture, not torn; the book's guide has the table and the broken copy
+it was proved on). In Chrome 157 the web files presented every frame, none
+dropped; the master decoded all 7,560 in real time, and dropped 11 at
+presentation on a loaded machine.
+
+**What #593's cut made** (2026-11-09, on the Legion, which has no room for
+the 4K takes: the same commands at 1280x720, `capture.py --cut master
+--width 1280 --height 720` then `cut.py master --width 1280`; the 4K files
+are those commands without the size, on a disk with ~60 GB free):
+
+| File | Format | Size | Sound |
+|---|---|---|---|
+| `many-hands-16x9-master.mp4` | 1280x720, 60 fps, H.264 High, crf 14, 7,200 frames | 225.5 MB | AAC 320k, 120.000 s, -14.01 LUFS, -1.49 dBTP |
+| `many-hands-web.mp4` | 1280x720, 30 fps, H.264 High, crf 32 | 18.7 MB | AAC 160k, 120.000 s, -14.04 LUFS, -1.44 dBTP |
+| `many-hands-web.webm` | 1280x720, 30 fps, VP9 two-pass 2.1 Mbit/s | 34.6 MB | Opus 160k, 120.000 s, -14.00 LUFS, -1.26 dBTP |
+
+All three passed `check_cut.py master`: every frame in place, none repeated,
+wrong or torn, the sound as long as the picture to the sample, and all 20
+shot starts on the music's frames. The 20 takes were 8,996 frames (12 GB)
+and five minutes of player time; the edit composed at ~100 frames a second
+and the master encoded in 74 s, the VP9 passes taking most of the rest.
+Recut by the same editor, the reel and its four stories passed too (-14.03
+LUFS, 18 of 18 shots on their frames).
+
+**Hosting.** The film is media, not part of the wasm or any game bundle, so
+it doesn't count against the 4 MB gzip line in
+[web.md's Size](web.md#size). On the Flint page it belongs where the page's
+other films are, as the hero `video` with `videoPoster`, which the page
+loads on its own. The page's current hero films are 1 to 6 MB for 20 to
+60 s; this one is about 34 to 37 MB for 2:00 with its sound, because ASCII is fine detail
+in every frame (the same cut at crf 27 and 60 fps was 80 MB, and 720p blurs
+8-point cells), so it should be click-to-play behind its poster
+(`preload="none"`), not a looping hero. Publishing it (the page, the book, YouTube) is outward-facing
+and waits for Chris.
 
 ### What main brought since the first draft
 
@@ -124,6 +221,89 @@ changed in it, and what didn't:
   every prop in its own hand; and a palette-quantize take (#324) would sit
   naturally among the looks.
 
+## The vertical cut (#437)
+
+The Instagram reel and its stories: `tools/showcase/cuts/reel.toml`,
+captured with `capture.py --cut reel` at 1080x1920 and cut by
+`tools/showcase/cut.py reel` into `reel.mp4` and four story pieces.
+
+**Length.** 24 bars at 100 bpm (2.4 s a bar, the clock beat 02 already
+changes on), 57.6 s, inside the 30 to 60 s asked for. Every cut is on a
+bar or half bar so the music (#438, written to the same file) changes on
+the cuts; the looks change on every beat, one take a quarter bar. Four
+stories of exactly 6 bars (14.4 s) each, split at shot boundaries.
+
+| Story | Shots (bars) |
+|---|---|
+| 1 | 01 the clearing, title (1.5) · 02 the world in type (3) · 03 edges (1.5) |
+| 2 | 04 some things in type (1.5) · 06 a script tells it (2.5) · 07 fade and dissolve (2) |
+| 3 | 08 pencil (2) · 09 watercolor (2) · 10 looks, eight takes (2) |
+| 4 | 11 styles you write (2) · 13 many hands, the end card over its last 2 bars (4) |
+
+In-points sit on the beats' own cues: 02 starts at 2.4 s so tint, CGA and
+amber land on downbeats, and 08 and 09 start at 2.6 s so their whole-frame
+switches at 5.0 s land on a shot's second bar.
+
+**Left out, and why.** Beats 05 (the mask in the F4 menu) and 12 (tuning
+by hand in F4) are the two whose subject is egui: on a 1080-pixel-wide
+frame the menu's rows are a few millimetres tall on a phone and its panel
+covers half the frame, and their input scripts click positions measured on
+the master's 1920x1080-point canvas. They stay in the 16:9 master. What
+they show that matters at phone size appears elsewhere: the style mask is
+what draws 03's outline round the ball and keeps 13's styles apart.
+
+**Framing.** Captured, not cropped: a 9:16 crop is a third of the
+master's width and loses the barrel or the figure. In a portrait window
+`film.rhai`'s moves back the camera off by 1.45x along its line of sight,
+open the field of view to 60° and aim 0.3 m low, which keeps the still
+life in the middle of the safe area; 04, 06 and 07, whose subjects (the
+figure, the barrel, the crate) stand either side of the table, film from
+the barrel's far side instead, where the three are closest together
+across the frame. The master's scripts are unchanged in a landscape
+window.
+
+**Cells.** Point-sized things are laid out on a 720-point canvas
+(`points_wide`, pixels per point 1.5): an 8-point ASCII cell is 12 px, 90
+across the frame. A sweep at 1080x1920 (`flint render --pixels-per-point 1
+--sweep ascii.cell=4.5,8,12,16 --sweep-crop 240,760,600,560`) showed the
+master's canvas (4.5 px cells) reading as texture, 8 px glyphs only just
+legible at 1:1, 12 px reading as characters, and 16 px too coarse to draw
+the table. Pencil spacing, outlines and edge widths scale with it.
+
+**Safe area.** Captions and key content stay inside x 120 to 960, y 250 to
+1480: the intersection of the story safe area (the central 1080x1420) and
+the reel's (clear of about 210 px of top bar, 440 px of caption and
+buttons at the bottom and 120 px of buttons down the right). Captions sit
+at the top of it, the still life in its middle. `cut.py --guides` shades
+the rest.
+
+**Instagram, as checked on 2026-11-08.** Sources disagree, and Meta's own
+help pages weren't among them, so the cut stays inside the tightest of
+what they say: 1080x1920 9:16, H.264 MP4 at 30 fps with AAC audio (larger
+frames are downscaled, so 4K gains nothing); reels of up to 3 minutes in
+the app (some sources say 90 s, one says more), and a story segment up to
+60 s, longer ones split. A 15-second story is no longer a hard cap, but
+the four 14.4 s pieces are what the ticket asked for and play as one story
+sequence either way. Safe-zone figures range from 250 px top and bottom
+(stories) to 210 top, 440 bottom and 120 right (reels); the cut uses the
+tighter of each. Check again before posting.
+
+**Encoding.** `cut.py` pipes each composed frame once to ffmpeg for the
+whole cut and for the story piece it falls in: libx264 High at level 4.2,
+CRF 16 capped at 24 Mb/s, yuv420p tagged BT.709 limited range, a keyframe
+a second (Instagram recompresses; a clean, high-bitrate upload loses
+least), AAC 192 kb/s at 48 kHz, `+faststart`. The soundtrack is the cut's
+`audio`, #438's `many-hands-reel.wav`, written to the same 24 bars; until
+it is built the cut is silent and `cut.py` says so.
+
+**Checked (2026-11-09, RTX 4070, Vulkan).** `reel.mp4` is 1080x1920, 1728
+frames, 57.600 s of video and audio, -14.0 LUFS integrated after AAC;
+each story is 432 frames, 14.400 s. Two portrait captures of 07 and of the
+blueprint look (`capture.py --cut reel --verify --scale 0.5`) were
+byte-identical, every frame. The portrait branch never runs in a landscape
+window: 01, 04, 06 and 07 at 960x540 with these scripts and with main's
+were byte-identical, so the master's takes are unchanged.
+
 ## Music
 
 *Many Hands* has a score of its own (#438), written for the film and
@@ -141,7 +321,7 @@ there as it fades.
 
 | Cut | List | Bars | Length | Frames at 30 fps |
 |---|---|---|---|---|
-| 16:9 master (#436) | `tools/showcase/cuts/master.toml` | 48 + 2 held at the end | 120.0 s | 3600 |
+| 16:9 master (#436, #593) | `tools/showcase/cuts/master.toml` | 48 + a 2-bar tail where 13 runs on | 120.0 s | 3600 (7200 at its 60) |
 | 9:16 reel (#437) | `tools/showcase/cuts/reel.toml` | 24, four 6-bar stories | 57.6 s | 1728 |
 
 ```bash
@@ -182,8 +362,8 @@ python tools/showcase/capture.py --verify   # each take twice, compared
 ```
 
 Takes land outside the repo (`~/flint-film/<beat>/<take>/frame_0001.png`;
-`--out` moves them). A 4K frame of these scenes is about 14 MB, so the
-whole film is about 76 GB at 4K and 19 GB at 1080p; the rig refuses to
+`--out` moves them). At 60 fps the film is 10,940 frames; a 4K frame of these scenes averaged
+7.0 MB, so the whole film is about 77 GB at 4K and 20 GB at 1080p; the rig refuses to
 start a run that won't fit.
 
 ## Determinism

@@ -15,14 +15,15 @@
 [film]
 title = "Many Hands"
 # Frames a second of game time. Each frame steps the clock exactly 1/fps.
-fps = 30
+# 60 since #436: the 16:9 master is 60 fps, and a cut never resamples time.
+fps = 60
 # The master. Point-sized things (ASCII cells, egui) are laid out on a
 # 1920x1080-point canvas whatever the resolution: pixels_per_point is
 # width / 1920, so a 4K take and a 1080p preview frame alike.
 width = 3840
 height = 2160
 # Frames go here unless --out says otherwise: outside the repo, since a 4K
-# frame is ~14 MB.
+# frame is ~7 MB (the whole film, 10,940 frames, was 77 GB).
 out = "~/flint-film"
 
 [[beat]]
@@ -113,5 +114,7 @@ input = "12_menu.input.txt"
 [[beat]]
 id = "13_hands"
 title = "Many hands"
-seconds = 12.0
+# The rise takes 12 s; the master's tail (#593) runs on 3.6 s past it, the
+# camera at rest in the evening under the end card
+seconds = 15.6
 features = ["per-entity ASCII, pencil, watercolor and a user style on one screen"]
