@@ -645,7 +645,7 @@ impl SceneRenderer {
         self.draw_bind_cache.arena = arena;
     }
 
-    /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
+    /// Execute the main render pass: skybox → terrain → entities → grid → sprites → particles → debug.
     #[profiling::function]
     pub(super) fn render_main_pass<'a>(
         &'a self,
@@ -744,24 +744,15 @@ impl SceneRenderer {
             }
         }
 
-        // Render grid
-        if phase.draws_opaque() {
-            if let Some(grid) = &self.grid_draw {
-                render_pass.set_pipeline(&self.pipeline.line_pipeline);
-                render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
-            }
-        }
-
         // In WireframeOnly mode: depth prepass masks outline interior,
         // then outline, then wireframe lines on top.
         if wireframe_only {
             self.render_wireframe_only_pass(render_pass);
+            if phase.draws_opaque() {
+                self.draw_editor_grid(render_pass);
+            }
         } else {
+            // The editor grid is drawn in here, after the opaque geometry.
             self.render_normal_pass(render_pass, phase);
         }
 
@@ -807,6 +798,26 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
+    }
+
+    /// The editor grid, as an overlay (#346): depth-tested against what is
+    /// already drawn, with the line bias, but never writing depth. Drawn
+    /// after the opaque geometry, so the grid still shows on a floor at
+    /// y = 0 and hides behind anything standing on it, while the depth that
+    /// styles, SSAO, fog and the edge passes read holds only the scene. With
+    /// depth writes, ASCII's edges traced every grid line.
+    fn draw_editor_grid<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        let Some(grid) = &self.grid_draw else {
+            return;
+        };
+        render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+        // Billboards may have left their texture group at slot 2.
+        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+        render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
+        render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
     }
 
     /// Draw the wireframe edges of every skinned draw call (opaque and
@@ -1152,7 +1163,10 @@ impl SceneRenderer {
                     }
                 }
             }
-        } // end opaque phase (outlines + entities + skinned + billboards)
+
+            // After every opaque draw: an overlay, not geometry (#346)
+            self.draw_editor_grid(render_pass);
+        } // end opaque phase (outlines + entities + skinned + billboards + grid)
 
         if !phase.draws_ocean_and_after() {
             return;
@@ -1276,10 +1290,56 @@ impl SceneRenderer {
         }
     }
 
+    /// Each style id's screen bounds this frame (#385): the projected world
+    /// bounds of exactly the draws the mask draws for it (terrain chunks in
+    /// view, opaque and transparent models and boxes, skinned meshes as
+    /// posed), so a styled pixel is always inside its id's rect.
+    pub(super) fn style_bounds(&self, view_proj: &[[f32; 4]; 4]) -> crate::style_mask::StyleBounds {
+        use crate::style_mask::IdBounds;
+        let mut bounds = crate::style_mask::StyleBounds::known();
+        let ids = &self.style_by_entity;
+        if ids.is_empty() {
+            return bounds;
+        }
+        let frustum = self.camera_frustum.as_ref();
+        let of = |aabb: Option<([f32; 3], [f32; 3])>| match aabb {
+            Some((min, max)) if frustum.is_some_and(|f| !f.aabb_visible(min, max)) => {
+                IdBounds::Nowhere
+            }
+            Some((min, max)) => IdBounds::of_box(view_proj, min, max),
+            None => IdBounds::Everywhere,
+        };
+        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
+        if let Some(id) = id_of(&self.terrain_entity) {
+            for d in &self.terrain_draws {
+                bounds.add(id, of(Some((d.aabb_min, d.aabb_max))));
+            }
+        }
+        for d in self.entity_draws.iter().chain(&self.transparent_draws) {
+            if d.is_wireframe {
+                continue;
+            }
+            if let Some(id) = id_of(&d.entity_id) {
+                bounds.add(id, of(d.world_aabb.or(d.style_aabb)));
+            }
+        }
+        for d in self
+            .skinned_entity_draws
+            .iter()
+            .chain(&self.transparent_skinned_draws)
+        {
+            if let Some(id) = id_of(&d.entity_id) {
+                bounds.add(id, of(d.world_aabb));
+            }
+        }
+        bounds
+    }
+
     /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
     #[profiling::function]
-    /// `depth_owned`: `depth_view` is the scaled scene's own, made with the
-    /// HDR chain, so bind groups over it can be kept with the chain (#139).
+    /// `depth_key`: who vouches for `depth_view` (the HDR chain for the
+    /// scaled scene's own, the caller's id for theirs), so bind groups over
+    /// it can be kept (#139, #379).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_postprocess(
         &self,
@@ -1287,7 +1347,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         target_view: &wgpu::TextureView,
         camera: &Camera,
         mut timer: Option<&mut crate::gpu_timer::GpuTimer>,
@@ -1318,12 +1378,22 @@ impl SceneRenderer {
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
         let ids = &self.style_ids;
-        let hdr_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Hdr, config, ids);
-        let display_styles = pp
-            .styles
-            .active(crate::stylize::StyleStage::Display, config, ids);
+        // The `style` debug view shows the mask over the plain scene (#334):
+        // mask_view runs alone, so no other style's output speckles its hues
+        let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
+        // and the `edges` view (#349) shows the ASCII style's edge passes
+        // over the plain scene: ASCII alone, drawing its edge view
+        let solo = solo.or((self.debug_state.mode == DebugMode::StyleEdges).then_some("ascii"));
+        let hdr_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Hdr, config, ids),
+            solo,
+        );
+        let display_styles = crate::stylize::solo(
+            pp.styles
+                .active(crate::stylize::StyleStage::Display, config, ids),
+            solo,
+        );
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
         let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {
@@ -1335,6 +1405,12 @@ impl SceneRenderer {
                 resources.height,
             )
         });
+        // Where each id's entities are (#385), for styles' scissors
+        let style_bounds = if style_mask.is_some() && self.style_scissor {
+            self.style_bounds(&camera.view_projection_matrix())
+        } else {
+            crate::style_mask::StyleBounds::default()
+        };
         let mut style_frame = (!hdr_styles.is_empty() || !display_styles.is_empty()).then(|| {
             crate::stylize::StyleFrame {
                 device,
@@ -1346,7 +1422,7 @@ impl SceneRenderer {
                 format: crate::postprocess::HDR_FORMAT,
                 depth: depth_view,
                 depth_size: [resources.width, resources.height],
-                depth_owned,
+                depth_key,
                 camera: crate::stylize::StyleCamera {
                     view_proj: camera.view_projection_matrix(),
                     inv_view_proj: camera.inverse_view_projection_matrix(),
@@ -1355,16 +1431,20 @@ impl SceneRenderer {
                     far: camera.far,
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
+                mask_fades: self.style_mask_fades(),
                 style_ids: &self.style_ids,
+                style_bounds: &style_bounds,
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
                 time: (self.ocean_time % 100_000.0) as f32,
+                dt: self.style_dt,
                 frame: self
                     .style_frame_serial
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
+                debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,
             }
@@ -1394,6 +1474,9 @@ impl SceneRenderer {
                     id: crate::stylize::input_id::HDR,
                 },
                 None,
+                pp.styles.blend_pass(),
+                pp.styles.ownership(),
+                pp.styles.fade(),
                 &mut |label, encoder, run| scoped(label, encoder, run),
             ),
             _ => None,
@@ -1410,7 +1493,7 @@ impl SceneRenderer {
                     resources,
                     config,
                     depth_view,
-                    depth_owned,
+                    depth_key,
                     camera,
                 )
             });
@@ -1428,7 +1511,7 @@ impl SceneRenderer {
                             resources,
                             config,
                             depth_view,
-                            depth_owned,
+                            depth_key,
                             camera,
                             crate::postprocess::VolumetricShadow {
                                 id: shadow_pass.id,
@@ -1443,10 +1526,22 @@ impl SceneRenderer {
             }
         }
 
-        // Run bloom if post-processing effects are enabled
+        // Run bloom if post-processing effects are enabled. It reads the
+        // unstylized scene, unless an HDR style that ran says it feeds
+        // bloom (#300): then the stage's result, so the style's own bright
+        // shapes glow.
         if config.enabled && config.bloom_enabled && resources.bloom_mip_count > 0 {
+            let source = match hdr_scene {
+                Some((view, id)) if hdr_styles.iter().any(|(d, _)| d.feeds_bloom_in(config)) => {
+                    crate::stylize::StyleInput { view, id }
+                }
+                _ => crate::stylize::StyleInput {
+                    view: &resources.hdr_view,
+                    id: crate::stylize::input_id::HDR,
+                },
+            };
             scoped("Bloom", encoder, &mut |encoder| {
-                pp.run_bloom(queue, encoder, device, resources, config)
+                pp.run_bloom(queue, encoder, device, resources, config, &source)
             });
         }
 
@@ -1504,7 +1599,7 @@ impl SceneRenderer {
             &self.postprocess_config,
             composite_target,
             depth_view,
-            depth_owned,
+            depth_key,
             camera,
             // Same f64 phase wrap as the ocean upload — keeps mode animation
             // precise over long sessions. Headless render leaves this 0.0.
@@ -1537,6 +1632,9 @@ impl SceneRenderer {
                     view: final_target,
                     id: crate::stylize::input_id::FXAA_IN,
                 }),
+                pp.styles.blend_pass(),
+                pp.styles.ownership(),
+                pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
                     run(encoder);
@@ -1580,6 +1678,21 @@ impl SceneRenderer {
             self.grass_instance_count = count.min(self.grass_max_instances);
         }
 
+        // Only the cells within reach of the camera are dispatched (ADR 0089)
+        let spacing = 1.0 / config.density.sqrt();
+        let window = grass_dispatch_window(
+            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
+            [self.grass_terrain_width, self.grass_terrain_depth],
+            spacing,
+            [camera.position.x, camera.position.z],
+            config.max_distance,
+        );
+        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
+        let workgroups_x = count_x.div_ceil(8);
+        let workgroups_z = count_z.div_ceil(8);
+        let group_count = workgroups_x * workgroups_z;
+        self.ensure_grass_group_slots(device, group_count);
+
         let grass_pipeline = match &self.grass_pipeline {
             Some(p) => p,
             None => return,
@@ -1598,22 +1711,11 @@ impl SceneRenderer {
             None => return,
         };
 
-        // Reset the draw arguments to no blades; the compute pass counts them in
+        // Reset the draw arguments to no blades; the scan pass counts them in
         let Some(draw_args) = &self.grass_draw_args_buffer else {
             return;
         };
         queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
-
-        // Only the cells within reach of the camera are dispatched (ADR 0089)
-        let spacing = 1.0 / config.density.sqrt();
-        let window = grass_dispatch_window(
-            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
-            [self.grass_terrain_width, self.grass_terrain_depth],
-            spacing,
-            [camera.position.x, camera.position.z],
-            config.max_distance,
-        );
-        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
 
         // Only the blades in view are drawn. The planes are pushed out by the
         // tallest blade, and with shadows on by how far its shadow reaches,
@@ -1652,7 +1754,7 @@ impl SceneRenderer {
             // A terrain's samples sit on its mesh's vertices; a game's
             // ground map's in its cells (ADR 0098)
             height_at_corners: !self.grass_on_ground as u32,
-            _pad0: 0,
+            group_count,
             _pad1: 0,
             _pad2: 0,
             frustum_planes,
@@ -1693,19 +1795,23 @@ impl SceneRenderer {
         }
 
         // Compute dispatch over the window (none when the camera is out of reach;
-        // the counter, reset above, then reads zero)
-        let workgroups_x = count_x.div_ceil(8);
-        let workgroups_z = count_z.div_ceil(8);
-
-        if workgroups_x > 0 && workgroups_z > 0 {
+        // the counter, reset above, then reads zero). Three passes put the
+        // blades in grid order, the same every run (#341): an atomic append
+        // ordered them by which GPU thread got there first, and the blade
+        // drawn first wins a depth tie, so captures moved by a level.
+        if group_count > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Grass Compute Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&grass_pipeline.compute_pipeline);
             pass.set_bind_group(0, compute_uniform_bg, &[]);
             pass.set_bind_group(1, compute_texture_bg, &[]);
             pass.set_bind_group(2, compute_storage_bg, &[]);
+            pass.set_pipeline(&grass_pipeline.count_pipeline);
+            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
+            pass.set_pipeline(&grass_pipeline.scan_pipeline);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&grass_pipeline.emit_pipeline);
             pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
         }
 

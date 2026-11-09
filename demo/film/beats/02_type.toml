@@ -1,7 +1,7 @@
 # The whole frame in type (#265), turning through its colour modes and
 # palettes (#276) under a slow orbit, temporal stability on (#277) so the
 # glyphs hold still while the camera moves. The script changes the scene's
-# [post_process.styles.ascii] table on cue with set_scene_style_param.
+# [post_process.styles.ascii] table on cue with set_post_style_param.
 
 [scene]
 name = "Film 02: The world in type"

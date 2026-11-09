@@ -45,6 +45,24 @@ impl PlayerApp {
             .unwrap_or_default()
     }
 
+    /// The scene's folder, where the style editor finds its own palettes
+    /// and glyph sets to offer (#322).
+    #[cfg(feature = "debug-hud")]
+    fn styles_scene_dir(&self) -> Option<std::path::PathBuf> {
+        std::path::Path::new(&self.scene_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+    }
+
+    /// The scene file the style editors' Commit to scene writes (#364):
+    /// the scene's path, unless it came from a bundle (nothing on the disk
+    /// to write) or the web.
+    #[cfg(feature = "debug-hud")]
+    fn styles_scene_file(&self) -> Option<std::path::PathBuf> {
+        self.scene_file_writable
+            .then(|| std::path::PathBuf::from(&self.scene_path))
+    }
+
     /// Create the Rendering & Effects panel (ADR 0053), or point the one
     /// that survived a scene transition at the new scene's authored styles.
     /// Every scene has a renderer to tune, so it is unconditional;
@@ -53,6 +71,10 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_render_debug_panel(&mut self) {
         let authored = self.authored_styles();
+        let scene_dir = self.styles_scene_dir();
+        let looks = flint_render::look::list(&self.scene_path);
+        let current = self.current_look().map(str::to_string);
+        let scene_file = self.styles_scene_file();
         let existing = self
             .debug_panels
             .iter_mut()
@@ -62,11 +84,36 @@ impl PlayerApp {
                     .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
             });
         match existing {
-            Some(panel) => panel.set_authored_styles(Some(authored)),
+            Some(panel) => {
+                panel.set_authored_styles(Some(authored));
+                panel.set_scene_dir(scene_dir);
+                panel.set_looks(&looks, current.as_deref());
+                panel.set_scene_file(scene_file);
+            }
             None => {
                 let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
                 panel.set_authored_styles(Some(authored));
+                panel.set_scene_dir(scene_dir);
+                panel.set_looks(&looks, current.as_deref());
+                panel.set_scene_file(scene_file);
                 self.debug_panels.push(Box::new(panel));
+            }
+        }
+    }
+
+    /// After a look changes (#356): F4 shows it as the one in use, and the
+    /// style editors' Authored button and markers follow the scene's keys
+    /// under it, which is what the scene draws with now.
+    pub(super) fn refresh_style_panels_after_look(&mut self) {
+        let authored = self.authored_styles();
+        let current = self.current_look().map(str::to_string);
+        for panel in &mut self.debug_panels {
+            let any = panel.as_any_mut();
+            if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
+                rp.set_authored_styles(Some(authored.clone()));
+                rp.set_current_look(current.as_deref());
+            } else if let Some(sp) = any.downcast_mut::<flint_debug_ui::StylesDebugPanel>() {
+                sp.set_authored(Some(authored.clone()));
             }
         }
     }
@@ -95,10 +142,10 @@ impl PlayerApp {
         if !has_table && !has_mask {
             return;
         }
-        self.debug_panels
-            .push(Box::new(flint_debug_ui::StylesDebugPanel::new(Some(
-                authored,
-            ))));
+        let panel = flint_debug_ui::StylesDebugPanel::new(Some(authored))
+            .with_scene_dir(self.styles_scene_dir())
+            .with_scene_file(self.styles_scene_file());
+        self.debug_panels.push(Box::new(panel));
     }
 
     /// Create the ocean tuning panel if the scene has an `ocean` component.
@@ -364,6 +411,24 @@ impl PlayerApp {
                     open: was_open,
                 }));
             }
+        }
+    }
+}
+
+/// Give both style editors (F4's and F3's) the scene's authored style
+/// settings after one of them committed a style (#364), so neither marks
+/// the committed values as edits.
+#[cfg(feature = "debug-hud")]
+pub(super) fn set_panels_authored_styles(
+    panels: &mut [Box<dyn flint_debug_ui::DebugPanel>],
+    authored: &flint_render::stylize::StyleSettings,
+) {
+    for panel in panels {
+        let any = panel.as_any_mut();
+        if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
+            rp.set_authored_styles(Some(authored.clone()));
+        } else if let Some(sp) = any.downcast_mut::<flint_debug_ui::StylesDebugPanel>() {
+            sp.set_authored_styles(Some(authored.clone()));
         }
     }
 }

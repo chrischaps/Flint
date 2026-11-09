@@ -2,6 +2,7 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+mod camera_cut;
 mod debug_panels;
 mod egui_input;
 mod events;
@@ -208,6 +209,13 @@ pub struct PlayerApp {
     render_context: Option<RenderContext>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
+    /// Resets style history when the camera cuts (#343)
+    camera_cut: camera_cut::CameraCutDetector,
+    /// Style settings the engine is easing for scripts (#370)
+    style_tweens: style_commands::StyleTweens,
+    /// The renderer's `post_config_generation` scripts' style reads were
+    /// last handed (#372); `None` until the first.
+    style_reader_generation: Option<u64>,
 
     // Skeletal animation: entity_id → asset name for bone matrix updates
     skeletal_entity_assets: HashMap<flint_core::EntityId, String>,
@@ -276,6 +284,10 @@ pub struct PlayerApp {
     /// it off). On by default natively; off for a bundle, whose files are
     /// not on the disk, and always off on the web.
     pub procgen_disk_cache: bool,
+    /// Whether `scene_path` names a file on the disk the player may write
+    /// (#364: the style editors' Commit to scene). On natively; off for a
+    /// bundle and on the web.
+    pub scene_file_writable: bool,
     dynamic_scale: render_scale::DynamicScale,
     /// `key=value,...` quality settings applied over `msaa_sample_count`,
     /// `render_scale` and the `FLINT_SHADOW*` switches at startup
@@ -311,6 +323,14 @@ pub struct PlayerApp {
     /// every scene's `[post_process]` as it loads, as `flint render --look`
     /// does. Found again at each load, after that scene's user styles.
     pub look: Option<String>,
+    /// `--style name[:key=value,...]` words (#328), written over every
+    /// scene's `[post_process]` at load, after each transition and after a
+    /// user style's hot reload, so they keep winning. See
+    /// [`PlayerApp::scene_post_config`].
+    pub style_specs: Vec<String>,
+    /// `--style-time`: hold the post time styles (and the ocean, grain and
+    /// render modes, which share it) see at this many seconds.
+    pub style_time: Option<f32>,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,
@@ -339,6 +359,9 @@ pub struct PlayerApp {
     /// the panel each frame (one-frame toggle lag, imperceptible).
     #[cfg(feature = "debug-hud")]
     pp_debug_freeze: bool,
+    /// A look F4's picker chose this frame (#356; `Some(None)`: none),
+    /// laid under the scene's keys at the start of the next render.
+    pending_look: Option<Option<String>>,
 
     // Ladder-driven post params: the scene's authored base, captured at
     // session start and written back after teardown (ADR 0021).

@@ -1,0 +1,50 @@
+# Coloured pencil: the scene's own colours laid down in a warm lead over
+# cream paper, two hatch layers, the paper's tooth showing through.
+#
+#   flint render <scene> --look coloured_pencil -o coloured.png
+#   flint render <scene> --look coloured_pencil --sweep pencil.color=0.3,0.6,0.9 -o colour.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# One of three pencil looks beside graphite (#391): coloured_pencil,
+# blueprint, charcoal.
+
+[look]
+name = "coloured_pencil"
+description = "Coloured pencil: the scene's colours hatched in a warm lead on cream, heavy tooth"
+tune = [
+    "pencil.color=0.3,0.6,0.9",
+    "pencil.grain=0.5,0.75,1",
+    "pencil.layers=1,2,3",
+    "pencil.spacing=4,5,7",
+]
+notes = """
+color is how much of the scene's own colour comes through: 0.3 is a tinted
+graphite study, 0.9 the picture itself with strokes on it. Grain is what makes
+it read as pencil rather than paint: at 1 the tooth breaks every stroke and
+the colour sits in the paper's peaks. Two layers keep it airy; a third
+crosses the darks and starts to look like ink. Spacing under 4 points loses
+the strokes at 1x and reads as flat colour.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = true
+ssao_intensity = 0.9
+exposure = 1.2
+vignette_enabled = true
+vignette_intensity = 0.15
+
+[post_process.styles.pencil]
+color = 0.6
+layers = 2
+spacing = 5.0
+thickness = 1.2
+contrast = 1.3
+darkness = 0.8
+shade = 0.35
+wobble = 1.2
+sketchy = 0.4
+grain = 0.8
+paper = [0.97, 0.94, 0.86]
+lead = [0.36, 0.2, 0.12]

@@ -40,19 +40,27 @@ pub fn load_user_styles(scene_path: &str) {
     }
 }
 
-/// A scene's `[post_process]` under the `--look` named (#435), or as it
-/// is when there's none. A look that won't apply leaves the scene's own,
-/// with a warning (the player checked the name at startup).
-pub fn under_look(
+/// A scene's `[post_process]` as the player draws it: the look the scene
+/// names laid under its own keys (#356), then the `--look` named, if any,
+/// merged over the result as `flint render --look` does (#435). A `--look`
+/// that won't apply leaves the scene's own, with a warning (the player
+/// checked the name at startup). The result keeps the scene's authored
+/// keys, so a later `set_look` or F4 Look re-resolves from the scene.
+pub fn scene_post_process(
     look: Option<&str>,
     scene_path: &str,
     pp: Option<flint_scene::PostProcessDef>,
 ) -> Option<flint_scene::PostProcessDef> {
+    let pp = pp.map(|d| flint_render::look::resolve_scene(&d, scene_path));
     let Some(name) = look else {
         return pp;
     };
     match flint_render::look::find(name, scene_path).and_then(|l| l.apply(pp.as_ref())) {
-        Ok(def) => Some(def),
+        Ok(mut def) => {
+            def.look = Some(name.to_string());
+            def.authored = pp.and_then(|p| p.authored);
+            Some(def)
+        }
         Err(e) => {
             tracing::warn!("--look {name}: {e}");
             pp
@@ -197,6 +205,8 @@ pub(super) fn load_terrain_from_world_inner(
             &config.layer_textures,
             scene_dir,
         );
+        // A style_mask on the terrain entity masks its chunks (#310)
+        scene_renderer.set_terrain_entity(Some(entity.id));
 
         // Register physics collider
         let (verts, tris) = terrain.trimesh_data();

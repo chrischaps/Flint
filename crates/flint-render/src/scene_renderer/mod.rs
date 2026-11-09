@@ -94,6 +94,10 @@ pub(super) struct DrawCall {
     sort_depth: f32,
     /// World-space bounds for frustum culling. `None` draws are never culled.
     world_aabb: Option<([f32; 3], [f32; 3])>,
+    /// World-space bounds of a draw that isn't culled by them (a
+    /// procedural box), for the per-entity style scissor (#385): it reads
+    /// `world_aabb`, else these.
+    style_aabb: Option<([f32; 3], [f32; 3])>,
     /// The camera distances this draw is drawn at: its mesh's level of detail
     /// and the entity's `lod.draw_distance`. `None` draws at every distance.
     lod: Option<DrawLod>,
@@ -325,6 +329,34 @@ pub(super) fn draw_visible(draw: &DrawCall, frustum: &crate::frustum::Frustum) -
         .map_or(true, |(min, max)| frustum.aabb_visible(min, max))
 }
 
+/// The bounds of a skinned mesh whose bind-pose box is `min..max` once
+/// posed by `bones` (#385). A skinned vertex is a weighted blend of its
+/// position under up to four bone matrices; with weights summing to one
+/// the blend lies in the box around every bone's image of the bind-pose
+/// box. The bind-pose box itself (identity bones) and the origin (a bone
+/// slot never written reads as zero) are in too, so the bound holds
+/// whichever slots a vertex names.
+pub(super) fn posed_aabb(
+    bones: &[[[f32; 4]; 4]],
+    min: [f32; 3],
+    max: [f32; 3],
+) -> ([f32; 3], [f32; 3]) {
+    let mut lo = [0.0f32; 3];
+    let mut hi = [0.0f32; 3];
+    for i in 0..3 {
+        lo[i] = min[i].min(0.0);
+        hi[i] = max[i].max(0.0);
+    }
+    for bone in bones {
+        let (a, b) = transform_aabb(bone, min, max);
+        for i in 0..3 {
+            lo[i] = lo[i].min(a[i]);
+            hi[i] = hi[i].max(b[i]);
+        }
+    }
+    (lo, hi)
+}
+
 /// The world-space AABB enclosing a local AABB under `model` (column-major),
 /// by Arvo's method: exact for the transformed box, never too small.
 pub(super) fn transform_aabb(
@@ -398,6 +430,10 @@ struct SkinnedDrawCall {
     sort_depth: f32,
     /// As [`DrawCall::casts_shadow`].
     casts_shadow: bool,
+    /// World-space bounds of the posed mesh (#385): its bind-pose box
+    /// under every bone matrix, which holds any blend of them. `None`
+    /// when the bones aren't known on the CPU.
+    world_aabb: Option<([f32; 3], [f32; 3])>,
 }
 
 /// Configuration for creating a SceneRenderer
@@ -499,6 +535,9 @@ pub struct SceneRenderer {
     terrain_material_buffer: Option<wgpu::Buffer>,
     terrain_total_chunks: u32,
     terrain_visible_chunks: u32,
+    /// The entity the loaded terrain belongs to, so a `style_mask` on it
+    /// masks the chunks (#310). Set by [`SceneRenderer::set_terrain_entity`].
+    terrain_entity: Option<flint_core::EntityId>,
     camera_frustum: Option<crate::frustum::Frustum>,
     /// Level-of-detail and draw-distance scales (#56)
     lod_settings: LodSettings,
@@ -530,14 +569,26 @@ pub struct SceneRenderer {
     /// Styled entities -> their mask id, rebuilt each `update_from_world`
     /// while the mask is wanted (empty otherwise).
     style_by_entity: HashMap<flint_core::EntityId, u16>,
+    /// Whether per-entity styles scissor their passes to their entities'
+    /// screen bounds (#385); `FLINT_STYLE_SCISSOR=0` starts it off.
+    style_scissor: bool,
     /// The blend of each styled entity drawn at less than 1 (#278).
     style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
+    /// Whether the last style mask drew a veil over its entities (#290):
+    /// something unstyled in front, so the mask's blend is below 1 there
+    /// even with every entity fully styled (#396 cross-fades by it).
+    style_mask_veiled: bool,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
+    /// Whether the `edges` view switched ASCII on itself (#349).
+    ascii_forced: bool,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
     grass_compute_storage_bind_group: Option<wgpu::BindGroup>,
+    /// Each placement workgroup's blade count, then its first slot, and how
+    /// many workgroups it holds (#341). Grown by the dispatch that needs more.
+    grass_group_slots: Option<(wgpu::Buffer, u32)>,
     grass_render_uniform_buffer: Option<wgpu::Buffer>,
     grass_render_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_render_instance_bind_group: Option<wgpu::BindGroup>,
@@ -604,6 +655,12 @@ pub struct SceneRenderer {
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
     pub ocean_time: f64,
+    /// Seconds of game time this frame stepped, for styles whose history
+    /// is a rate (ASCII's smoothing, #342): the player sets it from its
+    /// clock's `delta_time` (so it follows `--frame-step`), the viewer from
+    /// its frame time. Hosts that don't set it get 1/60, which is what a
+    /// per-frame weight always meant.
+    pub style_dt: f32,
     // Particles (ADR 0068)
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -631,6 +688,9 @@ pub struct SceneRenderer {
     sample_count: u32,
     msaa_color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     msaa_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// A new id each time `msaa_depth` is made, so the style mask can keep
+    /// a bind group over it (#306).
+    msaa_depth_id: u64,
     depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
     depth_resolve_layout: Option<wgpu::BindGroupLayout>,
     // Post-processing
@@ -641,6 +701,11 @@ pub struct SceneRenderer {
     /// What callers set (`set_post_process_config`): the scene's look, kept
     /// whole so lifting a quality cap brings its effect back.
     authored_postprocess: PostProcessConfig,
+    /// A fresh [`next_post_config_generation`] whenever the drawn
+    /// configuration may have changed, so a host mirroring it (scripts'
+    /// style reads, #372) copies it only then. Unique in the process, so a
+    /// rebuilt renderer never repeats an old one's.
+    post_config_generation: u64,
     /// The quality settings in force (FlintKart#55, `set_quality`).
     quality: crate::quality::QualitySettings,
     /// Render scale (#122): the HDR chain is this fraction of the surface on
@@ -681,8 +746,21 @@ pub struct SceneRenderer {
     /// shared by every entity that instances the asset, so entities playing
     /// different clips need their own storage or the last upload wins.
     entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
+    /// The bone matrices last written for each entity, and for each
+    /// asset's shared buffer, kept on the CPU to bound the posed meshes
+    /// for the per-entity style scissor (#385).
+    entity_bone_matrices: HashMap<flint_core::EntityId, Vec<[[f32; 4]; 4]>>,
+    asset_bone_matrices: HashMap<String, Vec<[[f32; 4]; 4]>>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
+}
+
+/// A number no other call in this process returns, for
+/// [`SceneRenderer::post_config_generation`].
+fn next_post_config_generation() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl SceneRenderer {
@@ -787,6 +865,8 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            entity_bone_matrices: HashMap::new(),
+            asset_bone_matrices: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -821,6 +901,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -837,12 +918,16 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_mask_veiled: false,
             mask_view_forced: false,
+            ascii_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
             grass_compute_storage_bind_group: None,
+            grass_group_slots: None,
             grass_render_uniform_buffer: None,
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
@@ -886,6 +971,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             particle_texture_bind_groups: HashMap::new(),
@@ -900,12 +986,14 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            post_config_generation: next_post_config_generation(),
             quality: crate::quality::QualitySettings {
                 msaa: sample_count,
                 ..Default::default()
@@ -1570,9 +1658,19 @@ impl SceneRenderer {
         self.reload_terrain_geometry(device, chunks, transform);
     }
 
+    /// Name the entity the loaded terrain belongs to (#310): a
+    /// `style_mask` (or a style's own component) on it, or on an ancestor,
+    /// then masks the terrain's chunks like any styled mesh. Hosts call it
+    /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
+    /// terrain unmasked, as it was before.
+    pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
+        self.terrain_entity = entity;
+    }
+
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain_draws.clear();
+        self.terrain_entity = None;
         self.terrain_material_bind_group = None;
         self.terrain_material_buffer = None;
     }
@@ -1845,21 +1943,6 @@ impl SceneRenderer {
             label: Some("Grass Compute Texture Bind Group"),
         });
 
-        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_storage_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: counter_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Compute Storage Bind Group"),
-        });
-
         // Render uniform buffer
         let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Grass Render Uniform Buffer"),
@@ -1909,7 +1992,9 @@ impl SceneRenderer {
         self.grass_compute_uniform_buffer = Some(compute_uniform_buffer);
         self.grass_compute_uniform_bind_group = Some(compute_uniform_bind_group);
         self.grass_compute_texture_bind_group = Some(compute_texture_bind_group);
-        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        // Made by the first dispatch, which knows how many workgroups it runs
+        self.grass_compute_storage_bind_group = None;
+        self.grass_group_slots = None;
         self.grass_render_uniform_buffer = Some(render_uniform_buffer);
         self.grass_render_uniform_bind_group = Some(render_uniform_bind_group);
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
@@ -1960,6 +2045,7 @@ impl SceneRenderer {
         self.grass_compute_uniform_bind_group = None;
         self.grass_compute_texture_bind_group = None;
         self.grass_compute_storage_bind_group = None;
+        self.grass_group_slots = None;
         self.grass_render_uniform_buffer = None;
         self.grass_render_uniform_bind_group = None;
         self.grass_render_instance_bind_group = None;
@@ -2057,22 +2143,6 @@ impl SceneRenderer {
         // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
         let counter_buffer = create_grass_draw_args_buffer(device);
 
-        // Recreate compute storage bind group (binds instance buffer at binding 0)
-        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_storage_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: counter_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Compute Storage Bind Group"),
-        });
-
         // Recreate render instance bind group (binds instance buffer at binding 0)
         let entity_buffer = self
             .grass_entity_buffer
@@ -2102,7 +2172,8 @@ impl SceneRenderer {
         self.grass_max_instances = max_instances;
         self.grass_draw_args_buffer = Some(counter_buffer);
         self.grass_count_readback = Some(GrassCountReadback::new(device));
-        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        // The next dispatch binds the new buffers
+        self.grass_compute_storage_bind_group = None;
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
         self.grass_config = Some(config);
         self.grass_needs_realloc = false;
@@ -2112,6 +2183,58 @@ impl SceneRenderer {
             max_instances,
             instance_buffer_size as f64 / (1024.0 * 1024.0)
         );
+    }
+
+    /// Make sure the grass compute's storage bind group exists and its
+    /// per-workgroup slots hold `groups` workgroups (#341). The slots grow
+    /// to the next power of two, so a window that changes size as the
+    /// camera nears the ground's edge rebuilds them a few times at most.
+    fn ensure_grass_group_slots(&mut self, device: &wgpu::Device, groups: u32) {
+        let groups = groups.max(1);
+        let fits = self
+            .grass_group_slots
+            .as_ref()
+            .is_some_and(|(_, capacity)| *capacity >= groups);
+        if fits && self.grass_compute_storage_bind_group.is_some() {
+            return;
+        }
+        let (Some(grass_pipeline), Some(instances), Some(draw_args)) = (
+            &self.grass_pipeline,
+            &self.grass_instance_buffer,
+            &self.grass_draw_args_buffer,
+        ) else {
+            return;
+        };
+        if !fits {
+            let capacity = groups.next_power_of_two();
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Group Slots"),
+                size: capacity as u64 * 4,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            self.grass_group_slots = Some((buffer, capacity));
+        }
+        let (slots, _) = self.grass_group_slots.as_ref().expect("grass group slots");
+        self.grass_compute_storage_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.compute_storage_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instances.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: draw_args.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: slots.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Compute Storage Bind Group"),
+            }));
     }
 
     /// Read-only access to the current grass config (if loaded).
@@ -2271,6 +2394,8 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            entity_bone_matrices: HashMap::new(),
+            asset_bone_matrices: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -2305,6 +2430,7 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             terrain_total_chunks: 0,
             terrain_visible_chunks: 0,
+            terrain_entity: None,
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
@@ -2321,12 +2447,16 @@ impl SceneRenderer {
             style_mask_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
+            style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_mask_veiled: false,
             mask_view_forced: false,
+            ascii_forced: false,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
             grass_compute_storage_bind_group: None,
+            grass_group_slots: None,
             grass_render_uniform_buffer: None,
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
@@ -2370,6 +2500,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            style_dt: 1.0 / 60.0,
             // Headless particles (ADR 0068): zero instances until a caller
             // steps a ParticleSystem, so existing pixel gates are unchanged.
             particle_pipeline: Some(particle_pipeline),
@@ -2386,12 +2517,14 @@ impl SceneRenderer {
             sample_count,
             msaa_color: None,
             msaa_depth: None,
+            msaa_depth_id: 0,
             depth_resolve_pipeline: None,
             depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             authored_postprocess: postprocess_config.clone(),
             postprocess_config,
+            post_config_generation: next_post_config_generation(),
             quality: crate::quality::QualitySettings {
                 msaa: sample_count,
                 ..Default::default()
@@ -2556,6 +2689,17 @@ impl SceneRenderer {
                 })
             });
         queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
+        let kept = &matrices[..matrices.len().min(crate::skinned_pipeline::MAX_BONES)];
+        let entity = self.entity_bone_matrices.entry(entity_id).or_default();
+        entity.clear();
+        entity.extend_from_slice(kept);
+        if let Some(asset) = self.asset_bone_matrices.get_mut(asset_name) {
+            asset.clear();
+            asset.extend_from_slice(kept);
+        } else {
+            self.asset_bone_matrices
+                .insert(asset_name.to_string(), kept.to_vec());
+        }
         // Its sub-meshes share one buffer
         if let Some(mesh) = self
             .mesh_cache
@@ -2566,9 +2710,29 @@ impl SceneRenderer {
         }
     }
 
+    /// Whether per-entity styles draw only inside their entities' screen
+    /// bounds (#385). On by default (`FLINT_STYLE_SCISSOR=0` starts it
+    /// off); the frame is the same either way, only cheaper with it on.
+    pub fn set_style_scissor(&mut self, on: bool) {
+        self.style_scissor = on;
+    }
+
+    pub fn style_scissor(&self) -> bool {
+        self.style_scissor
+    }
+
+    /// Where each style id's entities are on screen under `camera`, from
+    /// the draws of the last [`update_from_world`](Self::update_from_world)
+    /// (#385): what the per-entity style scissor reads.
+    pub fn style_screen_bounds(&self, camera: &Camera) -> crate::style_mask::StyleBounds {
+        self.style_bounds(&camera.view_projection_matrix())
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.entity_bone_buffers.clear();
+        self.entity_bone_matrices.clear();
+        self.asset_bone_matrices.clear();
         self.skinned_bone_binds.clear();
     }
 
@@ -3584,6 +3748,7 @@ impl SceneRenderer {
             blend_mode,
             sort_depth: 0.0,
             world_aabb: None,
+            style_aabb: None,
             lod: None,
         }
     }
@@ -3714,6 +3879,7 @@ impl SceneRenderer {
             blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
             world_aabb: None,
+            style_aabb: None,
             lod: None,
         }
     }
@@ -4431,7 +4597,7 @@ impl SceneRenderer {
         self.render_to(
             &context.device,
             &context.queue,
-            &context.depth_view,
+            context.depth_target(),
             camera,
             view,
         );
@@ -4520,6 +4686,16 @@ impl SceneRenderer {
         } else if std::mem::take(&mut self.mask_view_forced) {
             styles.set_enabled("mask_view", false);
         }
+        // The `edges` view (#349) is drawn by the ASCII style itself, so a
+        // scene without it gets it, at its defaults, for the view
+        if self.debug_state.mode == DebugMode::StyleEdges {
+            if !styles.is_enabled("ascii") {
+                styles.set_enabled("ascii", true);
+                self.ascii_forced = true;
+            }
+        } else if std::mem::take(&mut self.ascii_forced) {
+            styles.set_enabled("ascii", false);
+        }
     }
 
     /// Bind groups the post chain keeps (its styles' among them). Steady
@@ -4529,6 +4705,15 @@ impl SceneRenderer {
         self.postprocess_resources
             .as_ref()
             .map_or(0, |r| r.binds.len())
+    }
+
+    /// Bind groups the post chain has made since it was last rebuilt, the
+    /// ones it made for a single frame included: a steady frame adds none
+    /// once the caller's depth comes with an id (#379).
+    pub fn post_binds_made(&self) -> u64 {
+        self.postprocess_resources
+            .as_ref()
+            .map_or(0, |r| r.binds.made())
     }
 
     /// The style ids the mask uses: which number each `style_mask` style
@@ -4550,8 +4735,9 @@ impl SceneRenderer {
         &self.style_blend_by_entity
     }
 
-    /// Record the style mask pass over this frame's visible opaque draws
-    /// (static, procedural and skinned) of styled entities. The mask is
+    /// Record the style mask pass over this frame's visible draws of
+    /// styled entities: terrain chunks, opaque static, procedural and
+    /// skinned draws, then transparents over them (#310). The mask is
     /// cleared even with none, so a style never reads a stale frame.
     fn encode_style_mask(
         &mut self,
@@ -4559,16 +4745,17 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
     ) {
+        self.style_mask_veiled = false;
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
-        if self.style_mask_pass.is_none() {
-            let Some(skinned) = &self.skinned_pipeline else {
-                return;
-            };
-            self.style_mask_pass = Some(crate::style_mask::StyleMaskPass::new(
+        let Some(skinned) = &self.skinned_pipeline else {
+            return;
+        };
+        let pass = self.style_mask_pass.get_or_insert_with(|| {
+            crate::style_mask::StyleMaskPass::new(
                 device,
                 &crate::style_mask::MaskLayouts {
                     transform: &self.pipeline.transform_bind_group_layout,
@@ -4576,8 +4763,29 @@ impl SceneRenderer {
                     light: &self.pipeline.light_bind_group_layout,
                     bones: &skinned.bone_bind_group_layout,
                 },
-            ));
-        }
+            )
+        });
+        // Under MSAA the mask is drawn 4x against the scene's own samples
+        // and resolved, so a feature thinner than a pixel keeps the pixels
+        // the scene's samples gave it (#306).
+        let msaa_depth = match &self.msaa_depth {
+            Some((texture, view))
+                if self.sample_count == crate::style_mask::MSAA_SAMPLES
+                    && texture.size().width == resources.width
+                    && texture.size().height == resources.height =>
+            {
+                pass.ensure_msaa(
+                    device,
+                    &self.pipeline.transform_bind_group_layout,
+                    &skinned.bone_bind_group_layout,
+                );
+                Some(crate::style_mask::MsaaDepth {
+                    view,
+                    id: self.msaa_depth_id,
+                })
+            }
+            _ => None,
+        };
         let veil_target = resources.styles.get(
             device,
             crate::style_mask::VEIL_TARGET,
@@ -4602,6 +4810,29 @@ impl SceneRenderer {
         };
         let mut draws = Vec::new();
         if !ids.is_empty() {
+            // Terrain first (#310): the props on it are drawn after, and
+            // each fragment's depth test decides who owns a pixel anyway
+            if let Some(id) = id_of(&self.terrain_entity) {
+                let blend = blend_of(&self.terrain_entity);
+                let frustum = self.camera_frustum.as_ref();
+                let visible = |d: &&TerrainDrawCall| {
+                    frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
+                };
+                draws.extend(
+                    self.terrain_draws
+                        .iter()
+                        .filter(visible)
+                        .map(|d| crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id,
+                            blend,
+                        }),
+                );
+            }
             draws.extend(
                 self.entity_draws
                     .iter()
@@ -4619,6 +4850,39 @@ impl SceneRenderer {
                     }),
             );
             draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
+                Some(crate::style_mask::MaskDraw {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                    id: id_of(&d.entity_id)?,
+                    blend: blend_of(&d.entity_id),
+                })
+            }));
+            // Styled transparents last, back to front as the scene drew
+            // them (#310). They write no depth, so the depth test keeps them
+            // behind the opaques in front of them and nothing else: where
+            // one shows, it is the nearest styled surface and its id
+            // replaces what's behind. A styled glass is a lens, drawing
+            // what's seen through it in its style.
+            draws.extend(
+                self.transparent_draws
+                    .iter()
+                    .filter(|d| !d.is_wireframe)
+                    .filter_map(|d| {
+                        Some(crate::style_mask::MaskDraw {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            bones: None,
+                            id: id_of(&d.entity_id)?,
+                            blend: blend_of(&d.entity_id),
+                        })
+                    }),
+            );
+            draws.extend(self.transparent_skinned_draws.iter().filter_map(|d| {
                 Some(crate::style_mask::MaskDraw {
                     vertex_buffer: &d.vertex_buffer,
                     index_buffer: &d.index_buffer,
@@ -4673,20 +4937,40 @@ impl SceneRenderer {
                         draws: &self.particle_draws,
                     });
         }
+        let veiled = !veil.is_empty();
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
                 device,
                 queue,
                 encoder,
                 &resources.binds,
-                &mask.view,
+                &mask,
                 &veil_target.view,
                 depth_view,
-                depth_owned,
+                depth_key,
+                msaa_depth,
                 &draws,
                 &veil,
             );
         }
+        self.style_mask_veiled = veiled;
+    }
+
+    /// Whether some pixel of the last style mask may hold a blend below 1
+    /// (#396): an entity drawn part-way into its style (#278), or a veil
+    /// over a styled one (#290). While neither, the framework's
+    /// cross-fade is skipped.
+    pub fn style_mask_fades(&self) -> bool {
+        !self.style_blend_by_entity.is_empty() || self.style_mask_veiled
+    }
+
+    /// The entity style mask's per-draw uniform bytes and how many styled
+    /// draws the last frame masked (#311); `None` before a frame needed
+    /// the mask.
+    pub fn style_mask_draws(&self) -> Option<(u64, usize)> {
+        self.style_mask_pass
+            .as_ref()
+            .map(|p| (p.draw_buffer_bytes(), p.last_draws()))
     }
 
     /// The render scale [`set_render_scale`](Self::set_render_scale) set.
@@ -4748,6 +5032,15 @@ impl SceneRenderer {
     pub fn set_post_process_config(&mut self, config: PostProcessConfig) {
         self.postprocess_config = crate::quality::mask_post_process(&config, &self.quality);
         self.authored_postprocess = config;
+        self.post_config_generation = next_post_config_generation();
+    }
+
+    /// A number that changes whenever [`effective_post_process_config`]
+    /// may have: a host keeping a copy of it re-reads it only then.
+    ///
+    /// [`effective_post_process_config`]: Self::effective_post_process_config
+    pub fn post_config_generation(&self) -> u64 {
+        self.post_config_generation
     }
 
     /// The quality settings in force; see [`set_quality`](Self::set_quality).
@@ -4789,6 +5082,7 @@ impl SceneRenderer {
         }
         self.quality = q;
         self.postprocess_config = crate::quality::mask_post_process(&self.authored_postprocess, &q);
+        self.post_config_generation = next_post_config_generation();
         q
     }
 
@@ -4933,13 +5227,8 @@ impl SceneRenderer {
                  Try updating your graphics drivers.",
                 failed.label
             );
-            if failed.uses_style_table() {
-                self.postprocess_config.styles.set_enabled(failed.name, false);
-                self.authored_postprocess.styles.set_enabled(failed.name, false);
-            } else if failed.name == "kuwahara" {
-                self.postprocess_config.kuwahara_enabled = false;
-                self.authored_postprocess.kuwahara_enabled = false;
-            }
+            self.postprocess_config.styles.set_enabled(failed.name, false);
+            self.authored_postprocess.styles.set_enabled(failed.name, false);
             self.device_lost = true;
         }
     }
@@ -4947,10 +5236,43 @@ impl SceneRenderer {
     /// How many times the shared style edge pass (#301) has been drawn
     /// since this renderer was made: one a frame while any style that
     /// needs the edges is on, however many do.
+    /// Have glyph styles (ASCII) keep each frame's character grid as text
+    /// (#317), for [`style_text`](Self::style_text). Costs one pass of a
+    /// fragment per cell and a copy to the CPU a frame, so it's off unless
+    /// asked for. Does nothing without post-processing, where no style runs.
+    pub fn set_style_text_capture(&mut self, on: bool) {
+        if let Some(pp) = &mut self.postprocess_pipeline {
+            pp.styles.set_text_capture(on);
+        }
+    }
+
+    /// The character grid style `name` drew in the last frame rendered
+    /// with text capture on, once its submission is done (this waits on
+    /// the device). `None` if that style draws no glyphs or didn't run.
+    pub fn style_text(
+        &self,
+        device: &wgpu::Device,
+        name: &str,
+    ) -> Option<crate::stylize::GlyphText> {
+        self.postprocess_pipeline
+            .as_ref()?
+            .styles
+            .read_text(name, device)
+    }
+
     pub fn style_edge_runs(&self) -> u64 {
         self.postprocess_pipeline
             .as_ref()
             .map_or(0, |pp| pp.styles.edge_runs())
+    }
+
+    /// How many times the framework's cross-fade (#396) has been drawn:
+    /// once after each style it fades, on each frame some mask pixel is
+    /// below a blend of 1.
+    pub fn style_fade_runs(&self) -> u64 {
+        self.postprocess_pipeline
+            .as_ref()
+            .map_or(0, |pp| pp.styles.fade_runs())
     }
 
     /// The old name of [`ensure_style_resources`](Self::ensure_style_resources),
@@ -5013,6 +5335,7 @@ impl SceneRenderer {
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         self.msaa_color = Some((color, color_view, width, height));
         self.msaa_depth = Some((depth, depth_view));
+        self.msaa_depth_id = crate::bind_cache::gpu_id();
     }
 
     /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).
@@ -5120,11 +5443,11 @@ impl SceneRenderer {
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
-    pub fn render_to(
+    pub fn render_to<'d>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        depth_view: &wgpu::TextureView,
+        depth: impl Into<crate::bind_cache::DepthTarget<'d>>,
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
@@ -5134,7 +5457,7 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Frame Encoder"),
         });
-        self.encode_to(device, queue, &mut encoder, depth_view, camera, target_view);
+        self.encode_to(device, queue, &mut encoder, depth, camera, target_view);
         queue.submit(std::iter::once(encoder.finish()));
         self.frame_submitted();
     }
@@ -5148,18 +5471,25 @@ impl SceneRenderer {
     /// second camera's uniforms would overwrite this one's. After
     /// submitting, call [`frame_submitted`](Self::frame_submitted).
     #[profiling::function]
-    pub fn encode_to(
+    ///
+    /// `depth` is the caller's depth buffer: a `&TextureView`, or a
+    /// [`DepthTarget`](crate::bind_cache::DepthTarget) with an id
+    /// ([`RenderContext::depth_target`](crate::RenderContext::depth_target))
+    /// so the bind groups over it are kept from frame to frame (#379).
+    pub fn encode_to<'d>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        depth: impl Into<crate::bind_cache::DepthTarget<'d>>,
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
         if self.device_lost {
             return;
         }
+        let depth = depth.into();
+        let depth_view = depth.view;
         // A style switched on by any route (scene load, F4, a script's
         // config) is built before the frame that first needs it (#262).
         // When nothing new is on this is a walk over the registry.
@@ -5177,6 +5507,13 @@ impl SceneRenderer {
         let surface_depth_view = depth_view;
         let scaled_depth = self.scaled_depth.clone();
         let depth_view = scaled_depth.as_ref().map_or(depth_view, |d| &d.view);
+        // Who vouches for that view, so bind groups over it can be kept:
+        // the chain for its own, the caller's id for the caller's (#379).
+        let depth_key = if scaled_depth.is_some() {
+            crate::bind_cache::DepthKey::Owned
+        } else {
+            crate::bind_cache::DepthKey::caller(depth.id)
+        };
         let clear_color = wgpu::Color {
             r: self.clear_color[0] as f64,
             g: self.clear_color[1] as f64,
@@ -5414,7 +5751,7 @@ impl SceneRenderer {
                 let blit_bind_group =
                     resources
                         .binds
-                        .get_if(scaled_depth.is_some(), "ocean grab blit", 0, || {
+                        .get_over(depth_key, "ocean grab blit", 0, || {
                             device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 layout: &op.blit_bind_group_layout,
                                 entries: &[
@@ -5510,7 +5847,7 @@ impl SceneRenderer {
         // against the frame's single-sample depth, while a style reads it.
         if has_postprocess && self.style_mask_wanted() {
             let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
-            self.encode_style_mask(device, queue, encoder, depth_view, scaled_depth.is_some());
+            self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end(encoder, scope);
             }
@@ -5523,7 +5860,7 @@ impl SceneRenderer {
                 queue,
                 encoder,
                 depth_view,
-                scaled_depth.is_some(),
+                depth_key,
                 target_view,
                 camera,
                 gpu_timer.as_mut(),

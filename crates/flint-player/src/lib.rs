@@ -24,7 +24,7 @@ pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use player_app::fonts::project_font_definitions;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 pub use player_app::scene_loading::{
-    load_scene_grass_ground, load_user_styles, post_process_config_from_def, under_look,
+    load_scene_grass_ground, load_user_styles, post_process_config_from_def,
 };
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_page::begin as web_begin;
@@ -35,5 +35,8 @@ pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::procgen_assets::ProcGenMode;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
-pub use player_app::style_commands::{apply_style_command, StyleApplied, STYLE_CHANGED};
+pub use player_app::style_commands::{
+    apply_post_style_command, apply_style_command, is_post_style_command, Easing, SceneStyles,
+    StyleApplied, StyleTweens, TweenStep, POST_STYLE_CHANGED, STYLE_CHANGED, STYLE_TWEEN_DONE,
+};
 pub use player_app::{CaptureConfig, PlayerApp};

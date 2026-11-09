@@ -9,6 +9,6 @@ fn on_update() {
     let t = total_time();
     film::orbit(0.0, 0.75, -0.2, 4.6, 1.55, film::lerp(1.25, 0.7, film::ease(t / 10.0)));
     if t >= 5.0 {
-        set_scene_style_param("pencil", "scope", "screen");
+        set_post_style_param("pencil", "scope", "screen");
     }
 }

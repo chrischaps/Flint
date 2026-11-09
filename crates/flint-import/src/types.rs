@@ -3,7 +3,7 @@
 use flint_asset::AssetMeta;
 
 /// Result of importing a file
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImportResult {
     /// Metadata about the imported asset
     pub asset_meta: AssetMeta,

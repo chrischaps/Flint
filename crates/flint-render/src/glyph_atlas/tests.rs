@@ -318,6 +318,51 @@ fn a_grid_png_loads_from_toml() {
 }
 
 #[test]
+fn a_set_can_be_drawn_by_hand_in_pixel_text() {
+    let mut src = MemorySource::new();
+    src.insert(
+        "fonts/dots.txt",
+        "== space\n...\n...\n...\n...\n== o\n...\n.#.\n...\n...\n== -\n...\n###\n...\n...\n\
+         == |\n.#.\n.#.\n.#.\n.#.\n",
+    );
+    let toml = "[font]\nfile = \"dots.txt\"\ncell = [3, 4]\n[ramps.r]\nglyphs = \" o\"\n\
+                [edges]\ndiagonal = \"|\"\nantidiagonal = \"|\"\n";
+    let set = vfs::scoped(Arc::new(src.clone()), || {
+        GlyphSet::from_toml("dots", toml, Path::new("fonts"))
+    })
+    .unwrap();
+    assert_eq!(set.atlas().cell_size(), [3, 4]);
+    assert_eq!(set.atlas().sample('o', 1, 1), Some(255));
+    assert_eq!(set.ramp("r").unwrap().glyphs(), &[' ', 'o']);
+    let no_cell = vfs::scoped(Arc::new(src), || {
+        GlyphSet::from_toml("dots", "[font]\nfile = \"dots.txt\"\n", Path::new("fonts"))
+    });
+    assert!(no_cell.unwrap_err().to_string().contains("cell"));
+}
+
+#[test]
+fn atlases_stack_top_to_bottom_without_touching() {
+    let a = GlyphAtlas::builtin();
+    let b = GlyphAtlas::from_pixel_text("== x\n#.#\n.#.\n#.#\n", [3, 3]).unwrap();
+    let (pixels, size, tops) = stack_pixels(&[&a, &b]);
+    assert_eq!(tops, vec![0, a.size()[1]]);
+    assert_eq!(size, [a.size()[0], a.size()[1] + b.size()[1]]);
+    // Each atlas's pixels where its top says, the narrower one padded
+    let at = |x: u32, y: u32| pixels[(y * size[0] + x) as usize];
+    for y in 0..a.size()[1] {
+        for x in 0..a.size()[0] {
+            assert_eq!(at(x, y), a.pixels()[(y * a.size()[0] + x) as usize]);
+        }
+    }
+    let [ox, oy] = b.cell_origin(0);
+    assert_eq!(at(ox, tops[1] + oy), 255, "x's top-left ink");
+    assert_eq!(at(ox + 1, tops[1] + oy), 0);
+    assert_eq!(at(b.size()[0], tops[1] + oy), 0, "past b's width is empty");
+    // The gutters between them are empty, so no glyph reads its neighbour
+    assert!((0..size[0]).all(|x| at(x, tops[1]) == 0 && at(x, tops[1] - 1) == 0));
+}
+
+#[test]
 fn the_cache_finds_sets_by_name_and_remembers_failures() {
     vfs::scoped(Arc::new(game_files()), || {
         let mut cache = GlyphSetCache::for_scene(Path::new("game/scenes/level.scene.toml"));
@@ -369,7 +414,7 @@ fn a_set_loads_from_a_game_bundle() {
 #[test]
 fn the_atlas_uploads_and_reads_back() {
     let Ok(ctx) = pollster::block_on(crate::HeadlessContext::new(4, 4)) else {
-        eprintln!("no GPU adapter; skipping the upload round-trip");
+        crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
     let atlas = GlyphAtlas::builtin();
@@ -414,4 +459,60 @@ fn the_atlas_uploads_and_reads_back() {
             &atlas.pixels()[(y * w) as usize..((y + 1) * w) as usize]
         );
     }
+}
+
+/// #323: on disk, an edited ramp, a font file that appears (a typo fixed),
+/// and an edited font file each clear the cache at the next poll, and the
+/// next get hands out a new set.
+#[test]
+fn the_cache_reloads_what_changes_on_disk() {
+    let dir = std::env::temp_dir().join(format!("flint-glyphs-poll-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    let plain = dir.join("fonts/plain.glyphs.toml");
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
+    let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+    let before = cache.get("plain").unwrap();
+    assert!(!cache.poll(), "nothing changed yet");
+    assert!(Arc::ptr_eq(&before, &cache.get("plain").unwrap()));
+
+    // A ramp edited
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:#@\"\n").unwrap();
+    assert!(cache.poll());
+    let after = cache.get("plain").unwrap();
+    assert!(
+        !Arc::ptr_eq(&before, &after),
+        "a new Arc re-uploads the atlas"
+    );
+    assert_eq!(after.default_ramp().glyphs(), &[' ', '.', ':', '#', '@']);
+    assert!(!cache.poll(), "re-read, so settled again");
+
+    // A set whose font file is missing fails, and loads once it's there
+    std::fs::write(
+        dir.join("fonts/grid.glyphs.toml"),
+        "[font]\nfile = \"grid.png\"\ncell = [8, 8]\nchars = \" -\"\n\
+         [ramps.r]\nglyphs = \" -\"\n[edges]\nvertical = \"-\"\ndiagonal = \"-\"\nantidiagonal = \"-\"\n",
+    )
+    .unwrap();
+    assert!(cache.get("grid").is_err());
+    let png = |row: u32| {
+        let mut img = image::GrayImage::new(16, 8);
+        for x in 0..8 {
+            img.put_pixel(x + 8, row, image::Luma([255]));
+        }
+        img.save(dir.join("fonts/grid.png")).unwrap();
+    };
+    png(4);
+    assert!(cache.poll());
+    assert_eq!(
+        cache.get("grid").unwrap().atlas().sample('-', 3, 4),
+        Some(255)
+    );
+
+    // The font file itself redrawn (same size: the stamp's time must see it)
+    png(2);
+    assert!(cache.poll());
+    let grid = cache.get("grid").unwrap();
+    assert_eq!(grid.atlas().sample('-', 3, 4), Some(0));
+    assert_eq!(grid.atlas().sample('-', 3, 2), Some(255));
+    std::fs::remove_dir_all(&dir).ok();
 }

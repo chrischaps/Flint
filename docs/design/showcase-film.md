@@ -34,13 +34,16 @@ its own scene and its own take, for three reasons:
 - **Each beat starts clean.** ASCII's temporal history (#277), egui's open
   sections and the style ids all start from the scene's own state, so a
   beat looks the same whether it is captured first or tenth.
-- **Looks need takes.** `--look` replaces a scene's whole post-processing,
-  so the looks beat is one camera move captured five times and cut between.
+- **Looks need takes.** `--look` lays a look over a scene's whole
+  post-processing, so the looks beat is one camera move captured once per
+  look and cut between on the same frame of the move. (Since #356 a script
+  can also switch looks mid-shot with `set_look`, but a match cut wants the
+  same frame under two looks, which only two takes give.)
 
 Within a beat, the change is scripted on a timeline (`demo/film/scripts/`,
 game time only), so a beat is one continuous shot with its cuts inside.
-Two engine additions made that possible: `set_scene_style` /
-`set_scene_style_param` (scripts edit the whole-frame style tables, as
+Two engine additions made that possible: `set_post_style` /
+`set_post_style_param` (scripts edit the whole-frame style tables, as
 `set_style_param` does an entity's) and the player's `--look`.
 
 ## Beats
@@ -56,12 +59,12 @@ Two engine additions made that possible: `set_scene_style` /
 | 07 | Fade and dissolve | 10 | blends and transitions (#278) | the barrel dissolves into phosphor in spreading patches, the figure cross-fades into blocks, both go back | slow orbit | new |
 | 08 | Pencil | 10 | pencil sketch (#273): hatching, contours, paper, boil | each prop its own pencil (sepia, screen hatching, blue lead, object-anchored) boiling at 6 Hz; at 5 s the scene's pencil goes to the whole frame and the clearing becomes the page | orbit | new |
 | 09 | Watercolor | 9 | watercolor (#272) | the whole clearing painted except the figure (`enabled = false`), standing real in a painting; at 5 s the paint lifts off ground and sky and stays on the props | descending push | new |
-| 10 | Looks | 8 × 5 takes | looks (#279) | one orbit under `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`: cut between takes on the same frame of the move | identical orbit in every take | new, five takes |
+| 10 | Looks | 8 × 8 takes | looks (#279, #391) | one orbit under `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, and the pencil family `coloured_pencil`, `blueprint`, `charcoal`: cut between takes on the same frame of the move | identical orbit in every take | new, five takes |
 | 11 | Styles you write | 10 | user-authored WGSL styles (#274, #275) | the figure and the ball are holograms; the script prints the frame as a risograph, then lays survey contours over it | orbit | new |
 | 12 | Tuning by hand | 12 | the F4 Styles editor (#268) | the input script opens F4 → Styles, drags the ASCII cell size coarse then fine, picks palette, amber, then CGA | near-still, menu on the right | new, input script |
 | 13 | Many hands | 12 | per-entity ASCII, pencil, watercolor and a user style on one screen | every prop a different hand at once; the camera rises and pulls back until the sky takes the frame, room left for the title | long rise and pull back | new |
 
-About 2 min 38 s of footage before the edit (158 s, the five looks takes counted); a cut uses a few seconds of
+About 3 min 2 s of footage before the edit (182 s, the eight looks takes counted); a cut uses a few seconds of
 most beats.
 
 Every beat is a new scene on the shared set rather than an existing demo:
@@ -92,6 +95,34 @@ story's beats, the reveal's ramps, the mask's colours).
   2.4 s (100 bpm in quarter bars), 03's edges come up at 2.5 s, 08's and
   09's whole-frame switches are at 5 s.
 
+### What main brought since the first draft
+
+The storyboard was drawn before 68 commits of stylize work landed. What
+changed in it, and what didn't:
+
+- **Changed.** The scripts call `set_post_style` / `set_post_style_param`
+  (#369), which landed doing what this PR's `set_scene_style` did, so that
+  one went. The looks beat has three more takes, the pencil looks
+  (#391). Beats 05 and 12 click a menu that grew a Look row (#356) and, in
+  05, a mask legend (#309) that widens the panel; their input scripts were
+  re-measured and recaptured. Every take is now byte-identical (#341,
+  below).
+- **Unchanged, on purpose.** The beats still show the #260 batch, one
+  feature each. The follow-ups (palette quantize #324, display bloom #321,
+  whole-cell silhouettes #338, style ownership #384, world-anchored pencil
+  #389, paper from images #390, per-prop dissolve ranks #398, per-entity
+  user styles #414) draw inside the existing beats where those beats
+  already use them (07's dissolve ranks each prop's cells by #398 now;
+  11's holograms stay on the figure and ball, their `style_mask` being
+  what switches a mask-reading user style on since #414), but none has a
+  beat of its own.
+- **Worth a decision.** Three would make the film better if a beat is
+  added or reshaped: 08's switch to the whole page could cross-fade with a
+  whole-frame `blend` ramp (#369) instead of cutting; 13's finale could put
+  whole-frame ASCII behind the props and let style ownership (#384) keep
+  every prop in its own hand; and a palette-quantize take (#324) would sit
+  naturally among the looks.
+
 ## Capture
 
 ```bash
@@ -103,20 +134,20 @@ python tools/showcase/capture.py --verify   # each take twice, compared
 
 Takes land outside the repo (`~/flint-film/<beat>/<take>/frame_0001.png`;
 `--out` moves them). A 4K frame of these scenes is about 14 MB, so the
-whole film is about 66 GB at 4K and 17 GB at 1080p; the rig refuses to
+whole film is about 76 GB at 4K and 19 GB at 1080p; the rig refuses to
 start a run that won't fit.
 
 ## Determinism
 
-Every take was captured twice with `--verify` (the table is in the book's
+Every take is byte-identical run to run. All 20 takes were captured twice
+with `--verify` at 1280x720 on 2026-11-08 (RTX 4070, Vulkan), after main's
+#341 placed grass blades in grid order, and every frame of every pair
+matched (the table is in the book's
 [Filming a Showcase](../book/src/guides/filming-a-showcase.md#two-runs-one-film)).
-No take with grass is byte-identical, and none differs where anyone could
-see it: at most a few pixels a frame at grass blades' edges, and now and
-then a single ASCII cell's glyph for a few frames. With the grass taken
-out, the same beats are byte-identical. That names #341's cause: the grass
-compute pass appends blades with an `atomicAdd`, so draw order (and the
-winner of an equal-depth pixel) changes each run. It doesn't matter for the
-film; each beat is captured once and cut from that take.
+The first storyboard's captures, before #341, differed by a few pixels a
+frame at grass blades' edges, because the grass compute pass appended blades
+with an `atomicAdd` and draw order changed each run. That is gone, so a
+beat can be reshot and its frames cut together with an earlier take's.
 
 Three things the rig pins so two runs can match:
 

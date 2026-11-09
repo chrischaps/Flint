@@ -70,6 +70,9 @@ impl PlayerApp {
             scene_renderer: None,
             camera: Camera::new(),
             skeletal_entity_assets: HashMap::new(),
+            camera_cut: Default::default(),
+            style_tweens: Default::default(),
+            style_reader_generation: None,
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -93,6 +96,7 @@ impl PlayerApp {
             scene_ambient: None,
             msaa_sample_count: 1,
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
+            scene_file_writable: cfg!(not(target_arch = "wasm32")),
             procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
@@ -107,6 +111,8 @@ impl PlayerApp {
             scene_sheen: None,
             scene_camera: None,
             scene_post_process: None,
+            style_specs: Vec::new(),
+            style_time: None,
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -124,6 +130,7 @@ impl PlayerApp {
             pp_mode_was_active: false,
             #[cfg(feature = "debug-hud")]
             pp_debug_freeze: false,
+            pending_look: None,
             music_pp_base: None,
             music_pp_restore: None,
             scene_preload_audio: true,
@@ -228,12 +235,51 @@ impl PlayerApp {
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
         super::scene_loading::load_user_styles(&self.scene_path);
+        self.set_scene_post_process(scene_file.post_process.clone());
+    }
+
+    /// Take a scene's `[post_process]` block, with the look it names
+    /// (`look = "graphite"`, #356) laid under its own keys and `--look`
+    /// (#435) over them. A look that can't be found is warned about and the
+    /// block drawn without it. Call after the scene's user styles are
+    /// loaded (a look may name one).
+    pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
         self.scene_post_process =
-            super::scene_loading::under_look(
-            self.look.as_deref(),
-            &self.scene_path,
-            scene_file.post_process.clone(),
-        );
+            super::scene_loading::scene_post_process(self.look.as_deref(), &self.scene_path, def);
+    }
+
+    /// The look the scene draws with now: the one it names, or the one a
+    /// script or F4 chose since (#356). `None` for the scene's keys alone.
+    pub fn current_look(&self) -> Option<&str> {
+        self.scene_post_process.as_ref()?.look.as_deref()
+    }
+
+    /// Lay `look` under the scene's `[post_process]` keys in place of the
+    /// one it has (`None` or `""`: no look, the scene's keys alone), and
+    /// draw with it from the next frame (#356). Script post overrides keep
+    /// stamping their fields over it, as they do over the scene's. A scene
+    /// with no `[post_process]` block takes the look over the defaults.
+    pub fn set_look(&mut self, look: Option<&str>) -> Result<(), String> {
+        let base = match &self.scene_post_process {
+            Some(def) => def.clone(),
+            None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
+                .map_err(|e| e.to_string())?,
+        };
+        let def = flint_render::look::resolve(&base, look, &self.scene_path)?;
+        self.scene_post_process = Some(def);
+        let config = self.scene_post_config();
+        if let (Some(renderer), Some(context), Some(config)) = (
+            self.scene_renderer.as_mut(),
+            self.render_context.as_ref(),
+            config,
+        ) {
+            renderer.set_post_process_config(config);
+            renderer.ensure_style_resources(&context.device);
+            renderer.ensure_fxaa_resources(&context.device);
+        }
+        #[cfg(feature = "debug-hud")]
+        self.refresh_style_panels_after_look();
+        Ok(())
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).
@@ -247,6 +293,25 @@ impl PlayerApp {
     #[cfg(target_os = "android")]
     pub fn set_android_axis_reader(&mut self, reader: fn() -> [f32; 4]) {
         self.android_axis_reader = Some(reader);
+    }
+
+    /// The post-processing config a scene starts with: its `[post_process]`
+    /// with the `--style` words written over it (#328). `None` when the
+    /// scene authors no block and there are no words, so the renderer keeps
+    /// what it has, as before.
+    pub fn scene_post_config(&self) -> Option<flint_render::PostProcessConfig> {
+        if self.scene_post_process.is_none() && self.style_specs.is_empty() {
+            return None;
+        }
+        let mut config = self
+            .scene_post_process
+            .as_ref()
+            .map(scene_loading::post_process_config_from_def)
+            .unwrap_or_default();
+        for e in flint_render::stylize::apply_style_specs(&mut config, &self.style_specs) {
+            tracing::warn!("{e}");
+        }
+        Some(config)
     }
 
     /// Apply scene-level camera configuration from `CameraDef`
@@ -586,9 +651,8 @@ impl PlayerApp {
         self.apply_camera_tuning();
 
         // Apply scene-level post-processing config
-        if let Some(pp_def) = &self.scene_post_process {
-            scene_renderer
-                .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
+        if let Some(config) = self.scene_post_config() {
+            scene_renderer.set_post_process_config(config);
             scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
@@ -955,4 +1019,105 @@ fn procgen_disk_config(scene_dir: &Path) -> Option<flint_procgen::DiskCacheConfi
         .filter(|p| vfs::is_dir(p.join("schemas")) || vfs::is_dir(p.join("specs")))
         .unwrap_or(scene_dir);
     Some(flint_procgen::DiskCacheConfig::in_project(project))
+}
+
+#[cfg(test)]
+mod style_word_tests {
+    use super::PlayerApp;
+
+    fn app() -> PlayerApp {
+        PlayerApp::new(
+            flint_ecs::FlintWorld::new(),
+            "style_words.scene.toml".into(),
+            false,
+            None,
+            None,
+        )
+    }
+
+    fn scene(post: &str) -> flint_scene::PostProcessDef {
+        let doc: toml::Table = post.parse().unwrap();
+        doc["post_process"].clone().try_into().unwrap()
+    }
+
+    #[test]
+    fn without_words_or_a_block_the_renderer_keeps_its_config() {
+        assert!(app().scene_post_config().is_none());
+    }
+
+    #[test]
+    fn style_words_win_over_every_scene_they_meet() {
+        let mut app = app();
+        app.style_specs = vec!["ascii:cell=12".into()];
+
+        // A scene with no [post_process] still gets the style
+        let config = app.scene_post_config().unwrap();
+        assert!(config.styles.is_enabled("ascii"));
+        assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
+
+        // A scene that authors the same style, and keeps its own bloom:
+        // the word wins on the style and leaves the rest alone. This is
+        // what a transition re-reads (#328)
+        app.scene_post_process = Some(scene(
+            "[post_process]\nbloom_intensity = 0.3\n\
+             [post_process.styles.ascii]\ncell = 6\nramp = \"blocks\"\n",
+        ));
+        let config = app.scene_post_config().unwrap();
+        assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
+        assert_eq!(config.styles.option("ascii", "ramp"), Some("blocks"));
+        assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
+
+        // ascii:off turns off a style the scene has on
+        app.style_specs = vec!["ascii:off".into()];
+        assert!(!app.scene_post_config().unwrap().styles.is_enabled("ascii"));
+    }
+
+    fn loaded(scene_text: &str) -> flint_scene::PostProcessDef {
+        let mut def = scene(scene_text);
+        def.authored = flint_scene::PostProcessDef::authored_table(scene_text);
+        def
+    }
+
+    /// #356: a scene's look is laid under its keys on load, and a script
+    /// (or F4) swaps it for another, or takes it off, from the scene's
+    /// keys each time.
+    #[test]
+    fn a_scene_look_loads_and_set_look_swaps_it() {
+        let mut app = app();
+        app.set_scene_post_process(Some(loaded(
+            "[post_process]\nlook = \"graphite\"\nbloom_intensity = 0.3\n",
+        )));
+        assert_eq!(app.current_look(), Some("graphite"));
+        let config = app.scene_post_config().unwrap();
+        assert!(config.styles.is_enabled("pencil"), "graphite's pencil");
+        assert!(
+            (config.bloom_intensity - 0.3).abs() < 1e-6,
+            "the scene's key"
+        );
+
+        app.set_look(Some("matrix")).unwrap();
+        assert_eq!(app.current_look(), Some("matrix"));
+        let config = app.scene_post_config().unwrap();
+        assert!(config.styles.is_enabled("ascii"), "matrix is ASCII");
+        assert!(!config.styles.is_enabled("pencil"), "graphite is gone");
+        assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
+
+        app.set_look(None).unwrap();
+        assert_eq!(app.current_look(), None);
+        let config = app.scene_post_config().unwrap();
+        assert!(!config.styles.is_enabled("ascii"));
+        assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
+
+        let err = app.set_look(Some("no_such_look")).unwrap_err();
+        assert!(err.contains("unknown look"), "{err}");
+        assert_eq!(app.current_look(), None, "a failed look changes nothing");
+    }
+
+    #[test]
+    fn a_scene_without_a_block_still_takes_a_look() {
+        let mut app = app();
+        app.set_look(Some("ink_wash")).unwrap();
+        assert_eq!(app.current_look(), Some("ink_wash"));
+        assert!(app.scene_post_config().is_some());
+    }
 }

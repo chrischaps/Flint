@@ -88,11 +88,6 @@ pub struct PostProcessConfig {
     pub volumetric_density: f32,
     pub volumetric_max_distance: f32,
     pub volumetric_decay: f32,
-    pub kuwahara_enabled: bool,
-    pub kuwahara_radius: u32,
-    pub kuwahara_sharpness: f32,
-    pub kuwahara_hardness: f32,
-    pub kuwahara_anisotropy: f32,
     /// The shared geometry edges' thresholds (#301): the relative
     /// view-distance step that is a silhouette, and the rebuilt-normal
     /// Sobel that is a crease. One pair for every style that reads
@@ -129,8 +124,8 @@ pub struct PostProcessConfig {
     /// interim for tech-debt #13 until the MSAA workstream).
     pub fxaa_enabled: bool,
     /// Registered stylize passes' settings by style name (#262), from a
-    /// scene's `[post_process.styles.<name>]`. Kuwahara keeps the
-    /// `kuwahara_*` fields above instead.
+    /// scene's `[post_process.styles.<name>]` (Kuwahara's included, #298:
+    /// a scene's old `kuwahara_*` keys are folded in on the way).
     pub styles: crate::stylize::StyleSettings,
 }
 
@@ -181,11 +176,6 @@ impl Default for PostProcessConfig {
             volumetric_density: 1.0,
             volumetric_max_distance: 100.0,
             volumetric_decay: 0.98,
-            kuwahara_enabled: false,
-            kuwahara_radius: 4,
-            kuwahara_sharpness: 8.0,
-            kuwahara_hardness: 8.0,
-            kuwahara_anisotropy: 1.0,
             edge_depth: 0.6,
             edge_normal: 2.5,
             render_mode: 0,
@@ -256,11 +246,6 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.volumetric_density = pp_def.volumetric_density;
     config.volumetric_max_distance = pp_def.volumetric_max_distance;
     config.volumetric_decay = pp_def.volumetric_decay;
-    config.kuwahara_enabled = pp_def.kuwahara_enabled;
-    config.kuwahara_radius = pp_def.kuwahara_radius;
-    config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
-    config.kuwahara_hardness = pp_def.kuwahara_hardness;
-    config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
     config.edge_depth = pp_def.edge_depth;
     config.edge_normal = pp_def.edge_normal;
     config.film_grain = pp_def.film_grain;
@@ -268,7 +253,8 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.grade_gamma = pp_def.grade_gamma;
     config.grade_gain = pp_def.grade_gain;
     config.fxaa_enabled = pp_def.fxaa;
-    let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.styles);
+    // The old `kuwahara_*` keys arrive folded into the kuwahara table (#298)
+    let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.style_tables());
     for warning in warnings {
         tracing::warn!("{warning}");
     }
@@ -1736,7 +1722,10 @@ impl PostProcessPipeline {
     }
 
     /// Run the bloom downsample/upsample chain.
-    /// Reads from the HDR scene texture and writes to bloom mip chain.
+    /// Reads `source` (the HDR scene, or the HDR styles' result when one
+    /// of them feeds bloom, #300) and writes to bloom mip chain. The
+    /// threshold's bind group over it is kept, keyed by `source.id`, so
+    /// the view must live as long as `resources` (both do).
     ///
     /// Each step reads its own slot of the bloom uniform buffer (#139):
     /// the steps used to share one, rewritten and submitted step by step.
@@ -1749,6 +1738,7 @@ impl PostProcessPipeline {
         device: &wgpu::Device,
         resources: &PostProcessResources,
         config: &PostProcessConfig,
+        source: &crate::stylize::StyleInput<'_>,
     ) {
         let mips = resources.bloom_mip_count;
         if mips == 0 {
@@ -1799,9 +1789,10 @@ impl PostProcessPipeline {
                 })
             })
         };
-        // The source of each step: the HDR scene (variant 0) or a mip (1 + i)
-        let source_bg = |variant: usize, view: &wgpu::TextureView| {
-            resources.binds.get("bloom source", variant as u64, || {
+        // The source of each step: a mip (1 + i), or the threshold's input
+        // under its own name, keyed by the input's id
+        let source_bg = |name: &'static str, variant: u64, view: &wgpu::TextureView| {
+            resources.binds.get(name, variant, || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Bloom Source BG"),
                     layout: &self.bloom_texture_bgl,
@@ -1826,7 +1817,10 @@ impl PostProcessPipeline {
             &resources.bloom_mips[0].view,
             Some(wgpu::Color::BLACK),
             &self.bloom_threshold_pipeline,
-            &[&uniform_bg(0), &source_bg(0, &resources.hdr_view)],
+            &[
+                &uniform_bg(0),
+                &source_bg("bloom input", source.id, source.view),
+            ],
         );
 
         // Step 2: Progressive downsample mip[0] → mip[1] → ... → mip[N-1]
@@ -1839,7 +1833,7 @@ impl PostProcessPipeline {
                 &self.bloom_downsample_pipeline,
                 &[
                     &uniform_bg(i),
-                    &source_bg(i, &resources.bloom_mips[i - 1].view),
+                    &source_bg("bloom source", i as u64, &resources.bloom_mips[i - 1].view),
                 ],
             );
         }
@@ -1855,7 +1849,11 @@ impl PostProcessPipeline {
                 &self.bloom_upsample_pipeline,
                 &[
                     &uniform_bg(mips + i),
-                    &source_bg(i + 2, &resources.bloom_mips[i + 1].view),
+                    &source_bg(
+                        "bloom source",
+                        (i + 2) as u64,
+                        &resources.bloom_mips[i + 1].view,
+                    ),
                 ],
             );
         }
@@ -1863,8 +1861,8 @@ impl PostProcessPipeline {
 
     /// Run the SSAO generation and blur passes.
     /// Reads the depth buffer and writes blurred AO to `resources.ssao_blur_view`.
-    /// `depth_owned`: `depth_view` lives as long as `resources` (the scaled
-    /// scene's depth), so the bind group over it can be kept.
+    /// `depth_key`: who vouches for `depth_view`, so the bind group over it
+    /// can be kept ([`DepthKey`](crate::bind_cache::DepthKey), #379).
     #[allow(clippy::too_many_arguments)]
     pub fn run_ssao(
         &self,
@@ -1874,7 +1872,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
     ) {
         // Write SSAO uniforms
@@ -1906,7 +1904,7 @@ impl PostProcessPipeline {
                 }],
             })
         });
-        let depth_bg = resources.binds.get_if(depth_owned, "ssao depth", 0, || {
+        let depth_bg = resources.binds.get_over(depth_key, "ssao depth", 0, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Depth BG"),
                 layout: &self.ssao_depth_bgl,
@@ -2000,7 +1998,7 @@ impl PostProcessPipeline {
     /// Run the volumetric ray-march and bilateral blur passes.
     /// Reads the depth buffer and shadow maps, writes blurred god rays to
     /// `resources.volumetric_blur_view`. `shadow_id` is the shadow pass's
-    /// [`gpu_id`](crate::bind_cache::gpu_id), `depth_owned` as in
+    /// [`gpu_id`](crate::bind_cache::gpu_id), `depth_key` as in
     /// [`run_ssao`](Self::run_ssao).
     #[allow(clippy::too_many_arguments)]
     pub fn run_volumetric(
@@ -2011,7 +2009,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
         shadow: VolumetricShadow<'_>,
     ) {
@@ -2048,7 +2046,7 @@ impl PostProcessPipeline {
         });
         let depth_bg = resources
             .binds
-            .get_if(depth_owned, "volumetric depth", 0, || {
+            .get_over(depth_key, "volumetric depth", 0, || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Volumetric Depth BG"),
                     layout: &self.volumetric_depth_bgl,
@@ -2125,7 +2123,7 @@ impl PostProcessPipeline {
         let blur_texture_bg =
             resources
                 .binds
-                .get_if(depth_owned, "volumetric blur texture", 0, || {
+                .get_over(depth_key, "volumetric blur texture", 0, || {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Volumetric Blur Texture BG"),
                         layout: &self.volumetric_blur_texture_bgl,
@@ -2172,7 +2170,7 @@ impl PostProcessPipeline {
         config: &PostProcessConfig,
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
         camera: &Camera,
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
@@ -2202,7 +2200,7 @@ impl PostProcessPipeline {
         let ssao_depth_bg =
             resources
                 .binds
-                .get_if(depth_owned, "composite ssao+depth", variant, || {
+                .get_over(depth_key, "composite ssao+depth", variant, || {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Composite SSAO+Depth+Volumetric BG"),
                         layout: &self.composite_ssao_bgl,
@@ -2671,6 +2669,20 @@ fn generate_ssao_noise() -> [u8; 64] {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn old_kuwahara_keys_make_the_same_config_as_the_table() {
+        let old: flint_scene::PostProcessDef =
+            toml::from_str("kuwahara_enabled = true\nkuwahara_radius = 4").unwrap();
+        let table: flint_scene::PostProcessDef =
+            toml::from_str("[styles.kuwahara]\nradius = 4").unwrap();
+        let old = post_process_config_from_def(&old);
+        assert!(old.styles.is_enabled("kuwahara"));
+        assert_eq!(old.styles.param("kuwahara", "radius"), Some(4.0));
+        assert_eq!(old.styles, post_process_config_from_def(&table).styles);
+    }
+
     use super::*;
 
     /// The Rust uniform struct must byte-match the WGSL PostProcessUniforms

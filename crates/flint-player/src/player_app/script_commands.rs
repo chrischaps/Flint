@@ -22,7 +22,24 @@ use std::path::Path;
 impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
-            match style_commands::apply_style_command(&mut self.world, &cmd) {
+            if style_commands::is_post_style_command(&cmd) {
+                self.apply_post_style(&cmd);
+                continue;
+            }
+            // Style commands, and tweens (#370), which start from the
+            // scene's style table where an entity has no value of its own
+            let applied = {
+                let fallback;
+                let config = match self.scene_renderer.as_ref() {
+                    Some(r) => r.post_process_config(),
+                    None => {
+                        fallback = flint_render::PostProcessConfig::default();
+                        &fallback
+                    }
+                };
+                self.style_tweens.apply(&mut self.world, config, &cmd)
+            };
+            match applied {
                 StyleApplied::NotAStyleCommand => {}
                 StyleApplied::Done(event) => {
                     if let Some(event) = event {
@@ -39,32 +56,11 @@ impl PlayerApp {
                 // Applied above
                 ScriptCommand::SetEntityStyle { .. }
                 | ScriptCommand::SetStyleParam { .. }
-                | ScriptCommand::ClearEntityStyle { .. } => {}
-                ScriptCommand::SetSceneStyle {
-                    style,
-                    param,
-                    value,
-                } => {
-                    let (Some(renderer), Some(context)) =
-                        (&mut self.scene_renderer, &self.render_context)
-                    else {
-                        continue;
-                    };
-                    let mut config = renderer.post_process_config().clone();
-                    match config.styles.set_value(&style, &param, &value) {
-                        Ok(()) => {
-                            // Unchanged (a script holding a value every
-                            // frame) costs nothing; a change is a uniform
-                            if config.styles != renderer.post_process_config().styles {
-                                renderer.set_post_process_config(config);
-                                renderer.ensure_style_resources(&context.device);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(target: "script", "set_scene_style: {e}")
-                        }
-                    }
-                }
+                | ScriptCommand::TweenStyleParam { .. }
+                | ScriptCommand::ClearEntityStyle { .. }
+                | ScriptCommand::SetPostStyle { .. }
+                | ScriptCommand::SetPostStyleParam { .. }
+                | ScriptCommand::ResetPostStyle { .. } => {}
                 ScriptCommand::PlaySound {
                     name,
                     volume,
@@ -221,7 +217,47 @@ impl PlayerApp {
                 ScriptCommand::UnloadChunk { chunk_id } => {
                     self.unload_chunk(&chunk_id);
                 }
+                ScriptCommand::ResetStyleHistory => {
+                    if let Some(renderer) = &mut self.scene_renderer {
+                        renderer.reset_style_history();
+                    }
+                }
+                ScriptCommand::SetCameraCutDetection { enabled } => {
+                    self.camera_cut.enabled = enabled;
+                }
+                ScriptCommand::SetLook { name } => {
+                    if let Err(e) = self.set_look(name.as_deref()) {
+                        tracing::warn!("set_look: {e}");
+                    }
+                }
             }
+        }
+    }
+
+    /// A whole-frame style command (#369): edit the renderer's config and
+    /// hand it back; the next frame builds a style newly switched on.
+    /// Without a renderer there is no frame to style.
+    fn apply_post_style(&mut self, cmd: &ScriptCommand) {
+        // The scene's own settings, read only for a reset
+        let authored = matches!(cmd, ScriptCommand::ResetPostStyle { .. })
+            .then(|| self.scene_post_config().unwrap_or_default());
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        let mut config = renderer.post_process_config().clone();
+        match style_commands::apply_post_style_command(
+            &mut config,
+            || authored.unwrap_or_default(),
+            cmd,
+        ) {
+            StyleApplied::Done(event) => {
+                renderer.set_post_process_config(config);
+                if let Some(event) = event {
+                    self.physics.push_event(event);
+                }
+            }
+            StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
+            StyleApplied::NotAStyleCommand => {}
         }
     }
 

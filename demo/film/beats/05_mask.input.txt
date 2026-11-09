@@ -3,17 +3,19 @@
 # scales them to the take's pixels (the player reads window pixels).
 # Rows found by capturing the menu at each step: if the menu's layout
 # changes, capture again and move them.
+# Re-measured after #356 put a Look row above the Post chain: with Post
+# chain folded, rows from Debug mode down sit 21 points lower.
 
 0.6  tap    F4                # Rendering & Effects opens on the right
-1.2  click  1658 36           # fold Post chain away
+1.2  click  1660 78           # fold Post chain away
 1.6  mouse  1700 120 0.4
-2.0  click  1700 309          # open Debug mode
-2.4  mouse  1713 330 0.4
-2.8  click  1713 330          # the shading combo
-3.4  click  1700 522          # Style Mask: one hue per style id
+2.0  click  1700 330          # open Debug mode
+2.4  mouse  1713 351 0.4
+2.8  click  1713 351          # the shading combo
+3.4  click  1700 543          # Style Mask: one hue per style id
 3.6  mouse  1250 820 0.6      # and out of the way
-6.2  mouse  1713 330 0.4
-6.6  click  1713 330
-7.1  click  1700 354          # back to PBR: the styled frame again
+6.2  mouse  1550 351 0.4      # the combo again: the mask's legend (#309)
+6.6  click  1550 351          #   widened the panel, so it sits further left
+7.1  click  1545 376          # back to PBR: the styled frame again
 7.3  mouse  1250 820 0.6
 8.3  tap    F4                # menu away

@@ -19,6 +19,7 @@
 //! layers = 4          # glazes: tone steps, each edged darker (0 = smooth)
 //! paper_r = 0.97      # the paper's colour (a component's `paper = [r, g, b]`)
 //! scope = "screen"    # or "entities": a preset for watercolor_style entities
+//! paper_image = "cold_press"  # papers/cold_press.png (#390); "none" = procedural
 //! ```
 //!
 //! It runs at the display stage, on display-referred colour, because it
@@ -34,6 +35,13 @@
 //! The paper lives in screen space, in points, so its grain stays put as
 //! the camera moves (the paper doesn't travel with the world), and the
 //! same size to the eye on a high-DPI screen.
+//!
+//! `paper_image` (#390) lays the paint on a paper image instead of the
+//! procedural one, found and measured as pencil's is
+//! ([`images`](super::images)): one texel every `grain_scale` points, its
+//! luma against its own mean and spread the paper's height (so `grain` and
+//! `granulation` read it as they read the noise), its hue tinting `paper`.
+//! One paper a frame: the scene table's, else the first entity's.
 //!
 //! ## Per entity
 //!
@@ -52,13 +60,14 @@
 //! the other, and they share nothing (Kuwahara's structure tensor is an
 //! HDR-stage intermediate; the wash is the only smoothing watercolor does).
 
+use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Variant rows the uniform holds; row 0 is the scene's.
 pub const MAX_VARIANTS: usize = 16;
@@ -75,65 +84,60 @@ pub const SCOPES: &[&str] = &["screen", "entities"];
 /// The largest wash radius, in pixels, the blur covers.
 const MAX_WASH_PX: f32 = 48.0;
 
-const fn param(name: &'static str, default: f32, min: f32, max: f32) -> StyleParam {
-    StyleParam {
-        name,
-        default,
-        min,
-        max,
-    }
-}
+const PARAMS: &[StyleParam] = &[
+    StyleParam::new("wash", 4.0, 0.0..=16.0),
+    StyleParam::new("bleed", 0.55, 0.0..=1.0),
+    StyleParam::new("wobble", 2.0, 0.0..=8.0),
+    StyleParam::new("wobble_scale", 40.0, 8.0..=200.0),
+    StyleParam::new("edge", 1.0, 0.0..=4.0),
+    StyleParam::new("edge_depth", 0.8, 0.0..=2.0),
+    StyleParam::new("edge_width", 1.5, 0.5..=6.0),
+    StyleParam::new("turbulence", 0.35, 0.0..=1.0),
+    StyleParam::new("granulation", 0.5, 0.0..=2.0),
+    StyleParam::new("grain", 0.35, 0.0..=1.0),
+    StyleParam::new("grain_scale", 1.0, 0.25..=4.0),
+    StyleParam::new("pigment", 1.0, 0.2..=2.0),
+    StyleParam::new("layers", 4.0, 0.0..=12.0),
+    StyleParam::new("paper_r", 0.97, 0.0..=1.0),
+    StyleParam::new("paper_g", 0.94, 0.0..=1.0),
+    StyleParam::new("paper_b", 0.87, 0.0..=1.0),
+];
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "watercolor",
-    label: "Watercolor",
-    stage: StyleStage::Display,
-    params: &[
-        param("wash", 4.0, 0.0, 16.0),
-        param("bleed", 0.55, 0.0, 1.0),
-        param("wobble", 2.0, 0.0, 8.0),
-        param("wobble_scale", 40.0, 8.0, 200.0),
-        param("edge", 1.0, 0.0, 4.0),
-        param("edge_depth", 0.8, 0.0, 2.0),
-        param("edge_width", 1.5, 0.5, 6.0),
-        param("turbulence", 0.35, 0.0, 1.0),
-        param("granulation", 0.5, 0.0, 2.0),
-        param("grain", 0.35, 0.0, 1.0),
-        param("grain_scale", 1.0, 0.25, 4.0),
-        param("pigment", 1.0, 0.2, 2.0),
-        param("layers", 4.0, 0.0, 12.0),
-        param("paper_r", 0.97, 0.0, 1.0),
-        param("paper_g", 0.94, 0.0, 1.0),
-        param("paper_b", 0.87, 0.0, 1.0),
-    ],
-    options: &[StyleOption {
-        name: "scope",
-        default: "screen",
-        choices: SCOPES,
-    }],
-    enabled: None,
-    uses_mask: false,
-    needs: &[],
-    hints: &[
-        StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
-        StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
-        StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
-        StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
-        StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
-        StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
-        StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
-        StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
-        StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
-        StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
-        StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
-        StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
-        StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
-        StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
-        StyleHint::new("paper", "Paper", "The paper's colour"),
-    ],
-    component: Some("watercolor_style"),
-    create: |d| Box::new(Watercolor::new(d)),
-};
+const OPTIONS: &[StyleOption] = &[
+    StyleOption::new("scope", "screen", SCOPES),
+    StyleOption::new("paper_image", super::pencil::NO_IMAGE, &[])
+        .discovered(super::pencil::paper_choices),
+];
+
+const HINTS: &[StyleHint] = &[
+    StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
+    StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
+    StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
+    StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
+    StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
+    StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
+    StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
+    StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
+    StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
+    StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
+    StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
+    StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
+    StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
+    StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
+    StyleHint::new("paper", "Paper", "The paper's colour"),
+    StyleHint::new("paper_image", "Paper image", "A scanned paper (papers/<name>.png), a texel every grain_scale points: its relief is the grain, its hue tints the paper; none = procedural"),
+];
+
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("watercolor", "Watercolor", StyleStage::Display, create)
+        .params(PARAMS)
+        .options(OPTIONS)
+        .hints(HINTS)
+        .component("watercolor_style");
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    Box::new(Watercolor::new(d))
+}
 
 /// One blur direction's uniforms.
 #[repr(C)]
@@ -163,6 +167,9 @@ struct RowUniform {
     flags: u32,
     paper: [f32; 3],
     layers: f32,
+    /// 1 when this row paints on the paper image (#390).
+    image: f32,
+    _pad: [f32; 3],
 }
 
 #[repr(C)]
@@ -177,6 +184,8 @@ struct PaintUniforms {
     passthrough: u32,
     near: f32,
     far: f32,
+    /// The paper image's mean and spread of luma (#390), then 0, 0.
+    paper_stats: [f32; 4],
     rows: [RowUniform; MAX_VARIANTS],
     /// The row of each mask id, four ids a vec4.
     slots: [[u32; 4]; MAX_IDS / 4],
@@ -194,6 +203,7 @@ struct Watercolor {
     _no_mask: wgpu::Texture,
     no_mask_view: wgpu::TextureView,
     warned: std::sync::atomic::AtomicBool,
+    paper: Mutex<ImageSlot>,
 }
 
 impl Watercolor {
@@ -225,9 +235,10 @@ impl Watercolor {
                     },
                     count: None,
                 },
+                super::pencil::image_entry(2),
             ],
         });
-        let module = kit::shader(device, "Watercolor Shader", include_str!("watercolor.wgsl"));
+        let module = kit::shader(device, "Watercolor Shader", PAINT_SHADER);
         let wash_module = kit::shader(
             device,
             "Watercolor Wash Shader",
@@ -273,13 +284,20 @@ impl Watercolor {
             _no_mask: no_mask,
             no_mask_view,
             warned: Default::default(),
+            paper: Mutex::new(ImageSlot::new(ImageUse::Paper, "watercolor paper")),
         }
     }
 
     /// The mask (or the stand-in) and the depth, bound together.
-    fn entity_bind(&self, frame: &StyleFrame<'_>, with_mask: bool) -> Arc<wgpu::BindGroup> {
+    fn entity_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        with_mask: bool,
+        paper: &StyleImage,
+    ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
-        frame.depth_bind("Watercolor Entity BG", mask.is_some() as u64, || {
+        let key = mask.is_some() as u64 | paper.generation << 1;
+        frame.depth_bind("Watercolor Entity BG", key, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Watercolor Entity BG"),
                 layout: &self.entity_bgl,
@@ -294,14 +312,24 @@ impl Watercolor {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(frame.depth),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&paper.view),
+                    },
                 ],
             })
         })
     }
 }
 
+const PAINT_SHADER: &str = concat!(
+    include_str!("watercolor.wgsl"),
+    include_str!("style_image.wgsl")
+);
+
 /// A row from a settings source: the scene's (`param` = the frame's) or a
-/// variant's.
+/// variant's. Its `image` flag is set later, once the frame's paper is
+/// known.
 fn row(param: impl Fn(&str) -> f32, off: bool) -> RowUniform {
     RowUniform {
         wobble: param("wobble").clamp(0.0, 16.0),
@@ -322,6 +350,8 @@ fn row(param: impl Fn(&str) -> f32, off: bool) -> RowUniform {
             param("paper_b").clamp(0.0, 1.0),
         ],
         layers: param("layers").clamp(0.0, 32.0),
+        image: 0.0,
+        _pad: [0.0; 3],
     }
 }
 
@@ -335,6 +365,7 @@ impl StylePass for Watercolor {
     ) {
         // The variant table: row 0 the scene's, then each entity variant
         let mut rows = vec![row(|n| frame.param(n), false)];
+        let mut papers = vec![frame.option("paper_image").to_string()];
         let mut slots = [0u32; MAX_IDS];
         let mut wash = frame.param("wash");
         for (id, v) in frame.variants() {
@@ -353,6 +384,24 @@ impl StylePass for Watercolor {
             }
             slots[id as usize] = rows.len() as u32;
             rows.push(row(|n| frame.variant_param(v, n), v.off));
+            papers.push(frame.variant_option(v, "paper_image").to_string());
+        }
+        // The frame's one paper image (#390): the scene's, else the first
+        // entity's; a row naming it paints on it, any other row on noise
+        let chosen = papers
+            .iter()
+            .find(|n| super::pencil::names_image(n))
+            .cloned()
+            .unwrap_or_default();
+        let paper = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
+            frame.device,
+            frame.queue,
+            &super::ChoiceScope::defaults(frame.scene_dir).search(),
+            &chosen,
+            frame.frame.is_multiple_of(15),
+        );
+        for (r, name) in rows.iter_mut().zip(&papers) {
+            r.image = (paper.found && *name == chosen) as u32 as f32;
         }
         let with_mask = rows.len() > 1;
         let passthrough = !(frame.whole_frame() && frame.option("scope") != "entities");
@@ -405,6 +454,7 @@ impl StylePass for Watercolor {
             passthrough: passthrough as u32,
             near: frame.camera.near,
             far: frame.camera.far,
+            paper_stats: [paper.stats.mean, paper.stats.spread, 0.0, 0.0],
             rows: [RowUniform::zeroed(); MAX_VARIANTS],
             slots: [[0; 4]; MAX_IDS / 4],
         };
@@ -428,7 +478,7 @@ impl StylePass for Watercolor {
                     &self.sampled_bgl,
                     &washed.view,
                 ),
-                &self.entity_bind(frame, with_mask),
+                &self.entity_bind(frame, with_mask, &paper),
             ],
         );
     }
@@ -440,12 +490,31 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<RowUniform>(), 64);
+        assert_eq!(std::mem::size_of::<RowUniform>(), 80);
         assert_eq!(std::mem::size_of::<WashUniforms>(), 32);
         assert_eq!(
             std::mem::size_of::<PaintUniforms>(),
-            32 + MAX_VARIANTS * 64 + MAX_IDS / 4 * 16
+            48 + MAX_VARIANTS * 80 + MAX_IDS / 4 * 16
         );
+    }
+
+    #[test]
+    fn the_paint_shader_validates_and_its_uniforms_match_rust() {
+        let module = naga::front::wgsl::parse_str(PAINT_SHADER)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(PAINT_SHADER)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("watercolor shader validates");
+        let (_, u) = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("params"))
+            .expect("uniform params");
+        let size = module.types[u.ty].inner.size(module.to_ctx());
+        assert_eq!(size as usize, std::mem::size_of::<PaintUniforms>());
     }
 
     #[test]

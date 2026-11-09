@@ -1,5 +1,5 @@
 // Beat 11, styles you write (#274). Switching user styles on and off is
-// the same call as the engine's own: set_scene_style.
+// the same call as the engine's own: set_post_style.
 //
 //   0.0  the figure and the ball projected (hologram)
 //   3.6  the whole frame a risograph print
@@ -13,8 +13,8 @@ fn on_update() {
 
     let step = if t < 3.6 { 0 } else if t < 6.8 { 1 } else { 2 };
     if step != get_field(self_entity(), "film", "step") {
-        set_scene_style("risograph", step == 1);
-        set_scene_style("contour", step == 2);
+        set_post_style("risograph", step == 1);
+        set_post_style("contour", step == 2);
         set_field(self_entity(), "film", "step", step);
     }
 }

@@ -4,23 +4,32 @@
 # Glyphs shimmer in motion when a cell's tone sits on a ramp boundary and
 # the slightest change tips it to the neighbouring glyph and back. With
 # `temporal = "on"` (the default) each cell keeps part of last frame's
-# colour and keeps its glyph until its tone has clearly moved on. Capture it
-# both ways, deterministically:
+# colour and keeps its glyph until its tone has clearly moved on. Measure it
+# headless (#345), the same orbit as the script below, glyphs counted from
+# the style's own grid:
+#
+#   flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+#     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats
+#
+# and again with --style ascii:temporal=off. Add --style ascii:edges=0 to
+# leave out the edge glyphs (#267), which the history doesn't hold yet.
+# The player's capture, with the script, is the other way:
 #
 #   cargo run --bin flint-player -- demo/ascii_motion.scene.toml --schemas schemas \
-#     --frame-step 0.0166667 --screenshot out/on.png --screenshot-every 0.0166667 --exit-after 4
+#     --frame-step 0.0166667 --screenshot out/on.png --screenshot-every 0.0166667 --exit-after 3
 #
-# then set temporal = "off" below and capture again; tools/ascii_flips.py
-# counts the glyphs that change from one frame to the next.
+# with tools/ascii_flips.py counting glyphs from the PNGs.
 
 [scene]
 name = "ASCII Motion"
 version = "1.0"
 description = "The meadow clearing in ASCII under a slow orbit, to measure glyph shimmer (#277)"
 
+# The orbit's first pose (ascii_orbit.rhai at t = 0: angle 0.55 rad, radius
+# 5, height 1.5), so `flint render --orbit 6.8755` (0.12 rad/s) follows it.
 [camera]
-position = [4.2, 2.1, 11.5]
-target = [0.6, 0.7, 4.2]
+position = [3.21382, 1.5, 8.46243]
+target = [0.6, 0.6, 4.2]
 fov = 50.0
 
 [post_process]
@@ -46,6 +55,12 @@ dither = 0.0         # grid-fixed ordered dither before the ramp
 [entities.camera_rig]
 [entities.camera_rig.script]
 source = "ascii_orbit.rhai"
+# Radians a second. 0.12 is the slow orbit shimmer is measured on (#277);
+# 1.2 with pan = true (turn in place) is the fast pan reprojected history
+# is measured on (#344)
+[entities.camera_rig.orbit]
+speed = 0.12
+pan = false
 
 [entities.sky]
 [entities.sky.sky]

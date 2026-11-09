@@ -8,7 +8,7 @@
 // there (a ramp is a ladder of what the eye sees), and decode back.
 
 // One per-entity variant's settings (#266), drawn per pixel in the glyph
-// pass from its own samples.
+// pass from its own samples: a row of the `variants` storage buffer (#336).
 struct Variant {
     cell: vec2<f32>,
     origin: vec2<f32>,
@@ -34,14 +34,36 @@ struct Variant {
     // how far (0..1) its tone is stretched over the slot's own range
     exposure: f32,
     stretch: f32,
-    _p2: u32,
+    // #313: the first row + 1 of the variant's band in the variant cell
+    // state (ascii_variant_cells.wgsl), 0 when it has none
+    cell_row: u32,
     // #288: silhouette outline width in output pixels (0 = off), and the
     // ink floor for a cell this variant only grazes
     outline: f32,
     min_coverage: f32,
-    _p3: u32,
-    _p4: u32,
+    // #320: ordered dither between the two nearest inks, 0..1
+    palette_dither: f32,
+    // #320: palette chroma before matching
+    chroma: f32,
+    // #335: the variant's font's glyph cell in atlas pixels (each font's
+    // atlas is stacked in the one texture), and where its four edge glyphs'
+    // origins sit in the ramp table (NO_EDGE_START: the uniform's own)
+    glyph: vec2<f32>,
+    edge_start: u32,
+    // #338: for a variant with the SNAP flag, the least share of a cell's
+    // 16 samples it must cover to draw the cell whole
+    cell_share: f32,
+    // #398: the first row + 1 of the variant's band in the dissolve rank
+    // state (ascii_dissolve.wgsl), 0 when it has none
+    dissolve_row: u32,
+    // Scalars, not a vec3 (which would align to 16 and leave a hole)
+    _pad_dissolve_a: u32,
+    _pad_dissolve_b: u32,
+    _pad_dissolve_c: u32,
 };
+
+// A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
+const NO_EDGE_START: u32 = 0xffffffffu;
 
 struct AsciiUniforms {
     // Cell size in output pixels, and where the grid starts (centred, so
@@ -70,7 +92,9 @@ struct AsciiUniforms {
     // 0 nearest ink to the cell's hue, 1 a ladder picked by tone
     palette_match: u32,
     palette_bg: vec3<f32>,
-    _pad: u32,
+    // What inks the line glyphs (#351): 0 cell (as the tone glyph),
+    // 1 color (`edge_color`, toward the near hue by `edge_tint`), 2 hue
+    edge_ink: u32,
     // Temporal stability (#277): how much of last frame's cell colour a
     // cell keeps, how far (in ramp steps) its tone may stray before its
     // glyph changes, the ordered dither's strength, and whether last
@@ -86,6 +110,11 @@ struct AsciiUniforms {
     // The whole frame's exposure and normalisation (#289), as a variant's
     exposure: f32,
     stretch: f32,
+    // The whole frame's palette chroma and ink dither (#320)
+    chroma: f32,
+    palette_dither: f32,
+    edge_tint: f32,
+    _pad_palette: u32,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
     // antidiagonal, two per vec4 like the ramp
     edge_glyphs: array<vec4<u32>, 2>,
@@ -94,17 +123,61 @@ struct AsciiUniforms {
     // Every variant's palette inks, display values (rgb, unused w); the
     // whole frame's first
     palette: array<vec4<f32>, 32>,
-    // Per-entity variants (#266). x: rows in use (1 = the whole frame
-    // alone); y: 1 when the whole frame passes through (only entities
-    // asked). Row 0 is unused: the whole frame draws from the fields above
-    // and the cell state.
+    // The same inks in OKLab (#320), for matching (palette.wgsl)
+    palette_lab: array<vec4<f32>, 32>,
+    // Per-entity variants (#266). x: rows of `variants` in use (1 = the
+    // whole frame alone); y: 1 when the whole frame passes through (only
+    // entities asked). Row 0 is unused: the whole frame draws from the
+    // fields above and the cell state. z: bands in the variant cell state
+    // (#313). w: grids in `snap_grids` (#338).
     variant_meta: vec4<u32>,
-    variants: array<Variant, 64>,
-    // The variant slot of each mask id below 256, four ids a vec4.
-    slots: array<vec4<u32>, 64>,
+    // The variant cell state's bands (#313), `variant_meta.z` of them: each
+    // grid's cell and origin, and (first row, rows, columns, footprint as
+    // f32 bits)
+    bands: array<vec4<f32>, 8>,
+    band_rows: array<vec4<u32>, 8>,
+    // The grids of the variants whose silhouettes snap to whole cells
+    // (#338), `variant_meta.w` of them: (cell, origin)
+    snap_grids: array<vec4<f32>, 8>,
+    // Reprojected history (#344): this frame's clip to world, last frame's
+    // world to clip, and x = 1 when the cell pass reads each cell's past
+    // where its surface was last frame rather than in the same cell
+    inv_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
+    reproject: vec4<u32>,
+    // The line glyphs' ink for edge ink color (#351), display rgb
+    edge_color: vec4<f32>,
+    // The dissolving variants' bands in the dissolve state (#398): x = how
+    // many, then each one's (slot, first row, rows, columns)
+    dissolve_meta: vec4<u32>,
+    dissolve: array<vec4<u32>, 8>,
 };
 
+// Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
+const MAX_BANDS: u32 = 8u;
+// Variants whose dissolve is ranked (#398); `MAX_DISSOLVE` in ascii.rs.
+const MAX_DISSOLVE: u32 = 8u;
+// Grids a pixel checks for a snapped cell (#338); `MAX_SNAP_GRIDS` in ascii.rs.
+const MAX_SNAP_GRIDS: u32 = 8u;
+
 @group(0) @binding(0) var<uniform> u: AsciiUniforms;
+// The variant table (#336), sized to the frame: every per-entity variant's
+// row, and the slot (row) of each mask id, 0 for an id not drawn as a
+// variant. A frame without per-entity variants (variant_meta.x == 1)
+// never reads them, so full-screen ASCII costs what it did when the table
+// lived in the uniform.
+@group(0) @binding(1) var<storage, read> variants: array<Variant>;
+@group(0) @binding(2) var<storage, read> slots: array<u32>;
+
+// The variant slot of mask id `id`: 0 (the whole frame) past the table
+fn slot_of(id: u32) -> u32 {
+    // Id 0 is no styled entity, the whole frame's: most of a frame's
+    // pixels, spared the table read (#337)
+    if id == 0u || id >= arrayLength(&slots) {
+        return 0u;
+    }
+    return slots[id];
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -148,6 +221,10 @@ fn banded(tone_in: f32) -> f32 {
 // Tone normalisation (#289). The tone statistics lattice (ascii_stats*.wgsl)
 const STATS_COLS: u32 = 320u;
 const STATS_ROWS: u32 = 180u;
+// Each lattice row is summed in this many runs of STATS_COLS / STATS_CHUNKS
+// samples, a fragment each (#337): one fragment walking all 320 left a
+// prop's statistics to 180 threads, latency-bound at ~0.07 ms
+const STATS_CHUNKS: u32 = 16u;
 // The range a slot normalises onto: its mean -/+ this many deviations
 const STATS_SPREAD: f32 = 2.0;
 // The narrowest range a slot is stretched from, so a flat wall's noise
@@ -158,11 +235,17 @@ const STATS_GAMMA_MIN: f32 = 0.35;
 const STATS_GAMMA_MAX: f32 = 2.5;
 
 fn slot_exposure(slot: u32) -> f32 {
-    return select(u.variants[slot].exposure, u.exposure, slot == 0u);
+    if slot == 0u {
+        return u.exposure;
+    }
+    return variants[slot].exposure;
 }
 
 fn slot_normalize(slot: u32) -> f32 {
-    return select(u.variants[slot].stretch, u.stretch, slot == 0u);
+    if slot == 0u {
+        return u.stretch;
+    }
+    return variants[slot].stretch;
 }
 
 // A display colour with `gain` (2^exposure) applied in linear light

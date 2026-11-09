@@ -44,8 +44,16 @@
 //! bind group), so the per-entity loop makes no buffer and no bind group.
 //! There's no depth attachment: each fragment tests itself against the
 //! frame's single-sample depth with a tolerance of its own depth slope, so
-//! the mask works the same under MSAA (sample-0 resolve) and at any render
-//! scale, and the scene pipelines don't change.
+//! the mask works at any render scale and the scene pipelines don't
+//! change.
+//!
+//! Under MSAA (#306) the mask is drawn 4x instead, into a multisampled
+//! target of its own, each covered sample testing itself against that
+//! sample of the scene's multisampled depth, and a resolve folds it into
+//! the single-sample mask with any styled sample beating the empty ones.
+//! Drawn at pixel centres against the sample-0 depth, a feature about a
+//! pixel thin (a bench seat's edge at a grazing angle) lost the pixels
+//! the scene's samples gave it, and an outline style drew the gaps.
 //!
 //! Each draw's id goes into one dynamic-offset uniform buffer, uploaded in
 //! a single write a frame. The mask target lives in the post chain's
@@ -78,11 +86,24 @@
 //! style that honours the blend (ASCII, user styles through
 //! `flint_style_blend`) shows the fire as fire and the stone through any
 //! uncovered share; a fully covered pixel keeps its id at blend 0. A
-//! transparent that is itself styled is left out of the veil (whether it
-//! should be stylized is #310).
+//! transparent that is itself styled is left out of the veil: it is in
+//! the mask itself, as a lens (below).
 //!
-//! Sprites, grass, terrain and water stay unmasked and out of the veil:
-//! they write no mask (and, but for terrain, no depth either).
+//! ## Terrain and transparents (#310)
+//!
+//! Terrain chunks are masked when the terrain's entity (named by
+//! `SceneRenderer::set_terrain_entity`) is styled: they use the standard
+//! `Vertex` and transform layout, so the static pipeline draws them as is.
+//!
+//! A styled transparent is a lens. Its draws come after every opaque one,
+//! back to front as the scene drew them; they write no depth, but each
+//! fragment still tests against the opaques' depth, so where one shows it
+//! is the nearest styled surface and its id replaces what's behind it. The
+//! style then draws the whole pixel, glass and what's seen through it.
+//!
+//! Particles, sprites, grass and water stay unmasked (particles and
+//! unstyled transparents only veil): grass is instanced, and the others
+//! write no depth.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -135,11 +156,25 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// How far behind the scene's depth a mask fragment may be, in multiples
 /// of its own depth slope (`fwidth(z)`). The spike's value: it absorbs the
-/// sample-0 resolve under MSAA without letting a hidden face through.
+/// rasterisers' small disagreements (and, under MSAA, the half pixel
+/// between the centre's depth and a sample's) without letting a hidden
+/// face through.
 pub const SLOPE_TOLERANCE: f32 = 2.0;
 
-/// Masked draws one frame can hold; any more aren't masked (logged once).
-pub const MAX_MASK_DRAWS: usize = 4096;
+/// The per-draw slots the mask's uniform buffer starts with (4 KB, #311).
+/// A frame with more styled draws grows it to the next power of two, so a
+/// scene pays for the draws it has and every one of them is masked.
+pub const INITIAL_MASK_SLOTS: usize = 16;
+
+/// The slots a buffer holding `capacity` needs to grow to for `draws`:
+/// `capacity` while it fits, else the next power of two.
+pub fn mask_slots_for(capacity: usize, draws: usize) -> usize {
+    if draws <= capacity {
+        capacity
+    } else {
+        draws.next_power_of_two().max(INITIAL_MASK_SLOTS)
+    }
+}
 
 /// The dynamic-offset stride of the per-draw uniforms: the alignment
 /// wgpu's default limits ask for.
@@ -210,6 +245,11 @@ pub struct StyleIds {
     names: Vec<String>,
     /// What each name stands for, beside `names`.
     variants: Vec<StyleVariant>,
+    /// Beside `names`: whether every entity drawn in the id is at blend 0
+    /// (#400). A faded id keeps its number and variant, so a ramp out of 0
+    /// finds them where it left them, but asks for nothing: a style whose
+    /// entities have all faded is off, its pass and the mask not drawn.
+    faded: Vec<bool>,
 }
 
 impl StyleIds {
@@ -232,9 +272,29 @@ impl StyleIds {
             .map(|(i, v)| ((i + 1) as u16, v))
     }
 
-    /// Whether an entity asks to be drawn in `style` (an opt-out doesn't).
+    /// Whether an entity asks to be drawn in `style`: an opt-out doesn't,
+    /// nor does an id whose entities are all at blend 0 ([`Self::is_faded`]).
     pub fn requests(&self, style: &str) -> bool {
-        self.variants.iter().any(|v| v.style == style && !v.off)
+        self.variants
+            .iter()
+            .zip(&self.faded)
+            .any(|(v, &faded)| v.style == style && !v.off && !faded)
+    }
+
+    /// Whether every entity drawn in id `id` is at blend 0 (#400).
+    pub fn is_faded(&self, id: u16) -> bool {
+        (id as usize)
+            .checked_sub(1)
+            .and_then(|i| self.faded.get(i))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Mark which ids have faded: `faded(id)` for every id.
+    fn set_faded(&mut self, faded: impl Fn(u16) -> bool) {
+        for (i, slot) in self.faded.iter_mut().enumerate() {
+            *slot = faded((i + 1) as u16);
+        }
     }
 
     /// Whether any entity names `style`, opt-outs included.
@@ -244,7 +304,8 @@ impl StyleIds {
 
     /// Make the table hold exactly `entries` (any order; a repeated name
     /// keeps its first variant). Returns whether the set of names changed;
-    /// the variants (their anchors move) are taken either way.
+    /// the variants (their anchors move) are taken either way, and no id
+    /// is faded until [`resolve_blended`] says so.
     pub fn set(&mut self, mut entries: Vec<(String, StyleVariant)>) -> bool {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries.dedup_by(|a, b| a.0 == b.0);
@@ -255,9 +316,11 @@ impl StyleIds {
             for (slot, (_, v)) in self.variants.iter_mut().zip(entries) {
                 *slot = v;
             }
+            self.faded.fill(false);
             return false;
         }
         (self.names, self.variants) = entries.into_iter().unzip();
+        self.faded = vec![false; self.names.len()];
         true
     }
 
@@ -305,9 +368,123 @@ impl StyleIds {
     }
 }
 
+/// Where one style id's entities can be on screen this frame (#385).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IdBounds {
+    /// None of its draws is in view.
+    Nowhere,
+    /// Inside `[x0, y0, x1, y1]` in UV (0..1, y down).
+    Uv([f32; 4]),
+    /// Anywhere: a draw with no bounds, or one crossing the camera plane.
+    Everywhere,
+}
+
+impl IdBounds {
+    /// The bounds holding both.
+    pub fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Everywhere, _) | (_, Self::Everywhere) => Self::Everywhere,
+            (Self::Nowhere, b) | (b, Self::Nowhere) => b,
+            (Self::Uv(a), Self::Uv(b)) => Self::Uv([
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]),
+        }
+    }
+
+    /// Where world box `min..max` lands under `view_proj` (column-major,
+    /// as [`Camera::view_projection_matrix`](crate::Camera::view_projection_matrix)):
+    /// the projection of its 8 corners, clamped to the screen. A box
+    /// wholly behind the camera is nowhere; one crossing the camera plane
+    /// could be anywhere.
+    pub fn of_box(view_proj: &[[f32; 4]; 4], min: [f32; 3], max: [f32; 3]) -> Self {
+        let m = view_proj;
+        let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        let mut behind = 0;
+        for i in 0..8 {
+            let p = [
+                if i & 1 == 0 { min[0] } else { max[0] },
+                if i & 2 == 0 { min[1] } else { max[1] },
+                if i & 4 == 0 { min[2] } else { max[2] },
+            ];
+            let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
+            let w = row(3);
+            if !w.is_finite() {
+                return Self::Everywhere;
+            }
+            if w <= 1e-6 {
+                behind += 1;
+                continue;
+            }
+            let uv = [row(0) / w * 0.5 + 0.5, 0.5 - row(1) / w * 0.5];
+            for k in 0..2 {
+                lo[k] = lo[k].min(uv[k]);
+                hi[k] = hi[k].max(uv[k]);
+            }
+        }
+        if behind == 8 {
+            return Self::Nowhere;
+        }
+        if behind > 0 || !(lo[0].is_finite() && lo[1].is_finite()) {
+            return Self::Everywhere;
+        }
+        if hi[0] < 0.0 || hi[1] < 0.0 || lo[0] > 1.0 || lo[1] > 1.0 {
+            return Self::Nowhere;
+        }
+        Self::Uv([
+            lo[0].clamp(0.0, 1.0),
+            lo[1].clamp(0.0, 1.0),
+            hi[0].clamp(0.0, 1.0),
+            hi[1].clamp(0.0, 1.0),
+        ])
+    }
+}
+
+/// Each style id's screen bounds this frame (#385), from the world bounds
+/// of the draws the mask draws for it. A table the renderer didn't fill
+/// knows nothing, so every id in it is [`IdBounds::Everywhere`].
+#[derive(Clone, Debug, Default)]
+pub struct StyleBounds {
+    known: bool,
+    /// Index = style id.
+    by_id: Vec<IdBounds>,
+}
+
+impl StyleBounds {
+    /// An empty table that knows its ids are nowhere until told otherwise.
+    pub fn known() -> Self {
+        Self {
+            known: true,
+            by_id: Vec::new(),
+        }
+    }
+
+    /// Widen id `id`'s bounds by `b`.
+    pub fn add(&mut self, id: u16, b: IdBounds) {
+        let i = id as usize;
+        if self.by_id.len() <= i {
+            self.by_id.resize(i + 1, IdBounds::Nowhere);
+        }
+        self.by_id[i] = self.by_id[i].union(b);
+    }
+
+    /// Where id `id`'s entities can be.
+    pub fn get(&self, id: u16) -> IdBounds {
+        if !self.known {
+            return IdBounds::Everywhere;
+        }
+        self.by_id
+            .get(id as usize)
+            .copied()
+            .unwrap_or(IdBounds::Nowhere)
+    }
+}
+
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
-fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
     let from = |c: &str| {
         world
             .get_component(root, c)?
@@ -334,8 +511,9 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 }
 
 /// Read a style component's fields into `variant`: the descriptor's
-/// options as strings, its parameters as numbers, and a 3-array `x` as the
-/// parameters `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
+/// options as strings, its parameters as numbers, and a colour `x` (a
+/// 3-array, [`StyleColor`](crate::stylize::StyleColor)) as the parameters
+/// `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
 /// style doesn't take, a value of the wrong type) is skipped: the scene
 /// loader has already warned about it against the component's schema.
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
@@ -353,16 +531,10 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
             if let Some(n) = number(value) {
                 variant.params.insert(key.clone(), n);
             }
-        } else if let Some([r, g, b]) = value.as_array().map(Vec::as_slice) {
-            let channels = ["r", "g", "b"].map(|c| format!("{key}_{c}"));
-            if channels
-                .iter()
-                .all(|c| d.params.iter().any(|p| p.name == c))
-            {
-                for (c, v) in channels.into_iter().zip([r, g, b]) {
-                    if let Some(n) = number(v) {
-                        variant.params.insert(c, n);
-                    }
+        } else if let Some(color) = d.color_setting(key) {
+            if let Some(rgb) = crate::stylize::color_from_toml(value) {
+                for (p, n) in color.channels.iter().zip(rgb) {
+                    variant.params.insert(p.name.to_string(), n);
                 }
             }
         }
@@ -407,7 +579,7 @@ fn variant_name(v: &StyleVariant, root: &str) -> String {
 /// What a styled root asks for: its variant's name and the variant, or
 /// `None` for a `style_mask` opt-out. A style component (in registry
 /// order) wins over a `style_mask` on the same entity.
-fn request(
+pub(crate) fn request(
     world: &FlintWorld,
     config: &PostProcessConfig,
     root: EntityId,
@@ -440,6 +612,32 @@ fn request(
     Some((name, variant))
 }
 
+/// Whether `id` asks for a style itself: it carries a `style_mask` or a
+/// style's own component, so it roots a styled subtree.
+pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
+    world.get_component(id, STYLE_MASK_COMPONENT).is_some()
+        || crate::stylize::registry()
+            .iter()
+            .filter_map(|d| d.component)
+            .any(|c| world.get_component(id, c).is_some())
+}
+
+/// The styled root `id` takes its style from (#372): itself, else its
+/// nearest ancestor that asks for one, as [`resolve`] hands ids down.
+/// `None` when no entity on its chain to the top is styled.
+pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
+    let mut at = Some(id);
+    // A parent cycle can't load, but don't spin if one is built at run time
+    for _ in 0..4096 {
+        let e = at?;
+        if is_style_root(world, e) {
+            return Some(e);
+        }
+        at = world.get_parent(e);
+    }
+    None
+}
+
 /// Whether any entity carries a `style_mask` or a style's own component.
 pub(crate) fn any_styled(world: &FlintWorld) -> bool {
     !world
@@ -470,7 +668,10 @@ pub(crate) fn resolve(
 /// into `blends` (cleared first; #278). The blend is the root's, carried
 /// down its subtree with its id. It isn't part of the variant: entities
 /// fading at different rates still share one id, so a ramp makes no new
-/// variant a frame.
+/// variant a frame. An id all of whose roots are at blend 0 is marked
+/// faded in `ids` (#400): it keeps its number and its entities stay in
+/// `out`, so the mask is the same whenever another style draws it, but it
+/// no longer switches its style on.
 pub(crate) fn resolve_blended(
     world: &FlintWorld,
     config: &PostProcessConfig,
@@ -497,12 +698,16 @@ pub(crate) fn resolve_blended(
         .collect();
     ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
     let mut stack = Vec::new();
+    // Ids with a root above blend 0 (#400), a flag per id
+    let mut shown = vec![false; ids.len() + 1];
     for (root, req) in &requests {
         let root = *root;
         let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
         let blend = requested_blend(world, root);
+        // As the mask's `.g` holds it: a blend that rounds to 0 shows nothing
+        shown[id as usize] |= encode_blend(blend) > 0;
         stack.clear();
         stack.push(root);
         while let Some(e) = stack.pop() {
@@ -519,6 +724,7 @@ pub(crate) fn resolve_blended(
             );
         }
     }
+    ids.set_faded(|id| !shown[id as usize]);
 }
 
 /// The debug view's colour for style `id`: hues a golden angle apart, so
@@ -539,6 +745,73 @@ pub fn debug_color(id: u16) -> [f32; 3] {
     };
     // Lifted toward white a little so dark hues stay visible over a scene
     [0.25 + 0.75 * r, 0.25 + 0.75 * g, 0.25 + 0.75 * b]
+}
+
+/// A word for [`debug_color`]'s hue of `id`, so a legend can say "blue"
+/// rather than a triple (#309). `NO_STYLE` is "black".
+pub fn debug_color_name(id: u16) -> &'static str {
+    if id == NO_STYLE {
+        return "black";
+    }
+    let degrees = (id as f32 * 0.618_034).fract() * 360.0;
+    const NAMES: [(f32, &str); 12] = [
+        (15.0, "red"),
+        (40.0, "orange"),
+        (68.0, "yellow"),
+        (100.0, "lime"),
+        (145.0, "green"),
+        (170.0, "mint"),
+        (195.0, "cyan"),
+        (220.0, "azure"),
+        (255.0, "blue"),
+        (285.0, "violet"),
+        (325.0, "magenta"),
+        (345.0, "pink"),
+    ];
+    NAMES
+        .iter()
+        .find(|(below, _)| degrees < *below)
+        .map_or("red", |(_, name)| name)
+}
+
+/// One row of the style mask view's legend: an id, the style variant it
+/// stands for and the colour the view paints it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    pub id: u16,
+    /// The variant's name, as [`StyleIds`] holds it (`ascii`, `ascii{off}`).
+    pub name: String,
+    /// The view's display colour, 0..1.
+    pub color: [f32; 3],
+    /// A word for the colour ([`debug_color_name`]).
+    pub color_name: &'static str,
+}
+
+/// The legend for the style mask view (#309): each id in `ids`, in id
+/// order, with its hue.
+pub fn legend(ids: &StyleIds) -> Vec<LegendEntry> {
+    ids.iter()
+        .map(|(id, name)| LegendEntry {
+            id,
+            name: name.to_string(),
+            color: debug_color(id),
+            color_name: debug_color_name(id),
+        })
+        .collect()
+}
+
+/// The legend on one line, as `flint render` prints it:
+/// `style mask: 1 ascii (blue), 2 pencil (green)`, or a note that nothing
+/// is styled.
+pub fn legend_line(ids: &StyleIds) -> String {
+    if ids.is_empty() {
+        return "style mask: no styled entities".to_string();
+    }
+    let rows: Vec<String> = legend(ids)
+        .iter()
+        .map(|e| format!("{} {} ({})", e.id, e.name, e.color_name))
+        .collect();
+    format!("style mask: {}", rows.join(", "))
 }
 
 // ---------------------------------------------------------------------------
@@ -678,10 +951,274 @@ pub struct StyleMaskPass {
     /// Made the first frame with particles (the particle pipeline is too).
     veil_particles: Option<ParticleVeil>,
     draw_bgl: wgpu::BindGroupLayout,
+    /// The 4x path (#306), made the first frame the scene draws with MSAA.
+    msaa: Option<MsaaMask>,
+    /// The mask's shader, kept for the 4x path's pipelines.
+    shader: wgpu::ShaderModule,
+    /// One [`DRAW_STRIDE`] slot a draw, [`draw_slots`](Self::draw_slots)
+    /// of them; replaced by a bigger one when a frame needs more.
     draw_buffer: wgpu::Buffer,
+    draw_slots: usize,
+    /// The [`gpu_id`](crate::bind_cache::gpu_id) of `draw_buffer`, in the
+    /// cached bind group's key so a grown buffer gets a bind group of its
+    /// own (the old one goes with the chain's cache on the next resize).
+    draw_buffer_id: u64,
     /// The uniform bytes, kept so a frame reuses the allocation.
     scratch: Vec<u8>,
-    warned_overflow: bool,
+    /// Styled draws the last frame masked.
+    last_draws: usize,
+}
+
+/// One cache variant for a pair of [`gpu_id`](crate::bind_cache::gpu_id)s:
+/// exact while both stay under 2^32, which a process never reaches.
+fn mix_ids(a: u64, b: u64) -> u64 {
+    (a << 32) ^ b
+}
+
+fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Style Mask Draws"),
+        size: DRAW_STRIDE * slots as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The mask's 4x path (#306): pipelines drawing into a multisampled mask
+/// against the scene's multisampled depth, and the resolve that folds it
+/// into the single-sample mask.
+struct MsaaMask {
+    static_pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
+    draw_bgl: wgpu::BindGroupLayout,
+    resolve_pipeline: wgpu::RenderPipeline,
+    resolve_bgl: wgpu::BindGroupLayout,
+    /// The 4x mask, its size and the resolve's bind group over it.
+    target: Option<(wgpu::TextureView, u32, u32, wgpu::BindGroup)>,
+}
+
+/// The scene's multisampled depth, for the mask's 4x path (#306): its
+/// view, and an id that changes whenever the texture is made again (a
+/// bind group over it is kept under that id).
+pub(crate) struct MsaaDepth<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub id: u64,
+}
+
+/// The scene's sample count the mask matches under MSAA.
+pub const MSAA_SAMPLES: u32 = 4;
+
+#[allow(clippy::too_many_arguments)]
+fn mask_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    entry: &str,
+    fragment: &str,
+    samples: u32,
+    layouts: &[&wgpu::BindGroupLayout],
+    buffer: wgpu::VertexBufferLayout<'static>,
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: layouts,
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(entry),
+            buffers: &[buffer],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: STYLE_MASK_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        // Both faces, as the scene's opaque pipelines draw them
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// The per-draw uniforms' entry, binding 0 of both draw layouts.
+fn draw_uniform_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<MaskDrawUniform>() as u64),
+        },
+        count: None,
+    }
+}
+
+/// A depth texture entry of a draw layout.
+fn depth_entry(binding: u32, multisampled: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled,
+        },
+        count: None,
+    }
+}
+
+/// The style veil's entry (#290): a single-sample coverage texture, also
+/// under MSAA, where every sample of a pixel reads the same veil.
+fn veil_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+impl MsaaMask {
+    fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        transform_bgl: &wgpu::BindGroupLayout,
+        bone_bgl: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Style Mask MSAA Draw BGL"),
+            entries: &[draw_uniform_entry(), veil_entry(2), depth_entry(3, true)],
+        });
+        let static_pipeline = mask_pipeline(
+            device,
+            shader,
+            "Style Mask MSAA Pipeline",
+            "vs_static",
+            "fs_msaa",
+            MSAA_SAMPLES,
+            &[transform_bgl, &draw_bgl],
+            crate::primitives::Vertex::desc(),
+        );
+        let skinned_pipeline = mask_pipeline(
+            device,
+            shader,
+            "Style Mask MSAA Skinned Pipeline",
+            "vs_skinned",
+            "fs_msaa",
+            MSAA_SAMPLES,
+            &[transform_bgl, &draw_bgl, bone_bgl],
+            crate::primitives::SkinnedVertex::desc(),
+        );
+        let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Mask Resolve Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("style_mask_resolve.wgsl").into()),
+        });
+        let resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Style Mask Resolve BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+        let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Style Mask Resolve Layout"),
+            bind_group_layouts: &[&resolve_bgl],
+            push_constant_ranges: &[],
+        });
+        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Style Mask Resolve Pipeline"),
+            layout: Some(&resolve_layout),
+            vertex: wgpu::VertexState {
+                module: &resolve_shader,
+                entry_point: Some("vs_fullscreen"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &resolve_shader,
+                entry_point: Some("fs_resolve"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: STYLE_MASK_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        Self {
+            static_pipeline,
+            skinned_pipeline,
+            draw_bgl,
+            resolve_pipeline,
+            resolve_bgl,
+            target: None,
+        }
+    }
+
+    /// Make the 4x mask at `width` x `height`, again on a size change.
+    fn ensure_target(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if matches!(&self.target, Some((_, w, h, _)) if (*w, *h) == (width, height)) {
+            return;
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Style Mask MSAA"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLES,
+            dimension: wgpu::TextureDimension::D2,
+            format: STYLE_MASK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Style Mask Resolve BG"),
+            layout: &self.resolve_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
+        self.target = Some((view, width, height, bind));
+    }
 }
 
 impl StyleMaskPass {
@@ -693,89 +1230,25 @@ impl StyleMaskPass {
         });
         let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Style Mask Draw BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<MaskDrawUniform>() as u64,
-                        ),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &[draw_uniform_entry(), depth_entry(1, false), veil_entry(2)],
         });
-        let pipeline = |label: &str,
-                        entry: &str,
-                        layouts: &[&wgpu::BindGroupLayout],
-                        buffer: wgpu::VertexBufferLayout<'static>| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: layouts,
-                push_constant_ranges: &[],
-            });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    buffers: &[buffer],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: STYLE_MASK_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                // Both faces, as the scene's opaque pipelines draw them
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-        };
-        let static_pipeline = pipeline(
+        let static_pipeline = mask_pipeline(
+            device,
+            &shader,
             "Style Mask Pipeline",
             "vs_static",
+            "fs_main",
+            1,
             &[transform_bgl, &draw_bgl],
             crate::primitives::Vertex::desc(),
         );
-        let skinned_pipeline = pipeline(
+        let skinned_pipeline = mask_pipeline(
+            device,
+            &shader,
             "Style Mask Skinned Pipeline",
             "vs_skinned",
+            "fs_main",
+            1,
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
@@ -803,12 +1276,7 @@ impl StyleMaskPass {
             &[transform_bgl, layouts.material, layouts.light, bone_bgl],
             &[crate::primitives::SkinnedVertex::desc()],
         );
-        let draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Style Mask Draws"),
-            size: DRAW_STRIDE * MAX_MASK_DRAWS as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let draw_buffer = mask_draw_buffer(device, INITIAL_MASK_SLOTS);
         Self {
             static_pipeline,
             skinned_pipeline,
@@ -816,9 +1284,48 @@ impl StyleMaskPass {
             veil_skinned,
             veil_particles: None,
             draw_bgl,
+            msaa: None,
+            shader,
             draw_buffer,
+            draw_slots: INITIAL_MASK_SLOTS,
+            draw_buffer_id: crate::bind_cache::gpu_id(),
             scratch: Vec::new(),
-            warned_overflow: false,
+            last_draws: 0,
+        }
+    }
+
+    /// The bytes of the per-draw uniform buffer.
+    pub fn draw_buffer_bytes(&self) -> u64 {
+        self.draw_buffer.size()
+    }
+
+    /// How many styled draws the last frame masked.
+    pub fn last_draws(&self) -> usize {
+        self.last_draws
+    }
+
+    /// Build the 4x path (#306) if it isn't yet: the first frame the scene
+    /// draws with MSAA.
+    pub(crate) fn ensure_msaa(
+        &mut self,
+        device: &wgpu::Device,
+        transform_bgl: &wgpu::BindGroupLayout,
+        bone_bgl: &wgpu::BindGroupLayout,
+    ) {
+        if self.msaa.is_none() {
+            self.msaa = Some(MsaaMask::new(device, &self.shader, transform_bgl, bone_bgl));
+        }
+    }
+
+    /// The per-draw uniforms' binding, the same in both draw layouts.
+    fn uniform_entry(&self) -> wgpu::BindGroupEntry<'_> {
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &self.draw_buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(std::mem::size_of::<MaskDrawUniform>() as u64),
+            }),
         }
     }
 
@@ -831,34 +1338,30 @@ impl StyleMaskPass {
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
         veil: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_if(depth_owned, "Style Mask Draw BG", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Style Mask Draw BG"),
-                layout: &self.draw_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(
-                                std::mem::size_of::<MaskDrawUniform>() as u64
-                            ),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(scene_depth),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(veil),
-                    },
-                ],
-            })
-        })
+        binds.get_over(
+            depth_key,
+            "Style Mask Draw BG",
+            self.draw_buffer_id,
+            || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Style Mask Draw BG"),
+                    layout: &self.draw_bgl,
+                    entries: &[
+                        self.uniform_entry(),
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(scene_depth),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(veil),
+                        },
+                    ],
+                })
+            },
+        )
     }
 
     /// Clear `veil_view` and draw what's in front into it (#290): each
@@ -962,9 +1465,46 @@ impl StyleMaskPass {
         }
     }
 
+    /// The 4x path's bind group over the veil and the scene's
+    /// multisampled depth, kept under the depth's id (the renderer owns
+    /// that texture, so a new one comes with a new id; the veil lives in
+    /// the same resources as `binds`, so it goes with them) and the
+    /// uniform buffer's (a grown buffer needs a bind group of its own, #311).
+    fn msaa_draw_bind(
+        &self,
+        device: &wgpu::Device,
+        binds: &crate::bind_cache::BindCache,
+        msaa: &MsaaMask,
+        veil: &wgpu::TextureView,
+        depth: &MsaaDepth<'_>,
+    ) -> std::sync::Arc<wgpu::BindGroup> {
+        let key = mix_ids(depth.id, self.draw_buffer_id);
+        binds.get("Style Mask MSAA Draw BG", key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Style Mask MSAA Draw BG"),
+                layout: &msaa.draw_bgl,
+                entries: &[
+                    self.uniform_entry(),
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(veil),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(depth.view),
+                    },
+                ],
+            })
+        })
+    }
+
     /// Draw the veil into `veil_view`, then clear `mask` and draw `draws`
     /// into it, each tested against `scene_depth` (single-sample, the
     /// mask's size) and its blend scaled by what the veil leaves uncovered.
+    /// With `msaa_depth` (the scene drew 4x, and
+    /// [`ensure_msaa`](Self::ensure_msaa) ran), they're drawn 4x against
+    /// that depth instead, and resolved into `mask` with any sample a
+    /// style drew winning (#306).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
@@ -972,10 +1512,11 @@ impl StyleMaskPass {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         binds: &crate::bind_cache::BindCache,
-        mask: &wgpu::TextureView,
+        mask: &crate::stylize::StyleTexture,
         veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
-        depth_owned: bool,
+        depth_key: crate::bind_cache::DepthKey,
+        msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
         veil: &Veil<'_>,
     ) {
@@ -983,14 +1524,13 @@ impl StyleMaskPass {
         if !draws.is_empty() {
             self.encode_veil(device, encoder, veil_view, scene_depth, veil);
         }
-        if draws.len() > MAX_MASK_DRAWS && !self.warned_overflow {
-            self.warned_overflow = true;
-            tracing::warn!(
-                "style mask: {} styled draws, only the first {MAX_MASK_DRAWS} are masked",
-                draws.len()
-            );
+        let slots = mask_slots_for(self.draw_slots, draws.len());
+        if slots != self.draw_slots {
+            self.draw_buffer = mask_draw_buffer(device, slots);
+            self.draw_slots = slots;
+            self.draw_buffer_id = crate::bind_cache::gpu_id();
         }
-        let draws = &draws[..draws.len().min(MAX_MASK_DRAWS)];
+        self.last_draws = draws.len();
         self.scratch.clear();
         self.scratch.resize(draws.len() * DRAW_STRIDE as usize, 0);
         for (i, d) in draws.iter().enumerate() {
@@ -1007,50 +1547,157 @@ impl StyleMaskPass {
         if !self.scratch.is_empty() {
             queue.write_buffer(&self.draw_buffer, 0, &self.scratch);
         }
-        let draw_bg = (!draws.is_empty())
-            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_owned));
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Style Mask Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: mask,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        let Some(draw_bg) = draw_bg else { return };
-        let mut skinned = None;
-        for (i, d) in draws.iter().enumerate() {
-            let is_skinned = d.bones.is_some();
-            if skinned != Some(is_skinned) {
-                pass.set_pipeline(if is_skinned {
-                    &self.skinned_pipeline
-                } else {
-                    &self.static_pipeline
-                });
-                skinned = Some(is_skinned);
+        // The 4x path, while the scene drew 4x
+        let msaa_depth = msaa_depth.filter(|_| self.msaa.is_some());
+        if let Some(depth) = msaa_depth {
+            let mut msaa = self.msaa.take().expect("checked above");
+            msaa.ensure_target(device, mask.width, mask.height);
+            let draw_bg = (!draws.is_empty())
+                .then(|| self.msaa_draw_bind(device, binds, &msaa, veil_view, &depth));
+            let (ms_view, _, _, resolve_bg) = msaa.target.as_ref().expect("made above");
+            {
+                let mut pass = clear_pass(encoder, "Style Mask MSAA Pass", ms_view);
+                if let Some(draw_bg) = &draw_bg {
+                    record_draws(
+                        &mut pass,
+                        draws,
+                        draw_bg,
+                        &msaa.static_pipeline,
+                        &msaa.skinned_pipeline,
+                    );
+                }
             }
-            pass.set_bind_group(0, d.transform_bind_group, &[]);
-            pass.set_bind_group(1, &*draw_bg, &[(i as u64 * DRAW_STRIDE) as u32]);
-            if let Some(bones) = d.bones {
-                pass.set_bind_group(2, bones, &[]);
-            }
-            pass.set_vertex_buffer(0, d.vertex_buffer.slice(..));
-            pass.set_index_buffer(d.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..d.index_count, 0, 0..1);
+            let mut pass = clear_pass(encoder, "Style Mask Resolve Pass", &mask.view);
+            pass.set_pipeline(&msaa.resolve_pipeline);
+            pass.set_bind_group(0, resolve_bg, &[]);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            self.msaa = Some(msaa);
+            return;
         }
+
+        let draw_bg = (!draws.is_empty())
+            .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_key));
+        let mut pass = clear_pass(encoder, "Style Mask Pass", &mask.view);
+        if let Some(draw_bg) = &draw_bg {
+            record_draws(
+                &mut pass,
+                draws,
+                draw_bg,
+                &self.static_pipeline,
+                &self.skinned_pipeline,
+            );
+        }
+    }
+}
+
+/// A pass over `view` alone, cleared to no style.
+fn clear_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    view: &wgpu::TextureView,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
+}
+
+/// Record every masked draw, switching between the static and skinned
+/// pipelines as the list does.
+fn record_draws(
+    pass: &mut wgpu::RenderPass<'_>,
+    draws: &[MaskDraw<'_>],
+    draw_bg: &wgpu::BindGroup,
+    static_pipeline: &wgpu::RenderPipeline,
+    skinned_pipeline: &wgpu::RenderPipeline,
+) {
+    let mut skinned = None;
+    for (i, d) in draws.iter().enumerate() {
+        let is_skinned = d.bones.is_some();
+        if skinned != Some(is_skinned) {
+            pass.set_pipeline(if is_skinned {
+                skinned_pipeline
+            } else {
+                static_pipeline
+            });
+            skinned = Some(is_skinned);
+        }
+        pass.set_bind_group(0, d.transform_bind_group, &[]);
+        pass.set_bind_group(1, draw_bg, &[(i as u64 * DRAW_STRIDE) as u32]);
+        if let Some(bones) = d.bones {
+            pass.set_bind_group(2, bones, &[]);
+        }
+        pass.set_vertex_buffer(0, d.vertex_buffer.slice(..));
+        pass.set_index_buffer(d.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..d.index_count, 0, 0..1);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_box_projects_to_its_screen_rect_and_behind_the_camera_to_nothing() {
+        let camera = crate::Camera {
+            position: flint_core::Vec3::new(0.0, 0.0, 10.0),
+            target: flint_core::Vec3::ZERO,
+            ..Default::default()
+        };
+        let vp = camera.view_projection_matrix();
+        // A unit box at the origin, straight ahead: around the centre
+        let IdBounds::Uv([x0, y0, x1, y1]) = IdBounds::of_box(&vp, [-0.5; 3], [0.5; 3]) else {
+            panic!("in view");
+        };
+        assert!(x0 < 0.5 && x1 > 0.5 && y0 < 0.5 && y1 > 0.5);
+        assert!(x1 - x0 < 0.3 && y1 - y0 < 0.3, "small at 10 m");
+        // Above the centre is up the screen, which is y down
+        let IdBounds::Uv([_, _, _, top_y1]) =
+            IdBounds::of_box(&vp, [-0.5, 2.0, -0.5], [0.5, 3.0, 0.5])
+        else {
+            panic!("in view");
+        };
+        assert!(top_y1 < 0.5);
+        // Behind the camera, off to the side, and around the camera
+        assert_eq!(
+            IdBounds::of_box(&vp, [-0.5, -0.5, 20.0], [0.5, 0.5, 21.0]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [100.0, -0.5, -0.5], [101.0, 0.5, 0.5]),
+            IdBounds::Nowhere
+        );
+        assert_eq!(
+            IdBounds::of_box(&vp, [-1.0, -1.0, 9.0], [1.0, 1.0, 11.0]),
+            IdBounds::Everywhere
+        );
+    }
+
+    #[test]
+    fn style_bounds_union_per_id_and_know_nothing_unfilled() {
+        assert_eq!(StyleBounds::default().get(1), IdBounds::Everywhere);
+        let mut b = StyleBounds::known();
+        assert_eq!(b.get(3), IdBounds::Nowhere);
+        b.add(2, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(2, IdBounds::Uv([0.0, 0.3, 0.2, 0.5]));
+        b.add(2, IdBounds::Nowhere);
+        assert_eq!(b.get(2), IdBounds::Uv([0.0, 0.2, 0.3, 0.5]));
+        b.add(1, IdBounds::Uv([0.1, 0.2, 0.3, 0.4]));
+        b.add(1, IdBounds::Everywhere);
+        assert_eq!(b.get(1), IdBounds::Everywhere);
+    }
 
     #[test]
     fn ids_follow_name_order_and_survive_repeats() {
@@ -1074,6 +1721,19 @@ mod tests {
     }
 
     #[test]
+    fn the_draw_buffer_grows_by_doubling_and_never_shrinks() {
+        let start = INITIAL_MASK_SLOTS;
+        assert!(start as u64 * DRAW_STRIDE <= 4096, "the start is a few KB");
+        assert_eq!(mask_slots_for(start, 0), start);
+        assert_eq!(mask_slots_for(start, 8), start);
+        assert_eq!(mask_slots_for(start, start), start);
+        assert_eq!(mask_slots_for(start, start + 1), 2 * start);
+        assert_eq!(mask_slots_for(start, 5000), 8192);
+        // A quieter frame keeps the bigger buffer (no churn back and forth)
+        assert_eq!(mask_slots_for(8192, 3), 8192);
+    }
+
+    #[test]
     fn debug_colors_are_distinct_and_visible() {
         assert_eq!(debug_color(NO_STYLE), [0.0; 3]);
         for a in 1..16u16 {
@@ -1083,6 +1743,27 @@ mod tests {
             let d: f32 = ca.iter().zip(cb).map(|(x, y)| (x - y).abs()).sum();
             assert!(d > 0.3, "{a} and {} look alike", a + 1);
         }
+    }
+
+    #[test]
+    fn the_legend_names_each_id_and_its_hue() {
+        assert_eq!(debug_color_name(NO_STYLE), "black");
+        assert_eq!(debug_color_name(1), "blue");
+        assert_eq!(debug_color_name(2), "lime");
+        let mut ids = StyleIds::default();
+        assert_eq!(legend_line(&ids), "style mask: no styled entities");
+        ids.set(vec![
+            ("pencil".into(), StyleVariant::plain("pencil")),
+            ("ascii".into(), StyleVariant::plain("ascii")),
+        ]);
+        let rows = legend(&ids);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].id, rows[0].name.as_str()), (1, "ascii"));
+        assert_eq!(rows[1].color, debug_color(2));
+        assert_eq!(
+            legend_line(&ids),
+            "style mask: 1 ascii (blue), 2 pencil (lime)"
+        );
     }
 
     fn world_with(entities: &[(&str, Option<&str>, Option<&str>)]) -> FlintWorld {
@@ -1224,6 +1905,75 @@ mod tests {
         assert!(ids.mentions("ascii"));
     }
 
+    /// #400: an id whose every entity is at blend 0 keeps its number but
+    /// asks for nothing, so its style and the mask stay off until one of
+    /// them rises again.
+    #[test]
+    fn an_id_at_blend_zero_keeps_its_number_and_asks_for_nothing() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "ascii_style", "blend = 0.0");
+        with_component(&mut world, "crate", "ascii_style", "blend = 0");
+        with_component(&mut world, "lamp", "ascii_style", "cell = 12\nblend = 0.0");
+        let config = PostProcessConfig::default();
+        let resolve_at = |world: &FlintWorld, ids: &mut StyleIds| {
+            let mut out = HashMap::new();
+            resolve_blended(world, &config, ids, &mut out, &mut HashMap::new());
+            out
+        };
+        let mut ids = StyleIds::default();
+        let out = resolve_at(&world, &mut ids);
+        let barrel = out[&world.get_id("barrel").unwrap()];
+        let lamp = out[&world.get_id("lamp").unwrap()];
+        assert_eq!(out.len(), 3, "faded entities stay in the mask's map");
+        assert!(ids.is_faded(barrel) && ids.is_faded(lamp));
+        assert!(!ids.requests("ascii"), "all at 0: the style is off");
+        let ascii = crate::stylize::find("ascii").unwrap();
+        assert!(!ascii.is_on(&config, &ids));
+        assert!(!crate::stylize::any_uses_mask(&config, &ids));
+
+        // One of the two plain ascii entities rises: its id is shown, the
+        // lamp's own stays faded, and nothing is renumbered
+        let before = ids.clone();
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.004");
+        let out = resolve_at(&world, &mut ids);
+        assert_eq!(out[&world.get_id("barrel").unwrap()], barrel);
+        let same = |ids: &StyleIds| ids.iter().eq(before.iter());
+        assert!(same(&ids), "a rise renumbered the ids");
+        assert!(!ids.is_faded(barrel), "a root above 0 shows its id");
+        assert!(ids.is_faded(lamp));
+        assert!(ids.requests("ascii") && ascii.is_on(&config, &ids));
+
+        // A blend under half a step of the mask's encoding is 0
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.000001");
+        resolve_at(&world, &mut ids);
+        assert!(!ids.requests("ascii"));
+        assert!(same(&ids), "a fall renumbered the ids");
+
+        // A `scope = "entities"` table is only the entities' preset: it
+        // doesn't keep the style on (#278's demo), a screen table does
+        let mut preset = PostProcessConfig::default();
+        preset.styles.set_enabled("ascii", true);
+        assert!(ascii.is_on(&preset, &ids), "a screen table draws the frame");
+        preset.styles.set_option("ascii", "scope", "entities");
+        assert!(!ascii.is_on(&preset, &ids));
+        assert!(!crate::stylize::any_uses_mask(&preset, &ids));
+        with_component(&mut world, "crate", "ascii_style", "blend = 1.0");
+        resolve_at(&world, &mut ids);
+        assert!(ascii.is_on(&preset, &ids));
+
+        // Under a whole-frame pencil a faded prop is still ASCII's (#384's
+        // ownership): pencil leaves it as it came, a hole, and draws the
+        // mask for it, though ASCII itself is off
+        with_component(&mut world, "crate", "ascii_style", "blend = 0.0");
+        resolve_at(&world, &mut ids);
+        let mut pencil_frame = PostProcessConfig::default();
+        pencil_frame.styles.set_enabled("pencil", true);
+        let pencil = crate::stylize::find("pencil").unwrap();
+        assert!(!ascii.is_on(&pencil_frame, &ids));
+        assert_eq!(pencil.foreign_ids(&pencil_frame, &ids), vec![barrel, lamp]);
+        assert!(crate::stylize::any_uses_mask(&pencil_frame, &ids));
+    }
+
     #[test]
     fn an_entity_falls_back_on_the_scenes_settings_then_the_defaults() {
         let ascii = crate::stylize::find("ascii").unwrap();
@@ -1299,5 +2049,105 @@ mod tests {
         let (none, _) = resolved(&FlintWorld::new(), &config);
         assert!(!ascii.is_on(&config, &none));
         assert!(!crate::stylize::any_uses_mask(&config, &none));
+    }
+
+    /// #350: whole-frame ASCII asks for the mask only while it has edges
+    /// to draw and something styled to outline, or another style's entity
+    /// to pass through.
+    #[test]
+    fn whole_frame_ascii_asks_for_the_mask_only_when_it_reads_it() {
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        let empty = FlintWorld::new();
+        let (none, _) = resolved(&empty, &config);
+        assert!(!crate::stylize::any_uses_mask(&config, &none), "nothing styled");
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
+        let (other, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &other), "edges outline it");
+        config.styles.set_param("ascii", "edges", 0.0);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &other),
+            "another style's entity still passes through"
+        );
+
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
+        let (ours, _) = resolved(&world, &config);
+        assert!(
+            crate::stylize::any_uses_mask(&config, &ours),
+            "per-entity rows are found by mask id"
+        );
+
+        // --ascii-no-edges in a scene with no style_mask: no mask
+        let (none, _) = resolved(&empty, &config);
+        assert!(!crate::stylize::any_uses_mask(&config, &none));
+    }
+
+    /// #384: each pixel is one style's. A whole-frame style's foreign ids
+    /// are the entities another running style owns: not its own, not an
+    /// opt-out, not a style that isn't on.
+    #[test]
+    fn a_whole_frame_style_leaves_another_styles_entities() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let pencil = crate::stylize::find("pencil").unwrap();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("ascii", true);
+        config.styles.set_param("ascii", "edges", 0.0);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "style_mask", "style = \"ascii\"");
+        with_component(&mut world, "cask", "style_mask", "style = \"pencil\"");
+        with_component(&mut world, "crate", "pencil_style", "spacing = 6.0");
+        with_component(&mut world, "tag", "pencil_style", "enabled = false");
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (ids, out) = resolved(&world, &config);
+        let id = |name: &str| out[&world.get_id(name).unwrap()];
+
+        let foreign = ascii.foreign_ids(&config, &ids);
+        assert!(foreign.contains(&id("cask")), "a style_mask naming pencil");
+        assert!(foreign.contains(&id("crate")), "a pencil_style");
+        assert!(!foreign.contains(&id("barrel")), "its own");
+        assert!(!foreign.contains(&id("tag")), "an opt-out is nobody's");
+        assert!(!foreign.contains(&id("box")), "invert isn't on");
+        // And the other way round, pencil leaves ASCII's barrel
+        assert_eq!(pencil.foreign_ids(&config, &ids), vec![id("barrel")]);
+
+        let table = crate::stylize::owner_table(&config, &ids);
+        assert_eq!(table[0], crate::stylize::ownership::NONE, "unstyled");
+        assert_eq!(table[id("tag") as usize], crate::stylize::ownership::NONE);
+        assert_eq!(table[id("cask") as usize], table[id("crate") as usize]);
+        assert_ne!(table[id("cask") as usize], table[id("barrel") as usize]);
+
+        // A whole-frame invert now owns the box: ASCII leaves it too
+        config.styles.set_enabled("invert", true);
+        assert!(ascii.foreign_ids(&config, &ids).contains(&id("box")));
+
+        // Neither Kuwahara nor invert reads the mask, but Kuwahara yields
+        // to invert's box, so the mask is drawn for it
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("kuwahara", true);
+        config.styles.set_enabled("invert", true);
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "box", "style_mask", "style = \"invert\"");
+        let (only_box, _) = resolved(&world, &config);
+        assert!(crate::stylize::any_uses_mask(&config, &only_box));
+        config.styles.set_enabled("kuwahara", false);
+        assert!(
+            !crate::stylize::any_uses_mask(&config, &only_box),
+            "invert alone has nobody to yield to"
+        );
+    }
+
+    /// #384: the views that look at the whole picture on purpose don't
+    /// yield; every other built-in does, with no code of its own.
+    #[test]
+    fn only_debug_views_and_the_glow_draw_over_entities() {
+        let over: Vec<&str> = crate::stylize::registry()
+            .iter()
+            .filter(|d| !d.yields)
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(over, ["display_bloom", "mask_view", "edges_view"]);
     }
 }

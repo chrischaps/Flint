@@ -6,11 +6,14 @@
 //! A section has the style's toggle, a row per setting (a combo or text
 //! field for an option, a slider for a parameter, one colour picker for an
 //! `_r/_g/_b` triple; labels, hover text and whole-number steps come from
-//! the descriptor's hints), and three buttons: **Defaults** clears the
-//! style's values, **Authored** puts back what the scene says, and **Copy
+//! the descriptor's hints), and four buttons: **Defaults** clears the
+//! style's values, **Authored** puts back what the scene says, **Copy
 //! TOML** puts the `[post_process.styles.<name>]` block that reproduces
 //! what is on screen on the clipboard, so a look tuned by eye goes back
-//! into the scene in one paste.
+//! into the scene in one paste, and **Commit to scene** (#364) writes that
+//! block into the scene file itself, key by key
+//! ([`flint_scene::SceneDocument::set_style_table`]), while the host names
+//! a file to write.
 //!
 //! While the host gives it the scene's authored settings, a dot marks each
 //! value that differs from them (hover for the scene's value), and the
@@ -19,9 +22,40 @@
 //! Both the F4 Rendering & Effects panel and the F3 Styles panel draw this
 //! editor; it edits a [`PostProcessConfig`]'s `styles` and nothing else.
 
-use flint_render::stylize::{self, StyleControl, StyleDescriptor, StyleSettings, StyleStage};
+use flint_render::stylize::{
+    self, ChoiceScope, StyleControl, StyleDescriptor, StyleOption, StyleSettings, StyleStage,
+};
 use flint_render::PostProcessConfig;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// The "Feeds bloom" checkbox of an HDR style (#300): whether bloom
+/// reads the style's result or the unstylized scene. Returns whether it
+/// changed. Draws nothing for a display style, which runs after bloom.
+pub fn feeds_bloom_checkbox(
+    ui: &mut egui::Ui,
+    style: &'static StyleDescriptor,
+    pp: &mut PostProcessConfig,
+) -> bool {
+    if style.stage != StyleStage::Hdr {
+        return false;
+    }
+    let mut feeds = style.feeds_bloom_in(pp);
+    let changed = ui
+        .checkbox(&mut feeds, "Feeds bloom")
+        .on_hover_text(
+            "On: bloom glows from this style's output, so its own bright shapes halo. \
+             Off: bloom reads the scene under the style, so halos sit where the original \
+             bright pixels were. Scene key: feeds_bloom",
+        )
+        .changed();
+    if changed {
+        // Back at the default, say nothing: the scene's TOML stays clean
+        let choice = (feeds != style.feeds_bloom).then_some(feeds);
+        pp.styles.set_feeds_bloom(style.name, choice);
+    }
+    changed
+}
 
 /// What one frame of the editor changed.
 #[derive(Debug, Clone, Copy, Default)]
@@ -31,12 +65,17 @@ pub struct StylesEdit {
     /// A style was switched on: the host builds its pipelines
     /// (`ensure_style_resources`).
     pub needs_resources: bool,
+    /// This style was just written to the scene file (#364): what the
+    /// config says of it is now what the scene says, so the host makes its
+    /// authored settings match (`StyleSettings::restore` from the config).
+    pub committed: Option<&'static str>,
 }
 
 impl StylesEdit {
     fn merge(&mut self, other: StylesEdit) {
         self.changed |= other.changed;
         self.needs_resources |= other.needs_resources;
+        self.committed = other.committed.or(self.committed);
     }
 }
 
@@ -60,9 +99,105 @@ pub struct StylesEditor {
     pub last_copied: Option<String>,
     /// How many values the last frame marked as differing from the scene.
     pub marked: usize,
+    /// The scene's folder, where options find their run-time choices (its
+    /// palettes and glyph sets, #322); set by the host on scene load.
+    scene_dir: Option<PathBuf>,
+    /// Each option's run-time choices, by (style, option) and the other
+    /// options' values they were found under, so a combo lists the folder
+    /// once rather than every frame. Dropped when the scene changes.
+    choices: HashMap<(&'static str, &'static str), (String, Vec<String>)>,
+    /// The scene file Commit to scene writes (#364); `None` (a scene from
+    /// a bundle, or a host with no file) hides the button.
+    scene_file: Option<PathBuf>,
+    /// Why Commit to scene is greyed out right now, when it is (the
+    /// viewer's unsaved entity edits, which the reload would drop).
+    commit_blocked: Option<String>,
+    /// The last commit's note beside the buttons: the style, when, and its
+    /// error if it failed.
+    commit_note: Option<(&'static str, f64, Option<String>)>,
 }
 
 impl StylesEditor {
+    /// The scene's folder, where options look for its palettes and glyph
+    /// sets (#322); `None` offers the built-ins only. Calling it again (a
+    /// scene load or reload) finds new files.
+    pub fn set_scene_dir(&mut self, scene_dir: Option<PathBuf>) {
+        self.scene_dir = scene_dir;
+        self.choices.clear();
+    }
+
+    /// The scene file Commit to scene writes into (#364). `None` hides the
+    /// button: a scene played from a bundle has no file to write.
+    pub fn set_scene_file(&mut self, scene_file: Option<PathBuf>) {
+        self.scene_file = scene_file;
+    }
+
+    /// The scene file Commit to scene writes, when there is one.
+    pub fn scene_file(&self) -> Option<&Path> {
+        self.scene_file.as_deref()
+    }
+
+    /// Grey out Commit to scene, saying why on hover; `None` allows it.
+    pub fn set_commit_blocked(&mut self, reason: Option<String>) {
+        self.commit_blocked = reason;
+    }
+
+    /// Write style `style`'s settings in `pp` into the scene file and make
+    /// `pp` say exactly what the file now says of it (the values at their
+    /// defaults dropped), so it and the authored settings compare equal.
+    pub fn commit(
+        &self,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+    ) -> Result<(), String> {
+        let path = self
+            .scene_file
+            .as_deref()
+            .ok_or_else(|| "No scene file to write".to_string())?;
+        let committed = commit_style(path, style, pp)?;
+        pp.styles.restore(style.name, &committed);
+        Ok(())
+    }
+
+    /// The scene folder the editor looks in.
+    pub fn scene_dir(&self) -> Option<&Path> {
+        self.scene_dir.as_deref()
+    }
+
+    /// The values the combo offers for `o`: its fixed choices, or what its
+    /// `discover` finds beside the scene, cached until another option of
+    /// the style (the font, for ramps) or the scene changes.
+    pub fn choices(
+        &mut self,
+        style: &'static StyleDescriptor,
+        o: &StyleOption,
+        pp: &PostProcessConfig,
+    ) -> Vec<String> {
+        if o.discover.is_none() {
+            return o.choices.iter().map(|c| c.to_string()).collect();
+        }
+        let others: String = style
+            .options
+            .iter()
+            .filter(|other| other.name != o.name)
+            .map(|other| format!("{}={};", other.name, style.option(pp, other.name)))
+            .collect();
+        if let Some((key, found)) = self.choices.get(&(style.name, o.name)) {
+            if *key == others {
+                return found.clone();
+            }
+        }
+        let option = |name: &str| style.option(pp, name).to_string();
+        let scope = ChoiceScope {
+            scene_dir: self.scene_dir.as_deref(),
+            option: &option,
+        };
+        let found = o.choices_in(&scope);
+        self.choices
+            .insert((style.name, o.name), (others, found.clone()));
+        found
+    }
+
     /// Draw every table style's section, editing `pp.styles`. `authored`
     /// is the scene's own `[post_process.styles]`, when the host knows it.
     pub fn ui(
@@ -75,11 +210,7 @@ impl StylesEditor {
         self.marked = 0;
         edit.changed |= chain_ui(ui, pp);
         let mut any = false;
-        for style in stylize::registry()
-            .iter()
-            .copied()
-            .filter(|s| s.uses_style_table())
-        {
+        for style in stylize::registry().iter().copied() {
             any = true;
             edit.merge(self.section(ui, style, pp, authored));
         }
@@ -162,6 +293,7 @@ impl StylesEditor {
                                 ui.end_row();
                             }
                         });
+                    edit.changed |= feeds_bloom_checkbox(ui, style, pp);
                 });
                 ui.horizontal(|ui| {
                     if ui
@@ -205,8 +337,71 @@ impl StylesEditor {
                             ui.ctx().request_repaint();
                         }
                     }
+                    edit.merge(self.commit_button(ui, style, pp));
                 });
             });
+        edit
+    }
+
+    /// The Commit to scene button and its note, while there is a scene
+    /// file to write.
+    fn commit_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+    ) -> StylesEdit {
+        let mut edit = StylesEdit::default();
+        let Some(path) = self.scene_file.as_deref() else {
+            return edit;
+        };
+        let file = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
+        let button = ui
+            .add_enabled(
+                self.commit_blocked.is_none(),
+                egui::Button::new("Commit to scene").small(),
+            )
+            .on_hover_text(format!(
+                "Write this look into {file}'s [post_process.styles.{}], keeping its comments \
+                 (values back at their default are removed)",
+                style.name
+            ));
+        let button = match &self.commit_blocked {
+            Some(reason) => button.on_disabled_hover_text(reason.as_str()),
+            None => button,
+        };
+        let now = ui.input(|i| i.time);
+        if button.clicked() {
+            match self.commit(style, pp) {
+                Ok(()) => {
+                    edit.changed = true;
+                    edit.committed = Some(style.name);
+                    self.commit_note = Some((style.name, now, None));
+                }
+                Err(e) => {
+                    tracing::error!("Commit to scene failed: {e}");
+                    self.commit_note = Some((style.name, now, Some(e)));
+                }
+            }
+        }
+        if let Some((name, at, error)) = &self.commit_note {
+            if *name == style.name {
+                match error {
+                    Some(e) => {
+                        ui.colored_label(ui.visuals().error_fg_color, "not written")
+                            .on_hover_text(e.as_str());
+                    }
+                    None if now - at < COPIED_NOTE_SECS => {
+                        ui.weak("written");
+                        ui.ctx().request_repaint();
+                    }
+                    None => {}
+                }
+            }
+        }
         edit
     }
 
@@ -222,12 +417,30 @@ impl StylesEditor {
     ) -> bool {
         let label = style.label_for(control.name());
         let help = style.hint(control.name()).map_or("", |h| h.help);
+        // A setting the current options don't read (#365) is drawn greyed
+        // out, its hover line saying why; its reset and authored cells stay
+        // live, so it can still be put back
+        let unused = style.unused_reason(pp, control.name());
+        let active = unused.is_none();
+        let disabled_help = match (&unused, help.is_empty()) {
+            (Some(why), true) => why.clone(),
+            (Some(why), false) => format!("{why}\n{help}"),
+            (None, _) => String::new(),
+        };
         let with_help = |r: egui::Response| {
-            if help.is_empty() {
+            let r = if help.is_empty() {
                 r
             } else {
                 r.on_hover_text(help)
+            };
+            if active {
+                r
+            } else {
+                r.on_disabled_hover_text(&disabled_help)
             }
+        };
+        let label_cell = |ui: &mut egui::Ui| {
+            with_help(ui.add_enabled(active, egui::Label::new(&label)));
         };
         let mut changed = false;
         match control {
@@ -239,12 +452,14 @@ impl StylesEditor {
                         .to_string()
                 });
                 let mut picked = None;
+                let choices = self.choices(style, o, pp);
                 {
-                    with_help(ui.label(&label));
-                    if o.choices.is_empty() {
+                    label_cell(ui);
+                    if choices.is_empty() {
                         let key = (style.name, o.name);
                         let buffer = self.text.entry(key).or_insert_with(|| current.clone());
-                        let r = ui.add(
+                        let r = ui.add_enabled(
+                            active,
                             egui::TextEdit::singleline(buffer)
                                 .id(text_id(style.name, o.name))
                                 .desired_width(120.0)
@@ -265,27 +480,34 @@ impl StylesEditor {
                         } else {
                             current.as_str()
                         };
-                        egui::ComboBox::from_id_salt((style.name, o.name))
-                            .selected_text(shown)
-                            .show_ui(ui, |ui| {
-                                if o.default.is_empty()
-                                    && ui
-                                        .selectable_label(current.is_empty(), "(default)")
-                                        .clicked()
-                                {
-                                    picked = Some(String::new());
-                                }
-                                for choice in o.choices {
-                                    if ui.selectable_label(current == *choice, *choice).clicked() {
-                                        picked = Some(choice.to_string());
+                        let combo = ui.add_enabled_ui(active, |ui| {
+                            egui::ComboBox::from_id_salt((style.name, o.name))
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    if o.default.is_empty()
+                                        && ui
+                                            .selectable_label(current.is_empty(), "(default)")
+                                            .clicked()
+                                    {
+                                        picked = Some(String::new());
                                     }
-                                }
-                                // A value the scene names that the list
-                                // doesn't (a palette file) stays pickable
-                                if !current.is_empty() && !o.choices.contains(&current.as_str()) {
-                                    let _ = ui.selectable_label(true, &current);
-                                }
-                            });
+                                    for choice in &choices {
+                                        if ui
+                                            .selectable_label(current == *choice, choice.as_str())
+                                            .clicked()
+                                        {
+                                            picked = Some(choice.clone());
+                                        }
+                                    }
+                                    // A value the scene names that the list
+                                    // doesn't (a palette by its path) stays
+                                    // pickable
+                                    if !current.is_empty() && !choices.contains(&current) {
+                                        let _ = ui.selectable_label(true, &current);
+                                    }
+                                });
+                        });
+                        with_help(combo.response);
                     }
                     if reset_cell(ui, current != o.default, &format!("{:?}", o.default)) {
                         picked = Some(o.default.to_string());
@@ -306,12 +528,12 @@ impl StylesEditor {
                 let mut value = style.param(pp, p.name);
                 let scene = authored.map(|a| a.param(style.name, p.name).unwrap_or(p.default));
                 {
-                    with_help(ui.label(&label));
+                    label_cell(ui);
                     let mut slider = egui::Slider::new(&mut value, p.min..=p.max);
                     if integer {
                         slider = slider.step_by(1.0).fixed_decimals(0);
                     }
-                    changed |= with_help(ui.add(slider)).changed();
+                    changed |= with_help(ui.add_enabled(active, slider)).changed();
                     if reset_cell(ui, value != p.default, &number(p.default, integer)) {
                         value = p.default;
                         changed = true;
@@ -331,7 +553,7 @@ impl StylesEditor {
                 let scene = authored
                     .map(|a| channels.map(|c| a.param(style.name, c.name).unwrap_or(c.default)));
                 {
-                    with_help(ui.label(&label));
+                    label_cell(ui);
                     // Style colours are display values (what the eye sees,
                     // as the display-stage shaders work), so the picker is
                     // the sRGB one; its bytes replace the value only when
@@ -339,6 +561,9 @@ impl StylesEditor {
                     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
                     let mut srgb = rgb.map(byte);
                     ui.horizontal(|ui| {
+                        if !active {
+                            ui.disable();
+                        }
                         if with_help(ui.color_edit_button_srgb(&mut srgb)).changed() {
                             rgb = srgb.map(|b| b as f32 / 255.0);
                             changed = true;
@@ -361,6 +586,36 @@ impl StylesEditor {
         }
         changed
     }
+}
+
+/// Write style `style`'s settings in `pp` into the scene file at `path`
+/// (#364): the block Copy TOML would copy, merged key by key into the
+/// file's `[post_process.styles.<name>]`. Returns the settings the file now
+/// holds for the style, read back from that block.
+pub fn commit_style(
+    path: &Path,
+    style: &'static StyleDescriptor,
+    pp: &PostProcessConfig,
+) -> Result<StyleSettings, String> {
+    let block = stylize::style_toml(style, pp);
+    let mut doc = flint_scene::SceneDocument::from_file(path)?;
+    doc.set_style_table(style.name, &block, &style.table_keys())?;
+    doc.save(path)?;
+    let parsed: toml::Table =
+        toml::from_str(&block).map_err(|e| format!("Style block doesn't parse: {e}"))?;
+    let table = parsed
+        .get("post_process")
+        .and_then(|p| p.get("styles"))
+        .and_then(|s| s.get(style.name))
+        .and_then(|t| t.as_table())
+        .cloned()
+        .unwrap_or_default();
+    let tables = std::collections::BTreeMap::from([(style.name.to_string(), table)]);
+    let (settings, warnings) = StyleSettings::from_tables(&tables);
+    for warning in warnings {
+        tracing::warn!("Committed style block: {warning}");
+    }
+    Ok(settings)
 }
 
 /// The styles on in `stage`, in the order its chain runs them (#299).
@@ -526,7 +781,7 @@ mod tests {
 
     fn all_on() -> PostProcessConfig {
         let mut pp = PostProcessConfig::default();
-        for s in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for s in stylize::registry().iter() {
             pp.styles.set_enabled(s.name, true);
         }
         pp
@@ -537,7 +792,7 @@ mod tests {
         let mut editor = StylesEditor::default();
         let mut pp = all_on();
         let text = drawn_text(&mut editor, &mut pp, None);
-        for style in stylize::registry().iter().filter(|s| s.uses_style_table()) {
+        for style in stylize::registry().iter() {
             assert!(text.contains(&style.label.to_string()), "{}", style.label);
             for control in style.controls() {
                 let label = style.label_for(control.name());
@@ -567,24 +822,96 @@ mod tests {
         assert_eq!(editor.marked, 1);
     }
 
-    /// One frame of the editor with `events` as input.
-    fn frame(
-        ctx: &egui::Context,
-        editor: &mut StylesEditor,
-        pp: &mut PostProcessConfig,
-        events: Vec<egui::Event>,
-    ) -> StylesEdit {
-        let mut edit = StylesEdit::default();
-        let input = egui::RawInput {
-            events,
-            ..Default::default()
-        };
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                edit.merge(editor.ui(ui, pp, None));
+    /// Each label the editor drew and how strongly: how far its colour
+    /// stands from the panel's (a disabled row is tinted towards it).
+    fn drawn_strength(editor: &mut StylesEditor, pp: &mut PostProcessConfig) -> Vec<(String, f32)> {
+        let ctx = egui::Context::default();
+        let mut out = Vec::new();
+        let panel = ctx.style().visuals.panel_fill;
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    editor.ui(ui, pp, None);
+                });
             });
-        });
-        edit
+            out.clear();
+            fn walk(shape: &egui::Shape, panel: egui::Color32, out: &mut Vec<(String, f32)>) {
+                match shape {
+                    egui::Shape::Text(t) => {
+                        let color = t
+                            .override_text_color
+                            .or_else(|| {
+                                t.galley
+                                    .job
+                                    .sections
+                                    .first()
+                                    .map(|s| s.format.color)
+                                    .filter(|c| *c != egui::Color32::PLACEHOLDER)
+                            })
+                            .unwrap_or(t.fallback_color);
+                        let strength = color
+                            .to_array()
+                            .iter()
+                            .zip(panel.to_array())
+                            .take(3)
+                            .map(|(a, b)| (*a as f32 - b as f32).abs())
+                            .sum::<f32>()
+                            * t.opacity_factor;
+                        out.push((t.galley.job.text.clone(), strength));
+                    }
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, panel, out)),
+                    _ => {}
+                }
+            }
+            for clipped in output.shapes {
+                walk(&clipped.shape, panel, &mut out);
+            }
+        }
+        out
+    }
+
+    fn strength_of(drawn: &[(String, f32)], label: &str) -> f32 {
+        drawn
+            .iter()
+            .find(|(t, _)| t == label)
+            .unwrap_or_else(|| panic!("{label} not drawn"))
+            .1
+    }
+
+    #[test]
+    fn a_setting_the_colour_mode_ignores_is_greyed_out() {
+        // #365: in source mode Tint and Palette fade; switching to tint
+        // brings Tint back, and a setting without conditions never fades
+        let mut editor = StylesEditor::default();
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("ascii", true);
+        let source = drawn_strength(&mut editor, &mut pp);
+        let full = strength_of(&source, "Glow");
+        assert!(strength_of(&source, "Tint") < full * 0.9, "{source:?}");
+        assert!(strength_of(&source, "Palette") < full * 0.9);
+
+        pp.styles.set_option("ascii", "color", "tint");
+        let tint = drawn_strength(&mut editor, &mut pp);
+        assert_eq!(strength_of(&tint, "Tint"), strength_of(&tint, "Glow"));
+        assert!(strength_of(&tint, "Palette") < full * 0.9);
+        // Drawing greyed rows changes nothing
+        assert_eq!(pp.styles.option("ascii", "color"), Some("tint"));
+    }
+
+    #[test]
+    fn a_style_without_conditions_draws_every_row_alike() {
+        // pencil has hints but no conditions: every label at one strength
+        let mut editor = StylesEditor::default();
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("pencil", true);
+        let drawn = drawn_strength(&mut editor, &mut pp);
+        let pencil = stylize::find("pencil").unwrap();
+        let labels: Vec<f32> = pencil
+            .controls()
+            .into_iter()
+            .map(|c| strength_of(&drawn, &pencil.label_for(c.name())))
+            .collect();
+        assert!(labels.windows(2).all(|w| w[0] == w[1]), "{labels:?}");
     }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
@@ -597,40 +924,85 @@ mod tests {
         }
     }
 
+    /// A style with a free-text option (no choices, none found), as a
+    /// file-named setting is. Registered nowhere; drawn by hand.
+    static TEXT_STYLE: StyleDescriptor =
+        StyleDescriptor::new("text_test", "Text test", StyleStage::Display, |_| {
+            unreachable!("never drawn")
+        })
+        .options(&[StyleOption::new("file", "", &[])]);
+
     #[test]
-    fn typing_a_font_name_survives_frames_and_commits_on_enter() {
+    fn typing_a_file_name_survives_frames_and_commits_on_enter() {
         // The field used to be over a fresh copy of the config each
         // frame, so every keystroke was gone by the next one
         let ctx = egui::Context::default();
         let mut editor = StylesEditor::default();
-        let mut pp = all_on();
-        frame(&ctx, &mut editor, &mut pp, vec![]);
-        ctx.memory_mut(|m| m.request_focus(text_id("ascii", "font")));
-        frame(&ctx, &mut editor, &mut pp, vec![]);
-        frame(
-            &ctx,
-            &mut editor,
-            &mut pp,
-            vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
-        );
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled(TEXT_STYLE.name, true);
+        let mut frame = |pp: &mut PostProcessConfig, events: Vec<egui::Event>| {
+            let mut edit = StylesEdit::default();
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    edit.merge(editor.section(ui, &TEXT_STYLE, pp, None));
+                });
+            });
+            edit
+        };
+        frame(&mut pp, vec![]);
+        ctx.memory_mut(|m| m.request_focus(text_id("text_test", "file")));
+        frame(&mut pp, vec![]);
+        frame(&mut pp, vec![key(egui::Key::A, egui::Modifiers::COMMAND)]);
         for c in ["t", "e", "r", "m"] {
-            let edit = frame(
-                &ctx,
-                &mut editor,
-                &mut pp,
-                vec![egui::Event::Text(c.into())],
-            );
+            let edit = frame(&mut pp, vec![egui::Event::Text(c.into())]);
             assert!(!edit.changed, "typing doesn't apply until Enter");
         }
-        assert_eq!(pp.styles.option("ascii", "font"), None);
-        let edit = frame(
-            &ctx,
-            &mut editor,
-            &mut pp,
-            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
-        );
+        assert_eq!(pp.styles.option("text_test", "file"), None);
+        let edit = frame(&mut pp, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
         assert!(edit.changed);
-        assert_eq!(pp.styles.option("ascii", "font"), Some("term"));
+        assert_eq!(pp.styles.option("text_test", "file"), Some("term"));
+    }
+
+    #[test]
+    fn the_scene_folder_adds_its_palettes_fonts_and_ramps() {
+        let mut src = flint_core::vfs::MemorySource::new();
+        src.insert(
+            "demo/palettes/tidepool.palette.toml",
+            "colors = [\"#0a3d62\", \"#3c6382\"]\n",
+        );
+        src.insert(
+            "demo/fonts/plain.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n",
+        );
+        flint_core::vfs::scoped(std::sync::Arc::new(src), || {
+            let ascii = stylize::find("ascii").unwrap();
+            let option = |name: &str| ascii.options.iter().find(|o| o.name == name).unwrap();
+            let mut editor = StylesEditor::default();
+            let mut pp = all_on();
+            // No scene: the built-ins
+            let palettes = editor.choices(ascii, option("palette"), &pp);
+            assert!(!palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
+            editor.set_scene_dir(Some(PathBuf::from("demo")));
+            let palettes = editor.choices(ascii, option("palette"), &pp);
+            assert!(palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
+            assert!(palettes.iter().any(|p| p == "phosphor"), "built-ins stay");
+            let fonts = editor.choices(ascii, option("font"), &pp);
+            assert_eq!(fonts, ["builtin", "plain"]);
+            // The ramp list is the chosen font's, found again when it changes
+            let ramps = editor.choices(ascii, option("ramp"), &pp);
+            assert!(ramps.iter().any(|r| r == "classic"), "{ramps:?}");
+            pp.styles.set_option("ascii", "font", "plain");
+            assert_eq!(editor.choices(ascii, option("ramp"), &pp), ["dots"]);
+            // A fixed list is the descriptor's own
+            assert_eq!(
+                editor.choices(ascii, option("color"), &pp),
+                option("color").choices
+            );
+        });
     }
 
     #[test]
@@ -662,6 +1034,100 @@ mod tests {
         let chain = chain_of(StyleStage::Display, &pp);
         move_earlier(&mut pp, &chain, 2);
         assert_eq!(names(&pp), ["ascii", "invert", "watercolor"]);
+    }
+
+    /// A scene's `[post_process.styles]` as a fresh load reads it.
+    fn styles_in_file(path: &Path) -> StyleSettings {
+        let text = std::fs::read_to_string(path).unwrap();
+        let file: toml::Table = toml::from_str(&text).unwrap();
+        let tables = file
+            .get("post_process")
+            .and_then(|p| p.get("styles"))
+            .and_then(|s| s.as_table())
+            .map(|s| {
+                s.iter()
+                    .map(|(k, v)| (k.clone(), v.as_table().unwrap().clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        settings
+    }
+
+    #[test]
+    fn commit_writes_the_look_and_clears_the_marks() {
+        let dir = std::env::temp_dir().join(format!("flint-commit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("room.scene.toml");
+        std::fs::write(
+            &path,
+            "# A dim room\n[scene]\nname = \"Room\"\n\n[post_process]\nbloom_intensity = 0.1 # soft\n\n\
+             # The look\n[post_process.styles.ascii]\ncell = 12 # tuned by eye\nglow = 0.6\n",
+        )
+        .unwrap();
+        let mut authored = styles_in_file(&path);
+        let mut pp = PostProcessConfig {
+            styles: authored.clone(),
+            ..Default::default()
+        };
+        // Tuned in F4: a new cell and ramp, glow back at its default, a tint
+        let ascii = stylize::find("ascii").unwrap();
+        pp.styles.set_param("ascii", "cell", 9.0);
+        pp.styles.set_option("ascii", "ramp", "blocks");
+        let glow = ascii.params.iter().find(|p| p.name == "glow").unwrap();
+        pp.styles.set_param("ascii", "glow", glow.default);
+        pp.styles.set_color("ascii", "tint", [0.35, 1.0, 0.45]);
+        let shown = pp.clone();
+
+        let mut editor = StylesEditor::default();
+        editor.set_scene_file(Some(path.clone()));
+        editor.commit(ascii, &mut pp).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# A dim room"), "{text}");
+        assert!(text.contains("bloom_intensity = 0.1 # soft"), "{text}");
+        assert!(
+            text.contains("# The look\n[post_process.styles.ascii]"),
+            "{text}"
+        );
+        assert!(text.contains("cell = 9 # tuned by eye"), "{text}");
+        assert!(!text.contains("glow"), "{text}");
+
+        // Loaded fresh, the scene draws what was on screen
+        let fresh = styles_in_file(&path);
+        assert!(fresh.same_style("ascii", &pp.styles));
+        for p in ascii.params {
+            assert_eq!(
+                ascii.param(&shown, p.name),
+                ascii.param(&pp, p.name),
+                "{}",
+                p.name
+            );
+        }
+        for o in ascii.options {
+            assert_eq!(
+                ascii.option(&shown, o.name),
+                ascii.option(&pp, o.name),
+                "{}",
+                o.name
+            );
+        }
+
+        // The host's authored settings follow the commit: nothing is marked
+        authored.restore("ascii", &pp.styles);
+        let text = drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert!(text.contains(&"Commit to scene".to_string()), "{text:?}");
+        assert!(!text.contains(&"edited".to_string()), "{text:?}");
+        assert_eq!(editor.marked, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_scene_file_no_commit_button() {
+        let mut pp = all_on();
+        let text = drawn_text(&mut StylesEditor::default(), &mut pp, None);
+        assert!(!text.contains(&"Commit to scene".to_string()));
+        assert!(text.contains(&"Copy TOML".to_string()));
     }
 
     #[test]

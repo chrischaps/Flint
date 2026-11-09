@@ -377,7 +377,7 @@ impl PlayerApp {
                 });
                 self.scene_camera = scene_file.camera.clone();
                 super::scene_loading::load_user_styles(&new_scene_path);
-                self.scene_post_process = super::scene_loading::under_look(
+                self.scene_post_process = super::scene_loading::scene_post_process(
                     self.look.as_deref(),
                     &new_scene_path,
                     scene_file.post_process.clone(),
@@ -400,6 +400,8 @@ impl PlayerApp {
     fn bring_up_scene(&mut self) {
         // Apply camera config before borrowing renderer
         self.apply_camera_def();
+        // The new scene's [post_process] with --style over it (#328)
+        let scene_post_config = self.scene_post_config();
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -453,6 +455,8 @@ impl PlayerApp {
             // The new scene's first frame has no past: styles that keep
             // history (ASCII's temporal stability, #277) start over
             renderer.reset_style_history();
+            // ...and the new scene's first camera is no cut from the old one's
+            self.camera_cut.forget();
 
             // Scene-authored hemisphere ambient + wrap; reset first so the
             // previous scene's values never leak into one that doesn't
@@ -492,10 +496,8 @@ impl PlayerApp {
             }
 
             // Apply post-process config
-            if let Some(pp_def) = &self.scene_post_process {
-                renderer.set_post_process_config(
-                    super::scene_loading::post_process_config_from_def(pp_def),
-                );
+            if let Some(config) = scene_post_config {
+                renderer.set_post_process_config(config);
                 renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
             }

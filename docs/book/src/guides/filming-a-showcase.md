@@ -51,7 +51,7 @@ flint-player demo/film/02_type.scene.toml --schemas schemas \
   otherwise follow the window's scale factor, so the same take would differ
   between a 100% and a 125% display. A 4K take and a 1080p preview frame the
   same.
-- A take's `args` in `film.toml` add player flags; the looks beat's five
+- A take's `args` in `film.toml` add player flags; the looks beat's eight
   takes are one scene with `--look ascii_noir`, `--look matrix`, and so on.
 - A beat's `input` is an input script (`--input-script`) for the beats that
   drive the F4 menu. Its pointer positions are written in points; the rig
@@ -71,8 +71,8 @@ it first). The fragment may add components to the set's props
 (`[entities.barrel.ascii_style]`) and its style tables
 (`[post_process.styles.ascii]`), but not repeat a table the set has.
 
-Scripts change whole-frame styles with `set_scene_style(style, on)` and
-`set_scene_style_param(style, param, value)`, the scene-wide twins of
+Scripts change whole-frame styles with `set_post_style(style, on)` and
+`set_post_style_param(style, param, value)`, the scene-wide twins of
 `set_entity_style` and `set_style_param`
 ([Scripting → Style API](../concepts/scripting.md#style-api)). Shared moves
 (`orbit`, `dolly`, `ease`, `ramp`, `pulse`) are in
@@ -84,7 +84,7 @@ import "film" as film;
 fn on_update() {
     let t = total_time();
     film::orbit(0.0, 0.75, 0.0, 5.2, 1.6, film::lerp(0.85, 1.6, t / 14.0));
-    set_scene_style_param("ascii", "cell", film::lerp(8.0, 5.0, film::ramp(t, 12.0, 1.8)));
+    set_post_style_param("ascii", "cell", film::lerp(8.0, 5.0, film::ramp(t, 12.0, 1.8)));
 }
 ```
 
@@ -115,29 +115,15 @@ frames that differ, in how many pixels and by how many 8-bit levels.
 
 ### What two runs of the film gave
 
-Every take of the film, captured twice at 1280x720 (RTX 5070 Laptop,
-Vulkan, Windows 11, 2026-11-07):
+Every take of the film (all 13 beats, the looks beat's eight takes), captured
+twice at 1280x720 (RTX 4070, Vulkan, Windows 11, 2026-11-08), is
+**byte-identical**, every frame, the meadow's grass and the ASCII beats'
+temporal history included.
 
-| Takes | Frames identical | Where the rest differ |
-|---|---|---|
-| `10_looks/ascii_noir` | all 241 | nowhere |
-| `02_type`, `03_edges` (whole-frame ASCII) | 88% | 1 level in at most 29 pixels a frame |
-| the other beats and looks (01, 04–09, 11, 13; `ink_wash`, `graphite`, `watercolor`) | 51–83% | up to 29 levels in at most 7 pixels a frame, each at a grass blade's edge; the painted ones (09 and the `ink_wash` and `watercolor` looks) spread one over up to 36 pixels as their washes diffuse it |
-| `10_looks/matrix`, `12_menu` (whole-frame ASCII under temporal history) | 89–90% | the same, plus now and then one glyph cell (5x5 pixels here) drawing a different glyph for a few frames, up to 238 levels |
-
-The same beats with the meadow's grass taken out (`01_plain`, `02_type`,
-`13_hands`, two runs each) are **byte-identical**, every frame. The grass is
-the whole of #341: its compute pass appends visible blades with an
-`atomicAdd`, so their order in the instance buffer changes from run to run,
-and where two opaque blades meet a pixel at the same depth whichever draws
-first wins it. (Its count read-back, the first suspect, only feeds the
-stats overlay.) ASCII averages a cell's colour, which turns that into a
-1-level difference, and a cell sitting on a ramp boundary under temporal
-history can take the neighbouring glyph and hold it for a few frames: the
-amplification #341 worried about, seen here in one cell at a time.
-
-For a film this is invisible: a handful of pixels in 921,600, at blade
-edges in moving grass. The rule the storyboard follows is to capture each
-beat once and cut from that take. A scene that must be byte-identical
-(a golden, a flip count) leaves out `grass_ground` until #341 orders the
-blades deterministically.
+That took #341. Before it, the grass compute pass appended visible blades
+with an `atomicAdd`, so their order in the instance buffer changed from run
+to run, and where two opaque blades met a pixel at the same depth whichever
+drew first won it: a few pixels a frame at blade edges, which ASCII under
+temporal history now and then turned into one cell holding a different
+glyph for a few frames. Blades are placed in grid order now, so a beat can
+be reshot and cut against an earlier take frame for frame.

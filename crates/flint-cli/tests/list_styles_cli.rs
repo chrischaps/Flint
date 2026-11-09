@@ -50,7 +50,7 @@ fn json_parses_and_has_ranges() {
     let kuwahara = style("kuwahara");
     assert_eq!(kuwahara["stage"], "hdr");
     let radius = &kuwahara["params"][0];
-    assert!(radius["key"] == "kuwahara_radius" || radius["key"] == "radius");
+    assert_eq!(radius["key"], "radius");
     assert_eq!(radius["min"], 1.0);
     assert_eq!(radius["max"], 8.0);
     let invert = style("invert");

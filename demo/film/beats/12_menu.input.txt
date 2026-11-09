@@ -2,22 +2,24 @@
 # 1920x1080-point canvas (tools/showcase/capture.py scales them). Rows and
 # combo entries found by capturing the menu at each step; if its layout
 # changes, capture again and move them.
+# Re-measured after #356 put a Look row (and #369 a Freeze checkbox) above
+# the Post chain: every row from Post chain down sits 42 points lower.
 
 0.5  tap    F4                # Rendering & Effects
-1.0  click  1658 36           # fold Post chain away
-1.5  click  1690 183          # Styles: ASCII is on, so it opens
-2.2  mouse  1660 465 0.4      # the cell size slider's knob
+1.0  click  1660 78           # fold Post chain away
+1.5  click  1690 205          # Styles: ASCII is on, so it opens
+2.2  mouse  1660 551 0.4      # the cell size slider's knob
 2.7  down   MouseLeft
-2.8  mouse  1730 465 1.0      # cells grow coarse
-3.9  mouse  1652 465 1.2      # and settle finer than they began
+2.8  mouse  1730 551 1.0      # cells grow coarse
+3.9  mouse  1652 551 1.2      # and settle finer than they began
 5.2  up     MouseLeft
-5.6  mouse  1687 311 0.4
-6.0  click  1687 311          # colour mode
-6.5  click  1665 419          #   palette
-7.2  mouse  1687 333 0.3
-7.5  click  1687 333          # palette
-8.0  click  1665 441          #   amber
-8.9  click  1687 333
-9.4  click  1665 357          #   cga
+5.6  mouse  1687 353 0.4
+6.0  click  1687 353          # colour mode
+6.5  click  1665 461          #   palette
+7.2  mouse  1687 375 0.3
+7.5  click  1687 375          # palette
+8.0  click  1665 483          #   amber
+8.9  click  1687 375
+9.4  click  1665 400          #   cga
 10.2 mouse  1250 820 0.6      # hands off
 11.2 tap    F4                # menu away

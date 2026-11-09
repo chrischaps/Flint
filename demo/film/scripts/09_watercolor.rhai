@@ -8,6 +8,6 @@ fn on_update() {
     film::dolly([4.6, 2.1, 4.4], [3.2, 1.35, 2.9], [0.0, 0.6, 0.0], [-0.2, 0.75, -0.2],
         film::ease(t / 9.0));
     if t >= 5.0 {
-        set_scene_style_param("watercolor", "scope", "entities");
+        set_post_style_param("watercolor", "scope", "entities");
     }
 }

@@ -11,48 +11,37 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass, StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 
-pub(super) static STYLE: StyleDescriptor = StyleDescriptor {
-    name: "invert",
-    label: "Invert",
-    stage: StyleStage::Display,
-    params: &[StyleParam {
-        name: "strength",
-        default: 1.0,
-        min: 0.0,
-        max: 1.0,
-    }],
-    options: &[],
-    enabled: None,
-    uses_mask: false,
-    needs: &[],
-    hints: &[StyleHint::new(
-        "strength",
-        "Strength",
-        "How far toward the negative: 0 = none, 1 = full",
-    )],
-    component: None,
-    create: |d| {
-        let device = d.device;
-        let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");
-        let input_bgl = kit::sampled_layout(device, "Invert Input BGL");
-        Box::new(Invert {
-            pipeline: kit::fullscreen_pipeline(
-                device,
-                "Invert Pipeline",
-                &kit::shader(device, "Invert Shader", include_str!("invert.wgsl")),
-                &[&uniform_bgl, &input_bgl],
-                d.format,
-            ),
-            uniforms: kit::uniform_buffer::<InvertUniforms>(device, "Invert Uniforms"),
-            uniform_bgl,
-            input_bgl,
-        })
-    },
-};
+pub(super) static STYLE: StyleDescriptor =
+    StyleDescriptor::new("invert", "Invert", StyleStage::Display, create)
+        .params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
+        .hints(&[StyleHint::new(
+            "strength",
+            "Strength",
+            "How far toward the negative: 0 = none, 1 = full",
+        )]);
+
+fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+    let device = d.device;
+    let uniform_bgl = kit::uniform_layout(device, "Invert Uniform BGL");
+    let input_bgl = kit::sampled_layout(device, "Invert Input BGL");
+    Box::new(Invert {
+        pipeline: kit::fullscreen_pipeline(
+            device,
+            "Invert Pipeline",
+            &kit::shader(device, "Invert Shader", include_str!("invert.wgsl")),
+            &[&uniform_bgl, &input_bgl],
+            d.format,
+        ),
+        uniforms: kit::uniform_buffer::<InvertUniforms>(device, "Invert Uniforms"),
+        uniform_bgl,
+        input_bgl,
+    })
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

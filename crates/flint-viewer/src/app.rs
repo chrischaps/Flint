@@ -49,6 +49,15 @@ struct ViewerState {
     scene_camera: Option<CameraDef>,
 }
 
+/// `flint edit scene.toml --style ... --style-time ...` (#328): style words
+/// written over the scene's post-processing at load and at every hot
+/// reload, and the post time styles see.
+#[derive(Debug, Clone, Default)]
+pub struct ViewerStyle {
+    pub specs: Vec<String>,
+    pub time: Option<f32>,
+}
+
 /// Run the viewer application (standard viewer mode)
 pub fn run(
     scene_path: &str,
@@ -56,6 +65,7 @@ pub fn run(
     schemas_path: &str,
     inspector: bool,
     auto_orbit: bool,
+    style: ViewerStyle,
 ) -> Result<()> {
     let registry = if Path::new(schemas_path).exists() {
         SchemaRegistry::load_from_directory(schemas_path)?
@@ -68,6 +78,8 @@ pub fn run(
         ConstraintRegistry::load_from_directory(schemas_path).unwrap_or_default();
 
     load_user_styles(scene_path);
+    // A word may name one of the scene's styles, registered just now
+    flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
     let (world, scene_file) = load_scene(scene_path, &registry)?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
@@ -83,7 +95,10 @@ pub fn run(
         scene_path: scene_path.to_string(),
         needs_reload: false,
         scene_doc,
-        scene_post: scene_file.post_process.clone(),
+        scene_post: scene_file
+            .post_process
+            .as_ref()
+            .map(|d| flint_render::look::resolve_scene(d, scene_path)),
         scene_camera: scene_file.camera.clone(),
     }));
 
@@ -135,6 +150,8 @@ pub fn run(
 
     let mut app = ViewerApp::new(state, inspector);
     app.auto_orbit = auto_orbit;
+    app.style_specs = style.specs;
+    app.style_time = style.time;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -209,7 +226,10 @@ pub fn run_editor(
         scene_path: scene_path.to_string(),
         needs_reload: false,
         scene_doc: None,
-        scene_post: scene_file.post_process.clone(),
+        scene_post: scene_file
+            .post_process
+            .as_ref()
+            .map(|d| flint_render::look::resolve_scene(d, scene_path)),
         // Editor mode overrides the camera with its birds-eye view; never seeded.
         scene_camera: None,
     }));
@@ -337,6 +357,9 @@ pub struct ViewerApp {
     // Scene [post_process] application (authored <-> viewer default, toggled
     // from the Rendering & Effects menu)
     scene_post_enabled: bool,
+    /// A look picked in F4 (#356; `Some(None)`: none), kept over hot
+    /// reloads so a look file can be tuned while it is on screen.
+    picked_look: Option<Option<String>>,
     default_post_config: Option<PostProcessConfig>,
 
     // Viewer DoF follow: focus tracks the last selected entity; toggled from
@@ -354,6 +377,13 @@ pub struct ViewerApp {
     // input cancels — same convention as the model/procgen previewers).
     auto_orbit: bool,
     auto_orbit_speed: f32,
+
+    /// `--style name[:key=value,...]` words (#328), written over the
+    /// config at load, at each hot reload and at the authored/default
+    /// swap, so the command line keeps winning over the scene file.
+    style_specs: Vec<String>,
+    /// `--style-time`: the post time animated styles see.
+    style_time: Option<f32>,
 
     // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
     // player uses, so inspector edits to particle_emitter / particle_effect
@@ -381,6 +411,34 @@ fn scene_dir_of(scene_path: &str) -> &Path {
 fn load_user_styles(scene_path: &str) {
     for message in flint_render::stylize::custom::load_dir(scene_dir_of(scene_path)) {
         eprintln!("Warning: {message}");
+    }
+}
+
+/// `config` with the `--style` words written over it (#328).
+fn with_styles(mut config: PostProcessConfig, specs: &[String]) -> PostProcessConfig {
+    for e in flint_render::stylize::apply_style_specs(&mut config, specs) {
+        eprintln!("Warning: {e}");
+    }
+    config
+}
+
+/// A reloaded scene's `[post_process]` with its look laid under its keys
+/// (#356): the look picked in F4 when there is one, else the scene's own.
+fn with_look(
+    def: Option<PostProcessDef>,
+    scene_path: &str,
+    picked: Option<&Option<String>>,
+) -> Option<PostProcessDef> {
+    let Some(picked) = picked else {
+        return def.map(|d| flint_render::look::resolve_scene(&d, scene_path));
+    };
+    let base = def.or_else(|| PostProcessDef::from_authored(toml::Table::new()).ok())?;
+    match flint_render::look::resolve(&base, picked.as_deref(), scene_path) {
+        Ok(out) => Some(out),
+        Err(e) => {
+            eprintln!("look: {e}");
+            Some(flint_render::look::resolve_scene(&base, scene_path))
+        }
     }
 }
 
@@ -441,6 +499,7 @@ impl ViewerApp {
             dirty_fields: std::collections::HashSet::new(),
             status_message: None,
             scene_post_enabled: true,
+            picked_look: None,
             default_post_config: None,
             dof_follow: false,
             dof_focus_entity: None,
@@ -448,6 +507,8 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            style_specs: Vec::new(),
+            style_time: None,
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -495,6 +556,7 @@ impl ViewerApp {
             dirty_fields: std::collections::HashSet::new(),
             status_message: None,
             scene_post_enabled: true,
+            picked_look: None,
             default_post_config: None,
             dof_follow: false,
             dof_focus_entity: None,
@@ -502,6 +564,8 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            style_specs: Vec::new(),
+            style_time: None,
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -665,12 +729,42 @@ impl ViewerApp {
         {
             let state = self.state.lock().unwrap();
             if let Some(def) = &state.scene_post {
-                scene_renderer.set_post_process_config(post_process_config_from_def(def));
+                scene_renderer.set_post_process_config(with_styles(
+                    post_process_config_from_def(def),
+                    &self.style_specs,
+                ));
                 println!("Scene [post_process] applied (F11 toggles scene/default)");
+            } else if !self.style_specs.is_empty() {
+                let config = scene_renderer.post_process_config().clone();
+                scene_renderer.set_post_process_config(with_styles(config, &self.style_specs));
+            }
+            if !self.style_specs.is_empty() {
+                println!("--style applied: {}", self.style_specs.join(" "));
+            }
+            if let Some(t) = self.style_time {
+                scene_renderer.ocean_time = t as f64;
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel
                 .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+            // ...and offers the scene's own palettes and glyph sets (#322)
+            self.render_panel
+                .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
+            // ...and the looks the scene can reach (#356)
+            self.render_panel.set_looks(
+                &flint_render::look::list(&state.scene_path),
+                state.scene_post.as_ref().and_then(|d| d.look.as_deref()),
+            );
+            if let Some(look) = state.scene_post.as_ref().and_then(|d| d.look.as_deref()) {
+                println!("Scene look: {look} (F4 -> Look switches it)");
+            }
+            // ...and writes a style back into the file (#364)
+            self.render_panel.set_scene_file(
+                state
+                    .scene_doc
+                    .is_some()
+                    .then(|| std::path::PathBuf::from(&state.scene_path)),
+            );
         }
 
         // Run initial constraint evaluation
@@ -930,13 +1024,17 @@ impl ViewerApp {
         match scene_post {
             None => println!("Scene has no [post_process] block — nothing to toggle"),
             Some(def) if !self.scene_post_enabled => {
-                renderer.set_post_process_config(post_process_config_from_def(&def));
+                renderer.set_post_process_config(with_styles(
+                    post_process_config_from_def(&def),
+                    &self.style_specs,
+                ));
                 self.scene_post_enabled = true;
                 println!("Scene post-process: ON (authored)");
             }
             Some(_) => {
                 if let Some(default) = &self.default_post_config {
-                    renderer.set_post_process_config(default.clone());
+                    renderer
+                        .set_post_process_config(with_styles(default.clone(), &self.style_specs));
                 }
                 self.scene_post_enabled = false;
                 println!("Scene post-process: OFF (viewer default)");
@@ -975,6 +1073,13 @@ impl ViewerApp {
     /// into the widgets so the panel always displays the truth.
     fn sync_render_panel(&mut self) {
         use flint_debug_ui::DebugPanel as _;
+        // Commit to scene (#364) writes the file, and the watcher reloads
+        // it, which would drop entity edits not yet saved
+        self.render_panel.set_commit_blocked(self.dirty.then(|| {
+            "Save the scene first (Ctrl+S): committing reloads the file, \
+             and the unsaved entity edits would be lost"
+                .to_string()
+        }));
         let Some(renderer) = self.scene_renderer.as_mut() else {
             return;
         };
@@ -984,6 +1089,33 @@ impl ViewerApp {
                 return;
             };
             let flags = rp.take_flags();
+            if flags.look_changed {
+                // A look laid under the scene's keys (#356), kept over hot
+                // reloads; the authored post goes back on to show it
+                self.picked_look = Some(rp.look.clone());
+                let mut state = self.state.lock().unwrap();
+                let base = state.scene_post.clone().or_else(|| {
+                    flint_scene::PostProcessDef::from_authored(toml::Table::new()).ok()
+                });
+                match base.map(|def| {
+                    flint_render::look::resolve(&def, rp.look.as_deref(), &state.scene_path)
+                }) {
+                    Some(Ok(def)) => {
+                        renderer.set_post_process_config(with_styles(
+                            post_process_config_from_def(&def),
+                            &self.style_specs,
+                        ));
+                        renderer.ensure_style_resources(&context.device);
+                        renderer.ensure_fxaa_resources(&context.device);
+                        rp.set_authored_styles(Some(authored_styles(Some(&def))));
+                        println!("Look: {}", rp.look.as_deref().unwrap_or("none"));
+                        state.scene_post = Some(def);
+                        self.scene_post_enabled = true;
+                    }
+                    Some(Err(e)) => eprintln!("look: {e}"),
+                    None => {}
+                }
+            }
             if flags.pp_changed {
                 renderer.set_post_process_config(rp.pp.clone());
                 if flags.style_needs_resources {
@@ -1026,12 +1158,17 @@ impl ViewerApp {
                 self.camera.fov,
             );
         }
+        rp.set_style_ids(renderer.style_ids());
     }
 
     fn animate_camera(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
+        // ASCII's smoothing is per 60 Hz frame of this (#342)
+        if let Some(renderer) = self.scene_renderer.as_mut() {
+            renderer.style_dt = dt;
+        }
 
         // Keyboard orbit: WASD to orbit, Q/E to zoom
         {
@@ -1946,7 +2083,11 @@ impl ViewerApp {
                     {
                         let mut state = self.state.lock().unwrap();
                         state.world = new_world;
-                        state.scene_post = scene_file.post_process.clone();
+                        state.scene_post = with_look(
+                            scene_file.post_process.clone(),
+                            &state.scene_path,
+                            self.picked_look.as_ref(),
+                        );
                         // Refresh authored camera too; applied on the next
                         // Space reset (the live camera is never yanked).
                         state.scene_camera = scene_file.camera.clone();
@@ -1986,12 +2127,23 @@ impl ViewerApp {
                         // Re-derive the authored post-process so [post_process]
                         // edits hot-reload like the rest of the scene.
                         if self.scene_post_enabled {
+                            // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
-                                renderer.set_post_process_config(post_process_config_from_def(def));
+                                renderer.set_post_process_config(with_styles(
+                                    post_process_config_from_def(def),
+                                    &self.style_specs,
+                                ));
                             }
                         }
                         self.render_panel
                             .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+                        self.render_panel
+                            .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
+                        // A look file may be new, changed or gone (#356)
+                        self.render_panel.set_looks(
+                            &flint_render::look::list(&state.scene_path),
+                            state.scene_post.as_ref().and_then(|d| d.look.as_deref()),
+                        );
                     }
 
                     {

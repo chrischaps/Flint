@@ -29,11 +29,76 @@ pub(crate) fn gpu_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Who vouches for the depth view a frame's passes bind (#379).
+///
+/// wgpu 23 gives a `TextureView` no identity, so a bind group over the
+/// caller's depth buffer could only be kept when the caller says how long
+/// that view lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DepthKey {
+    /// The chain's own (the render-scale path's scaled depth), which lives
+    /// as long as the cache.
+    Owned,
+    /// The caller's, under an id it changes whenever it makes a new depth
+    /// texture ([`new_depth_id`]; `RenderContext::depth_id`).
+    Caller(u64),
+    /// The caller's, with no id: bind groups over it last one frame.
+    Frame,
+}
+
+impl DepthKey {
+    /// The key for the caller's view under `id` (`None`: no id).
+    pub fn caller(id: Option<u64>) -> Self {
+        id.map_or(DepthKey::Frame, DepthKey::Caller)
+    }
+}
+
+/// A fresh id for a depth texture a host hands the renderer
+/// ([`DepthKey::Caller`]): take a new one each time the texture is made.
+pub fn new_depth_id() -> u64 {
+    gpu_id()
+}
+
+/// The depth buffer a host hands [`SceneRenderer::encode_to`], with the id
+/// that lets the renderer keep bind groups over it (#379). A bare
+/// `&TextureView` converts to one with no id, whose bind groups are made
+/// every frame; `RenderContext::depth_target` carries its id.
+///
+/// [`SceneRenderer::encode_to`]: crate::SceneRenderer::encode_to
+#[derive(Clone, Copy)]
+pub struct DepthTarget<'a> {
+    pub view: &'a wgpu::TextureView,
+    /// A [`new_depth_id`] taken when the view's texture was made, changed
+    /// whenever it is made again. Reusing one for a new texture would bind
+    /// the old texture.
+    pub id: Option<u64>,
+}
+
+impl<'a> DepthTarget<'a> {
+    pub fn new(view: &'a wgpu::TextureView, id: u64) -> Self {
+        Self { view, id: Some(id) }
+    }
+}
+
+impl<'a> From<&'a wgpu::TextureView> for DepthTarget<'a> {
+    fn from(view: &'a wgpu::TextureView) -> Self {
+        Self { view, id: None }
+    }
+}
+
+type CallerGroups = (u64, HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>);
+
 /// Bind groups by a name and a variant (which views were chosen, whose
 /// objects they bind), made on first use; see the module docs.
 #[derive(Default)]
 pub struct BindCache {
     groups: Mutex<HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>>,
+    /// Groups over the caller's depth view, and the depth id they were
+    /// made for (0: none yet; ids start at 1).
+    caller: Mutex<CallerGroups>,
+    /// Bind groups made through it, kept or not: what a frame costs the
+    /// web in `createBindGroup`s, for tests.
+    made: AtomicU64,
     /// Uniforms whose contents last as long as the cache (texel sizes),
     /// written once.
     written: Mutex<Vec<&'static str>>,
@@ -50,25 +115,48 @@ impl BindCache {
         let mut groups = self.groups.lock().unwrap_or_else(|e| e.into_inner());
         groups
             .entry((name, variant))
-            .or_insert_with(|| Arc::new(make()))
+            .or_insert_with(|| self.make(make))
             .clone()
     }
 
-    /// [`get`](Self::get) when `keep`, else a bind group for this frame
-    /// only: for one over a view the cache can't vouch for, such as the
-    /// caller's depth buffer.
-    pub fn get_if(
+    /// The bind group `name` in `variant` over the frame's depth view,
+    /// kept as long as `depth` says the view lives (#379): with the cache
+    /// when the chain owns it, until the id changes when it's the caller's
+    /// (the caller's groups are dropped then, so an old depth texture isn't
+    /// held alive), and for this frame only when nothing vouches for it.
+    pub fn get_over(
         &self,
-        keep: bool,
+        depth: DepthKey,
         name: &'static str,
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        if keep {
-            self.get(name, variant, make)
-        } else {
-            Arc::new(make())
+        match depth {
+            DepthKey::Owned => self.get(name, variant, make),
+            DepthKey::Caller(id) => {
+                let mut caller = self.caller.lock().unwrap_or_else(|e| e.into_inner());
+                if caller.0 != id {
+                    caller.0 = id;
+                    caller.1.clear();
+                }
+                caller
+                    .1
+                    .entry((name, variant))
+                    .or_insert_with(|| self.make(make))
+                    .clone()
+            }
+            DepthKey::Frame => self.make(make),
         }
+    }
+
+    fn make(&self, make: impl FnOnce() -> wgpu::BindGroup) -> Arc<wgpu::BindGroup> {
+        self.made.fetch_add(1, Ordering::Relaxed);
+        Arc::new(make())
+    }
+
+    /// How many bind groups it has made, kept or for one frame.
+    pub fn made(&self) -> u64 {
+        self.made.load(Ordering::Relaxed)
     }
 
     /// True the first time it's asked about `name`: for an upload whose
@@ -85,7 +173,7 @@ impl BindCache {
 
     /// How many bind groups it holds.
     pub fn len(&self) -> usize {
-        self.groups.lock().map_or(0, |g| g.len())
+        self.groups.lock().map_or(0, |g| g.len()) + self.caller.lock().map_or(0, |c| c.1.len())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -252,7 +340,7 @@ mod tests {
     #[test]
     fn the_arena_pages_its_slots_and_uploads_them_together() {
         let Some((device, queue)) = device() else {
-            eprintln!("no GPU adapter: skipped");
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
         let mut arena = TransformArena::default();

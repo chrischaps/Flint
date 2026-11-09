@@ -23,8 +23,9 @@ pub struct ChartCommonArgs {
     pub base_dir: Option<String>,
 }
 
-/// `--style` and `--style-time`, shared by `flint render` and the
-/// headless `flint edit --render` paths (#271).
+/// `--style` and `--style-time`, shared by `flint render`, the headless
+/// `flint edit --render` paths (#271), `flint play` and the scene viewer
+/// (#328, which write the words over every scene load and hot reload).
 #[derive(clap::Args, Clone, Debug, Default)]
 pub struct StyleArgs {
     /// Turn on a registered style over the scene's post-processing:
@@ -94,9 +95,11 @@ fn parse_style_spec(s: &str) -> Result<String, String> {
 
 pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {
     match s {
-        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" => Ok(s.to_string()),
+        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" | "edges" => {
+            Ok(s.to_string())
+        }
         _ => Err(format!(
-            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style",
+            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style, edges",
             s
         )),
     }

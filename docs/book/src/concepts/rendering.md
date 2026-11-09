@@ -288,6 +288,7 @@ The renderer provides eight shading modes, selected from the **Shading** combo i
 | **Unlit** | `unlit` | Albedo color only, no lighting |
 | **Metal/Rough** | `metalrough` | Metallic (red channel) and roughness (green channel) |
 | **Style Mask** | `style` | The entity style mask: each `style_mask` style in its own hue, unstyled pixels grey (needs post-processing; see [Stylize Passes](stylize-passes.md#the-entity-style-mask)) |
+| **Style Edges** | `edges` | The ASCII style's edges: each edge pixel by its source (depth, crease, styled outline) and each glyph cell's decision with its edge length (needs post-processing; see [Stylize Passes](stylize-passes.md#edges)) |
 
 Both wireframe modes draw skinned meshes in their animated pose; rigged models used to get no lines at all in the overlay and vanished in wireframe-only.
 

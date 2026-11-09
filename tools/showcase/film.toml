@@ -91,6 +91,10 @@ take = [
     { name = "ink_wash", args = ["--look", "ink_wash"] },
     { name = "graphite", args = ["--look", "graphite"] },
     { name = "watercolor", args = ["--look", "watercolor"] },
+    # The pencil family (#391)
+    { name = "coloured_pencil", args = ["--look", "coloured_pencil"] },
+    { name = "blueprint", args = ["--look", "blueprint"] },
+    { name = "charcoal", args = ["--look", "charcoal"] },
 ]
 
 [[beat]]

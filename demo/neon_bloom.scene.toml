@@ -1,0 +1,131 @@
+# Bloom that follows a style (#300). `neon` (demo/styles/neon.*) is an hdr
+# user style: it dims the scene to night and traces world height in lines
+# brighter than white. Its .shader.toml says `feeds_bloom = true`, so bloom
+# reads the styled picture and the lines glow. Without it, bloom reads the
+# scene under the style: the lines stay flat, and the lamp, dimmed by the
+# style, still haloes at full strength, a ghost of the unstyled frame.
+#
+#   cargo run --bin flint -- render demo/neon_bloom.scene.toml --output neon.png
+#   cargo run --bin flint -- render demo/neon_bloom.scene.toml --style neon:feeds_bloom=0
+#   cargo run --bin flint -- render demo/neon_bloom.scene.toml --sweep neon.feeds_bloom=0,1
+#
+# Kuwahara keeps bloom on the original scene by default; a scene opts it in
+# with [post_process.styles.kuwahara] feeds_bloom = true (or
+# --style kuwahara:feeds_bloom=1).
+
+[scene]
+name = "Neon bloom"
+version = "1.0"
+description = "An hdr style that feeds bloom: the glow follows the style's own lines (#300)"
+
+[camera]
+position = [3.6, 1.5, 8.8]
+target = [0.9, 0.6, 4.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.12
+bloom_threshold = 1.0
+exposure = 1.1
+vignette_enabled = true
+vignette_intensity = 0.35
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[post_process.styles.neon]
+spacing = 0.2
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.03, 0.04, 0.12, 1.0]
+horizon_color = [0.20, 0.10, 0.22, 1.0]
+haze_color = [0.30, 0.16, 0.28, 0.6]
+cloud_tint = [0.40, 0.30, 0.45, 0.6]
+cloud_coverage = 0.25
+sun_glow = 0.4
+
+[entities.moon]
+[entities.moon.transform]
+position = [0, 50, 0]
+[entities.moon.light]
+type = "directional"
+direction = [0.75, -0.38, 0.35]
+color = [0.70, 0.78, 1.0]
+intensity = 1.6
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.cask]
+archetype = "furniture"
+[entities.cask.transform]
+position = [0.4, 0.48, 3.4]
+rotation = [0, 70, 0]
+scale = [0.5, 0.5, 0.5]
+[entities.cask.model]
+asset = "barrel"
+
+[entities.ybot]
+archetype = "character"
+[entities.ybot.transform]
+position = [-0.9, 0, 4.4]
+rotation = [0, 25, 0]
+[entities.ybot.model]
+asset = "YBotWithIdle"
+[entities.ybot.skeleton]
+skin = "Armature"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.4, 0.48, 5.4]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [2.1, 0.0, 2.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+# A lamp on the crate: bright in the scene, dimmed by the style
+[entities.lamp]
+archetype = "furniture"
+parent = "crate"
+[entities.lamp.transform]
+position = [0.0, 0.8, 0.0]
+[entities.lamp.bounds]
+min = [-0.12, 0.0, -0.12]
+max = [0.12, 0.35, 0.12]
+[entities.lamp.material]
+color = [1.0, 0.8, 0.5, 1.0]
+roughness = 1.0
+emissive = [9.0, 6.0, 2.5]
+
+[entities.lamp_light]
+parent = "crate"
+[entities.lamp_light.transform]
+position = [0.0, 1.3, 0.0]
+[entities.lamp_light.light]
+type = "point"
+color = [1.0, 0.75, 0.45]
+intensity = 4.0
+range = 6.0

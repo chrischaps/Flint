@@ -6,7 +6,8 @@
 # Looks (#279): named presets over a scene's whole [post_process]. This
 # beat is one camera move captured once per look (`--look`, its takes in
 # tools/showcase/film.toml), so the edit can cut between ascii_noir,
-# matrix, ink_wash, graphite and watercolor on the same frame of the move.
+# matrix, ink_wash, graphite, watercolor, coloured_pencil, blueprint and
+# charcoal on the same frame of the move.
 # The scene itself adds nothing: the look is the whole difference.
 
 [scene]

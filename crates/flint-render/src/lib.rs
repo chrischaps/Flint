@@ -11,6 +11,7 @@ pub mod bitmap_font;
 mod camera;
 mod context;
 mod debug;
+mod file_watch;
 pub mod frustum;
 pub mod gpu_select;
 pub mod bind_cache;
@@ -35,6 +36,7 @@ pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
 pub mod entity_style;
+pub mod post_style;
 pub mod style_mask;
 pub mod stylize;
 pub mod skinned_pipeline;
@@ -54,6 +56,7 @@ pub use glyph_atlas::{
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
+pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use context::{RenderContext, RenderError};
 pub use gpu_select::{list_adapters, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
@@ -101,7 +104,7 @@ pub use sprite2d_pipeline::{
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
-pub use texture_cache::{open_image, TextureCache};
+pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
 
 #[cfg(test)]
 mod tests {

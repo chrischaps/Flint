@@ -82,7 +82,7 @@ At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px
 
 | You want | Use |
 |---|---|
-| The whole game in a look | `[post_process.styles.<name>]`, or a [look](../concepts/stylize-passes.md#looks-and-sweeps) such as `--look ascii_noir` |
+| The whole game in a look | `[post_process.styles.<name>]`, or a [look](../concepts/stylize-passes.md#looks-in-scenes-f4-and-scripts): `look = "ascii_noir"` in the scene's `[post_process]`, `--look ascii_noir` to try one, `set_look` from a script |
 | A few things in a style, the world smooth | an `ascii_style` (or `style_mask`) on those entities, scope `entities` |
 | One thing to stay smooth under a whole-frame style | `enabled = false` on it (descendants follow) |
 | Glyphs that don't crawl as a prop slides | `grid = "object"` on that prop only |
@@ -90,7 +90,7 @@ At the HDR stage the glyphs are drawn at half resolution and upscaled: each 8 px
 | A painterly look that the fog and grade should touch | an HDR-stage style |
 | Marks that stay crisp under `--render-scale` | a Display-stage style |
 
-Today the mask covers static glTF meshes, procedural boxes and skinned meshes. Terrain, grass, particles, sprites and water can only be styled by the whole frame (#290, #310). A frame holds one glyph set (#335) and 63 per-entity variants (#336).
+Today the mask covers static glTF meshes, procedural boxes and skinned meshes. Terrain, grass, particles, sprites and water can only be styled by the whole frame (#290, #310). A frame holds up to 8 glyph sets, one per entity if you like (#335), and up to 4095 per-entity variants (#336).
 
 ## Tuning a look
 
@@ -101,7 +101,7 @@ flint render demo/ascii_entities.scene.toml --sweep ascii.cell=6,8,12 -o cells.p
 flint render demo/stylize_props.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
 ```
 
-Then confirm the winner with one render at the final size, since cells are in points. In the player or viewer, **F4 → Styles** tunes the same keys live. Its **Copy TOML** puts the block that reproduces the picture on the clipboard. See [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) and the reference's advice on [cell size and ramps](../concepts/stylize-passes.md#choosing-cell-size-and-ramp).
+Then confirm the winner with one render at the final size, since cells are in points. In the player or viewer, **F4 → Styles** tunes the same keys live. Its **Copy TOML** puts the block that reproduces the picture on the clipboard, and **Commit to scene** writes it into the scene file. See [Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps) and the reference's advice on [cell size and ramps](../concepts/stylize-passes.md#choosing-cell-size-and-ramp).
 
 ## Adding a style
 

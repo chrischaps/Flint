@@ -6,7 +6,12 @@
 //! 1. A name set programmatically via [`set_gpu_override`] (the `--gpu` CLI
 //!    flag on `play` / `render`).
 //! 2. `WGPU_ADAPTER_NAME` — case-insensitive substring match against the
-//!    adapter name (e.g. `NVIDIA`, `Intel`).
+//!    adapter name (e.g. `NVIDIA`, `Intel`). A name nothing matches falls
+//!    back to the power preference, except under `FLINT_REQUIRE_GPU`
+//!    ([`gpu_required`]), where it finds no adapter: CI asks for WARP by
+//!    name, and a run on anything else would test the wrong adapter (#314).
+//!    wgpu 23 hides WARP on a machine with a GPU; it appears on a runner
+//!    with none.
 //! 3. `WGPU_POWER_PREF` — `high`, `low`, or `none`.
 //! 4. Default: `PowerPreference::HighPerformance`, so dual-GPU laptops pick
 //!    the discrete card rather than whichever adapter enumerates first.
@@ -105,6 +110,16 @@ async fn select_by_name(
     });
 
     if matched.is_none() {
+        // A run that requires its GPU (CI on WARP, #314) asked for that
+        // adapter by name: drawing on another would test the wrong one
+        if gpu_required() {
+            tracing::error!(
+                "No GPU adapter matching {:?}; available: {:?}. FLINT_REQUIRE_GPU: no fallback.",
+                filter,
+                available
+            );
+            return None;
+        }
         tracing::warn!(
             "No GPU adapter matching {:?}; available: {:?}. Falling back to power preference.",
             filter,
@@ -119,6 +134,30 @@ async fn select_by_name(
             .await;
     }
     matched
+}
+
+/// Whether GPU tests must find an adapter (#314): `FLINT_REQUIRE_GPU` set
+/// to anything but `0` or empty. CI sets it on the job that renders on a
+/// software adapter, so a test that can't get one fails there instead of
+/// passing without having run.
+pub fn gpu_required() -> bool {
+    std::env::var("FLINT_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+/// What a GPU test calls when it found no adapter, before it returns
+/// (#314). It prints a note and the test passes, as on a machine with no
+/// GPU, unless [`gpu_required`], when it panics: a skip there is a failure.
+/// `why` names what was missing ("no GPU adapter", "no adapter with
+/// timestamp queries").
+#[track_caller]
+pub fn skip_without_gpu(why: &str) {
+    if gpu_required() {
+        panic!(
+            "{why}, and FLINT_REQUIRE_GPU is set; adapters: {:?}",
+            list_adapters()
+        );
+    }
+    eprintln!("{why}; skipping (FLINT_REQUIRE_GPU=1 fails instead)");
 }
 
 /// List available adapters as `(name, device type, backend)` strings.
