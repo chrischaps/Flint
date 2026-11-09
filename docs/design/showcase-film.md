@@ -131,7 +131,7 @@ vertical cut (#437), which is its own cut file over the same beats.
 **Two lists, one film (#593).** #436 first cut this film from a list of its
 own, `cut_16x9.toml`, timed in seconds (126 s), by an editor of its own,
 `edit.py`, with no sound; #438 had scored `cuts/master.toml` (120 s). Every
-ticket passed its own checks, and by beat 13 the picture was 6 s off its
+ticket passed its own checks, and by beat 13 the picture came 10.8 s after its
 music. #593 moved the titles onto `cuts/master.toml`, folded `edit.py` into
 `cut.py` and deleted both. `cut.py` now refuses a track whose report says
 it was scored to another list, and `check_cut.py` holds every shot's first
