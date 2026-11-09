@@ -34,6 +34,7 @@ mod primitives;
 pub mod quality;
 pub mod render_scale;
 pub mod render_stats;
+pub mod selection_outline;
 mod scene_renderer;
 pub mod shadow;
 pub mod entity_style;
@@ -228,9 +229,9 @@ mod tests {
     }
 
     #[test]
-    fn outline_shader_wgsl_parses() {
-        let source = include_str!("outline_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("outline_shader.wgsl failed to parse");
+    fn skinned_wire_shader_wgsl_parses() {
+        let source = include_str!("skinned_wire_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("skinned_wire_shader.wgsl failed to parse");
     }
 
     #[test]
