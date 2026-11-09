@@ -96,6 +96,71 @@ story's beats, the reveal's ramps, the mask's colours).
   `tools/showcase/cuts/`: cut on bar or half-bar lines and the music
   changes with the picture. See [Music](#music) below.
 
+### The 16:9 cut (#436)
+
+One landscape film for the chaps.dev YouTube channel and the Flint page:
+every beat in the table's order, 2 min 6 s at 3840x2160 and 60 fps.
+It opens on beat 01 under the film's title card and closes on 13's rise
+into the sky under a card naming the repo and the book. Each beat gets a
+lower third (its number of 13, its name, one line on what it shows); the
+looks beat is eight one-second shots, one per take, cut on the same orbit,
+under one lower third and a tag naming each look. Cuts are hard: every beat
+is the same clearing, so a cut reads as the place being redrawn.
+
+**Tools.** ffmpeg does the encode (8.0, the gyan.dev full build:
+`winget install Gyan.FFmpeg`; it is not in the repo, and a rebuild needs it
+on the PATH). The edit itself is `tools/showcase/edit.py` (Python, Pillow,
+numpy): it composes each film frame from its source PNG, draws the titles
+over it and pipes raw RGB to ffmpeg, so no editor project file has to be
+kept in step with the takes, and the film rebuilds after a beat is
+recaptured:
+
+```bash
+python tools/showcase/capture.py 08_pencil   # reshoot a beat after a style ticket lands
+python tools/showcase/edit.py                # the whole cut again: master, web, poster
+python tools/showcase/check_cut.py           # every frame against what the edit composed
+```
+
+The cut is a file, `tools/showcase/cut_16x9.toml`: shots (a take and a
+range of it), their titles and the encode settings. Titles are drawn in
+the edit rather than by the beats' `hud.rhai`, so the takes stay clean for
+the vertical cut (#437), which should be its own cut file over the same
+takes rather than a crop of this master with its titles burnt in.
+
+**What it made** (2026-11-08):
+
+| File | For | Format | Size |
+|---|---|---|---|
+| `many-hands-16x9-master.mp4` | YouTube | 3840x2160, 60 fps, H.264 High 5.2, crf 14, yuv420p, BT.709, 0.5 s closed GOPs, 81 Mbit/s | 1,276 MB |
+| `many-hands-web.mp4` | the Flint page | 1920x1080, 30 fps, H.264 High, crf 32, BT.709 | 36.4 MB |
+| `many-hands-web.webm` | the Flint page | 1920x1080, 30 fps, VP9 two-pass 2.1 Mbit/s, BT.709 | 33.1 MB |
+| `many-hands-poster.jpg` | the Flint page | 1920x1080, beat 13 at 3 s, no titles | 0.23 MB |
+
+They land in `~/flint-film/cuts/many-hands-16x9/` beside `<name>.json`
+(sizes), `<name>.check.json` (the frame checks), `<name>.frames.json` (which
+source frame each film frame is) and the thumbnails; none is in the repo.
+The 20 takes behind them, captured at 4K and 60 fps, are 10,940 frames and
+77 GB; the capture took about 22 minutes of player time, the edit and
+master encode 23 minutes (5.6 frames a second, x264 `slow` the bottleneck),
+the web files about 16 (11 of them the VP9 passes).
+
+Every frame of all three passed `check_cut.py` (in place, not repeated, the
+right picture, not torn; the book's guide has the table and the broken copy
+it was proved on). In Chrome 157 the web files presented every frame, none
+dropped; the master decoded all 7,560 in real time, and dropped 11 at
+presentation on a loaded machine.
+
+**Hosting.** The film is media, not part of the wasm or any game bundle, so
+it doesn't count against the 4 MB gzip line in
+[web.md's Size](web.md#size). On the Flint page it belongs where the page's
+other films are, as the hero `video` with `videoPoster`, which the page
+loads on its own. The page's current hero films are 1 to 6 MB for 20 to
+60 s; this one is 33 to 36 MB for 2:06, because ASCII is fine detail
+in every frame (the same cut at crf 27 and 60 fps was 80 MB, and 720p blurs
+8-point cells), so it should be click-to-play behind its poster
+(`preload="none"`), not a looping hero. Publishing it (the page, the book, YouTube) is outward-facing
+and waits for Chris.
+
 ### What main brought since the first draft
 
 The storyboard was drawn before 68 commits of stylize work landed. What
@@ -182,8 +247,8 @@ python tools/showcase/capture.py --verify   # each take twice, compared
 ```
 
 Takes land outside the repo (`~/flint-film/<beat>/<take>/frame_0001.png`;
-`--out` moves them). A 4K frame of these scenes is about 14 MB, so the
-whole film is about 76 GB at 4K and 19 GB at 1080p; the rig refuses to
+`--out` moves them). At 60 fps the film is 10,940 frames; a 4K frame of these scenes averaged
+7.0 MB, so the whole film is about 77 GB at 4K and 20 GB at 1080p; the rig refuses to
 start a run that won't fit.
 
 ## Determinism
