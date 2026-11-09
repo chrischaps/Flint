@@ -28,10 +28,11 @@ use std::path::{Path, PathBuf};
 use flint_core::components as comp;
 use flint_core::toml_util::toml_vec3;
 use flint_core::vfs;
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_procgen::{
-    AssetKind, ChannelSemantics, CompletedAsset, FailedAsset, GeneratorOutput, ImageData, MeshData,
-    ProcGenResolver,
+    AssetKind, ChannelSemantics, CompletedAsset, FailedAsset, GeneratorOutput, ImageData,
+    LivingRig, MeshData, ProcGenResolver,
 };
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
@@ -82,6 +83,10 @@ pub trait AssetSink {
     fn has_file(&self, name: &str, kind: AssetKind) -> bool;
     /// Upload (or replace) the mesh `name`.
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData);
+    /// Upload (or replace) a living lineage's skinned rest mesh as `name`.
+    fn upload_living(&mut self, name: &str, rig: &LivingRig);
+    /// Write one entity's own bone buffer, drawing the skinned mesh `name`.
+    fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]);
     /// Upload (or replace) the texture `name`.
     fn upload_image(&mut self, name: &str, image: &ImageData);
     /// Upload (or replace) the placeholder for `name`.
@@ -274,6 +279,11 @@ pub fn upload_output(
             Some(mesh) => sink.upload_mesh(name, mesh),
             None => return Err("it produced no LODs".into()),
         },
+        // Nothing here moves its bones, so it draws as the still mesh it is:
+        // a `living_prop` is what asks for the skinned path and a pose ring.
+        (GeneratorOutput::SkinnedMesh(skinned), AssetKind::Model) => {
+            sink.upload_mesh(name, &skinned.rest_mesh())
+        }
         (GeneratorOutput::Image(image), _) => sink.upload_image(name, image),
         (GeneratorOutput::ImageSet(images), _) if !images.is_empty() => {
             for (i, image) in images.iter().enumerate() {
@@ -423,6 +433,19 @@ impl AssetSink for GpuSink<'_> {
             .load_procedural_mesh_parts(self.device, name, parts);
     }
 
+    fn upload_living(&mut self, name: &str, rig: &LivingRig) {
+        // A placeholder may be standing under this name.
+        self.renderer.remove_mesh(name);
+        let import = super::living_props::import_of(name, rig);
+        self.renderer
+            .load_skinned_model(self.device, self.queue, name, &import);
+    }
+
+    fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
+        self.renderer
+            .update_bone_matrices(self.device, self.queue, entity, name, palette);
+    }
+
     fn upload_image(&mut self, name: &str, image: &ImageData) {
         let is_normal = matches!(image.channel_semantics, ChannelSemantics::Normal);
         if let Err(e) = self.renderer.replace_texture_rgba(
@@ -511,18 +534,20 @@ impl AssetSink for GpuSink<'_> {
     }
 }
 
-/// Resolve the scene's procgen assets into the renderer: discover specs,
-/// then catalog > procgen > file > placeholder for each name. Runs before
-/// the model loader, which then skips every name this uploaded.
+/// Resolve the scene's procgen assets into the renderer: discover specs, turn
+/// `living_prop` entities into living props, then catalog > procgen > file >
+/// placeholder for each other name. Runs before the model loader, which then
+/// skips every name this uploaded.
 pub fn resolve_scene(
     scene_path: &str,
-    world: &FlintWorld,
+    world: &mut FlintWorld,
     resolver: &mut ProcGenResolver,
     mode: ProcGenMode,
     mut sink: GpuSink<'_>,
 ) {
     let started = web_time::Instant::now();
     discover_specs(resolver, scene_path);
+    super::living_props::resolve(world, sink.config, resolver, &mut sink, mode);
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {
         return;
@@ -533,7 +558,7 @@ pub fn resolve_scene(
     // One line a load: how long procgen held the scene up, and where the
     // assets came from (#181: the disk tier is what makes a relaunch fast).
     // Deferred assets are queued, so they appear in none of the three.
-    println!(
+    eprintln!(
         "[procgen] {} asset(s) in {:.0} ms: {} generated, {} from disk, {} from memory",
         requests.len(),
         started.elapsed().as_secs_f64() * 1e3,
@@ -554,4 +579,4 @@ pub fn resolve_scene(
 
 #[cfg(test)]
 #[path = "procgen_assets_tests.rs"]
-mod tests;
+pub(super) mod tests;

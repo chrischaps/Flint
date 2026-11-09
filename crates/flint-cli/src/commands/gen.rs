@@ -16,6 +16,7 @@ use serde::Serialize;
 
 use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
+use super::gen_strip::{self, StripOptions};
 
 /// Human lines go to stdout, unless stdout is carrying something a program
 /// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
@@ -206,6 +207,65 @@ pub struct GenArgs {
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
     #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
+
+    /// Render a [living] spec over time as one labelled contact sheet, a PNG:
+    /// hold-and-glide evaluated per frame from the spec's step, glide and
+    /// stagger, the whole mesh rebuilt each frame, one fixed camera
+    #[arg(
+        long,
+        help_heading = "Living props",
+        conflicts_with_all = [
+            "ai_step", "batch", "format", "print_spec", "register", "save_spec", "seed",
+            "validate",
+        ]
+    )]
+    pub strip: bool,
+
+    /// With --strip: how many frames
+    #[arg(
+        long,
+        default_value_t = 48,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(1..=1024),
+        help_heading = "Living props"
+    )]
+    pub frames: u32,
+
+    /// With --strip: frames per second of game time
+    #[arg(
+        long,
+        default_value_t = 24.0,
+        requires = "strip",
+        value_parser = parse_fps,
+        help_heading = "Living props"
+    )]
+    pub fps: f32,
+
+    /// With --strip: columns in the grid [default: whatever makes a 4:3 sheet]
+    #[arg(
+        long,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(1..=256),
+        help_heading = "Living props"
+    )]
+    pub columns: Option<u32>,
+
+    /// With --strip: each frame's width and height in pixels
+    #[arg(
+        long,
+        default_value_t = 240,
+        requires = "strip",
+        value_parser = clap::value_parser!(u32).range(32..=2048),
+        help_heading = "Living props"
+    )]
+    pub cell_size: u32,
+}
+
+fn parse_fps(s: &str) -> std::result::Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(fps) if fps.is_finite() && fps > 0.0 => Ok(fps),
+        _ => Err(format!("'{s}' isn't a frame rate above 0")),
+    }
 }
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
@@ -303,10 +363,33 @@ pub fn run(args: GenArgs) -> Result<()> {
     for issue in &issues {
         eprintln!("warning: {label}: {issue}");
     }
-    if args.strict && !issues.is_empty() {
-        bail!(
-            "{} spec parameter(s) would be ignored (--strict)",
-            issues.len()
+    // A strip refuses a spec that can't live, so it has no need of the warning.
+    let living_issue = if args.strip {
+        None
+    } else {
+        living_issue(generator, &spec)
+    };
+    if let Some(issue) = &living_issue {
+        eprintln!("warning: {label}: {issue}");
+    }
+    let ignored = issues.len() + usize::from(living_issue.is_some());
+    if args.strict && ignored > 0 {
+        bail!("{ignored} spec parameter(s) would be ignored (--strict)");
+    }
+
+    if args.strip {
+        return gen_strip::run(
+            generator,
+            &spec,
+            &label,
+            StripOptions {
+                frames: args.frames,
+                fps: args.fps,
+                columns: args.columns,
+                cell_size: args.cell_size,
+            },
+            args.output.as_deref(),
+            args.dry_run,
         );
     }
 
@@ -320,7 +403,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     )?;
 
     if let Some(seed_val) = args.seed {
-        spec = spec_with_seed(&spec, seed_val);
+        spec = spec_with_lineage(&spec_with_seed(&spec, seed_val), seed_val);
     }
 
     if args.print_spec || args.save_spec.is_some() {
@@ -362,6 +445,25 @@ pub fn run(args: GenArgs) -> Result<()> {
             format_bytes(cost.estimated_texture_bytes)
         );
         say!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
+        if let (Some(living), None, Some(alive)) =
+            (&spec.living, &living_issue, generator.as_living())
+        {
+            let skeleton = alive
+                .structure(&spec, living.lineage_seed)
+                .with_context(|| format!("{label}: couldn't grow the living structure"))?;
+            let rig = alive
+                .rig(&spec, living.lineage_seed)
+                .with_context(|| format!("{label}: couldn't skin the living structure"))?;
+            say!();
+            say!(
+                "Living:     lineage {}: {} segments on {} bones, {} leaf cards, a ring of {} poses",
+                living.lineage_seed,
+                skeleton.segments.len(),
+                rig.mesh.bone_count(),
+                skeleton.leaf_bindings.len(),
+                living.pose_ring
+            );
+        }
         return Ok(());
     }
 
@@ -421,7 +523,10 @@ pub fn run(args: GenArgs) -> Result<()> {
         let tag = batch_total
             .map(|n| format!("[{}/{}] ", i + 1, n))
             .unwrap_or_default();
-        let seed_spec = spec_with_seed(&spec, seed);
+        let mut seed_spec = spec_with_seed(&spec, seed);
+        if batch_total.is_some() {
+            seed_spec = spec_with_lineage(&seed_spec, seed);
+        }
 
         // The cache: this spec + seed was registered before, by the
         // generator revision running now, and the store still holds every
@@ -480,6 +585,9 @@ pub fn run(args: GenArgs) -> Result<()> {
 
         if batch_total.is_some() {
             say!("{tag}Generating seed {seed}...");
+        } else if let (Some(living), None) = (&seed_spec.living, &living_issue) {
+            // Its `[seed]` plays no part: the tree grows from the lineage.
+            say!("Lineage:    {}", living.lineage_seed);
         } else {
             say!("Seed:       {}", describe_resolved_seed(&spec, seed));
         }
@@ -540,6 +648,17 @@ fn spec_with_seed(spec: &ProcGenSpec, seed: u64) -> ProcGenSpec {
     s
 }
 
+/// A seed asked for on the command line picks a living spec's lineage: that's
+/// the seed its tree grows from, so without this every seed bakes one tree.
+/// A spec's own `[seed]` doesn't, because `lineage_seed` is its identity.
+fn spec_with_lineage(spec: &ProcGenSpec, seed: u64) -> ProcGenSpec {
+    let mut s = spec.clone();
+    if let Some(living) = s.living.as_mut() {
+        living.lineage_seed = seed;
+    }
+    s
+}
+
 /// Generate output from a spec, returning the output and generation time.
 fn generate_and_get_output(
     spec: &ProcGenSpec,
@@ -555,6 +674,21 @@ fn generate_and_get_output(
 
 /// Look up the spec's generator, or explain which spec named an unknown one
 /// and what the choices are.
+/// Why a spec's `[living]` table would have no effect, if it wouldn't. The
+/// bake is still good, so this warns rather than fails.
+fn living_issue(generator: &dyn Generator, spec: &ProcGenSpec) -> Option<String> {
+    spec.living.as_ref()?;
+    let reason = match generator.as_living() {
+        None => format!(
+            "not a living prop: generator '{}' can't separate a structure from its poses; \
+             it gets shallow wooze only",
+            spec.generator
+        ),
+        Some(living) => living.check_living(spec).err()?.to_string(),
+    };
+    Some(format!("[living] would be ignored: {reason}"))
+}
+
 fn resolve_generator<'a>(
     registry: &'a GeneratorRegistry,
     spec: &ProcGenSpec,

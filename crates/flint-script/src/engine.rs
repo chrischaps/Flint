@@ -37,7 +37,12 @@ pub struct ScriptInstance {
     pub has_on_animation_end: bool,
     pub has_on_sequence_cue: bool,
     pub has_on_event: bool,
+    pub has_on_expression: bool,
     pub init_called: bool,
+    /// The name of the entity the script is on, which decides the order scripts
+    /// run in (empty until [`ScriptEngine::name_script`]). Entity ids differ run
+    /// to run, so a name is what makes the order the same every time (#8).
+    pub entity_name: String,
 }
 
 impl ScriptInstance {
@@ -57,6 +62,7 @@ impl ScriptInstance {
         let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         let has_on_event = has_function(&ast, cb::ON_EVENT);
+        let has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
 
         Self {
             ast,
@@ -76,7 +82,9 @@ impl ScriptInstance {
             has_on_animation_end,
             has_on_sequence_cue,
             has_on_event,
+            has_on_expression,
             init_called: false,
+            entity_name: String::new(),
         }
     }
 
@@ -97,6 +105,7 @@ impl ScriptInstance {
         self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         self.has_on_event = has_function(&ast, cb::ON_EVENT);
+        self.has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -122,6 +131,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_SCENE_ENTER, 0),
     (cb::ON_ANIMATION_END, 1),
     (cb::ON_EVENT, 2),
+    (cb::ON_EXPRESSION, 1),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -240,6 +250,31 @@ impl ScriptEngine {
         self.scripts.insert(entity, instance);
     }
 
+    /// Say which entity a script is on, by name, so it runs in its place in
+    /// [`Self::in_order`].
+    pub fn name_script(&mut self, entity: EntityId, name: &str) {
+        if let Some(script) = self.scripts.get_mut(&entity) {
+            script.entity_name = name.to_string();
+        }
+    }
+
+    /// The scripts `keep` picks, in the order every callback runs them: by the
+    /// name of the entity each is on, then by id among scripts with the same
+    /// name. Ids come from a process-wide counter and scenes load from a
+    /// `HashMap`, so ordering by id (or by the map) changed run to run, and a
+    /// script that read what another wrote that frame could see it or not.
+    /// Names are the scene's, so the order is the same every run (#8).
+    pub(crate) fn in_order(&self, keep: impl Fn(&ScriptInstance) -> bool) -> Vec<EntityId> {
+        let mut ids: Vec<(&str, EntityId)> = self
+            .scripts
+            .iter()
+            .filter(|(_, script)| keep(script))
+            .map(|(id, script)| (script.entity_name.as_str(), *id))
+            .collect();
+        ids.sort_by(|a, b| a.0.cmp(b.0).then(a.1.raw().cmp(&b.1.raw())));
+        ids.into_iter().map(|(_, id)| id).collect()
+    }
+
     /// Provide context for the current frame
     pub fn provide_context(&self, input: InputSnapshot, delta_time: f64, total_time: f64) {
         let mut c = crate::lock_or_recover(&self.ctx);
@@ -252,7 +287,7 @@ impl ScriptEngine {
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
         let _world_scope = WorldScope::new(&self.ctx, world);
 
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_init && !script.init_called {
@@ -298,7 +333,7 @@ impl ScriptEngine {
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
         let _world_scope = WorldScope::new(&self.ctx, world);
 
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_update {
@@ -360,7 +395,7 @@ impl ScriptEngine {
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
         let _world_scope = WorldScope::new(&self.ctx, world);
 
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_draw_ui {
@@ -512,20 +547,14 @@ impl ScriptEngine {
     }
 
     /// Broadcast a custom event to every script that defines
-    /// `on_event(name, data)`, in entity-id order so delivery is
+    /// `on_event(name, data)`, in [`Self::in_order`] so delivery is
     /// deterministic. `data` always arrives as a map: a non-table payload
     /// is wrapped as `#{ value: .. }` (ADR 0072).
     fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
-        let mut entity_ids: Vec<EntityId> = self
-            .scripts
-            .iter()
-            .filter(|(_, s)| s.has_on_event)
-            .map(|(id, _)| *id)
-            .collect();
+        let entity_ids = self.in_order(|s| s.has_on_event);
         if entity_ids.is_empty() {
             return;
         }
-        entity_ids.sort_by_key(|id| id.raw());
 
         let data = match data {
             toml::Value::Table(_) => api::toml_to_dynamic(data.clone()),
@@ -553,8 +582,37 @@ impl ScriptEngine {
         }
     }
 
+    /// Deliver expression states from outside the process (Flint#518), in
+    /// arrival order. Each becomes what `expression()` returns, then every
+    /// script that defines `on_expression(state)` hears it, in
+    /// [`Self::in_order`]. With no states this does nothing, so `expression()` holds the
+    /// last one until another arrives.
+    pub fn deliver_expressions(&mut self, world: &mut FlintWorld, states: Vec<rhai::Map>) {
+        if states.is_empty() {
+            return;
+        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
+        let entity_ids = self.in_order(|s| s.has_on_expression);
+
+        for state in states {
+            crate::lock_or_recover(&self.ctx).expression = state.clone();
+            for &entity_id in &entity_ids {
+                let script = self.scripts.get_mut(&entity_id).unwrap();
+                crate::lock_or_recover(&self.ctx).current_entity = entity_id;
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    cb::ON_EXPRESSION,
+                    (rhai::Dynamic::from_map(state.clone()),),
+                ) {
+                    tracing::warn!("on_expression error ({}): {}", script.source_path, e);
+                }
+            }
+        }
+    }
+
     fn call_action_on_all(&mut self, action: &str, world: &FlintWorld) {
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
 
@@ -626,7 +684,7 @@ impl ScriptEngine {
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
         let _world_scope = WorldScope::new(&self.ctx, world);
 
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_scene_exit {
@@ -648,7 +706,7 @@ impl ScriptEngine {
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
         let _world_scope = WorldScope::new(&self.ctx, world);
 
-        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_scene_enter {

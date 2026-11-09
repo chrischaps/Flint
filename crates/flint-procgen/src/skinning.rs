@@ -6,7 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BoundingBox, MaterialData, SubMesh};
+use crate::types::{BoundingBox, MaterialData, MeshData, SubMesh, Vertex};
+
+/// The most bones a skinned mesh can have: what the renderer's per-skeleton
+/// bone buffer holds (`flint_render::skinned_pipeline::MAX_BONES`).
+pub const MAX_SKINNED_BONES: usize = 256;
+
+/// How far a vertex's weights may stray from summing to 1.
+const WEIGHT_SUM_TOLERANCE: f32 = 1e-4;
 
 /// A skinned vertex with joint influences for skeletal animation.
 ///
@@ -138,7 +145,35 @@ impl SkinnedMeshData {
                 .sum::<usize>()
     }
 
+    /// The rest pose as a plain mesh, which is the same geometry without the
+    /// joints: for a caller that draws it holding still.
+    pub fn rest_mesh(&self) -> MeshData {
+        MeshData {
+            vertices: self
+                .vertices
+                .iter()
+                .map(|v| Vertex {
+                    position: v.position,
+                    normal: v.normal,
+                    tangent: v.tangent,
+                    uv: v.uv,
+                })
+                .collect(),
+            indices: self.indices.clone(),
+            materials: self.materials.clone(),
+            submeshes: self.submeshes.clone(),
+            bounding_box: self.bounding_box,
+        }
+    }
+
     pub fn validate(&self) -> crate::Result<()> {
+        // More would overrun the renderer's bone buffer when uploaded.
+        if self.skeleton.bones.len() > MAX_SKINNED_BONES {
+            return Err(crate::ProcGenError::InvalidMesh(format!(
+                "{} bones, and a skinned mesh can have at most {MAX_SKINNED_BONES}",
+                self.skeleton.bones.len()
+            )));
+        }
         if !self.indices.len().is_multiple_of(3) {
             return Err(crate::ProcGenError::InvalidMesh(format!(
                 "index count {} is not a multiple of 3",
@@ -163,6 +198,12 @@ impl SkinnedMeshData {
                         i, k, v.joint_indices[k], bone_count
                     )));
                 }
+            }
+            let sum: f32 = v.joint_weights.iter().sum();
+            if (sum - 1.0).abs() > WEIGHT_SUM_TOLERANCE {
+                return Err(crate::ProcGenError::InvalidMesh(format!(
+                    "vertex {i}'s joint weights sum to {sum}, not 1"
+                )));
             }
         }
         Ok(())

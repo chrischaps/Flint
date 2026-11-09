@@ -460,6 +460,7 @@ impl AnthropicAgent {
             },
             params,
             lod: None,
+            living: None,
         };
         Ok((spec, report))
     }
@@ -783,6 +784,7 @@ impl Ctx {
             },
             params,
             lod: None,
+            living: None,
         }
     }
 

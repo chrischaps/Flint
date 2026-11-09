@@ -1,0 +1,64 @@
+# A living form: one abstract shape that holds its silhouette while its
+# surface keeps boiling and its outline breathes.
+#
+#   flint gen specs/examples/form_living.procgen.toml -o form.glb        # the lineage's rest pose
+#   flint gen specs/examples/form_living.procgen.toml --strip -o strip.png  # a few seconds of it living
+#
+# form_v1 sweeps a body around a spine of bones and lays small two-sided cards on
+# it. The lineage seed fixes everything that makes it this form: the spine, the
+# lobes in its surface, where every card lies. Each pose is a smooth curve drawn
+# along the spine from a shape seed (a lean, a ripple, a swell, a turn), and the
+# cards ride their bones and turn on the jitter clock, as a tree's leaf cards do.
+#
+# This one is a held flame: wide low, narrowing to a point, leaning a little,
+# with cards standing up toward the tip so its edge flickers while it holds.
+
+generator = "form_v1"
+
+[meta]
+name = "form_living"
+description = "A living form: a held flame, lathed on a spine, with standing cards that boil"
+version = "1.0.0"
+tags = ["living", "form", "abstract"]
+
+[seed]
+mode = "fixed"
+value = 7
+
+[params]
+height = 1.25
+radius = 0.26
+# Radius fractions from base to tip, joined smoothly. Ending at 0 is a point.
+profile = [0.7, 1.0, 0.92, 0.66, 0.36, 0.0]
+round_base = 0.08
+round_tip = 0.0
+lean = 0.05
+# A slight hook near the tip, sideways to a camera on +Z.
+curl_deg = 24.0
+curl_bias = 2.2
+lobes = 0.05
+# Cards: denser and more upright toward the tip, so the flicker is at the edge.
+cards = 640
+card_size = 0.05
+card_aspect = 2.2
+card_tilt = 0.45
+card_rise = 1.5
+body_color = "#3A3129"
+card_color = "#B39B7C"
+# The pose vocabulary, at drift amplitude 1.
+bend_deg = 12.0
+ripple = 0.8
+ripple_waves = 1.6
+swell = 0.12
+stretch = 0.04
+
+[living]
+lineage_seed = 11
+step = 0.9
+glide = 0.45
+stagger = "per_level"
+# form_v1 reads drift.amplitude only: 1 is the pose params as written.
+drift = { amplitude = 1.0 }
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
+variance = { amount = 0.8, steady = 0.5, keep_size = true }
+echoes = { count = 4, spread = 0.9, alpha = 0.12 }

@@ -7,15 +7,15 @@ Flint includes an HDR post-processing pipeline that transforms the raw scene ren
 Instead of rendering directly to the screen, the scene is drawn to an intermediate **HDR buffer** (`Rgba16Float` format) that can store values brighter than 1.0. A series of fullscreen passes then process this buffer:
 
 ```
-Scene render        Depth       Kuwahara     SSAO       Volumetric   Bloom chain    Composite pass        FXAA
-(PBR, skinned,  ->  resolve  -> (optional -> depth-  -> shadow-   -> downsample  -> DoF, AO, god rays  -> (optional
- billboard,         (MSAA       painterly    based      based        upsample       bloom, fog, exposure    edge AA)
- particles,         sample 0)   pre-pass)    AO         god rays                    ACES, grade, desat,
- sky, ocean,                                                                        render mode, vignette,
- terrain, grass)                                                                    grain, dither
-     |                 |            |           |           |            |                |                   |
- Rgba16Float       depth       filtered     AO         vol          bloom          sRGB surface or       sRGB
- HDR buffer        texture     HDR          texture    texture      texture        FXAA intermediate     surface
+Scene render        Depth       Kuwahara     Contour      SSAO       Volumetric   Bloom chain    Composite pass        FXAA
+(PBR, skinned,  ->  resolve  -> (optional -> (optional -> depth-  -> shadow-   -> downsample  -> DoF, AO, god rays  -> (optional
+ billboard,         (MSAA       painterly    ink          based      based        upsample       bloom, fog, exposure    edge AA)
+ particles,         sample 0)   pre-pass)    lines)       AO         god rays                    ACES, grade, desat,
+ sky, ocean,                                                                                     render mode, vignette,
+ terrain, grass)                                                                                 grain, dither
+     |                 |            |            |           |           |            |                |                   |
+ Rgba16Float       depth       filtered     inked        AO         vol          bloom          sRGB surface or       sRGB
+ HDR buffer        texture     HDR          HDR          texture    texture      texture        FXAA intermediate     surface
 ```
 
 All scene pipelines --- PBR, skinned mesh, billboard sprite, particle, skybox, sky, ocean, terrain and grass --- render to the HDR buffer when post-processing is active. The PBR shader's built-in tonemapping is automatically disabled so it outputs linear HDR values for the composite pass to process. Kuwahara and FXAA resources are only allocated when their effect is enabled. Kuwahara is a [stylize pass](stylize-passes.md); stylize passes of the display stage (such as `invert`) run after the composite and before FXAA.
@@ -211,6 +211,8 @@ sharpness = 6.0
 hardness = 4.0
 ```
 
+In a scene with a `[wooze]` table its paint can also boil: `kuwahara_boil` (a plain `[post_process]` key beside `contour_boil` and `boil_on`, not one of the table's) moves the kernel and turns the strokes a little on each drawing. See [Shading boil](#shading-boil).
+
 | Key | Default | Menu range | Description |
 |-----|---------|------------|-------------|
 | `radius` | `4` | 1--8 | Kernel radius in scene pixels, rounded to a whole pixel; larger = broader strokes |
@@ -221,6 +223,68 @@ hardness = 4.0
 Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness` and `kuwahara_anisotropy` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
 
 The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing. Kuwahara is the first [stylize pass](stylize-passes.md): it runs through the same framework as every later style, in its HDR stage.
+
+## Contour (Ink Lines)
+
+The contour pass draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It runs after the Kuwahara filter, so paint sits under the ink and never smears it.
+
+Depth is read as the second difference of 1 / distance, which is zero on any flat surface however steep the view, so a floor seen at a grazing angle draws no lines.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `contour_enabled` | bool | `false` | Enable the pass |
+| `contour_width` | f32 | `1.25` | Half a line's width, in pixels at 1080p. Scaled with the frame, and never under a pixel's reach |
+| `contour_threshold` | f32 | `0.08` | How strong an edge must be before it starts to ink. Lower draws more |
+| `contour_strength` | f32 | `0.9` | How dark the ink goes, 0--1 |
+| `contour_luma` | f32 | `0.5` | How much edges in luminance count against edges in depth. 0 is silhouettes only |
+| `contour_color` | \[f32; 3\] | `[0.015, 0.012, 0.02]` | The ink's colour, linear |
+| `contour_fade` | f32 | `30.0` | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
+| `contour_boil` | f32 | `0.0` | How far each drawing moves the lines, and how much it changes their width and pressure |
+
+Its texture and pipeline are allocated the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
+
+## Shading Boil
+
+In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink can re-decide themselves on the field's beat, the way every frame of a rotoscoped film was redrawn. Each *drawing* moves the Kuwahara filter's kernel and turns its strokes, and moves the contour's lines, changes their width and lifts the pen in places. The scene under them stays where it is.
+
+![One drawing](../images/shading-boil-a.png)
+
+*`demo/shading_boil.scene.toml`, in which nothing moves.*
+
+![The next drawing](../images/shading-boil-b.png)
+
+*The same frame half a second later.*
+
+```toml
+[wooze]
+preset = "linklater"
+
+[post_process]
+kuwahara_enabled = true
+kuwahara_boil = 0.5
+contour_enabled = true
+contour_boil = 1.0
+boil_on = 1
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
+
+A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `demo/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
+
+The field's `jitter` sets how hard it boils: both `_boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
+
+With either `_boil` at 0, or no `[wooze]` table, that pass renders byte for byte as if boil didn't exist. The contour still draws in a scene with no field; its lines just hold still.
+
+To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
+
+```bash
+flint-player demo/shading_boil.scene.toml --schemas schemas \
+  --frame-step 0.0416666666666667 --screenshot out/f.png --screenshot-every 0.0416666666666667 --exit-after 2
+```
+
+Headless, `--boil-time <seconds>` picks the drawing: the same value gives the same pixels.
 
 ## Color Grade, Film Grain and FXAA
 
@@ -293,6 +357,7 @@ volumetric_enabled = false
 dof_strength = 0.4
 dof_focus_distance = 8.0
 dof_focus_range = 4.0
+contour_enabled = false
 grade_lift = [0.03, 0.02, 0.015]
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.04, 1.0, 0.94]
@@ -341,6 +406,9 @@ flint render scene.toml --dof 0.6 --dof-focus 10 --dof-range 5
 # Kuwahara
 flint render scene.toml --kuwahara-radius 4 --kuwahara-sharpness 8 --kuwahara-hardness 8 --kuwahara-anisotropy 1
 
+# Ink, and a drawing of the shading boil in a scene with a [wooze] table
+flint render scene.toml --contour --contour-width 1.5 --contour-boil 1 --kuwahara-boil 0.5 --boil-on 2 --boil-time 0.5
+
 # Grade, grain, FXAA, MSAA
 flint render scene.toml --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03 --fxaa --msaa 4
 
@@ -373,6 +441,17 @@ flint play scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 
 | `--kuwahara-sharpness <f32>` | Kuwahara sector sharpness |
 | `--kuwahara-hardness <f32>` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | Kuwahara anisotropy, 0--1 |
+| `--kuwahara-boil <f32>` | How far each drawing moves the paint |
+| `--contour` | Enable the contour pass |
+| `--contour-width <f32>` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | Film grain intensity |
 | `--grain-time <f32>` | Post time for grain and mode animation (default 0) |
 | `--grade-lift <r,g,b>` | Color grade lift |
@@ -399,6 +478,8 @@ There are no longer per-effect function keys. ADR 0053 consolidated every render
 | Bloom | Enabled, intensity, threshold, soft threshold |
 | Grade / Grain / FXAA | Lift, gamma, gain, Neutral grade button, film grain, FXAA |
 | Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
+| Contour | Enabled, width, threshold, strength, luma, ink colour, fade, boil |
+| Shading boil | Paint boil (Kuwahara's), hold each drawing (ones, twos, threes), and what the wooze field says now: step, jitter and the drawing |
 | Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater), mix, params |
 | Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
@@ -537,7 +618,7 @@ the Matrix mode nearly black.
 - **Rgba16Float** for the HDR buffer provides sufficient precision for bloom extraction without the memory cost of Rgba32Float
 - **Progressive downsample/upsample** (rather than a single Gaussian blur) produces wide, natural-looking bloom cheaply
 - **1x1 black fallback texture** when bloom is disabled avoids conditional bind group creation
-- **Lazy allocation** --- Kuwahara and FXAA pipelines and textures are created the first time they are enabled, so the default path pays nothing for them
+- **Lazy allocation** --- Kuwahara, contour and FXAA pipelines and textures are created the first time they are enabled, so the default path pays nothing for them
 - **Gate-safe defaults** --- MSAA, FXAA and film grain default off, and grain time is pinned at 0 headlessly, so `flint render` output stays byte-stable for pixel-diff gates
 - **Resize handling** --- `PostProcessResources` are recreated on window resize since the HDR texture and bloom mip chain are resolution-dependent
 - **Extended shadow depth** --- the shadow frustum's depth range is extended beyond the camera frustum so off-screen casters (ceilings, walls behind the camera) are captured in the shadow map, which is critical for correct volumetric shafts in enclosed spaces

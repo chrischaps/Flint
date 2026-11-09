@@ -290,6 +290,7 @@ impl PlayerApp {
         self.animation.clear();
         self.particles.clear();
         self.procgen_resolver.clear_queue();
+        self.procgen_resolver.clear_living_props();
 
         // Clear world
         self.world = FlintWorld::new();
@@ -298,6 +299,8 @@ impl PlayerApp {
         self.terrain = None;
         if let Some(renderer) = &mut self.scene_renderer {
             renderer.clear_terrain();
+            // Entity ids are never reused, so the old scene's bones are garbage.
+            renderer.clear_entity_bone_buffers();
             renderer.unload_grass();
         }
 
@@ -382,6 +385,8 @@ impl PlayerApp {
                     &new_scene_path,
                     scene_file.post_process.clone(),
                 );
+                self.scene_living = scene_file.living.clone();
+                self.scene_wooze = scene_file.wooze.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;
             }
@@ -417,9 +422,19 @@ impl PlayerApp {
             );
 
             // Procgen before the model loader: catalog > procgen > file (#32).
+            self.procgen_resolver
+                .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
+            self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
+            self.wooze_time = 0.0;
+            self.shallow_wooze.clear();
+            renderer.set_shallow_wooze(std::iter::empty());
+            super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
+            self.boil_clock = Default::default();
+            self.grass_wooze = Default::default();
+            self.living_tune.for_new_scene();
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
-                &self.world,
+                &mut self.world,
                 &mut self.procgen_resolver,
                 self.procgen_mode,
                 super::procgen_assets::GpuSink {
@@ -500,6 +515,7 @@ impl PlayerApp {
                 renderer.set_post_process_config(config);
                 renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
+                renderer.ensure_contour_resources(&context.device);
             }
         }
 

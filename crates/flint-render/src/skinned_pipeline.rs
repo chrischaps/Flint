@@ -19,6 +19,9 @@ pub struct SkinnedPipeline {
     pub transparent_additive_pipeline: wgpu::RenderPipeline,
     pub transparent_multiply_pipeline: wgpu::RenderPipeline,
     pub bone_bind_group_layout: wgpu::BindGroupLayout,
+    /// What shallow wooze's skinned pipelines build on (#215).
+    pub(crate) shader: wgpu::ShaderModule,
+    pub(crate) pipeline_layout: wgpu::PipelineLayout,
 }
 
 impl SkinnedPipeline {
@@ -277,18 +280,7 @@ impl SkinnedPipeline {
                     entry_point: Some("fs_skinned"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(crate::pipeline::ADDITIVE_BLEND),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -333,18 +325,7 @@ impl SkinnedPipeline {
                     entry_point: Some("fs_skinned"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Dst,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(crate::pipeline::MULTIPLY_BLEND),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -429,6 +410,8 @@ impl SkinnedPipeline {
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
             bone_bind_group_layout,
+            shader,
+            pipeline_layout,
         }
     }
 }

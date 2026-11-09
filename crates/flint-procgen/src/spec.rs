@@ -91,6 +91,356 @@ pub struct LodLevel {
     pub target_triangles: u32,
 }
 
+// ── Living props ───────────────────────────────────────────────────────────
+
+/// The params `[living] drift` may name.
+pub const DRIFT_PARAMS: &[&str] = &["branch_angle", "lsystem_tropism", "trunk_curve"];
+
+/// What `[living] jitter` may target.
+pub const JITTER_TARGETS: &[&str] = &["leaf_cards"];
+
+/// The `[living]` table: this spec is a prop that keeps drifting between
+/// versions of itself. `flint gen`'s bake doesn't read it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LivingConfig {
+    /// The seed that fixes the structure: the prop's identity. Required,
+    /// since a prop's identity shouldn't be left to a default.
+    pub lineage_seed: u64,
+    /// How many poses to keep ready.
+    #[serde(default = "default_pose_ring")]
+    pub pose_ring: u32,
+    /// The slow, large layer: changes the silhouette and always glides.
+    #[serde(default)]
+    pub drift: DriftConfig,
+    /// The fast, small layer: makes it feel drawn and may snap.
+    #[serde(default)]
+    pub jitter: JitterConfig,
+    /// Seconds between pose targets: one beat of the hold-and-glide clock.
+    #[serde(default = "default_step")]
+    pub step: f32,
+    /// How much of each step is spent easing to the next pose, 0 to 1: 0
+    /// holds and then snaps, 1 never holds.
+    #[serde(default = "default_glide")]
+    pub glide: f32,
+    /// How the branches fall out of phase with each other.
+    #[serde(default)]
+    pub stagger: Stagger,
+    /// How far poses wander from the lineage's, and where on the tree.
+    #[serde(default)]
+    pub variance: VarianceConfig,
+    /// Faint copies of the prop a little before and after now. Left out of a
+    /// spec's text unless changed, since they don't touch what's baked.
+    #[serde(default, skip_serializing_if = "EchoConfig::is_default")]
+    pub echoes: EchoConfig,
+}
+
+fn default_pose_ring() -> u32 {
+    8
+}
+
+fn default_step() -> f32 {
+    0.5
+}
+
+fn default_glide() -> f32 {
+    0.3
+}
+
+impl LivingConfig {
+    /// Check what the types can't, naming the key at fault.
+    pub fn validate(&self) -> Result<()> {
+        let bad = |key: &str, reason: String| {
+            Err(ProcGenError::InvalidParameter {
+                name: format!("living.{key}"),
+                reason,
+            })
+        };
+        let at_least_zero = |x: f32| x.is_finite() && x >= 0.0;
+        let unit = |x: f32| (0.0..=1.0).contains(&x);
+
+        if self.pose_ring < 2 {
+            return bad(
+                "pose_ring",
+                format!("{}: a ring needs at least 2 poses to blend", self.pose_ring),
+            );
+        }
+        if !self.step.is_finite() || self.step <= 0.0 {
+            return bad(
+                "step",
+                format!("{}: must be more than 0 seconds", self.step),
+            );
+        }
+        if !unit(self.glide) {
+            return bad("glide", format!("{}: must be in [0.0, 1.0]", self.glide));
+        }
+        if !at_least_zero(self.drift.amplitude) {
+            return bad(
+                "drift.amplitude",
+                format!("{}: must be 0 or more", self.drift.amplitude),
+            );
+        }
+        if let Some(p) = self
+            .drift
+            .params
+            .iter()
+            .find(|p| !DRIFT_PARAMS.contains(&p.as_str()))
+        {
+            return bad(
+                "drift.params",
+                format!("unknown param \"{p}\"; expected one of {DRIFT_PARAMS:?}"),
+            );
+        }
+        if !at_least_zero(self.jitter.amplitude) {
+            return bad(
+                "jitter.amplitude",
+                format!("{}: must be 0 or more", self.jitter.amplitude),
+            );
+        }
+        if let Some(t) = self
+            .jitter
+            .targets
+            .iter()
+            .find(|t| !JITTER_TARGETS.contains(&t.as_str()))
+        {
+            return bad(
+                "jitter.targets",
+                format!("unknown target \"{t}\"; expected one of {JITTER_TARGETS:?}"),
+            );
+        }
+        if !(self.jitter.step.is_finite() && self.jitter.step > 0.0) {
+            return bad(
+                "jitter.step",
+                format!("{}: must be more than 0", self.jitter.step),
+            );
+        }
+        if !unit(self.jitter.glide) {
+            return bad(
+                "jitter.glide",
+                format!("{}: must be in [0.0, 1.0]", self.jitter.glide),
+            );
+        }
+        if !unit(self.variance.amount) {
+            return bad(
+                "variance.amount",
+                format!("{}: must be in [0.0, 1.0]", self.variance.amount),
+            );
+        }
+        if !unit(self.variance.steady) {
+            return bad(
+                "variance.steady",
+                format!("{}: must be in [0.0, 1.0]", self.variance.steady),
+            );
+        }
+        if let Err((key, reason)) = self.echoes.check() {
+            return bad(&format!("echoes.{key}"), reason);
+        }
+        Ok(())
+    }
+}
+
+/// `[living] drift`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct DriftConfig {
+    /// How large the drift is.
+    pub amplitude: f32,
+    /// Which spec params it moves, from [`DRIFT_PARAMS`].
+    pub params: Vec<String>,
+}
+
+impl Default for DriftConfig {
+    fn default() -> Self {
+        Self {
+            amplitude: 0.35,
+            params: DRIFT_PARAMS.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+}
+
+/// `[living] jitter`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct JitterConfig {
+    /// How large the jitter is.
+    pub amplitude: f32,
+    /// What it moves, from [`JITTER_TARGETS`].
+    pub targets: Vec<String>,
+    /// Seconds between its targets. Fast, on threes at 24 fps by default.
+    pub step: f32,
+    /// How much of a step is spent easing, 0 to 1: 0 snaps, which is what
+    /// makes it read as drawn.
+    pub glide: f32,
+}
+
+impl Default for JitterConfig {
+    fn default() -> Self {
+        Self {
+            amplitude: 0.05,
+            targets: JITTER_TARGETS.iter().map(|t| t.to_string()).collect(),
+            step: 0.125,
+            glide: 0.0,
+        }
+    }
+}
+
+/// How much of an echo's alpha is gone per step of clock offset.
+const ECHO_FALLOFF: f32 = 0.55;
+
+/// The most echoes a prop may have: each is a bone palette and a draw per part.
+pub const MAX_ECHOES: u32 = 16;
+
+/// The widest `spread`, where [`ECHO_FALLOFF`] has taken an echo's alpha to nothing.
+pub const MAX_ECHO_SPREAD: f32 = 1.0 / ECHO_FALLOFF;
+
+/// How the offsets of [`EchoConfig::copies`] bunch toward now. With three pairs
+/// and a spread of 0.9 this is the look chosen by eye in the mock-up: about
+/// 0.25, 0.55 and 0.9 of a step.
+const ECHO_BUNCHING: f32 = 1.17;
+
+/// `[living] echoes`: faint copies of the prop drawn in its own colours, each
+/// sampled a little before or after now on its clock. Every prop has them by
+/// default, and `count = 0` turns them off and costs nothing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct EchoConfig {
+    /// How many copies to draw.
+    pub count: u32,
+    /// How far the farthest copy is from now, in steps of the clock.
+    pub spread: f32,
+    /// The opacity of a copy at now, which falls off with distance from it.
+    pub alpha: f32,
+}
+
+impl Default for EchoConfig {
+    fn default() -> Self {
+        Self {
+            count: 6,
+            spread: 0.9,
+            alpha: 0.2,
+        }
+    }
+}
+
+/// One copy of a prop: see [`EchoConfig::copies`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EchoCopy {
+    /// Where it is on the clock, in steps from now. Negative is behind.
+    pub offset: f32,
+    /// How opaque it's drawn, 0 to 1.
+    pub opacity: f32,
+}
+
+impl EchoConfig {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The copies, in the order to draw them: farthest from now first, and of
+    /// a pair the one behind first. An odd count's spare is behind, since a
+    /// trailing copy reads better than one that leads. Nothing that would draw
+    /// nothing is listed, so `count = 0` and `alpha = 0` are both no copies.
+    pub fn copies(&self) -> Vec<EchoCopy> {
+        let pairs = self.count.div_ceil(2);
+        (0..self.count)
+            .map(|i| {
+                let pair = pairs - i / 2;
+                let reach = self.spread * (pair as f32 / pairs as f32).powf(ECHO_BUNCHING);
+                EchoCopy {
+                    offset: if i % 2 == 0 { -reach } else { reach },
+                    opacity: self.alpha * (1.0 - reach * ECHO_FALLOFF),
+                }
+            })
+            .filter(|copy| copy.offset != 0.0 && copy.opacity > 0.0)
+            .collect()
+    }
+
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        if self.count > MAX_ECHOES {
+            return Err(("count", format!("{}: at most {MAX_ECHOES}", self.count)));
+        }
+        if !(0.0..=MAX_ECHO_SPREAD).contains(&self.spread) {
+            return Err((
+                "spread",
+                format!(
+                    "{}: must be from 0 to {MAX_ECHO_SPREAD:.2} steps, where an echo has faded to nothing",
+                    self.spread
+                ),
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.alpha) {
+            return Err(("alpha", format!("{}: must be in [0.0, 1.0]", self.alpha)));
+        }
+        Ok(())
+    }
+}
+
+/// `[living] stagger`: each part's phase offset into the step cycle.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Stagger {
+    /// The whole prop moves at once.
+    None,
+    /// Offset by branching depth.
+    #[default]
+    PerLevel,
+    /// Offset by segment.
+    PerBranch,
+}
+
+/// `[living] variance` (#229): how much of the difference between poses is
+/// left, and where on the tree.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct VarianceConfig {
+    /// How much of each pose's difference from the base is left, 0 to 1.
+    pub amount: f32,
+    /// How much of that is held back from the trunk side: 0 even, 1 all at
+    /// the tips.
+    pub steady: f32,
+    /// Scale each pose so its bounding box matches the base's, as near as one
+    /// scale can: the side furthest over is as far over as the side furthest
+    /// under is under.
+    pub keep_size: bool,
+}
+
+impl VarianceConfig {
+    /// Nothing held back: a pose is exactly what its shape seed grew.
+    pub const FULL: Self = Self {
+        amount: 1.0,
+        steady: 0.0,
+        keep_size: false,
+    };
+
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        for (key, value) in [("amount", self.amount), ("steady", self.steady)] {
+            if !(0.0..=1.0).contains(&value) {
+                return Err((key, format!("{value}: must be in [0.0, 1.0]")));
+            }
+        }
+        Ok(())
+    }
+
+    /// How much of its difference from the base a segment at `depth` keeps:
+    /// `amount × ((1 − steady) + steady × (depth / max_depth)^1.3)`.
+    pub fn weight(&self, depth: u32, max_depth: u32) -> f32 {
+        let level = depth as f32 / max_depth.max(1) as f32;
+        self.amount * ((1.0 - self.steady) + self.steady * level.powf(1.3))
+    }
+}
+
+impl Default for VarianceConfig {
+    fn default() -> Self {
+        Self {
+            amount: 0.35,
+            steady: 0.8,
+            keep_size: true,
+        }
+    }
+}
+
 // ── ProcGenSpec ────────────────────────────────────────────────────────────
 
 /// A complete procedural generation specification.
@@ -111,6 +461,10 @@ pub struct ProcGenSpec {
     /// Optional LOD levels.
     #[serde(default)]
     pub lod: Option<Vec<LodLevel>>,
+    /// Optional `[living]` table. Left out when absent, so a spec without one
+    /// keeps its content hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub living: Option<LivingConfig>,
 }
 
 fn default_params() -> toml::Value {
@@ -120,7 +474,12 @@ fn default_params() -> toml::Value {
 impl ProcGenSpec {
     /// Parse a spec from a TOML string.
     pub fn parse(toml_str: &str) -> Result<Self> {
-        toml::from_str(toml_str).map_err(|e| ProcGenError::SpecParseError(e.to_string()))
+        let spec: Self =
+            toml::from_str(toml_str).map_err(|e| ProcGenError::SpecParseError(e.to_string()))?;
+        if let Some(living) = &spec.living {
+            living.validate()?;
+        }
+        Ok(spec)
     }
 
     /// Load a spec from a TOML file.
@@ -326,6 +685,212 @@ mode = "random"
     fn parse_error_on_bad_toml() {
         let result = ProcGenSpec::parse("not valid { toml");
         assert!(result.is_err());
+    }
+
+    fn with_living(table: &str) -> String {
+        format!("{MINIMAL_SPEC}\n[living]\n{table}\n")
+    }
+
+    #[test]
+    fn a_spec_without_living_keeps_its_hash_text() {
+        let spec = ProcGenSpec::parse(MINIMAL_SPEC).unwrap();
+        assert!(spec.living.is_none());
+        assert!(!toml::to_string(&spec).unwrap().contains("living"));
+    }
+
+    #[test]
+    fn living_parses_the_designs_table() {
+        let spec = ProcGenSpec::parse(&with_living(
+            r#"
+lineage_seed = 7
+pose_ring = 12
+drift = { amplitude = 0.2, params = ["branch_angle", "lsystem_tropism"] }
+jitter = { amplitude = 0.01, targets = ["leaf_cards"] }
+stagger = "per_branch"
+variance = { amount = 1, steady = 0, keep_size = false }
+"#,
+        ))
+        .unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert_eq!(living.lineage_seed, 7);
+        assert_eq!(living.pose_ring, 12);
+        assert_eq!(living.drift.amplitude, 0.2);
+        assert_eq!(living.drift.params.len(), 2);
+        assert_eq!(living.jitter.amplitude, 0.01);
+        assert_eq!(living.stagger, Stagger::PerBranch);
+        assert_eq!(living.variance.amount, 1.0);
+        assert_eq!(living.variance.steady, 0.0);
+        assert!(!living.variance.keep_size);
+
+        // It survives the round trip every save and content hash takes.
+        let again = ProcGenSpec::parse(&toml::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn echoes_default_to_six_and_stay_out_of_a_specs_text() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let echoes = spec.living.as_ref().unwrap().echoes;
+        assert_eq!(echoes, EchoConfig::default());
+        assert_eq!(echoes.count, 6);
+        assert!(!toml::to_string(&spec).unwrap().contains("echoes"));
+    }
+
+    #[test]
+    fn six_echoes_sit_where_the_mock_up_put_them() {
+        let copies = EchoConfig::default().copies();
+        let offsets: Vec<f32> = copies.iter().map(|c| c.offset).collect();
+        let want = [-0.9, 0.9, -0.56, 0.56, -0.25, 0.25];
+        assert_eq!(offsets.len(), want.len());
+        for (got, want) in offsets.iter().zip(want) {
+            assert!((got - want).abs() < 0.01, "{offsets:?}");
+        }
+        // alpha x (1 - |offset| x 0.55), and so nearer copies are stronger.
+        assert!((copies[0].opacity - 0.2 * (1.0 - 0.9 * 0.55)).abs() < 1e-5);
+        assert!(copies[4].opacity > copies[2].opacity);
+        assert!(copies[2].opacity > copies[0].opacity);
+        assert_eq!(copies[0].opacity, copies[1].opacity);
+    }
+
+    #[test]
+    fn no_copy_is_listed_that_would_draw_nothing() {
+        let off = |count, spread, alpha| {
+            EchoConfig {
+                count,
+                spread,
+                alpha,
+            }
+            .copies()
+        };
+        assert!(off(0, 0.9, 0.2).is_empty());
+        assert!(off(6, 0.0, 0.2).is_empty());
+        assert!(off(6, 0.9, 0.0).is_empty());
+    }
+
+    #[test]
+    fn an_odd_count_keeps_its_spare_behind() {
+        let copies = EchoConfig {
+            count: 3,
+            ..Default::default()
+        }
+        .copies();
+        assert_eq!(copies.len(), 3);
+        assert!(copies[0].offset < 0.0 && copies[1].offset > 0.0 && copies[2].offset < 0.0);
+        assert!(copies[2].offset.abs() < copies[0].offset.abs());
+    }
+
+    #[test]
+    fn echoes_are_checked_at_parse() {
+        for (table, key) in [
+            ("count = 17", "living.echoes.count"),
+            ("spread = -0.1", "living.echoes.spread"),
+            ("spread = 2.0", "living.echoes.spread"),
+            ("alpha = 1.5", "living.echoes.alpha"),
+        ] {
+            let text = with_living(&format!("lineage_seed = 3\nechoes = {{ {table} }}"));
+            let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
+            assert!(error.contains(key), "{table}: {error}");
+        }
+    }
+
+    #[test]
+    fn living_reads_and_checks_step_and_glide() {
+        let table = "lineage_seed = 3\nstep = 0.25\nglide = 0.8";
+        let spec = ProcGenSpec::parse(&with_living(table)).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert_eq!((living.step, living.glide), (0.25, 0.8));
+
+        for (table, says) in [
+            ("lineage_seed = 3\nstep = 0", "living.step"),
+            ("lineage_seed = 3\nstep = -1", "living.step"),
+            ("lineage_seed = 3\nglide = 1.5", "living.glide"),
+            ("lineage_seed = 3\nglide = -0.1", "living.glide"),
+        ] {
+            let error = ProcGenSpec::parse(&with_living(table))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(says), "{table}: {error}");
+        }
+    }
+
+    #[test]
+    fn living_fills_in_defaults_from_the_lineage_alone() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let living = spec.living.unwrap();
+        assert_eq!(living.pose_ring, 8);
+        assert_eq!(living.step, 0.5);
+        assert_eq!(living.glide, 0.3);
+        assert_eq!(living.stagger, Stagger::PerLevel);
+        assert_eq!(living.drift, DriftConfig::default());
+        assert_eq!(living.jitter, JitterConfig::default());
+        assert_eq!(
+            living.variance,
+            VarianceConfig {
+                amount: 0.35,
+                steady: 0.8,
+                keep_size: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_partial_nested_table_keeps_its_other_defaults() {
+        let spec = ProcGenSpec::parse(&with_living(
+            "lineage_seed = 3\nvariance = { amount = 0.5 }",
+        ))
+        .unwrap();
+        let variance = spec.living.unwrap().variance;
+        assert_eq!(variance.amount, 0.5);
+        assert_eq!(variance.steady, 0.8);
+    }
+
+    #[test]
+    fn malformed_living_names_the_bad_key() {
+        for (table, key) in [
+            ("pose_ring = 8", "lineage_seed"),
+            ("lineage_seed = -1", "lineage_seed"),
+            ("lineage_seed = 7\npose_rng = 8", "pose_rng"),
+            ("lineage_seed = 7\npose_ring = \"eight\"", "pose_ring"),
+            ("lineage_seed = 7\npose_ring = 1", "living.pose_ring"),
+            (
+                "lineage_seed = 7\ndrift = { amplitude = 0.1, parms = [] }",
+                "parms",
+            ),
+            (
+                "lineage_seed = 7\ndrift = { amplitude = -0.1 }",
+                "living.drift.amplitude",
+            ),
+            (
+                "lineage_seed = 7\ndrift = { params = [\"branch_angel\"] }",
+                "branch_angel",
+            ),
+            (
+                "lineage_seed = 7\njitter = { amplitude = -1 }",
+                "living.jitter.amplitude",
+            ),
+            (
+                "lineage_seed = 7\njitter = { targets = [\"bark\"] }",
+                "living.jitter.targets",
+            ),
+            ("lineage_seed = 7\nstagger = \"per_twig\"", "stagger"),
+            (
+                "lineage_seed = 7\nvariance = { amount = 1.5 }",
+                "living.variance.amount",
+            ),
+            (
+                "lineage_seed = 7\nvariance = { steady = -0.5 }",
+                "living.variance.steady",
+            ),
+            (
+                "lineage_seed = 7\nvariance = { keep_size = 1 }",
+                "keep_size",
+            ),
+        ] {
+            let message = ProcGenSpec::parse(&with_living(table))
+                .expect_err(table)
+                .to_string();
+            assert!(message.contains(key), "{table:?} gave: {message}");
+        }
     }
 
     #[test]

@@ -164,6 +164,8 @@ fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off")),
         )
+        // Stdout belongs to what a command answers with, such as --report json.
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();

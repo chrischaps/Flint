@@ -20,9 +20,18 @@ pub fn load_scene<P: AsRef<Path>>(
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
+    fill_in_preset(&mut scene_file, path);
 
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file))
+}
+
+/// Fill in what a `[wooze] preset` file says. A look lab shouldn't refuse to start
+/// over one: what's wrong is named, and `flint validate` fails on it.
+fn fill_in_preset(scene_file: &mut SceneFile, path: &Path) {
+    for issue in crate::wooze::apply_preset_file(scene_file, path) {
+        tracing::warn!("{issue}");
+    }
 }
 
 /// Load a scene from a TOML string (no prefab expansion — no filesystem access)
@@ -68,6 +77,7 @@ pub fn reload_scene<P: AsRef<Path>>(
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
+    fill_in_preset(&mut scene_file, path);
 
     // Clear existing world
     world.clear();
@@ -632,6 +642,36 @@ position = [2.5, 1.0, -3.5]
             (table_t.position.z - (-3.5)).abs() < 0.001,
             "table z={}, expected -3.5",
             table_t.position.z
+        );
+    }
+
+    #[test]
+    fn test_load_living_table() {
+        let file: crate::SceneFile = toml::from_str(
+            r#"
+[scene]
+name = "grove"
+
+[living]
+shadows = "drift"
+"#,
+        )
+        .unwrap();
+        let living = file.living.expect("[living] should be present");
+        assert_eq!(living.shadows.as_deref(), Some("drift"));
+
+        let bad = toml::from_str::<crate::SceneFile>(
+            r#"
+[scene]
+name = "grove"
+
+[living]
+glide = 0.3
+"#,
+        );
+        assert!(
+            bad.is_err(),
+            "glide is [wooze]'s now, and shouldn't pass for nothing"
         );
     }
 }

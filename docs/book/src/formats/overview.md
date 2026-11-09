@@ -142,6 +142,16 @@ fxaa = false
 | `dof_focus_distance` | f32 | `10.0` | Focus plane distance in view metres |
 | `dof_focus_range` | f32 | `5.0` | Half-width of the in-focus band in view metres |
 | `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness`, `kuwahara_anisotropy` | | | Older spellings of `[post_process.styles.kuwahara]`, still read (see [Post-Processing](../concepts/post-processing.md#kuwahara-painterly-filter)) |
+| `kuwahara_boil` | f32 | `0.0` | With a `[wooze]` table, how far each drawing moves the paint, as a share of the radius |
+| `contour_enabled` | bool | `false` | Ink lines from breaks in depth and luminance |
+| `contour_width` | f32 | `1.25` | Half a line's width, in pixels at 1080p |
+| `contour_threshold` | f32 | `0.08` | How strong an edge must be before it inks |
+| `contour_strength` | f32 | `0.9` | How dark the ink goes, 0--1 |
+| `contour_luma` | f32 | `0.5` | How much luminance edges count; `0` is silhouettes only |
+| `contour_color` | \[f32; 3\] | `[0.015, 0.012, 0.02]` | The ink's colour, linear |
+| `contour_fade` | f32 | `30.0` | Metres at which a line has faded by half; `0` never fades |
+| `contour_boil` | f32 | `0.0` | With a `[wooze]` table, how far each drawing moves the lines |
+| `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
 | `film_grain` | f32 | `0` | Animated grain; `0.02`–`0.05` is subtle |
 | `grade_lift` | `[f32; 3]` | `[0, 0, 0]` | Per-channel add after ACES tone mapping |
 | `grade_gamma` | `[f32; 3]` | `[1, 1, 1]` | Per-channel midtone curve |

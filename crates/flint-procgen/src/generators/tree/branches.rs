@@ -151,9 +151,25 @@ pub(super) fn grow_branch_segments(
     trunk: &TrunkSpine,
     rng: &mut SeededRng,
 ) -> Result<Vec<BranchSegment>> {
-    match params.method {
+    let mut segments = match params.method {
         BranchMethod::LSystem => generate_lsystem_branches(params, trunk, rng),
         BranchMethod::SpaceColonization => generate_colonization_branches(params, trunk, rng),
+    }?;
+    link_segments(&mut segments);
+    Ok(segments)
+}
+
+/// Give each segment its id (its index) and its parent: the latest earlier
+/// segment whose end is this one's start, on the same grid [`extract_tips`]
+/// and [`scaffold_limbs`] use to decide two points are one. A segment with
+/// no such parent leaves the trunk.
+pub fn link_segments(segments: &mut [BranchSegment]) {
+    let mut ending_at: HashMap<[i32; 3], u32> = HashMap::with_capacity(segments.len());
+    for (i, seg) in segments.iter_mut().enumerate() {
+        let id = i as u32;
+        seg.id = id;
+        seg.parent = ending_at.get(&quantize_position(seg.start)).copied();
+        ending_at.insert(quantize_position(seg.end), id);
     }
 }
 
@@ -260,6 +276,8 @@ fn generate_lsystem_branches(
                 radius_start: (seg.radius_start * thicken).min(cap),
                 radius_end: (seg.radius_end * thicken).min(cap),
                 depth: seg.depth,
+                id: 0,
+                parent: None,
             });
         }
     }
@@ -315,6 +333,8 @@ fn sleeve_the_tip(segments: &mut Vec<BranchSegment>, trunk: &TrunkSpine) {
             radius_start: r,
             radius_end: joint,
             depth: 1,
+            id: 0,
+            parent: None,
         },
     );
 }
@@ -448,6 +468,8 @@ fn generate_colonization_branches(
             radius_start: nodes[parent].radius.min(cap),
             radius_end: node.radius.min(cap),
             depth: node.depth.max(1),
+            id: 0,
+            parent: None,
         });
     }
     sleeve_the_tip(&mut segments, trunk);
@@ -551,6 +573,9 @@ fn colonize_crown(
 struct Limb {
     points: Vec<Vec3>,
     radii: Vec<f32>,
+    /// The segments it runs through: `segments[k]` joins `points[k]` to
+    /// `points[k + 1]`.
+    segments: Vec<usize>,
 }
 
 /// Join segments into limbs. Where a segment ends, the child that carries on
@@ -598,6 +623,7 @@ fn join_limbs(segments: &[BranchSegment]) -> Vec<Limb> {
         let mut limb = Limb {
             points: vec![seg.start, seg.end],
             radii: vec![seg.radius_start, seg.radius_end],
+            segments: vec![first],
         };
         let mut at = first;
         // A limb can't be longer than every segment; the bound guards loops.
@@ -605,6 +631,7 @@ fn join_limbs(segments: &[BranchSegment]) -> Vec<Limb> {
             let Some(c) = next[at] else { break };
             limb.points.push(segments[c].end);
             limb.radii.push(segments[c].radius_end);
+            limb.segments.push(c);
             at = c;
         }
         limbs.push(limb);
@@ -713,6 +740,47 @@ pub fn segments_to_mesh(segments: &[BranchSegment], base_radial_segments: u32) -
     }];
 
     Ok(mesh)
+}
+
+/// Which segments move each vertex of [`segments_to_mesh`]'s tubes, in vertex
+/// order: one id, or two sharing the vertex evenly.
+///
+/// A ring where a limb carries on from one segment to the next belongs to
+/// both, so a bend turns the ring half way and doesn't crease it. A limb's
+/// first and last rings, and the caps that fan from them, belong to their one
+/// segment. Rings are shared along a limb, so no pose can tear one open.
+pub(super) fn tube_influences(
+    segments: &[BranchSegment],
+    base_radial_segments: u32,
+) -> Vec<(u32, Option<u32>)> {
+    let limbs = join_limbs(segments);
+    let thickest = limbs.iter().map(|l| l.radii[0]).fold(0.0f32, f32::max);
+    let mut influences = Vec::new();
+    for limb in &limbs {
+        let radii = tapered_radii(limb);
+        let id = |k: usize| segments[limb.segments[k]].id;
+        let first = (id(0), None);
+        let last = (id(limb.segments.len() - 1), None);
+
+        // A circle's ring repeats its first vertex as the seam (see `tube_size`).
+        let row = radial_segments_for(limb.radii[0], thickest, base_radial_segments) as usize + 1;
+        for ring in 0..radii.len() {
+            let owner = match ring {
+                0 => first,
+                r if r == radii.len() - 1 => last,
+                r => (id(r - 1), Some(id(r))),
+            };
+            influences.extend(std::iter::repeat_n(owner, row));
+        }
+        // The start cap's centre comes first, then the end cap's.
+        if radii[0] > 1e-10 {
+            influences.push(first);
+        }
+        if radii[radii.len() - 1] > 1e-10 {
+            influences.push(last);
+        }
+    }
+    influences
 }
 
 // ─── Tip Extraction ─────────────────────────────────────────────────────────
@@ -1095,6 +1163,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.08,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
             BranchSegment {
                 start: Vec3::new(1.0, 6.0, 0.0),
@@ -1102,6 +1172,8 @@ mod tests {
                 radius_start: 0.08,
                 radius_end: 0.05,
                 depth: 2,
+                id: 0,
+                parent: None,
             },
         ];
 
@@ -1209,6 +1281,8 @@ mod tests {
             radius_start: 0.1,
             radius_end: 0.05,
             depth: 0,
+            id: 0,
+            parent: None,
         }];
 
         let tip = Vec3::new(0.0, 5.0, 0.0);
@@ -1229,6 +1303,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.08,
                 depth: 0,
+                id: 0,
+                parent: None,
             },
             BranchSegment {
                 start: Vec3::new(1.0, 0.0, 0.0),
@@ -1236,6 +1312,8 @@ mod tests {
                 radius_start: 0.08,
                 radius_end: 0.05,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
             // Branch: A → D (terminal)
             BranchSegment {
@@ -1244,6 +1322,8 @@ mod tests {
                 radius_start: 0.1,
                 radius_end: 0.06,
                 depth: 1,
+                id: 0,
+                parent: None,
             },
         ];
 
@@ -1350,6 +1430,8 @@ mod tests {
             radius_start: r0,
             radius_end: r1,
             depth: 1,
+            id: 0,
+            parent: None,
         };
         let a = Vec3::ZERO;
         let b = Vec3::new(0.0, 1.0, 0.0);
@@ -1424,6 +1506,8 @@ mod tests {
             radius_start: 0.2,
             radius_end: 0.1,
             depth: 1,
+            id: 0,
+            parent: None,
         }];
         let mesh = segments_to_mesh(&segments, 6).unwrap();
         let axis = TrunkSpine {

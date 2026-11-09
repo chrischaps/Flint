@@ -129,6 +129,7 @@ const ASSET_DIRS: &[&str] = &[
     "textures",
     "sprites",
     "particles",
+    "wooze",
     "animations",
     "prefabs",
     "fonts",

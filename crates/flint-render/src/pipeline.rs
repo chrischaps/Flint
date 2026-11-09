@@ -19,6 +19,34 @@ pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
 }
 use bytemuck::{Pod, Zeroable};
 
+/// Additive blending: src*SrcAlpha + dst*One.
+pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::SrcAlpha,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+/// Multiply blending: src*DstColor + dst*OneMinusSrcAlpha.
+pub(crate) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Dst,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
 /// Blend mode for transparent materials
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlendMode {
@@ -374,6 +402,12 @@ pub struct RenderPipeline {
     /// group (binding 4) rather than in each material's: linear, with linear
     /// mips, repeating, as `TextureCache` made every texture's own.
     pub material_sampler: wgpu::Sampler,
+    /// What shallow wooze's pipelines build on (#215), made only when a scene
+    /// asks for them: the PBR fragment stage, and the layout and targets it has.
+    pub(crate) shader: wgpu::ShaderModule,
+    pub(crate) pipeline_layout: wgpu::PipelineLayout,
+    pub(crate) format: wgpu::TextureFormat,
+    pub(crate) sample_count: u32,
 }
 
 impl RenderPipeline {
@@ -889,18 +923,7 @@ impl RenderPipeline {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(ADDITIVE_BLEND),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -945,18 +968,7 @@ impl RenderPipeline {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Dst,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(MULTIPLY_BLEND),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -1000,6 +1012,10 @@ impl RenderPipeline {
             material_bind_group_layout,
             light_bind_group_layout,
             material_sampler,
+            shader,
+            pipeline_layout,
+            format,
+            sample_count,
         }
     }
 }

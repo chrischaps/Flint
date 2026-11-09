@@ -194,6 +194,120 @@ impl SceneDocument {
         Ok(())
     }
 
+    /// Whether the file has this table, as a header or inline: `["post_process"]`.
+    pub fn has_table(&self, path: &[&str]) -> bool {
+        let mut at: &dyn toml_edit::TableLike = self.doc.as_table();
+        for segment in path {
+            match at.get(segment).and_then(|item| item.as_table_like()) {
+                Some(next) => at = next,
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Set one scene-level value, or take it out (#249): `edit.table` is a header
+    /// such as `living.species.grove_thorn`, made if it isn't there, and
+    /// `edit.key` the path inside it, through inline tables, as
+    /// `echoes.count`. Only that value's text changes: a value that already says
+    /// the same is left as written, and one that's replaced keeps its comment.
+    /// A species table left with nothing in it goes.
+    pub fn apply_edit(&mut self, edit: &crate::commit::SceneEdit) -> Result<(), String> {
+        let (leaf, inside) = edit
+            .key
+            .split_last()
+            .ok_or_else(|| format!("{}: no key", edit.label()))?;
+        if edit.value.is_none()
+            && !self.has_table(&edit.table.iter().map(String::as_str).collect::<Vec<_>>())
+        {
+            return Ok(());
+        }
+        let anchor = self.new_table_position(&edit.table[0]);
+        let table = header_table(self.doc.as_table_mut(), &edit.table, anchor)?;
+
+        // The inline tables on the way, made only to set something.
+        let mut at: &mut dyn toml_edit::TableLike = table;
+        for segment in inside {
+            if at.get(segment).is_none() {
+                if edit.value.is_none() {
+                    return Ok(());
+                }
+                at.insert(
+                    segment,
+                    toml_edit::Item::Value(toml_edit::Value::InlineTable(Default::default())),
+                );
+            }
+            at = at
+                .get_mut(segment)
+                .and_then(|item| item.as_table_like_mut())
+                .ok_or_else(|| format!("{}: '{segment}' isn't a table", edit.label()))?;
+        }
+
+        match &edit.value {
+            Some(value) => match at.get_mut(leaf).and_then(|item| item.as_value_mut()) {
+                Some(there) if value.is_in(there) => {}
+                Some(there) => {
+                    let decor = there.decor().clone();
+                    *there = value.to_edit();
+                    *there.decor_mut() = decor;
+                }
+                None => {
+                    at.insert(leaf, toml_edit::Item::Value(value.to_edit()));
+                }
+            },
+            None => {
+                at.remove(leaf);
+            }
+        }
+        if edit.value.is_none() {
+            self.drop_empty(&edit.table, inside);
+        }
+        Ok(())
+    }
+
+    /// After taking a value out: an inline table it leaves empty goes, and so does
+    /// a species table.
+    fn drop_empty(&mut self, table: &[String], inside: &[String]) {
+        let Ok(header) = header_table(self.doc.as_table_mut(), table, None) else {
+            return;
+        };
+        if let Some(container) = inside.first() {
+            let empty = header
+                .get(container)
+                .and_then(|item| item.as_table_like())
+                .is_some_and(|t| t.is_empty());
+            if empty {
+                header.remove(container);
+            }
+        }
+        let is_species = table.len() == 3 && table[0] == "living" && table[1] == "species";
+        if is_species && header.is_empty() {
+            let species = (self.doc.get_mut("living"))
+                .and_then(|item| item.as_table_like_mut())
+                .and_then(|living| living.get_mut("species"))
+                .and_then(|item| item.as_table_like_mut());
+            if let Some(species) = species {
+                species.remove(&table[2]);
+            }
+        }
+    }
+
+    /// Where a new top-level table goes: after the tables of `[wooze]`, its zones
+    /// included, or after `[scene]`'s, so that `[living]` sits with the scene's
+    /// other settings rather than after its last entity. `None` if `name` is
+    /// already there.
+    fn new_table_position(&self, name: &str) -> Option<usize> {
+        if self.doc.get(name).is_some() {
+            return None;
+        }
+        ["wooze", "scene"].iter().find_map(|anchor| {
+            let item = self.doc.get(anchor)?;
+            let mut last = None;
+            last_position(item, &mut last);
+            last
+        })
+    }
+
     /// Serialize the document back to a string (preserving formatting)
     pub fn to_string(&self) -> String {
         self.doc.to_string()
@@ -202,6 +316,59 @@ impl SceneDocument {
     /// Write the document to a file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         fs::write(path, self.to_string()).map_err(|e| format!("Failed to write scene file: {}", e))
+    }
+}
+
+/// The header table at `path` from the root, made where it's missing: the last
+/// one as a `[header]` with a blank line before it, the ones on the way implicit,
+/// so that a new `[living.species.x]` doesn't bring an empty `[living]` with it.
+/// A new top-level table takes `anchor` as its place in the file.
+fn header_table<'a>(
+    root: &'a mut toml_edit::Table,
+    path: &[String],
+    anchor: Option<usize>,
+) -> Result<&'a mut dyn toml_edit::TableLike, String> {
+    let mut at: &mut dyn toml_edit::TableLike = root;
+    for (depth, segment) in path.iter().enumerate() {
+        if at.get(segment).is_none() {
+            let mut table = toml_edit::Table::new();
+            if depth + 1 < path.len() {
+                table.set_implicit(true);
+            } else {
+                table.decor_mut().set_prefix("\n");
+            }
+            if let (0, Some(position)) = (depth, anchor) {
+                table.set_position(position);
+            }
+            at.insert(segment, toml_edit::Item::Table(table));
+        }
+        at = at
+            .get_mut(segment)
+            .and_then(|item| item.as_table_like_mut())
+            .ok_or_else(|| format!("[{}] isn't a table", path[..=depth].join(".")))?;
+    }
+    Ok(at)
+}
+
+/// The last place any table under `item` has in the file.
+fn last_position(item: &toml_edit::Item, last: &mut Option<usize>) {
+    match item {
+        toml_edit::Item::Table(table) => {
+            if let Some(position) = table.position() {
+                *last = Some(last.map_or(position, |l| l.max(position)));
+            }
+            for (_, child) in table.iter() {
+                last_position(child, last);
+            }
+        }
+        toml_edit::Item::ArrayOfTables(array) => {
+            for table in array.iter() {
+                if let Some(position) = table.position() {
+                    *last = Some(last.map_or(position, |l| l.max(position)));
+                }
+            }
+        }
+        _ => {}
     }
 }
 

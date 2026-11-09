@@ -6,6 +6,7 @@ mod camera_cut;
 mod debug_panels;
 mod egui_input;
 mod events;
+pub mod expression_feed;
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(test)]
@@ -21,6 +22,7 @@ mod vfs_tests;
 pub mod fonts;
 mod frame;
 pub mod frame_rate;
+pub mod headless_scripts;
 mod hud_render;
 mod init;
 mod input_config;
@@ -30,6 +32,10 @@ mod music_guide_panel;
 mod music_session;
 mod pacing;
 mod perf;
+mod living_ab;
+pub mod living_props;
+pub(crate) mod living_tuning;
+mod shallow_wooze;
 mod persist;
 mod quality;
 pub mod render_scale;
@@ -332,6 +338,24 @@ pub struct PlayerApp {
     /// render modes, which share it) see at this many seconds.
     pub style_time: Option<f32>,
 
+    // The scene's `[living]` table, and room to blend its props each frame
+    pub scene_living: Option<flint_scene::LivingDef>,
+    living_blend: flint_procgen::BlendFrame,
+    // The scene's `[wooze]` table, and the field made from it, sampled on a clock
+    // of its own that stops when animation does. No table: no field, no samples.
+    pub scene_wooze: Option<flint_scene::WoozeDef>,
+    wooze: Option<flint_core::wooze::WoozeField>,
+    wooze_time: f64,
+    wooze_missing_warned: bool,
+    // Shallow wooze (#215): the clocks of the meshes on the field with no poses.
+    shallow_wooze: shallow_wooze::ShallowWooze,
+    // The shading boil's beats (#214), on the same clock as the field.
+    boil_clock: flint_core::wooze::BoilClock,
+    // Woozy grass (#252): the grass's sway and comb on the same clock.
+    grass_wooze: shallow_wooze::GrassWooze,
+    // What's been done to a running grove by hand (#218).
+    pub(crate) living_tune: living_tuning::LivingTune,
+
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,
     pp_bloom_override: Option<f32>,
@@ -384,6 +408,10 @@ pub struct PlayerApp {
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame
     /// (scene + egui HUD) right before `present()`.
     pub capture: CaptureConfig,
+    /// State from outside the process for scripts' `expression()` and
+    /// `on_expression` (`--expression-timeline`, `--expression-listen`;
+    /// Flint#518). `None` when neither was given.
+    pub expression_feed: Option<expression_feed::ExpressionFeed>,
     /// Set once `--exit-after` elapses; the redraw handler exits the loop.
     exit_requested: bool,
 

@@ -61,11 +61,12 @@ warning: tavern_brick.procgen.toml: `ops[0].colums` is not a parameter of the br
 
 ## Examples
 
-Four commented specs in `specs/examples/` are the place to start: each opens by saying how its generator thinks, and notes every key that isn't obvious.
+Five commented specs in `specs/examples/` are the place to start: each opens by saying how its generator thinks, and notes every key that isn't obvious.
 
 | Spec | Makes | Shows |
 |------|-------|-------|
 | `oak_tree` | A broad oak, three LODs | `tree_v1` with the built-in L-system |
+| `oak_living` | The same oak as a [living prop](#living-props) | A `[living]` table |
 | `pine_tree` | A Scots pine, three LODs | `tree_v1` with space colonization in a `cone` crown |
 | `stone_wall` | Fieldstone in mortar, three tiling maps | `texture_v1`, the `voronoi_brick` pattern |
 | `wood_plank` | Oak floorboards, three maps | `texture_v1`, a pipeline of ops |
@@ -153,11 +154,557 @@ A skinned mesh from a data-driven skeleton. Everything anatomical is in the spec
 
 The output is a skinned GLB with a skeleton the [animation](animation.md) system can drive.
 
+### `form_v1`
+
+One abstract [living](#living-props) form that isn't a tree: a held flame, a folded ribbon, a standing stone. It was built for the Embodiment project, which needed a silhouette that holds while its details keep shifting, and it's the second `LivingGenerator` after `tree_v1`. Every `form_v1` spec is living. Example: `specs/examples/form_living.procgen.toml`.
+
+- **The spine.** A smooth curve of `segments` bones from the base, `height` long. It can `lean`, curl through `curl_deg` toward `facing_deg` (`curl_bias` puts the curl toward the tip or the base), and wander on a `coil`. `lift` floats the base off the ground. A frame is carried up the spine by parallel transport, so the section never spins where the curve bends.
+- **The section.** An ellipse swept along the spine. Its radius is `radius` times the `profile` (fractions from base to tip, joined smoothly; end on 0 for a point), with `round_base` and `round_tip` closing the ends. `aspect` thins it (0.1 is a ribbon), `section_deg` turns its broad axis out of the curl's plane, and `twist_turns` twists it along the length. The lineage adds slow `lobes`.
+- **The cards.** Small two-sided quads on the surface, front and back faces like a tree's leaf cards, so the jitter layer boils them. `card_tilt` stands them up toward the tip: flat ones boil inside the outline, upright ones boil its edge. `card_aspect` below 1 makes short strokes across the surface, `card_rise` crowds them toward the tip, and `card_from`/`card_to` bound them.
+- **The poses.** Drawn from a smooth seeded curve along the spine rather than regrown, so the vocabulary is the params': `bend_deg` (a slow lean), `ripple` and `ripple_waves` (a wave up it), `swell` (the section breathing), `turn_deg` (the section turning about the spine, which is what a flat form shows) and `stretch`. They're full size at `[living] drift.amplitude = 1`, and the drift amplitude and the wooze field's `amplitude` scale them together. `form_v1` reads `drift.amplitude` only; `drift.params` names a tree's params and is ignored.
+- **`waves`** puts the segments in that many depth bands: per-level stagger ripples up the form in that many waves, and `[living] variance.steady` holds the low bands steadier than the tip.
+
+The lineage seed fixes everything that makes the form itself: the spine's facing (within ±15° of `facing_deg`), the lobes, the coil's phase and every card. `flint gen` bakes its skinned rest, as for a living tree.
+
 ## Determinism and Seeds
 
 All randomness flows through a `SeededRng` forked by name per stage (`"pattern"`, `"pipeline"`, and so on), so adding a stage never disturbs the numbers an earlier one draws. A `fixed` seed reproduces the asset bit for bit; `derived` hashes a string so a spec can be reseeded by, say, an entity name; `random` is for variants. `flint gen --seed N` overrides whatever the spec says, and `--batch N --seed-start S` writes N sequential-seed variants with the seed inserted into each filename.
 
 Generators are stateless and `Send + Sync`; parameters live in the spec and randomness in the RNG.
+
+## Living Props
+
+A living prop keeps drifting between versions of itself and stays recognisably the same thing. Topology can't be interpolated, so its generator splits it in two with a pair of seeds:
+
+- The **lineage seed** fixes the structure: the trunk, the branch segments with their stable ids and parents, and every leaf card, each bound to its nearest segment. This is the prop's identity, and for a tree it's exactly the tree `flint gen --seed <lineage>` bakes.
+- Each **shape seed** gives a pose: a rotation, length scale and radius scale per segment, relative to the structure. A pose regrows only the branches, on the lineage's trunk, so limbs stay attached and the trunk holds still.
+
+A generator opts in by implementing `LivingGenerator` next to `Generator`:
+
+```rust
+fn structure(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingSkeleton>;
+fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig>;
+fn full_pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
+```
+
+`pose` is `full_pose` held to the spec's variance. `LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. `tree_v1` supports the built-in L-system only, where every seed grows the same segments in the same order. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed, so all three report themselves unsupported.
+
+A spec declares it with a `[living]` table. Only `lineage_seed` is required:
+
+```toml
+[living]
+lineage_seed = 7          # the prop's identity
+pose_ring = 8             # poses to keep ready, at least 2
+step = 0.5                # seconds between pose targets
+glide = 0.3               # how much of a step is spent easing, 0 (snap) to 1 (never holds)
+stagger = "per_level"     # none | per_level | per_branch
+drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
+variance = { amount = 0.35, steady = 0.8, keep_size = true }
+echoes = { count = 6, spread = 0.9, alpha = 0.2 }
+```
+
+These are the defaults. `pose` applies `variance`. `step`, `glide` and `stagger` drive the contact strip below and the player's blending, and in a scene with a [wooze field](#the-wooze-field) its `step` and `glide` take over. `jitter` drives the leaf cards' boil, `echoes` draws the faint copies ([below](#echoes)), and `drift` is checked and carried. The rest arrives through [epic #206](https://github.com/chrischaps/Flint/issues/206).
+
+`variance` is what keeps the silhouette. A freshly grown pose is a different-looking tree, so each segment is pulled back toward the lineage's own shape, keeping only this share of its difference:
+
+```text
+w = amount × ((1 − steady) + steady × (depth / max_depth)^1.3)
+```
+
+- `amount` is how much is left overall.
+- `steady` is how much of that is held back from the trunk side: 0 is even, 1 puts it all at the tips.
+- `keep_size` then gives every segment's length one shared scale, so the box around the branches and leaves is as far over on its longest side as it is under on its shortest. One scale keeps the tree's proportions and its limbs on the trunk, so the sides can't all match exactly.
+
+On the example oak at the defaults, first-level limbs turn 4° on average and the twigs 29°, and across an 8-pose ring each pose's box stays within 3 to 5% of the base on every side (6 to 12% without `keep_size`, up to 25% at full variance).
+
+`variance = { amount = 1, steady = 0, keep_size = false }` undoes all of it and gives each pose exactly as its shape seed grew it. Leave `keep_size` on with `amount = 1, steady = 0` and you get the same angles at a held size.
+
+The player keeps both forms of each pose in its rings and holds them again with `LivingSkeleton::with_variance` when a knob moves, with no regrowing ([Debug Panels](../guides/debug-panels.md#living-props-f3)).
+
+`flint gen --dry-run` refuses a malformed table, naming the bad key, and reports the skeleton's size. If the spec can't live, `flint gen` warns that `[living]` would be ignored, and `--strict` makes that an error. A plain `flint gen` still bakes one still tree from `[seed]`.
+
+### The skinned rest mesh
+
+Otherwise `flint gen` writes the lineage's rest mesh as a skinned GLB. It's the same geometry as the still tree `flint gen --seed <lineage>` bakes without a `[living]` table, plus joints and weights, so it holds still until something poses it. It grows from `lineage_seed`, so `[seed]` plays no part, and `--seed` or `--batch` pick the lineage instead.
+
+- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), and the player keeps the last 12 for leaf jitter, so a tree with more than 243 segments folds its shortest twigs into their parents' bones, from the tips in. `LivingRig::segment_bones` says which bone moves a segment.
+- **Weights.** A ring where a limb carries on from one segment to the next is shared half and half by the two bones, and a limb's first and last rings belong to their own segment. Rings are single vertices, so a joint can't tear. A leaf card rides the bone of its segment, whole.
+- **Poses.** `LivingRig::palette` turns a pose into bone matrices, ready to upload, and `skinned_mesh` applies them on the CPU. All of a pose's scale lives in those matrices: glTF's parent-child transforms can't carry a stretch without shearing the children, so the GLB's skeleton holds none.
+
+A skinned rest has one level: `[[lod]]` doesn't apply, and `flint gen --validate` warns if it's over the spec's level-0 target. Two bones sharing a ring also pinch it when they turn far apart, keeping `cos(turn / 2)` of its width in the plane of the bend. An undamped pose has joints close to half a turn, and the default `variance` keeps the oak's above about 70% of their width. A held pose's `keep_size` scale reaches the bones too, so a leaf card stretches with its segment by that much, up to about 10% along it. In a scene, an entity draws this mesh skinned only if it has a [`living_prop`](#in-a-scene-the-living_prop-component); without one, nothing would move its bones, so it draws as the still tree it is.
+
+To try it, pose a bone by hand:
+
+```bash
+flint gen specs/examples/oak_living.procgen.toml -o oak.glb
+flint edit oak.glb --pose-bone seg_0001:0,0,55 --show-skeleton
+```
+
+### Seeing it move: the contact strip
+
+Motion can't be judged from a still, so `flint gen --strip` renders one prop over time as a labelled sheet, a frame per cell:
+
+```bash
+flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o strip.png
+# --columns N (default: whatever makes a 4:3 sheet), --cell-size PX (default 240)
+# --dry-run prints the clock and the sheet's size without a GPU
+```
+
+![24 frames of the living oak on one contact sheet, with a bar for each branch level under each frame](../images/living-strip.png)
+
+Each frame evaluates the hold-and-glide clock on the CPU, blends the two poses either side per segment, rebuilds the whole mesh and renders it. With [echoes](#echoes) on, which is the default, it instead sends the rest mesh up once and draws each frame from bone palettes, through the same skinned draw as the player, with the prop and each echo a palette of its own. The camera is fixed and frames every frame's bounds, so what changes between cells is the prop. The same spec gives a byte-identical PNG on the same machine and driver.
+
+The clock is the design's warped time, with `s` for `step` and `g` for `glide`:
+
+```text
+t' = floor(t/s) + ease(clamp((frac(t/s) - (1 - g)) / g, 0, 1))
+```
+
+`ease` is smoothstep. The whole part of `t'` is a pose, and since a pose's index is its shape seed, the stream of poses has no end. The fraction is how far the prop has blended toward the next. `stagger` puts each segment's clock ahead by a phase: 0.15 of a step per branch level for `per_level`, and an even spread by segment id for `per_branch`.
+
+Under each cell are a bar for how far the blend has gone (one per branch level under `per_level`, trunk side on top), the frame number, `t'`, and the two poses. So `glide = 0` shows empty bars and a hard cut on each beat, while `glide = 1` shows bars that rise steadily and a tree that never stops moving.
+
+`-o strip.gif` writes the same frames as an animation instead of a sheet, at `--fps` (up to 50). To see a whole scene over time, or to compare settings at one moment, use [`flint render --time` and `--sweep`](../guides/headless-rendering.md#a-chosen-moment).
+
+A strip reads `[living]` and ignores `[seed]`, so `--seed` doesn't apply, and it takes no run mode that writes something else (`--batch`, `--validate`, `--register`, `--format`). `--strict` still refuses unknown params. A spec with no `[living]` table, or one that can't live, is an error.
+
+To look at a lineage's poses as files, `cargo run -p flint-procgen --example living_poses -- specs/examples/oak_living.procgen.toml --out poses` writes the skinned mesh, then each pose twice as a GLB: `poseN.glb` rebuilt from scratch and `poseN_skinned.glb` moved by its bone matrices. It also prints how far each box moved, how far each level turned and how far the pose deforms the mesh. `--amount`, `--steady` and `--keep-size` override the spec.
+
+### In a scene: the `living_prop` component
+
+An entity becomes a living prop with a `living_prop` component, on a model whose asset names a spec with a `[living]` table:
+
+```toml
+[entities.oak_07.transform]
+position = [12.0, 0.0, -4.0]
+
+[entities.oak_07.model]
+asset = "oak_living"
+
+[entities.oak_07.living_prop]
+lineage_seed = 9           # which tree this is. Unset: the spec's lineage_seed
+# pose_ring = 8            # how many poses to keep ready. Unset: the spec's
+# phase_offset = 0.25      # how far into its step cycle it runs, 0 to 1. Unset: from the entity's name
+# stagger = "per_branch"   # none | per_level | per_branch. Unset: the spec's
+```
+
+An entity's lineage says which tree it is, and its name says which way it moves: its shape seeds come from the name and the step index, never from an entity id or the wall clock. So two props of a lineage are the same tree moving differently, a prop looks the same on every run, and a slow frame can only change when a pose is ready, not which pose it is.
+
+What a prop costs:
+
+- **One mesh a lineage.** The rest mesh goes up once, as `<spec>@<lineage>` (`oak_living@9`), through the same path as a skinned GLB. The player rewrites the entity's `model.asset` to that name when it loads. It takes the oak about 25 ms to build, in a release build, and there's no disk tier for it yet.
+- **One bone buffer a prop.** That's the prop's own skeleton instance, and it's written only on a frame something in it has moved.
+- **One ring a prop.** Poses are kept a few steps ahead of the prop's clock, which stops when the game pauses, plus one spare, so that a beat leaves the ring full. A ring is raised to whatever the prop's stagger can reach.
+
+At load the player builds every lineage and fills every ring, so the first frame finds them full: 40 oaks on 5 lineages take about 500 ms. `--procgen-defer` shows a placeholder under each lineage's name instead and does the same work on the queue, one lineage a frame and then the poses.
+
+In play, each frame fills the emptiest rings first with whatever the asset queue left of the frame budget (`runtime_max_generation_ms_per_frame`, 4 ms by default). A pose of the oak takes about 1.2 ms in a release build, and a grove needs `props / step` of them a second, so 40 oaks at a 0.5 s step need about 1.3 a frame at 60 fps. Poses have their own cache, apart from the meshes: a grove makes 80 a second, and they'd push the meshes out. It keeps 8 MB, so coming back to a scene doesn't regenerate them. A pose can't be cut short, so the budget is a soft cap: the fill stops when the slowest recent pose wouldn't fit, and a pose slower than that still runs over, on a frame or two a minute. A debug build is far slower, so it gets one pose a frame and overruns the budget.
+
+A prop whose spec can't live, or whose component has a bad field, stays a still model, with a warning saying why. A catalog entry for the same name wins, as it does anywhere.
+
+`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from `demo/living_props.scene.toml` with its echoes off:
+
+```
+[living] 40 props on 5 lineages, 8 poses a ring: 3900 of 3900 frames ended full, never more than 0 short, 0 frames missing a pose in use
+[living] 5200 poses made, 0 from cache, 0 failed: avg 1.30 ms/frame, worst 4.57 ms, budget 4 ms, over it on 1 frames
+[living] blending and upload: avg 0.351 ms/frame, worst 1.03 ms, over 1 ms on 1 frames, 37.7 bone writes a frame, 0 kept their last bones for want of a pose
+[living] 240 skinned draws this frame
+```
+
+Headless `flint render` draws living props too, at time 0, or at `--time T` with the same pixels the player draws at T, and `--time 0..4` gives a sequence ([Headless Rendering](../guides/headless-rendering.md#a-chosen-moment)). Scripts don't run there, so for a grove a script tunes, use `flint-player --frame-step` with `--screenshot-every`.
+
+### The warped clock
+
+Each frame, every part of every prop reads its own place on the hold-and-glide clock, picks the two poses either side, and blends them per segment: rotation by nlerp the short way round, scales by lerp. `LivingRig::palette` turns the result into bone matrices, and they go up to the prop's own bone buffer. It all happens on the CPU, so no new shader is involved, and the strip uses the same blend, so what it shows is what the bones draw.
+
+```text
+t' = floor(t / step) + ease(clamp((frac(t / step) - (1 - glide)) / glide, 0, 1))
+```
+
+- **Glide 0** holds for the whole step and snaps on the beat. Between beats nothing moves and nothing is written.
+- **Glide 0.3** holds for 70% of the step and eases into the next pose over the rest.
+- **Glide 1** never holds.
+
+`stagger` offsets each part's phase. `per_level` puts each branch level 15% of a step ahead of the one before it, and `per_branch` spreads the segments around the cycle by id. `none` moves the whole prop at once. Each prop also starts at its own phase, from its name, so a grove never moves in step.
+
+A prop whose pose isn't ready keeps its last bones for that frame, and the report counts it. That takes a budget running behind, or poses still coming in under `--procgen-defer`, where a prop can jump once from its rest pose when its ring first fills. The bench below never does it.
+
+The clock reads `step` and `glide` from the spec, or from the [wooze field](#the-wooze-field) in a scene that has one. A prop counts its clock in beats and moves it on by `dt / step` each frame, so a new step changes how fast it runs from here and never where it is.
+
+A scene's `[living]` table says what its props' shadows follow:
+
+```toml
+[living]
+shadows = "blended"   # blended | drift
+echoes = { count = 0 }   # over each spec's, a field at a time: count, spread, alpha
+```
+
+A bad value here gets a warning and means its default. A misspelt key fails the scene's load.
+
+### Leaf jitter
+
+The fast layer boils the leaf cards on a clock of its own, `jitter.step` and `jitter.glide`, snapping by default. Its values are pure functions of the prop's name, the channel and the step, so they cost no generating and come out the same on every run.
+
+- **Card rotation.** Each card turns about its own centre and normal, up to 4 radians per unit of `amplitude` (about 11° either way at the default). A card takes one of 4 channels and a share of its turn from its index, so neighbours don't turn together. Each channel has three axis bones at the end of the palette, which hold only an offset, and a card's vertices weight them by `n x r`, so the turn fits in the skinning sum with no new shader or vertex data. These weights don't sum to 1, so they go up only to the renderer: the GLB `flint gen` bakes stays valid glTF.
+- **Tint.** Each leaf shade moves toward warm or cool, by up to 2 times `amplitude` (10% at the default). A shade is a sub-mesh with its own draw, so this is per shade and not per card. It takes one of 9 levels, so the whole grove shares a few materials, made once.
+
+`amplitude = 0`, or leaving `leaf_cards` out of `targets`, turns the layer off. It only reaches the player: `flint gen --strip` draws the slow layer.
+
+### Shadows
+
+A tree's shadow follows what's drawn by default, stagger and leaf jitter included, at no extra cost. Whether a whole shadow boiling reads as life or as noise is a question for each scene, so `[living] shadows = "drift"` gives the shadow bones of its own: a slower pose at half the speed, with no stagger and no jitter. It adds about 0.05 ms a frame for 40 oaks.
+
+### Echoes
+
+Every living prop draws faint copies of itself in its own colours, each sampled a little before or after now on its clock, so they drift with it. It's a moving version of Pep Ventosa's layered tree photographs: one tree, with where it's just been and where it's about to go showing softly around its edge.
+
+![Two moments of the living oak on a contact sheet, each crown soft at the edge with faint copies of itself](../images/living-echoes.png)
+
+```toml
+[living]
+echoes = { count = 6, spread = 0.9, alpha = 0.2 }   # the default; count = 0 turns them off
+```
+
+- **`count`** copies, up to 16. They come in pairs, one behind now and one ahead. An odd count's spare is behind.
+- **`spread`** is how far the farthest copy is from now, in steps of the clock, up to 1.82. The pairs bunch toward now: six at 0.9 sit at about ±0.25, ±0.56 and ±0.9.
+- **`alpha`** is the opacity a copy would have at now. Each is drawn at `alpha × (1 − |offset| × 0.55)`, so at the defaults they run from 0.17 down to 0.10.
+
+Each echo is the prop's own blend, at its own place on the clock: every part with its stagger, and every leaf card with its bones and its turn. It keeps the prop's current tints. Its bones have a buffer of their own, written only on a frame they move. A ring's window starts as far behind now as the farthest echo, so it spans the same number of poses a little earlier, and echoes make no more poses than the prop would.
+
+They draw after everything opaque, tree by tree from the back, with each tree's farthest offset first. They test against depth and don't write it, so they can't hide each other and the part of a copy behind its own tree stays hidden. Only front faces are drawn: a two-sided leaf card would otherwise count twice and muddy the crown. They cast no shadow, and debug shading views leave them out.
+
+`count = 0` costs nothing and draws nothing. Against the build before echoes existed, the bench is pixel for pixel the same, and a strip is byte for byte the same.
+
+Each echo is another palette and a draw per part, so what count does is worth knowing. 40 oaks, uncapped at 1600 x 900 on an RTX 5070 laptop, two alternating runs of each:
+
+| Echoes per tree | Frame | Blending and upload | GPU | Draws | Triangles |
+|---|---|---|---|---|---|
+| 0 | 2.0 to 4.1 ms | 0.3 to 0.6 ms | 1.5 ms | 241 | 0.5 M |
+| 2 | 3.1 to 7.0 ms | 1.0 to 1.7 ms | 1.8 ms | 721 | 1.6 M |
+| 4 | 4.8 to 7.6 ms | 1.8 to 2.4 ms | 2.2 to 2.5 ms | 1201 | 2.6 M |
+| 6 | 5.7 to 7.8 ms | 2.3 to 3.0 ms | 2.5 to 3.2 ms | 1681 | 3.7 M |
+| 12 | 10.9 to 12.5 ms | 4.9 to 5.6 ms | 3.5 to 4.2 ms | 3121 | 6.8 M |
+
+At the default six, a 60 s run at the display's rate held 60 fps, with 1 frame in 3480 over 1.5x the median. Most of what echoes add is CPU: nearly every palette moves on nearly every frame under `per_level` stagger, about 260 writes of 16 KB, or some 250 MB/s up to the GPU. Off-screen props still blend and draw. Dropping echoes by distance is the first thing to reach for if a scene needs the room. `--exit-after` prints how many echoes and draws a scene has.
+
+### The wooze field
+
+Once anything in a scene drifts, anything that holds still looks wrong, so how woozy a place is belongs to the world and not to each prop. A scene with a `[wooze]` table has one function of position and time that everything reads: `flint_core::wooze::WoozeField::sample(position, time)` returns `{ amplitude, step, glide, jitter }`.
+
+```toml
+[wooze]
+preset = "linklater"     # a set of knobs to start from
+glide = 0.4              # any global knob beats the preset
+
+[[wooze.zone]]
+name = "pocket"
+shape = "sphere"
+center = [0, 0, -30]
+radius = 10
+falloff = 16             # metres past the edge to fade out over; 0, the default, is a hard edge
+glide = 0.8              # dreamier in here
+
+[[wooze.zone]]
+name = "hush"
+shape = "box"
+center = [48, 0, -30]
+size = [18, 40, 24]      # full width on each axis
+falloff = 6
+amplitude = 0.2
+step = 1.5
+jitter = 0
+```
+
+| Knob | Range | Means |
+|------|-------|-------|
+| `step` | 0.01 s and up | Seconds between pose targets |
+| `glide` | 0 to 1 | How much of a step is spent easing: 0 holds and snaps, 1 never rests |
+| `amplitude` | 0 to 1 | How much of a prop's slow drift shows: 1 is what its spec authored, 0 is its rest pose |
+| `jitter` | 0 to 4 | How much of a prop's fast jitter shows: 1 is what its spec authored, 0 is none |
+
+The value at a point is the global one with the zones laid over it in the order they're written, each by how far inside it the point is, along a smoothstep through its `falloff`. A knob a zone doesn't name passes through what's below. The field knows nothing about any one consumer, so `step` and `glide` are the same seconds and shares everywhere, and `amplitude` and `jitter` are shares of what each consumer was authored with.
+
+In a scene with a table, the field decides `step` and `glide` for every prop, whatever its spec says. A bare `[wooze]` opts in with amplitude 1, step 0.5, glide 0.3 and jitter 1. A scene with no table has no field: nothing samples it and props keep to their specs.
+
+| Preset | Step | Glide | Amplitude | Jitter | |
+|--------|------|-------|-----------|--------|---|
+| `linklater` | 0.5 | 0.6 | 0.5 | 1 | The sweet spot between the two below: the crown wanders, and the leaves and lines keep it drawn. [How it was found](#the-sweet-spot-linklater) |
+| `boil` | 0.125 | 0 | 0.6 | 1.5 | Small, fast and snapping |
+| `morph` | 1 | 1 | 1 | 0 | Slow, and never rests |
+| `calm` | 1.5 | 0.6 | 0.35 | 0.25 | Barely there |
+
+**No change pops.** A new step bends each prop's clock from wherever it stands, at once. A new glide or amplitude can't do that, since either one would move a pose that's on screen, so each part of a prop reads them when its own cycle begins and finishes the cycle it's in. Under stagger, a tree takes a change one level at a time. A new amplitude is the one thing that waits a little longer: the pose already on its way arrives as it was promised, and the cycle after it heads for the new value, so a change of amplitude reaches a prop within two steps. Leaf tints keep to the same 9 levels wherever a prop stands, so a grove still shares a few materials.
+
+**From a script.** The field changes at run time through three functions, each of which can take a last argument of seconds to get there over. See the [Wooze API](scripting.md#wooze-api).
+
+```rust
+set_wooze(#{ step: 0.25 });                                  // the whole world, now
+set_wooze(#{ preset: "calm" }, 4.0);                         // come down over 4 s
+set_wooze_zone("pocket", #{ glide: 0.15 }, 2.0);             // change a zone
+set_wooze_zone("spot", #{ shape: "sphere", center: [0, 0, 0], radius: 5.0, glide: 1.0 }, 1.0);  // a new one fades in
+remove_wooze_zone("spot", 1.0);                              // and out
+```
+
+**Checking it.** `flint validate` fails on a malformed table, naming the zone: `wooze zone 'pocket': radius = -6 must be more than 0 metres`. It checks what the field itself needs, such as a sphere having a radius, and then `schemas/components/wooze.toml`, which `flint schema wooze_zone` prints and a game's own schemas can tighten. The player goes on without a bad zone, with a warning, so that a look lab doesn't refuse to start over one knob. A misspelt global key fails the scene's load, the same as in `[living]`.
+
+`--exit-after` adds a line saying how far apart the field has put the props:
+
+```text
+[wooze] 2 zones over 13 props: step 0.25..1.50, glide 0.30..0.80, amplitude 0.20..1.00, jitter 0.00..1.00
+```
+
+Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
+
+**Paint and ink read it too.** The [shading boil](post-processing.md#shading-boil) runs the Kuwahara filter and contour lines on the field's beat, as hard as its `jitter` says, where the camera stands.
+
+### Saved presets
+
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3) saves a look as a file that a `[wooze]` table can name. `preset = "misty"` looks for `wooze/misty.wooze.toml` beside the scene, then one level up for a scene in `levels/`, and then for a built-in, so a file can stand in for a built-in of its name.
+
+```toml
+# wooze/misty.wooze.toml
+[wooze]
+amplitude = 0.8
+step = 0.3
+glide = 0.65
+jitter = 2.5
+
+[living]
+stagger = "per_branch"
+echoes = { count = 3, spread = 1.2, alpha = 0.35 }
+variance = { amount = 0.8, steady = 0.3, keep_size = false }
+
+[boil]
+enabled = true
+kuwahara = 0.6
+contour = 1.4
+on = 3
+```
+
+The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional. A preset holds [`[living.species.<spec>]`](#species-values) tables too, in the same shape, and the panel saves one for each species with values of its own, so one file holds a look for every species in the grove. A species the scene gave values that has none when you save gets an empty table, which loading reads as "back to the grove's". When a scene names the preset its own species tables still beat the preset's, a field at a time; when the panel or a script loads it, each species it names takes exactly its table.
+
+Whatever a scene says itself still beats its preset, as with a built-in: `glide = 0.4` beside `preset = "misty"` means 0.4, and the panel lists those keys when it saves. There are two exceptions. `stagger` from the scene or a preset beats an entity's own `living_prop` stagger too, since a preset has to look as it did when it was saved. And `[boil]` beats `[post_process]`, whose `kuwahara_boil`, `contour_boil` and `boil_on` have no way to say they weren't set. Whether the passes themselves are on stays with `[post_process]`, and zones stay with the scene, since they belong to a place.
+
+A file holds numbers as briefly as they read back to the same bits, so what you saved is what you get: a run tuned to these values and a fresh run that names the file drew 0 of 518,400 pixels differently at each of 12 moments over 6 s.
+
+`flint render --sweep wooze.preset=misty,linklater` reads a file before a built-in, as the panel does, with its `[living]`, species tables and boil, so a saved look renders the same headless, and `--report json` names the layer behind each value.
+
+`flint validate` fails on a preset file with a misspelt key or a value out of range, naming the preset. The player warns and goes without it, and `flint bundle` packs `wooze/`.
+
+To choose between two presets, put them side by side: the panel's [A/B](../guides/debug-panels.md#comparing-two-presets-ab), or `flint-player <scene> --compare linklater,misty --split`, shows both on the same grove at the same moment, and `F6` flips between them.
+
+### Species values
+
+A grove is one world made of different things. `[living.species.<spec>]` gives one species values of its own, so the thorns can be twitchier than the oaks without editing a spec:
+
+```toml
+[living.species.grove_thorn]
+step = 0.125             # the clock's knobs, as [wooze] names them
+glide = 0.0
+jitter = 2.2
+stagger = "none"         # and the props' knobs, as [living] names them
+echoes = { count = 0 }
+variance = { amount = 0.9 }
+```
+
+A species is a spec, named by its `meta.name`, which is what a living prop's `model.asset` says. It covers every lineage seed of that spec. Every key is optional, and one left out is whatever the layers below say. Those are, lowest first:
+
+| Layer | Where it's said | Sets |
+|-------|-----------------|------|
+| `spec` | The spec's `[living]` table | Everything; amplitude and jitter are 1, as authored |
+| `entity` | A `living_prop` component | `stagger` only. `lineage_seed`, `pose_ring` and `phase_offset` are the entity's alone |
+| `global` | The scene's `[living]` and `[wooze]` globals, a preset it names, and any knob moved live for the whole grove | Everything |
+| `zone:<name>` | A `[[wooze.zone]]` where the prop stands | The clock's four knobs |
+| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance` |
+
+Each layer beats every one above it, a field at a time: a species that sets echo `count` still takes `spread` from the layers below. So a global knob does what it always did, and a species value survives it. Move `glide` on the [F3 panel](../guides/debug-panels.md#living-props-f3) and every tree takes it except a species that set its own. Pick a species under the panel's **Tuning**, or click one of its trees in the world, to move its own values, see the layer each one comes from, and clear them.
+
+Two things to know about that order:
+
+- **A species with its own clock ignores a zone's.** In Woozy Grove's `hush`, a thorn with its own `step` keeps it. That's the point of the layer, and also its cost: a zone can't calm a species that has been told otherwise. Leave clock values unset for species in shipped scenes unless the look needs them.
+- **The shading boil and the shadows stay global.** The boil is a screen-space pass over the whole frame, and shadows are one choice per scene.
+
+Variance is held per lineage, as it was, and a lineage belongs to one spec, so a species' new variance re-holds only its own poses. A species' new echoes wait for the rings to have what they'd read, as global ones do.
+
+**Saying where a value came from.** `flint render --report json` gives every prop its `species` and a `values` map: each value it runs on and the layer that set it, `spec`, `entity`, `global`, `zone:<name>` or `species` ([What a Prop Was Doing](../guides/headless-rendering.md#what-a-prop-was-doing)).
+
+```bash
+flint render demo/living_compare.scene.toml --time 3.5 -o compare.png --report json
+```
+
+**Checking it.** `flint validate` names a bad value, `[living.species.grove_thorn_twin]: step = -1 must be 0.01 seconds or more`, and a species no living prop in the scene grows from, which is most likely a misspelt spec. The player warns and leaves a bad value to the layers below. A misspelt key fails the scene's load, as it does in `[living]`.
+
+**From a script.** `tune_living(#{ species: "grove_thorn", step: 0.125, echoes: #{ count: 1 } })` sets one species' values over what it has, and `clear_living("grove_thorn")`, or `clear_living("grove_thorn", ["echoes", "step"])`, gives them back to the layers below. See the [Living Props API](scripting.md#living-props-api). The panel's **As loaded** puts every species back as the scene set it.
+
+**Keeping them.** A species tuned by hand is kept two ways. The panel's **Commit to File**, or a script's `commit_living()`, writes it into the scene: one changed value is one changed line, inside the species' table or a new table beside the others, with every comment and the file's order as they were. A fresh run of the committed scene then draws what the tuned run drew. Or **Save** puts every species' table in a preset, beside the grove's knobs, and **Load** gives each species exactly what the file says, in this run or another. Neither writes the species' spec: a committed species reads differently from its `.procgen.toml`, and `flint gen --strip` shows the spec's look, not the scene's.
+
+#### Comparing two settings side by side
+
+Different species are different trees, so an oak beside a thorn compares nothing. A fair pair is one spec beside a copy of itself:
+
+1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in `living_props.rs` tests exactly that.
+2. Stand the two side by side with the same `lineage_seed`, rotation and scale, and give them the same `phase_offset`, so they hold and glide on the same beats.
+3. Give the copy its own values in `[living.species.grove_oak_twin]` and leave the original alone.
+
+![Left to right: the oak as specced, the oak at the morph end, the thorn as specced, the thorn at the shiver end](../images/living-compare.png)
+
+`demo/living_compare.scene.toml` does this twice under `linklater`. The oak twin is at the morph end (step 1, glide 1, all of its drift, brighter echoes) and the thorn twin at the shiver end (step 0.125, no glide, jitter 2.2, no echoes). Its twins are `demo/specs/grove_oak_twin.procgen.toml` and `grove_thorn_twin.procgen.toml`. Copy them again if their originals change.
+
+What still differs within a pair is each pose's shape seed, which comes from the entity's name. Two entities can't share a name, so the twins pass through cousins of each other's poses: the same rest shape, clock and settings, a different draw of the same distribution. Treat a pair as a look comparison, not a cost one. A copy has its own lineage and pose cache, so it builds and fills everything twice; measure frame cost on the 40-oak bench.
+
+### Shallow wooze
+
+A hand-made bench next to a boiling tree looks pasted in, and a mesh with no skeleton has no poses to drift between. Shallow wooze gives it a little of the same drift: each vertex moves through world-space noise on the field's clock.
+
+```toml
+[wooze]                         # the scene has to opt in
+glide = 0.4
+
+[entities.bench.shallow_wooze]
+amplitude = 0.03                # metres at full swing, times the field's amplitude here
+wavelength = 0.8                # metres between swells
+```
+
+It covers the entity and everything below it, so a bench built from boards, or a GLB expanded into nodes, needs one component at the top. The topmost component holds the clock for its whole group, read where it stands, so a group crossing the edge of a zone can't drift apart. One further down changes its own branch's settings, and `amplitude = 0` opts the branch out.
+
+| Field | Default | |
+|---|---|---|
+| `amplitude` | `0.03` | Metres at full swing on each axis, times the field's amplitude where it stands |
+| `wavelength` | `1.0` | Metres between swells, at least `0.05`. Well above the mesh's size it moves whole; near its size it changes shape |
+
+**In step.** The clock counts beats the way a prop's does, from the same field on the same `dt`, so a bench keeps the tempo of the tree beside it through any change of step, and takes a new amplitude on its next beat without a pop. It has no phase offset of its own, unlike a prop. Two meshes in the same place are on the same target with the same weight, and the noise is a function of world position, so they're displaced by one continuous field: what touches stays touching, if they share a wavelength. Each target is the noise from somewhere else in its domain, so holding and gliding between them is the blend a prop does between poses.
+
+**Shadows.** The shadow pass displaces by the same function on the same numbers, so a shadow stays attached. A draw's frustum bounds grow by its amplitude.
+
+**What it costs.** Nothing, in a scene that doesn't use it. Woozy draws have their own vertex stages (`wooze_vertex.wgsl`, `wooze_shadow_shader.wgsl`) paired with the fragment stages already compiled, and those pipelines aren't built until the first woozy draw exists. Ordinary draws run today's shaders with no new uniform or branch: the drift rides in padding each draw's uniform slot already had. On a 270-entity scene, 268 of them woozy, it adds about 0.6 ms a frame.
+
+**What it doesn't do.**
+
+- A mesh moves only at its vertices. A long box has them only at its corners, so its faces stay flat and two boards can slide a centimetre across each other, which tends to read as hand-drawn. A denser mesh bends.
+- Normals aren't bent. At a few centimetres over a metre that's a degree or two of shading.
+- A plain `flint render` shows the mesh at rest. `--time` and `--sweep` draw it, as the player does at that moment. The wireframe debug view draws the rest pose.
+- Collision and picking use the rest pose.
+- A prop's [echoes](#echoes) don't take it, if a living prop has both.
+- With no `[wooze]` table in the scene it does nothing, and the player warns once at load.
+
+`--exit-after` prints `[wooze] shallow: 15 entities on 5 clocks`. Bench: `demo/shallow_wooze.scene.toml`, a woozy set and a still set under the same oaks.
+
+### Woozy grass
+
+Grass sways on the wall clock, so beside trees that hold and glide it moves like something from another film. `grass.wooze` on a [terrain](terrain.md#grass) or [`grass_ground`](grass-ground.md) puts it on the field instead:
+
+```toml
+[entities.meadow.grass_ground]
+mask = "woozy_grove_grass/mask.png"
+"grass.wooze" = true
+"grass.wooze_amplitude" = 0.14  # metres at the tip, times the field's amplitude
+"grass.wooze_wavelength" = 2.5  # metres from one combed patch to the next
+```
+
+Two things change. **The sway's clock** holds for the first part of each beat and glides over the rest, as a prop's pose does, so the blades rest and then sweep on together. A beat is worth the field's step where the clock started, so the authored `wind_speed` holds on average and the sway slows where the field slows: in a zone with a long step the meadow nearly stops, and on a fast snap it jumps. **The comb** leans each blade's tip by the noise [shallow wooze](#shallow-wooze) moves meshes by, read at the blade's root, so a patch leans together and each beat lays the meadow down a new way. It's the same function on the same beat as a bench standing in it.
+
+There's one clock for the whole field, read where the camera is, as the shading boil's is, because the grass compute knows nothing of zones and the grass you see is the grass round you. Walking from one zone into another bends its tempo from where it stands, with no jump. The shadow pass sways and combs by the same numbers.
+
+It needs a `[wooze]` table: without one the player warns once and the grass keeps the wall clock. Grass without `grass.wooze` draws exactly as before. `flint render --time` and `--sweep` draw it as the player does at that moment. In an [A/B](../guides/debug-panels.md#comparing-two-presets-ab) the grass has one clock, which reads whichever side's field is showing, and both halves of a `--split` view get the same sway and comb, since the grass's uniforms hold one value a frame.
+
+![The Woozy Grove with a meadow, at 3.5 s](../images/woozy-grove-grass.png)
+
+Bench: `demo/woozy_grove_grass.scene.toml`, the Woozy Grove grown over with a meadow worn along its paths. `python demo/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; `demo/woozy_grove_grass/README.md` has what was found.
+
+### Woozy Grove
+
+The benches each test one thing from a fixed camera. `demo/woozy_grove.scene.toml` puts them together in a place to walk through, since the look can only be judged by eye, from inside it:
+
+```bash
+flint play demo/woozy_grove.scene.toml
+```
+
+![Woozy Grove, from the north path into the clearing](../images/woozy-grove.png)
+
+It's 38 living trees in four species, from `demo/specs/`: an oak, a cypress, a birch and a gnarled thorn. A bench and a lantern share one `shallow_wooze`, and three zones change the dial as you walk:
+
+| Zone | Where | Field | What it's for |
+|------|-------|-------|---------------|
+| None | The clearing | `preset = "linklater"` | [The look the epic is after](#the-sweet-spot-linklater) |
+| `hush` | Left, among the cypress | step 1.6, glide 0.6, amplitude 0.2, jitter 0.15 | How little movement still reads as alive |
+| `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, amplitude 1, jitter 0.4 | The morph end of the dial, which never rests |
+| `shiver` | Near right, thorn and birch | step 0.125, glide 0, amplitude 0.7, jitter 2.2 | The boil end of the dial, which never eases |
+
+`demo/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Don't step coarser than 1/60: the character reads mouse look once per physics step, so a frame of two steps turns it twice as far.
+
+A few things the grove had to work around, which any scene like it will meet:
+
+- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls, and space colonization can't live at all.
+- **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
+- **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
+- **A character always starts facing +Z,** so a scene's way in has to be laid out along it.
+- **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. No system reads a `directional_light` table, and `flint validate` lets one through, so a scene with only that has the renderer's default light and no warning.
+
+### The sweet spot: `linklater`
+
+The grove exists to find one setting that reads as alive and not jerky. The setting it found:
+
+```toml
+[wooze]
+preset = "linklater"     # amplitude 0.5, step 0.5, glide 0.6, jitter 1
+
+[post_process]
+boil_on = 1              # at that step, a new drawing 12 times a second
+```
+
+The strip shows why. Both rows are the same crown at the same moments. In the first guess (amplitude 1, step 0.25, glide 0.3, on twos) the limbs change place between frames and the outline of the crown keeps breaking. In `linklater` the limbs stay about where they were, and the foliage is what re-decides itself.
+
+![The same crown at eighth-second moments, under the first guess above and linklater below](../images/linklater-strip.png)
+
+A strip can't show motion, and motion is the question. This one comes closer: one row of pixels through that crown, stacked over 4 s with time running down. A lurch is a jag, a hold is a straight line and a glide is a curve.
+
+![Slit-scans of the first guess, a jagged zigzag, and of linklater, long soft curves with a fine grain on them](../images/linklater-slit.png)
+
+The first guess is a zigzag four times a second. `linklater` is long curves carrying a fine stair-step, which is the slow layer gliding and the fast layer snapping, as the design asked for.
+
+**What moved it.** Measured over 4 s at 60 fps from the walker's start, at 960 x 540 and with speeds scaled to 1080p. *Speed* is how far the fastest 1% of the picture moves in a frame, by phase correlation per tile. *Change* is how much the busiest 1% of 24-pixel tiles changes in a frame, out of 255 levels. The first three columns of each row are the field's knobs:
+
+| Look | Amplitude | Step | Glide | Boil on | Speed (px/frame) | Change |
+|------|-----------|------|-------|---------|------------------|--------|
+| The first guess | 1 | 0.25 | 0.3 | twos | 15.0 | 34.2 |
+| **`linklater`** | **0.5** | **0.5** | **0.6** | **ones** | **6.3** | **19.8** |
+| Glide 0, otherwise `linklater` | 0.5 | 0.5 | 0 | ones | 12.2 | 25.4 |
+| Glide 0.3 | 0.5 | 0.5 | 0.3 | ones | 6.3 | 20.9 |
+| Glide 1 | 0.5 | 0.5 | 1 | ones | 6.3 | 19.1 |
+| Less drift | 0.35 | 0.5 | 0.6 | ones | 6.0 | 19.4 |
+| More drift, longer glide | 0.7 | 0.5 | 0.85 | ones | 7.0 | 20.2 |
+| Slower | 0.7 | 1 | 0.6 | ones | 5.7 | 15.9 |
+| `boil` | 0.6 | 0.125 | 0 | twos | 17.2 | 38.5 |
+| `morph` | 1 | 1 | 1 | twos | 4.5 | 13.8 |
+
+The numbers narrow the choice, and don't make it. They put `linklater` between the two ends and away from the lurch. The rows near it measure much alike, and it was chosen over them by looking at the strips and scans, and at what each knob is for:
+
+- **Step and amplitude do most of the work.** At a quarter second a pose has to cover its distance in a few frames, however it eases. The design's first guess spent its effort on glide, but glide only matters coming off the floor: 0 doubles the speed, and from 0.3 up it hardly changes. 0.6 is there for the softer corners in the scan, and it still holds for 0.2 s of each step.
+- **The half second is what the boil wanted anyway.** A beat is six film frames, so 0.5 s is 12 film frames a second and `boil_on = 1` draws on every one, which is animation on twos. On twos at this step the drawings come 6 times a second, which shows up as a throb at 6 Hz.
+- **Amplitude stops at a half** because a tree that wanders needs somewhere to go. 0.35 measures about the same but scans flatter, with less of the slow curve.
+- **Jitter stays at what the specs authored.** Most of the sharp change that's left is the leaf cards' own snap on their 8 Hz clock, and turning the shading boil off barely moves it. Jitter 0.5 takes the change down to 16.9, but this is the layer that makes it feel drawn.
+- **Stagger stays as each species has it,** `per_level` for oak and cypress and `per_branch` for birch and thorn. With none at all, the change goes up to 21.3. Putting the whole grove on one or the other moves it by less than 1%.
+
+**What a preset holds.** A built-in preset holds the clock's four knobs. The rest of the look is what the grove's tables and specs already say: Kuwahara and contour on, `boil_on = 1`, and each species' own `echoes`, `stagger`, `variance` and leaf `jitter` in `demo/specs/grove_*.procgen.toml`. `flint render demo/woozy_grove.scene.toml --time 3.5` reproduces any moment byte for byte. The strip and the scan come from the scene alone:
+
+```bash
+python tools/living-strip/living_strip.py --player target/release/flint-player
+```
+
+Two runs write the same bytes on the same machine and driver.
+
+**What it costs.** 1920 x 1080 on an RTX 5070 laptop. Nothing is culled, so each row costs the same wherever the camera looks: the grove draws its 1.84 M triangles from any spot, 30 trees in the frame or fewer. The 60 is the grove plus 22 more copies, which isn't committed.
+
+| Living props | Run | Display rate | Uncapped | Blending and upload | Frames missing a pose |
+|--------------|-----|--------------|----------|---------------------|-----------------------|
+| 38 | Standing, 30 s | 59.9 to 60.0 fps | 138 to 155 fps | 1.2 to 1.7 ms | 0 |
+| 38 | The scripted walk, 48 s | 60.0 fps | | 1.3 ms | 0 |
+| 38 | Standing, 5 min | 60.0 fps | | 1.3 ms | 0 |
+| 60 | Standing, 30 s | 60.0 fps | 133 to 138 fps | 2.0 to 2.5 ms | 0 |
+| 60 | Standing, 5 min | 60.0 fps | | 2.3 ms | 0 |
+
+Read the last column as well as the frame rate. A prop short of a pose keeps its last bones for that frame and the frame still arrives on time, so a grove can report 60 fps while its trees stutter. That's what happens on a machine with far more work than cores: 48 busy processes on 24 threads leave nearly every frame short of a pose while they run, at 59 fps. With 24 busy processes, none are short.
 
 ## `flint gen`
 
@@ -297,7 +844,7 @@ Headless `flint render` does not run the resolver. For snapshots of procgen-back
 - **Generators**: `tree`, `texture` (patterns, node graph, map derivation) and `creature` (body parts, limb chains, skeleton builder), registered through `GeneratorRegistry`.
 - **Spec, seed and RNG**: `ProcGenSpec`, `Seed`, `SeededRng`.
 - **Output**: `MeshData`, `ImageData`, `SkinnedMeshData`, GLB export with LOD chains and skins.
-- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue), used by the player.
+- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue, `LivingProps`), used by the player.
 - **Validation**: `validate_output` with style-guide constraints.
 
 `flint-procgen-ai` sits on top for tool-time spec creation and refinement from prompts; it is not linked into the player.

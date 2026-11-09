@@ -26,8 +26,8 @@ flint render levels/tavern.scene.toml \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output <path>` | `render.png` | Output file path |
-| `--width <px>` | 1920 | Image width in pixels |
-| `--height <px>` | 1080 | Image height in pixels |
+| `--width <px>` | 1920 | Image width in pixels (640 per column in a sweep, 960 in a GIF) |
+| `--height <px>` | 1080 | Image height in pixels (360 per column in a sweep, 540 in a GIF) |
 | `--distance <units>` | scene `[camera]` or auto | Camera distance from the target |
 | `--yaw <degrees>` | scene `[camera]` or auto | Horizontal camera angle |
 | `--pitch <degrees>` | scene `[camera]` or auto | Vertical camera angle |
@@ -83,6 +83,17 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy, 0--1 |
 | `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | Shared geometry edges' thresholds (`--style edges_view` shows what they find) |
+| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
+| `--contour` | off | Enable the contour pass |
+| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--render-mode <0-5>` | `0` | Stylized render mode |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
@@ -91,7 +102,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
 | `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
-| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` (Living Props builds only); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
+| `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` ([below](#sweeping-a-knob)); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
 | `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
 | `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
 | `--report <file.json>` | (none) | Each column's (or the frame's) measures: mean luminance, near-black/white shares, edge density, the ASCII ramp-step histogram, the distance to `--reference` ([Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look)) |
@@ -180,8 +191,8 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 
 - **Time is pinned.** Film grain, render-mode animation and animated styles read a post time that headless render fixes at 0. Pass `--style-time` (or `--grain-time`) to pick a different but equally repeatable frame; two renders at the same value match, different values differ.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
-- **Animation does not run.** Skinned meshes render at bind pose. For a posed headless frame use the model previewer's render mode instead: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically.
-- **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture.
+- **Animation does not run.** Skinned meshes render at bind pose. For a posed headless frame use the model previewer's render mode instead: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
+- **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
 - **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes (ADR 0052), which matters when a CI job renders dozens of frames.
 
 ## Frame sequences
@@ -242,6 +253,115 @@ flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
 A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
+## A Chosen Moment
+
+`--time` captures a scene at a game time, so that two settings can be compared at the same instant:
+
+```bash
+flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
+```
+
+[Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component), shallow wooze, the [shading boil](../concepts/post-processing.md) and the [wooze field](../concepts/procgen.md#the-wooze-field) they all read run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time), particles (`--particle-time` overrides those), and `--boil-time` holds the boil on one drawing. The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
+
+It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
+
+Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+
+## Scripts and an Expression Timeline
+
+`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--expression-timeline` feeds them [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
+
+```bash
+flint render scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json \
+  --time 0..12 --fps 12 -o one-turn.gif
+```
+
+Scripts start once the models are loaded, as in the player, and tick once per clock step (1/60 s, or `--frame-step`), in the player's frame order: the timeline's states that have come due, `on_expression` then `on_update`, `on_draw_ui`, then what the scripts asked for, then the wooze field and living props. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
+
+It's deterministic, so a review can diff two renders:
+
+- The clock is the step, and it is the only one: `timestamp()`, Rhai's wall clock, fails and says to use `total_time()`.
+- `random()` and `random_range()` draw from a seeded sequence, the same every run. The player's are unchanged.
+- Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
+- There is no input.
+
+What changes the picture runs: everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material), `tune_living`, `freeze_living`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, `fire_event` between scripts, the `set_camera_*` overrides and the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...). Sound is dropped quietly. Everything else a script asks for (physics, particles, a scene change, `tune_living`'s boil, the HUD, render modes) is named once on stderr and in the report's `warnings`, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
+
+`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, and a tune and a freeze reach living props.
+
+A scene with `living_prop` entities draws them in any `flint render`, at time 0 without `--time`. Procgen assets resolve as in the player only in those scenes. Other scenes draw exactly as they did.
+
+## Sweeping a Knob
+
+A wooze key on `--sweep` renders the same moment once per value of a wooze knob, side by side on one image:
+
+```bash
+flint render demo/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0.25,0.5,1 -o glide.png
+```
+
+![The same moment in the living oak bench at four values of glide, as labelled columns on a strip of film](../images/render-sweep-glide.png)
+
+It takes `wooze.amplitude`, `wooze.step`, `wooze.glide`, `wooze.jitter` and `wooze.preset` (`wooze.preset=boil,morph,calm`). Each column is a whole run of its own from time 0, since a prop's state at a moment depends on what the knob was all the way there. `--width` and `--height` are each column's size, 640 x 360 by default, as for every sweep.
+
+A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or a scene with living props or a `[wooze]` table) draws a world and renderer a column like this whatever its key, so `--sweep ascii.cell=6,8 --time 0..1 -o cells.gif` animates a style sweep and `--report json` gives each of its captures a `column`. Those renders take one `--sweep` (no grid) and don't yet take `--sweep-crop`, `--sweep-scale`, `--reference`, a `--report` file, `--ascii-text`, `--gpu-time`, `--frames` or `--ai-refine`; each says so.
+
+A sweep sets the scene's global value, the same one a `[wooze]` table would, and a scene without a table gets an empty one. Zones still apply on top. If a zone keeps any prop off the value, the column says what the props really read (`PROPS READ 0.25-0.80`). If two neighbouring columns come out pixel-identical, a warning says so: at this moment, nothing on screen is listening to that knob.
+
+## A Span of Time as a GIF
+
+Stills can't show motion. Give `--time` a span and `--output` a `.gif`:
+
+```bash
+flint render demo/living_props.scene.toml --time 0..4 --fps 12 -o grove.gif
+flint render demo/living_props.scene.toml --time 0..4 --sweep wooze.glide=0,1 -o glide.gif
+flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o oak.gif
+```
+
+The span leaves out its last moment, so that a span one cycle long loops cleanly. `--fps` goes up to 50, which is as fast as browsers will honestly play a GIF. A frame is 960 x 540 by default.
+
+Nothing moves in the file that didn't move in the render. All the frames share one palette with no dithering, and a pixel the render left alone is written as transparent over the last frame. On 24 frames of the bench, in which 75.5% of the pixels never change, this keeps all of them still, where the `image` crate's encoder, with a new palette every frame, shimmers 81% of them by as much as 22 levels. That shimmer would look just like the boil you're trying to judge. It also comes out smaller: 1.8 MB to its 2.5 MB.
+
+## What a Prop Was Doing
+
+`--report json` writes one JSON object on stdout, and moves everything else to stderr:
+
+```bash
+flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
+```
+
+```json
+{
+  "scene": "The Wooze Field", "output": "at-3.5.png", "width": 1920, "height": 1080,
+  "frame_step": 0.016666666666666666, "wooze_field": true, "wooze_zones": 2,
+  "captures": [{
+    "time": 3.5,
+    "props": [{
+      "entity": "oak_00", "asset": "oak_living@7", "lineage_seed": 7,
+      "position": [-48.0, 0.0, -30.0], "phase_offset": 0.61965674, "beats": 7.619656741619093,
+      "poses": { "index": 7, "weight": 0.13669996, "shape_seed": 11430650338220828881,
+                 "lowest": 7, "highest": 8, "gliding_parts": 51, "parts": 243 },
+      "wooze": { "amplitude": 1.0, "step": 0.5, "glide": 0.3, "jitter": 1.0 },
+      "echoes": 6,
+      "species": "oak_living",
+      "values": {
+        "step": { "value": 0.5, "layer": "global" },
+        "glide": { "value": 0.3, "layer": "global" },
+        "echoes.count": { "value": 6, "layer": "spec" },
+        "stagger": { "value": "per_level", "layer": "spec" },
+        "...": "amplitude, jitter, echoes.spread, echoes.alpha and variance.* the same way"
+      }
+    }]
+  }],
+  "still_props": [],
+  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it"]
+}
+```
+
+There's one capture per image in the file: per column in a sweep (each with a `column`, the knob's value), and per frame in a span. Props come in order of name.
+
+`poses` is what was drawn, read from the blend: `index` and `weight` are the first part of the skeleton, the trunk's first segment, leaving that pose toward the next, and `shape_seed` regrows it. `lowest` and `highest` are how far a staggered tree's parts have spread, and `gliding_parts` is how many are between poses instead of holding, so a frozen-looking tree has a number that says why. `wooze` is what the field said where the prop stands. `species` is the prop's spec, and `values` has every value a [species](../concepts/procgen.md#species-values) can set, as the prop runs on it, with the layer that set it: `spec`, `entity` (a `living_prop` stagger), `global` (the scene's `[living]` or `[wooze]`), `zone:<name>` where a zone has the last word, or `species`. A zone's `value` can be part way to its own, inside its falloff. `still_props` lists entities that asked to be living and drew as still models; the reason is in stderr.
+
+Why the runtime values are here and not in `flint query`: query reads scene files, and none of this is in one.
 
 ## CI Pipeline Integration
 
@@ -420,7 +540,7 @@ Headless rendering uses the same wgpu PBR pipeline as the interactive viewer:
 - **Cascaded shadow mapping** for directional light shadows, with PCSS when the light has an `angular_size`
 - **glTF mesh rendering** with full material support
 - **Skinned mesh rendering** at bind pose (no animation is evaluated headlessly)
-- **The full post-processing chain**, including Kuwahara and FXAA when enabled
+- **The full post-processing chain**, including Kuwahara, contour and FXAA when enabled
 
 The only difference from interactive rendering is that the output goes to a texture-to-buffer copy instead of a swapchain surface.
 

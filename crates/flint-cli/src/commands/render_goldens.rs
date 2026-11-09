@@ -1284,7 +1284,13 @@ mod tests {
     #[test]
     fn only_the_mixed_cases_use_the_mixed_props_bench() {
         let (_, manifest) = stylize_manifest();
-        let mixed = ["style-mask", "style-mask-msaa4", "styles-mixed"];
+        let mixed = [
+            "style-mask",
+            "style-mask-msaa4",
+            "styles-mixed",
+            // ASCII giving way to pencil needs both styles' props
+            "ascii-full-yields-to-pencil",
+        ];
         for case in &manifest.cases {
             if case.scene == "demo/stylize_props.scene.toml" {
                 assert!(

@@ -2209,6 +2209,9 @@ pub(crate) mod input_id {
     pub const DISPLAY_PING: u64 = 4;
     /// FXAA's intermediate, when the display stage draws through it (#302).
     pub const FXAA_IN: u64 = 6;
+    /// The contour pass's ink over the HDR stage (#214), which the composite
+    /// reads in its place.
+    pub const CONTOUR: u64 = 7;
 }
 
 const HDR_PINGS: [&str; 2] = ["style hdr ping 0", "style hdr ping 1"];

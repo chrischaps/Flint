@@ -100,6 +100,11 @@ impl ProcGenQueue {
         self.budget_ms = budget_ms;
     }
 
+    /// The milliseconds a frame may spend generating.
+    pub fn budget_ms(&self) -> f64 {
+        self.budget_ms
+    }
+
     /// Enqueue a generation request. Deduplicates by `spec_name`.
     pub fn enqueue(&mut self, request: GenerationRequest) {
         if self.is_pending(&request.spec_name) {

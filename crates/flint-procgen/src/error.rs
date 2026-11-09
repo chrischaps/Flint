@@ -43,6 +43,10 @@ pub enum ProcGenError {
     /// The generation exceeded its polygon or memory budget.
     #[error("budget exceeded: {0}")]
     BudgetExceeded(String),
+
+    /// This spec can't be split into a stable structure and per-seed poses.
+    #[error("not a living prop: {0}")]
+    LivingUnsupported(String),
 }
 
 /// Convenience alias for `Result<T, ProcGenError>`.

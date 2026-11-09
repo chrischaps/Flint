@@ -164,6 +164,76 @@ impl PlayerApp {
                         );
                     }
                 }
+                ScriptCommand::SetWooze { knobs, seconds } => {
+                    self.change_wooze(|field, time| {
+                        let table = table_of(&knobs)?;
+                        field.set_global(table, time, seconds)
+                    });
+                }
+                ScriptCommand::SetWoozeZone {
+                    name,
+                    fields,
+                    seconds,
+                } => {
+                    self.change_wooze(|field, time| {
+                        let table = table_of(&fields)?;
+                        field
+                            .set_zone(&name, table, time, seconds)
+                            .map_err(|e| format!("zone '{name}': {e}"))
+                    });
+                }
+                ScriptCommand::RemoveWoozeZone { name, seconds } => {
+                    self.change_wooze(|field, time| {
+                        if field.remove_zone(&name, time, seconds) {
+                            Ok(())
+                        } else {
+                            Err(format!("there's no zone named '{name}' to remove"))
+                        }
+                    });
+                }
+                ScriptCommand::TuneLiving { knobs } => {
+                    if let Err(problem) = self.tune_living_from_script(knobs) {
+                        tracing::warn!(target: "script", "tune_living: {problem}");
+                    }
+                }
+                ScriptCommand::ClearLiving { species, keys } => {
+                    if let Err(problem) = self.clear_living_species(&species, &keys) {
+                        tracing::warn!(target: "script", "clear_living: {problem}");
+                    }
+                }
+                ScriptCommand::FreezeLiving { frozen } => self.living_tune.frozen = frozen,
+                ScriptCommand::StepLiving => self.step_living(),
+                ScriptCommand::SaveLivingPreset { name } => match self.save_living_preset(&name) {
+                    Ok(path) => println!("[living] saved {}", path.display()),
+                    Err(problem) => {
+                        tracing::warn!(target: "script", "save_living_preset: {problem}");
+                    }
+                },
+                ScriptCommand::CommitLiving => match self.commit_living() {
+                    Ok(said) => println!("[living] {said}"),
+                    Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
+                },
+                ScriptCommand::LoadLivingPreset { name } => {
+                    if let Err(problem) = self.load_living_preset(&name) {
+                        tracing::warn!(target: "script", "load_living_preset: {problem}");
+                    }
+                }
+                ScriptCommand::CompareLiving { a, b } => {
+                    if let Err(problem) = self.compare_living(&a, &b) {
+                        tracing::warn!(target: "script", "compare_living: {problem}");
+                    }
+                }
+                ScriptCommand::FlipLiving => {
+                    if !self.flip_living() {
+                        tracing::warn!(target: "script", "flip_living: nothing is being compared");
+                    }
+                }
+                ScriptCommand::SplitLiving { split } => {
+                    if !self.split_living(split) {
+                        tracing::warn!(target: "script", "split_living: nothing is being compared");
+                    }
+                }
+                ScriptCommand::StopComparingLiving => self.stop_comparing_living(),
                 ScriptCommand::LoadScene { path } => {
                     if self.transition_phase.is_idle() {
                         println!("[transition] Starting exit transition → {}", path);
@@ -258,6 +328,31 @@ impl PlayerApp {
             }
             StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
             StyleApplied::NotAStyleCommand => {}
+        }
+    }
+
+    /// A script's change to the wooze field. A change that's no good is named and
+    /// changes nothing. A scene with no `[wooze]` table never asked for a field, so
+    /// it doesn't get one; it says so once, since a script may ask every frame.
+    fn change_wooze(
+        &mut self,
+        change: impl FnOnce(&mut flint_core::wooze::WoozeField, f64) -> Result<(), String>,
+    ) {
+        let time = self.wooze_time;
+        match &mut self.wooze {
+            Some(field) => {
+                if let Err(reason) = change(field, time) {
+                    tracing::warn!("A script's change to the wooze field: {reason}");
+                }
+            }
+            None if !self.wooze_missing_warned => {
+                self.wooze_missing_warned = true;
+                tracing::warn!(
+                    "A script tried to change the wooze field, and this scene has none: \
+                     give it a [wooze] table, even an empty one, to opt in"
+                );
+            }
+            None => {}
         }
     }
 
@@ -405,4 +500,10 @@ impl PlayerApp {
             });
         }
     }
+}
+
+fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
+    value
+        .as_table()
+        .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }

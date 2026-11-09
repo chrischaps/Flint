@@ -49,6 +49,8 @@ pub struct RenderPanelFlags {
     /// A look was picked (#356): the host lays [`RenderDebugPanel::look`]
     /// under the scene's keys and uploads the result.
     pub look_changed: bool,
+    /// Contour was just enabled — host must call ensure_contour_resources.
+    pub contour_needs_resources: bool,
 }
 
 impl RenderPanelFlags {
@@ -467,6 +469,45 @@ impl RenderDebugPanel {
             f.pp_changed |= slider(ui, "Crease", &mut self.pp.edge_normal, 0.2..=8.0);
         });
 
+        section(ui, "Contour", false, |ui| {
+            let was_off = !self.pp.contour_enabled;
+            if ui
+                .checkbox(&mut self.pp.contour_enabled, "Enabled")
+                .changed()
+            {
+                f.pp_changed = true;
+                if was_off && self.pp.contour_enabled {
+                    f.contour_needs_resources = true;
+                }
+            }
+            f.pp_changed |= slider(ui, "Width", &mut self.pp.contour_width, 0.25..=5.0);
+            f.pp_changed |= slider(ui, "Threshold", &mut self.pp.contour_threshold, 0.01..=0.5);
+            f.pp_changed |= slider(ui, "Strength", &mut self.pp.contour_strength, 0.0..=1.0);
+            f.pp_changed |= slider(ui, "Luma", &mut self.pp.contour_luma, 0.0..=2.0);
+            f.pp_changed |= color_row(ui, "Ink", &mut self.pp.contour_color);
+            f.pp_changed |= slider(ui, "Fade (m)", &mut self.pp.contour_fade, 0.0..=200.0);
+            f.pp_changed |= slider(ui, "Boil", &mut self.pp.contour_boil, 0.0..=2.0);
+        });
+
+        section(ui, "Shading boil", false, |ui| {
+            // The Kuwahara style's paint boil (#214), a scene-level knob
+            // beside the contour's: both move on the wooze field's beat
+            f.pp_changed |= slider(ui, "Paint boil", &mut self.pp.kuwahara_boil, 0.0..=1.0);
+            let names = ["Ones", "Twos", "Threes"];
+            let cur = (self.pp.boil_on.clamp(1, 3) - 1) as usize;
+            egui::ComboBox::from_label("Hold each drawing")
+                .selected_text(names[cur])
+                .show_ui(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        if ui.selectable_label(cur == i, *name).clicked() && cur != i {
+                            self.pp.boil_on = i as u32 + 1;
+                            f.pp_changed = true;
+                        }
+                    }
+                });
+            ui.label(boil_status(&self.pp.boil));
+        });
+
         section(ui, "Render mode", false, |ui| {
             let labels = ["None", "Matrix", "Blood", "Drunk", "Tron", "Underwater"];
             let cur = (self.pp.render_mode as usize).min(labels.len() - 1);
@@ -682,6 +723,19 @@ fn fov_label(fov_deg: f32) -> &'static str {
         f if f < 72.0 => "natural",
         f if f < 90.0 => "wide",
         _ => "fisheye",
+    }
+}
+
+/// What the wooze field is telling the boil here and now. Its sliders are shares
+/// of this, so a scene with no field needs to say why they do nothing.
+fn boil_status(boil: &flint_core::wooze::BoilFrame) -> String {
+    if boil.step <= 0.0 {
+        "No [wooze] table here, so nothing boils.".to_string()
+    } else {
+        format!(
+            "Field: step {:.3} s, jitter {:.2}, drawing {}",
+            boil.step, boil.amount, boil.seed
+        )
     }
 }
 

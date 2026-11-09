@@ -110,7 +110,7 @@ pub fn load_particle_effects_from_world(scene_path: &str, system: &mut ParticleS
     for (path, result) in load_effects_from_dir(&dir) {
         match result {
             Ok(fx) => {
-                println!(
+                eprintln!(
                     "Loaded particle effect: {} ({} emitter{})",
                     fx.name,
                     fx.emitters.len(),

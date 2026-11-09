@@ -33,6 +33,9 @@ use crate::postprocess::{
 use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
+use crate::wooze_pipeline::{
+    grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms, WoozePipelineSet,
+};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
@@ -101,6 +104,8 @@ pub(super) struct DrawCall {
     /// The camera distances this draw is drawn at: its mesh's level of detail
     /// and the entity's `lod.draw_distance`. `None` draws at every distance.
     lod: Option<DrawLod>,
+    /// Its drift this frame, if its entity has shallow wooze (#215).
+    wooze: Option<ShallowWoozeUniforms>,
 }
 
 /// A draw's level of detail in world space: the band of camera distances it
@@ -239,7 +244,11 @@ impl DrawBindCache {
             }
             keep
         });
-        self.materials.retain(|_, m| m.touched == frame);
+        // Kept a little past their last draw: a living prop's leaves flick
+        // between a few shared tints (#212), which shouldn't remake a buffer and
+        // a bind group each time one goes unused for a frame.
+        self.materials
+            .retain(|_, m| frame.saturating_sub(m.touched) < MATERIAL_GRACE_FRAMES);
     }
 }
 
@@ -263,6 +272,18 @@ impl TransformTarget {
                 queue.write_buffer(buffer, 0, bytemuck::bytes_of(uniforms));
             }
             TransformTarget::Slot(slot) => arena.stage(*slot, bytemuck::bytes_of(uniforms)),
+        }
+    }
+
+    /// Put shallow wooze's drift in the rest of the slot (#215). Only cached draws
+    /// have the room, and only they can have drift.
+    fn write_wooze(&self, arena: &mut TransformArena, wooze: &ShallowWoozeUniforms) {
+        if let TransformTarget::Slot(slot) = self {
+            arena.stage_at(
+                *slot,
+                std::mem::size_of::<TransformUniforms>(),
+                bytemuck::bytes_of(wooze),
+            );
         }
     }
 
@@ -401,6 +422,31 @@ pub(super) struct CachedBoneBind {
     pub touched: u64,
 }
 
+/// Write `matrices` into a bone buffer from bone `first`, stopping at its end.
+fn write_bones(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    first: usize,
+    matrices: &[[[f32; 4]; 4]],
+) {
+    let room = crate::skinned_pipeline::MAX_BONES.saturating_sub(first);
+    let matrices = &matrices[..matrices.len().min(room)];
+    if !matrices.is_empty() {
+        queue.write_buffer(
+            buffer,
+            (first * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
+            bytemuck::cast_slice(matrices),
+        );
+    }
+}
+
+/// How long a material nothing draws with stays in the cache: about 2 s.
+const MATERIAL_GRACE_FRAMES: u64 = 120;
+
+/// The `skinned_bone_binds` key bit for a draw's shadow bones, when it has its
+/// own apart from the bones it's drawn with.
+pub(super) const SHADOW_BONE_KEY: u32 = 1 << 30;
+
 /// The `draw_bind_cache` key bit that keeps a skinned draw's binds apart
 /// from a static draw's of the same entity and sub-mesh index.
 pub(super) const SKINNED_DRAW_KEY: u32 = 1 << 31;
@@ -419,6 +465,9 @@ struct SkinnedDrawCall {
     material_buffer: Arc<MaterialBuffer>,
     material_bind_group: Arc<wgpu::BindGroup>,
     bone_bind_group: Arc<wgpu::BindGroup>,
+    /// What the shadow pass binds: `bone_bind_group`, unless the entity has
+    /// shadow bones of its own (`write_entity_shadow_bones`).
+    shadow_bone_bind_group: Arc<wgpu::BindGroup>,
     /// Unique-edge index buffer for wireframe debug modes (shares the
     /// skinned vertex buffer, so the lines follow the animated pose).
     wire_index_buffer: Option<wgpu::Buffer>,
@@ -434,6 +483,33 @@ struct SkinnedDrawCall {
     /// under every bone matrix, which holds any blend of them. `None`
     /// when the bones aren't known on the CPU.
     world_aabb: Option<([f32; 3], [f32; 3])>,
+    /// As [`DrawCall::wooze`].
+    wooze: Option<ShallowWoozeUniforms>,
+}
+
+/// One faint copy of a skinned entity (#228): bones of its own and how opaque
+/// it draws. The rest it takes from the entity's own draw at extraction.
+struct EntityEcho {
+    bones: wgpu::Buffer,
+    bind_group: Arc<wgpu::BindGroup>,
+    opacity: f32,
+}
+
+/// A draw of one part of one echo. It reads the entity's transform slot rather
+/// than having one of its own, and a material shared by content.
+struct EchoDrawCall {
+    vertex_buffer: Arc<wgpu::Buffer>,
+    index_buffer: Arc<wgpu::Buffer>,
+    index_count: u32,
+    transform_bind_group: Arc<wgpu::BindGroup>,
+    material_buffer: Arc<MaterialBuffer>,
+    material_bind_group: Arc<wgpu::BindGroup>,
+    bone_bind_group: Arc<wgpu::BindGroup>,
+    /// Where the entity stands, since all its echoes sort as one.
+    origin: [f32; 3],
+    /// Which echo: they draw in this order, so farthest from now first.
+    echo: usize,
+    sort_depth: f32,
 }
 
 /// Configuration for creating a SceneRenderer
@@ -479,6 +555,11 @@ pub struct LightingLevers {
 pub struct SceneRenderer {
     pipeline: RenderPipeline,
     skinned_pipeline: Option<SkinnedPipeline>,
+    /// Shallow wooze (#215): each entity's drift this frame, from the caller, and
+    /// the pipelines its draws use, built when the first one needs them.
+    shallow_wooze: HashMap<flint_core::EntityId, ShallowWoozeDraw>,
+    wooze_standard: Option<WoozePipelineSet>,
+    wooze_skinned: Option<WoozePipelineSet>,
     billboard_pipeline: Option<BillboardPipeline>,
     archetype_visuals: HashMap<String, ArchetypeVisual>,
     mesh_cache: MeshCache,
@@ -498,6 +579,7 @@ pub struct SceneRenderer {
     skinned_entity_draws: Vec<SkinnedDrawCall>,
     transparent_draws: Vec<DrawCall>,
     transparent_skinned_draws: Vec<SkinnedDrawCall>,
+    echo_draws: Vec<EchoDrawCall>,
     /// Draws outside the camera frustum in the last `render_to`, set aside
     /// from `entity_draws` / `transparent_draws` after the shadow pass.
     culled_entity_draws: Vec<DrawCall>,
@@ -740,6 +822,9 @@ pub struct SceneRenderer {
     style_history_epoch: u64,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
+    /// The comb of woozy grass this frame (#252), from the clock the player set
+    /// `grass_time` on. `None`, the default, combs nothing.
+    pub grass_wooze: Option<ShallowWoozeDraw>,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
     device_lost: bool,
     /// Per-entity bone matrix buffers. The `GpuSkinnedMesh` bone buffer is
@@ -751,6 +836,12 @@ pub struct SceneRenderer {
     /// for the per-entity style scissor (#385).
     entity_bone_matrices: HashMap<flint_core::EntityId, Vec<[[f32; 4]; 4]>>,
     asset_bone_matrices: HashMap<String, Vec<[[f32; 4]; 4]>>,
+    /// Entities whose shadow follows other bones than they're drawn with.
+    entity_shadow_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
+    /// Per entity, what each skinned part's vertex colour is multiplied by.
+    entity_part_tints: HashMap<flint_core::EntityId, Vec<[f32; 3]>>,
+    /// Living props' echoes, in the order they draw. Empty costs nothing.
+    entity_echoes: HashMap<flint_core::EntityId, Vec<EntityEcho>>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
 }
@@ -856,6 +947,9 @@ impl SceneRenderer {
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            shallow_wooze: HashMap::new(),
+            wooze_standard: None,
+            wooze_skinned: None,
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
@@ -867,12 +961,16 @@ impl SceneRenderer {
             entity_bone_buffers: HashMap::new(),
             entity_bone_matrices: HashMap::new(),
             asset_bone_matrices: HashMap::new(),
+            entity_shadow_bone_buffers: HashMap::new(),
+            entity_part_tints: HashMap::new(),
+            entity_echoes: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            echo_draws: Vec::new(),
             culled_entity_draws: Vec::new(),
             culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
@@ -1013,6 +1111,7 @@ impl SceneRenderer {
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
             grass_time: 0.0,
+            grass_wooze: None,
             device_lost: false,
         }
     }
@@ -2279,6 +2378,7 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.echo_draws.clear();
         self.culled_entity_draws.clear();
         self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
@@ -2385,6 +2485,9 @@ impl SceneRenderer {
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            shallow_wooze: HashMap::new(),
+            wooze_standard: None,
+            wooze_skinned: None,
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
@@ -2396,12 +2499,16 @@ impl SceneRenderer {
             entity_bone_buffers: HashMap::new(),
             entity_bone_matrices: HashMap::new(),
             asset_bone_matrices: HashMap::new(),
+            entity_shadow_bone_buffers: HashMap::new(),
+            entity_part_tints: HashMap::new(),
+            entity_echoes: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            echo_draws: Vec::new(),
             culled_entity_draws: Vec::new(),
             culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
@@ -2544,6 +2651,7 @@ impl SceneRenderer {
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
             grass_time: 0.0,
+            grass_wooze: None,
             device_lost: false,
         }
     }
@@ -2728,11 +2836,134 @@ impl SceneRenderer {
         self.style_bounds(&camera.view_projection_matrix())
     }
 
+    /// Write part of an entity's own bones, from bone `first`, and nothing else.
+    ///
+    /// This is [`update_bone_matrices`](Self::update_bone_matrices) for a palette
+    /// that changes every frame on many entities (#212): that one writes the
+    /// asset's shared buffer too, which forty trees would do forty times to no
+    /// effect, since each draws from its own.
+    pub fn write_entity_bones(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        entity_id: flint_core::EntityId,
+        first: usize,
+        matrices: &[[[f32; 4]; 4]],
+    ) {
+        if self.device_lost {
+            return;
+        }
+        let buffer = self
+            .entity_bone_buffers
+            .entry(entity_id)
+            .or_insert_with(|| Self::create_entity_bones(device, "Entity Bone Buffer"));
+        write_bones(queue, buffer, first, matrices);
+    }
+
+    /// Give an entity's shadow its own bones, from the shadow pass's next frame,
+    /// or write them again.
+    pub fn write_entity_shadow_bones(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        entity_id: flint_core::EntityId,
+        matrices: &[[[f32; 4]; 4]],
+    ) {
+        if self.device_lost {
+            return;
+        }
+        let buffer = self
+            .entity_shadow_bone_buffers
+            .entry(entity_id)
+            .or_insert_with(|| Self::create_entity_bones(device, "Entity Shadow Bone Buffer"));
+        write_bones(queue, buffer, 0, matrices);
+    }
+
+    fn create_entity_bones(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: (crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>())
+                as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Write part of the bones of echo `echo` of a skinned entity, from bone
+    /// `first`, and say how opaque it draws. Writing an echo is what makes it
+    /// exist. It then draws from the next extraction, after everything opaque,
+    /// in the entity's own colours and with no depth write, in `echo` order. An
+    /// entity that's never written one pays nothing.
+    ///
+    /// Write the whole palette first: until then its bones are zero, which puts
+    /// it nowhere.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_entity_echo_bones(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        entity_id: flint_core::EntityId,
+        echo: usize,
+        opacity: f32,
+        first: usize,
+        matrices: &[[[f32; 4]; 4]],
+    ) {
+        if self.device_lost {
+            return;
+        }
+        let Some(pipeline) = &self.skinned_pipeline else {
+            return;
+        };
+        let echoes = self.entity_echoes.entry(entity_id).or_default();
+        while echoes.len() <= echo {
+            let bones = Self::create_entity_bones(device, "Entity Echo Bone Buffer");
+            let bind_group =
+                Self::create_bone_bind(device, &pipeline.bone_bind_group_layout, &bones);
+            echoes.push(EntityEcho {
+                bones,
+                bind_group: Arc::new(bind_group),
+                opacity: 0.0,
+            });
+        }
+        echoes[echo].opacity = opacity;
+        write_bones(queue, &echoes[echo].bones, first, matrices);
+    }
+
+    /// Stop drawing an entity's echoes from `count` on. Their buffers stay, ready
+    /// for the next write, so a slider sweeping a count allocates nothing on its
+    /// way back up: an opacity of 0 is what leaves one out at extraction.
+    pub fn set_entity_echo_count(&mut self, entity_id: flint_core::EntityId, count: usize) {
+        if let Some(echoes) = self.entity_echoes.get_mut(&entity_id) {
+            for echo in echoes.iter_mut().skip(count) {
+                echo.opacity = 0.0;
+            }
+        }
+    }
+
+    /// Multiply the vertex colour of one part of an entity's skinned mesh by
+    /// `tint`. Materials are shared by content, so a few distinct tints cost a
+    /// few materials, however many entities use them: keep them few.
+    pub fn set_entity_part_tint(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        part: usize,
+        tint: [f32; 3],
+    ) {
+        let tints = self.entity_part_tints.entry(entity_id).or_default();
+        if tints.len() <= part {
+            tints.resize(part + 1, [1.0; 3]);
+        }
+        tints[part] = tint;
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.entity_bone_buffers.clear();
         self.entity_bone_matrices.clear();
         self.asset_bone_matrices.clear();
+        self.entity_shadow_bone_buffers.clear();
+        self.entity_part_tints.clear();
+        self.entity_echoes.clear();
         self.skinned_bone_binds.clear();
     }
 
@@ -2928,8 +3159,10 @@ impl SceneRenderer {
         let entity_draws = self.entity_draws.len() as u32;
         let skinned_draws = self.skinned_entity_draws.len() as u32;
         let terrain_draws = self.terrain_visible_chunks;
-        let transparent_draws =
-            (self.transparent_draws.len() + self.transparent_skinned_draws.len()) as u32;
+        let echo_draws = self.echo_draws.len() as u32;
+        let transparent_draws = (self.transparent_draws.len()
+            + self.transparent_skinned_draws.len()
+            + self.echo_draws.len()) as u32;
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
@@ -2956,6 +3189,9 @@ impl SceneRenderer {
             triangles += d.index_count / 3;
         }
         for d in &self.transparent_skinned_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.echo_draws {
             triangles += d.index_count / 3;
         }
         for d in &self.terrain_draws {
@@ -3005,6 +3241,7 @@ impl SceneRenderer {
         crate::render_stats::RenderStats {
             draw_calls,
             triangles,
+            echo_draws,
             entity_draws,
             culled_draws: (self.culled_entity_draws.len() + self.culled_transparent_draws.len())
                 as u32,
@@ -3444,6 +3681,7 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.echo_draws.clear();
         self.culled_entity_draws.clear();
         self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
@@ -3616,6 +3854,8 @@ impl SceneRenderer {
         // Sort & batch sprite2d instances
         self.batch_sprite2d_instances(device, tex_cache_ref, sprite2d_collected);
 
+        self.apply_shallow_wooze(device);
+
         // Drop cached resources nothing used this frame (despawned entities,
         // entities that changed shape/model).
         let frame = self.extract_frame;
@@ -3625,6 +3865,84 @@ impl SceneRenderer {
 
         // Put texture cache back
         self.texture_cache = tex_cache;
+    }
+
+    /// Replace which entities have shallow wooze this frame, and how far along
+    /// each is (#215). What's named here shows from the next `update_from_world`.
+    /// An empty list, the default, costs a scene nothing.
+    pub fn set_shallow_wooze(
+        &mut self,
+        draws: impl IntoIterator<Item = (flint_core::EntityId, ShallowWoozeDraw)>,
+    ) {
+        self.shallow_wooze.clear();
+        self.shallow_wooze.extend(draws);
+    }
+
+    /// Which of shallow wooze's pipelines exist: standard, skinned and shadow.
+    #[cfg(test)]
+    pub(crate) fn wooze_built(&self) -> (bool, bool, bool) {
+        (
+            self.wooze_standard.is_some(),
+            self.wooze_skinned.is_some(),
+            self.shadow_pass
+                .as_ref()
+                .is_some_and(|sp| sp.wooze.is_some()),
+        )
+    }
+
+    /// Give this frame's draws of woozy entities their drift, grow their bounds to
+    /// match, and build the pipelines they need the first time they need them.
+    fn apply_shallow_wooze(&mut self, device: &wgpu::Device) {
+        if self.shallow_wooze.is_empty() {
+            return;
+        }
+        let map = &self.shallow_wooze;
+        let drift = |id: Option<flint_core::EntityId>| Some(map.get(&id?)?.uniforms());
+
+        let mut any_standard = false;
+        for draw in self
+            .entity_draws
+            .iter_mut()
+            .chain(self.transparent_draws.iter_mut())
+            .filter(|d| !d.is_wireframe)
+        {
+            let Some(wooze) = drift(draw.entity_id) else {
+                continue;
+            };
+            if let Some(bounds) = &mut draw.world_aabb {
+                grow_bounds(bounds, &wooze);
+            }
+            draw.wooze = Some(wooze);
+            any_standard = true;
+        }
+
+        let mut any_skinned = false;
+        for draw in self
+            .skinned_entity_draws
+            .iter_mut()
+            .chain(self.transparent_skinned_draws.iter_mut())
+        {
+            let Some(wooze) = drift(draw.entity_id) else {
+                continue;
+            };
+            draw.wooze = Some(wooze);
+            any_skinned = true;
+        }
+
+        if any_standard && self.wooze_standard.is_none() {
+            self.wooze_standard = Some(WoozePipelineSet::standard(device, &self.pipeline));
+        }
+        if any_skinned && self.wooze_skinned.is_none() {
+            if let Some(skinned) = &self.skinned_pipeline {
+                self.wooze_skinned =
+                    Some(WoozePipelineSet::skinned(device, &self.pipeline, skinned));
+            }
+        }
+        if any_standard || any_skinned {
+            if let Some(shadow_pass) = &mut self.shadow_pass {
+                shadow_pass.ensure_wooze(device);
+            }
+        }
     }
 
     /// Transform + material resources for one draw of `key`, created on
@@ -3647,24 +3965,18 @@ impl SceneRenderer {
         metallic_roughness: &wgpu::TextureView,
         emissive: &wgpu::TextureView,
     ) -> &'a CachedDrawBinds {
-        let shared = cache.materials.entry(material_key).or_insert_with(|| {
-            let (b, bg) = Self::create_material_bind_with_textures(
-                device,
-                pipeline,
-                material_uniforms,
-                base_color,
-                normal,
-                metallic_roughness,
-                emissive,
-            );
-            SharedMaterial {
-                buffer: Arc::new(MaterialBuffer::new(b)),
-                bind_group: Arc::new(bg),
-                touched: frame,
-            }
-        });
-        shared.touched = frame;
-        let (mb, mbg) = (shared.buffer.clone(), shared.bind_group.clone());
+        let (mb, mbg) = Self::shared_material(
+            cache,
+            frame,
+            device,
+            pipeline,
+            material_uniforms,
+            material_key,
+            base_color,
+            normal,
+            metallic_roughness,
+            emissive,
+        );
         let arena = &mut cache.arena;
         let entry = cache.draws.entry(key).or_insert_with(|| {
             let (slot, page) = arena.alloc(device);
@@ -3677,9 +3989,9 @@ impl SceneRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &page,
                             offset: slot.offset(),
-                            size: wgpu::BufferSize::new(
-                                std::mem::size_of::<TransformUniforms>() as u64
-                            ),
+                            // The whole slot: a plain draw reads its first 208
+                            // bytes, and shallow wooze's the 48 past them too.
+                            size: wgpu::BufferSize::new(crate::bind_cache::SLOT_STRIDE),
                         }),
                     }],
                     label: Some("Transform Bind Group (arena)"),
@@ -3700,6 +4012,41 @@ impl SceneRenderer {
         }
         entry.touched = frame;
         entry
+    }
+
+    /// The material for `material_key`, made on first use and shared with every
+    /// draw of that key.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn shared_material(
+        cache: &mut DrawBindCache,
+        frame: u64,
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        material_uniforms: &MaterialUniforms,
+        material_key: u64,
+        base_color: &wgpu::TextureView,
+        normal: &wgpu::TextureView,
+        metallic_roughness: &wgpu::TextureView,
+        emissive: &wgpu::TextureView,
+    ) -> (Arc<MaterialBuffer>, Arc<wgpu::BindGroup>) {
+        let shared = cache.materials.entry(material_key).or_insert_with(|| {
+            let (b, bg) = Self::create_material_bind_with_textures(
+                device,
+                pipeline,
+                material_uniforms,
+                base_color,
+                normal,
+                metallic_roughness,
+                emissive,
+            );
+            SharedMaterial {
+                buffer: Arc::new(MaterialBuffer::new(b)),
+                bind_group: Arc::new(bg),
+                touched: frame,
+            }
+        });
+        shared.touched = frame;
+        (shared.buffer.clone(), shared.bind_group.clone())
     }
 
     /// The uploaded box for `key`, building it with `build` on a miss.
@@ -3760,6 +4107,7 @@ impl SceneRenderer {
             world_aabb: None,
             style_aabb: None,
             lod: None,
+            wooze: None,
         }
     }
 
@@ -3891,6 +4239,7 @@ impl SceneRenderer {
             world_aabb: None,
             style_aabb: None,
             lod: None,
+            wooze: None,
         }
     }
 
@@ -4651,8 +5000,10 @@ impl SceneRenderer {
             self.scaled_depth = Some(std::sync::Arc::new(depth));
         }
         // The recreated resources drop the FXAA intermediate; re-allocate it
-        // at the new size when the pass is active (ADR 0050).
+        // at the new size when the pass is active (ADR 0050). Likewise the
+        // contour's texture (#214).
         self.ensure_fxaa_resources(device);
+        self.ensure_contour_resources(device);
     }
 
     /// Draw the scene at `scale` of the surface's size on each side, and
@@ -5022,6 +5373,30 @@ impl SceneRenderer {
                 ));
             }
         }
+    }
+
+    /// Ensure the contour pass's GPU resources exist (#214): call after enabling it
+    /// at runtime and after resize. No-op when it's off, which allocates nothing.
+    pub fn ensure_contour_resources(&mut self, device: &wgpu::Device) {
+        if !self.postprocess_config.contour_enabled {
+            return;
+        }
+        if let Some(pp) = &mut self.postprocess_pipeline {
+            pp.contour
+                .get_or_insert_with(|| crate::contour::ContourPipeline::new(device));
+        }
+        if let Some(resources) = &mut self.postprocess_resources {
+            if resources.contour.is_none() {
+                let (w, h) = (resources.width, resources.height);
+                resources.contour = Some(crate::contour::ContourTextures::new(device, w, h));
+            }
+        }
+    }
+
+    /// This frame's drawing for the shading boil (#214), from the wooze field.
+    pub fn set_boil(&mut self, boil: flint_core::wooze::BoilFrame) {
+        self.postprocess_config.boil = boil;
+        self.authored_postprocess.boil = boil;
     }
 
     /// The post-processing configuration as set: the scene's look, before
@@ -5901,6 +6276,25 @@ impl SceneRenderer {
             }
         }
         self.gpu_timer = gpu_timer;
+    }
+
+    /// [`encode_to`](Self::encode_to) a second time in a frame, for the other
+    /// half of a split view (#238), with the GPU timer left out: its scopes are
+    /// the first drawing's. Submit the first drawing before calling this, since
+    /// what changed between the two (bones, the boil) reaches the GPU through
+    /// the queue's writes, and those land with the next submission.
+    pub fn encode_again_to(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+        target_view: &wgpu::TextureView,
+    ) {
+        let timer = self.gpu_timer.take();
+        self.encode_to(device, queue, encoder, depth_view, camera, target_view);
+        self.gpu_timer = timer;
     }
 
     /// Start what waits on the frame [`encode_to`](Self::encode_to)

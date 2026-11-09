@@ -66,7 +66,16 @@ pub struct ScriptSystem {
     pub(crate) engine: ScriptEngine,
     pub(crate) sync: ScriptSync,
     pending_events: Vec<GameEvent>,
+    /// Expression states from outside the process, waiting for the next
+    /// `update` (Flint#518). Not cleared by a scene change: they describe the
+    /// world outside the game.
+    pending_expressions: std::collections::VecDeque<rhai::Map>,
 }
+
+/// The most expression states held for scripts that aren't running (a paused
+/// state, a long load). Past this the oldest go first: each state is a whole
+/// snapshot, so the latest is the one that matters.
+pub const MAX_PENDING_EXPRESSIONS: usize = 256;
 
 impl ScriptSystem {
     /// Time each script's `on_update` from now on, for a perf readout.
@@ -85,7 +94,64 @@ impl ScriptSystem {
             engine: ScriptEngine::new(),
             sync: ScriptSync::new(),
             pending_events: Vec::new(),
+            pending_expressions: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Queue an expression state from outside the process (Flint#518). The
+    /// next `update` makes it what `expression()` returns and calls
+    /// `on_expression(state)` on every script that defines it, before any
+    /// `on_update`, so a state queued this frame is seen this frame.
+    pub fn queue_expression(&mut self, state: rhai::Map) {
+        if self.pending_expressions.len() >= MAX_PENDING_EXPRESSIONS {
+            self.pending_expressions.pop_front();
+            tracing::warn!(
+                "expression: more than {MAX_PENDING_EXPRESSIONS} states waiting for scripts; dropped the oldest"
+            );
+        }
+        self.pending_expressions.push_back(state);
+    }
+
+    /// Make the game clock the only clock scripts have, and their randomness a
+    /// seeded sequence, for runs that must come out the same every time
+    /// (`flint render --scripts`, #8). `random()` and `random_range(a, b)` draw
+    /// from one SplitMix64 started at `seed`, shared by every script in the
+    /// order they run; Rhai's `timestamp()`, which reads the wall clock, fails
+    /// and says to use `total_time()`. The player keeps its own.
+    pub fn make_deterministic(&mut self, seed: u64) {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(seed));
+        let next = move || -> f64 {
+            let mut s = lock_or_recover(&state);
+            *s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *s;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            // The top 53 bits, as a float in [0, 1).
+            (z >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let rhai = self.rhai_engine_mut();
+        let random = next.clone();
+        rhai.register_fn("random", move || -> f64 { random() });
+        rhai.register_fn("random_range", move |min: f64, max: f64| -> f64 {
+            min + (max - min) * next()
+        });
+        rhai.register_fn(
+            "timestamp",
+            || -> std::result::Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+                Err(
+                    "timestamp() reads the wall clock, which a deterministic run doesn't \
+                     have: use total_time() or delta_time()"
+                        .into(),
+                )
+            },
+        );
+    }
+
+    /// The expression state scripts see now (`expression()`): the last one
+    /// delivered, or an empty map before any.
+    pub fn expression(&self) -> rhai::Map {
+        crate::lock_or_recover(&self.engine.ctx).expression.clone()
     }
 
     /// Clear all script state for a scene transition.
@@ -527,7 +593,7 @@ impl RuntimeSystem for ScriptSystem {
 
         let count = self.engine.scripts.len();
         if count > 0 {
-            println!("Script system initialized ({} scripts)", count);
+            eprintln!("Script system initialized ({} scripts)", count);
         }
 
         Ok(())
@@ -572,6 +638,14 @@ impl RuntimeSystem for ScriptSystem {
         self.engine.process_events(&events, world);
         if let Some(began) = began {
             self.engine.add_update_time("[events]", began);
+        }
+
+        // Expression states from outside (Flint#518), so on_update sees them
+        let began = now();
+        let states: Vec<rhai::Map> = self.pending_expressions.drain(..).collect();
+        self.engine.deliver_expressions(world, states);
+        if let Some(began) = began {
+            self.engine.add_update_time("[expression]", began);
         }
 
         // Call on_update() for all scripts
@@ -687,6 +761,165 @@ mod tests {
         system.engine.add_script(id, ast, "host.rhai".into());
         system.engine.call_updates(&mut world);
         assert_eq!(*seen.lock().unwrap(), [42, 7, 42, 7]);
+    }
+
+    #[test]
+    fn expression_states_reach_scripts_in_order_before_on_update() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut system = ScriptSystem::new();
+        {
+            let seen = seen.clone();
+            system
+                .rhai_engine_mut()
+                .register_fn("record", move |s: &str| seen.lock().unwrap().push(s.into()));
+        }
+        let source = r#"
+            fn on_expression(state) {
+                // expression() already says what this call is about
+                record(`heard ${state.state} (now ${expression().state}) energy ${state.energy}`);
+            }
+            fn on_update() {
+                let e = expression();
+                record(if e.len() == 0 { "update: none" } else { `update: ${e.state}` });
+            }
+        "#;
+        let mut world = FlintWorld::new();
+        let id = world.spawn("listener").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "listener.rhai".into());
+
+        system.update(&mut world, 0.016).unwrap();
+        let state = |name: &str, energy: f64| {
+            let mut m = rhai::Map::new();
+            m.insert("state".into(), name.into());
+            m.insert("energy".into(), rhai::Dynamic::from_float(energy));
+            m
+        };
+        system.queue_expression(state("thinking", 0.6));
+        system.queue_expression(state("speaking", 0.5));
+        system.update(&mut world, 0.016).unwrap();
+        system.update(&mut world, 0.016).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "update: none",
+                "heard thinking (now thinking) energy 0.6",
+                "heard speaking (now speaking) energy 0.5",
+                "update: speaking",
+                "update: speaking", // it holds until another arrives
+            ]
+        );
+
+        // A scene change keeps the state: it's the world outside the game.
+        system.clear();
+        assert_eq!(
+            system.expression()["state"].clone().into_string().unwrap(),
+            "speaking"
+        );
+    }
+
+    /// A system whose scripts can `record(s)` what they see, and what they saw.
+    fn recording_system() -> (ScriptSystem, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut system = ScriptSystem::new();
+        let into = seen.clone();
+        system
+            .rhai_engine_mut()
+            .register_fn("record", move |s: &str| into.lock().unwrap().push(s.into()));
+        (system, seen)
+    }
+
+    #[test]
+    fn deterministic_random_is_the_same_sequence_every_run() {
+        let source = r#"fn on_update() {
+            record(`${random()} ${random_range(10.0, 20.0)}`);
+        }"#;
+        let run = |seed: u64| {
+            let (mut system, seen) = recording_system();
+            system.make_deterministic(seed);
+            let mut world = FlintWorld::new();
+            let id = world.spawn("dice").unwrap();
+            let ast = system.engine.compile(source).unwrap();
+            system.engine.add_script(id, ast, "dice.rhai".into());
+            for _ in 0..4 {
+                system.update(&mut world, 1.0 / 60.0).unwrap();
+            }
+            let out = seen.lock().unwrap().clone();
+            out
+        };
+        let first = run(7);
+        assert_eq!(first, run(7));
+        assert_ne!(first, run(8));
+        for line in &first {
+            let mut parts = line.split(' ').map(|p| p.parse::<f64>().unwrap());
+            let (unit, ranged) = (parts.next().unwrap(), parts.next().unwrap());
+            assert!((0.0..1.0).contains(&unit), "{unit}");
+            assert!((10.0..20.0).contains(&ranged), "{ranged}");
+        }
+        // Not stuck on one value.
+        assert_ne!(first[0], first[1]);
+    }
+
+    #[test]
+    fn deterministic_runs_have_no_wall_clock() {
+        let (mut system, seen) = recording_system();
+        system.make_deterministic(1);
+        let source = r#"fn on_update() {
+            try { let t = timestamp(); record("read the wall clock"); }
+            catch (e) { record(`${e}`); }
+        }"#;
+        let mut world = FlintWorld::new();
+        let id = world.spawn("clock").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "clock.rhai".into());
+        system.update(&mut world, 1.0 / 60.0).unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("total_time()"), "{}", seen[0]);
+    }
+
+    #[test]
+    fn scripts_run_in_the_order_of_their_entities_names() {
+        let (mut system, seen) = recording_system();
+        let mut world = FlintWorld::new();
+        // Spawned, so numbered, in the opposite order to their names.
+        for name in ["c_last", "b_middle", "a_first"] {
+            let id = world.spawn(name).unwrap();
+            let source = format!(
+                r#"fn on_update() {{ record("{name}"); }}
+                   fn on_expression(state) {{ record("{name} heard"); }}"#
+            );
+            let ast = system.engine.compile(&source).unwrap();
+            system.engine.add_script(id, ast, format!("{name}.rhai"));
+            system.engine.name_script(id, name);
+        }
+        system.queue_expression(rhai::Map::new());
+        system.update(&mut world, 1.0 / 60.0).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "a_first heard",
+                "b_middle heard",
+                "c_last heard",
+                "a_first",
+                "b_middle",
+                "c_last"
+            ]
+        );
+    }
+
+    #[test]
+    fn expression_backlog_keeps_the_latest() {
+        let mut system = ScriptSystem::new();
+        for i in 0..(MAX_PENDING_EXPRESSIONS + 10) {
+            let mut m = rhai::Map::new();
+            m.insert("i".into(), (i as i64).into());
+            system.queue_expression(m);
+        }
+        assert_eq!(system.pending_expressions.len(), MAX_PENDING_EXPRESSIONS);
+        assert_eq!(system.pending_expressions[0]["i"].as_int().unwrap(), 10);
     }
 
     #[test]

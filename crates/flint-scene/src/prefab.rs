@@ -253,6 +253,8 @@ mod tests {
             camera: None,
             environment: None,
             post_process: None,
+            living: None,
+            wooze: None,
             prefabs: HashMap::new(),
             entities: HashMap::new(),
         };

@@ -140,7 +140,13 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
 pub fn cell_origin(cell_w: u32, cell_h: u32, text: &SheetText, i: usize) -> (u32, u32) {
     let scale = text_scale(cell_w);
     let line = GLYPH * scale;
-    let head = GLYPH * (scale + 1) + 6 * scale + line + 10 * scale;
+    // The subtitle wraps at the sheet's width, as `compose` lays it out
+    let columns = text.labels.len().clamp(1, PER_ROW) as u32;
+    let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
+    let lines =
+        wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale).len() as u32;
+    let head =
+        GLYPH * (scale + 1) + 6 * scale + lines * (line + 3 * scale) - 3 * scale + 10 * scale;
     let noted = text.notes.iter().any(|note| !note.is_empty());
     let note_band = if noted { 3 * scale + line } else { 0 };
     let row_h = cell_h + 2 + 6 * scale + line + note_band + 4 * scale;

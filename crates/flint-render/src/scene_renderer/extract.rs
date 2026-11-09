@@ -5,7 +5,8 @@
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
 use super::{
-    hash_parts, transform_aabb, CachedBoneBind, SceneRenderer, SkinnedDrawCall, SKINNED_DRAW_KEY,
+    hash_parts, transform_aabb, CachedBoneBind, EchoDrawCall, SceneRenderer, SkinnedDrawCall,
+    SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
 };
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
@@ -80,7 +81,12 @@ impl SceneRenderer {
         let read = |id: EntityId| {
             let m = world.get_components(id)?.get(comp::MATERIAL)?;
             let c = |k: &str| m.get(k).and_then(toml_f32).map(|v| v.max(0.0));
-            Some([c("vertex_tint_r")?, c("vertex_tint_g")?, c("vertex_tint_b")?, 1.0])
+            Some([
+                c("vertex_tint_r")?,
+                c("vertex_tint_g")?,
+                c("vertex_tint_b")?,
+                1.0,
+            ])
         };
         read(entity_id)
             .or_else(|| world.get_parent(entity_id).and_then(read))
@@ -217,6 +223,15 @@ impl SceneRenderer {
         };
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
+        let first_echo_draw = self.echo_draws.len();
+        // All of an entity's echoes read the transform of its first part, as
+        // every part's holds the same matrices.
+        let mut echo_transform: Option<Arc<wgpu::BindGroup>> = None;
+        // Debug views are for the geometry itself, and return an alpha of 1.
+        let echoes = match self.debug_state.mode {
+            crate::debug::DebugMode::Pbr => self.entity_echoes.get(&entity_id),
+            _ => None,
+        };
 
         for (mesh_index, gpu_mesh) in skinned_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
@@ -275,6 +290,15 @@ impl SceneRenderer {
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
+            if let Some(tint) = self
+                .entity_part_tints
+                .get(&entity_id)
+                .and_then(|tints| tints.get(mesh_index))
+            {
+                for (out, by) in material_uniforms.vertex_tint.iter_mut().zip(tint) {
+                    *out *= by;
+                }
+            }
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Cached like a static model's binds (`cached_binds`), keyed
@@ -326,6 +350,45 @@ impl SceneRenderer {
             let material_buffer = binds.material_buffer.clone();
             let material_bind_group = binds.material_bind_group.clone();
 
+            // One draw per echo per part, in the part's own colours (tint and
+            // all) at the echo's opacity. No more buffers than the opacities
+            // and colours in use: a material is shared by its content.
+            for (echo, copy) in echoes.into_iter().flatten().enumerate() {
+                if copy.opacity <= 0.0 {
+                    continue;
+                }
+                let mut uniforms = material_uniforms;
+                uniforms.opacity = copy.opacity;
+                let echo_key =
+                    hash_parts(&[&material_key.to_le_bytes(), &copy.opacity.to_le_bytes()]);
+                let (buffer, bind_group) = Self::shared_material(
+                    &mut self.draw_bind_cache,
+                    self.extract_frame,
+                    device,
+                    &self.pipeline,
+                    &uniforms,
+                    echo_key,
+                    bc_view,
+                    nm_view,
+                    mr_view,
+                    em_view,
+                );
+                self.echo_draws.push(EchoDrawCall {
+                    vertex_buffer: gpu_mesh.vertex_buffer.clone(),
+                    index_buffer: gpu_mesh.index_buffer.clone(),
+                    index_count: gpu_mesh.index_count,
+                    transform_bind_group: echo_transform
+                        .get_or_insert_with(|| transform_bind_group.clone())
+                        .clone(),
+                    material_buffer: buffer,
+                    material_bind_group: bind_group,
+                    bone_bind_group: copy.bind_group.clone(),
+                    origin: [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]],
+                    echo,
+                    sort_depth: 0.0,
+                });
+            }
+
             let entity_bones = self.entity_bone_buffers.get(&entity_id);
             let from_entity = entity_bones.is_some();
             let bone_layout = &self
@@ -355,6 +418,31 @@ impl SceneRenderer {
             let bone = self.skinned_bone_binds.get_mut(&key).unwrap();
             bone.touched = self.extract_frame;
             let bone_bind_group = bone.bind_group.clone();
+
+            // Most draws' shadows follow the bones they're drawn with.
+            let shadow_bone_bind_group = match self.entity_shadow_bone_buffers.get(&entity_id) {
+                None => bone_bind_group.clone(),
+                Some(bones) => {
+                    let shadow_key = (entity_id, key.1 | SHADOW_BONE_KEY);
+                    let shadow = self
+                        .skinned_bone_binds
+                        .entry(shadow_key)
+                        .or_insert_with(|| {
+                            let layout = &self
+                                .skinned_pipeline
+                                .as_ref()
+                                .unwrap()
+                                .bone_bind_group_layout;
+                            CachedBoneBind {
+                                from_entity: true,
+                                bind_group: Arc::new(Self::create_bone_bind(device, layout, bones)),
+                                touched: 0,
+                            }
+                        });
+                    shadow.touched = self.extract_frame;
+                    shadow.bind_group.clone()
+                }
+            };
 
             // Check transparency from glTF material and ECS material component
             let gltf_alpha = gpu_mesh.material.base_color[3];
@@ -413,6 +501,7 @@ impl SceneRenderer {
                 material_buffer,
                 material_bind_group,
                 bone_bind_group,
+                shadow_bone_bind_group,
                 wire_index_buffer,
                 wire_index_count,
                 model: model_matrix,
@@ -430,6 +519,7 @@ impl SceneRenderer {
                     let (lo, hi) = super::posed_aabb(bones, gpu_mesh.aabb_min, gpu_mesh.aabb_max);
                     Some(transform_aabb(&model_matrix, lo, hi))
                 },
+                wooze: None,
             };
 
             if is_transparent {
@@ -438,6 +528,10 @@ impl SceneRenderer {
                 self.skinned_entity_draws.push(skinned_draw);
             }
         }
+
+        // They came a part at a time: a whole echo at a time, in its order,
+        // is what keeps overlapping copies from flickering.
+        self.echo_draws[first_echo_draw..].sort_by_key(|draw| draw.echo);
 
         true
     }
