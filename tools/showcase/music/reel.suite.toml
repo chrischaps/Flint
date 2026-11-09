@@ -1,0 +1,80 @@
+# *Many Hands*, the showcase film's music: the reel cut (#438).
+# Written by tools/showcase/music.py from tools/showcase/cuts/reel.toml; edit the cut
+# list or score.py and rebuild, never this file. Every sound is original:
+# synthesized by tools/showcase/synth.py, no samples.
+schema_version = 0
+
+[suite]
+id = "many-hands-reel"
+title = "Many Hands (reel)"
+
+[audio]
+sample_rate = 48000
+
+[[tempo]]
+sample = 0
+bpm = 100.0
+time_signature = [4, 4]
+
+[[sections]]
+name = "01_01_plain"
+start_sample = 0
+pulse_window_ms = 100
+
+[[sections]]
+name = "04_04_entities"
+start_sample = 691200
+pulse_window_ms = 100
+
+[[sections]]
+name = "06_07_reveal"
+start_sample = 1152000
+pulse_window_ms = 100
+
+[[sections]]
+name = "07_08_pencil"
+start_sample = 1382400
+pulse_window_ms = 100
+
+[[sections]]
+name = "08_09_watercolor"
+start_sample = 1612800
+pulse_window_ms = 100
+
+[[sections]]
+name = "09_10_looks"
+start_sample = 1843200
+pulse_window_ms = 100
+
+[[sections]]
+name = "17_11_user"
+start_sample = 2073600
+pulse_window_ms = 100
+
+[[sections]]
+name = "18_13_hands"
+start_sample = 2304000
+pulse_window_ms = 100
+
+[reintegration]
+re_entry_sections = ["01_01_plain"]
+lead_bus = "home_theme"
+reassembly_bars = 2
+
+[buses.foundation]
+file = "stems/reel/foundation.wav"
+
+[buses.harmony]
+file = "stems/reel/harmony.wav"
+
+[buses.world_voice]
+file = "stems/reel/world_voice.wav"
+
+[buses.home_theme]
+file = "stems/reel/home_theme.wav"
+
+[buses.child_motif]
+file = "stems/reel/child_motif.wav"
+
+[buses.texture]
+file = "stems/reel/texture.wav"

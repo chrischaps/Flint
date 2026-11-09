@@ -1,0 +1,160 @@
+# The 16:9 master's cut list (#436), shared with its music (#438).
+#
+# One [[shot]] per piece of a take, in screen order. The film's clock is the
+# music's: 100 bpm in 4/4, so a bar is 2.4 s, 72 frames at 30 fps, 144 at
+# 60. Every cut sits on a bar or half-bar line, so the music changes where
+# the picture does. `bars` is the shot's length on screen; `start_s` is where
+# in the take it starts (seconds of game time). The music
+# (`python tools/showcase/music.py`, #438) is arranged to this list: each
+# shot's instruments come in on its first bar, and the cues inside a shot
+# (02's tables, 03's edges, 08/09's switches at 5.0 s, 05/12's clicks) are
+# placed by `start_s`, so they follow an in-point when it moves. Rebuild the
+# music after changing anything here.
+#
+# Drafted by #438 against the storyboard (docs/design/showcase-film.md);
+# #436 owns the edit and may change any of it. 48 bars of picture and a
+# 2-bar tail (the last frame held under the title as the music rings out):
+# 50 bars, 120.0 s.
+
+[cut]
+name = "master"
+bpm = 100
+beats_per_bar = 4
+width = 1920
+height = 1080
+# Bars after the last shot that hold its final frame (title card, end).
+tail_bars = 2
+
+[[shot]]
+beat = "01_plain"
+take = "main"
+start_s = 1.2
+bars = 2
+caption = "Flint, as it renders"
+
+[[shot]]
+beat = "02_type"
+take = "main"
+start_s = 0.0          # its table changes every 2.4 s: each change on a bar line
+bars = 5
+caption = "The world in type"
+
+[[shot]]
+beat = "03_edges"
+take = "main"
+start_s = 0.1          # the edges come up at 2.5 s, the shot's second bar
+bars = 3
+caption = "Edges"
+
+[[shot]]
+beat = "04_entities"
+take = "main"
+start_s = 0.5
+bars = 3.5
+caption = "Some things in type"
+
+[[shot]]
+beat = "05_mask"
+take = "main"
+start_s = 1.6          # Style Mask goes on at 3.4 s and off at 7.1 s
+bars = 3
+caption = "The style mask"
+
+[[shot]]
+beat = "06_story"
+take = "main"
+start_s = 0.6
+bars = 3.5
+caption = "A story in styles"
+
+[[shot]]
+beat = "07_reveal"
+take = "main"
+start_s = 0.2
+bars = 4
+caption = "Fade and dissolve"
+
+[[shot]]
+beat = "08_pencil"
+take = "main"
+start_s = 0.2          # the whole page at 5.0 s, on the shot's third bar
+bars = 4
+caption = "Pencil"
+
+[[shot]]
+beat = "09_watercolor"
+take = "main"
+start_s = 0.2          # the paint lifts at 5.0 s, on the shot's third bar
+bars = 3
+caption = "Watercolor"
+
+# Looks: one orbit, a half bar per look, cut on the move.
+[[shot]]
+beat = "10_looks"
+take = "ascii_noir"
+start_s = 0.0
+bars = 0.5
+caption = "Looks"
+
+[[shot]]
+beat = "10_looks"
+take = "matrix"
+start_s = 0.85
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "ink_wash"
+start_s = 1.7
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "graphite"
+start_s = 2.55
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "watercolor"
+start_s = 3.4
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "coloured_pencil"
+start_s = 4.25
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "blueprint"
+start_s = 5.1
+bars = 0.5
+
+[[shot]]
+beat = "10_looks"
+take = "charcoal"
+start_s = 5.95
+bars = 0.5
+
+[[shot]]
+beat = "11_user"
+take = "main"
+start_s = 0.2
+bars = 4
+caption = "Styles you write"
+
+[[shot]]
+beat = "12_menu"
+take = "main"
+start_s = 2.2          # the cell-size drag at 2.8 s, palettes from 6.0 s
+bars = 4
+caption = "Tuning by hand"
+
+[[shot]]
+beat = "13_hands"
+take = "main"
+start_s = 0.0
+bars = 5
+caption = "Many hands"

@@ -127,3 +127,39 @@ drew first won it: a few pixels a frame at blade edges, which ASCII under
 temporal history now and then turned into one cell holding a different
 glyph for a few frames. Blades are placed in grid order now, so a beat can
 be reshot and cut against an earlier take frame for frame.
+
+## Music on the same clock
+
+The film's music (#438) is written and mixed with Flint too, and its clock
+is the film's: 100 bpm in 4/4, so a bar is 2.4 s, 72 frames at 30 fps. Each
+cut is a list of shots in `tools/showcase/cuts/<cut>.toml` (`master` for the
+16:9 film, `reel` for the vertical one): the beat and take, where in the
+take it starts, and how many bars it lasts. Cuts sit on bar or half-bar
+lines, so the music can change where the picture does.
+
+```bash
+cargo build --release --bin flint
+python tools/showcase/music.py                # every cut, into ~/flint-film/music/
+python tools/showcase/music.py reel --plot    # one, with a sheet of its shots and levels
+python tools/showcase/music.py --verify       # build twice, compare every byte
+```
+
+For each cut it arranges the score (`tools/showcase/score.py`) to the shot
+list, synthesizes six stems (`tools/showcase/synth.py`: sines, noise and FM,
+no samples), writes a suite and its mix automation
+(`tools/showcase/music/<cut>.suite.toml`, `<cut>.events.toml`), renders
+them with `flint render-suite`, and masters the result to -14 LUFS under a
+-1.5 dBTP ceiling: `many-hands-<cut>.wav`, 48 kHz 24-bit, exactly as long as
+the cut. The JSON beside it has its length in samples and frames, its
+loudness and peaks, and each shot's start frame. It needs numpy and scipy
+(matplotlib for `--plot`).
+
+The piece plays one melody throughout, in a different instrument for each
+style: electric piano for the plain render, pulse waves for the ASCII beats
+(their width changing with 02's tables), plucked strings for edges and
+pencil, a flute for watercolor, FM glass for the user styles, a new voice
+for every look. Cues inside a shot (03's edges, the 5.0 s switches in 08
+and 09, the clicks in 05 and 12) are placed by the shot's `start_s`, so
+they move with an in-point. Change a cut list and rebuild: the track
+follows. Every sound is synthesized, so Content ID and Instagram's audio
+match have nothing to find.

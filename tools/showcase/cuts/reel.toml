@@ -1,0 +1,140 @@
+# The 9:16 reel's cut list (#437), shared with its music (#438).
+#
+# Same clock as the master (cuts/master.toml): 100 bpm in 4/4, a bar is
+# 2.4 s, 72 frames at 30 fps. 24 bars = 57.6 s, four 6-bar stories of
+# 14.4 s cut at shot boundaries. The music (`python tools/showcase/music.py
+# reel`, #438) is arranged to this list, its cues inside a shot placed by
+# `start_s`; rebuild it after changing anything here.
+
+[cut]
+name = "reel"
+bpm = 100
+beats_per_bar = 4
+width = 1080
+height = 1920
+story_bars = 6
+tail_bars = 0
+
+# story 1
+[[shot]]
+beat = "01_plain"
+take = "main"
+start_s = 0.0
+bars = 1.5
+caption = "Flint, as it renders"
+
+[[shot]]
+beat = "02_type"
+take = "main"
+start_s = 2.4          # so tint, CGA and amber land on bar lines
+bars = 3
+caption = "The world in type"
+
+[[shot]]
+beat = "03_edges"
+take = "main"
+start_s = 0.0
+bars = 1.5
+caption = "Edges"
+
+# story 2
+[[shot]]
+beat = "04_entities"
+take = "main"
+start_s = 0.0
+bars = 1.5
+caption = "Some things in type"
+
+[[shot]]
+beat = "06_story"
+take = "main"
+start_s = 0.0
+bars = 2.5
+caption = "A story in styles"
+
+[[shot]]
+beat = "07_reveal"
+take = "main"
+start_s = 0.0
+bars = 2
+caption = "Fade and dissolve"
+
+# story 3
+[[shot]]
+beat = "08_pencil"
+take = "main"
+start_s = 2.6          # the whole-page switch at 5.0 s lands on the bar
+bars = 2
+caption = "Pencil"
+
+[[shot]]
+beat = "09_watercolor"
+take = "main"
+start_s = 2.6
+bars = 2
+caption = "Watercolor"
+
+# Looks: a quarter bar (one beat) each, in film.toml's take order.
+[[shot]]
+beat = "10_looks"
+take = "ascii_noir"
+start_s = 0.0
+bars = 0.25
+caption = "Looks"
+
+[[shot]]
+beat = "10_looks"
+take = "matrix"
+start_s = 0.6
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "ink_wash"
+start_s = 1.2
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "graphite"
+start_s = 1.8
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "watercolor"
+start_s = 2.4
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "coloured_pencil"
+start_s = 3.0
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "blueprint"
+start_s = 3.6
+bars = 0.25
+
+[[shot]]
+beat = "10_looks"
+take = "charcoal"
+start_s = 4.2
+bars = 0.25
+
+# story 4
+[[shot]]
+beat = "11_user"
+take = "main"
+start_s = 0.0
+bars = 2
+caption = "Styles you write"
+
+[[shot]]
+beat = "13_hands"
+take = "main"
+start_s = 0.0
+bars = 4               # end card over the last 2 bars, black on the final one
+caption = "Many hands"

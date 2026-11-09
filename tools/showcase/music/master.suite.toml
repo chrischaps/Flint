@@ -1,0 +1,100 @@
+# *Many Hands*, the showcase film's music: the master cut (#438).
+# Written by tools/showcase/music.py from tools/showcase/cuts/master.toml; edit the cut
+# list or score.py and rebuild, never this file. Every sound is original:
+# synthesized by tools/showcase/synth.py, no samples.
+schema_version = 0
+
+[suite]
+id = "many-hands-master"
+title = "Many Hands (master)"
+
+[audio]
+sample_rate = 48000
+
+[[tempo]]
+sample = 0
+bpm = 100.0
+time_signature = [4, 4]
+
+[[sections]]
+name = "01_01_plain"
+start_sample = 0
+pulse_window_ms = 100
+
+[[sections]]
+name = "02_02_type"
+start_sample = 230400
+pulse_window_ms = 100
+
+[[sections]]
+name = "03_03_edges"
+start_sample = 806400
+pulse_window_ms = 100
+
+[[sections]]
+name = "04_04_entities"
+start_sample = 1152000
+pulse_window_ms = 100
+
+[[sections]]
+name = "07_07_reveal"
+start_sample = 2304000
+pulse_window_ms = 100
+
+[[sections]]
+name = "08_08_pencil"
+start_sample = 2764800
+pulse_window_ms = 100
+
+[[sections]]
+name = "09_09_watercolor"
+start_sample = 3225600
+pulse_window_ms = 100
+
+[[sections]]
+name = "10_10_looks"
+start_sample = 3571200
+pulse_window_ms = 100
+
+[[sections]]
+name = "18_11_user"
+start_sample = 4032000
+pulse_window_ms = 100
+
+[[sections]]
+name = "19_12_menu"
+start_sample = 4492800
+pulse_window_ms = 100
+
+[[sections]]
+name = "20_13_hands"
+start_sample = 4953600
+pulse_window_ms = 100
+
+[[sections]]
+name = "tail"
+start_sample = 5529600
+pulse_window_ms = 100
+
+[reintegration]
+re_entry_sections = ["01_01_plain"]
+lead_bus = "home_theme"
+reassembly_bars = 2
+
+[buses.foundation]
+file = "stems/master/foundation.wav"
+
+[buses.harmony]
+file = "stems/master/harmony.wav"
+
+[buses.world_voice]
+file = "stems/master/world_voice.wav"
+
+[buses.home_theme]
+file = "stems/master/home_theme.wav"
+
+[buses.child_motif]
+file = "stems/master/child_motif.wav"
+
+[buses.texture]
+file = "stems/master/texture.wav"
