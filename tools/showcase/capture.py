@@ -5,6 +5,13 @@
     python tools/showcase/capture.py --scale 0.5        # 1920x1080 preview frames
     python tools/showcase/capture.py --verify 02_type   # capture twice and compare
     python tools/showcase/capture.py --list             # beats, takes, frames, disk
+    python tools/showcase/capture.py --cut reel         # what the vertical reel uses
+
+A cut (`tools/showcase/cuts/<name>.toml`, #437) can be captured on its own
+terms: `--cut reel` takes the cut's frame size and point canvas
+(`points_wide`), captures only the takes its shots use, each only as far
+as its last shot reaches, and lands them in `<out>/<cut>/`, so a 1080x1920
+take never overwrites the master's. `edit.py` cuts them together.
 
 Each take is one run of `flint-player` on the beat's scene with the clock
 stepped exactly 1/fps a frame (`--frame-step`) and every frame written
@@ -54,9 +61,47 @@ def takes_of(beat):
     return beat.get("take") or [{"name": "main"}]
 
 
-def frame_count(film, beat):
+def frame_count(film, beat, seconds=None):
     """Frames a take writes: one at t = 0, then one a step to `seconds`."""
-    return int(round(beat["seconds"] * film["fps"])) + 1
+    seconds = beat["seconds"] if seconds is None else seconds
+    return int(round(seconds * film["fps"])) + 1
+
+
+def load_cut(name):
+    """A cut's file, tools/showcase/cuts/<name>.toml: [cut] and [[shot]]."""
+    path = HERE / "cuts" / f"{name}.toml"
+    if not path.exists():
+        have = sorted(p.stem for p in (HERE / "cuts").glob("*.toml"))
+        raise SystemExit(f"no cut {name!r} in tools/showcase/cuts/ (have {have})")
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def bar_seconds(cut):
+    return cut["cut"]["beats_per_bar"] * 60.0 / cut["cut"]["bpm"]
+
+
+def cut_needs(cut, film, beats):
+    """{(beat id, take name): seconds of the take the cut's shots reach}.
+    A take always starts at 0 (its script runs on game time from the
+    first frame) and runs to its furthest shot's last frame."""
+    bar = bar_seconds(cut)
+    by_id = {b["id"]: b for b in beats}
+    needs = {}
+    for shot in cut["shot"]:
+        beat = by_id.get(shot["beat"])
+        if beat is None:
+            raise SystemExit(f"cut shot names unknown beat {shot['beat']!r}")
+        take = shot.get("take", "main")
+        if take not in {t["name"] for t in takes_of(beat)}:
+            raise SystemExit(f"cut shot names unknown take {shot['beat']}/{take}")
+        end = shot["start_s"] + shot["bars"] * bar
+        if end > beat["seconds"] + 1e-6:
+            raise SystemExit(
+                f"shot {shot['beat']}/{take} runs to {end:.2f} s, past the beat's "
+                f"{beat['seconds']} s")
+        key = (beat["id"], take)
+        needs[key] = max(needs.get(key, 0.0), end)
+    return needs
 
 
 def scaled_input(source, scale, dest):
@@ -77,39 +122,41 @@ def scaled_input(source, scale, dest):
     return dest
 
 
-def take_args(film, beat, take, width, height, folder):
+def take_args(film, beat, take, width, height, folder, points_wide=POINTS_WIDE,
+              seconds=None):
     """The flint-player command line for one take."""
     step = 1.0 / film["fps"]
+    seconds = beat["seconds"] if seconds is None else seconds
     args = [
         str(player_path()),
         str(Path("demo") / "film" / f"{beat['id']}.scene.toml"),
         "--schemas", "schemas",
         "--width", str(width),
         "--height", str(height),
-        "--pixels-per-point", f"{width / POINTS_WIDE:.6g}",
+        "--pixels-per-point", f"{width / points_wide:.6g}",
         "--frame-step", f"{step:.9f}",
         "--screenshot", str(folder / "frame.png"),
         "--screenshot-every", f"{step:.9f}",
         # Half a step short of `seconds`, so float sums of the step neither
         # drop the last frame nor add one past it.
-        "--exit-after", f"{beat['seconds'] - step * 0.5:.9f}",
+        "--exit-after", f"{seconds - step * 0.5:.9f}",
         "--music-volume", "0",
         "--sfx-volume", "0",
     ]
     script = take.get("input") or beat.get("input")
     if script:
         source = ROOT / "demo" / "film" / "beats" / script
-        scaled = scaled_input(source, width / POINTS_WIDE, folder / "input.txt")
+        scaled = scaled_input(source, width / points_wide, folder / "input.txt")
         args += ["--input-script", str(scaled)]
     args += take.get("args", []) + beat.get("args", [])
     return args
 
 
-def capture(film, beat, take, width, height, folder):
+def capture(film, beat, take, width, height, folder, points_wide=POINTS_WIDE, seconds=None):
     if folder.exists():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
-    args = take_args(film, beat, take, width, height, folder)
+    args = take_args(film, beat, take, width, height, folder, points_wide, seconds)
     started = time.time()
     log = folder / "player.log"
     with open(log, "w", encoding="utf-8") as out:
@@ -125,7 +172,8 @@ def capture(film, beat, take, width, height, folder):
         "height": height,
         "fps": film["fps"],
         "frames": len(frames),
-        "expected_frames": frame_count(film, beat),
+        "expected_frames": frame_count(film, beat, seconds),
+        "points_wide": round(points_wide, 3),
         "wall_seconds": round(seconds, 1),
         "exit_code": result.returncode,
         "command": [Path(args[0]).name] + args[1:],
@@ -162,6 +210,8 @@ def main():
     ap.add_argument("--height", type=int, help="frame height (overrides --scale)")
     ap.add_argument("--verify", action="store_true",
                     help="capture each take twice and compare the runs")
+    ap.add_argument("--cut", help="capture what this cut (tools/showcase/cuts/<name>.toml) "
+                    "uses, at its size, into <out>/<name>/")
     ap.add_argument("--list", action="store_true", help="list beats and exit")
     ap.add_argument("--no-build", action="store_true", help="don't rebuild the scenes first")
     args = ap.parse_args()
@@ -172,6 +222,18 @@ def main():
     width = args.width or int(round(film["width"] * args.scale))
     height = args.height or int(round(film["height"] * args.scale))
     out = Path(os.path.expanduser(args.out or film["out"])).resolve()
+    points_wide = POINTS_WIDE
+    needs = None
+    if args.cut:
+        cut = load_cut(args.cut)
+        width = args.width or int(round(cut["cut"]["width"] * args.scale))
+        height = args.height or int(round(cut["cut"]["height"] * args.scale))
+        # The point canvas scales with the frame, so a --scale preview keeps
+        # the cut's layout (cells, captions' room) and is just smaller
+        points_wide = cut["cut"].get("points_wide", POINTS_WIDE) * width / cut["cut"]["width"]
+        needs = cut_needs(cut, film, beats)
+        if not args.out:
+            out = out / cut["cut"]["name"]
 
     unknown = [b for b in args.beats if b not in {x["id"] for x in beats}]
     if unknown:
@@ -183,11 +245,17 @@ def main():
         for take in takes_of(beat):
             if args.take and take["name"] not in args.take:
                 continue
+            if needs is not None and (beat["id"], take["name"]) not in needs:
+                continue
             runs.append((beat, take))
+
+    def seconds_of(beat, take):
+        return None if needs is None else needs[(beat["id"], take["name"])]
 
     # A 4K PNG of these scenes is ~14 MB; refuse to start a run that can't fit
     per_frame = 14e6 * (width * height) / (3840 * 2160)
-    frames = sum(frame_count(film, b) for b, _ in runs) * (2 if args.verify else 1)
+    frames = sum(frame_count(film, b, seconds_of(b, t)) for b, t in runs)
+    frames *= 2 if args.verify else 1
     need = frames * per_frame
 
     if args.list:
@@ -205,17 +273,20 @@ def main():
     if not args.no_build:
         subprocess.run([sys.executable, str(HERE / "build_scenes.py")], cwd=ROOT, check=True)
 
-    print(f"{film['title']}: {len(runs)} takes at {width}x{height}, "
+    print(f"{film['title']}{' (' + args.cut + ')' if args.cut else ''}: "
+          f"{len(runs)} takes at {width}x{height}, "
           f"{film['fps']} fps, into {out} (~{need / 1e9:.1f} GB)")
     failed = False
     reports = []
     for beat, take in runs:
         folder = out / beat["id"] / take["name"]
-        record = capture(film, beat, take, width, height, folder)
+        record = capture(film, beat, take, width, height, folder, points_wide,
+                         seconds_of(beat, take))
         failed |= record["exit_code"] != 0 or record["frames"] == 0
         if args.verify:
             again = out / beat["id"] / f"{take['name']}.again"
-            record2 = capture(film, beat, take, width, height, again)
+            record2 = capture(film, beat, take, width, height, again, points_wide,
+                              seconds_of(beat, take))
             failed |= record2["exit_code"] != 0
             sys.path.insert(0, str(HERE))
             from compare import compare_folders

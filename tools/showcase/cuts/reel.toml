@@ -1,0 +1,207 @@
+# The vertical cut (#437): Many Hands for an Instagram reel and story.
+#
+#   python tools/showcase/capture.py --cut reel      # the takes it uses, 1080x1920
+#   python tools/showcase/edit.py reel               # reel.mp4 + four story pieces
+#
+# One file per cut (the master is cuts/master.toml, #436). Shots are on the
+# music's bar grid (#438): 100 bpm in 4/4, one bar = 2.4 s = 72 frames at
+# 30 fps, every cut on a bar or half bar (the looks on quarter bars, one a
+# beat). 24 bars = 57.6 s, which splits into four 6-bar stories of 14.4 s,
+# each cut at a shot boundary. The music reads `beat` and `bars` only:
+# moving a start_s or a caption never touches the track.
+#
+# A shot is `start_s` seconds into its take (the beat's own clock, as its
+# script counts it) for `bars` bars. Its caption goes up on its first bar
+# and comes down at its last; shots in a row with the same caption share
+# one, and `label` (the small line under it) can change within it.
+
+[cut]
+name = "reel"
+bpm = 100
+beats_per_bar = 4
+fps = 30
+width = 1080
+height = 1920
+story_bars = 6
+tail_bars = 0
+# Point-sized things (ASCII cells, pencil spacing, outlines) are laid out on
+# a canvas this many points wide: pixels_per_point = 1080 / 720 = 1.5. The
+# master's 1920-point canvas would make an 8-point cell 4.5 px here, fine
+# grain a phone shows as noise; at 1.5 a cell is 12 px, 90 across the frame
+# (see the storyboard's "Vertical cut" for the sweep that chose it).
+points_wide = 720
+# Where key content and captions stay: x0, y0, x1, y1 in pixels. The
+# intersection of Instagram's story safe area (central 1080x1420) and the
+# reel's (clear of ~210 px of top bar, ~440 px of caption and buttons at
+# the bottom, ~120 px of buttons down the right).
+safe = [120, 250, 960, 1480]
+# The captions' type: a serif italic over a monospaced line (Windows fonts;
+# edit.py says what it couldn't find and which it used instead)
+caption_font = ["georgiai.ttf", "DejaVuSerif-Italic.ttf"]
+label_font = ["CascadiaMono.ttf", "consola.ttf", "DejaVuSansMono.ttf"]
+
+# The last shot ends on a card: the title over the evening, then black
+[cut.end]
+bars = 2.0
+title = "Flint"
+line = "a game engine built for AI agents"
+small = "every frame captured from the engine  ·  chaps.dev/projects/flint"
+fade_out_s = 1.2
+
+# --- story 1 -------------------------------------------------------------
+
+[[shot]]
+beat = "01_plain"
+take = "main"
+start_s = 2.4
+bars = 1.5
+caption = "Many Hands"
+label = "one clearing, drawn by many hands"
+
+[[shot]]
+beat = "02_type"
+take = "main"
+# On a bar line of the beat's own 2.4 s clock: tint, CGA and amber land on
+# the music's downbeats
+start_s = 2.4
+bars = 3.0
+caption = "the world in type"
+label = "ASCII  ·  palettes  ·  glyphs that hold still"
+
+[[shot]]
+beat = "03_edges"
+take = "main"
+start_s = 1.6
+bars = 1.5
+caption = "every edge, traced"
+label = "line glyphs on depth, crease and mask edges"
+
+# --- story 2 -------------------------------------------------------------
+
+[[shot]]
+beat = "04_entities"
+take = "main"
+start_s = 2.0
+bars = 1.5
+caption = "some things in type"
+label = "a style per entity, the world left smooth"
+
+[[shot]]
+beat = "06_story"
+take = "main"
+start_s = 0.6
+bars = 2.5
+caption = "a script tells it"
+label = "set_entity_style  ·  set_style_param"
+
+[[shot]]
+beat = "07_reveal"
+take = "main"
+start_s = 1.0
+bars = 2.0
+caption = "fade and dissolve"
+label = "blends and transitions, per entity"
+
+# --- story 3 -------------------------------------------------------------
+
+[[shot]]
+beat = "08_pencil"
+take = "main"
+# The whole-page switch at 5.0 s lands on the shot's second bar
+start_s = 2.6
+bars = 2.0
+caption = "pencil"
+label = "hatching  ·  contours  ·  paper  ·  boil"
+
+[[shot]]
+beat = "09_watercolor"
+take = "main"
+start_s = 2.6
+bars = 2.0
+caption = "watercolor"
+label = "washes and pooled edges"
+
+# Looks: one orbit, eight takes, a quarter bar (one beat) each, cut on the
+# same move so the frame stays and the hand changes
+
+[[shot]]
+beat = "10_looks"
+take = "ascii_noir"
+start_s = 1.0
+bars = 0.25
+caption = "looks"
+label = "ascii_noir"
+
+[[shot]]
+beat = "10_looks"
+take = "matrix"
+start_s = 1.6
+bars = 0.25
+caption = "looks"
+label = "matrix"
+
+[[shot]]
+beat = "10_looks"
+take = "ink_wash"
+start_s = 2.2
+bars = 0.25
+caption = "looks"
+label = "ink_wash"
+
+[[shot]]
+beat = "10_looks"
+take = "graphite"
+start_s = 2.8
+bars = 0.25
+caption = "looks"
+label = "graphite"
+
+[[shot]]
+beat = "10_looks"
+take = "watercolor"
+start_s = 3.4
+bars = 0.25
+caption = "looks"
+label = "watercolor"
+
+[[shot]]
+beat = "10_looks"
+take = "coloured_pencil"
+start_s = 4.0
+bars = 0.25
+caption = "looks"
+label = "coloured_pencil"
+
+[[shot]]
+beat = "10_looks"
+take = "blueprint"
+start_s = 4.6
+bars = 0.25
+caption = "looks"
+label = "blueprint"
+
+[[shot]]
+beat = "10_looks"
+take = "charcoal"
+start_s = 5.2
+bars = 0.25
+caption = "looks"
+label = "charcoal"
+
+# --- story 4 -------------------------------------------------------------
+
+[[shot]]
+beat = "11_user"
+take = "main"
+start_s = 2.0
+bars = 2.0
+caption = "styles you write"
+label = "WGSL beside the scene, loaded as it plays"
+
+[[shot]]
+beat = "13_hands"
+take = "main"
+start_s = 2.4
+bars = 4.0
+caption = "many hands"
+label = "glyphs, pencil, paint and a hologram, at once"
