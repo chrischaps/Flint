@@ -7,6 +7,7 @@ pub mod extension;
 mod player_app;
 pub mod spline_gen;
 pub mod user_files;
+pub mod window_args;
 
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
@@ -48,3 +49,4 @@ pub use player_app::style_commands::{
     StyleApplied, StyleTweens, TweenStep, POST_STYLE_CHANGED, STYLE_CHANGED, STYLE_TWEEN_DONE,
 };
 pub use player_app::{CaptureConfig, PlayerApp};
+pub use window_args::WindowArgs;

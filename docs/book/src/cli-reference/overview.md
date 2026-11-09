@@ -47,12 +47,19 @@ Launch a scene as an interactive first-person experience with physics:
 ```bash
 flint play demo/phase4_runtime.scene.toml
 flint play levels/tavern.scene.toml --schemas schemas --fullscreen
+# a small companion window in a corner that stays up and leaves the keyboard alone
+flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560   --borderless --always-on-top --no-activate
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
 | `--fullscreen` | Launch in fullscreen mode |
+| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`). A narrow or square window keeps the camera's aspect: it shows less to the sides, never a stretched scene |
+| `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one; write them with `=` (`--position=-1920,0`). Default: wherever the system puts it |
+| `--borderless` | No title bar or frame. Esc still exits and Alt+F4 still closes it |
+| `--always-on-top` | Keep the window above other windows |
+| `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
@@ -66,7 +73,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
-The standalone `flint-player` binary takes the same flags plus `--msaa <1|4>`
+The standalone `flint-player` binary takes the same flags (the window ones
+too, #611) plus `--msaa <1|4>`
 (default `1`) for multisample anti-aliasing of the scene passes; `flint play`
 does not expose `--msaa`. Its `--procgen-defer` shows placeholders for a
 scene's procgen assets at once and generates them over the following frames
@@ -90,7 +98,6 @@ window can't change the shot. Only the input script drives it (see
 
 | Flag | Description |
 |------|-------------|
-| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`) |
 | `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
 | `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |

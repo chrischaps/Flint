@@ -215,6 +215,7 @@ Flint uses an **edit -> validate -> play** loop:
    `fract(theta - base)` on a ±ε knife edge. A `.suite.toml` there is still music to WAV.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
+   Window flags (#611; `flint_player::WindowArgs`, flattened into `flint play` and `flint-player`, applied in `create_window`): `--width`/`--height` (physical px, default 1280x720, the size is `PlayerApp::window_size`), `--position X,Y` (outer top-left, physical desktop px; negatives as `--position=-1920,0`), `--borderless`, `--always-on-top`, `--no-activate` (opens without taking the keyboard, `with_active(false)`; refuses `--fullscreen`, since winit's fullscreen path on Windows presses Alt to take the foreground). Esc exits and Alt+F4 closes a borderless window. A game embedding `PlayerApp` sets `window_options`.
 
 **For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (searches `scene_dir/models/` then `../models/`), generates geometry, and computes the full transform hierarchy.
 
