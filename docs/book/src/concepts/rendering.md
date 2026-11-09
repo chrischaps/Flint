@@ -181,7 +181,7 @@ Every scene pipeline (PBR, skinned, sky, skybox, ocean, terrain, grass, particle
 
 ## Post-Processing
 
-The renderer includes an HDR post-processing pipeline that applies bloom, SSAO, fog, volumetric light, depth of field, Kuwahara, color grade, film grain, tonemapping, vignette, FXAA and render modes as fullscreen passes. See [Post-Processing](post-processing.md) for full details.
+The renderer includes an HDR post-processing pipeline that applies bloom, SSAO, fog, volumetric light, depth of field, Kuwahara, contour lines, color grade, film grain, tonemapping, vignette, FXAA and render modes as fullscreen passes. See [Post-Processing](post-processing.md) for full details.
 
 When post-processing is active, all scene pipelines render to an `Rgba16Float` HDR intermediate buffer. A composite fullscreen pass then applies exposure, ACES tonemapping and the rest of the chain to produce the final sRGB output.
 

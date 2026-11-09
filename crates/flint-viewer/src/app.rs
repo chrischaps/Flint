@@ -43,6 +43,9 @@ struct ViewerState {
     /// so the viewer shows the authored look (DoF, vignette, fog, …);
     /// F11 toggles between it and the viewer's default config.
     scene_post: Option<PostProcessDef>,
+    /// The scene's wooze field, if it has a `[wooze]` table. The viewer reads it
+    /// for the shading boil only (#214); it doesn't run living props.
+    wooze: Option<flint_core::wooze::WoozeField>,
     /// The scene's authored `[camera]` block, if any — seeds the orbit camera
     /// on load (and on Space reset) so the viewer opens on the authored
     /// framing instead of the generic default.
@@ -99,6 +102,7 @@ pub fn run(
             .post_process
             .as_ref()
             .map(|d| flint_render::look::resolve_scene(d, scene_path)),
+        wooze: field_of(&scene_file),
         scene_camera: scene_file.camera.clone(),
     }));
 
@@ -177,6 +181,7 @@ pub fn run_with_world(
         needs_reload: false,
         scene_doc: None,
         scene_post: None,
+        wooze: None,
         scene_camera: None,
     }));
 
@@ -230,6 +235,7 @@ pub fn run_editor(
             .post_process
             .as_ref()
             .map(|d| flint_render::look::resolve_scene(d, scene_path)),
+        wooze: field_of(&scene_file),
         // Editor mode overrides the camera with its birds-eye view; never seeded.
         scene_camera: None,
     }));
@@ -394,6 +400,10 @@ pub struct ViewerApp {
     particle_speed: f32,
     particle_alive: usize,
     last_particle_tick: Instant,
+    /// The shading boil's clock (#214): beats, and seconds for the field's ramps.
+    boil_clock: flint_core::wooze::BoilClock,
+    boil_time: f64,
+    last_boil_tick: Instant,
 }
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
@@ -515,6 +525,9 @@ impl ViewerApp {
             particle_speed: 1.0,
             particle_alive: 0,
             last_particle_tick: Instant::now(),
+            boil_clock: Default::default(),
+            boil_time: 0.0,
+            last_boil_tick: Instant::now(),
         }
     }
 
@@ -572,6 +585,9 @@ impl ViewerApp {
             particle_speed: 1.0,
             particle_alive: 0,
             last_particle_tick: Instant::now(),
+            boil_clock: Default::default(),
+            boil_time: 0.0,
+            last_boil_tick: Instant::now(),
         }
     }
 
@@ -839,6 +855,9 @@ impl ViewerApp {
         // state (after DoF follow so the mirror shows the followed focus).
         self.sync_render_panel();
 
+        // Shading boil: this frame's drawing, from the scene's field (#214)
+        self.tick_boil();
+
         // Particles: step, pack, upload (ADR 0068)
         self.tick_particles();
 
@@ -995,6 +1014,35 @@ impl ViewerApp {
         renderer.set_post_process_config(config);
     }
 
+    /// Advance the shading boil and tell the renderer which drawing it's on. Also
+    /// keeps the post passes' resources in step with the config, since every way
+    /// the viewer changes it (load, F11, hot reload, F4) ends up here.
+    fn tick_boil(&mut self) {
+        let now = Instant::now();
+        let dt = (now - self.last_boil_tick).as_secs_f64().min(0.1);
+        self.last_boil_tick = now;
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+        renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+        renderer.ensure_contour_resources(&context.device);
+
+        let eye = self.camera.position_array();
+        let state = self.state.lock().unwrap();
+        let boil = match &state.wooze {
+            Some(field) => {
+                self.boil_time += dt;
+                let sample = field.sample(eye, self.boil_time);
+                self.boil_clock.tick(dt, &sample);
+                self.boil_clock
+                    .frame(&sample, renderer.post_process_config().boil_on)
+            }
+            None => Default::default(),
+        };
+        renderer.set_boil(boil);
+    }
+
     /// Restore DoF params to the active base config (authored scene post if
     /// enabled, else the viewer default) when F12 follow is switched off.
     fn restore_base_dof(&mut self) {
@@ -1123,6 +1171,9 @@ impl ViewerApp {
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
+                }
+                if flags.contour_needs_resources {
+                    renderer.ensure_contour_resources(&context.device);
                 }
             }
             if flags.shadows_changed {
@@ -2088,6 +2139,7 @@ impl ViewerApp {
                             &state.scene_path,
                             self.picked_look.as_ref(),
                         );
+                        state.wooze = field_of(&scene_file);
                         // Refresh authored camera too; applied on the next
                         // Space reset (the live camera is never yanked).
                         state.scene_camera = scene_file.camera.clone();
@@ -2662,6 +2714,16 @@ impl ApplicationHandler for ViewerApp {
 }
 
 // --- Helpers ---
+
+/// The wooze field a scene describes, naming what's wrong with it and going on
+/// without that part, as the player does.
+fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_core::wooze::WoozeField> {
+    let (field, issues) = scene.wooze.as_ref()?.field();
+    for issue in issues {
+        tracing::warn!("{issue}; going without it");
+    }
+    Some(field)
+}
 
 fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
     toml::Value::Array(vec![

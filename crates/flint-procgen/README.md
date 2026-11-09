@@ -12,11 +12,12 @@ The book's [Procedural Generation](https://docs.chaps.dev/concepts/procgen.html)
 
 ## Quick start
 
-Four commented specs live in [`specs/examples/`](../../specs/examples). Read one top to bottom, then run it:
+Five commented specs live in [`specs/examples/`](../../specs/examples). Read one top to bottom, then run it:
 
 | Spec | What it makes | Shows |
 |---|---|---|
 | [`oak_tree`](../../specs/examples/oak_tree.procgen.toml) | A broad oak, GLB with three LODs | `tree_v1`, the built-in L-system, seasonal leaf shades |
+| [`oak_living`](../../specs/examples/oak_living.procgen.toml) | The same oak as a living prop | A `[living]` table |
 | [`pine_tree`](../../specs/examples/pine_tree.procgen.toml) | A Scots pine, GLB with three LODs | `tree_v1`, space colonization in a `cone` crown |
 | [`stone_wall`](../../specs/examples/stone_wall.procgen.toml) | Fieldstone in mortar, three tiling PBR maps | `texture_v1`, the `voronoi_brick` pattern |
 | [`wood_plank`](../../specs/examples/wood_plank.procgen.toml) | Oak floorboards, three PBR maps | `texture_v1`, a `pipeline` of ops |
@@ -105,6 +106,8 @@ target_triangles = 9000
 
 `flint gen --seed N` overrides `[seed]` for one run.
 
+A spec can also have a `[living]` table, which makes it a prop that keeps drifting between versions of itself. See `LivingGenerator` in `src/generator.rs` and [`specs/examples/oak_living.procgen.toml`](../../specs/examples/oak_living.procgen.toml). `flint gen <spec> --strip -o strip.png` renders one over time as a labelled contact sheet; the clock and the blend are `LivingClock` and `PoseStream` in `src/living.rs`.
+
 ## Generator catalog
 
 Every key, generated from the generators' own schemas by `cargo run -p flint-procgen --example param_catalog`. A test fails when this section and the schemas differ. "Only when" tables list keys that a mode ignores; `flint gen` warns about them, `--strict` refuses them, and the previewer hides them.
@@ -119,6 +122,68 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `limb_chains` | array of tables |  | Auto-generated bone chains with tapered geometry |
 | `materials` | table |  | Named materials, as [params.materials.<name>] tables; body parts and limb chains pick one by name |
 | `symmetry` | `bilateral` \| `none` | `"none"` | Symmetry mode for mirroring |
+
+### `form_v1` (mesh, written as GLB)
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `aspect` | number >0 to 1 | `1.0` | The section's thin axis over its broad one: 1 round, 0.1 a ribbon |
+| `bend_deg` | number 0–90 | `16.0` | Pose: how far a pose leans the tip, degrees, at drift amplitude 1. The slow lean of the whole form |
+| `body_color` | hex colour | `"#3E382F"` | The body's colour, sRGB hex |
+| `body_opacity` | number 0–1 | `1.0` | How much of the body shows: 1 solid; below 1 it's drawn translucent after everything opaque, and its echoes with it; 0 not at all, so the form is only its cards |
+| `body_roughness` | number 0–1 | `0.800000011920929` | The body's roughness, 0 glossy to 1 matte |
+| `card_aspect` | number >0 to 10 | `1.5` | A card's length over its width: above 1 a feather or flake along the surface |
+| `card_color` | hex colour | `"#9C8E7A"` | The cards' middle colour, sRGB hex; shades spread warmer and cooler around it |
+| `card_from` | number 0–1 | `0.03999999910593033` | Height fraction where cards begin, below `card_to` |
+| `card_layout` | `scatter` \| `rows` | `"scatter"` | Where cards lie: `scatter` over the whole surface by area; `rows` in lines across the broad faces, a card a word, so a flat form reads as a page of writing. In rows `card_size` is a stroke's thickness and `card_aspect` a typical word's length over it, the cards lie flat, and `card_tilt` and `card_rise` have nothing to do |
+| `card_lift` | number 0–1 | `0.012000000104308128` | How far a card sits off the surface, metres |
+| `card_roughness` | number 0–1 | `0.699999988079071` | The cards' roughness, 0 glossy to 1 matte |
+| `card_shades` | integer 1–8 | `4` | Shades the cards are spread over, each a part of its own the jitter tints |
+| `card_size` | number >0 to 10 | `0.05999999865889549` | Typical card width, metres; each varies ±30% |
+| `card_to` | number 0–1 | `0.9700000286102295` | Height fraction where cards end |
+| `card_turn_deg` | number 0–180 | `35.0` | Largest turn of a card about its normal away from pointing up the surface, degrees |
+| `cards` | integer 0–20000 | `520` | Cards on the surface: what boils. 0 is a smooth form. With `card_layout = "rows"` it's the most there can be, and the rows decide how many |
+| `coil` | number 0–10 | `0.0` | Radius of a helical wander of the spine at the tip, metres, from nothing at the base |
+| `coil_turns` | number 0–12 | `1.0` | Turns the coil makes over the spine |
+| `curl_bias` | number 0.2–5 | `1.0` | Where the curl happens: 1 evenly, above 1 more toward the tip, below 1 more toward the base |
+| `curl_deg` | number -270–270 | `0.0` | Degrees the spine's direction turns through from base to tip, toward `facing_deg`: a hook, a wave, a fold |
+| `facing_deg` | number -360–360 | `0.0` | Direction of the lean and curl, degrees about up from +X (0 bends sideways to a camera on +Z); each lineage turns it by up to ±15° |
+| `height` | number >0 to 100 | `1.2999999523162842` | Length of the spine from base to tip, metres (its height when it doesn't curl) |
+| `lean` | number -10–10 | `0.07000000029802322` | Sideways offset of the tip toward `facing_deg`, metres, growing with the square of the height |
+| `lift` | number 0–100 | `0.0` | How far the base stands above the prop's origin, metres: above 0 the form floats |
+| `lobes` | number 0–0.5 | `0.05999999865889549` | Depth of the slow lobes the lineage puts in the surface, as a fraction of the radius |
+| `profile` | list of strings | `[0.6000000238418579, 0.949999988079071, 1.0, 0.8500000238418579, 0.550000011920929, 0.15000000596046448]` | The section's radius as fractions of `radius`, evenly spaced from base to tip and joined smoothly: a flame narrows to 0 at the tip, a stone stays wide |
+| `radius` | number >0 to 50 | `0.27000001072883606` | The section's radius where `profile` is 1, metres |
+| `rings` | integer 4–1024 | `96` | Rings of vertices along the body |
+| `ripple` | number 0–2 | `0.5` | Pose: a wave up the spine, as a share of `bend_deg` |
+| `ripple_waves` | number 0–6 | `1.399999976158142` | Pose: waves of the ripple along the length; each pose varies it ±25% |
+| `round_base` | number 0–0.5 | `0.05999999865889549` | Fraction of the length over which the base rounds off to the spine: 0 is a flat base |
+| `round_tip` | number 0–0.5 | `0.11999999731779099` | Fraction of the length over which the tip rounds off to the spine: 0 is a flat top |
+| `section_deg` | number -360–360 | `0.0` | Turn of the section's broad axis away from the curl's plane, degrees: 90 folds a ribbon across its width |
+| `segments` | integer 2–64 | `10` | Bones along the spine: more is a smoother bend and more palette per prop |
+| `sides` | integer 6–1024 | `64` | Vertices around each ring |
+| `stretch` | number 0–0.5 | `0.05000000074505806` | Pose: how much a pose lengthens or shortens the spine, as a fraction (`[living] variance.keep_size` evens the box out again) |
+| `swell` | number 0–0.9 | `0.14000000059604645` | Pose: how much the section breathes wider and narrower along the length, as a fraction of its radius |
+| `turn_deg` | number 0–180 | `0.0` | Pose: how far a pose turns the section about the spine at the tip, degrees: what a flat form shows |
+| `twist_turns` | number -8–8 | `0.0` | Turns the section makes about the spine from base to tip, at rest |
+| `waves` | integer 1–64 | `3` | Depth bands the segments fall into, base to tip, at most `segments`: per-level stagger ripples up the form in this many waves, and `[living] variance.steady` holds the low bands still |
+
+Only when `card_layout` is `rows`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `paragraph_lines` | number 0–1000 | `6.0` | Rows: lines in a typical paragraph, whose last line stops short and whose next begins indented; 0 is one unbroken block |
+| `row_faces` | `front` \| `back` \| `both` | `"both"` | Rows: which broad faces carry lines. The front is the face turned away from `facing_deg`, so a page curling away from you shows you its front |
+| `row_margin` | number 0–0.9 | `0.10000000149011612` | Rows: the share of the section's half-width kept clear at each side, so lines stop short of the edge and never bristle at the outline |
+| `row_spacing` | number >0 to 10 | `0.03999999910593033` | Rows: metres from one line to the next, up the surface |
+| `word_gap` | number 0–10 | `0.012000000104308128` | Rows: metres between words; each gap varies ±30% |
+
+Only when `card_layout` is `scatter`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `card_rise` | number -0.9–10 | `0.0` | How cards crowd along the length: 0 by area alone, above 0 toward the tip, below 0 toward the base |
+| `card_tilt` | number 0–1 | `0.0` | How far cards stand up off the surface toward the tip: 0 flat like scales, 1 upright like a fringe, which boils the outline's edge |
 
 ### `texture_v1` (image set, written as PNGs)
 

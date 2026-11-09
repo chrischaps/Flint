@@ -13,6 +13,8 @@ pub struct RenderStats {
     // Totals
     pub draw_calls: u32,
     pub triangles: u32,
+    /// Of `draw_calls`: living props' echoes.
+    pub echo_draws: u32,
     // Per-system breakdown
     pub entity_draws: u32,
     /// Opaque and transparent mesh draws skipped because their bounds were

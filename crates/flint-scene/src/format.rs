@@ -1,7 +1,7 @@
 //! Scene file format definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Root structure of a scene TOML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,9 +14,182 @@ pub struct SceneFile {
     #[serde(default)]
     pub post_process: Option<PostProcessDef>,
     #[serde(default)]
+    pub living: Option<LivingDef>,
+    #[serde(default)]
+    pub wooze: Option<WoozeDef>,
+    #[serde(default)]
     pub prefabs: HashMap<String, PrefabInstance>,
     #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+}
+
+/// A scene's `[wooze]` table (#213): how woozy it is everywhere, and the zones
+/// that are more or less so. A scene without one has no field and pays nothing.
+/// [`WoozeDef::field`](crate::WoozeDef::field) makes it into one, and
+/// [`WoozeDef::check`](crate::WoozeDef::check) is what `flint validate` runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WoozeDef {
+    /// A built-in set of knobs to start from. Unset: everything as authored.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// How much of a consumer's slow drift shows, 0 to 1.
+    #[serde(default)]
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    #[serde(default)]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1.
+    #[serde(default)]
+    pub glide: Option<f32>,
+    /// How much of a consumer's fast jitter shows.
+    #[serde(default)]
+    pub jitter: Option<f32>,
+    /// `[[wooze.zone]]` entries. Raw, so that one that's wrong can be named
+    /// rather than failing the whole scene's parse with a line number.
+    #[serde(default)]
+    pub zone: Vec<toml::Value>,
+}
+
+/// A scene's `[living]` table: what it says about all its living props, ahead
+/// of any one spec. How woozy they are is `[wooze]`'s to say.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingDef {
+    /// What the shadows follow: `blended` (what's drawn; the default) or
+    /// `drift` (a slower pose with no stagger or jitter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<String>,
+    /// How parts fall out of phase, over each spec's and each prop's own: `none`,
+    /// `per_level` or `per_branch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stagger: Option<String>,
+    /// Faint time-offset copies of every prop. Fields left unset are each spec's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echoes: Option<LivingEchoesDef>,
+    /// How much of the difference between poses is left. Fields left unset are
+    /// each spec's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variance: Option<LivingVarianceDef>,
+    /// `[living.species.<spec>]` (#246): one species' own values, over everything
+    /// above, a field at a time. Keyed by the spec's `meta.name`, which is what a
+    /// living prop's `model.asset` names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub species: BTreeMap<String, LivingSpeciesDef>,
+}
+
+/// One species' values (#246): the clock knobs `[wooze]` has and the props'
+/// knobs `[living]` has, each beating the global one, zones included. Unset is
+/// whatever the layers below say.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingSpeciesDef {
+    /// How much of its slow drift shows, 0 to 1. The panel calls it drift.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide: Option<f32>,
+    /// How much of its fast jitter shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter: Option<f32>,
+    /// `none`, `per_level` or `per_branch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stagger: Option<String>,
+    /// Its echoes, a field at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echoes: Option<LivingEchoesDef>,
+    /// Its variance, a field at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variance: Option<LivingVarianceDef>,
+}
+
+/// A scene's `[living] echoes`, over each spec's a field at a time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingEchoesDef {
+    /// How many copies; 0 turns them off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// How far the farthest copy is from now, in steps of the clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread: Option<f32>,
+    /// The opacity of a copy at now, which falls off with distance from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f32>,
+}
+
+/// A saved look (#218): a `<name>.wooze.toml` beside a scene, which its `[wooze]
+/// preset` can name. The tables are the shapes a scene's own take, so one can be
+/// pasted into the other. Zones aren't here, since they belong to a place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WoozePreset {
+    /// The field's global knobs.
+    #[serde(default)]
+    pub wooze: WoozeKnobs,
+    /// What the scene says about its props: stagger, echoes, variance.
+    #[serde(default)]
+    pub living: LivingDef,
+    /// The shading boil.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boil: Option<BoilDef>,
+}
+
+/// A wooze field's global knobs: whichever a preset sets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WoozeKnobs {
+    /// How much of a consumer's slow drift shows, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide: Option<f32>,
+    /// How much of a consumer's fast jitter shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter: Option<f32>,
+}
+
+/// The shading boil in a preset, which is `kuwahara_boil`, `contour_boil` and
+/// `boil_on` from a scene's `[post_process]`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoilDef {
+    /// Whether it boils at all. Off keeps the amounts for when it's back on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// How far each drawing moves the paint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara: Option<f32>,
+    /// How far each drawing moves the lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour: Option<f32>,
+    /// A new drawing every this many film frames: 1, 2 or 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<u32>,
+}
+
+/// A scene's `[living] variance`, over each spec's a field at a time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingVarianceDef {
+    /// How much of each pose's difference from the base is left, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<f32>,
+    /// How much of that is held back from the trunk side: 0 even, 1 all at the
+    /// tips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steady: Option<f32>,
+    /// Scale each pose so its box matches the base's, as near as one scale can.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_size: Option<bool>,
 }
 
 /// A prefab template file (.prefab.toml)
@@ -153,6 +326,40 @@ pub struct PostProcessDef {
     /// renderer checks names and parameters against its registry.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub styles: std::collections::BTreeMap<String, toml::Table>,
+    /// How far each drawing moves the paint in a scene with a `[wooze]` table: a
+    /// share of the radius, turning the strokes too. 0 holds it still.
+    #[serde(default)]
+    pub kuwahara_boil: f32,
+    /// Ink lines over the scene, from breaks in depth and luminance (#214).
+    #[serde(default)]
+    pub contour_enabled: bool,
+    /// Half a line's width, in pixels at 1080p.
+    #[serde(default = "default_contour_width")]
+    pub contour_width: f32,
+    /// How strong an edge must be before it starts to ink. Lower draws more.
+    #[serde(default = "default_contour_threshold")]
+    pub contour_threshold: f32,
+    /// How dark the ink goes, 0 to 1.
+    #[serde(default = "default_contour_strength")]
+    pub contour_strength: f32,
+    /// How much edges in luminance count, against edges in depth. 0 is silhouettes only.
+    #[serde(default = "default_contour_luma")]
+    pub contour_luma: f32,
+    /// The ink's colour, linear.
+    #[serde(default = "default_contour_color")]
+    pub contour_color: [f32; 3],
+    /// Metres at which a line has faded by half, so that distant foliage doesn't
+    /// go solid with ink. 0 never fades.
+    #[serde(default = "default_contour_fade")]
+    pub contour_fade: f32,
+    /// How far each drawing moves the lines in a scene with a `[wooze]` table,
+    /// and how much it changes their width and pressure. 0 holds them still.
+    #[serde(default)]
+    pub contour_boil: f32,
+    /// Film frames each drawing is held: 1, 2 or 3 ("on twos"). A beat of the
+    /// field's `step` is six film frames.
+    #[serde(default = "default_boil_on")]
+    pub boil_on: u32,
     /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
     #[serde(default)]
     pub film_grain: f32,
@@ -501,6 +708,34 @@ impl PostProcessDef {
     }
 }
 
+fn default_contour_width() -> f32 {
+    1.25
+}
+
+fn default_contour_threshold() -> f32 {
+    0.08
+}
+
+fn default_contour_strength() -> f32 {
+    0.9
+}
+
+fn default_contour_luma() -> f32 {
+    0.5
+}
+
+fn default_contour_color() -> [f32; 3] {
+    [0.015, 0.012, 0.02]
+}
+
+fn default_contour_fade() -> f32 {
+    30.0
+}
+
+fn default_boil_on() -> u32 {
+    2
+}
+
 /// Camera configuration for the scene
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraDef {
@@ -641,6 +876,8 @@ impl SceneFile {
             camera: None,
             environment: None,
             post_process: None,
+            living: None,
+            wooze: None,
             prefabs: HashMap::new(),
             entities: HashMap::new(),
         }

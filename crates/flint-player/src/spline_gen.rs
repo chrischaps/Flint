@@ -766,7 +766,7 @@ pub fn load_splines(
                         spline::sample_open_spline(&def.control_points, def.spacing)
                     };
 
-                    println!(
+                    eprintln!(
                         "Loaded spline '{}': {} control points → {} samples ({})",
                         entity.name,
                         def.control_points.len(),
@@ -877,7 +877,7 @@ pub fn load_splines(
             let num_segs = if info.closed { n } else { n - 1 };
             let num_chunks = (num_segs + chunk_sz - 1) / chunk_sz;
 
-            println!(
+            eprintln!(
                 "  Chunked mesh '{}': {}x{} @ offset [{:.1}, {:.1}], {} segments → {} chunks of {}",
                 job.entity_name,
                 job.def.width,
@@ -1046,7 +1046,7 @@ pub fn load_splines(
                 continue;
             }
 
-            println!(
+            eprintln!(
                 "  Mesh '{}': {}x{} @ offset [{:.1}, {:.1}] → {} verts, {} tris",
                 job.entity_name,
                 job.def.width,
@@ -1090,7 +1090,7 @@ pub fn load_splines(
     }
 
     if !spline_infos.is_empty() || !mesh_jobs.is_empty() {
-        println!(
+        eprintln!(
             "Spline generation complete: {} splines, {} meshes.",
             spline_infos.len(),
             mesh_jobs.len(),

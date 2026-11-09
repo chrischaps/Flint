@@ -240,6 +240,26 @@ impl AnimationSystem {
         self.skeletal_sync.bone_matrices(entity_id)
     }
 
+    /// Turn a joint by hand, in its own frame, on top of what the clips say;
+    /// `None` gives it back. Takes effect at once, with or without a clip.
+    pub fn set_joint_offset(
+        &mut self,
+        entity_id: EntityId,
+        joint: usize,
+        rotation: Option<[f32; 4]>,
+    ) {
+        self.skeletal_sync
+            .set_joint_offset(entity_id, joint, rotation);
+    }
+
+    /// The joints turned by [`Self::set_joint_offset`].
+    pub fn joint_offsets(
+        &self,
+        entity_id: &EntityId,
+    ) -> Option<&std::collections::BTreeMap<usize, [f32; 4]>> {
+        self.skeletal_sync.joint_offsets(entity_id)
+    }
+
     /// The skeleton driving an entity (joint hierarchy + model-space globals
     /// from the last pose computation — e.g. for a debug armature overlay)
     pub fn skeleton(&self, entity_id: &EntityId) -> Option<&Skeleton> {

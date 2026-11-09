@@ -5,7 +5,9 @@
 //! output is byte-identical. Its settings are `[post_process.styles.kuwahara]`
 //! like every other style's (#298); a scene's older `kuwahara_enabled`,
 //! `kuwahara_radius`... keys are folded into that table when it loads
-//! (`flint_scene::fold_legacy_style_keys`).
+//! (`flint_scene::fold_legacy_style_keys`). In a scene with a `[wooze]`
+//! field the paint also boils (#214): `[post_process] kuwahara_boil` moves
+//! the kernel and turns the strokes a little on each drawing of the field.
 
 use super::kit;
 use super::{
@@ -72,7 +74,20 @@ struct KuwaharaUniforms {
     sharpness: f32,
     hardness: f32,
     anisotropy: f32,
-    _pad: [f32; 2],
+    /// Which drawing this is (#214): changes on the wooze field's beat.
+    boil_seed: u32,
+    /// How far the paint moves this frame, as a share of the radius. 0 is off.
+    boil: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    /// The boil's seed and amount (#214) ride the two floats that padded the
+    /// filter's uniforms, so its buffer is the size it always was.
+    #[test]
+    fn boil_rides_the_old_padding() {
+        assert_eq!(std::mem::size_of::<super::KuwaharaUniforms>(), 32);
+    }
 }
 
 struct Kuwahara {
@@ -206,7 +221,10 @@ impl StylePass for Kuwahara {
             sharpness: frame.param("sharpness"),
             hardness: frame.param("hardness"),
             anisotropy: frame.param("anisotropy"),
-            _pad: [0.0; 2],
+            // The shading boil (#214): `[post_process] kuwahara_boil`, scaled
+            // by this frame's drawing from the wooze field (0 with no field)
+            boil_seed: frame.config.boil.seed,
+            boil: frame.config.kuwahara_boil.max(0.0) * frame.config.boil.amount,
         };
         frame
             .queue

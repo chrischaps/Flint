@@ -51,6 +51,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_sequence_cue` | `fn on_sequence_cue(sequence, cue)` | An animation sequence passed a `cue` event (see [Animation](animation.md#sequences)) |
 | `on_animation_end` | `fn on_animation_end(clip)` | A `once` sprite clip finished (see [2D Sprites](sprites-2d.md)) |
 | `on_event` | `fn on_event(name, data)` | A custom game event fired by a script, the engine or a player extension (see [Event API](#event-api)) |
+| `on_expression` | `fn on_expression(state)` | A new state arrived from outside the process: a timeline or a localhost socket (see [Expression API](#expression-api)) |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -188,8 +189,8 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
-| `random()` | `f64` | Random value in `[0, 1)` |
-| `random_range(min, max)` | `f64` | Random value in `[min, max)` |
+| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, a seeded sequence that's the same every run |
+| `random_range(min, max)` | `f64` | Random value in `[min, max)`, seeded the same way |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |
 | `abs(x)` | `f64` | Absolute value |
@@ -284,6 +285,67 @@ reaches `on_event` at the start of the next frame, before that frame's
 
 A payload that isn't a table arrives as `#{ value: data }`. Events are dropped
 while the game state pauses scripts, as input actions are.
+
+### Expression API
+
+State from outside the player process, for a game that something else drives:
+a live bridge, a rehearsal timeline, a recorded replay. The player is started
+with either source, or both:
+
+```bash
+flint play scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json
+flint play scenes/stage.scene.toml --expression-listen 127.0.0.1:7777
+```
+
+| Function | Description |
+|----------|-------------|
+| `expression()` | The latest state as a map; `#{}` before the first arrives |
+
+Every script that defines `on_expression(state)` hears each new state, once,
+in arrival order and in the order of the entities' names, before that frame's
+`on_update`. During
+the call `expression()` already returns that state, so a frame that takes two
+calls `on_expression` twice and leaves the second in place. The state holds
+until another arrives, and outlives scene changes: it describes the world
+outside the game.
+
+```rhai
+fn on_expression(state) {
+    log(`now ${state.state}, energy ${state.energy}`);
+}
+
+fn on_update() {
+    let e = expression();
+    if e.len() == 0 { return; }          // nothing has arrived yet
+    // ease toward e.energy here; a state says what is happening, not how it moves
+}
+```
+
+Flint doesn't know the fields. Any JSON object arrives as a map, and every
+number as a float, so `1` and `1.0` read the same. Whoever writes the messages
+owns their vocabulary and how strictly to check it.
+
+- **`--expression-timeline <file>`** plays `{"events": [{..., "t": secs}, ...]}`
+  on the game clock, so `--frame-step` and `set_time_scale` apply to it. An
+  event is delivered on the first frame whose game time reaches its `t` (to
+  within a microsecond, so summed frame steps don't put a whole-second cue a
+  frame late); one long frame delivers all that came due, in file order.
+  `flint render --expression-timeline` plays the same file headless and
+  deterministically ([Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline)). `t` must be 0 or later
+  and never decrease. Other top-level fields are ignored.
+- **`--expression-listen <ip:port>`** takes newline-delimited JSON objects over
+  TCP. It binds loopback only (`127.0.0.1` or `::1`; anything else is refused)
+  and is off unless given. Reader threads parse each line off the frame
+  thread, so a frame never waits on the network, and a frame takes at most 64
+  states. A line that isn't a JSON object, or is over 64 KiB, is logged and
+  dropped, and the connection stays open. At most 8 connections at once. If
+  more than 256 states are waiting, the oldest go: each is a whole snapshot,
+  so the latest is the one that matters.
+
+The feed logs each state it delivers at info under the `expression` target
+(`RUST_LOG=expression=info,script=info` shows them beside the scripts' own
+`log` lines). While the game state pauses scripts, states wait for them, up to
+256.
 
 ### Log API
 
@@ -584,6 +646,59 @@ for every key and what a change rebuilds.
 The post-process keys (`post_process`, `bloom`, `ssao`, `ssao_samples`,
 `fog`, `volumetric`) are caps: off turns the scene's effect off, on leaves it
 as the scene set it. They hold across scene loads.
+### Wooze API
+
+Moves the scene's [wooze field](procgen.md#the-wooze-field), which every living prop and [shallow wooze](procgen.md#shallow-wooze) mesh reads. Each takes an optional last argument of seconds to get there over, an integer or a float. Without it, the change is immediate.
+
+| Function | Description |
+|----------|-------------|
+| `set_wooze(knobs)` | Change global knobs. `knobs` is a map of any of `amplitude`, `step`, `glide`, `jitter`, `preset`; a preset applies first and the others on top |
+| `set_wooze(knobs, seconds)` | The same, over `seconds` |
+| `set_wooze_zone(name, fields)` | Change the named zone, keeping what `fields` leaves out, or add it if there's none. A new zone needs `shape`, `center`, `radius` or `size`, and a knob |
+| `set_wooze_zone(name, fields, seconds)` | The same, with a change of knob easing over `seconds` and a new zone fading in. A zone's place and shape move at once |
+| `remove_wooze_zone(name)` | Drop the named zone |
+| `remove_wooze_zone(name, seconds)` | Fade it out over `seconds`, then drop it |
+
+Whether or not the change eases, nothing pops: a prop's parts take a new glide or amplitude when their own cycles begin, and a new step bends their clocks from wherever they stand.
+
+A change the field can't use is logged by the player, naming the zone, and changes nothing. So does any of these in a scene with no `[wooze]` table: it has no field to change, and an empty table opts it in.
+
+### Living Props API
+
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s controls, for a script. These reach every prop at once, or [one species](procgen.md#species-values), and a look lab or a test can run them with no panel open.
+
+| Function | Description |
+|----------|-------------|
+| `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is, prop by prop: `echoes: #{ count: 3 }` gives every prop three echoes and leaves each species its own `spread` and `alpha` |
+| `tune_living(#{ species: name, ... })` | One species' own values, which beat the global ones, the field and its zones: the shape of a scene's [`[living.species.<spec>]`](procgen.md#species-values), so `step`, `glide`, `amplitude`, `jitter`, `stagger`, `echoes` and `variance`. A field it leaves out stays as the species has it. A species no prop grows from is logged and kept, for none |
+| `clear_living(name)`, `clear_living(name, keys)` | Give a species' values back to the layers below: all of them, or the keys named, such as `["step", "echoes.count", "variance"]` |
+| `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
+| `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
+| `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on, and each species' own values as `[living.species.<spec>]` tables. Not on the web, which has nowhere to put it |
+| `load_living_preset(name)` | Load a preset file or a built-in, live. Each species the file names takes exactly its values |
+| `commit_living()` | Write every value the scene file doesn't already say into it, as the panel's [Commit to File](../guides/debug-panels.md#living-props-f3) does: species to `[living.species.<spec>]`, the grove's to `[wooze]` and `[living]`, one line each. Logged; an error on the web |
+| `compare_living(a, b)` | Put preset `a` and preset `b` on the same grove, showing A ([A/B](../guides/debug-panels.md#comparing-two-presets-ab)). `""` is the knobs as they stand |
+| `flip_living()` | Show the other side, on the same clock and camera |
+| `split_living(split)` | Show both at once, A left and B right, or one at a time |
+| `stop_comparing_living()` | End the comparison, keeping the side that's shown |
+
+```rust
+tune_living(#{
+    wooze: #{ step: 0.25, glide: 0.4 },
+    living: #{
+        stagger: "per_branch",
+        echoes: #{ count: 3, spread: 1.2 },
+        variance: #{ amount: 0.6, keep_size: false },
+    },
+    boil: #{ contour: 1.0, on: 3 },
+});
+
+// The thorns twitchier than the rest, whatever the grove does next.
+tune_living(#{ species: "grove_thorn", step: 0.125, glide: 0.0, echoes: #{ count: 1 } });
+clear_living("grove_thorn", ["echoes"]);   // their echoes back to the grove's
+```
+
+Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `demo/living_sweep.scene.toml`, whose script moves every knob across its range.
 
 ### Conducted Parameters API
 

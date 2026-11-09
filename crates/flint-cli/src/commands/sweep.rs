@@ -14,9 +14,9 @@
 //! typo costs nothing. How a column takes its value is up to its family: a look,
 //! post or style column changes the `[post_process]` it draws with
 //! ([`Sweep::column_def`], [`Sweep::column_style`]); a wooze column lays
-//! [`Sweep::wooze_table`] over the scene's `[wooze]`, which only a build with the
-//! wooze field can draw (feature/living-props, #206). The sheet the columns land
-//! on is [`super::style_sheet::compose`] for every family.
+//! [`Sweep::wooze_table`] over the scene's `[wooze]`, and so draws through
+//! `render.rs`'s stages, a world and renderer a column (#487). The sheet the
+//! columns land on is [`super::style_sheet::compose`] for every family.
 
 use super::look::{did_you_mean, find, overlay, Look};
 use anyhow::{Context, Result};
@@ -129,9 +129,8 @@ impl Sweep {
 
     /// Column `i`'s `[post_process]`: the scene's, under the base look (or
     /// the column's own, for a look sweep), under a post field's value. A
-    /// style or wooze column draws with the base's. Kept for one-key callers
-    /// (feature/living-props' wooze stages, #487); `flint render` asks
-    /// [`SweepGrid::cell_def`].
+    /// style or wooze column draws with the base's. `flint render` asks
+    /// [`SweepGrid::cell_def`], for each axis of a grid.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn column_def(
         &self,
@@ -161,9 +160,7 @@ impl Sweep {
 
     /// What column `i` of a wooze sweep lays over the scene's `[wooze]` table
     /// (#216): the knob at the column's value, a number unless it's a preset's name.
-    /// Read by the wooze stages on feature/living-props, which replace its own
-    /// `render_plan::Sweep::table` with this when it merges.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// `None` for a sweep of anything else.
     pub fn wooze_table(&self, i: usize) -> Option<toml::Table> {
         let knob = self.wooze_knob()?;
         let text = &self.values[i];

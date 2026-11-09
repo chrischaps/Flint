@@ -241,7 +241,7 @@ pub fn load_particle_textures(
             if flint_core::vfs::exists(&path) {
                 match renderer.load_texture_file(device, queue, &tex_name, &path) {
                     Ok(true) => {
-                        println!("Loaded particle texture: {tex_name}");
+                        eprintln!("Loaded particle texture: {tex_name}");
                         any_new = true;
                     }
                     Ok(false) => {} // already cached

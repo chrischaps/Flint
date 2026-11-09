@@ -10,18 +10,20 @@ use std::sync::Arc;
 
 /// What the renderer was asked to do, in order.
 #[derive(Debug, Clone, PartialEq)]
-enum Event {
+pub(crate) enum Event {
     Mesh(String, usize),
     Image(String),
     Placeholder(String, AssetKind),
     File(String, AssetKind),
+    Living(String),
+    Bones(EntityId, String, usize),
 }
 
 #[derive(Default)]
-struct Recorder {
-    meshes: HashMap<String, usize>,
+pub(crate) struct Recorder {
+    pub(crate) meshes: HashMap<String, usize>,
     files: HashSet<(String, bool)>,
-    events: Vec<Event>,
+    pub(crate) events: Vec<Event>,
 }
 
 impl Recorder {
@@ -43,6 +45,14 @@ impl AssetSink for Recorder {
         self.meshes.insert(name.into(), mesh.vertices.len());
         self.events
             .push(Event::Mesh(name.into(), mesh.vertices.len()));
+    }
+    fn upload_living(&mut self, name: &str, rig: &LivingRig) {
+        self.meshes.insert(name.into(), rig.mesh.vertices.len());
+        self.events.push(Event::Living(name.into()));
+    }
+    fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
+        self.events
+            .push(Event::Bones(entity, name.into(), palette.len()));
     }
     fn upload_image(&mut self, name: &str, _image: &ImageData) {
         self.events.push(Event::Image(name.into()));
@@ -412,6 +422,39 @@ fn a_mesh_named_as_a_texture_is_refused() {
         panic!("{results:?}");
     };
     assert_eq!(reason, "a mesh can't be drawn as a texture");
+}
+
+/// With no `living_prop` to move it, a living spec in a scene is a still tree.
+#[test]
+fn a_skinned_mesh_draws_holding_still() {
+    let mesh = flint_procgen::SkinnedMeshData {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+        materials: Vec::new(),
+        submeshes: Vec::new(),
+        bounding_box: flint_procgen::BoundingBox::from_positions(&[]),
+        skeleton: flint_procgen::SkeletonDef { bones: Vec::new() },
+    };
+    let mut sink = Recorder::default();
+    upload_output(
+        "oak",
+        AssetKind::Model,
+        &GeneratorOutput::SkinnedMesh(mesh.clone()),
+        &mut sink,
+    )
+    .unwrap();
+    assert!(sink.meshes.contains_key("oak"));
+
+    let refused = upload_output(
+        "oak",
+        AssetKind::Texture,
+        &GeneratorOutput::SkinnedMesh(mesh),
+        &mut sink,
+    );
+    assert_eq!(
+        refused.unwrap_err(),
+        "a skinned mesh can't be drawn as a texture"
+    );
 }
 
 #[test]

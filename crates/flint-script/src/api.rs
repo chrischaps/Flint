@@ -31,6 +31,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_style_api(engine, ctx.clone());
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
+    register_wooze_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
     register_data_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
@@ -43,6 +44,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_conducted_api(engine, ctx.clone());
     register_ocean_api(engine, ctx.clone());
     register_quality_api(engine, ctx.clone());
+    register_expression_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -4243,6 +4245,21 @@ fn toml_token_to_dynamic(v: &toml::Value) -> Dynamic {
     }
 }
 
+// ─── Expression API (Flint#518) ───────────────────────────
+//
+// State from outside the process: a timeline played on the game clock
+// (`--expression-timeline`) or newline-delimited JSON on a localhost socket
+// (`--expression-listen`). Flint doesn't know the fields; any JSON object
+// arrives as a map, numbers as floats. The host delivers each new state before
+// on_update, calling `on_expression(state)` on every script that defines it.
+
+fn register_expression_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // expression() -> Map: the latest state, #{} before the first arrives
+    engine.register_fn("expression", move || -> Map {
+        crate::lock_or_recover(&ctx).expression.clone()
+    });
+}
+
 // ─── State Machine API ────────────────────────────────────
 
 fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
@@ -4417,6 +4434,232 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn("transition_phase", move || -> String {
             let c = crate::lock_or_recover(&ctx);
             c.transition_phase.clone()
+        });
+    }
+}
+
+// ─── Wooze API (#213) ─────────────────────────────────────
+//
+// Takes effect when the frame's commands run, and reaches a living prop on the
+// next cycle of each of its parts, or at once for step, which bends the clock.
+// What's wrong with a table is logged by the player, naming the zone. A scene
+// with no [wooze] table has no field to change, and says so.
+
+fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // Living Props' knobs (#218), the F3 panel's by another door. tune_living takes
+    // what a .wooze.toml holds: #{ wooze: #{ step: 0.25 }, living: #{ echoes:
+    // #{ count: 3 } }, boil: #{ on: 2 } }. What it leaves out stays as it is.
+    // With a species (#246) it takes one species' own values, which beat the
+    // global ones: #{ species: "grove_thorn", step: 0.25, echoes: #{ count: 1 } }.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tune_living", move |knobs: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::TuneLiving {
+                knobs: map_to_toml(&knobs),
+            });
+        });
+    }
+    // clear_living(species), clear_living(species, ["echoes", "step"]): give a
+    // species' values back to the layers below, all of them or the keys named.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_living", move |species: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ClearLiving {
+                species: species.to_string(),
+                keys: Vec::new(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_living", move |species: &str, keys: Array| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ClearLiving {
+                species: species.to_string(),
+                keys: keys.iter().map(|key| key.to_string()).collect(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("freeze_living", move |frozen: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::FreezeLiving { frozen });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("step_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StepLiving);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("save_living_preset", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SaveLivingPreset {
+                name: name.to_string(),
+            });
+        });
+    }
+    // commit_living(): write every value the scene file doesn't give into it
+    // (#249), species tables included, each on its own line. Logged; an error on
+    // the web, which has no file to write.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("commit_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::CommitLiving);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_living_preset", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::LoadLivingPreset {
+                name: name.to_string(),
+            });
+        });
+    }
+    // A/B (#238): compare_living("", "linklater") puts the knobs as they stand
+    // beside a preset; flip_living() swaps which is shown, split_living(true)
+    // shows both, A left; stop_comparing_living() keeps what's shown.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("compare_living", move |a: &str, b: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::CompareLiving {
+                a: a.to_string(),
+                b: b.to_string(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("flip_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::FlipLiving);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("split_living", move |split: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SplitLiving { split });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_comparing_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StopComparingLiving);
+        });
+    }
+
+    // set_wooze(knobs: Map), set_wooze(knobs: Map, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map, seconds: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze", move |knobs: Map, seconds: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWooze {
+                knobs: map_to_toml(&knobs),
+                seconds: seconds as f64,
+            });
+        });
+    }
+
+    // set_wooze_zone(name, fields: Map), set_wooze_zone(name, fields: Map, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_wooze_zone", move |name: &str, fields: Map| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::SetWoozeZone {
+                name: name.to_string(),
+                fields: map_to_toml(&fields),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_wooze_zone",
+            move |name: &str, fields: Map, seconds: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetWoozeZone {
+                    name: name.to_string(),
+                    fields: map_to_toml(&fields),
+                    seconds,
+                });
+            },
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_wooze_zone",
+            move |name: &str, fields: Map, seconds: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetWoozeZone {
+                    name: name.to_string(),
+                    fields: map_to_toml(&fields),
+                    seconds: seconds as f64,
+                });
+            },
+        );
+    }
+
+    // remove_wooze_zone(name), remove_wooze_zone(name, seconds)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("remove_wooze_zone", move |name: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds: 0.0,
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("remove_wooze_zone", move |name: &str, seconds: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds,
+            });
+        });
+    }
+    {
+        engine.register_fn("remove_wooze_zone", move |name: &str, seconds: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::RemoveWoozeZone {
+                name: name.to_string(),
+                seconds: seconds as f64,
+            });
         });
     }
 }

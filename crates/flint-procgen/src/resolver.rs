@@ -9,6 +9,9 @@ use std::sync::Arc;
 
 use crate::cache::{ProcGenCache, ProcGenCacheConfig};
 use crate::disk_cache::DiskStats;
+use crate::living_props::{
+    LineageDone, LivingDefaults, LivingPropId, LivingPropRequest, LivingProps, POSE_CACHE_BYTES,
+};
 use crate::output::GeneratorOutput;
 use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 use crate::registry::GeneratorRegistry;
@@ -26,6 +29,8 @@ pub struct ProcGenResolver {
     cache: ProcGenCache,
     /// Frame-budgeted generation queue
     queue: ProcGenQueue,
+    /// The scene's living props, which share the queue's frame budget
+    living: LivingProps,
 }
 
 impl ProcGenResolver {
@@ -46,6 +51,7 @@ impl ProcGenResolver {
             registry,
             cache: ProcGenCache::new(config),
             queue: ProcGenQueue::new(budget_ms),
+            living: LivingProps::new(POSE_CACHE_BYTES),
         }
     }
 
@@ -60,6 +66,11 @@ impl ProcGenResolver {
                 }
             }
         }
+    }
+
+    /// Index one spec, as discovery would have.
+    pub fn index_spec(&mut self, spec: ProcGenSpec) {
+        self.specs.insert(spec.meta.name.clone(), spec);
     }
 
     /// Check whether a spec with the given name is indexed.
@@ -216,6 +227,148 @@ impl ProcGenResolver {
             .get(name)
             .and_then(|spec| Self::cache_key(&self.registry, spec).ok())
             .is_some_and(|(hash, seed)| self.cache.contains(hash, &seed))
+    }
+
+    /// Add a living prop. Returns its id and the name of the mesh it draws, one
+    /// per spec and lineage; `Err` says why its spec can't live, in which case
+    /// nothing was added. Nothing is generated yet.
+    pub fn add_living_prop(
+        &mut self,
+        request: LivingPropRequest,
+    ) -> std::result::Result<(LivingPropId, String), String> {
+        let name = &request.spec_name;
+        let spec = self
+            .specs
+            .get(name)
+            .ok_or_else(|| format!("no spec named '{name}'"))?;
+        if spec.living.is_none() {
+            return Err(format!("its spec '{name}' has no [living] table"));
+        }
+        let generator = self
+            .registry
+            .get(&spec.generator)
+            .ok_or_else(|| format!("its generator '{}' is not registered", spec.generator))?;
+        generator
+            .as_living()
+            .ok_or_else(|| format!("its generator '{}' can't live", spec.generator))?
+            .check_living(spec)
+            .map_err(|e| e.to_string())?;
+        // What a pose depends on: the generator's revision and the whole spec.
+        let identity = format!(
+            "{}@{}\n{}",
+            generator.type_name(),
+            generator.revision(),
+            toml::to_string(spec).unwrap_or_default()
+        );
+        Ok(self.living.add(request, spec, &identity))
+    }
+
+    /// Build every living lineage and fill every ring now, unbudgeted, for a
+    /// scene load whose first frame should find them full.
+    pub fn make_living_now(&mut self) -> Vec<LineageDone> {
+        self.living.make_all_now(&self.registry)
+    }
+
+    /// One frame of living props: move their clock on by `dt` (0 while paused),
+    /// then generate what the rings are missing, in whatever the asset queue
+    /// left of the frame budget. Call after [`process_frame`](Self::process_frame).
+    /// Lineages that finished come back to be uploaded. Does nothing at all in
+    /// a scene with no living props.
+    pub fn process_living(&mut self, dt: f64) -> Vec<LineageDone> {
+        self.process_living_in(dt, None)
+    }
+
+    /// [`process_living`](Self::process_living) in a scene with a wooze field,
+    /// given with the moment on its own clock to sample it at. `None` for a scene
+    /// with none, in which props keep to their specs and nothing is sampled.
+    pub fn process_living_in(
+        &mut self,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) -> Vec<LineageDone> {
+        if self.living.is_empty() {
+            return Vec::new();
+        }
+        let left = self.queue.budget_ms() - self.queue.stats().budget_used_ms;
+        self.living.tick(dt, left, &self.registry, wooze)
+    }
+
+    /// The milliseconds a frame may spend generating, assets and poses together.
+    pub fn frame_budget_ms(&self) -> f64 {
+        self.queue.budget_ms()
+    }
+
+    /// One step of living props with no frame budget: every pose the rings want
+    /// is there when this returns. For a capture, where nobody is waiting on the
+    /// frame and a pose arriving late would change the picture (#216).
+    pub fn step_living_now(
+        &mut self,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) -> Vec<LineageDone> {
+        if self.living.is_empty() {
+            return Vec::new();
+        }
+        self.living.tick(dt, f64::INFINITY, &self.registry, wooze)
+    }
+
+    /// [`process_living_in`](Self::process_living_in) for a second look at the
+    /// scene's props (#238), made with [`LivingProps::fork`]: its own knobs, the
+    /// same clock and frame budget, and the scene's pose cache, so a pose either
+    /// side has made the other finds. Its lineages are built, so nothing comes back.
+    pub fn process_living_beside(
+        &mut self,
+        side: &mut LivingProps,
+        dt: f64,
+        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+    ) {
+        if side.is_empty() {
+            return;
+        }
+        let left = self.queue.budget_ms() - self.queue.stats().budget_used_ms;
+        self.living.swap_cache(side);
+        side.tick(dt, left, &self.registry, wooze);
+        self.living.swap_cache(side);
+    }
+
+    /// Finish what the knobs of the scene's props have started, now and with no
+    /// budget: see [`LivingProps::settle_now`]. With `side`, that side's instead,
+    /// on the scene's pose cache.
+    pub fn settle_living_now(&mut self, side: Option<&mut LivingProps>) {
+        match side {
+            Some(side) => {
+                self.living.swap_cache(side);
+                side.settle_now(&self.registry);
+                self.living.swap_cache(side);
+            }
+            None => self.living.settle_now(&self.registry),
+        }
+    }
+
+    /// The frame's whole budget, for tests that want it tight or wide.
+    #[cfg(test)]
+    pub(crate) fn frame_budget_for_test(&mut self, budget_ms: f64) {
+        self.queue.set_budget_ms(budget_ms);
+    }
+
+    /// The scene's living props and how their rings have fared.
+    pub fn living_props(&self) -> &LivingProps {
+        &self.living
+    }
+
+    /// The scene's living props, to blend them.
+    pub fn living_props_mut(&mut self) -> &mut LivingProps {
+        &mut self.living
+    }
+
+    /// What the scene says about living props, for the props added after this.
+    pub fn set_living_defaults(&mut self, defaults: LivingDefaults) {
+        self.living.set_defaults(defaults);
+    }
+
+    /// Forget the scene's living props, keeping the poses already made.
+    pub fn clear_living_props(&mut self) {
+        self.living.clear_props();
     }
 
     /// Current queue statistics.

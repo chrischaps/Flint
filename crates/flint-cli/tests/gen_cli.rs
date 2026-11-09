@@ -102,6 +102,84 @@ fn texture_spec_writes_one_png_per_map() {
     }
 }
 
+/// The living oak example with its `[living]` table replaced, or `None` to
+/// keep it. Written to a scratch file so each case can break it its own way.
+fn living_spec(dir: &Path, living: Option<&str>) -> PathBuf {
+    let src = std::fs::read_to_string(repo_root().join("specs/examples/oak_living.procgen.toml"))
+        .unwrap();
+    let text = match living {
+        None => src,
+        Some(table) => {
+            // At the start of a line: the header comment names it too.
+            let cut = src
+                .find("\n[living]")
+                .expect("the example has a [living] table");
+            format!("{}\n[living]\n{table}\n", &src[..cut])
+        }
+    };
+    let path = dir.join("living.procgen.toml");
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn dry_run_counts_a_living_spec_skeleton() {
+    let dir = scratch("living_ok");
+    let o = gen(&[s(&living_spec(&dir, None)), "--dry-run"]);
+    let t = text(&o);
+    assert!(o.status.success(), "{t}");
+    assert!(
+        t.contains("lineage 7: 243 segments") && t.contains("a ring of 8 poses"),
+        "{t}"
+    );
+}
+
+#[test]
+fn dry_run_refuses_a_malformed_living_table_and_names_the_key() {
+    let dir = scratch("living_bad");
+    for (table, key) in [
+        ("lineage_seed = 7\npose_rng = 8", "pose_rng"),
+        ("pose_ring = 8", "lineage_seed"),
+        ("lineage_seed = 7\npose_ring = 1", "living.pose_ring"),
+        ("lineage_seed = 7\nstagger = \"per_twig\"", "stagger"),
+        (
+            "lineage_seed = 7\nvariance = { amount = 2.0 }",
+            "living.variance.amount",
+        ),
+        (
+            "lineage_seed = 7\ndrift = { params = [\"branch_angel\"] }",
+            "branch_angel",
+        ),
+    ] {
+        let o = gen(&[s(&living_spec(&dir, Some(table))), "--dry-run"]);
+        let t = text(&o);
+        assert!(!o.status.success(), "{table:?} passed:\n{t}");
+        assert!(t.contains(key), "{table:?} didn't name {key}:\n{t}");
+    }
+}
+
+#[test]
+fn living_on_a_colonized_tree_warns_and_strict_refuses() {
+    let dir = scratch("living_pine");
+    let pine =
+        std::fs::read_to_string(repo_root().join("specs/examples/pine_tree.procgen.toml")).unwrap();
+    let pine = pine.split("[[lod]]").next().unwrap();
+    let path = dir.join("pine.procgen.toml");
+    std::fs::write(&path, format!("{pine}\n[living]\nlineage_seed = 7\n")).unwrap();
+
+    let o = gen(&[s(&path), "--dry-run"]);
+    let t = text(&o);
+    assert!(o.status.success(), "the bake is still good:\n{t}");
+    assert!(
+        t.contains("[living] would be ignored") && t.contains("space colonization"),
+        "{t}"
+    );
+    assert!(!t.contains("Living:"), "{t}");
+
+    let o = gen(&[s(&path), "--dry-run", "--strict"]);
+    assert!(!o.status.success(), "{}", text(&o));
+}
+
 #[test]
 fn dry_run_prints_the_estimate_and_writes_nothing() {
     let dir = scratch("dry");
@@ -358,4 +436,132 @@ fn cost_report_sums_the_ledger() {
     let o = gen_in(&dir, &["--cost-report", "--since", "last tuesday"]);
     assert!(!o.status.success());
     assert!(text(&o).contains("YYYY-MM-DD"), "{}", text(&o));
+}
+
+// ── --strip ────────────────────────────────────────────────────────────────
+
+/// A strip small enough to render quickly. `None` when this machine has no
+/// GPU adapter, which is every CI runner.
+fn small_strip(dir: &Path, name: &str, living: &str) -> Option<Vec<u8>> {
+    let out = dir.join(format!("{name}.png"));
+    let o = gen(&[
+        s(&living_spec(dir, Some(living))),
+        "--strip",
+        "--frames",
+        "4",
+        "--columns",
+        "2",
+        "--cell-size",
+        "48",
+        "-o",
+        s(&out),
+    ]);
+    if !o.status.success() && text(&o).contains("headless render context") {
+        eprintln!("no GPU adapter; skipping");
+        return None;
+    }
+    assert!(o.status.success(), "{}", text(&o));
+    Some(std::fs::read(&out).unwrap())
+}
+
+#[test]
+fn strip_dry_run_says_what_it_would_make_and_writes_nothing() {
+    let dir = scratch("strip_dry");
+    let out = dir.join("strip.png");
+    let o = gen(&[
+        s(&living_spec(&dir, None)),
+        "--strip",
+        "--dry-run",
+        "-o",
+        s(&out),
+    ]);
+    let t = text(&o);
+    assert!(o.status.success(), "{t}");
+    assert!(t.contains("lineage 7"), "{t}");
+    assert!(t.contains("48 frames at 24 fps, 8 x 6 cells"), "{t}");
+    assert!(t.contains("glide 0.3"), "{t}");
+    assert!(!out.exists(), "a dry run wrote {out:?}");
+}
+
+#[test]
+fn strip_reads_glide_from_the_spec() {
+    let dir = scratch("strip_glide");
+    let o = gen(&[
+        s(&living_spec(
+            &dir,
+            Some("lineage_seed = 7\nstep = 0.25\nglide = 0.9"),
+        )),
+        "--strip",
+        "--dry-run",
+    ]);
+    let t = text(&o);
+    assert!(o.status.success(), "{t}");
+    assert!(t.contains("step 0.25 s, glide 0.9"), "{t}");
+}
+
+#[test]
+fn strip_refuses_what_has_no_living_side() {
+    let dir = scratch("strip_refuses");
+    // No [living] table.
+    let o = gen(&[s(&oak_spec()), "--strip", "--dry-run"]);
+    assert!(!o.status.success());
+    assert!(text(&o).contains("no [living] table"), "{}", text(&o));
+
+    // A [living] table on a tree that can't live: an error, not the warning.
+    let pine =
+        std::fs::read_to_string(repo_root().join("specs/examples/pine_tree.procgen.toml")).unwrap();
+    let path = dir.join("pine.procgen.toml");
+    std::fs::write(&path, format!("{pine}\n[living]\nlineage_seed = 7\n")).unwrap();
+    let o = gen(&[s(&path), "--strip", "--dry-run"]);
+    let t = text(&o);
+    assert!(!o.status.success());
+    assert!(t.contains("space colonization"), "{t}");
+    assert!(!t.contains("would be ignored"), "{t}");
+}
+
+#[test]
+fn strip_writes_only_a_png_and_takes_no_other_run_mode() {
+    let dir = scratch("strip_flags");
+    let spec = living_spec(&dir, None);
+    let o = gen(&[s(&spec), "--strip", "--dry-run", "-o", "tree.glb"]);
+    assert!(!o.status.success());
+    assert!(text(&o).contains(".png"), "{}", text(&o));
+
+    for flags in [
+        &["--batch", "2"][..],
+        &["--seed", "1"],
+        &["--validate"],
+        &["--register"],
+        &["--format", "glb"],
+        &["--print-spec"],
+    ] {
+        let mut args = vec![s(&spec), "--strip", "--dry-run"];
+        args.extend_from_slice(flags);
+        let o = gen(&args);
+        assert!(!o.status.success(), "{flags:?} should conflict");
+    }
+
+    // The strip's own flags mean nothing without it.
+    for flags in [["--frames", "4"], ["--fps", "12"], ["--cell-size", "64"]] {
+        let mut args = vec![s(&spec), "--dry-run"];
+        args.extend_from_slice(&flags);
+        assert!(!gen(&args).status.success(), "{flags:?} needs --strip");
+    }
+}
+
+#[test]
+fn a_strip_is_byte_identical_across_runs_and_changes_with_glide() {
+    let dir = scratch("strip_bytes");
+    let table = |glide: f32| format!("lineage_seed = 7\nstagger = \"none\"\nglide = {glide}");
+    let Some(first) = small_strip(&dir, "first", &table(1.0)) else {
+        return;
+    };
+    let second = small_strip(&dir, "second", &table(1.0)).unwrap();
+    assert!(first == second, "two runs of one spec differ");
+
+    let snapping = small_strip(&dir, "snapping", &table(0.0)).unwrap();
+    assert!(first != snapping, "changing glide changed nothing");
+
+    let sheet = image::load_from_memory(&first).unwrap();
+    assert_eq!(sheet.width(), 28 * 2 + 48 * 2 + 16);
 }

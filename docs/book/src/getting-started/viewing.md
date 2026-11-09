@@ -80,7 +80,7 @@ The viewer renders scenes with the same PBR pipeline used by the player:
 
 ### The Rendering & Effects Menu (F4)
 
-F4 opens one window holding every render and post-process control: post-processing on/off, exposure, vignette, SSAO, depth of field, fog, bloom, color grade and film grain, FXAA, Kuwahara, render modes, dither and volumetric light, shadows and their resolution, the lighting levers, vertical FOV, and the shading debug mode (PBR, wireframe overlay, wireframe, normals, depth, UV, unlit, metal/rough). Changes apply immediately.
+F4 opens one window holding every render and post-process control: post-processing on/off, exposure, vignette, SSAO, depth of field, fog, bloom, color grade and film grain, FXAA, Kuwahara, contour lines and the shading boil, render modes, dither and volumetric light, shadows and their resolution, the lighting levers, vertical FOV, and the shading debug mode (PBR, wireframe overlay, wireframe, normals, depth, UV, unlit, metal/rough). Changes apply immediately.
 
 Two controls are specific to the viewer:
 

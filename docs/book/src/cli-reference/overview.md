@@ -14,7 +14,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate a scene against constraints |
+| `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
@@ -60,6 +60,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--list-gpus` | Print available GPU adapters and exit |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off`. Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
+| `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
+| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
@@ -219,7 +221,7 @@ Built-in panels:
 | Reality | `reality` | Read-only active render-mode tear and mix, trigger-mode and end-now buttons, mix pin |
 | Visitor | `raft_visitor` | Read-only phase/day plus a trigger-visit button |
 | Dead Calm | `dead_calm` | Read-only phase/calm plus trigger and end-now buttons |
-| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
+| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, contour, shading boil, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
 | Music Guide | `music_session` | Upcoming pulse/press/flick windows with countdown, per-channel targets beside the live stick and trigger state (`` ` ``) |
 | Manifest Map | `music_session` | Full-width bottom strip: sections, bar ruler, tempo/meter changes, re-entry points, playhead and this run's judged pulses and seams (`\`) |
 
@@ -348,11 +350,29 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
 | `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | The [shared geometry edges](../concepts/stylize-passes.md#shared-edges)' silhouette and crease thresholds, for every style that reads them |
+| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
+| `--contour` | off | Enable the contour pass |
+| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
+| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
+| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
+| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
+| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
+| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
+| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
+| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
+| `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
+| `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
+| `--scripts` | `false` | Run the scene's scripts, one tick a clock step in the player's frame order, deterministically (seeded `random()`, no wall clock). What isn't drawn headless is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
+| `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
+| `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
+| `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
+| `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it. Everything else moves to stderr |
 | `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
 | `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |
@@ -367,15 +387,18 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
-> **`flint render` runs no scripts.** Anything your game drives from a script —
-> a render mode, a time of day, a floating hull, an animated character — will
-> not happen. The render-mode flags exist precisely so a stylized frame can be
-> captured without one. For script-driven world state, bake a fixture scene
-> with the values you want; for animation, note that skinned meshes render at
+> **`flint render` runs no scripts unless you pass `--scripts`.** Without it,
+> anything your game drives from a script — a render mode, a time of day, a
+> floating hull, an animated character — will not happen. With it, what scripts
+> write to the world, Living Props and the wooze field is drawn, but physics,
+> particles, render modes and the HUD still aren't (a warning names them). The
+> render-mode flags exist so a stylized frame can be captured without a script.
+> For animation, note that skinned meshes render at
 > **bind pose** headlessly. To capture a posed frame of a rigged model, use the
 > model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
 > (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
-> exception: `--particle-time 2` steps every emitter before the capture.
+> exception: `--particle-time 2` steps every emitter before the capture. So are
+> living props, which draw at time 0 or at `--time`.
 
 ## The `edit` Command
 
@@ -456,6 +479,8 @@ integrated GPU.
 | `--sequence <file.sequence.toml>` | (none) | Play a sequence of timestamped animator events |
 | `--sequence-loop` | `false` | Loop the sequence regardless of its `loop` setting |
 | `--anim-time <s>` | (none) | With `--render`: sample the animation (or replay the sequence) at this time |
+| `--pose-bone <joint:x,y,z>` | (none) | Turn a joint in its own frame, in degrees; repeatable. Works without a clip |
+| `--show-skeleton` | off | Draw the skeleton over the model, posed joints and everything past them in orange |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
 | `--style <name[:k=v,...]>` / `--style-time <s>` | (none) | With `--render`: a registered style over the snapshot, as on `flint render` (also for `.particles.toml`) |
 

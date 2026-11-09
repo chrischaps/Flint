@@ -113,6 +113,16 @@ impl PlayerApp {
             scene_post_process: None,
             style_specs: Vec::new(),
             style_time: None,
+            scene_living: None,
+            living_blend: Default::default(),
+            scene_wooze: None,
+            wooze: None,
+            wooze_time: 0.0,
+            wooze_missing_warned: false,
+            shallow_wooze: Default::default(),
+            boil_clock: Default::default(),
+            grass_wooze: Default::default(),
+            living_tune: Default::default(),
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -137,6 +147,7 @@ impl PlayerApp {
             audio_vfs_generation: flint_core::vfs::generation(),
             window_size: (1280, 720),
             capture: CaptureConfig::default(),
+            expression_feed: None,
             exit_requested: false,
             input_config_override,
             scene_input_config,
@@ -236,6 +247,8 @@ impl PlayerApp {
         // registry, and a table for an unloaded style is dropped
         super::scene_loading::load_user_styles(&self.scene_path);
         self.set_scene_post_process(scene_file.post_process.clone());
+        self.scene_living = scene_file.living.clone();
+        self.scene_wooze = scene_file.wooze.clone();
     }
 
     /// Take a scene's `[post_process]` block, with the look it names
@@ -510,9 +523,17 @@ impl PlayerApp {
         }
 
         // Procgen before the model loader: catalog > procgen > file (#32).
+        self.procgen_resolver
+            .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
+        self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
+        self.wooze_time = 0.0;
+        super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
+        self.boil_clock = Default::default();
+        self.grass_wooze = Default::default();
+        self.living_tune.for_new_scene();
         super::procgen_assets::resolve_scene(
             &self.scene_path,
-            &self.world,
+            &mut self.world,
             &mut self.procgen_resolver,
             self.procgen_mode,
             super::procgen_assets::GpuSink {
@@ -655,6 +676,7 @@ impl PlayerApp {
             scene_renderer.set_post_process_config(config);
             scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
+            scene_renderer.ensure_contour_resources(&render_context.device);
         }
     }
 
@@ -749,6 +771,10 @@ impl PlayerApp {
         }
         #[cfg(not(feature = "debug-hud"))]
         let _ = grass_info;
+        super::shallow_wooze::warn_grass_without_a_field(
+            scene_renderer.grass_config(),
+            self.wooze.as_ref(),
+        );
 
         #[cfg(feature = "debug-hud")]
         {
@@ -760,6 +786,7 @@ impl PlayerApp {
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
             self.create_particles_debug_panel();
+            self.create_living_debug_panel();
             self.create_styles_debug_panel();
             // Rendering & Effects (ADR 0053): unconditional, F4 summons it
             self.create_render_debug_panel();

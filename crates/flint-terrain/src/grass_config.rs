@@ -56,6 +56,19 @@ pub struct GrassConfig {
     pub density_layer: u32,
     #[serde(default = "default_density_threshold")]
     pub density_threshold: f32,
+    /// Sway on the scene's wooze field (#252): the clock holds and glides as the
+    /// trees' does, read where the viewer stands, and each beat the tips are combed
+    /// by the noise the field's shallow wooze uses. Needs a `[wooze]` table; off, the
+    /// grass sways on the wall clock as it always has.
+    #[serde(default)]
+    pub wooze: bool,
+    /// Metres the tips lean at full swing on a woozy field, times the field's
+    /// amplitude where the viewer stands. 0 keeps only the clock.
+    #[serde(default = "default_wooze_amplitude")]
+    pub wooze_amplitude: f32,
+    /// Metres from one combed patch to the next.
+    #[serde(default = "default_wooze_wavelength")]
+    pub wooze_wavelength: f32,
 }
 
 impl Default for GrassConfig {
@@ -80,6 +93,9 @@ impl Default for GrassConfig {
             density_source: DensitySource::default(),
             density_layer: 0,
             density_threshold: default_density_threshold(),
+            wooze: false,
+            wooze_amplitude: default_wooze_amplitude(),
+            wooze_wavelength: default_wooze_wavelength(),
         }
     }
 }
@@ -133,6 +149,12 @@ impl GrassConfig {
             .map(|i| i as u32)
             .unwrap_or(gc.density_layer);
         gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
+        gc.wooze = comp_value
+            .get("grass.wooze")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(gc.wooze);
+        gc.wooze_amplitude = get_f32("grass.wooze_amplitude", gc.wooze_amplitude).max(0.0);
+        gc.wooze_wavelength = get_f32("grass.wooze_wavelength", gc.wooze_wavelength);
 
         // Parse vec3 fields
         if let Some(v) = comp_value.get("grass.color_base").and_then(toml_vec3) {
@@ -195,6 +217,12 @@ fn default_bend_radius() -> f32 {
 }
 fn default_bend_strength() -> f32 {
     0.8
+}
+fn default_wooze_amplitude() -> f32 {
+    0.12
+}
+fn default_wooze_wavelength() -> f32 {
+    2.5
 }
 fn default_density_threshold() -> f32 {
     0.1

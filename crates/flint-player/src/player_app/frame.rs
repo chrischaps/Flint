@@ -64,6 +64,19 @@ impl PlayerApp {
 
         let view = context.frame_view(&output.texture);
 
+        // The shading boil's drawing (#214): the field where the viewer stands. With
+        // no field the amount is 0, and neither pass boils.
+        let boil = self
+            .wooze
+            .as_ref()
+            .map(|field| {
+                let sample = field.sample(self.camera.position_array(), self.wooze_time);
+                self.boil_clock
+                    .frame(&sample, renderer.post_process_config().boil_on)
+            })
+            .unwrap_or_default();
+        renderer.set_boil(boil);
+
         // Apply script-driven post-processing overrides before rendering.
         // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
         // stamp entirely so panel edits to contended fields stick; the
@@ -272,6 +285,9 @@ impl PlayerApp {
                     }
                     if flags.fxaa_needs_resources {
                         renderer.ensure_fxaa_resources(&context.device);
+                    }
+                    if flags.contour_needs_resources {
+                        renderer.ensure_contour_resources(&context.device);
                     }
                 }
                 if flags.shadows_changed {
@@ -658,6 +674,42 @@ impl PlayerApp {
             &self.camera,
             &view,
         );
+        // A split A/B (#238): this drawing is the side being shown, so it goes
+        // to the GPU now, and the other side draws over its half after it.
+        if let Some(ab) = self.living_tune.ab.as_deref_mut().filter(|ab| ab.is_split()) {
+            let first = std::mem::replace(
+                &mut encoder,
+                context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Split Frame Encoder"),
+                    }),
+            );
+            context.queue.submit(std::iter::once(first.finish()));
+            let frame_copy = output.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(context.hud_format),
+                ..Default::default()
+            });
+            super::living_ab::draw_other_side(
+                super::living_ab::OtherSide {
+                    ab,
+                    resolver: &mut self.procgen_resolver,
+                    blend: &mut self.living_blend,
+                    world: &self.world,
+                    camera: &self.camera,
+                    own_boil: boil,
+                    own_shallow: &self.shallow_wooze,
+                },
+                renderer,
+                &context.device,
+                &context.queue,
+                &mut encoder,
+                &context.depth_view,
+                &frame_copy,
+                (output.texture.width(), output.texture.height()),
+                (context.view_format, context.hud_format),
+            );
+        }
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.perf {
             perf.mark(super::perf::Phase::Render);
@@ -753,6 +805,71 @@ impl PlayerApp {
                         );
                     }
                 }
+                self.print_living_report();
+            }
+        }
+    }
+
+    /// Whether the rings stayed full and within budget. Silent with no props.
+    fn print_living_report(&self) {
+        let props = self.procgen_resolver.living_props();
+        if props.is_empty() {
+            return;
+        }
+        let ring = props
+            .props()
+            .iter()
+            .map(|p| p.ring_len())
+            .max()
+            .unwrap_or(0);
+        let lines = super::living_props::report(
+            &props.stats(),
+            props.props().len(),
+            props.lineage_count(),
+            ring,
+            self.procgen_resolver.frame_budget_ms(),
+        );
+        for line in lines {
+            eprintln!("{line}");
+        }
+        if let Some(line) = super::living_props::knobs_report(&props.stats(), props) {
+            eprintln!("{line}");
+        }
+        // The other side of an A/B (#238): its rings, and its own blending.
+        if let (Some(ab), Some(stats)) = (self.living_ab_state(), self.hidden_side_stats()) {
+            let hidden = if ab.showing_b { "A" } else { "B" };
+            eprintln!(
+                "[living] A/B {}split: hidden side {hidden}: {} of {} frames full, {} missing a pose \
+                 in use, {} poses made, {} from cache; blending {:.3} ms/frame over {} frames",
+                if ab.split { "" } else { "not " },
+                stats.frames_full,
+                stats.frames,
+                stats.frames_starved,
+                stats.poses_made,
+                stats.poses_from_cache,
+                stats.blend_total_ms / stats.blend_frames.max(1) as f64,
+                stats.blend_frames,
+            );
+        }
+        if let Some(field) = &self.wooze {
+            eprintln!("{}", super::living_props::wooze_report(field, props));
+            eprintln!(
+                "[wooze] shallow: {} entities on {} clocks",
+                self.shallow_wooze.draw_count(),
+                self.shallow_wooze.clock_count()
+            );
+        }
+        if let Some(renderer) = &self.scene_renderer {
+            eprintln!(
+                "[living] {} skinned draws this frame",
+                renderer.collect_stats().skinned_draws
+            );
+            let echoes: usize = props.props().iter().map(|p| p.echo_count()).sum();
+            if echoes > 0 {
+                eprintln!(
+                    "[living] {echoes} echoes, {} echo draws this frame",
+                    renderer.collect_stats().echo_draws
+                );
             }
         }
     }
@@ -765,9 +882,12 @@ impl PlayerApp {
     fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
         let base = self.capture.path.clone()?;
         let now = self.clock.total_time;
+        // Tolerance so `--screenshot-at` means the frame at that time: 210 steps of
+        // 1/60 add up to a hair under 3.5, and the next frame is a step too late.
+        let reached = now + 1e-6 >= self.capture.at;
         match self.capture.every {
             None => {
-                if self.capture.taken || now < self.capture.at {
+                if self.capture.taken || !reached {
                     return None;
                 }
                 self.capture.taken = true;
@@ -775,7 +895,7 @@ impl PlayerApp {
             }
             Some(every) => {
                 if !self.capture.taken {
-                    if now < self.capture.at {
+                    if !reached {
                         return None;
                     }
                     self.capture.taken = true;
@@ -883,6 +1003,15 @@ impl PlayerApp {
             }
         }
 
+        // Expression states due by now (Flint#518): the timeline on the game
+        // clock, then what the socket's reader threads have parsed. Queued
+        // for the scripts' update below, which hears them before on_update.
+        if let Some(feed) = &mut self.expression_feed {
+            for state in feed.poll(self.clock.total_time) {
+                self.script.queue_expression(state);
+            }
+        }
+
         // Advance transition phase timing
         self.advance_transition();
 
@@ -974,8 +1103,16 @@ impl PlayerApp {
         self.tick_av_systems(&config, &game_events);
         self.perf_mark(Phase::AnimFx);
 
-        // Frame-budgeted procgen queue
-        self.tick_procgen();
+        // Frame-budgeted procgen queue, then whatever it left to living props,
+        // whose clock stops when animation does
+        #[cfg(feature = "debug-hud")]
+        self.drain_living_panel();
+        let living_dt = if config.animation == SystemPolicy::Run && !self.living_tune.frozen {
+            self.clock.delta_time
+        } else {
+            0.0
+        };
+        self.tick_procgen(living_dt);
 
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
@@ -1501,7 +1638,8 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn tick_procgen(&mut self) {
+    pub(super) fn tick_procgen(&mut self, living_dt: f64) {
+        let living_dt = living_dt + self.before_living_tick();
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1527,7 +1665,67 @@ impl PlayerApp {
                     super::procgen_assets::apply_failures(&failures, &mut sink);
                 }
             }
+            // A scene with a wooze field reads it where each prop now stands.
+            if self.wooze.is_some() {
+                self.wooze_time += living_dt;
+                let world = &self.world;
+                self.procgen_resolver
+                    .living_props_mut()
+                    .track_positions(|entity| {
+                        world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
+                    });
+            }
+            // So does the shading boil, where the viewer stands (#214).
+            if let Some(field) = &self.wooze {
+                let sample = field.sample(self.camera.position_array(), self.wooze_time);
+                self.boil_clock.tick(living_dt, &sample);
+            }
+            let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+            let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
+            // Hand-made meshes read the same field on the same dt (#215).
+            if let (Some(field), Some(renderer)) = (&self.wooze, &mut self.scene_renderer) {
+                let draws =
+                    self.shallow_wooze
+                        .advance(&self.world, field, self.wooze_time, living_dt);
+                renderer.set_shallow_wooze(draws.iter().copied());
+                // And so does grass that asks to (#252), where the viewer stands.
+                self.grass_wooze.advance(
+                    renderer.grass_config(),
+                    field,
+                    self.camera.position_array(),
+                    self.wooze_time,
+                    living_dt,
+                );
+            }
+            if !lineages.is_empty() {
+                if let (Some(renderer), Some(ctx)) =
+                    (&mut self.scene_renderer, &self.render_context)
+                {
+                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                        &self.scene_path,
+                    );
+                    let mut sink = super::procgen_assets::GpuSink {
+                        renderer,
+                        device: &ctx.device,
+                        queue: &ctx.queue,
+                        config: &config,
+                    };
+                    super::living_props::apply_lineages(&lineages, &mut sink);
+                }
+            }
+            // Blend after the rings have slid and any new lineage is up.
+            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
+                super::living_props::upload_blends(
+                    &mut self.procgen_resolver,
+                    &mut self.living_blend,
+                    renderer,
+                    &ctx.device,
+                    &ctx.queue,
+                );
+            }
         }
+        // The other side of an A/B (#238), on the same dt, after the scene's own.
+        self.tick_hidden_side(living_dt);
     }
 
     #[profiling::function]
@@ -1613,7 +1811,8 @@ impl PlayerApp {
 
         // Update grass time and entity positions for bend-on-contact
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            renderer.grass_time = self.clock.total_time as f32;
+            // The wall clock, unless the grass is on the wooze field's (#252).
+            self.grass_wooze.apply(renderer, self.clock.total_time);
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;
@@ -1690,6 +1889,7 @@ impl PlayerApp {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
+        let ab_state = self.living_ab_state();
 
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else {
@@ -1713,6 +1913,8 @@ impl PlayerApp {
         let mut extensions = std::mem::take(&mut self.extensions);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
+        #[cfg(feature = "debug-hud")]
+        let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.ui_textures;
         let ui_fonts = &self.ui_fonts;
         let ui_fonts_warned = &mut self.ui_fonts_warned;
@@ -1789,6 +1991,23 @@ impl PlayerApp {
 
             // On-screen touch controls (#133), over the game's UI.
             super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
+
+            // Which preset is where, while two are compared (#238).
+            if let Some(ab) = &ab_state {
+                super::living_ab::paint_labels(ctx, ab);
+            }
+
+            // The pose overlay (#218) and a picked tree's marks and window
+            // (#248), in the world and under every panel.
+            #[cfg(feature = "debug-hud")]
+            for panel in debug_panels.iter_mut() {
+                if let Some(living) = panel
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::LivingPropsDebugPanel>()
+                {
+                    living.paint_overlay(ctx, &view_proj);
+                }
+            }
 
             #[cfg(feature = "debug-hud")]
             let debug_width =

@@ -1,10 +1,12 @@
 //! Scene validation command
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use flint_constraint::{
     compute_scene_diff, ConstraintEvaluator, ConstraintFixer, ConstraintRegistry, Severity,
+    ValidationReport, Violation,
 };
-use flint_scene::{load_scene, save_scene_string};
+use flint_core::EntityId;
+use flint_scene::{load_scene, save_scene_string, SceneFile};
 use flint_schema::SchemaRegistry;
 
 #[derive(clap::Args)]
@@ -87,6 +89,8 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         .filter(|p| std::path::Path::new(p).exists())
         .collect();
     let schema_registry = SchemaRegistry::load_from_directories(&existing)?;
+    let mut wooze = wooze_violations(&args.scene, &schema_registry)?;
+    wooze.extend(species_violations(&args.scene, &schema_registry)?);
     let mut constraint_registry = ConstraintRegistry::new();
 
     if existing.is_empty() {
@@ -106,6 +110,9 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     }
 
     if constraint_registry.is_empty() {
+        if !wooze.is_empty() {
+            print_and_fail(wooze, &args.format);
+        }
         if existing.is_empty() {
             println!("No constraints found in schemas/constraints/");
         } else {
@@ -192,10 +199,15 @@ pub fn run(args: ValidateArgs) -> Result<()> {
                 }
             }
         }
+        // Nothing here fixes a zone, so a fixed scene can still be a bad one.
+        if !wooze.is_empty() {
+            print_and_fail(wooze, &args.format);
+        }
     } else {
         // Validation only
         let evaluator = ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry);
-        let report = evaluator.validate();
+        let mut report = evaluator.validate();
+        report.violations.extend(wooze);
 
         if args.format == "json" {
             print_report_json(&report);
@@ -209,6 +221,96 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// What's wrong with the scene's `[wooze]` table, as violations of a constraint
+/// that isn't about any entity. A table that doesn't parse at all, such as one
+/// with a misspelt key, is an error here, with the parser's words for it.
+fn wooze_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Violation>> {
+    let text = std::fs::read_to_string(scene).with_context(|| format!("reading {scene}"))?;
+    let mut file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
+    let preset_issues = flint_scene::apply_preset_file(&mut file, std::path::Path::new(scene));
+    let Some(table) = file.wooze else {
+        return Ok(Vec::new());
+    };
+    let issues = preset_issues.into_iter().chain(table.check(schemas));
+    Ok(issues
+        .map(|issue| Violation {
+            constraint_name: "wooze".to_string(),
+            entity_name: issue.zone.clone().unwrap_or_else(|| "[wooze]".to_string()),
+            entity_id: EntityId::from_raw(0),
+            severity: Severity::Error,
+            message: issue.to_string(),
+            has_auto_fix: false,
+        })
+        .collect())
+}
+
+/// What's wrong with the scene's `[living.species.<spec>]` tables (#246): a value
+/// the player would leave out, and a species no living prop in the scene grows
+/// from, which is most likely a misspelt spec name and would change nothing.
+fn species_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Violation>> {
+    let text = std::fs::read_to_string(scene).with_context(|| format!("reading {scene}"))?;
+    let mut file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
+    // A preset the scene names can hold species too, laid under its own.
+    flint_scene::apply_preset_file(&mut file, std::path::Path::new(scene));
+    let Some(living) = file.living.filter(|living| !living.species.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let (world, _) = load_scene(scene, schemas)?;
+    let mut grown: Vec<String> = world
+        .all_entities()
+        .iter()
+        .filter_map(|entity| {
+            let comps = world.get_components(entity.id)?;
+            comps.get(flint_core::components::LIVING_PROP)?;
+            let asset = comps.get(flint_core::components::MODEL)?.get("asset")?;
+            Some(asset.as_str()?.to_string())
+        })
+        .collect();
+    grown.sort();
+    grown.dedup();
+
+    let violation = |name: &str, message: String| Violation {
+        constraint_name: "living_species".to_string(),
+        entity_name: format!("[living.species.{name}]"),
+        entity_id: EntityId::from_raw(0),
+        severity: Severity::Error,
+        message,
+        has_auto_fix: false,
+    };
+    let mut violations = Vec::new();
+    for (name, def) in &living.species {
+        for problem in flint_player::species_problems(def) {
+            violations.push(violation(name, problem));
+        }
+        if !grown.contains(name) {
+            let species = if grown.is_empty() {
+                "it has no living props".to_string()
+            } else {
+                format!("its living props grow from {}", grown.join(", "))
+            };
+            violations.push(violation(
+                name,
+                format!(
+                    "no living prop in this scene grows from '{name}', \
+                     so it changes nothing; {species}"
+                ),
+            ));
+        }
+    }
+    Ok(violations)
+}
+
+/// Report violations with no constraint run to go with them, and fail.
+fn print_and_fail(violations: Vec<Violation>, format: &str) -> ! {
+    let report = ValidationReport { violations };
+    if format == "json" {
+        print_report_json(&report);
+    } else {
+        print_report_text(&report);
+    }
+    std::process::exit(1)
 }
 
 fn print_report_text(report: &flint_constraint::ValidationReport) {

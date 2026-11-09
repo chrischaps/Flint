@@ -318,6 +318,65 @@ pub enum ScriptCommand {
     SetLook {
         name: Option<String>,
     },
+    /// Change the wooze field's global knobs (#213): any of `amplitude`, `step`,
+    /// `glide`, `jitter` and `preset`, over `seconds`.
+    SetWooze {
+        knobs: toml::Value,
+        seconds: f64,
+    },
+    /// Change a wooze zone, or add it if there's none of that name, over `seconds`.
+    SetWoozeZone {
+        name: String,
+        fields: toml::Value,
+        seconds: f64,
+    },
+    /// Fade a wooze zone out over `seconds` and drop it.
+    RemoveWoozeZone {
+        name: String,
+        seconds: f64,
+    },
+    /// Turn Living Props' knobs (#218): a table shaped like a `.wooze.toml`, with
+    /// any of `wooze`, `living` and `boil`.
+    TuneLiving {
+        knobs: toml::Value,
+    },
+    /// Clear one species' own Living Props values (#246), so the layers below
+    /// decide them again: the named keys, or every one with none named.
+    ClearLiving {
+        species: String,
+        keys: Vec<String>,
+    },
+    /// Stop or start the clock living props run on.
+    FreezeLiving {
+        frozen: bool,
+    },
+    /// Move that clock on by exactly one beat.
+    StepLiving,
+    /// Save every Living Props knob as `wooze/<name>.wooze.toml`.
+    SaveLivingPreset {
+        name: String,
+    },
+    /// Load a preset file or a built-in, live.
+    LoadLivingPreset {
+        name: String,
+    },
+    /// Write every Living Props value the scene file doesn't give into it
+    /// (#249), as the F3 panel's Commit to File does.
+    CommitLiving,
+    /// Compare two presets on the same grove (#238). An empty name is the knobs
+    /// as they stand.
+    CompareLiving {
+        a: String,
+        b: String,
+    },
+    /// Show the other side of the comparison.
+    FlipLiving,
+    /// Show both sides at once, A left and B right, or one at a time.
+    SplitLiving {
+        split: bool,
+    },
+    /// End the comparison, keeping the side that's shown.
+    StopComparingLiving,
     LoadScene {
         path: String,
     },
@@ -661,6 +720,11 @@ pub struct ScriptCallContext {
     /// Conducted-parameters snapshot for this frame (set by the host before
     /// scripts run; neutral defaults when no music session — ADR 0020)
     pub conducted: ConductedSnapshot,
+    /// The latest expression state from outside the process (Flint#518):
+    /// a timeline or a localhost socket, as the host feeds it. Empty until
+    /// the first one arrives. `expression()` reads it; it outlives scene
+    /// changes, since it describes the world outside the game, not the scene.
+    pub expression: rhai::Map,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -748,6 +812,7 @@ impl ScriptCallContext {
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),
             conducted: ConductedSnapshot::default(),
+            expression: rhai::Map::new(),
         }
     }
 

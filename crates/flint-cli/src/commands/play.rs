@@ -46,6 +46,17 @@ pub struct PlayArgs {
     /// kept through transitions, and `--style-time` (#328)
     #[command(flatten)]
     pub style: crate::commands::common_args::StyleArgs,
+    /// Play expression states from a JSON timeline on the game clock:
+    /// `{"events": [{..., "t": secs}, ...]}`. Scripts read the latest with
+    /// `expression()` and hear each in `on_expression(state)` (Flint#518)
+    #[arg(long, value_name = "FILE")]
+    pub expression_timeline: Option<String>,
+
+    /// Take expression states as newline-delimited JSON objects over TCP at
+    /// this loopback address (e.g. 127.0.0.1:7777). Off unless given; only
+    /// 127.0.0.1 or ::1 can listen (Flint#518)
+    #[arg(long, value_name = "IP:PORT")]
+    pub expression_listen: Option<String>,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -84,6 +95,12 @@ pub fn run(args: PlayArgs) -> Result<()> {
         flint_player::load_user_styles(&args.scene);
         args.style.check().map_err(anyhow::Error::msg)?;
     }
+    // Expression sources first, so a bad timeline or a taken port fails
+    // before a window opens
+    let expression_feed = flint_player::ExpressionFeed::open(
+        args.expression_timeline.as_deref(),
+        args.expression_listen.as_deref(),
+    )?;
 
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
@@ -115,6 +132,7 @@ pub fn run(args: PlayArgs) -> Result<()> {
     );
 
     app.scene_preload_audio = scene_file.scene.preload_audio;
+    app.expression_feed = expression_feed;
 
     // Apply initial mixer bus volumes from CLI
     app.audio
@@ -135,6 +153,10 @@ pub fn run(args: PlayArgs) -> Result<()> {
     app.set_scene_post_process(scene_file.post_process.clone());
     app.style_specs = args.style.styles.clone();
     app.style_time = args.style.style_time;
+
+    // The scene's living props: what their shadows follow, and how woozy it is
+    app.scene_living = scene_file.living.clone();
+    app.scene_wooze = scene_file.wooze.clone();
 
     // Preserve schema paths for scene transitions (includes auto-discovered)
     app.set_schema_paths(all_schemas);

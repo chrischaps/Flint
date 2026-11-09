@@ -690,6 +690,8 @@ mod tests {
                 radius_start: 0.08,
                 radius_end: 0.05,
                 depth: 2,
+                id: 0,
+                parent: None,
             },
             BranchSegment {
                 start: Vec3::new(1.0, 4.0, 0.0),
@@ -697,6 +699,8 @@ mod tests {
                 radius_start: 0.05,
                 radius_end: 0.03,
                 depth: 3,
+                id: 0,
+                parent: None,
             },
         ];
 
@@ -738,6 +742,8 @@ mod tests {
             radius_start: 0.1,
             radius_end: 0.08,
             depth: 1, // below min_depth=2
+            id: 0,
+            parent: None,
         }];
 
         let params = LeafParams {

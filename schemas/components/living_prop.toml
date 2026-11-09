@@ -1,0 +1,22 @@
+# A prop that keeps drifting between versions of itself (epic #206).
+#
+# Goes on an entity whose `model.asset` names a spec with a `[living]` table. At
+# load the player builds the skinned rest mesh of the entity's lineage (one per
+# spec and lineage seed, shared) and gives the entity its own bone buffer and its
+# own ring of poses, kept full a few steps ahead of its clock within the procgen
+# frame budget, and blends them each frame on a warped clock of hold and glide.
+#
+# Every field is optional, and one left out comes from the spec's `[living]`
+# table, except `phase_offset`, which comes from the entity's name so that a
+# grove doesn't move in step. The entity's name also seeds its stream of poses,
+# so a prop looks the same on every run and whatever its id. Two props with the
+# same lineage are the same tree moving differently.
+
+[component.living_prop]
+description = "Keeps this entity's model, a spec with a [living] table, drifting between generated poses of one tree. Blank fields come from the spec."
+
+[component.living_prop.fields]
+lineage_seed = { type = "i64", min = 0, description = "Which tree this is: the seed that fixes its structure. Unset: the spec's lineage_seed" }
+pose_ring = { type = "i32", min = 2, max = 64, description = "How many poses to keep ready ahead of the clock. Raised if the stagger needs more. Unset: the spec's pose_ring" }
+phase_offset = { type = "f32", min = 0.0, max = 1.0, description = "How far into its step cycle this prop runs, as a fraction of a step. Unset: taken from the entity's name" }
+stagger = { type = "enum", values = ["none", "per_level", "per_branch"], description = "How its branches fall out of phase. Unset: the spec's stagger" }

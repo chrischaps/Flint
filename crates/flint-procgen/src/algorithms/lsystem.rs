@@ -251,6 +251,8 @@ fn interpret_turtle(symbols: &[Symbol], params: &LSystemParams) -> Result<Vec<Br
                     radius_start: radius,
                     radius_end,
                     depth: state.depth,
+                    id: 0,
+                    parent: None,
                 });
                 if segments.len() > params.max_segments as usize {
                     return Err(ProcGenError::BudgetExceeded(format!(
@@ -697,6 +699,8 @@ mod tests {
             radius_start: 2.0,
             radius_end: 1.0,
             depth: 0,
+            id: 0,
+            parent: None,
         };
         assert!((seg.length() - 5.0).abs() < 1e-6);
         assert!((seg.mean_radius() - 1.5).abs() < 1e-6);
@@ -713,6 +717,8 @@ mod tests {
             radius_start: 1.0,
             radius_end: 1.0,
             depth: 0,
+            id: 0,
+            parent: None,
         };
         assert!(seg.length() < 1e-6);
         assert_eq!(seg.direction(), Vec3::ZERO);

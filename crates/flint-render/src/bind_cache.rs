@@ -258,11 +258,16 @@ impl TransformArena {
 
     /// Put `bytes` in `slot`, to go up with its page at [`upload`](Self::upload).
     pub fn stage(&mut self, slot: ArenaSlot, bytes: &[u8]) {
-        debug_assert!(bytes.len() as u64 <= SLOT_STRIDE);
+        self.stage_at(slot, 0, bytes);
+    }
+
+    /// Put `bytes` in `slot`, `offset` bytes in.
+    pub fn stage_at(&mut self, slot: ArenaSlot, offset: usize, bytes: &[u8]) {
+        debug_assert!((offset + bytes.len()) as u64 <= SLOT_STRIDE);
         let Some(page) = self.pages.get_mut(slot.page as usize) else {
             return;
         };
-        let at = slot.offset() as usize;
+        let at = slot.offset() as usize + offset;
         page.staging[at..at + bytes.len()].copy_from_slice(bytes);
         page.dirty = Some(match page.dirty {
             Some((a, b)) => (a.min(slot.index), b.max(slot.index + 1)),

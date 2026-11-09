@@ -10,6 +10,7 @@ pub mod billboard_pipeline;
 pub mod bitmap_font;
 mod camera;
 mod context;
+pub mod contour;
 mod debug;
 mod file_watch;
 pub mod frustum;
@@ -42,11 +43,13 @@ pub mod stylize;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;
+pub mod split_view;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
 pub mod water_body;
 mod texture_cache;
 pub mod world_line_pipeline;
+mod wooze_pipeline;
 
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use atlas::{AtlasRegistry, TextureAtlas};
@@ -97,6 +100,8 @@ pub use scene_renderer::{
     SceneRenderer, DEFAULT_CLEAR_COLOR,
 };
 pub use skinned_pipeline::SkinnedPipeline;
+pub use split_view::SplitView;
+pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
 pub use sprite2d_pipeline::{
@@ -143,6 +148,23 @@ mod tests {
                 }
             }
             assert_eq!(material_sampler, Some((2, 4)), "{name}: material_sampler at group 2, binding 4");
+        }
+    }
+
+    /// Both of the shading boil's passes, on the validator the player's GPU runs.
+    #[test]
+    fn shading_boil_shaders_validate() {
+        for source in [
+            include_str!("contour_shader.wgsl"),
+            include_str!("stylize/kuwahara.wgsl"),
+        ] {
+            let module = naga::front::wgsl::parse_str(source).expect("failed to parse");
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect("failed validation");
         }
     }
 
@@ -469,7 +491,34 @@ mod tests {
 
     #[test]
     fn grass_render_shader_wgsl_parses() {
-        let source = include_str!("grass_render.wgsl");
-        naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
+        // As grass_pipeline.rs builds it: shallow wooze's noise first, for the
+        // comb of woozy grass (#252).
+        let source = concat!(
+            include_str!("wooze_noise.wgsl"),
+            include_str!("grass_render.wgsl")
+        );
+        let module =
+            naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("grass_render.wgsl failed validation");
+
+        // The uniforms the Rust side writes must match the shader's struct
+        let span = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("GrassRenderUniforms"))
+            .map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { span, .. } => *span,
+                _ => panic!("GrassRenderUniforms is not a struct"),
+            })
+            .expect("GrassRenderUniforms in grass_render.wgsl");
+        assert_eq!(
+            span as usize,
+            std::mem::size_of::<crate::GrassRenderUniforms>()
+        );
     }
 }
