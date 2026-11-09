@@ -85,12 +85,8 @@ story's beats, the reveal's ramps, the mask's colours).
 - **UI beats** (05, 12) are the only ones with egui on screen. In the
   vertical cut the menu falls outside a centre crop: crop right for the
   menu half of those beats, or keep them to the 16:9 master.
-- **The vertical cut** starts from a crop of the 16:9 master: a 9:16
-  window is a third of its width, and the moves were framed for 16:9, so
-  check each beat's subject stays inside the crop (the barrel and figure
-  sit either side of the table and drift toward the edges in 04 and 07).
-  A native vertical take is `capture.py --width 1080 --height 1920`, which
-  needs the moves reframed for it (#437).
+- **The vertical cut** is captured at 1080x1920, not cropped from the
+  master: see [The vertical cut](#the-vertical-cut-437) below.
 - **Music** (#438) is on the beats' own clock, 100 bpm in 4/4 (02 changes
   every 2.4 s, a bar), and it is arranged to the cut lists in
   `tools/showcase/cuts/`: cut on bar or half-bar lines and the music
@@ -188,6 +184,89 @@ changed in it, and what didn't:
   whole-frame ASCII behind the props and let style ownership (#384) keep
   every prop in its own hand; and a palette-quantize take (#324) would sit
   naturally among the looks.
+
+## The vertical cut (#437)
+
+The Instagram reel and its stories: `tools/showcase/cuts/reel.toml`,
+captured with `capture.py --cut reel` at 1080x1920 and cut by
+`tools/showcase/cut.py reel` into `reel.mp4` and four story pieces.
+
+**Length.** 24 bars at 100 bpm (2.4 s a bar, the clock beat 02 already
+changes on), 57.6 s, inside the 30 to 60 s asked for. Every cut is on a
+bar or half bar so the music (#438, written to the same file) changes on
+the cuts; the looks change on every beat, one take a quarter bar. Four
+stories of exactly 6 bars (14.4 s) each, split at shot boundaries.
+
+| Story | Shots (bars) |
+|---|---|
+| 1 | 01 the clearing, title (1.5) · 02 the world in type (3) · 03 edges (1.5) |
+| 2 | 04 some things in type (1.5) · 06 a script tells it (2.5) · 07 fade and dissolve (2) |
+| 3 | 08 pencil (2) · 09 watercolor (2) · 10 looks, eight takes (2) |
+| 4 | 11 styles you write (2) · 13 many hands, the end card over its last 2 bars (4) |
+
+In-points sit on the beats' own cues: 02 starts at 2.4 s so tint, CGA and
+amber land on downbeats, and 08 and 09 start at 2.6 s so their whole-frame
+switches at 5.0 s land on a shot's second bar.
+
+**Left out, and why.** Beats 05 (the mask in the F4 menu) and 12 (tuning
+by hand in F4) are the two whose subject is egui: on a 1080-pixel-wide
+frame the menu's rows are a few millimetres tall on a phone and its panel
+covers half the frame, and their input scripts click positions measured on
+the master's 1920x1080-point canvas. They stay in the 16:9 master. What
+they show that matters at phone size appears elsewhere: the style mask is
+what draws 03's outline round the ball and keeps 13's styles apart.
+
+**Framing.** Captured, not cropped: a 9:16 crop is a third of the
+master's width and loses the barrel or the figure. In a portrait window
+`film.rhai`'s moves back the camera off by 1.45x along its line of sight,
+open the field of view to 60° and aim 0.3 m low, which keeps the still
+life in the middle of the safe area; 04, 06 and 07, whose subjects (the
+figure, the barrel, the crate) stand either side of the table, film from
+the barrel's far side instead, where the three are closest together
+across the frame. The master's scripts are unchanged in a landscape
+window.
+
+**Cells.** Point-sized things are laid out on a 720-point canvas
+(`points_wide`, pixels per point 1.5): an 8-point ASCII cell is 12 px, 90
+across the frame. A sweep at 1080x1920 (`flint render --pixels-per-point 1
+--sweep ascii.cell=4.5,8,12,16 --sweep-crop 240,760,600,560`) showed the
+master's canvas (4.5 px cells) reading as texture, 8 px glyphs only just
+legible at 1:1, 12 px reading as characters, and 16 px too coarse to draw
+the table. Pencil spacing, outlines and edge widths scale with it.
+
+**Safe area.** Captions and key content stay inside x 120 to 960, y 250 to
+1480: the intersection of the story safe area (the central 1080x1420) and
+the reel's (clear of about 210 px of top bar, 440 px of caption and
+buttons at the bottom and 120 px of buttons down the right). Captions sit
+at the top of it, the still life in its middle. `cut.py --guides` shades
+the rest.
+
+**Instagram, as checked on 2026-11-08.** Sources disagree, and Meta's own
+help pages weren't among them, so the cut stays inside the tightest of
+what they say: 1080x1920 9:16, H.264 MP4 at 30 fps with AAC audio (larger
+frames are downscaled, so 4K gains nothing); reels of up to 3 minutes in
+the app (some sources say 90 s, one says more), and a story segment up to
+60 s, longer ones split. A 15-second story is no longer a hard cap, but
+the four 14.4 s pieces are what the ticket asked for and play as one story
+sequence either way. Safe-zone figures range from 250 px top and bottom
+(stories) to 210 top, 440 bottom and 120 right (reels); the cut uses the
+tighter of each. Check again before posting.
+
+**Encoding.** `cut.py` pipes each composed frame once to ffmpeg for the
+whole cut and for the story piece it falls in: libx264 High at level 4.2,
+CRF 16 capped at 24 Mb/s, yuv420p tagged BT.709 limited range, a keyframe
+a second (Instagram recompresses; a clean, high-bitrate upload loses
+least), AAC 192 kb/s at 48 kHz, `+faststart`. The soundtrack is the cut's
+`audio`, #438's `many-hands-reel.wav`, written to the same 24 bars; until
+it is built the cut is silent and `cut.py` says so.
+
+**Checked (2026-11-09, RTX 4070, Vulkan).** `reel.mp4` is 1080x1920, 1728
+frames, 57.600 s of video and audio, -14.0 LUFS integrated after AAC;
+each story is 432 frames, 14.400 s. Two portrait captures of 07 and of the
+blueprint look (`capture.py --cut reel --verify --scale 0.5`) were
+byte-identical, every frame. The portrait branch never runs in a landscape
+window: 01, 04, 06 and 07 at 960x540 with these scripts and with main's
+were byte-identical, so the master's takes are unchanged.
 
 ## Music
 

@@ -26,6 +26,7 @@ Python 3.11 or later; `--verify` also needs Pillow and numpy.
 | `--width W --height H` | Any size; point-sized things keep their layout (below) |
 | `--out DIR` | Somewhere other than `[film] out` |
 | `--verify` | Capture each take twice and compare the runs |
+| `--cut reel` | What a cut uses, at its size and point canvas, into `<out>/<cut>/` ([A cut](#a-cut)) |
 
 A 4K frame of the film's scenes averages about 7 MB and the whole film is
 10,940 frames at 60 fps (77 GB), so the rig estimates the disk a run needs and refuses one that
@@ -99,6 +100,90 @@ fixed order).
 
 The storyboard (each beat, its feature, its camera, and how the cuts are
 meant to go) is `docs/design/showcase-film.md` in the repository.
+
+## A cut
+
+A cut is a film edited for one place, and is one file,
+`tools/showcase/cuts/<name>.toml`: a `[cut]` table (frame size, frame rate,
+the music's bar grid, where captions may go) and its `[[shot]]`s in order,
+each a take of a beat from `start_s` seconds for a number of bars. The
+vertical reel is made this way (`cuts/reel.toml`, `cut.py`); the 16:9
+master is still edited from `cut_16x9.toml` by `edit.py`
+([Cutting the film](#cutting-the-film)) until it moves onto the same bars.
+
+```toml
+[cut]
+name = "reel"
+bpm = 100
+beats_per_bar = 4
+fps = 30
+width = 1080
+height = 1920
+story_bars = 6                 # split into pieces of at most 6 bars too
+points_wide = 720              # the point canvas: pixels_per_point = 1.5
+safe = [120, 250, 960, 1480]   # captions and key content stay inside
+
+[[shot]]
+beat = "02_type"
+take = "main"
+start_s = 2.4
+bars = 3.0
+caption = "the world in type"
+label = "ASCII  ·  palettes  ·  glyphs that hold still"
+```
+
+Shots are measured in bars, not seconds, so the music (#438) can be
+written to the same list and change on every cut. Then:
+
+```bash
+python tools/showcase/capture.py --cut reel   # the takes the cut uses, at its size
+python tools/showcase/cut.py reel            # the MP4s
+```
+
+`capture.py --cut` captures only the takes the cut's shots use, each only
+as far as its last shot reaches, at the cut's size, frame rate (the reel is 30 fps, the film 60) and point canvas,
+into `~/flint-film/<cut>/`. A cut's `points_wide` is the frame's width in
+points: the master lays out on 1920, which in a 1080-pixel-wide frame makes
+an 8-point ASCII cell 4.5 pixels, too fine for a phone. The reel uses 720
+(a cell is 12 pixels); `flint render --pixels-per-point 1 --sweep
+ascii.cell=4.5,8,12,16 --sweep-crop ...` at the cut's size shows the
+choice side by side.
+
+`cut.py` reads the frames, lays each shot's caption over it inside
+`safe` (a serif line and a monospaced label under it; consecutive shots
+with the same caption share one), adds the `[cut.end]` card over the last
+bars, and pipes every frame once to ffmpeg. It writes the whole cut and,
+from the same frames in the same pass, each story-length piece:
+
+```
+~/flint-film/reel/edit/reel.mp4
+~/flint-film/reel/edit/reel_story_1.mp4 ... reel_story_4.mp4
+~/flint-film/reel/edit/edit.json
+```
+
+H.264 High at level 4.2, yuv420p tagged BT.709, a keyframe a second, and
+AAC audio: `--audio track.wav` (or the cut's `audio` key), else a silent
+track, so the file is what a phone and Instagram expect either way.
+`--guides` shades everything outside the safe area for review, `--stills
+6` also writes frames as PNG, and `--dry-run` prints the timeline. It needs
+Pillow, numpy and ffmpeg on `PATH`; the captions use Windows' Georgia
+Italic and Cascadia Mono, falling back as the cut's `caption_font` and
+`label_font` lists say.
+
+### Framing for a tall frame
+
+A 9:16 window at the same field of view keeps less than a third of a 16:9
+frame's width, so a cut that isn't 16:9 is captured, not cropped. The
+film's camera moves all go through `film::orbit` and `film::dolly`, which
+ask `film::portrait()` (`screen_height() > screen_width()`) and, in a tall
+window, back the camera off along its line of sight, open the field of
+view to 60° and aim a little low, so the still life sits in the middle of
+the safe area with sky above it and grass below. The same scene and
+script serve both cuts. A beat whose move doesn't survive that rule draws
+a portrait path of its own with `film::orbit_portrait` /
+`film::dolly_portrait` (beats 04, 06 and 07 film from the barrel's far
+side, where the figure, the barrel and the crate stand closest together
+across a narrow frame).
 
 ## Two runs, one film
 
