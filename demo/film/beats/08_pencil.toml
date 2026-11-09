@@ -1,0 +1,49 @@
+# Pencil sketch (#273): each prop drawn by its own hand, hatching,
+# contours and paper, the strokes redrawn a few times a second (boil) so
+# the drawing breathes the way a hand-drawn film does. Then the script
+# widens the scene's pencil table to the whole frame: the clearing itself
+# becomes the page, the props keeping their own pencils as variants.
+
+[scene]
+name = "Film 08: Pencil"
+version = "1.0"
+description = "Per-entity pencil with boil, then the whole frame as one sketch (#273)"
+
+[camera]
+position = [3.4, 1.6, 3.2]
+target = [0.0, 0.75, -0.2]
+fov = 42.0
+
+[post_process.styles.pencil]
+scope = "entities"
+boil = 6.0
+
+[entities.barrel.pencil_style]
+color = 0.7
+lead = [0.32, 0.18, 0.08]
+boil = 6.0
+
+[entities.crate.pencil_style]
+direction = "screen"
+layers = 4.0
+angle = 35.0
+boil = 6.0
+
+[entities.figure.pencil_style]
+lead = [0.10, 0.16, 0.42]
+contour_width = 2.2
+sketchy = 0.9
+boil = 6.0
+
+[entities.table.pencil_style]
+grid = "object"
+color = 0.4
+boil = 6.0
+
+[entities.orb.pencil_style]
+spacing = 4.0
+boil = 6.0
+
+[entities.director]
+[entities.director.script]
+source = "08_pencil.rhai"

@@ -1,0 +1,30 @@
+# Styles a script tells (#269): nothing is styled in this file. The
+# script turns props into glyphs and pencil and back at story beats with
+# set_entity_style, set_style_param and clear_entity_style, and animates a
+# param every frame (a uniform write, no GPU allocation).
+
+[scene]
+name = "Film 06: A story in styles"
+version = "1.0"
+description = "A Rhai script styles props at story beats and animates their params (#269)"
+
+[camera]
+position = [3.0, 1.5, 3.8]
+target = [0.0, 0.75, 0.0]
+fov = 42.0
+
+# The presets the script's styles start from; scope = "entities" keeps
+# them off the rest of the frame
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+brightness = 0.25
+
+[post_process.styles.pencil]
+scope = "entities"
+
+[entities.director]
+[entities.director.film]
+step = -1
+[entities.director.script]
+source = "06_story.rhai"

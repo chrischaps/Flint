@@ -1,0 +1,20 @@
+# Looks (#279): named presets over a scene's whole [post_process]. This
+# beat is one camera move captured once per look (`--look`, its takes in
+# tools/showcase/film.toml), so the edit can cut between ascii_noir,
+# matrix, ink_wash, graphite, watercolor, coloured_pencil, blueprint and
+# charcoal on the same frame of the move.
+# The scene itself adds nothing: the look is the whole difference.
+
+[scene]
+name = "Film 10: Looks"
+version = "1.0"
+description = "One move under each built-in look, for match cuts between them (#279)"
+
+[camera]
+position = [4.4, 1.7, 3.4]
+target = [0.0, 0.75, 0.0]
+fov = 44.0
+
+[entities.director]
+[entities.director.script]
+source = "10_looks.rhai"

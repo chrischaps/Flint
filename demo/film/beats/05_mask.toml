@@ -1,0 +1,48 @@
+# The style mask (#263): what the per-entity styles stand on. Props under
+# three styles (ASCII, pencil, watercolor) and the F4 menu's debug view
+# switched to the mask, so each style id shows as a hue, unstyled pixels
+# grey and the seams white; then back to the styled frame. Driven through
+# the menu by beats/05_mask.input.txt, as a person would click it.
+
+[scene]
+name = "Film 05: The mask"
+version = "1.0"
+description = "Props under three styles, and the F4 debug view of the style mask they share (#263)"
+
+[camera]
+position = [3.6, 1.6, 3.6]
+target = [0.0, 0.7, 0.0]
+fov = 44.0
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+brightness = 0.25
+
+[post_process.styles.pencil]
+scope = "entities"
+
+[post_process.styles.watercolor]
+scope = "entities"
+
+[entities.barrel.ascii_style]
+color = "tint"
+tint = [0.35, 1.0, 0.45]
+glow = 0.5
+
+[entities.figure.ascii_style]
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.70, 0.30]
+levels = 4
+
+[entities.crate.pencil_style]
+
+[entities.table.watercolor_style]
+
+[entities.orb.pencil_style]
+color = 0.6
+
+[entities.director]
+[entities.director.script]
+source = "05_mask.rhai"

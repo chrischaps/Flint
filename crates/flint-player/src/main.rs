@@ -147,6 +147,20 @@ struct Args {
     #[arg(long, value_name = "SECS")]
     frame_step: Option<f64>,
 
+    /// Play every scene under a look (#279, #435): a built-in
+    /// (ascii_noir, matrix, ink_wash, graphite, watercolor), a
+    /// `styles/<name>.look.toml` beside the scene, or a path. Merged over the
+    /// scene's `[post_process]` as `flint render --look` does
+    #[arg(long, value_name = "NAME|PATH")]
+    look: Option<String>,
+
+    /// Draw point-sized things (ASCII cells, egui panels, the HUD) at this
+    /// many pixels a point instead of the window's scale factor, so a
+    /// capture is the same on any display (#435). 2 at 3840x2160 lays a
+    /// 4K frame out as 1920x1080 points
+    #[arg(long, value_name = "SCALE")]
+    pixels_per_point: Option<f32>,
+
     /// Play timed key, gamepad and mouse input from a file (see
     /// `player_app/input_script.rs` for the format)
     #[arg(long, value_name = "FILE")]
@@ -273,6 +287,16 @@ fn main() -> Result<()> {
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
     app.input.touch_controls_mut().set_mode(touch_mode);
+    app.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
+    if let Some(name) = &args.look {
+        // Refuse a bad name now. The scene's user styles first: a look may
+        // name one (they are loaded again, harmlessly, with the scene)
+        flint_player::load_user_styles(&app.scene_path);
+        let look = flint_render::look::find(name, &app.scene_path)
+            .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
+        println!("Look: {} ({})", look.name, look.source);
+        app.look = Some(name.clone());
+    }
     app.style_specs = args.styles.clone();
     app.style_time = args.style_time;
     // Skybox, ambient, shading levers, camera and post from the scene file

@@ -101,6 +101,8 @@ impl PlayerApp {
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
             quality_overrides: String::new(),
+            pixels_per_point: None,
+            look: None,
             quality: Default::default(),
             frame_pacer: None,
             hold_at: None,
@@ -237,12 +239,13 @@ impl PlayerApp {
     }
 
     /// Take a scene's `[post_process]` block, with the look it names
-    /// (`look = "graphite"`, #356) laid under its own keys. A look that
-    /// can't be found is warned about and the block drawn without it. Call
-    /// after the scene's user styles are loaded (a look may name one).
+    /// (`look = "graphite"`, #356) laid under its own keys and `--look`
+    /// (#435) over them. A look that can't be found is warned about and the
+    /// block drawn without it. Call after the scene's user styles are
+    /// loaded (a look may name one).
     pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
         self.scene_post_process =
-            def.map(|d| flint_render::look::resolve_scene(&d, &self.scene_path));
+            super::scene_loading::scene_post_process(self.look.as_deref(), &self.scene_path, def);
     }
 
     /// The look the scene draws with now: the one it names, or the one a

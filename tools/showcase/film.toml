@@ -1,0 +1,117 @@
+# The showcase film (#434, #435): one beat per stylize feature, each a
+# scene in demo/film/ played by flint-player with no hand on the controls
+# and captured frame by frame. The storyboard (what each beat shows, why it
+# is cut the way it is) is docs/design/showcase-film.md.
+#
+#   python tools/showcase/build_scenes.py         # beats/*.toml + set.toml -> scenes
+#   python tools/showcase/capture.py              # every beat, every take
+#   python tools/showcase/capture.py 02_type      # one beat
+#   python tools/showcase/capture.py --verify 02_type   # twice, and compare
+#
+# A beat's takes are the runs captured for it; most have one, `main`. A
+# take may add player arguments (`args`), e.g. a look, so one camera path
+# is shot several ways and cut together.
+
+[film]
+title = "Many Hands"
+# Frames a second of game time. Each frame steps the clock exactly 1/fps.
+fps = 30
+# The master. Point-sized things (ASCII cells, egui) are laid out on a
+# 1920x1080-point canvas whatever the resolution: pixels_per_point is
+# width / 1920, so a 4K take and a 1080p preview frame alike.
+width = 3840
+height = 2160
+# Frames go here unless --out says otherwise: outside the repo, since a 4K
+# frame is ~14 MB.
+out = "~/flint-film"
+
+[[beat]]
+id = "01_plain"
+title = "The clearing"
+seconds = 6.0
+features = ["the unstyled render every style redraws"]
+
+[[beat]]
+id = "02_type"
+title = "The world in type"
+seconds = 14.0
+features = ["#265 full-screen ASCII", "#276 colour modes and palettes", "#277 temporal stability"]
+
+[[beat]]
+id = "03_edges"
+title = "Edges"
+seconds = 8.0
+features = ["#267 edge-aware glyphs", "#263 a mask outline that is always an edge"]
+
+[[beat]]
+id = "04_entities"
+title = "Some things in type"
+seconds = 9.0
+features = ["#266 per-entity ASCII", "grid = \"object\" glyphs that travel with their prop"]
+
+[[beat]]
+id = "05_mask"
+title = "The mask"
+seconds = 9.0
+features = ["#263 the entity style mask", "#268 the F4 Rendering & Effects menu"]
+input = "05_mask.input.txt"
+
+[[beat]]
+id = "06_story"
+title = "A story in styles"
+seconds = 9.0
+features = ["#269 Rhai API and events for styles"]
+
+[[beat]]
+id = "07_reveal"
+title = "Fade and dissolve"
+seconds = 10.0
+features = ["#278 blends and transitions per entity"]
+
+[[beat]]
+id = "08_pencil"
+title = "Pencil"
+seconds = 10.0
+features = ["#273 pencil sketch: hatching, contours, paper, boil"]
+
+[[beat]]
+id = "09_watercolor"
+title = "Watercolor"
+seconds = 9.0
+features = ["#272 watercolor: washes, pooled edges, paper"]
+
+[[beat]]
+id = "10_looks"
+title = "Looks"
+seconds = 8.0
+features = ["#279 looks: named presets over a scene's post-processing"]
+take = [
+    { name = "ascii_noir", args = ["--look", "ascii_noir"] },
+    { name = "matrix", args = ["--look", "matrix"] },
+    { name = "ink_wash", args = ["--look", "ink_wash"] },
+    { name = "graphite", args = ["--look", "graphite"] },
+    { name = "watercolor", args = ["--look", "watercolor"] },
+    # The pencil family (#391)
+    { name = "coloured_pencil", args = ["--look", "coloured_pencil"] },
+    { name = "blueprint", args = ["--look", "blueprint"] },
+    { name = "charcoal", args = ["--look", "charcoal"] },
+]
+
+[[beat]]
+id = "11_user"
+title = "Styles you write"
+seconds = 10.0
+features = ["#274 user-authored WGSL styles", "#275 loaded at run time beside the scene"]
+
+[[beat]]
+id = "12_menu"
+title = "Tuning by hand"
+seconds = 12.0
+features = ["#268 the F4 Styles editor"]
+input = "12_menu.input.txt"
+
+[[beat]]
+id = "13_hands"
+title = "Many hands"
+seconds = 12.0
+features = ["per-entity ASCII, pencil, watercolor and a user style on one screen"]

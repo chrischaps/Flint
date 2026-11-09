@@ -1,0 +1,47 @@
+# Per-entity ASCII (#266): a few props drawn in glyphs, each its own way,
+# and the clearing around them left as it is. Written in the scene, not a
+# script: each prop's ascii_style changes only what it needs from the
+# scene's preset. The barrel's grid is its own (grid = "object"), so its
+# glyphs ride round with it as it turns; the others share the screen grid.
+
+[scene]
+name = "Film 04: Some things in type"
+version = "1.0"
+description = "Chosen props in ASCII, each its own way, the world left smooth (#266)"
+
+[camera]
+position = [3.8, 1.5, 3.4]
+target = [0.0, 0.7, 0.0]
+fov = 42.0
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.3
+brightness = 0.2
+
+[entities.barrel.ascii_style]
+grid = "object"
+color = "tint"
+tint = [0.35, 1.0, 0.45]
+glow = 0.6
+brightness = 0.3
+
+[entities.figure.ascii_style]
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.70, 0.30]
+levels = 4
+brightness = 0.35
+
+[entities.crate.ascii_style]
+color = "palette"
+palette = "cga"
+brightness = 0.3
+
+[entities.lid.ascii_style]
+enabled = false
+
+[entities.director]
+[entities.director.script]
+source = "04_entities.rhai"

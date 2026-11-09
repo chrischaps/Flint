@@ -294,6 +294,10 @@ pub struct PlayerApp {
     /// (FlintKart#55): `--quality`, the page's `?quality=`, an Android dev
     /// profile's `[quality]`. Scripts change them later with `set_quality`.
     pub quality_overrides: String,
+    /// `--pixels-per-point` (#435): the scale point-sized things are drawn
+    /// at (ASCII cells, egui, the HUD) instead of the window's scale factor,
+    /// so a capture looks the same on any display. `None` follows the window.
+    pub pixels_per_point: Option<f32>,
     /// The quality settings in force (see `quality.rs`).
     quality: flint_render::QualitySettings,
     /// Which refreshes the web player draws (#140, `?fps=`); `None` draws
@@ -315,6 +319,10 @@ pub struct PlayerApp {
 
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
+    /// `--look` (#435): a look (a name or a `.look.toml` path) merged over
+    /// every scene's `[post_process]` as it loads, as `flint render --look`
+    /// does. Found again at each load, after that scene's user styles.
+    pub look: Option<String>,
     /// `--style name[:key=value,...]` words (#328), written over every
     /// scene's `[post_process]` at load, after each transition and after a
     /// user style's hot reload, so they keep winning. See

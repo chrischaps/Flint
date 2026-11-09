@@ -1,0 +1,33 @@
+# Watercolor (#272): the whole clearing painted, washes and pooled edges
+# on paper, except the figure, who opts out (enabled = false) and stands
+# in the painting as the renderer drew it. Then the paint lifts from the
+# ground and sky and stays on the still life (scope "entities").
+
+[scene]
+name = "Film 09: Watercolor"
+version = "1.0"
+description = "A painted clearing with one figure left real, then paint on the props alone (#272)"
+
+[camera]
+position = [4.4, 1.9, 4.2]
+target = [0.0, 0.7, 0.0]
+fov = 44.0
+
+[post_process.styles.watercolor]
+scope = "screen"
+
+[entities.barrel.watercolor_style]
+edge = 1.4
+
+[entities.table.watercolor_style]
+
+[entities.crate.watercolor_style]
+
+[entities.orb.watercolor_style]
+
+[entities.figure.watercolor_style]
+enabled = false
+
+[entities.director]
+[entities.director.script]
+source = "09_watercolor.rhai"

@@ -1,0 +1,17 @@
+# The clearing as Flint draws it with no style at all: PBR, shadows, SSAO,
+# bloom, grass in the wind. Every later beat is this frame, redrawn. A slow
+# push in from wide to the table.
+
+[scene]
+name = "Film 01: The clearing"
+version = "1.0"
+description = "The showcase film's set, unstyled: the frame every style redraws (#435)"
+
+[camera]
+position = [4.6, 1.9, 6.4]
+target = [0.0, 0.7, 0.0]
+fov = 45.0
+
+[entities.director]
+[entities.director.script]
+source = "01_plain.rhai"

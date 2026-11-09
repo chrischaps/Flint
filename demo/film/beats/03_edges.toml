@@ -1,0 +1,31 @@
+# Edge glyphs (#267): close on the stone ball, the barrel and the standing
+# stone, in ASCII drawn from tone alone; then the edges come up and every
+# silhouette and crease is traced in line glyphs (─ │ ╱ ╲). The ball is as
+# bright as the sky behind it, so tone alone loses it; its style_mask
+# makes its outline an edge whatever the thresholds say.
+
+[scene]
+name = "Film 03: Edges"
+version = "1.0"
+description = "ASCII from tone alone, then with edge glyphs along every silhouette (#267)"
+
+[camera]
+position = [3.2, 1.0, 2.4]
+target = [1.0, 0.45, -0.3]
+fov = 40.0
+
+[post_process.styles.ascii]
+cell = 10
+ramp = "classic"
+color = "source"
+brightness = 0.35
+contrast = 1.2
+edges = 0.0
+edge_threshold = 0.45
+
+[entities.orb.style_mask]
+style = "ascii"
+
+[entities.director]
+[entities.director.script]
+source = "03_edges.rhai"
