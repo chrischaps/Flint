@@ -1,0 +1,914 @@
+# Mix automation for the reel cut (#438), written by tools/showcase/music.py:
+# a marker at every shot, each shot's bus levels, the watercolor's lift and
+# the menu drag as low-passes, and the last bar's fade. Times in beats
+# from the start (100 bpm: a beat is 0.6 s).
+schema_version = 0
+
+[[events]]
+at = "beat:0"
+action = "marker"
+label = "01_plain/main"
+
+[[events]]
+at = "beat:0"
+bus = "foundation"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:0"
+bus = "harmony"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:0"
+bus = "world_voice"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:0"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:0"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:0"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+action = "marker"
+label = "02_type/main"
+
+[[events]]
+at = "beat:6"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+bus = "harmony"
+action = "set_gain"
+db = -5.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+bus = "world_voice"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+bus = "home_theme"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:6"
+bus = "texture"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+action = "marker"
+label = "03_edges/main"
+
+[[events]]
+at = "beat:18"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+bus = "harmony"
+action = "set_gain"
+db = -5.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+bus = "world_voice"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+bus = "home_theme"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:18"
+bus = "texture"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+action = "marker"
+label = "04_entities/main"
+
+[[events]]
+at = "beat:24"
+bus = "foundation"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+bus = "harmony"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+bus = "world_voice"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:24"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+action = "marker"
+label = "06_story/main"
+
+[[events]]
+at = "beat:30"
+bus = "foundation"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+bus = "harmony"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+bus = "world_voice"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:30"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+action = "marker"
+label = "07_reveal/main"
+
+[[events]]
+at = "beat:40"
+bus = "foundation"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+bus = "harmony"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+bus = "world_voice"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:40"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+action = "marker"
+label = "08_pencil/main"
+
+[[events]]
+at = "beat:48"
+bus = "foundation"
+action = "set_gain"
+db = -6.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+bus = "world_voice"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:48"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+action = "marker"
+label = "09_watercolor/main"
+
+[[events]]
+at = "beat:56"
+bus = "foundation"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+bus = "harmony"
+action = "set_gain"
+db = 1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+bus = "world_voice"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:56"
+bus = "texture"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:60"
+bus = "harmony"
+action = "set_lpf"
+hz = 1400.0
+ramp_ms = 1800.0
+
+[[events]]
+at = "beat:64"
+action = "marker"
+label = "10_looks/ascii_noir"
+
+[[events]]
+at = "beat:64"
+bus = "harmony"
+action = "set_lpf"
+hz = 20000.0
+ramp_ms = 300.0
+
+[[events]]
+at = "beat:64"
+bus = "home_theme"
+action = "set_lpf"
+hz = 20000.0
+ramp_ms = 300.0
+
+[[events]]
+at = "beat:64"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:64"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:64"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:64"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:64"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:64"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+action = "marker"
+label = "10_looks/matrix"
+
+[[events]]
+at = "beat:65"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:65"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+action = "marker"
+label = "10_looks/ink_wash"
+
+[[events]]
+at = "beat:66"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:66"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+action = "marker"
+label = "10_looks/graphite"
+
+[[events]]
+at = "beat:67"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:67"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+action = "marker"
+label = "10_looks/watercolor"
+
+[[events]]
+at = "beat:68"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:68"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+action = "marker"
+label = "10_looks/coloured_pencil"
+
+[[events]]
+at = "beat:69"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:69"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+action = "marker"
+label = "10_looks/blueprint"
+
+[[events]]
+at = "beat:70"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:70"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+action = "marker"
+label = "10_looks/charcoal"
+
+[[events]]
+at = "beat:71"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+bus = "harmony"
+action = "set_gain"
+db = -4.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:71"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+action = "marker"
+label = "11_user/main"
+
+[[events]]
+at = "beat:72"
+bus = "foundation"
+action = "set_gain"
+db = -2.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+bus = "harmony"
+action = "set_gain"
+db = -3.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+bus = "world_voice"
+action = "set_gain"
+db = -1.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:72"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+action = "marker"
+label = "13_hands/main"
+
+[[events]]
+at = "beat:80"
+bus = "foundation"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+bus = "harmony"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+bus = "world_voice"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+bus = "child_motif"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:80"
+bus = "texture"
+action = "set_gain"
+db = 0.0
+ramp_ms = 150.0
+
+[[events]]
+at = "beat:92"
+bus = "foundation"
+action = "set_gain"
+db = -40.0
+ramp_ms = 2400.0
+
+[[events]]
+at = "beat:92"
+bus = "harmony"
+action = "set_gain"
+db = -40.0
+ramp_ms = 2400.0
+
+[[events]]
+at = "beat:92"
+bus = "world_voice"
+action = "set_gain"
+db = -40.0
+ramp_ms = 2400.0
+
+[[events]]
+at = "beat:92"
+bus = "home_theme"
+action = "set_gain"
+db = -40.0
+ramp_ms = 2400.0
+
+[[events]]
+at = "beat:92"
+bus = "child_motif"
+action = "set_gain"
+db = -40.0
+ramp_ms = 2400.0
+
+[[events]]
+at = "beat:92"
+bus = "texture"
+action = "set_gain"
+db = -18.0
+ramp_ms = 2400.0

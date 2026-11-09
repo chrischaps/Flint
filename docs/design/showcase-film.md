@@ -91,9 +91,10 @@ story's beats, the reveal's ramps, the mask's colours).
   sit either side of the table and drift toward the edges in 04 and 07).
   A native vertical take is `capture.py --width 1080 --height 1920`, which
   needs the moves reframed for it (#437).
-- **Music** (#438) can lean on the beats' internal cues: 02 changes every
-  2.4 s (100 bpm in quarter bars), 03's edges come up at 2.5 s, 08's and
-  09's whole-frame switches are at 5 s.
+- **Music** (#438) is on the beats' own clock, 100 bpm in 4/4 (02 changes
+  every 2.4 s, a bar), and it is arranged to the cut lists in
+  `tools/showcase/cuts/`: cut on bar or half-bar lines and the music
+  changes with the picture. See [Music](#music) below.
 
 ### The 16:9 cut (#436)
 
@@ -187,6 +188,54 @@ changed in it, and what didn't:
   whole-frame ASCII behind the props and let style ownership (#384) keep
   every prop in its own hand; and a palette-quantize take (#324) would sit
   naturally among the looks.
+
+## Music
+
+*Many Hands* has a score of its own (#438), written for the film and
+rendered by Flint's music tools. One melody plays through the whole cut and
+each shot plays it in its own instrument, as each beat redraws the same
+clearing in its own hand: an electric piano for the plain render; pulse
+waves for the type beats, their width changing with each of 02's tables;
+plucked lines when 03's edges come up; dry strings and the scratch of a
+pencil trembling at the boil's 6 Hz for 08; a breathy flute for the
+watercolor, its pad closing as the paint lifts at 5 s; FM glass for the
+holograms; a new voice for every look; a music box and the menu's own
+clicks for 05 and 12. In 13 every hand takes a bar of the tune, and it comes
+home to D as the camera rises. The crickets that open the film are still
+there as it fades.
+
+| Cut | List | Bars | Length | Frames at 30 fps |
+|---|---|---|---|---|
+| 16:9 master (#436) | `tools/showcase/cuts/master.toml` | 48 + 2 held at the end | 120.0 s | 3600 |
+| 9:16 reel (#437) | `tools/showcase/cuts/reel.toml` | 24, four 6-bar stories | 57.6 s | 1728 |
+
+```bash
+python tools/showcase/music.py          # ~/flint-film/music/many-hands-<cut>.wav (+ .json)
+python tools/showcase/music.py --plot   # and a sheet: shots, spectrogram, bus levels
+```
+
+`score.py` arranges the theme to a cut's shots; `synth.py` synthesizes the
+six stems flint-music mixes (foundation, harmony, world voice, theme,
+the figure's motif, texture); `music.py` writes the suite and its event
+script (`tools/showcase/music/<cut>.suite.toml`, `.events.toml`: a marker
+at every shot, each shot's bus levels, the watercolor and menu low-passes,
+the last bar's fade), renders them with `flint render-suite`, and masters
+to -14 LUFS integrated (BS.1770-4) under a -1.5 dBTP ceiling, 48 kHz
+24-bit. Each WAV is exactly its cut's length, and two builds are
+byte-identical on one machine (numpy 2.3, scipy 1.17).
+
+**Every sound is original.** The score was written for this film, and
+every note and noise in it is synthesized from sines, noise and FM by
+`tools/showcase/synth.py`: no samples, loops, presets or recordings from
+anywhere else, and no library music. YouTube's Content ID and Instagram's
+audio matching have nothing to match it against, and the rights are
+Chris's. If a platform flags it anyway, this page and the build command
+are the evidence.
+
+The cut lists belong to the edits (#436, #437). Change one, rebuild the
+music, and the track follows: the instruments change on the new cut lines,
+and the cues inside a shot follow its `start_s`. Lengths stay in
+quarter-bars, and each cut ends on a whole bar.
 
 ## Capture
 
