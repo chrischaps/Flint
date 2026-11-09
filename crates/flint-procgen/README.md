@@ -130,19 +130,19 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `aspect` | number >0 to 1 | `1.0` | The section's thin axis over its broad one: 1 round, 0.1 a ribbon |
 | `bend_deg` | number 0–90 | `16.0` | Pose: how far a pose leans the tip, degrees, at drift amplitude 1. The slow lean of the whole form |
 | `body_color` | hex colour | `"#3E382F"` | The body's colour, sRGB hex |
+| `body_opacity` | number 0–1 | `1.0` | How much of the body shows: 1 solid; below 1 it's drawn translucent after everything opaque, and its echoes with it; 0 not at all, so the form is only its cards |
 | `body_roughness` | number 0–1 | `0.800000011920929` | The body's roughness, 0 glossy to 1 matte |
 | `card_aspect` | number >0 to 10 | `1.5` | A card's length over its width: above 1 a feather or flake along the surface |
 | `card_color` | hex colour | `"#9C8E7A"` | The cards' middle colour, sRGB hex; shades spread warmer and cooler around it |
 | `card_from` | number 0–1 | `0.03999999910593033` | Height fraction where cards begin, below `card_to` |
+| `card_layout` | `scatter` \| `rows` | `"scatter"` | Where cards lie: `scatter` over the whole surface by area; `rows` in lines across the broad faces, a card a word, so a flat form reads as a page of writing. In rows `card_size` is a stroke's thickness and `card_aspect` a typical word's length over it, the cards lie flat, and `card_tilt` and `card_rise` have nothing to do |
 | `card_lift` | number 0–1 | `0.012000000104308128` | How far a card sits off the surface, metres |
-| `card_rise` | number -0.9–10 | `0.0` | How cards crowd along the length: 0 by area alone, above 0 toward the tip, below 0 toward the base |
 | `card_roughness` | number 0–1 | `0.699999988079071` | The cards' roughness, 0 glossy to 1 matte |
 | `card_shades` | integer 1–8 | `4` | Shades the cards are spread over, each a part of its own the jitter tints |
 | `card_size` | number >0 to 10 | `0.05999999865889549` | Typical card width, metres; each varies ±30% |
-| `card_tilt` | number 0–1 | `0.0` | How far cards stand up off the surface toward the tip: 0 flat like scales, 1 upright like a fringe, which boils the outline's edge |
 | `card_to` | number 0–1 | `0.9700000286102295` | Height fraction where cards end |
 | `card_turn_deg` | number 0–180 | `35.0` | Largest turn of a card about its normal away from pointing up the surface, degrees |
-| `cards` | integer 0–20000 | `520` | Cards on the surface: what boils. 0 is a smooth form |
+| `cards` | integer 0–20000 | `520` | Cards on the surface: what boils. 0 is a smooth form. With `card_layout = "rows"` it's the most there can be, and the rows decide how many |
 | `coil` | number 0–10 | `0.0` | Radius of a helical wander of the spine at the tip, metres, from nothing at the base |
 | `coil_turns` | number 0–12 | `1.0` | Turns the coil makes over the spine |
 | `curl_bias` | number 0.2–5 | `1.0` | Where the curl happens: 1 evenly, above 1 more toward the tip, below 1 more toward the base |
@@ -167,6 +167,23 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `turn_deg` | number 0–180 | `0.0` | Pose: how far a pose turns the section about the spine at the tip, degrees: what a flat form shows |
 | `twist_turns` | number -8–8 | `0.0` | Turns the section makes about the spine from base to tip, at rest |
 | `waves` | integer 1–64 | `3` | Depth bands the segments fall into, base to tip, at most `segments`: per-level stagger ripples up the form in this many waves, and `[living] variance.steady` holds the low bands still |
+
+Only when `card_layout` is `rows`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `paragraph_lines` | number 0–1000 | `6.0` | Rows: lines in a typical paragraph, whose last line stops short and whose next begins indented; 0 is one unbroken block |
+| `row_faces` | `front` \| `back` \| `both` | `"both"` | Rows: which broad faces carry lines. The front is the face turned away from `facing_deg`, so a page curling away from you shows you its front |
+| `row_margin` | number 0–0.9 | `0.10000000149011612` | Rows: the share of the section's half-width kept clear at each side, so lines stop short of the edge and never bristle at the outline |
+| `row_spacing` | number >0 to 10 | `0.03999999910593033` | Rows: metres from one line to the next, up the surface |
+| `word_gap` | number 0–10 | `0.012000000104308128` | Rows: metres between words; each gap varies ±30% |
+
+Only when `card_layout` is `scatter`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `card_rise` | number -0.9–10 | `0.0` | How cards crowd along the length: 0 by area alone, above 0 toward the tip, below 0 toward the base |
+| `card_tilt` | number 0–1 | `0.0` | How far cards stand up off the surface toward the tip: 0 flat like scales, 1 upright like a fringe, which boils the outline's edge |
 
 ### `texture_v1` (image set, written as PNGs)
 
