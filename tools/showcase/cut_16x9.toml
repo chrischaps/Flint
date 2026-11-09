@@ -1,0 +1,227 @@
+# The 16:9 cut of the showcase film (#436): the master for the chaps.dev
+# YouTube channel and a lighter web version for the Flint page.
+#
+#   python tools/showcase/capture.py                 # the beats, 4K, 60 fps
+#   python tools/showcase/edit.py                    # this cut -> master, web, poster
+#   python tools/showcase/check_cut.py               # every frame accounted for
+#
+# Shots are takes of film.toml's beats, cut in this order. `in` and `out` are
+# seconds of the take (frame 1 is t = 0); a shot is `out - in` seconds,
+# exactly (out - in) * fps frames, each one source frame used once.
+# Titles are drawn in the edit, over the captured frames, on a 1920x1080-point
+# canvas scaled to the frame, so the takes stay clean for other cuts (#437).
+
+[cut]
+name = "many-hands-16x9"
+width = 3840
+height = 2160
+fps = 60
+# Seconds from black at the start and to black at the end.
+fade_in = 0.6
+fade_out = 1.2
+
+[fonts]
+# The first file found wins; looked up as given, then in the system's
+# font folders. Georgia for titles, Cascadia (SIL OFL) for the tags.
+title = ["georgia.ttf", "DejaVuSerif.ttf"]
+title_italic = ["georgiai.ttf", "DejaVuSerif-Italic.ttf"]
+body = ["segoeui.ttf", "DejaVuSans.ttf"]
+mono = ["CascadiaMono.ttf", "consola.ttf", "DejaVuSansMono.ttf"]
+
+[lower_third]
+# When a shot's lower third shows, from the shot's start, and how it moves.
+at = 0.5
+hold = 4.0
+fade = 0.45
+slide = 14.0   # points it travels while fading in
+
+[master]
+# YouTube: H.264 High, yuv420p, BT.709 tags, closed 0.5 s GOPs, faststart.
+file = "many-hands-16x9-master.mp4"
+crf = 14
+preset = "slow"
+
+[web]
+# The Flint page: the same cut, smaller. MP4 (H.264) and WebM (VP9).
+# 1080p, because at 720p ASCII's 8-point cells blur into texture; 30 fps
+# (every other frame of the cut), because the glyphs are fine detail that
+# costs bits in every frame: H.264 at crf 27 and 60 fps made 80 MB. At
+# crf 32 and 30 fps it is 33 MB, and the WebM is held to the same bitrate.
+width = 1920
+height = 1080
+fps = 30
+mp4 = "many-hands-web.mp4"
+mp4_crf = 32
+webm = "many-hands-web.webm"
+webm_bitrate = "2100k"
+poster = "many-hands-poster.jpg"
+# Where the poster comes from: a clean frame of a take, titles left off.
+poster_beat = "13_hands"
+poster_take = "main"
+poster_time = 3.0
+
+# ---------------------------------------------------------------- the cut
+
+[[shot]]
+beat = "01_plain"
+in = 0.0
+out = 6.0
+number = "01"
+title = "The clearing"
+caption = "Flint's own render: PBR, shadows, ambient occlusion, bloom, grass"
+lower_third_at = 3.1
+lower_third_hold = 2.6
+card = { title = "Many Hands", caption = "Every stylize feature in Flint, drawn by the engine itself", at = 0.5, hold = 2.2 }
+
+[[shot]]
+beat = "02_type"
+in = 0.0
+out = 14.0
+number = "02"
+title = "The world in type"
+caption = "Full-screen ASCII, its colour modes and palettes, glyphs that hold still as the camera moves"
+lower_third_hold = 5.0
+
+[[shot]]
+beat = "03_edges"
+in = 0.0
+out = 8.0
+number = "03"
+title = "Edges"
+caption = "Silhouettes and creases traced in line glyphs; a mask keeps the ball's outline against the sky"
+
+[[shot]]
+beat = "04_entities"
+in = 0.0
+out = 9.0
+number = "04"
+title = "Some things in type"
+caption = "Per-entity ASCII: each prop its own ramp, palette and grid"
+
+[[shot]]
+beat = "05_mask"
+in = 0.0
+out = 9.0
+number = "05"
+title = "The mask"
+caption = "Which style owns each pixel, seen through the F4 menu"
+
+[[shot]]
+beat = "06_story"
+in = 0.0
+out = 9.0
+number = "06"
+title = "A story in styles"
+caption = "Scripts set, tune and clear styles on cue"
+
+[[shot]]
+beat = "07_reveal"
+in = 0.0
+out = 10.0
+number = "07"
+title = "Fade and dissolve"
+caption = "Per-prop blends: a cross-fade, and a dissolve that turns cell by cell"
+
+[[shot]]
+beat = "08_pencil"
+in = 0.0
+out = 10.0
+number = "08"
+title = "Pencil"
+caption = "Hatching, contours, paper and boil, a prop at a time, then the whole page"
+
+[[shot]]
+beat = "09_watercolor"
+in = 0.0
+out = 9.0
+number = "09"
+title = "Watercolor"
+caption = "Washes and pooled edges; one figure left standing outside the painting"
+
+# Looks: one orbit, eight takes, a second of each, cut on the move. The lower
+# third runs across all eight; each shot's tag names its look.
+[[shot]]
+beat = "10_looks"
+take = "ascii_noir"
+in = 0.0
+out = 1.0
+number = "10"
+title = "Looks"
+caption = "Named presets laid over a scene: one camera move, eight takes"
+lower_third_hold = 6.6
+tag = "--look ascii_noir"
+
+[[shot]]
+beat = "10_looks"
+take = "matrix"
+in = 1.0
+out = 2.0
+tag = "--look matrix"
+
+[[shot]]
+beat = "10_looks"
+take = "ink_wash"
+in = 2.0
+out = 3.0
+tag = "--look ink_wash"
+
+[[shot]]
+beat = "10_looks"
+take = "graphite"
+in = 3.0
+out = 4.0
+tag = "--look graphite"
+
+[[shot]]
+beat = "10_looks"
+take = "watercolor"
+in = 4.0
+out = 5.0
+tag = "--look watercolor"
+
+[[shot]]
+beat = "10_looks"
+take = "coloured_pencil"
+in = 5.0
+out = 6.0
+tag = "--look coloured_pencil"
+
+[[shot]]
+beat = "10_looks"
+take = "blueprint"
+in = 6.0
+out = 7.0
+tag = "--look blueprint"
+
+[[shot]]
+beat = "10_looks"
+take = "charcoal"
+in = 7.0
+out = 8.0
+tag = "--look charcoal"
+
+[[shot]]
+beat = "11_user"
+in = 0.0
+out = 10.0
+number = "11"
+title = "Styles you write"
+caption = "WGSL beside the scene, loaded at run time: a hologram, a risograph, survey contours"
+
+[[shot]]
+beat = "12_menu"
+in = 0.0
+out = 12.0
+number = "12"
+title = "Tuning by hand"
+caption = "The F4 Styles editor: every parameter of every style, live"
+
+[[shot]]
+beat = "13_hands"
+in = 0.0
+out = 12.0
+number = "13"
+title = "Many hands"
+caption = "Type, pencil, paint and a user style, one screen, one frame"
+lower_third_hold = 4.0
+card = { title = "Flint", caption = "github.com/chrischaps/Flint  ·  docs.chaps.dev/flint", at = 7.2, hold = 3.4 }

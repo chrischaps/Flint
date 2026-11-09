@@ -185,8 +185,9 @@ def main():
                 continue
             runs.append((beat, take))
 
-    # A 4K PNG of these scenes is ~14 MB; refuse to start a run that can't fit
-    per_frame = 14e6 * (width * height) / (3840 * 2160)
+    # A 4K PNG of these scenes averaged 7.0 MB at 60 fps (#436; up to 18 MB
+    # for the busiest); estimate 8 MB and refuse a run that can't fit
+    per_frame = 8e6 * (width * height) / (3840 * 2160)
     frames = sum(frame_count(film, b) for b, _ in runs) * (2 if args.verify else 1)
     need = frames * per_frame
 
