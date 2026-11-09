@@ -43,7 +43,9 @@ use crate::living::{
     SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
 };
 use crate::registry::GeneratorRegistry;
-use crate::spec::{EchoBlend, EchoConfig, EchoCopy, ProcGenSpec, Stagger, VarianceConfig};
+use crate::spec::{
+    EchoBlend, EchoConfig, EchoCopy, EchoPlaces, ProcGenSpec, Stagger, VarianceConfig,
+};
 use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
@@ -399,6 +401,9 @@ struct DrawnBones {
     /// How much of the poses' slide it showed: it changes with an echo's
     /// offset while the clock holds, and must be drawn when it does.
     slide: f32,
+    /// Where it was moved to (`[living] echo_places`): like the slide, it
+    /// changes with an echo's place while the clock holds.
+    place: [f32; 2],
     /// Each part's cycle, by segment id. Holds what the part started it with, for
     /// this buffer alone: an echo reaches each beat at a moment of its own.
     parts: Vec<Cycle>,
@@ -631,6 +636,8 @@ pub struct LivingProp {
     echo_blend: EchoBlend,
     /// Its spec's `echo_slide`: 0, or the steps at which an echo's slide is whole.
     echo_slide: f32,
+    /// Its spec's `echo_places`: where its echoes stand at a wide spread.
+    echo_places: EchoPlaces,
     /// How deep its lineage's tree is, once built. A ring's size depends on it.
     max_depth: u32,
     /// Clocks it's been asked for and is waiting on poses to start.
@@ -898,7 +905,7 @@ impl LivingProp {
                 copy,
                 drawn: old
                     .get(i)
-                    .filter(|was| was.copy.offset == copy.offset)
+                    .filter(|was| was.copy.offset == copy.offset && was.copy.place == copy.place)
                     .map(|was| DrawnBones {
                         times: Vec::new(),
                         ..was.drawn.clone()
@@ -1453,7 +1460,7 @@ impl LivingProps {
         let stagger = prop.stagger();
         prop.pending = Some(PendingClocks {
             stagger,
-            copies: echoes.copies(),
+            copies: echoes.copies_placed(&prop.echo_places),
         });
         if prop.ring.is_none() {
             prop.start_pending();
@@ -1787,7 +1794,7 @@ impl LivingProps {
             shadow_cycle: Cycle::default(),
             drawn: DrawnState::default(),
             echoes: echo_config
-                .copies()
+                .copies_placed(&living.echo_places)
                 .into_iter()
                 .map(|copy| PropEcho {
                     copy,
@@ -1797,6 +1804,7 @@ impl LivingProps {
             echo_config,
             echo_blend: living.echo_blend,
             echo_slide: living.echo_slide,
+            echo_places: living.echo_places.clone(),
             max_depth: 0,
             pending: None,
             echoes_changed: false,
@@ -1855,6 +1863,7 @@ impl LivingProps {
             prop.beats,
             &prop.wooze,
             crate::spec::slide_shown(prop.echo_slide, 0.0),
+            [0.0; 2],
             &mut prop.drawn.bones,
             frame,
         );
@@ -1934,7 +1943,8 @@ impl LivingProps {
         let t = prop.echo_jitter_time(echo, self.time + prop.jitter_ahead);
         let beats = prop.echo_beats(echo);
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
-        let slide = crate::spec::slide_shown(prop.echo_slide, prop.echoes[echo].copy.offset);
+        let copy = prop.echoes[echo].copy;
+        let slide = copy.slide_shown(prop.echo_slide);
         let drawn = &mut prop.echoes[echo].drawn;
         let never_posed = drawn.times.is_empty();
         let moved = blend_bones(
@@ -1948,6 +1958,7 @@ impl LivingProps {
             beats,
             &prop.wooze,
             slide,
+            copy.place,
             drawn,
             frame,
         );
@@ -2330,6 +2341,7 @@ fn blend_bones(
     beats: f64,
     wooze: &WoozeSample,
     slide: f32,
+    place: [f32; 2],
     drawn: &mut DrawnBones,
     frame: &mut BlendFrame,
 ) -> MovedBones {
@@ -2353,7 +2365,7 @@ fn blend_bones(
         });
     }
     let turned = turns != drawn.turns;
-    let drifted = frame.times != drawn.times || slide != drawn.slide;
+    let drifted = frame.times != drawn.times || slide != drawn.slide || place != drawn.place;
 
     frame.bones.clear();
     if drifted {
@@ -2370,10 +2382,8 @@ fn blend_bones(
                 if shown < 1.0 {
                     *segment = segment.pulled(shown);
                 }
-                if slide != 1.0 {
-                    segment.slide = segment.slide.map(|x| x * slide);
-                }
             }
+            skeleton.show_at(pose, slide, place);
         }
         let posed = found
             && rig
@@ -2382,6 +2392,7 @@ fn blend_bones(
         if posed {
             std::mem::swap(&mut drawn.times, &mut frame.times);
             drawn.slide = slide;
+            drawn.place = place;
             boil_bones(&turns, &mut frame.bones);
             drawn.turns = turns;
             moved.first_bone = Some(0);
@@ -4025,6 +4036,60 @@ value = 1
             }
         }
         assert!(checked > 30, "only {checked} echo blends moved");
+    }
+
+    #[test]
+    fn an_echo_at_a_place_is_its_blend_moved_there() {
+        // Two echoes, a step either side, each already at its place.
+        let extra = format!(
+            "stagger = \"per_level\"\nechoes = {{ count = 2, spread = 1.0 }}\n\
+             echo_places = {{ at = [[0.1, 0.0, -1.0], [0.0, 0.2, 1.0]], from = 0.2, whole = 0.8 }}\n{NO_JITTER}"
+        );
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let prop = resolver.living_props().prop(id);
+        assert_eq!(prop.echo(0).place, [0.1, 0.0]);
+        assert_eq!(prop.echo(1).place, [0.0, 0.2]);
+        let mut frame = BlendFrame::default();
+        let mut checked = 0;
+        for _ in 0..40 {
+            resolver.process_living(0.03);
+            for echo in 0..2 {
+                let first = resolver.living_props_mut().blend_echo(id, echo, &mut frame);
+                if first != Some(0) {
+                    continue;
+                }
+                checked += 1;
+                let props = resolver.living_props();
+                let prop = props.prop(id);
+                let (skeleton, rig) = props.rig_of(id).unwrap();
+                let segments = skeleton
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let (index, weight) = flint_core::wooze::warp(
+                            prop.echo_beats(echo) + prop.clock.phase(s),
+                            prop.clock.glide,
+                        );
+                        SegmentPose::blend(
+                            &prop.pose(index).unwrap().segments[i],
+                            &prop.pose(index + 1).unwrap().segments[i],
+                            weight,
+                        )
+                    })
+                    .collect();
+                let mut by_hand = LivingPose {
+                    shape_seed: 0,
+                    segments,
+                };
+                // A tree has no place axes of its own: the prop's X and Y.
+                skeleton.show_at(&mut by_hand, 1.0, prop.echo(echo).place);
+                let mut expected = Vec::new();
+                rig.palette(skeleton, &by_hand, &mut expected).unwrap();
+                assert_eq!(&frame.bones[..expected.len()], &expected[..]);
+            }
+        }
+        assert!(checked > 10, "only {checked} echo blends moved");
     }
 
     #[test]

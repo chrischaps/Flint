@@ -591,6 +591,7 @@ mod noise {
                 leaf_mesh,
                 card_index_count: card_indices,
                 leaf_bindings,
+                place_axes: Vec::new(),
             })
         }
 

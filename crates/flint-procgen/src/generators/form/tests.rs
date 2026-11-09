@@ -522,6 +522,43 @@ fn a_slide_moves_the_form_along_its_lines_and_changes_nothing_else() {
 }
 
 #[test]
+fn an_echo_place_moves_the_writing_along_its_lines_and_up_the_form() {
+    let spec = example();
+    let skeleton = FormGenerator.structure(&spec, LINEAGE).unwrap();
+    let built = build(&spec, LINEAGE).unwrap();
+    let n = skeleton.segments.len();
+    assert_eq!(skeleton.place_axes.len(), n);
+    let pose = FormGenerator.full_pose(&spec, &skeleton, 1).unwrap();
+    // At [0, 0] an echo is the pose, bit for bit.
+    let mut same = pose.clone();
+    skeleton.show_at(&mut same, 1.0, [0.0; 2]);
+    assert_eq!(same, pose);
+
+    let (along, up) = (0.05, 0.015);
+    let mut placed = pose.clone();
+    skeleton.show_at(&mut placed, 1.0, [along, up]);
+    let (a, b) = (
+        skeleton.posed_segments(&pose).unwrap(),
+        skeleton.posed_segments(&placed).unwrap(),
+    );
+    for i in 0..n {
+        let line = body::broad_axis(&built.p, &built.spine, (i as f32 + 0.5) / n as f32);
+        let length = skeleton.segments[i].direction();
+        let moved = b[i].start - a[i].start;
+        // Along the lines by `along`, up the form by `up`: nothing out of the page.
+        assert!((moved.dot(&line) - along).abs() < 1e-3, "segment {i} along");
+        assert!(
+            (moved - line * along - length * up).length() < 1e-5,
+            "segment {i} moved {moved:?}"
+        );
+        assert!(
+            (b[i].end - a[i].end - moved).length() < 1e-5,
+            "segment {i}'s end"
+        );
+    }
+}
+
+#[test]
 fn keep_size_doesnt_read_a_slide_as_stretch() {
     let mut t = table(&example());
     t.insert("slide".into(), 0.3.into());

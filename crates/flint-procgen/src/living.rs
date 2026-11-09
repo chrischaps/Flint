@@ -483,6 +483,11 @@ pub struct LivingSkeleton {
     pub card_index_count: usize,
     /// `leaf_bindings[k]` is where card `k` rides.
     pub leaf_bindings: Vec<LeafBinding>,
+    /// The two axes, per segment and in the rest pose, that an echo's place
+    /// is measured along (`[living] echo_places`): `form_v1`'s are along its
+    /// lines of writing and up the form. Empty, as for a tree: every segment's
+    /// are the prop's X and Y.
+    pub place_axes: Vec<[[f32; 3]; 2]>,
 }
 
 impl LivingSkeleton {
@@ -493,6 +498,37 @@ impl LivingSkeleton {
         verts.sort_unstable();
         verts.dedup();
         verts
+    }
+
+    /// How far segment `i` moves for an echo at `place` (`[along, up]` in
+    /// metres along [`Self::place_axes`]), in the prop's space.
+    pub fn place_offset(&self, i: usize, place: [f32; 2]) -> [f32; 3] {
+        let [a, b] = self
+            .place_axes
+            .get(i)
+            .copied()
+            .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        std::array::from_fn(|k| a[k] * place[0] + b[k] * place[1])
+    }
+
+    /// `pose` as an echo draws it: showing `slide` of its slides (see
+    /// [`SegmentPose::slide`] and `[living] echo_slide`), and moved to
+    /// `place` (`[living] echo_places`). A slide is absolute and doesn't
+    /// carry, so a place that changes smoothly along the form shears it
+    /// without parting it. The prop itself is drawn at its own slide and
+    /// `[0, 0]`.
+    pub fn show_at(&self, pose: &mut LivingPose, slide: f32, place: [f32; 2]) {
+        if slide != 1.0 {
+            for segment in &mut pose.segments {
+                segment.slide = segment.slide.map(|x| x * slide);
+            }
+        }
+        if place != [0.0; 2] {
+            for (i, segment) in pose.segments.iter_mut().enumerate() {
+                let by = self.place_offset(i, place);
+                segment.slide = std::array::from_fn(|k| segment.slide[k] + by[k]);
+            }
+        }
     }
 
     /// The segments as `pose` holds them: each child starts at its parent's
@@ -675,17 +711,13 @@ impl LivingSkeleton {
     fn hold_size(&self, pose: &mut LivingPose) -> Result<()> {
         let rest = self.rest_bounds();
         // Only a pose with a slide pays for the copy.
-        let mut unslid = pose
-            .segments
-            .iter()
-            .any(|s| s.slide != [0.0; 3])
-            .then(|| {
-                let mut unslid = pose.clone();
-                for s in &mut unslid.segments {
-                    s.slide = [0.0; 3];
-                }
-                unslid
-            });
+        let mut unslid = pose.segments.iter().any(|s| s.slide != [0.0; 3]).then(|| {
+            let mut unslid = pose.clone();
+            for s in &mut unslid.segments {
+                s.slide = [0.0; 3];
+            }
+            unslid
+        });
         for _ in 0..KEEP_SIZE_ROUNDS {
             let measured = unslid.as_ref().unwrap_or(pose);
             let scale = balancing_scale(&rest, &self.posed_bounds(measured)?);
