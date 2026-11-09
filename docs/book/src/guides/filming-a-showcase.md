@@ -106,10 +106,11 @@ meant to go) is `docs/design/showcase-film.md` in the repository.
 A cut is a film edited for one place, and is one file,
 `tools/showcase/cuts/<name>.toml`: a `[cut]` table (frame size, frame rate,
 the music's bar grid, where captions may go) and its `[[shot]]`s in order,
-each a take of a beat from `start_s` seconds for a number of bars. The
-vertical reel is made this way (`cuts/reel.toml`, `cut.py`); the 16:9
-master is still edited from `cut_16x9.toml` by `edit.py`
-([Cutting the film](#cutting-the-film)) until it moves onto the same bars.
+each a take of a beat from `start_s` seconds for a number of bars. Both
+films are made this way, by one editor, `cut.py`: the 16:9 master
+(`cuts/master.toml`, [Cutting the film](#cutting-the-film)) and the
+vertical reel (`cuts/reel.toml`). The music (#438) is scored to the same
+file, so a cut and its track change on the same frames.
 
 ```toml
 [cut]
@@ -137,23 +138,29 @@ written to the same list and change on every cut. Then:
 
 ```bash
 python tools/showcase/capture.py --cut reel   # the takes the cut uses, at its size
-python tools/showcase/cut.py reel            # the MP4s
+python tools/showcase/music.py reel           # its score, to the same list
+python tools/showcase/cut.py reel             # the MP4s, with the score
+python tools/showcase/check_cut.py reel       # every frame, the sound, every shot on its bar
 ```
 
 `capture.py --cut` captures only the takes the cut's shots use, each only
-as far as its last shot reaches, at the cut's size, frame rate (the reel is 30 fps, the film 60) and point canvas,
-into `~/flint-film/<cut>/`. A cut's `points_wide` is the frame's width in
+as far as its last shot reaches (and the last through the cut's
+`tail_bars`), at the cut's size, frame rate (the reel is 30 fps, the master 60) and point canvas,
+into `~/flint-film/<cut>/`. With `--scale` the point canvas stays the
+cut's, so a smaller capture keeps its layout and the input scripts' clicks
+land on the same rows. A cut's `points_wide` is the frame's width in
 points: the master lays out on 1920, which in a 1080-pixel-wide frame makes
 an 8-point ASCII cell 4.5 pixels, too fine for a phone. The reel uses 720
 (a cell is 12 pixels); `flint render --pixels-per-point 1 --sweep
 ascii.cell=4.5,8,12,16 --sweep-crop ...` at the cut's size shows the
 choice side by side.
 
-`cut.py` reads the frames, lays each shot's caption over it inside
-`safe` (a serif line and a monospaced label under it; consecutive shots
-with the same caption share one), adds the `[cut.end]` card over the last
-bars, and pipes every frame once to ffmpeg. It writes the whole cut and,
-from the same frames in the same pass, each story-length piece:
+`cut.py` reads the frames, lays the cut's titles over them, adds the
+`[cut.end]` card over the last bars, and pipes every frame once to ffmpeg.
+The reel's titles are `titles = "caption"`: a serif line at the top of
+`safe` and a monospaced label under it, shared by consecutive shots with
+the same caption. It writes the whole cut and, from the same frames in the
+same pass, each story-length piece:
 
 ```
 ~/flint-film/reel/edit/reel.mp4
@@ -161,14 +168,19 @@ from the same frames in the same pass, each story-length piece:
 ~/flint-film/reel/edit/edit.json
 ```
 
-H.264 High at level 4.2, yuv420p tagged BT.709, a keyframe a second, and
-AAC audio: `--audio track.wav` (or the cut's `audio` key), else a silent
-track, so the file is what a phone and Instagram expect either way.
+H.264 High at level 4.2, yuv420p tagged BT.709, a keyframe a second
+(the cut's `[encode]` table; the reel holds Instagram's 24 Mbit/s), and AAC
+audio from the cut's `audio` key or `--audio`. Before it composes a frame
+it reads the music's report beside the WAV (`many-hands-<cut>.json`) and
+refuses a track scored to another list: another cut, another length, a
+shot starting on a frame other than the music's, or a WAV the report
+doesn't describe. `--silent` cuts without one, for a picture check.
 `--guides` shades everything outside the safe area for review, `--stills
-6` also writes frames as PNG, and `--dry-run` prints the timeline. It needs
-Pillow, numpy and ffmpeg on `PATH`; the captions use Windows' Georgia
-Italic and Cascadia Mono, falling back as the cut's `caption_font` and
-`label_font` lists say.
+6` also writes frames as PNG, `--still 2.0,40.5` writes those film times and
+stops, and `--dry-run` prints the timeline and whether the music fits it.
+It needs Pillow, numpy and ffmpeg on `PATH`; the captions use Windows'
+Georgia Italic and Cascadia Mono, falling back as the cut's `caption_font`
+and `label_font` lists say.
 
 ### Framing for a tall frame
 
@@ -215,59 +227,75 @@ be reshot and cut against an earlier take frame for frame.
 
 ## Cutting the film
 
-The takes are cut into films by `tools/showcase/edit.py`, from a cut file
-that names the shots in order. The 16:9 cut, for YouTube and the Flint page
-on chaps.dev, is `tools/showcase/cut_16x9.toml`:
+The 16:9 film, for YouTube and the Flint page on chaps.dev, is the cut
+`master` (`tools/showcase/cuts/master.toml`), made like the reel:
 
 ```bash
-python tools/showcase/capture.py            # the takes, 3840x2160 at 60 fps
-python tools/showcase/edit.py               # master MP4, web MP4 + WebM, poster
-python tools/showcase/check_cut.py          # every encoded frame against the edit
+python tools/showcase/capture.py --cut master   # the takes it uses, 3840x2160 at 60 fps
+python tools/showcase/music.py master           # its score
+python tools/showcase/cut.py master             # master MP4, web MP4 + WebM, poster
+python tools/showcase/check_cut.py master       # every frame, the sound, every shot on its bar
 ```
 
-Everything lands in `~/flint-film/cuts/<name>/`. The edit needs Python 3.11+,
-Pillow, numpy and ffmpeg on the PATH (`winget install Gyan.FFmpeg`; 8.0 made
-the first cut).
+Everything lands in `~/flint-film/master/edit/`. Takes already captured
+for the whole film (`capture.py` with no `--cut`, `~/flint-film/<beat>/`)
+are at the master's size and rate, so `cut.py master --frames ~/flint-film`
+cuts from them. `--scale` (or `--width`) cuts takes captured smaller, for a
+preview on a disk without room for 4K.
 
-A shot is a range of one take:
+Its shots are on the same bars as the reel's, with a beat's line under it:
 
 ```toml
+[cut]
+name = "master"
+fps = 60
+width = 3840
+height = 2160
+points_wide = 1920       # pixels_per_point = 2
+tail_bars = 2            # the last take runs on 2 bars under the end card
+titles = "lower_third"
+
 [[shot]]
 beat = "10_looks"
 take = "matrix"
-in = 1.0
-out = 2.0
+start_s = 0.85
+bars = 0.5
 tag = "--look matrix"
 ```
 
-`in` and `out` are seconds of the take, and a shot is exactly
-`(out - in) * fps` of its frames, each used once and in order. The takes
-must be captured at the cut's frame rate; the edit never resamples time.
-A shot can carry a lower third (`number`, `title`, `caption`, with
-`lower_third_at` / `lower_third_hold` to move it), a centred `card` (the
-film's title, the closing line) and a `tag` that cuts with its shot. They
-are drawn in the edit, on a 1920x1080-point canvas scaled to the frame, so
-the takes stay clean and the vertical cut (#437) can lay out its own.
-
-| Flag | What it does |
-|------|--------------|
-| `--list` | Each shot's film time, take and frame range, and the film's length |
-| `--still 2.0,40.5` | Those film times as composed PNGs, to check titles without encoding |
-| `--master-only` / `--web-only` | One half of the encode (the web files come from the master) |
-| `--web-files webm` | Only those web files (`mp4`, `webm`, or both) |
-| `--cut FILE` | Another cut file |
+`titles = "lower_third"` gives each beat a lower third: its number of 13,
+its title (film.toml's, or the shot's `title`) and the shot's `caption`,
+shared by a beat's shots in a row and moved with `lower_third_at` /
+`lower_third_hold` (seconds from the beat's first shot; `[lower_third]`
+has the defaults). A shot can also carry a centred `card` (the film's
+title) and a `tag` that cuts with it (each look's name). They are drawn in
+the edit on the cut's point canvas, so the takes stay clean for other cuts.
+The last shot's take runs on through `tail_bars`, where the music rings
+out: 13's camera comes to rest at 12 s and the evening keeps moving under
+the card, rather than holding a still frame.
 
 Each film frame is composed in a worker pool (the source PNG, the titles at
-their fade, the fade from and to black) and piped to ffmpeg as raw RGB. The
-master is H.264 High, `yuv420p`, BT.709 in its matrix and its tags, half-second
-closed GOPs, `+faststart`: what YouTube asks for. The web files are scaled
-from it: an H.264 MP4 and a two-pass VP9 WebM, and a poster JPEG from a
-clean frame of a take, titles left off.
+their fade, the fade from and to black) and piped to ffmpeg as raw RGB with
+the WAV beside it. `[encode]` makes the master H.264 High, `yuv420p`,
+BT.709 in its matrix and its tags, half-second closed GOPs, `+faststart`,
+AAC at 320 kbit/s: what YouTube asks for. `[web]` makes the page's files
+from the master's picture and the WAV itself (so the sound isn't encoded
+twice): an H.264/AAC MP4 and a two-pass VP9/Opus WebM at 1080p and 30 fps,
+and a poster JPEG from a clean frame of a take, titles left off.
+`--web-only` remakes them from a master already cut, `--web-files webm`
+only those, `--no-web` skips them.
+
+The first master (#436) was cut by an editor of its own from a list timed
+in seconds, 126 s long and silent, while the music was scored to this list,
+120 s long: the two drew one film to two clocks. Since #593 there is one
+list and one editor, and the editor won't cut to a track scored to anything
+else.
 
 ### Checking every frame
 
-The edit saves a 160x90 luma thumbnail of every frame it composed.
-`check_cut.py` reads each encoded file's packet times (every frame there,
+`cut.py` saves a small luma thumbnail of every frame it composed, and
+`edit.json` lists each file it encoded and which of those frames it holds.
+`check_cut.py <cut>` reads each encoded file's packet times (every frame there,
 once, exactly a frame apart), then decodes every frame, takes out its mean
 level (the YUV round trip shifts luma by a level or two) and holds it
 against those thumbnails:
@@ -284,14 +312,25 @@ against those thumbnails:
   about equally well.
 
 Steps where the composed film barely moves (the black of the fades) can't
-show a repeat and are counted as still. It writes `<name>.check.json`
+show a repeat and are counted as still.
+
+Then the sound (#593). Each file's audio is decoded as a player would play
+it (AAC's edit list and Opus's pre-skip applied) and measured with the
+meters the music was mastered with (`synth.py`, BS.1770-4): it must be
+there (unless the cut was made `--silent`), 48 kHz stereo, as long as the
+picture to within one of the file's frames, within 0.5 LU of -14 LUFS for
+a file of the whole cut (a story piece is a slice, so its loudness isn't),
+and at most -1.0 dBTP true peak with no sample at full scale. And the bars:
+the music's report must still describe its WAV, be this cut's, and start
+every shot on the frame the edit started it. It writes `<cut>.check.json`
 beside the films and exits 1 if anything fails.
 
-To be sure it can fail, it was run on a broken copy of the first master: the
+To be sure it can fail, it was run on a broken copy of #436's first master: the
 same 7,560 frames with frame 3000 shown twice, frame 5000 dropped and frame
 6000's bottom half taken from frame 6030. It failed it, and flagged nothing
 outside the faults: the windows from frame 3000 to 5039 matched best a frame
-late, and frame 6000 was flagged as wrong and torn.
+late, and frame 6000 was flagged as wrong and torn. That first master, the
+silent 126 s one:
 
 | File | Frames | Frame steps | Error (mean / max, 8-bit luma) | Shifted, repeated, wrong, torn |
 |---|---|---|---|---|
@@ -342,6 +381,10 @@ they move with an in-point. Change a cut list and rebuild: the track
 follows. Every sound is synthesized, so Content ID and Instagram's audio
 match have nothing to find.
 
-The picture's edit (`cut_16x9.toml`, above) does not read this list yet:
-its shots are timed in seconds, not bars, so until the two are one list the
-track and the 16:9 picture don't change at the same frames.
+The picture is cut from the same list ([A cut](#a-cut), [Cutting the
+film](#cutting-the-film)), so the track and the picture change on the same
+frames. Nothing has to be kept in step by hand: change a shot and `cut.py`
+refuses the old track until `music.py` has rebuilt it, and `check_cut.py`
+holds every encoded file's shot starts against the music's report again
+after the encode. The JSON gives each shot's start frame at the cut's own
+rate (`frame`; 60 fps for the master) as well as at 30 fps.

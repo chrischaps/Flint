@@ -22,53 +22,18 @@ start_sample = 0
 pulse_window_ms = 100
 
 [[sections]]
-name = "02_02_type"
-start_sample = 230400
+name = "05_05_mask"
+start_sample = 1612800
 pulse_window_ms = 100
 
 [[sections]]
-name = "03_03_edges"
-start_sample = 806400
+name = "06_06_story"
+start_sample = 1958400
 pulse_window_ms = 100
 
 [[sections]]
-name = "04_04_entities"
-start_sample = 1152000
-pulse_window_ms = 100
-
-[[sections]]
-name = "07_07_reveal"
-start_sample = 2304000
-pulse_window_ms = 100
-
-[[sections]]
-name = "08_08_pencil"
-start_sample = 2764800
-pulse_window_ms = 100
-
-[[sections]]
-name = "09_09_watercolor"
-start_sample = 3225600
-pulse_window_ms = 100
-
-[[sections]]
-name = "10_10_looks"
-start_sample = 3571200
-pulse_window_ms = 100
-
-[[sections]]
-name = "18_11_user"
-start_sample = 4032000
-pulse_window_ms = 100
-
-[[sections]]
-name = "19_12_menu"
-start_sample = 4492800
-pulse_window_ms = 100
-
-[[sections]]
-name = "20_13_hands"
-start_sample = 4953600
+name = "11_10_looks"
+start_sample = 3686400
 pulse_window_ms = 100
 
 [[sections]]

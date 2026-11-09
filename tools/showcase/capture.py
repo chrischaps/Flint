@@ -47,13 +47,16 @@ HERE = ROOT / "tools" / "showcase"
 POINTS_WIDE = 1920  # the canvas point-sized things are laid out on
 
 
+def target_dir():
+    """Cargo's output folder: $CARGO_TARGET_DIR, else the repo's target/."""
+    return Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+
+
 def player_path():
     exe = "flint-player.exe" if os.name == "nt" else "flint-player"
-    path = ROOT / "target" / "release" / exe
+    path = target_dir() / "release" / exe
     if not path.exists():
-        raise SystemExit(
-            f"no {path.relative_to(ROOT)}: cargo build --release --bin flint-player"
-        )
+        raise SystemExit(f"no {path}: cargo build --release --bin flint-player")
     return path
 
 
@@ -87,7 +90,8 @@ def cut_needs(cut, film, beats):
     bar = bar_seconds(cut)
     by_id = {b["id"]: b for b in beats}
     needs = {}
-    for shot in cut["shot"]:
+    tail = cut["cut"].get("tail_bars", 0) * bar
+    for i, shot in enumerate(cut["shot"]):
         beat = by_id.get(shot["beat"])
         if beat is None:
             raise SystemExit(f"cut shot names unknown beat {shot['beat']!r}")
@@ -95,6 +99,8 @@ def cut_needs(cut, film, beats):
         if take not in {t["name"] for t in takes_of(beat)}:
             raise SystemExit(f"cut shot names unknown take {shot['beat']}/{take}")
         end = shot["start_s"] + shot["bars"] * bar
+        if i == len(cut["shot"]) - 1:
+            end += tail  # the last take runs on under the tail
         if end > beat["seconds"] + 1e-6:
             raise SystemExit(
                 f"shot {shot['beat']}/{take} runs to {end:.2f} s, past the beat's "
@@ -228,9 +234,10 @@ def main():
         cut = load_cut(args.cut)
         width = args.width or int(round(cut["cut"]["width"] * args.scale))
         height = args.height or int(round(cut["cut"]["height"] * args.scale))
-        # The point canvas scales with the frame, so a --scale preview keeps
-        # the cut's layout (cells, captions' room) and is just smaller
-        points_wide = cut["cut"].get("points_wide", POINTS_WIDE) * width / cut["cut"]["width"]
+        # The point canvas stays the cut's, so a --scale preview keeps its
+        # layout (cells, captions' room, where the input scripts click) and
+        # is just smaller: pixels_per_point scales with the frame
+        points_wide = cut["cut"].get("points_wide", POINTS_WIDE)
         # A cut keeps its own frame rate (the reel is 30 fps, the master 60):
         # its takes step the clock 1/fps of the cut, never a resampled master
         film = {**film, "fps": cut["cut"].get("fps", film["fps"])}

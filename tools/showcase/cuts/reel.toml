@@ -24,6 +24,8 @@ width = 1080
 height = 1920
 story_bars = 6
 tail_bars = 0
+# What #437 promises (Instagram takes longer reels); cut.py refuses past it
+max_seconds = 90
 # Point-sized things (ASCII cells, pencil spacing, outlines) are laid out on
 # a canvas this many points wide: pixels_per_point = 1080 / 720 = 1.5. The
 # master's 1920-point canvas would make an 8-point cell 4.5 px here, fine
@@ -42,6 +44,15 @@ label_font = ["CascadiaMono.ttf", "consola.ttf", "DejaVuSansMono.ttf"]
 # The soundtrack, written to this cut's bars by `python tools/showcase/music.py
 # reel` (#438); cut.py cuts silent, and says so, until it exists
 audio = "~/flint-film/music/many-hands-reel.wav"
+
+# H.264 High, BT.709, a keyframe a second, under Instagram's bitrate
+[encode]
+crf = 16
+preset = "slow"
+gop_s = 1.0
+maxrate = "24M"
+bufsize = "48M"
+audio_bitrate = "192k"
 
 # The last shot ends on a card: the title over the evening, then black
 [cut.end]
