@@ -33,6 +33,22 @@ pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
     },
 };
 
+/// Lighten blending: the brighter of src and dst, channel by channel, for a
+/// fragment that has already multiplied its colour by its alpha. Nothing drawn
+/// with it can darken what's behind it.
+pub(crate) const LIGHTEN_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+};
+
 /// Multiply blending: src*DstColor + dst*OneMinusSrcAlpha.
 pub(crate) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {

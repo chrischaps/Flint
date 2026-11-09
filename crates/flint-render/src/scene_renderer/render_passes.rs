@@ -1341,15 +1341,25 @@ impl SceneRenderer {
         // no depth write, so they can't hide each other: drawing the back faces as
         // well would double every two-sided leaf card and muddy the crown. They
         // test against depth, so the part of a copy behind its own tree stays hidden.
+        // A prop whose echoes may only add light (`echo_blend = "lighten"`)
+        // draws them with a max blend instead.
         if let Some(sp) = &self.skinned_pipeline {
             if !self.echo_draws.is_empty() {
-                render_pass.set_pipeline(&sp.transparent_alpha_pipeline);
+                let mut lighten = None;
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
                 // A tree's echoes share a transform, and an echo's parts its
                 // bones, so a grove rebinds those far less often than it draws.
                 let mut transform = None;
                 let mut bones = None;
                 for draw in &self.echo_draws {
+                    if lighten != Some(draw.lighten) {
+                        render_pass.set_pipeline(if draw.lighten {
+                            &sp.echo_lighten_pipeline
+                        } else {
+                            &sp.transparent_alpha_pipeline
+                        });
+                        lighten = Some(draw.lighten);
+                    }
                     if transform
                         .is_none_or(|t| !std::sync::Arc::ptr_eq(t, &draw.transform_bind_group))
                     {

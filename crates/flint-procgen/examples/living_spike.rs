@@ -631,6 +631,7 @@ mod noise {
                         rotation,
                         length_scale: (1.0 + self.0.stretch * field.at(3, mid)).clamp(0.5, 1.5),
                         radius_scale: 1.0,
+                        slide: [0.0; 3],
                     }
                 })
                 .collect();

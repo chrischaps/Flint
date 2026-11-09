@@ -18,6 +18,9 @@ pub struct SkinnedPipeline {
     pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
     pub transparent_additive_pipeline: wgpu::RenderPipeline,
     pub transparent_multiply_pipeline: wgpu::RenderPipeline,
+    /// Living props' echoes that may only add light (`[living] echo_blend =
+    /// "lighten"`): front faces, no depth write, a max blend.
+    pub echo_lighten_pipeline: wgpu::RenderPipeline,
     pub bone_bind_group_layout: wgpu::BindGroupLayout,
     /// What shallow wooze's skinned pipelines build on (#215).
     pub(crate) shader: wgpu::ShaderModule,
@@ -211,7 +214,10 @@ impl SkinnedPipeline {
         // mesh a single double-sided pass blends its own back faces over its front
         // faces in index order, which shows as triangular patches on a translucent
         // sphere. Two passes make every convex translucent object order-independent.
-        let make_transparent_alpha = |label: &str, cull_mode: Option<wgpu::Face>| {
+        let make_transparent = |label: &str,
+                                cull_mode: Option<wgpu::Face>,
+                                fragment: &str,
+                                blend: wgpu::BlendState| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -223,10 +229,10 @@ impl SkinnedPipeline {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs_skinned"),
+                    entry_point: Some(fragment),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: Some(blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -255,13 +261,24 @@ impl SkinnedPipeline {
                 cache: None,
             })
         };
-        let transparent_alpha_back_pipeline = make_transparent_alpha(
+        let alpha = wgpu::BlendState::ALPHA_BLENDING;
+        let transparent_alpha_back_pipeline = make_transparent(
             "Skinned Transparent Alpha Pipeline (back faces)",
             Some(wgpu::Face::Front),
+            "fs_skinned",
+            alpha,
         );
-        let transparent_alpha_pipeline = make_transparent_alpha(
+        let transparent_alpha_pipeline = make_transparent(
             "Skinned Transparent Alpha Pipeline (front faces)",
             Some(wgpu::Face::Back),
+            "fs_skinned",
+            alpha,
+        );
+        let echo_lighten_pipeline = make_transparent(
+            "Skinned Echo Lighten Pipeline",
+            Some(wgpu::Face::Back),
+            "fs_skinned_lighten",
+            crate::pipeline::LIGHTEN_BLEND,
         );
 
         // Transparent additive pipeline for skinned meshes
@@ -409,6 +426,7 @@ impl SkinnedPipeline {
             transparent_alpha_back_pipeline,
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
+            echo_lighten_pipeline,
             bone_bind_group_layout,
             shader,
             pipeline_layout,

@@ -232,6 +232,7 @@ impl SceneRenderer {
             crate::debug::DebugMode::Pbr => self.entity_echoes.get(&entity_id),
             _ => None,
         };
+        let echoes_lighten = self.entity_echo_lighten.contains(&entity_id);
 
         for (mesh_index, gpu_mesh) in skinned_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
@@ -383,6 +384,7 @@ impl SceneRenderer {
                     material_buffer: buffer,
                     material_bind_group: bind_group,
                     bone_bind_group: copy.bind_group.clone(),
+                    lighten: echoes_lighten,
                     origin: [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]],
                     echo,
                     sort_depth: 0.0,

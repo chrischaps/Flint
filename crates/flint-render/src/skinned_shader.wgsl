@@ -411,6 +411,19 @@ fn evaluate_light(
 
 @fragment
 fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade_skinned(in);
+}
+
+// A living prop's echo that may only add light (`[living] echo_blend =
+// "lighten"`): its colour premultiplied by its opacity, for a max blend, so a
+// pixel ends as the brighter of what was there and the echo's share of light.
+@fragment
+fn fs_skinned_lighten(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = shade_skinned(in);
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
+fn shade_skinned(in: VertexOutput) -> vec4<f32> {
     let dm = material.debug_mode;
 
     if (dm == 1u) {
