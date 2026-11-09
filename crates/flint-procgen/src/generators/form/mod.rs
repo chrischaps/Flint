@@ -68,8 +68,10 @@ pub struct FormParams {
     pub sides: u32,
     pub body_color: [f32; 4],
     pub body_roughness: f32,
+    pub body_opacity: f32,
     // The cards.
     pub cards: u32,
+    pub card_layout: CardLayout,
     pub card_size: f32,
     pub card_aspect: f32,
     pub card_lift: f32,
@@ -81,6 +83,12 @@ pub struct FormParams {
     pub card_color: [f32; 4],
     pub card_shades: u32,
     pub card_roughness: f32,
+    // Rows: the cards as lines of writing (`card_layout = "rows"`).
+    pub row_spacing: f32,
+    pub row_margin: f32,
+    pub word_gap: f32,
+    pub paragraph_lines: f32,
+    pub row_faces: RowFaces,
     // The pose vocabulary.
     pub bend_deg: f32,
     pub ripple: f32,
@@ -115,7 +123,9 @@ impl Default for FormParams {
             sides: 64,
             body_color: parse_hex_color(DEFAULT_BODY).expect("a valid colour"),
             body_roughness: 0.8,
+            body_opacity: 1.0,
             cards: 520,
+            card_layout: CardLayout::Scatter,
             card_size: 0.06,
             card_aspect: 1.5,
             card_lift: 0.012,
@@ -127,6 +137,11 @@ impl Default for FormParams {
             card_color: parse_hex_color(DEFAULT_CARD).expect("a valid colour"),
             card_shades: 4,
             card_roughness: 0.7,
+            row_spacing: 0.04,
+            row_margin: 0.1,
+            word_gap: 0.012,
+            paragraph_lines: 6.0,
+            row_faces: RowFaces::Both,
             bend_deg: 16.0,
             ripple: 0.5,
             ripple_waves: 1.4,
@@ -135,6 +150,44 @@ impl Default for FormParams {
             stretch: 0.05,
         }
     }
+}
+
+/// Where the cards lie: `card_layout`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardLayout {
+    /// Scattered over the whole surface by area, like scales or flakes.
+    Scatter,
+    /// In rows across the broad faces, a card a word, like lines of writing.
+    Rows,
+}
+
+/// Which broad faces carry rows: `row_faces`. The front is the face turned
+/// away from `facing_deg`, so a page curling away from you shows you its front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowFaces {
+    Front,
+    Back,
+    Both,
+}
+
+/// An enum key: its value must be one of `names`, read as the matching item.
+fn one_of<T: Copy>(
+    t: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    names: &[(&str, T)],
+) -> Result<Option<T>> {
+    let Some(v) = t.get(key) else {
+        return Ok(None);
+    };
+    let s = toml_string(v, key)?;
+    names
+        .iter()
+        .find(|(name, _)| *name == s)
+        .map(|(_, item)| Some(*item))
+        .ok_or_else(|| {
+            let all: Vec<String> = names.iter().map(|(n, _)| format!("{n:?}")).collect();
+            invalid(key, format!("{s:?}: must be one of {}", all.join(", ")))
+        })
 }
 
 const DEFAULT_PROFILE: [f32; 6] = [0.6, 0.95, 1.0, 0.85, 0.55, 0.15];
@@ -250,7 +303,15 @@ impl FormParams {
         int!("sides", sides, 6, 1024);
         colour!("body_color", body_color);
         num!("body_roughness", body_roughness, closed(0.0, 1.0));
+        num!("body_opacity", body_opacity, closed(0.0, 1.0));
         int!("cards", cards, 0, 20_000);
+        if let Some(layout) = one_of(
+            t,
+            "card_layout",
+            &[("scatter", CardLayout::Scatter), ("rows", CardLayout::Rows)],
+        )? {
+            p.card_layout = layout;
+        }
         num!("card_size", card_size, above(0.0, 10.0));
         num!("card_aspect", card_aspect, above(0.0, 10.0));
         num!("card_lift", card_lift, closed(0.0, 1.0));
@@ -262,6 +323,21 @@ impl FormParams {
         colour!("card_color", card_color);
         int!("card_shades", card_shades, 1, 8);
         num!("card_roughness", card_roughness, closed(0.0, 1.0));
+        num!("row_spacing", row_spacing, above(0.0, 10.0));
+        num!("row_margin", row_margin, closed(0.0, 0.9));
+        num!("word_gap", word_gap, closed(0.0, 10.0));
+        num!("paragraph_lines", paragraph_lines, closed(0.0, 1000.0));
+        if let Some(faces) = one_of(
+            t,
+            "row_faces",
+            &[
+                ("front", RowFaces::Front),
+                ("back", RowFaces::Back),
+                ("both", RowFaces::Both),
+            ],
+        )? {
+            p.row_faces = faces;
+        }
         num!("bend_deg", bend_deg, closed(0.0, 90.0));
         num!("ripple", ripple, closed(0.0, 2.0));
         num!("ripple_waves", ripple_waves, closed(0.0, 6.0));
@@ -648,15 +724,19 @@ impl Generator for FormGenerator {
                     "description": "The body's colour, sRGB hex" },
                 "body_roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.body_roughness,
                     "description": "The body's roughness, 0 glossy to 1 matte" },
+                "body_opacity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.body_opacity,
+                    "description": "How much of the body shows: 1 solid; below 1 it's drawn translucent after everything opaque, and its echoes with it; 0 not at all, so the form is only its cards" },
                 "cards": { "type": "integer", "minimum": 0, "maximum": 20000, "default": d.cards,
-                    "description": "Cards on the surface: what boils. 0 is a smooth form" },
+                    "description": "Cards on the surface: what boils. 0 is a smooth form. With `card_layout = \"rows\"` it's the most there can be, and the rows decide how many" },
+                "card_layout": { "type": "string", "enum": ["scatter", "rows"], "default": "scatter",
+                    "description": "Where cards lie: `scatter` over the whole surface by area; `rows` in lines across the broad faces, a card a word, so a flat form reads as a page of writing. In rows `card_size` is a stroke's thickness and `card_aspect` a typical word's length over it, the cards lie flat, and `card_tilt` and `card_rise` have nothing to do" },
                 "card_size": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 10.0, "default": d.card_size,
                     "description": "Typical card width, metres; each varies ±30%" },
                 "card_aspect": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 10.0, "default": d.card_aspect,
                     "description": "A card's length over its width: above 1 a feather or flake along the surface" },
                 "card_lift": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.card_lift,
                     "description": "How far a card sits off the surface, metres" },
-                "card_tilt": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.card_tilt,
+                "card_tilt": { "x-when": { "card_layout": ["scatter"] }, "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.card_tilt,
                     "description": "How far cards stand up off the surface toward the tip: 0 flat like scales, 1 upright like a fringe, which boils the outline's edge" },
                 "card_turn_deg": { "type": "number", "minimum": 0.0, "maximum": 180.0, "default": d.card_turn_deg,
                     "description": "Largest turn of a card about its normal away from pointing up the surface, degrees" },
@@ -664,7 +744,7 @@ impl Generator for FormGenerator {
                     "description": "Height fraction where cards begin, below `card_to`" },
                 "card_to": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.card_to,
                     "description": "Height fraction where cards end" },
-                "card_rise": { "type": "number", "minimum": -0.9, "maximum": 10.0, "default": d.card_rise,
+                "card_rise": { "x-when": { "card_layout": ["scatter"] }, "type": "number", "minimum": -0.9, "maximum": 10.0, "default": d.card_rise,
                     "description": "How cards crowd along the length: 0 by area alone, above 0 toward the tip, below 0 toward the base" },
                 "card_color": { "type": "string", "pattern": hex, "default": DEFAULT_CARD,
                     "description": "The cards' middle colour, sRGB hex; shades spread warmer and cooler around it" },
@@ -672,6 +752,16 @@ impl Generator for FormGenerator {
                     "description": "Shades the cards are spread over, each a part of its own the jitter tints" },
                 "card_roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.card_roughness,
                     "description": "The cards' roughness, 0 glossy to 1 matte" },
+                "row_spacing": { "x-when": { "card_layout": ["rows"] }, "type": "number", "exclusiveMinimum": 0.0, "maximum": 10.0, "default": d.row_spacing,
+                    "description": "Rows: metres from one line to the next, up the surface" },
+                "row_margin": { "x-when": { "card_layout": ["rows"] }, "type": "number", "minimum": 0.0, "maximum": 0.9, "default": d.row_margin,
+                    "description": "Rows: the share of the section's half-width kept clear at each side, so lines stop short of the edge and never bristle at the outline" },
+                "word_gap": { "x-when": { "card_layout": ["rows"] }, "type": "number", "minimum": 0.0, "maximum": 10.0, "default": d.word_gap,
+                    "description": "Rows: metres between words; each gap varies ±30%" },
+                "paragraph_lines": { "x-when": { "card_layout": ["rows"] }, "type": "number", "minimum": 0.0, "maximum": 1000.0, "default": d.paragraph_lines,
+                    "description": "Rows: lines in a typical paragraph, whose last line stops short and whose next begins indented; 0 is one unbroken block" },
+                "row_faces": { "x-when": { "card_layout": ["rows"] }, "type": "string", "enum": ["front", "back", "both"], "default": "both",
+                    "description": "Rows: which broad faces carry lines. The front is the face turned away from `facing_deg`, so a page curling away from you shows you its front" },
                 "bend_deg": { "type": "number", "minimum": 0.0, "maximum": 90.0, "default": d.bend_deg,
                     "description": "Pose: how far a pose leans the tip, degrees, at drift amplitude 1. The slow lean of the whole form" },
                 "ripple": { "type": "number", "minimum": 0.0, "maximum": 2.0, "default": d.ripple,
