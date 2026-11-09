@@ -52,956 +52,956 @@ db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 action = "marker"
 label = "02_type/main"
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "harmony"
 action = "set_gain"
 db = -5.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "world_voice"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "home_theme"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:8"
+at = "beat:10"
 bus = "texture"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 action = "marker"
 label = "03_edges/main"
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "harmony"
 action = "set_gain"
 db = -5.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "world_voice"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "home_theme"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:28"
+at = "beat:30"
 bus = "texture"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 action = "marker"
 label = "04_entities/main"
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "foundation"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "harmony"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "world_voice"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:40"
+at = "beat:42"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 action = "marker"
 label = "05_mask/main"
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "foundation"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "harmony"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "world_voice"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "home_theme"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:54"
+at = "beat:56"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 action = "marker"
 label = "06_story/main"
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "foundation"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "harmony"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "world_voice"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:66"
+at = "beat:68"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 action = "marker"
 label = "07_reveal/main"
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "foundation"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "harmony"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "world_voice"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:80"
+at = "beat:82"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 action = "marker"
 label = "08_pencil/main"
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "foundation"
 action = "set_gain"
 db = -6.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "world_voice"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:96"
+at = "beat:98"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 action = "marker"
 label = "09_watercolor/main"
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "foundation"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "harmony"
 action = "set_gain"
 db = 1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "world_voice"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:112"
+at = "beat:114"
 bus = "texture"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:120"
+at = "beat:122"
 bus = "harmony"
 action = "set_lpf"
 hz = 1400.0
 ramp_ms = 1800.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 action = "marker"
 label = "10_looks/ascii_noir"
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "harmony"
 action = "set_lpf"
 hz = 20000.0
 ramp_ms = 300.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "home_theme"
 action = "set_lpf"
 hz = 20000.0
 ramp_ms = 300.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:124"
+at = "beat:126"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 action = "marker"
 label = "10_looks/matrix"
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:126"
+at = "beat:128"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 action = "marker"
 label = "10_looks/ink_wash"
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:128"
+at = "beat:130"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 action = "marker"
 label = "10_looks/graphite"
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:130"
+at = "beat:132"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 action = "marker"
 label = "10_looks/watercolor"
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:132"
+at = "beat:134"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 action = "marker"
 label = "10_looks/coloured_pencil"
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:134"
+at = "beat:136"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 action = "marker"
 label = "10_looks/blueprint"
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:136"
+at = "beat:138"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 action = "marker"
 label = "10_looks/charcoal"
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "harmony"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:138"
+at = "beat:140"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 action = "marker"
 label = "11_user/main"
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "foundation"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "harmony"
 action = "set_gain"
 db = -3.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "world_voice"
 action = "set_gain"
 db = -1.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:140"
+at = "beat:142"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 action = "marker"
 label = "12_menu/main"
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "foundation"
 action = "set_gain"
 db = -4.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "harmony"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "world_voice"
 action = "set_gain"
 db = -6.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "home_theme"
 action = "set_gain"
 db = -2.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:156"
+at = "beat:158"
 bus = "texture"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:157"
+at = "beat:159"
 bus = "harmony"
 action = "set_lpf"
 hz = 650.0
 ramp_ms = 1100.0
 
 [[events]]
-at = "beat:157"
+at = "beat:159"
 bus = "home_theme"
 action = "set_lpf"
 hz = 1300.0
 ramp_ms = 1100.0
 
 [[events]]
-at = "beat:158.833"
+at = "beat:160.833"
 bus = "harmony"
 action = "set_lpf"
 hz = 20000.0
 ramp_ms = 1300.0
 
 [[events]]
-at = "beat:158.833"
+at = "beat:160.833"
 bus = "home_theme"
 action = "set_lpf"
 hz = 40000.0
 ramp_ms = 1300.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 action = "marker"
 label = "13_hands/main"
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "harmony"
 action = "set_lpf"
 hz = 20000.0
 ramp_ms = 300.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "home_theme"
 action = "set_lpf"
 hz = 20000.0
 ramp_ms = 300.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "foundation"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "harmony"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "world_voice"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "home_theme"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "child_motif"
 action = "set_gain"
 db = 0.0
 ramp_ms = 150.0
 
 [[events]]
-at = "beat:172"
+at = "beat:174"
 bus = "texture"
 action = "set_gain"
 db = 0.0

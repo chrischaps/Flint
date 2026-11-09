@@ -131,6 +131,7 @@ class Cut:
     bars: float
     tail_bars: float
     raw: dict = field(default_factory=dict)
+    fps: int = 30  # the picture's; the JSON gives each shot's first frame at it
 
     @property
     def beats(self) -> float:
@@ -170,7 +171,7 @@ def load_cut(path: Path) -> Cut:
     bars = at / BAR
     if abs(bars - round(bars)) > 1e-9:
         raise SystemExit(f"{path}: the cut is {bars} bars; it must end on a bar line")
-    return Cut(c["name"], shots, round(bars), tail, d)
+    return Cut(c["name"], shots, round(bars), tail, d, int(c.get("fps", 30)))
 
 
 # --- the arrangement ----------------------------------------------------------

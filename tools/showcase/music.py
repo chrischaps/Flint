@@ -62,8 +62,9 @@ def flint_bin(explicit: str | None) -> list[str]:
     if explicit:
         return [explicit]
     exe = "flint.exe" if os.name == "nt" else "flint"
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
     for d in ("release", "debug"):
-        p = ROOT / "target" / d / exe
+        p = target / d / exe
         if p.exists():
             return [str(p)]
     return ["cargo", "run", "--release", "--quiet", "--bin", "flint", "--"]
@@ -202,6 +203,8 @@ def build(cut_path: Path, out: Path, flint: list[str], quiet: bool = False,
         "seconds": round(cut.seconds, 3),
         "samples": len(final),
         "sample_rate": synth.SR,
+        "fps": cut.fps,
+        "frames": int(round(cut.seconds * cut.fps)),
         "frames_30fps": int(round(cut.seconds * 30)),
         "frames_60fps": int(round(cut.seconds * 60)),
         "events_fired": fired,
@@ -210,13 +213,15 @@ def build(cut_path: Path, out: Path, flint: list[str], quiet: bool = False,
         "sha256": hashlib.sha256(wav.read_bytes()).hexdigest(),
         "shots": [
             {"beat": s.beat, "take": s.take, "bar": s.start / 4, "bars": s.length / 4,
-             "at_s": round(s.start * score.BEAT_S, 3), "frame_30fps": int(round(s.start * 18))}
+             "at_s": round(s.start * score.BEAT_S, 3),
+             "frame": int(round(s.start * score.BEAT_S * cut.fps)),
+             "frame_30fps": int(round(s.start * 18))}
             for s in cut.shots
         ],
     }
     (out / f"many-hands-{cut.name}.json").write_text(json.dumps(report, indent=2) + "\n",
                                                      encoding="utf-8")
-    say(f"  {wav}: {report['seconds']} s = {report['frames_30fps']} frames at 30 fps, "
+    say(f"  {wav}: {report['seconds']} s = {report['frames']} frames at {cut.fps} fps, "
         f"{meter['integrated_lufs']} LUFS, {meter['true_peak_dbtp']} dBTP, "
         f"{meter['clipped_samples']} clipped, {fired} events ({late} late)")
     return report
