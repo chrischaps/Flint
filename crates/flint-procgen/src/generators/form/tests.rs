@@ -229,6 +229,12 @@ fn bad_values_are_refused_by_name() {
             toml::Value::Array(vec![1.0.into(), (-1.0).into()]),
         ),
         ("body_color", "not a colour".into()),
+        ("body_opacity", 1.5.into()),
+        ("card_layout", "grid".into()),
+        ("card_layout", 1.into()),
+        ("row_faces", "left".into()),
+        ("row_margin", 0.95.into()),
+        ("row_spacing", 0.0.into()),
     ];
     for (key, value) in cases {
         let mut t = table(&example());
@@ -263,41 +269,68 @@ fn nudge_base() -> toml::map::Map<String, toml::Value> {
     t
 }
 
+/// The nudge base written in rows, on one face, so the row keys have
+/// something to act on.
+fn rows_base() -> toml::map::Map<String, toml::Value> {
+    let mut t = nudge_base();
+    t.insert("card_layout".into(), "rows".into());
+    t.insert("row_faces".into(), "front".into());
+    t.insert("aspect".into(), 0.1.into());
+    t.insert("card_size".into(), 0.012.into());
+    t.insert("card_aspect".into(), 4.0.into());
+    t.insert("cards".into(), 2000.into());
+    t
+}
+
 /// Every key the schema lists changes what's made, and nothing else is read:
-/// a nudge to each moves the digest.
+/// a nudge to each moves the digest, in scattered cards or in rows (some keys
+/// only mean something in one of them).
 #[test]
 fn the_schema_says_exactly_which_keys_the_form_reads() {
     let schema = FormGenerator.param_schema();
     let props = schema["properties"].as_object().unwrap();
-    let base = nudge_base();
-    let before = digest(&with_params(toml::Value::Table(base.clone())));
+    let bases = [nudge_base(), rows_base()];
+    let befores: Vec<u64> = bases
+        .iter()
+        .map(|b| digest(&with_params(toml::Value::Table(b.clone()))))
+        .collect();
     let defaults = FormParams::default();
     let mut idle = Vec::new();
     for (key, prop) in props {
-        let current = base.get(key).cloned().unwrap_or_else(|| {
-            serde_json::from_value::<toml::Value>(prop["default"].clone())
-                .unwrap_or_else(|_| panic!("{key}: default"))
+        let moved = bases.iter().zip(&befores).any(|(base, before)| {
+            let current = base.get(key).cloned().unwrap_or_else(|| {
+                serde_json::from_value::<toml::Value>(prop["default"].clone())
+                    .unwrap_or_else(|_| panic!("{key}: default"))
+            });
+            let nudged = match (&current, prop.get("enum")) {
+                (toml::Value::String(s), Some(names)) => names
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| n.as_str().unwrap())
+                    .find(|n| n != s)
+                    .unwrap()
+                    .into(),
+                (toml::Value::Integer(n), _) => toml::Value::Integer(n - 1),
+                (toml::Value::Float(x), _) if *x == 0.0 => toml::Value::Float(0.05),
+                (toml::Value::Float(x), _) => toml::Value::Float(x * 0.9),
+                (toml::Value::String(s), _) => toml::Value::String(if s.ends_with('0') {
+                    format!("{}8", &s[..s.len() - 1])
+                } else {
+                    format!("{}0", &s[..s.len() - 1])
+                }),
+                (toml::Value::Array(a), _) => {
+                    let mut a = a.clone();
+                    a[1] = toml::Value::Float(a[1].as_float().unwrap() * 0.8);
+                    toml::Value::Array(a)
+                }
+                other => panic!("{key}: can't nudge {other:?}"),
+            };
+            let mut t = base.clone();
+            t.insert(key.clone(), nudged);
+            digest(&with_params(toml::Value::Table(t))) != *before
         });
-        let nudged = match (&current, prop["type"].as_str().unwrap()) {
-            (toml::Value::Integer(n), _) => toml::Value::Integer(n - 1),
-            (toml::Value::Float(x), _) if *x == 0.0 => toml::Value::Float(0.05),
-            (toml::Value::Float(x), _) => toml::Value::Float(x * 0.9),
-            (toml::Value::String(s), _) => toml::Value::String(if s.ends_with('0') {
-                format!("{}8", &s[..s.len() - 1])
-            } else {
-                format!("{}0", &s[..s.len() - 1])
-            }),
-            (toml::Value::Array(a), _) => {
-                let mut a = a.clone();
-                a[1] = toml::Value::Float(a[1].as_float().unwrap() * 0.8);
-                toml::Value::Array(a)
-            }
-            other => panic!("{key}: can't nudge {other:?}"),
-        };
-        let mut t = base.clone();
-        t.insert(key.clone(), nudged);
-        let spec = with_params(toml::Value::Table(t));
-        if digest(&spec) == before {
+        if !moved {
             idle.push(key.clone());
         }
     }
@@ -314,6 +347,113 @@ fn the_schema_says_exactly_which_keys_the_form_reads() {
             defaults,
             "{key}'s default"
         );
+    }
+}
+
+fn rows_spec(faces: &str) -> ProcGenSpec {
+    let mut t = rows_base();
+    t.insert("row_faces".into(), faces.into());
+    t.insert("lobes".into(), 0.0.into());
+    t.insert("twist_turns".into(), 0.0.into());
+    // A page's outline, so every line has room (a flame's tip has none).
+    t.insert(
+        "profile".into(),
+        toml::Value::Array(vec![1.0.into(), 1.0.into(), 1.0.into()]),
+    );
+    t.insert("round_base".into(), 0.02.into());
+    t.insert("round_tip".into(), 0.02.into());
+    // Upright, broad side square to the curl's plane: a line is level.
+    t.insert("curl_deg".into(), 0.0.into());
+    t.insert("lean".into(), 0.0.into());
+    t.insert("coil".into(), 0.0.into());
+    t.insert("section_deg".into(), 90.0.into());
+    with_params(toml::Value::Table(t))
+}
+
+/// Each card's centre and front normal, in the rest pose.
+fn card_centres(spec: &ProcGenSpec) -> Vec<(Vec3, Vec3)> {
+    let mesh = FormGenerator.structure(spec, LINEAGE).unwrap().leaf_mesh;
+    mesh.vertices
+        .chunks(CARD_VERTICES)
+        .map(|card| {
+            let centre = card[..4]
+                .iter()
+                .fold(Vec3::ZERO, |s, v| s + Vec3::from_array(v.position))
+                * 0.25;
+            (centre, Vec3::from_array(card[0].normal))
+        })
+        .collect()
+}
+
+#[test]
+fn rows_write_one_face_and_stop_short_of_the_edge() {
+    let spec = rows_spec("front");
+    let p = FormParams::from_toml(&spec.params).unwrap();
+    let lin = body::Lineage::new(&mut SeededRng::new(LINEAGE).fork("lineage"));
+    let spine = body::Spine::new(&p, &lin);
+    let cards = card_centres(&spec);
+    assert!(cards.len() > 200, "{} cards", cards.len());
+    assert!(cards.len() <= p.cards as usize);
+    // Every card faces the same way as the first: one face written.
+    let first = cards[0].1;
+    assert!(cards.iter().all(|(_, n)| n.dot(&first) > 0.5));
+    // None reaches the margin: the outline has no marks standing out of it.
+    for (centre, _) in &cards {
+        let (near, f) = (0..=200)
+            .map(|i| i as f32 / 200.0)
+            .map(|u| (u, spine.frame(u)))
+            .min_by(|a, b| {
+                (a.1.centre - *centre)
+                    .length()
+                    .total_cmp(&(b.1.centre - *centre).length())
+            })
+            .unwrap();
+        let half = body::radius_along(&p, &lin, near, 0.0);
+        let off = (*centre - f.centre).length();
+        assert!(
+            off <= half * (1.0 - p.row_margin) + 0.02,
+            "a card {off} m out where the margin is at {}",
+            half * (1.0 - p.row_margin)
+        );
+    }
+    // Both faces is about twice the writing, back to back.
+    let both = card_centres(&rows_spec("both"));
+    assert!(both.len() as f32 > 1.6 * cards.len() as f32);
+    assert!(both.iter().any(|(_, n)| n.dot(&first) < -0.5));
+}
+
+#[test]
+fn rows_fall_into_lines() {
+    let spec = rows_spec("front");
+    let p = FormParams::from_toml(&spec.params).unwrap();
+    let mut heights: Vec<f32> = card_centres(&spec).iter().map(|(c, _)| c.y).collect();
+    heights.sort_by(f32::total_cmp);
+    // Cards fall into lines: between two lines there's a gap of most of a
+    // line's spacing, and inside one, nearly none.
+    let gaps: Vec<f32> = heights.windows(2).map(|w| w[1] - w[0]).collect();
+    let lines = gaps
+        .iter()
+        .filter(|g| **g > 0.5 * p.row_spacing * 0.8)
+        .count()
+        + 1;
+    let expected = ((p.card_to - p.card_from) * p.height / p.row_spacing) as usize;
+    assert!(
+        lines + 3 >= expected && lines <= expected + 1,
+        "{lines} lines, about {expected} expected"
+    );
+}
+
+#[test]
+fn body_opacity_is_the_body_materials_alpha() {
+    let mut t = table(&example());
+    t.insert("body_opacity".into(), 0.25.into());
+    let spec = with_params(toml::Value::Table(t));
+    let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+    let body = &rig.mesh.materials[rig.mesh.submeshes[0].material_index];
+    assert_eq!(body.base_color[3], 0.25);
+    // The cards stay solid.
+    for sub in &rig.mesh.submeshes[1..] {
+        assert_eq!(rig.mesh.materials[sub.material_index].base_color[3], 1.0);
     }
 }
 
