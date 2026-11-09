@@ -486,6 +486,8 @@ pub fn upload_props(
         if let Some(count) = blend.echo_count {
             renderer.set_entity_echo_count(blend.entity, count);
         }
+        let lighten = props.prop(id).echo_blend() == flint_procgen::EchoBlend::Lighten;
+        renderer.set_entity_echo_lighten(blend.entity, lighten);
         if let Some(first) = blend.first_bone {
             renderer.write_entity_bones(device, queue, blend.entity, first, &frame.bones);
             writes += 1;
