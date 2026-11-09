@@ -609,8 +609,9 @@ pub struct RenderArgs {
 
     /// The game time to capture: living props, the wooze field and everything else
     /// a clock drives, as the player has them at that time. Seconds (3.5), or a span
-    /// (0..4) for an animated --output x.gif. Physics and animation clips don't
-    /// run, and scripts only with --scripts. Same value, same pixels
+    /// (0..4) for an animated --output x.gif or a PNG a frame to --output
+    /// frames/f-%05d.png, in one frame's memory however long. Physics and animation
+    /// clips don't run, and scripts only with --scripts. Same value, same pixels
     #[arg(long, value_parser = render_plan::parse_time)]
     pub time: Option<TimeSpec>,
 
@@ -2106,11 +2107,18 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         eprintln!("Warning: {warning}");
     }
 
+    let output = Path::new(&args.output);
+    // Where each frame goes as it's captured, so a span costs memory for one
+    // frame however long it runs (#588).
+    let sequence = animated && render_plan::is_sequence(&args.output);
+    let mut gif = None;
+    let mut still = None;
+    let mut written_bytes = 0u64;
+    let (mut frame_width, mut frame_height) = (width, height);
     let mut captures = Vec::new();
-    let mut frames: Vec<image::RgbaImage> = Vec::with_capacity(times.len());
     // Whether each pair of neighbouring columns has differed in any frame yet.
     let mut columns_differ = vec![false; columns.saturating_sub(1)];
-    for &t in &times {
+    for (index, &t) in times.iter().enumerate() {
         let mut cells = Vec::with_capacity(columns);
         for (column, stage) in stages.iter_mut().enumerate() {
             cells.push(stage.capture(args, ctx, t, frame_step)?);
@@ -2132,12 +2140,49 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         for (differ, pair) in columns_differ.iter_mut().zip(cells.windows(2)) {
             *differ |= pair[0] != pair[1];
         }
-        frames.push(match sweep {
+        let frame = match sweep {
             Some(sweep) => {
                 super::style_sheet::compose(&cells, &sheet_text(sweep, &scene_name, t, &stages))
             }
             None => cells.remove(0),
-        });
+        };
+        (frame_width, frame_height) = frame.dimensions();
+        if sequence {
+            let path = render_plan::sequence_path(&args.output, index);
+            if let Some(parent) = Path::new(&path)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            frame
+                .save(&path)
+                .with_context(|| format!("Failed to save frame {index} to {path}"))?;
+            written_bytes += std::fs::metadata(&path).map_or(0, |m| m.len());
+        } else if animated {
+            let frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
+            let spool = match &mut gif {
+                Some(spool) => spool,
+                None => gif.insert(gif_writer::Spool::new(
+                    output,
+                    frame.width(),
+                    frame.height(),
+                    times.len(),
+                )?),
+            };
+            spool.push(&frame)?;
+        } else {
+            still = Some(frame);
+        }
+    }
+
+    // A span's clocks run on to its end (the end itself is never a frame, so that
+    // the GIF loops), so what the scripts log covers all of it.
+    if let Some(TimeSpec::Range(_, end)) = args.time {
+        for stage in &mut stages {
+            stage.advance(end, frame_step);
+        }
     }
 
     // What the scripts asked for that isn't in the picture, said once as it
@@ -2157,32 +2202,37 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     }
 
     // Write the file
-    let output = Path::new(&args.output);
-    if animated {
-        let rgb: Vec<image::RgbImage> = frames
-            .iter()
-            .map(|f| image::DynamicImage::ImageRgba8(f.clone()).into_rgb8())
-            .collect();
-        gif_writer::write(output, &rgb, args.fps)?;
+    if sequence {
         say!(
-            "Rendered {} frames of {}x{} at {} fps to {} ({:.1} MB)",
-            rgb.len(),
-            rgb[0].width(),
-            rgb[0].height(),
+            "Rendered {} frames of {frame_width}x{frame_height} at {} fps to {} ({:.1} MB)",
+            times.len(),
+            args.fps,
+            args.output,
+            written_bytes as f64 / 1e6,
+        );
+    } else if animated {
+        let spool = gif.context("a span captured no frames")?;
+        let (frames, spilled) = (spool.frames(), spool.spilled());
+        spool.finish(args.fps)?;
+        say!(
+            "Rendered {frames} frames of {frame_width}x{frame_height} at {} fps to {} \
+             ({:.1} MB; {:.1} MB waited on disk)",
             args.fps,
             args.output,
             std::fs::metadata(output).map_or(0.0, |m| m.len() as f64 / 1e6),
+            spilled as f64 / 1e6,
         );
     } else {
-        frames[0]
+        let still = still.context("the render captured no frame")?;
+        still
             .save(&args.output)
             .context(format!("Failed to save image to {}", args.output))?;
         match sweep {
             Some(_) => say!(
                 "Rendered {} columns of {width}x{height} as {}x{} to {}",
                 columns,
-                frames[0].width(),
-                frames[0].height(),
+                frame_width,
+                frame_height,
                 args.output
             ),
             None => say!("Rendered {width}x{height} image to {}", args.output),
@@ -2762,13 +2812,7 @@ impl Stage {
         t: f64,
         frame_step: f64,
     ) -> Result<image::RgbaImage> {
-        let (steps, rest) = render_plan::steps_within(t - self.clock, frame_step);
-        for _ in 0..steps {
-            self.step_clocks(frame_step);
-        }
-        if rest > 0.0 {
-            self.step_clocks(rest);
-        }
+        self.advance(t, frame_step);
         if let Some(run) = &mut self.living {
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
@@ -2832,6 +2876,18 @@ impl Stage {
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
             .context("Failed to create image from pixel data")
+    }
+
+    /// Move the clocks on to `t` a `frame_step` at a time, landing on `t` exactly,
+    /// without a picture. `t` only goes forward.
+    fn advance(&mut self, t: f64, frame_step: f64) {
+        let (steps, rest) = render_plan::steps_within(t - self.clock, frame_step);
+        for _ in 0..steps {
+            self.step_clocks(frame_step);
+        }
+        if rest > 0.0 {
+            self.step_clocks(rest);
+        }
     }
 
     /// One step of everything on the clock, in the order of the player's frame:

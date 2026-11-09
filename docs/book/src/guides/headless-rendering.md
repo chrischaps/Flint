@@ -321,6 +321,19 @@ The span leaves out its last moment, so that a span one cycle long loops cleanly
 
 Nothing moves in the file that didn't move in the render. All the frames share one palette with no dithering, and a pixel the render left alone is written as transparent over the last frame. On 24 frames of the bench, in which 75.5% of the pixels never change, this keeps all of them still, where the `image` crate's encoder, with a new palette every frame, shimmers 81% of them by as much as 22 levels. That shimmer would look just like the boil you're trying to judge. It also comes out smaller: 1.8 MB to its 2.5 MB.
 
+### Long spans
+
+A span of any length renders in about the memory of one frame. The palette is learned from every frame, so the GIF can't be encoded until the last one is in, and until then each frame waits on disk beside the output (`x.gif.frames~`, removed when the GIF is written, or if the render fails) as its difference from the frame before, deflated. Footage that is mostly still costs almost nothing there. The GIF comes out the same, byte for byte, as when all the frames were held at once.
+
+To edit the footage, or to encode it yourself, give `--output` a numbered PNG path instead. Each frame is written as it's captured, and nothing waits:
+
+```bash
+flint render live.scene.toml --scripts --time 0..900 --fps 8 -o frames/live-%05d.png
+ffmpeg -framerate 8 -i frames/live-%05d.png -pix_fmt yuv420p live.mp4
+```
+
+`%d` numbers from 0 at its natural width, and `%05d` pads to five digits. A span's clocks, and its scripts, run on to the span's end, though the end itself is never a frame, so a script's log covers all of `0..900` rather than stopping at the last capture.
+
 ## What a Prop Was Doing
 
 `--report json` writes one JSON object on stdout, and moves everything else to stderr:
