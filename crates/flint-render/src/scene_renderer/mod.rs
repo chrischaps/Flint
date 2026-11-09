@@ -391,6 +391,8 @@ struct EchoDrawCall {
     material_buffer: Arc<MaterialBuffer>,
     material_bind_group: Arc<wgpu::BindGroup>,
     bone_bind_group: Arc<wgpu::BindGroup>,
+    /// Whether it may only add light: its entity's `[living] echo_blend`.
+    lighten: bool,
     /// Where the entity stands, since all its echoes sort as one.
     origin: [f32; 3],
     /// Which echo: they draw in this order, so farthest from now first.
@@ -664,6 +666,8 @@ pub struct SceneRenderer {
     entity_part_tints: HashMap<flint_core::EntityId, Vec<[f32; 3]>>,
     /// Living props' echoes, in the order they draw. Empty costs nothing.
     entity_echoes: HashMap<flint_core::EntityId, Vec<EntityEcho>>,
+    /// The entities whose echoes may only add light.
+    entity_echo_lighten: std::collections::HashSet<flint_core::EntityId>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
 }
@@ -781,6 +785,7 @@ impl SceneRenderer {
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
             entity_echoes: HashMap::new(),
+            entity_echo_lighten: std::collections::HashSet::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -2265,6 +2270,7 @@ impl SceneRenderer {
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
             entity_echoes: HashMap::new(),
+            entity_echo_lighten: std::collections::HashSet::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -2651,6 +2657,17 @@ impl SceneRenderer {
         }
     }
 
+    /// How an entity's echoes meet what's behind them: over it at their
+    /// opacity (`false`, the default), or `lighten`, the brighter of the two,
+    /// so an echo can only add light and never darken the form it's behind.
+    pub fn set_entity_echo_lighten(&mut self, entity_id: flint_core::EntityId, lighten: bool) {
+        if lighten {
+            self.entity_echo_lighten.insert(entity_id);
+        } else {
+            self.entity_echo_lighten.remove(&entity_id);
+        }
+    }
+
     /// Multiply the vertex colour of one part of an entity's skinned mesh by
     /// `tint`. Materials are shared by content, so a few distinct tints cost a
     /// few materials, however many entities use them: keep them few.
@@ -2673,6 +2690,7 @@ impl SceneRenderer {
         self.entity_shadow_bone_buffers.clear();
         self.entity_part_tints.clear();
         self.entity_echoes.clear();
+        self.entity_echo_lighten.clear();
         self.skinned_bone_binds.clear();
     }
 

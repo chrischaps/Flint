@@ -52,6 +52,7 @@ fn digest(spec: &ProcGenSpec) -> u64 {
             s.rotation.iter().for_each(|c| mix(c.to_bits()));
             mix(s.length_scale.to_bits());
             mix(s.radius_scale.to_bits());
+            s.slide.iter().for_each(|c| mix(c.to_bits()));
         }
     }
     digest
@@ -441,6 +442,102 @@ fn rows_fall_into_lines() {
         lines + 3 >= expected && lines <= expected + 1,
         "{lines} lines, about {expected} expected"
     );
+}
+
+#[test]
+fn a_slide_moves_the_form_along_its_lines_and_changes_nothing_else() {
+    let spec = example();
+    let skeleton = FormGenerator.structure(&spec, LINEAGE).unwrap();
+    let with = |slide: f32, reflow: f32| {
+        let mut t = table(&spec);
+        t.insert("slide".into(), f64::from(slide).into());
+        t.insert("slide_reflow".into(), f64::from(reflow).into());
+        with_params(toml::Value::Table(t))
+    };
+    let whole = with(0.1, 0.0);
+    let built = build(&whole, LINEAGE).unwrap();
+    let reach = 0.1 * amplitude(&whole);
+    let n = skeleton.segments.len();
+    for seed in [1, 2, 3] {
+        let plain = FormGenerator.full_pose(&spec, &skeleton, seed).unwrap();
+        let slid = FormGenerator.full_pose(&whole, &skeleton, seed).unwrap();
+        // The slide is drawn last, so the rest of the pose is the same bits,
+        // and a spec without one poses as it did before there was a slide.
+        for (a, b) in plain.segments.iter().zip(&slid.segments) {
+            assert_eq!(a.slide, [0.0; 3]);
+            assert_eq!(
+                (a.rotation, a.length_scale, a.radius_scale),
+                (b.rotation, b.length_scale, b.radius_scale)
+            );
+        }
+        // With no reflow, one move for the whole form, along the lines.
+        let size = Vec3::from_array(slid.segments[0].slide).length();
+        assert!(
+            size > 0.0 && size <= reach + 1e-6,
+            "slid {size}, at most {reach}"
+        );
+        for (i, s) in slid.segments.iter().enumerate() {
+            let axis = body::broad_axis(&built.p, &built.spine, (i as f32 + 0.5) / n as f32);
+            let v = Vec3::from_array(s.slide);
+            assert!(
+                (v - axis * v.dot(&axis)).length() < 1e-6,
+                "segment {i} slides off its lines"
+            );
+            assert!(
+                (v.length() - size).abs() < 1e-5,
+                "segment {i} slides {} not {size}",
+                v.length()
+            );
+        }
+        // Each segment is where it would have been, moved by its own slide
+        // and no other: a slide doesn't carry to the segment's children.
+        let (a, b) = (
+            skeleton.posed_segments(&plain).unwrap(),
+            skeleton.posed_segments(&slid).unwrap(),
+        );
+        for (i, ((x, y), s)) in a.iter().zip(&b).zip(&slid.segments).enumerate() {
+            let s = Vec3::from_array(s.slide);
+            assert!(
+                (y.start - x.start - s).length() < 1e-5,
+                "segment {i}'s start"
+            );
+            assert!((y.end - x.end - s).length() < 1e-5, "segment {i}'s end");
+        }
+    }
+    // With reflow the lines at one height go one way and at another the other.
+    let reflow = with(0.1, 1.0);
+    let pose = FormGenerator.full_pose(&reflow, &skeleton, 1).unwrap();
+    let sizes: Vec<f32> = pose
+        .segments
+        .iter()
+        .map(|s| Vec3::from_array(s.slide).length())
+        .collect();
+    let (least, most) = sizes
+        .iter()
+        .fold((f32::MAX, 0.0f32), |(l, m), s| (l.min(*s), m.max(*s)));
+    assert!(
+        most - least > 0.01,
+        "a reflowing slide should change up the form: {sizes:?}"
+    );
+}
+
+#[test]
+fn keep_size_doesnt_read_a_slide_as_stretch() {
+    let mut t = table(&example());
+    t.insert("slide".into(), 0.3.into());
+    t.insert("slide_reflow".into(), 1.0.into());
+    let slid = with_params(toml::Value::Table(t));
+    let mut t = table(&example());
+    t.insert("slide".into(), 0.0.into());
+    let plain = with_params(toml::Value::Table(t));
+    let skeleton = FormGenerator.structure(&plain, LINEAGE).unwrap();
+    for seed in [1, 2, 3] {
+        let a = FormGenerator.pose(&plain, &skeleton, seed).unwrap();
+        let b = FormGenerator.pose(&slid, &skeleton, seed).unwrap();
+        for (x, y) in a.segments.iter().zip(&b.segments) {
+            assert_eq!(x.length_scale, y.length_scale);
+        }
+    }
 }
 
 #[test]
