@@ -133,6 +133,60 @@ pub struct LivingConfig {
     /// spec's text unless changed, since they don't touch what's baked.
     #[serde(default, skip_serializing_if = "EchoConfig::is_default")]
     pub echoes: EchoConfig,
+    /// How its echoes meet what's behind them. It's the spec's alone: no
+    /// scene, species or live tuning changes it.
+    #[serde(default, skip_serializing_if = "EchoBlend::is_default")]
+    pub echo_blend: EchoBlend,
+    /// Whose the poses' slide is (`form_v1`'s `slide`; see [`SegmentPose::slide`]
+    /// in `living.rs`). 0, the default: every pose's, the prop's own too. Above
+    /// 0 it belongs to the echoes: the prop itself never slides, and an echo's
+    /// slide grows with its distance from now, whole at this many steps. So
+    /// echoes at a spread of 0 sit on the prop, and wide ones stand beside it,
+    /// while the prop moves only as its other terms say. Up to 2 steps.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub echo_slide: f32,
+}
+
+fn is_zero(x: &f32) -> bool {
+    *x == 0.0
+}
+
+impl LivingConfig {
+    /// How much of its poses' slide a copy `offset` steps from now shows (the
+    /// prop itself is at 0). See [`Self::echo_slide`].
+    pub fn slide_shown(&self, offset: f32) -> f32 {
+        slide_shown(self.echo_slide, offset)
+    }
+}
+
+/// [`LivingConfig::slide_shown`] for an `echo_slide` of `steps`.
+pub fn slide_shown(steps: f32, offset: f32) -> f32 {
+    if steps <= 0.0 {
+        1.0
+    } else {
+        (offset.abs() / steps).min(1.0)
+    }
+}
+
+/// `[living] echo_blend`: how a prop's echoes meet what's behind them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EchoBlend {
+    /// Over it at the echo's opacity, as a translucent copy: an echo in
+    /// shadow darkens a lit prop behind it.
+    #[default]
+    Over,
+    /// The brighter of the two, channel by channel, with the echo's colour
+    /// at its opacity: an echo only ever adds light, so it can't darken the
+    /// prop it's behind, and echoes laid over each other don't add up. For a
+    /// form drawn light on a dark ground (chrischaps/Embodiment#40).
+    Lighten,
+}
+
+impl EchoBlend {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 fn default_pose_ring() -> u32 {
@@ -169,6 +223,12 @@ impl LivingConfig {
             return bad(
                 "step",
                 format!("{}: must be more than 0 seconds", self.step),
+            );
+        }
+        if !(self.echo_slide.is_finite() && (0.0..=2.0).contains(&self.echo_slide)) {
+            return bad(
+                "echo_slide",
+                format!("{}: must be in [0.0, 2.0] steps", self.echo_slide),
             );
         }
         if !unit(self.glide) {
@@ -777,6 +837,48 @@ variance = { amount = 1, steady = 0, keep_size = false }
         assert_eq!(copies.len(), 3);
         assert!(copies[0].offset < 0.0 && copies[1].offset > 0.0 && copies[2].offset < 0.0);
         assert!(copies[2].offset.abs() < copies[0].offset.abs());
+    }
+
+    #[test]
+    fn echo_blend_is_over_unless_a_spec_says_lighten() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        assert_eq!(spec.living.as_ref().unwrap().echo_blend, EchoBlend::Over);
+        assert!(!toml::to_string(&spec).unwrap().contains("echo_blend"));
+
+        let text = with_living("lineage_seed = 3\necho_blend = \"lighten\"");
+        let spec = ProcGenSpec::parse(&text).unwrap();
+        assert_eq!(spec.living.as_ref().unwrap().echo_blend, EchoBlend::Lighten);
+        assert!(toml::to_string(&spec)
+            .unwrap()
+            .contains("echo_blend = \"lighten\""));
+
+        let text = with_living("lineage_seed = 3\necho_blend = \"screen\"");
+        assert!(ProcGenSpec::parse(&text).is_err());
+    }
+
+    #[test]
+    fn echo_slide_gives_the_slide_to_the_echoes() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        // By default the slide is every pose's, the prop's own too.
+        assert_eq!(living.echo_slide, 0.0);
+        assert_eq!(living.slide_shown(0.0), 1.0);
+        assert_eq!(living.slide_shown(1.3), 1.0);
+        assert!(!toml::to_string(&spec).unwrap().contains("echo_slide"));
+
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3\necho_slide = 1.5")).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        // The prop never slides, an echo more the further it is, whole from 1.5.
+        assert_eq!(living.slide_shown(0.0), 0.0);
+        assert!((living.slide_shown(-0.75) - 0.5).abs() < 1e-6);
+        assert!((living.slide_shown(0.75) - 0.5).abs() < 1e-6);
+        assert_eq!(living.slide_shown(1.8), 1.0);
+
+        for bad in ["-0.5", "2.5"] {
+            let text = with_living(&format!("lineage_seed = 3\necho_slide = {bad}"));
+            let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
+            assert!(error.contains("living.echo_slide"), "{bad}: {error}");
+        }
     }
 
     #[test]

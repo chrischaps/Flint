@@ -43,7 +43,7 @@ use crate::living::{
     SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
 };
 use crate::registry::GeneratorRegistry;
-use crate::spec::{EchoConfig, EchoCopy, ProcGenSpec, Stagger, VarianceConfig};
+use crate::spec::{EchoBlend, EchoConfig, EchoCopy, ProcGenSpec, Stagger, VarianceConfig};
 use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
@@ -396,6 +396,9 @@ struct DrawnState {
 struct DrawnBones {
     times: Vec<WarpedTime>,
     turns: [f32; JITTER_CHANNELS],
+    /// How much of the poses' slide it showed: it changes with an echo's
+    /// offset while the clock holds, and must be drawn when it does.
+    slide: f32,
     /// Each part's cycle, by segment id. Holds what the part started it with, for
     /// this buffer alone: an echo reaches each beat at a moment of its own.
     parts: Vec<Cycle>,
@@ -624,6 +627,10 @@ pub struct LivingProp {
     /// What its echoes are set to, or are about to be, in the units a person
     /// turns: [`Self::echoes`] is what those work out to.
     echo_config: EchoConfig,
+    /// How its echoes meet what's behind them: its spec's.
+    echo_blend: EchoBlend,
+    /// Its spec's `echo_slide`: 0, or the steps at which an echo's slide is whole.
+    echo_slide: f32,
     /// How deep its lineage's tree is, once built. A ring's size depends on it.
     max_depth: u32,
     /// Clocks it's been asked for and is waiting on poses to start.
@@ -909,6 +916,11 @@ impl LivingProp {
         for echo in &mut self.echoes {
             echo.drawn.times.clear();
         }
+    }
+
+    /// How its echoes meet what's behind them, as its spec says.
+    pub fn echo_blend(&self) -> EchoBlend {
+        self.echo_blend
     }
 
     /// What its echoes are set to, as a person would turn them.
@@ -1783,6 +1795,8 @@ impl LivingProps {
                 })
                 .collect(),
             echo_config,
+            echo_blend: living.echo_blend,
+            echo_slide: living.echo_slide,
             max_depth: 0,
             pending: None,
             echoes_changed: false,
@@ -1840,6 +1854,7 @@ impl LivingProps {
             t,
             prop.beats,
             &prop.wooze,
+            crate::spec::slide_shown(prop.echo_slide, 0.0),
             &mut prop.drawn.bones,
             frame,
         );
@@ -1877,8 +1892,10 @@ impl LivingProps {
                     ring.get(wanted).map(|p| &**p)
                 });
                 if found {
+                    let slide = crate::spec::slide_shown(prop.echo_slide, 0.0);
                     for segment in &mut pose.segments {
                         *segment = segment.pulled(shown);
+                        segment.slide = segment.slide.map(|x| x * slide);
                     }
                 }
                 if found
@@ -1917,6 +1934,7 @@ impl LivingProps {
         let t = prop.echo_jitter_time(echo, self.time + prop.jitter_ahead);
         let beats = prop.echo_beats(echo);
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
+        let slide = crate::spec::slide_shown(prop.echo_slide, prop.echoes[echo].copy.offset);
         let drawn = &mut prop.echoes[echo].drawn;
         let never_posed = drawn.times.is_empty();
         let moved = blend_bones(
@@ -1929,6 +1947,7 @@ impl LivingProps {
             t,
             beats,
             &prop.wooze,
+            slide,
             drawn,
             frame,
         );
@@ -2310,6 +2329,7 @@ fn blend_bones(
     t: f64,
     beats: f64,
     wooze: &WoozeSample,
+    slide: f32,
     drawn: &mut DrawnBones,
     frame: &mut BlendFrame,
 ) -> MovedBones {
@@ -2333,7 +2353,7 @@ fn blend_bones(
         });
     }
     let turned = turns != drawn.turns;
-    let drifted = frame.times != drawn.times;
+    let drifted = frame.times != drawn.times || slide != drawn.slide;
 
     frame.bones.clear();
     if drifted {
@@ -2350,6 +2370,9 @@ fn blend_bones(
                 if shown < 1.0 {
                     *segment = segment.pulled(shown);
                 }
+                if slide != 1.0 {
+                    segment.slide = segment.slide.map(|x| x * slide);
+                }
             }
         }
         let posed = found
@@ -2358,6 +2381,7 @@ fn blend_bones(
                 .is_ok();
         if posed {
             std::mem::swap(&mut drawn.times, &mut frame.times);
+            drawn.slide = slide;
             boil_bones(&turns, &mut frame.bones);
             drawn.turns = turns;
             moved.first_bone = Some(0);
