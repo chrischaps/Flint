@@ -39,6 +39,7 @@ flint render levels/tavern.scene.toml \
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
 | `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |
 | `--frames <n>` | (none) | Draw a moving sequence of `n` frames ([Frame sequences](#frame-sequences)) |
+| `--mesh <entity>=<files>` | (none) | Draw a frame per mesh file on that entity, one renderer for all ([Mesh sequences](#mesh-sequences)) |
 
 ## Post-Processing Flags
 
@@ -253,6 +254,30 @@ flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
 A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
+
+### Mesh sequences
+
+A procgen look test often has its frames already, as mesh files: one GLB per seed, per pose or per setting. `--mesh <entity>=<files>` draws a frame per file on one renderer, showing each file in turn on that entity, so twelve files cost one start-up instead of twelve (#222). The files are one GLB, a folder of them, or a wildcard in the file name, taken in natural order (`f2` before `f10`):
+
+```bash
+for s in $(seq 1 12); do flint gen specs/oak_tree.procgen.toml --seed $s -o out/oaks/oak_seed$s.glb; done
+flint render demo/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oaks.png --no-grid
+#   Sequence: 12 frames, 0.083333 s apart
+#   Rendered 12 640x360 frames as one 2664x1346 sheet to oaks.png
+```
+
+![Twelve seeds of one oak spec on a labelled contact sheet, one cell per GLB, drawn in one flint render run](../images/mesh-sequence-oaks.png)
+
+| Output | What it writes |
+|--------|----------------|
+| `-o seq.png` | `seq_0000.png`... as `--frames` numbers them |
+| `-o frames/f-%03d.png` | a PNG a frame, numbered as the pattern says |
+| `-o oaks.gif` | one GIF at `--fps` (default 12; at most 50) |
+| `--sheet -o oaks.png` | one contact sheet, each cell labelled with its file's name (cells 640x360 unless `--width`/`--height`) |
+
+Repeat `--mesh` to move several entities at once, frame for frame: `--mesh tree_a=out/oaks --mesh tree_b='out/willows/w*.glb'` gives frame *n* the *n*th file of each, and refuses lists of different lengths. Frames are 1/`--fps` apart (or `--frame-dt`), so `--orbit`, `--camera-path`, post time and particles move as in any sequence. `demo/mesh_sequence.scene.toml` has three slots (`tree_a` in the middle, `tree_b` and `tree_c` either side) and a bench for scale.
+
+The bound entity's `model` is pointed at an asset of its own (`mesh-seq/<entity>`) and marked `runtime`, so the scene's loader leaves it alone and other entities naming the same asset keep theirs. An entity with no model gets one. A GLB of several mesh nodes, or one moved by its node, is baked into one mesh, so a swap is one upload. Skinned files draw their rest pose. A mesh sequence draws on the still path, so it refuses `--time`, `--scripts`, `--sweep` and scenes with living props or a `[wooze]` table. On a shared machine, release build, 960x540: 12 oaks in one run took 2.05 s, and 12 runs of one file each took 24.2 s (the minimum of three alternating rounds). `crates/flint-cli/tests/render_mesh_cli.rs` checks that the last frame of a sequence is byte-identical to that file rendered alone.
 ## A Chosen Moment
 
 `--time` captures a scene at a game time, so that two settings can be compared at the same instant:
@@ -264,6 +289,14 @@ flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
 [Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component), shallow wooze, the [shading boil](../concepts/post-processing.md) and the [wooze field](../concepts/procgen.md#the-wooze-field) they all read run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time), particles (`--particle-time` overrides those), and `--boil-time` holds the boil on one drawing. The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
 
 It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
+
+Several moments of one run are a list, each later than the one before:
+
+```bash
+flint render demo/living_props.scene.toml --time 2,5,9.5 -o at.png
+```
+
+That writes a still a moment beside `--output`, numbered as a [`--frames`](#frame-sequences) sequence is (`at_0000.png`, `at_0001.png`, `at_0002.png`). It's one run: the scene loads once and the clocks step through the moments in order, so it simulates to the last moment once, where three renders would simulate to each. A moment that falls on the step (1/60 s, or `--frame-step`) gets the same bytes it gets rendered alone. Between moments off the step, the clocks take one short step to land on each, as a span's frames do. `--report json` has a capture a moment, and a `--sweep` writes a sheet a moment.
 
 Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
 
@@ -321,6 +354,19 @@ The span leaves out its last moment, so that a span one cycle long loops cleanly
 
 Nothing moves in the file that didn't move in the render. All the frames share one palette with no dithering, and a pixel the render left alone is written as transparent over the last frame. On 24 frames of the bench, in which 75.5% of the pixels never change, this keeps all of them still, where the `image` crate's encoder, with a new palette every frame, shimmers 81% of them by as much as 22 levels. That shimmer would look just like the boil you're trying to judge. It also comes out smaller: 1.8 MB to its 2.5 MB.
 
+### Long spans
+
+A span of any length renders in about the memory of one frame. The palette is learned from every frame, so the GIF can't be encoded until the last one is in, and until then each frame waits on disk beside the output (`x.gif.frames~`, removed when the GIF is written, or if the render fails) as its difference from the frame before, deflated. Footage that is mostly still costs almost nothing there. The GIF comes out the same, byte for byte, as when all the frames were held at once.
+
+To edit the footage, or to encode it yourself, give `--output` a numbered PNG path instead. Each frame is written as it's captured, and nothing waits:
+
+```bash
+flint render live.scene.toml --scripts --time 0..900 --fps 8 -o frames/live-%05d.png
+ffmpeg -framerate 8 -i frames/live-%05d.png -pix_fmt yuv420p live.mp4
+```
+
+`%d` numbers from 0 at its natural width, and `%05d` pads to five digits. A span's clocks, and its scripts, run on to the span's end, though the end itself is never a frame, so a script's log covers all of `0..900` rather than stopping at the last capture.
+
 ## What a Prop Was Doing
 
 `--report json` writes one JSON object on stdout, and moves everything else to stderr:
@@ -365,7 +411,7 @@ Why the runtime values are here and not in `flint query`: query reads scene file
 
 ## CI Pipeline Integration
 
-Headless rendering works on machines without a display. Use it in CI to catch visual regressions:
+Headless rendering works on machines without a display. On one without a GPU, it needs a software adapter: lavapipe (`mesa-vulkan-drivers`) on Linux, WARP on Windows. [Linux and Headless Setup](../getting-started/installation.md#linux-and-headless-setup) has the packages. Use it in CI to catch visual regressions:
 
 ```yaml
 # Example GitHub Actions step

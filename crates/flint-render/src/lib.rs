@@ -34,6 +34,7 @@ mod primitives;
 pub mod quality;
 pub mod render_scale;
 pub mod render_stats;
+pub mod selection_outline;
 mod scene_renderer;
 pub mod shadow;
 pub mod entity_style;
@@ -55,13 +56,14 @@ pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use glyph_atlas::{
     EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas,
+    RampMap,
 };
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use context::{RenderContext, RenderError};
-pub use gpu_select::{list_adapters, set_gpu_override};
+pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
 pub use ground_fog::GroundFog;
 pub use debug::{DebugMode, DebugState};
@@ -228,9 +230,9 @@ mod tests {
     }
 
     #[test]
-    fn outline_shader_wgsl_parses() {
-        let source = include_str!("outline_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("outline_shader.wgsl failed to parse");
+    fn skinned_wire_shader_wgsl_parses() {
+        let source = include_str!("skinned_wire_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("skinned_wire_shader.wgsl failed to parse");
     }
 
     #[test]

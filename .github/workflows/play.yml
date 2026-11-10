@@ -25,6 +25,7 @@ on:
       - "crates/flint-player/index.html"
       - "crates/flint-player/src/bin/flint_web.rs"
       - "crates/flint-cli/src/commands/bundle.rs"
+      - "crates/flint-cli/src/commands/export.rs"
       - "tools/play-site/**"
       - ".github/workflows/play.yml"
   workflow_dispatch:
@@ -75,7 +76,9 @@ jobs:
       - name: Build the flint CLI
         run: cargo build -p flint-cli --bin flint
 
-      - name: Pack the games and assemble the site
+      # build.py fetches each game at its pin and runs `flint export web`
+      # on it into site/ (#106), the same command any game ships with
+      - name: Export the games into the site
         run: python3 tools/play-site/build.py --player play-dist --flint target/debug/flint --out site
 
       - name: What the site holds

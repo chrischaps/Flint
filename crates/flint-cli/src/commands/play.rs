@@ -20,6 +20,12 @@ pub struct PlayArgs {
     #[arg(long)]
     pub fullscreen: bool,
 
+    /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
+    /// and `--no-activate`: the window's size and place, its frame, whether
+    /// it stays on top and whether it takes the keyboard (#611)
+    #[command(flatten)]
+    pub window: flint_player::WindowArgs,
+
     /// Optional input config overlay path
     #[arg(long)]
     pub input_config: Option<String>,
@@ -61,7 +67,11 @@ pub struct PlayArgs {
 
 pub fn run(args: PlayArgs) -> Result<()> {
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             println!("{a}");
         }
         return Ok(());
@@ -132,6 +142,8 @@ pub fn run(args: PlayArgs) -> Result<()> {
     );
 
     app.scene_preload_audio = scene_file.scene.preload_audio;
+    app.window_size = args.window.size();
+    app.window_options = args.window.clone();
     app.expression_feed = expression_feed;
 
     // Apply initial mixer bus volumes from CLI

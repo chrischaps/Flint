@@ -6,7 +6,7 @@ mod file_dialog;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart,
+    asset, bundle, calibrate, edit_router, export, entity, gen, gen_preview, init, play, play_chart,
     play_suite, prefab, preview, query, render, render_suite, replay_chart, scene, schema,
     spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
 };
@@ -96,6 +96,11 @@ enum Commands {
 
     /// Pack a game folder into .flintpack bundles for the web player
     Bundle(bundle::BundleArgs),
+
+    /// Export a game for elsewhere: `flint export web <game>` writes a
+    /// folder any static server plays it from
+    #[command(subcommand)]
+    Export(export::ExportCommands),
 
     /// Validate a musical suite manifest (and optional beatmap chart)
     ValidateSuite(validate_suite::ValidateSuiteArgs),
@@ -193,6 +198,7 @@ fn main() -> Result<()> {
         ),
         Commands::Validate(args) => validate::run(args),
         Commands::Bundle(args) => bundle::run(args),
+        Commands::Export(cmd) => export::run(cmd),
         Commands::ValidateSuite(args) => validate_suite::run(args),
         Commands::PlaySuite(args) => play_suite::run(args),
         Commands::Calibrate(args) => calibrate::run(args),

@@ -641,9 +641,19 @@
         });
 
         async function decide() {
-          const game = query.get("game");
-          const named = game || query.has("bundle") || query.has("scene");
+          let game = query.get("game");
+          let named = game || query.has("bundle") || query.has("scene");
           const games = await listing();
+          // A folder holding one game (`flint export web`, #106) plays it at
+          // its bare address, and ?scene= picks a scene inside its bundle. The
+          // player reads ?game= once the doorway opens, so naming it in the
+          // address here is all it takes.
+          if (games && games.length === 1 && !game && !query.has("bundle")) {
+            game = games[0].id;
+            named = true;
+            query.set("game", game);
+            history.replaceState(null, "", `?${query}${location.hash}`);
+          }
           const entry = games && games.find((g) => g.id === game);
           if (games && games.length && !named) return list(games);
           if (games && game && !entry) return list(games, game);

@@ -817,8 +817,6 @@ impl SceneRenderer {
             }
         }
 
-        // In WireframeOnly mode: depth prepass masks outline interior,
-        // then outline, then wireframe lines on top.
         if wireframe_only {
             self.render_wireframe_only_pass(render_pass);
             if phase.draws_opaque() {
@@ -916,85 +914,10 @@ impl SceneRenderer {
         }
     }
 
-    /// Wireframe-only mode rendering: depth prepass + outline + wireframe lines.
+    /// Wireframe-only mode rendering: wireframe lines. The selection is
+    /// outlined over the finished image (#602).
     fn render_wireframe_only_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-        if let Some(sel_id) = self.selected_entity {
-            // Step 1: Depth prepass — write front-face depth (no color)
-            // so the outline interior is blocked by the depth buffer.
-            render_pass.set_pipeline(&self.pipeline.depth_prepass_pipeline);
-            for draw in self
-                .entity_draws
-                .iter()
-                .chain(self.transparent_draws.iter())
-            {
-                if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-            }
-
-            if let Some(sp) = &self.skinned_pipeline {
-                render_pass.set_pipeline(&sp.depth_prepass_pipeline);
-                for draw in self
-                    .skinned_entity_draws
-                    .iter()
-                    .chain(self.transparent_skinned_draws.iter())
-                {
-                    if draw.entity_id == Some(sel_id) {
-                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            draw.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                }
-            }
-
-            // Step 2: Outline — back faces pushed out, only visible at silhouette
-            render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-            for draw in self
-                .entity_draws
-                .iter()
-                .chain(self.transparent_draws.iter())
-            {
-                if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-            }
-
-            if let Some(sp) = &self.skinned_pipeline {
-                render_pass.set_pipeline(&sp.outline_pipeline);
-                for draw in self
-                    .skinned_entity_draws
-                    .iter()
-                    .chain(self.transparent_skinned_draws.iter())
-                {
-                    if draw.entity_id == Some(sel_id) {
-                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            draw.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Step 3: Wireframe lines — use overlay pipeline (LessEqual + bias)
-        // so lines draw on top of the depth prepass.
+        // Wireframe lines: the overlay pipeline (LessEqual + bias)
         render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
         for draw in &self.wireframe_overlay_draws {
             render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
@@ -1021,7 +944,7 @@ impl SceneRenderer {
         self.draw_skinned_wireframes(render_pass);
     }
 
-    /// Normal mode rendering: terrain → outlines → entities → skinned → billboards → sprites → transparent → particles → wireframe.
+    /// Normal mode rendering: terrain → entities → skinned → billboards → sprites → transparent → particles → wireframe.
     fn render_normal_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -1126,26 +1049,6 @@ impl SceneRenderer {
         }
 
         if phase.draws_opaque() {
-            // Outline pass for selected standard entities (before normal rendering)
-            if let Some(sel_id) = self.selected_entity {
-                render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-                for draw in self
-                    .entity_draws
-                    .iter()
-                    .chain(self.transparent_draws.iter())
-                {
-                    if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            draw.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                }
-            }
-
             // Normal entity rendering
             for draw in &self.entity_draws {
                 if draw.is_wireframe {
@@ -1161,29 +1064,6 @@ impl SceneRenderer {
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-            }
-
-            // Outline pass for selected skinned entities
-            if let Some(sel_id) = self.selected_entity {
-                if let Some(sp) = &self.skinned_pipeline {
-                    render_pass.set_pipeline(&sp.outline_pipeline);
-                    for draw in self
-                        .skinned_entity_draws
-                        .iter()
-                        .chain(self.transparent_skinned_draws.iter())
-                    {
-                        if draw.entity_id == Some(sel_id) {
-                            render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                            render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                            render_pass.set_index_buffer(
-                                draw.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                        }
-                    }
-                }
             }
 
             // Render skinned entities
@@ -1211,24 +1091,6 @@ impl SceneRenderer {
                 }
             }
 
-            // Outline pass for selected billboards
-            if let Some(sel_id) = self.selected_entity {
-                if let Some(bp) = &self.billboard_pipeline {
-                    render_pass.set_pipeline(&bp.outline_pipeline);
-                    for draw in &self.billboard_draws {
-                        if draw.entity_id == Some(sel_id) {
-                            render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
-                            render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
-                            render_pass.set_index_buffer(
-                                bp.quad_index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            render_pass.draw_indexed(0..6, 0, 0..1);
-                        }
-                    }
-                }
-            }
-
             // Billboard sprites (after geometry, uses depth test)
             if let Some(bp) = &self.billboard_pipeline {
                 if !self.billboard_draws.is_empty() {
@@ -1247,7 +1109,7 @@ impl SceneRenderer {
 
             // After every opaque draw: an overlay, not geometry (#346)
             self.draw_editor_grid(render_pass);
-        } // end opaque phase (outlines + entities + skinned + billboards + grid)
+        } // end opaque phase (entities + skinned + billboards + grid)
 
         if !phase.draws_ocean_and_after() {
             return;
@@ -1341,15 +1203,25 @@ impl SceneRenderer {
         // no depth write, so they can't hide each other: drawing the back faces as
         // well would double every two-sided leaf card and muddy the crown. They
         // test against depth, so the part of a copy behind its own tree stays hidden.
+        // A prop whose echoes may only add light (`echo_blend = "lighten"`)
+        // draws them with a max blend instead.
         if let Some(sp) = &self.skinned_pipeline {
             if !self.echo_draws.is_empty() {
-                render_pass.set_pipeline(&sp.transparent_alpha_pipeline);
+                let mut lighten = None;
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
                 // A tree's echoes share a transform, and an echo's parts its
                 // bones, so a grove rebinds those far less often than it draws.
                 let mut transform = None;
                 let mut bones = None;
                 for draw in &self.echo_draws {
+                    if lighten != Some(draw.lighten) {
+                        render_pass.set_pipeline(if draw.lighten {
+                            &sp.echo_lighten_pipeline
+                        } else {
+                            &sp.transparent_alpha_pipeline
+                        });
+                        lighten = Some(draw.lighten);
+                    }
                     if transform
                         .is_none_or(|t| !std::sync::Arc::ptr_eq(t, &draw.transform_bind_group))
                     {

@@ -173,6 +173,8 @@ pub struct ImportedMesh {
 /// `extras = { flint_lod = { near, far, draw_distance, ref_min, ref_max } }`
 /// (every key optional). Keep a model's levels as primitives of one mesh on
 /// one node: several mesh nodes are expanded into a child entity each.
+/// (Root nodes named `LOD_0`, `LOD_1`, ... without bands get them from
+/// [`band_lod_chain`](crate::band_lod_chain), #193.)
 ///
 /// The distance is measured from the camera to the closest point of the
 /// reference box `ref_min..ref_max` (model space; the mesh's own bounds when

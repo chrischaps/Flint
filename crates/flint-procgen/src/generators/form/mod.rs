@@ -17,7 +17,7 @@
 //! The parameters fall in four groups, described in [`FormGenerator::param_schema`]:
 //! the section (`radius`, `profile`, `aspect`, ...), the spine (`height`, `lean`,
 //! `curl_deg`, `coil`, ...), the cards (`cards`, `card_tilt`, ...) and the pose
-//! vocabulary (`bend_deg`, `ripple`, `swell`, `turn_deg`, `stretch`).
+//! vocabulary (`bend_deg`, `ripple`, `swell`, `turn_deg`, `stretch`, `slide`).
 
 mod body;
 mod cards;
@@ -96,6 +96,8 @@ pub struct FormParams {
     pub swell: f32,
     pub turn_deg: f32,
     pub stretch: f32,
+    pub slide: f32,
+    pub slide_reflow: f32,
 }
 
 impl Default for FormParams {
@@ -148,6 +150,8 @@ impl Default for FormParams {
             swell: 0.14,
             turn_deg: 0.0,
             stretch: 0.05,
+            slide: 0.0,
+            slide_reflow: 0.5,
         }
     }
 }
@@ -344,6 +348,8 @@ impl FormParams {
         num!("swell", swell, closed(0.0, 0.9));
         num!("turn_deg", turn_deg, closed(0.0, 180.0));
         num!("stretch", stretch, closed(0.0, 0.5));
+        num!("slide", slide, closed(0.0, 1.0));
+        num!("slide_reflow", slide_reflow, closed(0.0, 1.0));
         if let Some(v) = t.get("profile") {
             let Some(list) = v.as_array() else {
                 return Err(invalid("profile", "must be an array of numbers"));
@@ -424,12 +430,27 @@ impl FormGenerator {
             &mut SeededRng::new(lineage_seed).fork("cards"),
         );
         let leaf_bindings = bind_cards(&leaf_mesh, &built.segments);
+        // An echo's place (`[living] echo_places`) is measured along the
+        // lines of writing, the section's broad axis, and up the form, each
+        // segment's own way: the same frame the pose's slide moves along.
+        let n = built.segments.len();
+        let place_axes = built
+            .segments
+            .iter()
+            .enumerate()
+            .map(|(i, segment)| {
+                let u = (i as f32 + 0.5) / n as f32;
+                let along = body::broad_axis(&built.p, &built.spine, u);
+                [along.to_array(), segment.direction().to_array()]
+            })
+            .collect();
         LivingSkeleton {
             lineage_seed,
             segments: built.segments.clone(),
             leaf_mesh,
             card_index_count: CARD_INDICES,
             leaf_bindings,
+            place_axes,
         }
     }
 }
@@ -773,7 +794,11 @@ impl Generator for FormGenerator {
                 "turn_deg": { "type": "number", "minimum": 0.0, "maximum": 180.0, "default": d.turn_deg,
                     "description": "Pose: how far a pose turns the section about the spine at the tip, degrees: what a flat form shows" },
                 "stretch": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": d.stretch,
-                    "description": "Pose: how much a pose lengthens or shortens the spine, as a fraction (`[living] variance.keep_size` evens the box out again)" }
+                    "description": "Pose: how much a pose lengthens or shortens the spine, as a fraction (`[living] variance.keep_size` evens the box out again)" },
+                "slide": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.slide,
+                    "description": "Pose: how far a pose moves the form along its section's broad axis at most, metres: along the lines of a page in rows. Unlike a bend it doesn't pivot at the base, so an echo can stand beside the form rather than fan from its root" },
+                "slide_reflow": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.slide_reflow,
+                    "description": "Pose: how much of the slide changes along the length rather than moving the whole form: 0 slides it as one, 1 lets lines at one height go one way and lines at another the other" }
             },
             "additionalProperties": false
         })

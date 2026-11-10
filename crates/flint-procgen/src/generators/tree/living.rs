@@ -78,6 +78,7 @@ impl LivingGenerator for TreeGenerator {
             leaf_mesh,
             card_index_count: card_indices,
             leaf_bindings,
+            place_axes: Vec::new(),
         })
     }
 
@@ -231,6 +232,7 @@ fn segment_pose(rest: &BranchSegment, now: &BranchSegment) -> SegmentPose {
         rotation: rotation_between(rest.direction(), now.direction()),
         length_scale: ratio(now.length(), rest.length()),
         radius_scale: ratio(now.mean_radius(), rest.mean_radius()),
+        slide: [0.0; 3],
     }
 }
 
@@ -924,6 +926,9 @@ mod tests {
             stagger: Default::default(),
             variance,
             echoes: Default::default(),
+            echo_blend: Default::default(),
+            echo_slide: 0.0,
+            echo_places: Default::default(),
         });
         living.variance = variance;
         spec.living = Some(living);

@@ -32,6 +32,20 @@
 //! Late parts are fetched one after another in the order `[late]` lists
 //! them, and a file goes to the first part whose patterns match it. Put
 //! what is heard first in a small part of its own (#124).
+//!
+//! Two more tables (#106):
+//!
+//! ```toml
+//! [mount]                                  # a folder outside the game, packed at a path inside it
+//! "engine/schemas" = "../schemas"          # (Flint's demo/, whose schemas are the repo's)
+//! [web]                                    # what `flint export web` puts on the page
+//! title = "Flint demos"
+//! line = "One sentence under the title."
+//! ```
+//!
+//! A game with no `engine/schemas` of its own and no mount for it packs the
+//! engine's schemas from the Flint tree this CLI was built from, so a scene
+//! an agent wrote in an empty folder packs as it plays.
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
@@ -141,8 +155,8 @@ const ASSET_DIRS: &[&str] = &[
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BundleConfig {
-    name: Option<String>,
+pub struct BundleConfig {
+    pub name: Option<String>,
     scene: Option<String>,
     schemas: Option<Vec<String>>,
     #[serde(default)]
@@ -150,10 +164,78 @@ struct BundleConfig {
     #[serde(default)]
     include: Vec<String>,
     late: Option<BTreeMap<String, Vec<String>>>,
+    /// Bundle path → a folder relative to the game root, packed there.
+    #[serde(default)]
+    mount: BTreeMap<String, String>,
+    /// The page's words and film, for `flint export web`.
+    #[serde(default)]
+    pub web: WebMeta,
     /// `[late]`'s keys in the order the file lists them (a `BTreeMap`
     /// forgets it).
     #[serde(skip)]
     late_order: Vec<String>,
+}
+
+/// `bundle.toml`'s `[web]`: one game's entry in the page's `games.json`
+/// (the chooser's card, the gate's words, the film for a browser without
+/// WebGPU). `tools/play-site/games.toml` documents each key.
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WebMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controls: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub film: Option<String>,
+}
+
+impl WebMeta {
+    /// The keys, in the order `games.json` lists them after `id`.
+    pub const KEYS: &'static [&'static str] = &[
+        "title",
+        "line",
+        "controls",
+        "touch",
+        "orientation",
+        "page",
+        "video",
+        "poster",
+        "film",
+    ];
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Option<String>> {
+        Some(match key {
+            "title" => &mut self.title,
+            "line" => &mut self.line,
+            "controls" => &mut self.controls,
+            "touch" => &mut self.touch,
+            "orientation" => &mut self.orientation,
+            "page" => &mut self.page,
+            "video" => &mut self.video,
+            "poster" => &mut self.poster,
+            "film" => &mut self.film,
+            _ => return None,
+        })
+    }
+}
+
+/// The engine's own schemas, in the Flint tree this CLI was built from.
+fn engine_schemas() -> Option<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    dir.join("components").is_dir().then_some(dir)
 }
 
 impl BundleConfig {
@@ -242,10 +324,61 @@ fn glob_match(pattern: &str, path: &str) -> bool {
     segments(&pattern, &path)
 }
 
+/// Every file the rules keep, as its bundle path and the file on disk:
+/// those under `root`, then each mount's folder under its bundle path. A
+/// mounted file wins over one the game holds at the same path.
+fn collect(
+    root: &Path,
+    rules: &Rules,
+    mounts: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeMap<String, PathBuf>> {
+    let mut out: BTreeMap<String, PathBuf> = collect_under(root, rules)?
+        .into_iter()
+        .map(|key| {
+            let path = root.join(&key);
+            (key, path)
+        })
+        .collect();
+    for (at, dir) in mounts {
+        if !dir.is_dir() {
+            bail!("[mount] \"{at}\" = {}: not a folder", dir.display());
+        }
+        let at = normalize(Path::new(at));
+        // A mount replaces what the game has there.
+        out.retain(|key, _| !key.starts_with(&format!("{at}/")));
+        let mut stack = vec![PathBuf::new()];
+        while let Some(rel) = stack.pop() {
+            for entry in std::fs::read_dir(dir.join(&rel))
+                .with_context(|| format!("reading {}", dir.join(&rel).display()))?
+            {
+                let entry = entry?;
+                let rel_path = rel.join(entry.file_name());
+                if entry.file_type()?.is_dir() {
+                    stack.push(rel_path);
+                    continue;
+                }
+                let key = normalize(&Path::new(&at).join(&rel_path));
+                // The excludes still hold (a README, a dotfile), but a
+                // mount needs no include to be packed: it was asked for.
+                let any = |list: &[String]| list.iter().any(|p| glob_match(p, &key));
+                let excluded_by_name = rules
+                    .exclude
+                    .iter()
+                    .filter(|p| p.starts_with("**/"))
+                    .any(|p| glob_match(p, &key));
+                if any(&rules.include) || !excluded_by_name {
+                    out.insert(key, dir.join(&rel_path));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Every file under `root`, as normalized paths relative to it, that the
 /// rules keep. Excluded directories are not descended into unless an
 /// include could reach inside them.
-fn collect(root: &Path, rules: &Rules) -> Result<Vec<String>> {
+fn collect_under(root: &Path, rules: &Rules) -> Result<Vec<String>> {
     let mut out = Vec::new();
     let mut stack = vec![PathBuf::new()];
     while let Some(rel) = stack.pop() {
@@ -542,18 +675,44 @@ fn mb(bytes: u64) -> String {
     format!("{:.2} MB", bytes as f64 / 1_000_000.0)
 }
 
+/// The game's `bundle.toml`, or every default without one.
+pub fn read_config(root: &Path) -> Result<BundleConfig> {
+    let config_path = root.join("bundle.toml");
+    if config_path.is_file() {
+        let text = std::fs::read_to_string(&config_path)?;
+        BundleConfig::parse(&text).with_context(|| format!("reading {}", config_path.display()))
+    } else {
+        Ok(BundleConfig::default())
+    }
+}
+
+/// What a pack wrote (or, in a dry run, would have).
+pub struct Packed {
+    /// The scene the player starts.
+    pub scene: String,
+    /// The files, in the order written: the main bundle first.
+    pub files: Vec<(String, u64)>,
+}
+
 pub fn run(args: BundleArgs) -> Result<()> {
+    let out_dir = args
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| args.game.join("dist"));
+    let dry_run = args.dry_run;
+    pack(args)?;
+    if !dry_run {
+        println!("written to {}", out_dir.display());
+    }
+    Ok(())
+}
+
+pub fn pack(args: BundleArgs) -> Result<Packed> {
     let root = args.game.as_path();
     if !root.is_dir() {
         bail!("{} is not a folder", root.display());
     }
-    let config_path = root.join("bundle.toml");
-    let config: BundleConfig = if config_path.is_file() {
-        let text = std::fs::read_to_string(&config_path)?;
-        BundleConfig::parse(&text).with_context(|| format!("reading {}", config_path.display()))?
-    } else {
-        BundleConfig::default()
-    };
+    let config = read_config(root)?;
     let rules = Rules::from_config(&config);
 
     let name = args
@@ -568,10 +727,25 @@ pub fn run(args: BundleArgs) -> Result<()> {
         })
         .unwrap_or_else(|| "game".into());
 
-    let paths = collect(root, &rules)?;
+    let mut mounts: BTreeMap<String, PathBuf> = config
+        .mount
+        .iter()
+        .map(|(at, from)| (normalize(Path::new(at)), root.join(from)))
+        .collect();
+    if !mounts.contains_key("engine/schemas") && !root.join("engine/schemas").is_dir() {
+        if let Some(dir) = engine_schemas() {
+            println!(
+                "no engine/schemas in the game: packing the engine's, from {}",
+                dir.display()
+            );
+            mounts.insert("engine/schemas".into(), dir);
+        }
+    }
+
+    let paths = collect(root, &rules, &mounts)?;
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    for path in &paths {
-        let bytes = std::fs::read(root.join(path)).with_context(|| format!("reading {path}"))?;
+    for (path, from) in &paths {
+        let bytes = std::fs::read(from).with_context(|| format!("reading {}", from.display()))?;
         files.insert(path.clone(), bytes);
     }
 
@@ -682,16 +856,22 @@ pub fn run(args: BundleArgs) -> Result<()> {
             mb(bytes.len() as u64)
         );
     }
+    let packed = Packed {
+        scene,
+        files: written
+            .iter()
+            .map(|(file, _, bytes)| (file.clone(), bytes.len() as u64))
+            .collect(),
+    };
     if args.dry_run {
         println!("(dry run: nothing written)");
-        return Ok(());
+        return Ok(packed);
     }
     std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
     for (file, _, bytes) in &written {
         std::fs::write(out_dir.join(file), bytes)?;
     }
-    println!("written to {}", out_dir.display());
-    Ok(())
+    Ok(packed)
 }
 
 #[cfg(test)]

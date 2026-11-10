@@ -13,9 +13,149 @@ fn builtin_atlas_holds_printable_ascii_and_the_shade_blocks() {
     for c in printable_ascii().chain("─│╱╲░▒▓█".chars()) {
         assert!(atlas.contains(c), "built-in atlas lacks {c:?}");
     }
-    assert_eq!(atlas.glyphs().len(), 95 + 8);
+    // ASCII, edges + shades, corners and tees, quadrant blocks, braille.
+    assert_eq!(atlas.glyphs().len(), 95 + 8 + 9 + 14 + 256);
     // 16 columns of 8 px cells with a 1 px gutter.
-    assert_eq!(atlas.size(), [1 + 16 * 9, 1 + 7 * 9]);
+    assert_eq!(atlas.size(), [1 + 16 * 9, 1 + 24 * 9]);
+    // The new groups go after the old, so every older glyph keeps its cell.
+    assert_eq!(atlas.index_of('█'), Some(95 + 8 + 9 - 1));
+}
+
+#[test]
+fn builtin_corners_and_tees_meet_the_edge_strokes() {
+    let atlas = GlyphAtlas::builtin();
+    // Which of a glyph's arms (left, right, up, down) leave the cell, on
+    // the row and column the edge glyphs `─` and `│` use.
+    let arms = |c: char| {
+        let ink = |x, y| atlas.sample(c, x, y) == Some(255);
+        [ink(0, 3), ink(7, 3), ink(3, 0), ink(3, 7)]
+    };
+    let cases = [
+        ('┌', [false, true, false, true]),
+        ('┐', [true, false, false, true]),
+        ('└', [false, true, true, false]),
+        ('┘', [true, false, true, false]),
+        ('├', [false, true, true, true]),
+        ('┤', [true, false, true, true]),
+        ('┬', [true, true, false, true]),
+        ('┴', [true, true, true, false]),
+        ('┼', [true, true, true, true]),
+    ];
+    for (c, want) in cases {
+        assert_eq!(arms(c), want, "{c:?} arms (left, right, up, down)");
+        // Every arm reaches the centre pixel, so the turn has no gap.
+        assert_eq!(atlas.sample(c, 3, 3), Some(255), "{c:?} centre");
+        // One pixel wide: nothing but its arms is inked.
+        // The centre is (3, 3): left and up arms are 3 px, right and down 4.
+        let arm_px = 1 + [3, 4, 3, 4]
+            .iter()
+            .zip(want)
+            .filter(|(_, on)| *on)
+            .map(|(n, _)| n)
+            .sum::<usize>();
+        let inked = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| atlas.sample(c, x, y) == Some(255))
+            .count();
+        assert_eq!(inked, arm_px, "{c:?} stroke width");
+    }
+    assert_eq!(arms('─'), [true, true, false, false]);
+    assert_eq!(arms('│'), [false, false, true, true]);
+}
+
+#[test]
+fn builtin_quadrant_blocks_ink_their_quadrants() {
+    let atlas = GlyphAtlas::builtin();
+    let quadrant_ink = |c: char, q: u32| {
+        let (x0, y0) = ((q % 2) * 4, (q / 2) * 4);
+        let all = (0..4).all(|dy| (0..4).all(|dx| atlas.sample(c, x0 + dx, y0 + dy) == Some(255)));
+        let none = (0..4).all(|dy| (0..4).all(|dx| atlas.sample(c, x0 + dx, y0 + dy) == Some(0)));
+        assert!(all || none, "{c:?} quadrant {q} is half inked");
+        all
+    };
+    for (c, bits) in QUADRANT_BLOCKS {
+        for q in 0..4 {
+            assert_eq!(
+                quadrant_ink(c, q),
+                bits & (1 << q) != 0,
+                "{c:?} quadrant {q}"
+            );
+        }
+        assert_eq!(atlas.coverage(c), Some(bits.count_ones() as f32 / 4.0));
+    }
+    // With space and `█`, the fourteen are every one of the 16 patterns.
+    let mut seen: Vec<u8> = QUADRANT_BLOCKS.iter().map(|(_, b)| *b).collect();
+    seen.extend([0, 15]);
+    seen.sort();
+    assert_eq!(seen, (0..16).collect::<Vec<u8>>());
+    // The halves are what their names say.
+    assert_eq!(atlas.sample('▀', 7, 3), Some(255));
+    assert_eq!(atlas.sample('▀', 0, 4), Some(0));
+    assert_eq!(atlas.sample('▐', 4, 7), Some(255));
+    assert_eq!(atlas.sample('▐', 3, 0), Some(0));
+}
+
+#[test]
+fn builtin_braille_glyphs_are_their_dot_patterns() {
+    let atlas = GlyphAtlas::builtin();
+    assert_eq!(braille_char(0), '⠀');
+    assert_eq!(braille_char(0xff), '⣿');
+    assert_eq!(braille_char(braille_dot(0, 0)), '⠁');
+    assert_eq!(braille_char(braille_dot(0, 3)), '⡀');
+    assert_eq!(braille_char(braille_dot(1, 3)), '⢀');
+    for dots in 0..=255u8 {
+        let c = braille_char(dots);
+        assert!(atlas.contains(c), "{c:?}");
+        for column in 0..2 {
+            for row in 0..4 {
+                let on = dots & braille_dot(column, row) != 0;
+                // A dot is the 2x1 px at (1 + 4 column, 2 row).
+                let (x, y) = (1 + column * 4, row * 2);
+                let want = Some(if on { 255 } else { 0 });
+                assert_eq!(atlas.sample(c, x, y), want, "{c:?} dot ({column}, {row})");
+                assert_eq!(
+                    atlas.sample(c, x + 1, y),
+                    want,
+                    "{c:?} dot ({column}, {row})"
+                );
+                // The row and column round each dot stay paper.
+                assert_eq!(atlas.sample(c, x, y + 1), Some(0));
+                assert_eq!(atlas.sample(c, x - 1, y), Some(0));
+            }
+        }
+        assert_eq!(atlas.coverage(c), Some(dots.count_ones() as f32 / 32.0));
+    }
+}
+
+#[test]
+fn the_sub_cell_ramps_add_one_piece_a_step() {
+    let set = GlyphSet::builtin();
+    let atlas = set.atlas();
+    let ink = |c: char| -> Vec<bool> {
+        (0..64)
+            .map(|i| atlas.sample(c, i % 8, i / 8) == Some(255))
+            .collect()
+    };
+    for (name, steps, piece) in [("quadrants", 5, 16), ("braille", 9, 2)] {
+        let ramp = set.ramp(name).unwrap();
+        assert_eq!(ramp.glyphs().len(), steps, "{name}");
+        assert_eq!(ramp.glyphs()[0], ' ');
+        for pair in ramp.glyphs().windows(2) {
+            let (a, b) = (ink(pair[0]), ink(pair[1]));
+            // Each step keeps every inked pixel and adds exactly one piece.
+            assert!(
+                a.iter().zip(&b).all(|(a, b)| !a || *b),
+                "{name}: {pair:?} drops ink"
+            );
+            let added = a.iter().zip(&b).filter(|(a, b)| !**a && **b).count();
+            assert_eq!(added, piece, "{name}: {pair:?}");
+        }
+    }
+    assert_eq!(
+        *set.ramp("quadrants").unwrap().glyphs().last().unwrap(),
+        '█'
+    );
+    assert_eq!(*set.ramp("braille").unwrap().glyphs().last().unwrap(), '⣿');
 }
 
 #[test]
@@ -32,7 +172,7 @@ fn every_builtin_ramp_glyph_has_a_cell() {
             assert!(uv[0] < uv[2] && uv[1] < uv[3] && uv[2] <= 1.0 && uv[3] <= 1.0);
         }
     }
-    assert_eq!(ramps, 4);
+    assert_eq!(ramps, 6);
     for c in set.edges().all() {
         assert!(atlas.contains(c), "edge glyph {c:?}");
     }
@@ -79,6 +219,111 @@ fn ramp_pick_maps_luminance_into_equal_bands() {
     assert_eq!(ramp.pick(-3.0), ' ');
     assert_eq!(ramp.pick(f32::NAN), ' ');
     assert_eq!(ramp.pick(7.0), '@');
+}
+
+/// The ink each of `ramp`'s picks gives across 0..1 in `samples` steps.
+fn ink_curve(ramp: &GlyphRamp, atlas: &GlyphAtlas, samples: usize) -> Vec<(f32, char, f32)> {
+    (0..=samples)
+        .map(|i| {
+            let l = i as f32 / samples as f32;
+            let c = ramp.pick(l);
+            (l, c, atlas.coverage(c).unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn the_classic_ramp_as_written_gives_brighter_inputs_less_ink() {
+    // #281's finding, kept as a test so a redrawn font that fixes it says so
+    let set = GlyphSet::builtin();
+    let classic = set.ramp("classic").unwrap();
+    assert_eq!(classic.map(), RampMap::Index);
+    assert_eq!(
+        classic.inversions(),
+        vec![(':', '-'), ('=', '+'), ('#', '%')]
+    );
+    let curve = ink_curve(classic, set.atlas(), 1000);
+    assert!(curve.windows(2).any(|w| w[1].2 < w[0].2));
+}
+
+#[test]
+fn a_calibrated_classic_ramp_never_gives_a_brighter_input_less_ink() {
+    // #281's done-when, in the built-in 8x8 font and in Hack at 16 px
+    let hack = GlyphAtlas::from_ttf(HACK, 16.0, printable_ascii()).unwrap();
+    let builtin = GlyphAtlas::builtin();
+    for atlas in [&*builtin, &hack] {
+        let ramp = GlyphRamp::mapped(
+            "classic",
+            " .:-=+*#%@",
+            RampOrder::AsWritten,
+            RampMap::Coverage,
+            atlas,
+        )
+        .unwrap();
+        assert_eq!(ramp.map(), RampMap::Coverage);
+        assert!(ramp.inversions().is_empty());
+        assert_eq!(ramp.len(), 10, "every glyph kept");
+        let curve = ink_curve(&ramp, atlas, 10_000);
+        for w in curve.windows(2) {
+            assert!(
+                w[1].2 >= w[0].2,
+                "{:?} at {} inks less than {:?} at {}",
+                w[1].1,
+                w[1].0,
+                w[0].1,
+                w[0].0
+            );
+        }
+        // The ends stay paper and the most ink
+        assert_eq!(ramp.pick(0.0), ' ');
+        let most = ramp.coverage().iter().copied().fold(0.0, f32::max);
+        assert_eq!(atlas.coverage(ramp.pick(1.0)), Some(most));
+        // Nearest measured ink: each glyph is picked where its normalised
+        // coverage lies
+        let (lo, hi) = (ramp.coverage()[0], most);
+        for (c, cov) in ramp.glyphs().iter().zip(ramp.coverage()) {
+            let at = (cov - lo) / (hi - lo);
+            assert_eq!(atlas.coverage(ramp.pick(at)), Some(*cov), "{c:?} at {at}");
+        }
+    }
+    // In the 8x8 font `#` (.313) out-inks `@` (.281): it becomes the top step
+    let ramp = GlyphSet::builtin().ramp("classic").unwrap().calibrated();
+    assert_eq!(ramp.glyphs().iter().collect::<String>(), " .-:+=*%@#");
+    assert_eq!(ramp.pick(1.0), '#');
+}
+
+#[test]
+fn calibrated_bands_start_at_the_midpoints_between_neighbours() {
+    let b = calibrated_bounds(&[0.0, 0.1, 0.3, 0.5]);
+    let want = [0.0, 0.1, 0.4, 0.8];
+    for (got, want) in b.iter().zip(want) {
+        assert!((got - want).abs() < 1e-6, "{b:?}");
+    }
+    // No range at all: equal bands
+    assert_eq!(calibrated_bounds(&[0.2, 0.2]), vec![0.0, 0.5]);
+    assert!(calibrated_bounds(&[]).is_empty());
+    // Ties keep a step that is never picked rather than a step backwards
+    let tied = calibrated_bounds(&[0.0, 0.5, 0.5, 1.0]);
+    assert_eq!(tied, vec![0.0, 0.25, 0.5, 0.75]);
+}
+
+#[test]
+fn a_ramp_maps_by_coverage_when_its_toml_says_so() {
+    let toml = "[ramps.classic]\nglyphs = \" .:-=+*#%@\"\nmap = \"coverage\"\n\
+                [ramps.plain]\nglyphs = \" .:-=+*#%@\"\n";
+    let set = GlyphSet::from_toml("cal", toml, Path::new("")).unwrap();
+    let classic = set.ramp("classic").unwrap();
+    assert_eq!(classic.map(), RampMap::Coverage);
+    let plain = set.ramp("plain").unwrap().calibrated();
+    assert_eq!(classic.glyphs(), plain.glyphs());
+    assert_eq!(classic.bounds(), plain.bounds());
+    assert_eq!(set.ramp("plain").unwrap().map(), RampMap::Index);
+    assert!(GlyphSet::from_toml(
+        "x",
+        "[ramps.a]\nglyphs = \" .\"\nmap = \"ink\"\n",
+        Path::new("")
+    )
+    .is_err());
 }
 
 #[test]
@@ -514,5 +759,73 @@ fn the_cache_reloads_what_changes_on_disk() {
     let grid = cache.get("grid").unwrap();
     assert_eq!(grid.atlas().sample('-', 3, 4), Some(0));
     assert_eq!(grid.atlas().sample('-', 3, 2), Some(255));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Counts WARN events on this thread, so a test can hold "said once".
+struct WarnCount(Arc<std::sync::atomic::AtomicUsize>);
+
+impl tracing::Subscriber for WarnCount {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() == tracing::Level::WARN {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// #286: a broken edit to a set that loaded keeps its last good glyphs (the
+/// same `Arc`, so the atlas isn't re-uploaded) and warns once however many
+/// frames ask; fixing the file loads the new glyphs.
+#[test]
+fn a_broken_edit_keeps_the_last_good_glyphs() {
+    let dir = std::env::temp_dir().join(format!("flint-glyphs-broken-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    let plain = dir.join("fonts/plain.glyphs.toml");
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
+    let warns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = || warns.load(std::sync::atomic::Ordering::SeqCst);
+    tracing::subscriber::with_default(WarnCount(warns.clone()), || {
+        let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+        let good = cache.get("plain").unwrap();
+        assert_eq!(count(), 0);
+
+        // Half-typed: not TOML
+        std::fs::write(&plain, "[ramps.dots\nglyphs = \" .:#\"\n").unwrap();
+        assert!(cache.poll());
+        for _ in 0..30 {
+            let kept = cache.get("plain").expect("the last good set");
+            assert!(Arc::ptr_eq(&good, &kept), "no re-upload");
+            assert!(!cache.poll(), "settled on the broken file");
+        }
+        assert_eq!(count(), 1, "one warning for the broken edit");
+
+        // Fixed
+        std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:#\"\n").unwrap();
+        assert!(cache.poll());
+        let fixed = cache.get("plain").unwrap();
+        assert!(!Arc::ptr_eq(&good, &fixed));
+        assert_eq!(fixed.default_ramp().glyphs(), &[' ', '.', ':', '#']);
+        assert_eq!(count(), 1);
+
+        // Deleted: still the last good set, and one more warning
+        std::fs::remove_file(&plain).unwrap();
+        assert!(cache.poll());
+        assert!(Arc::ptr_eq(&fixed, &cache.get("plain").unwrap()));
+        assert!(Arc::ptr_eq(&fixed, &cache.get("plain").unwrap()));
+        assert_eq!(count(), 2);
+
+        // A name that never loaded still fails, as before
+        assert!(cache.get("nowhere").is_err());
+    });
     std::fs::remove_dir_all(&dir).ok();
 }

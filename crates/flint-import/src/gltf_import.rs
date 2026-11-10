@@ -233,6 +233,10 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
         root_nodes.push(idx);
     }
 
+    // `LOD_0`, `LOD_1`, ... at the root are one model's levels, not parts:
+    // band them so one draws at a time (#193).
+    crate::lod_chain::band_lod_chain(&mut meshes, &imported_nodes, &root_nodes);
+
     // Name each texture the same way the material references below do
     // (`texture_name`), so embedded textures resolve by name after upload.
     let mut textures = Vec::new();

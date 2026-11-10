@@ -52,6 +52,8 @@ macro_rules! say {
 const REPORT_TO_STDOUT: &str = "json";
 
 #[derive(clap::Args)]
+#[command(group(clap::ArgGroup::new("sequence").multiple(true).args(["frames", "mesh"])))]
+#[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "mesh"])))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(
@@ -127,7 +129,7 @@ pub struct RenderArgs {
     /// falls. Writes the refined look (--refine-out), a JSON log beside it
     /// and a sheet of the rounds (-o). Calls go through the cost meter and
     /// ledger (.flint/procgen_costs.json)
-    #[arg(long, requires_all = ["look", "reference"], conflicts_with_all = ["sweep", "frames"])]
+    #[arg(long, requires_all = ["look", "reference"], conflicts_with_all = ["sweep", "frames", "mesh"])]
     pub ai_refine: bool,
 
     /// Most refine rounds
@@ -183,6 +185,11 @@ pub struct RenderArgs {
     /// Disable ground grid
     #[arg(long)]
     pub no_grid: bool,
+
+    /// Draw the editor's selection outline around this entity, by name, as
+    /// `flint edit` does when it is picked (#602)
+    #[arg(long, value_name = "ENTITY")]
+    pub select: Option<String>,
 
     /// Debug visualization mode
     #[arg(long, value_parser = crate::commands::common_args::parse_debug_mode)]
@@ -251,7 +258,7 @@ pub struct RenderArgs {
     pub ascii_font: Option<String>,
 
     /// ASCII style: the glyph set's ramp (built-in: classic, blocks,
-    /// minimal, detailed; default the set's own)
+    /// minimal, detailed, quadrants, braille; default the set's own)
     #[arg(long)]
     pub ascii_ramp: Option<String>,
 
@@ -392,16 +399,30 @@ pub struct RenderArgs {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub frames: Option<u32>,
 
+    /// Draw a frame per mesh file (#222): `<entity>=<files>` shows each file
+    /// in turn on that entity, all on one renderer. Files are one GLB, a
+    /// folder of them or a wildcard in the name (`out/f*.glb`), in natural
+    /// order (f2 before f10); a GLB of several nodes is baked into one mesh.
+    /// Repeat it to move several entities at once, frame for frame. Output as
+    /// --frames (numbered PNGs), or `-o x.gif` at --fps, or `--sheet`
+    #[arg(long, value_name = "ENTITY=FILES", value_parser = super::mesh_seq::parse_mesh_arg)]
+    pub mesh: Vec<super::mesh_seq::MeshArg>,
+
+    /// With --mesh: write one labelled contact sheet of the frames (each
+    /// cell named for its file) to --output instead of a file a frame
+    #[arg(long, requires = "mesh")]
+    pub sheet: bool,
+
     /// With --frames: seconds between frames (default 1/60). Post time,
     /// grass wind and particles advance by it too
-    #[arg(long, requires = "frames")]
+    #[arg(long, requires = "sequence")]
     pub frame_dt: Option<f32>,
 
     /// With --frames: orbit the camera about its target at this many
     /// degrees a second (negative turns the other way)
     #[arg(
         long,
-        requires = "frames",
+        requires = "sequence",
         allow_hyphen_values = true,
         conflicts_with = "camera_path"
     )]
@@ -409,21 +430,21 @@ pub struct RenderArgs {
 
     /// With --frames: a TOML file of `[[key]] time/position/target`, the
     /// camera interpolated linearly between keys
-    #[arg(long, requires = "frames")]
+    #[arg(long, requires = "sequence")]
     pub camera_path: Option<String>,
 
     /// With --frames: count the ASCII style's glyph flips and A-B-A
     /// reversals frame to frame, exactly, from its own character grid,
     /// and print them per frame and in sum
-    #[arg(long, requires = "frames")]
+    #[arg(long, requires = "sequence")]
     pub flip_stats: bool,
 
     /// With --frames: write the flip counts (as --flip-stats) to this JSON
-    #[arg(long, requires = "frames")]
+    #[arg(long, requires = "sequence")]
     pub flip_json: Option<String>,
 
     /// With --frames: write no PNGs (for a --flip-stats measurement)
-    #[arg(long, requires = "frames")]
+    #[arg(long, requires = "sequence")]
     pub no_images: bool,
 
     /// Bloom intensity (enables bloom; default: 0.04)
@@ -608,9 +629,12 @@ pub struct RenderArgs {
     pub particle_time: Option<f32>,
 
     /// The game time to capture: living props, the wooze field and everything else
-    /// a clock drives, as the player has them at that time. Seconds (3.5), or a span
-    /// (0..4) for an animated --output x.gif. Physics and animation clips don't
-    /// run, and scripts only with --scripts. Same value, same pixels
+    /// a clock drives, as the player has them at that time. Seconds (3.5), a span
+    /// (0..4) for an animated --output x.gif or a PNG a frame to --output
+    /// frames/f-%05d.png, in one frame's memory however long, or a list (2,5,9.5) of
+    /// moments of one run, each written as a still beside --output (x.png gives
+    /// x_0000.png...). Physics and animation clips don't run, and scripts only with
+    /// --scripts. Same value, same pixels
     #[arg(long, value_parser = render_plan::parse_time)]
     pub time: Option<TimeSpec>,
 
@@ -633,8 +657,10 @@ pub struct RenderArgs {
     #[arg(long, requires = "time", value_parser = parse_frame_step)]
     pub frame_step: Option<f64>,
 
-    /// With a --time span: frames per second of game time in the GIF
-    #[arg(long, requires = "time", default_value_t = 12.0, value_parser = render_plan::parse_gif_fps)]
+    /// With a --time span: frames per second of game time in the GIF. With
+    /// --mesh: frames per second of its GIF, and (unless --frame-dt) the
+    /// time post effects and particles step between its frames
+    #[arg(long, requires = "span", default_value_t = 12.0, value_parser = render_plan::parse_gif_fps)]
     pub fps: f32,
 
     /// Color grade lift as R,G,B (per-channel add post-ACES; neutral 0,0,0)
@@ -760,7 +786,11 @@ pub fn run(args: RenderArgs) -> Result<()> {
 /// `flint render` on `host`'s GPU (made on first use).
 pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             say!("{a}");
         }
         return Ok(());
@@ -777,7 +807,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     let report_json = args.report.as_deref() == Some(REPORT_TO_STDOUT);
     HUMAN_TO_STDERR.store(report_json, Ordering::Relaxed);
-    render_plan::check_output(&args.output, args.time)?;
+    // A mesh sequence (#222) is its own span: its files are the frames
+    let meshes = super::mesh_seq::resolve(&args.mesh)?;
+    if meshes.is_empty() {
+        render_plan::check_output(&args.output, args.time.as_ref())?;
+    } else {
+        check_mesh_output(&args, meshes[0].files.len())?;
+    }
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
     let grid = super::sweep::SweepGrid::new(&args.sweep).map_err(|e| anyhow::anyhow!(e))?;
@@ -788,8 +824,9 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if wants_text && grid.is_some() {
         anyhow::bail!("--ascii-text writes one frame's grid: drop --sweep");
     }
-    if args.frames.is_some() && grid.is_some() {
-        anyhow::bail!("--frames draws one sequence: drop --sweep");
+    let sequence = args.frames.is_some() || !meshes.is_empty();
+    if sequence && grid.is_some() {
+        anyhow::bail!("--frames and --mesh draw one sequence: drop --sweep");
     }
     if let Some(sweep) = grid.as_ref().filter(|g| g.wooze_knob().is_some()) {
         check_wooze_sweep(&args, &sweep.columns)?;
@@ -823,6 +860,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .transpose()?;
     let (width, height) = match grid {
         Some(_) => view.render_size(args.width, args.height),
+        // A sheet's cells, and a GIF small enough to move
+        None if args.sheet || (!meshes.is_empty() && render_plan::is_gif(&args.output)) => {
+            let (w, h) = render_plan::default_size(args.sheet, !args.sheet);
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
         // A refine's rounds are sheet cells too
         None if args.ai_refine => {
             let (w, h) = super::sweep::CELL_SIZE;
@@ -836,11 +878,25 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .as_deref()
         .map(super::look_measure::load_reference)
         .transpose()?;
-    if (args.report.is_some() || reference.is_some()) && args.frames.is_some() {
-        anyhow::bail!("--report / --reference measure one frame or a sweep: drop --frames");
+    if (args.report.is_some() || reference.is_some()) && sequence {
+        anyhow::bail!(
+            "--report / --reference measure one frame or a sweep: drop --frames / --mesh"
+        );
     }
-    if args.time.is_some() && args.frames.is_some() {
-        anyhow::bail!("--time and --frames both draw a span: --time 0..4 -o x.gif, or --frames");
+    if args.time.is_some() && sequence {
+        anyhow::bail!(
+            "--time and --frames / --mesh each draw a span: --time 0..4 -o x.gif, or a sequence"
+        );
+    }
+    if let (Some(frames), Some(first)) = (args.frames, meshes.first()) {
+        if frames as usize != first.files.len() {
+            anyhow::bail!(
+                "--frames {frames} but --mesh {} has {} files: a mesh sequence draws a frame \
+                 a file, so drop --frames",
+                first.entity,
+                first.files.len()
+            );
+        }
     }
     flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
@@ -870,6 +926,9 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         load_scene(&args.scene, &registry).context("Failed to load scene")?;
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
+    for binding in &meshes {
+        bind_mesh(&mut world, binding)?;
+    }
 
     // Every column's post-processing, worked out (and checked) before any
     // GPU work: the scene's block, under the look, under the column.
@@ -910,6 +969,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         || report_json
         || LivingRun::wanted_by(&world)
         || scene_file.wooze.is_some();
+    if timed && !meshes.is_empty() {
+        anyhow::bail!(
+            "--mesh draws its files on one still renderer, and this render has clocks \
+             (--time, --scripts, --report json, a wooze sweep, living props or a [wooze] \
+             table): render the meshes in a scene without them"
+        );
+    }
     if timed {
         return run_stages(
             &args,
@@ -1136,6 +1202,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Two-bone IK (ADR 0070): pose authored chains before the single frame.
     flint_animation::IkPass::new().run(&mut world);
 
+    if let Some(name) = &args.select {
+        let id = world
+            .get_id(name)
+            .with_context(|| format!("--select: no entity named '{name}'"))?;
+        renderer.set_selected_entity(Some(id));
+    }
     renderer.update_from_world(&world, &ctx.device);
 
     // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
@@ -1232,7 +1304,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         }
     }
 
-    if let Some(frames) = args.frames {
+    let frames = match meshes.first() {
+        Some(first) => Some(first.files.len() as u32),
+        None => args.frames,
+    };
+    if let Some(frames) = frames {
         return render_sequence(
             &args,
             SequenceRig {
@@ -1242,6 +1318,8 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 camera,
                 camera_path: camera_path.as_ref(),
                 particles: particle_sim.as_mut(),
+                meshes: &meshes,
+                scene_name: &scene_file.scene.name,
             },
             frames,
         );
@@ -1569,6 +1647,152 @@ struct SequenceRig<'a> {
     camera: Camera,
     camera_path: Option<&'a super::frame_seq::CameraPath>,
     particles: Option<&'a mut flint_particles::ParticleSystem>,
+    /// `--mesh` (#222): each frame shows the next file on each binding
+    meshes: &'a [super::mesh_seq::MeshBinding],
+    scene_name: &'a str,
+}
+
+/// Where a `--mesh` sequence's frames go: a PNG a frame (`seq.png` numbered as
+/// --frames numbers them, or `frames/f-%05d.png`), one GIF, or with `--sheet`
+/// one contact sheet.
+fn check_mesh_output(args: &RenderArgs, files: usize) -> Result<()> {
+    let out = &args.output;
+    let moving = render_plan::is_gif(out) || render_plan::is_sequence(out);
+    if args.sheet && moving {
+        anyhow::bail!("--sheet writes one image: give --output a plain .png, not {out}");
+    }
+    if render_plan::is_gif(out) && files < 2 {
+        anyhow::bail!("--mesh matched one file, and a GIF of one frame is a still: -o x.png");
+    }
+    if args.no_images && (moving || args.sheet) {
+        anyhow::bail!("--no-images writes no frames, so {out} would be empty: drop one");
+    }
+    Ok(())
+}
+
+/// Point `binding`'s entity at the asset its frames are uploaded under. Its
+/// `model` is marked `runtime`, so the scene's model loader leaves it to the
+/// sequence; an entity with no model gets one.
+fn bind_mesh(
+    world: &mut flint_ecs::FlintWorld,
+    binding: &super::mesh_seq::MeshBinding,
+) -> Result<()> {
+    use flint_core::components::MODEL;
+    let Some(id) = world.get_id(&binding.entity) else {
+        let mut names: Vec<String> = world
+            .all_entities()
+            .iter()
+            .filter(|e| {
+                world
+                    .get_components(e.id)
+                    .is_some_and(|c| c.get(MODEL).is_some())
+            })
+            .map(|e| e.name.clone())
+            .collect();
+        names.sort();
+        let known = if names.is_empty() {
+            String::new()
+        } else {
+            format!(" (entities with a model: {})", names.join(", "))
+        };
+        anyhow::bail!(
+            "--mesh: no entity named '{}' in the scene{known}",
+            binding.entity
+        );
+    };
+    let mut model = world
+        .get_components(id)
+        .and_then(|c| c.get(MODEL))
+        .and_then(|m| m.as_table().cloned())
+        .unwrap_or_default();
+    model.insert("asset".into(), binding.asset().into());
+    model.insert("runtime".into(), true.into());
+    world
+        .set_component(id, MODEL, toml::Value::Table(model))
+        .map_err(|e| anyhow::anyhow!("--mesh {}: {e}", binding.entity))?;
+    Ok(())
+}
+
+/// Upload frame `index` of every binding in place of the frame before it,
+/// whose namespaced textures go first so that no draw binds the old ones.
+fn swap_meshes(
+    ctx: &HeadlessContext,
+    renderer: &mut SceneRenderer,
+    meshes: &[super::mesh_seq::MeshBinding],
+    index: usize,
+    textures: &mut Vec<Vec<String>>,
+) -> Result<()> {
+    textures.resize(meshes.len(), Vec::new());
+    for (binding, old) in meshes.iter().zip(textures.iter_mut()) {
+        let file = &binding.files[index];
+        let import = flint_import::import_gltf(file)
+            .with_context(|| format!("--mesh {}: importing {}", binding.entity, file.display()))?;
+        let import = super::mesh_seq::flatten(import);
+        let asset = binding.asset();
+        for texture in old.drain(..) {
+            renderer.remove_texture(&texture);
+        }
+        renderer.remove_mesh(&asset);
+        renderer.load_model(&ctx.device, &ctx.queue, &asset, &import);
+        *old = import
+            .materials
+            .iter()
+            .flat_map(|m| {
+                [
+                    &m.base_color_texture,
+                    &m.emissive_texture,
+                    &m.normal_texture,
+                    &m.metallic_roughness_texture,
+                ]
+            })
+            .flatten()
+            // A texture used as colour and as data is uploaded twice, the
+            // data copy suffixed (namespace_textures); a missing name is a no-op
+            .flat_map(|t| [format!("{asset}::{t}"), format!("{asset}::{t}#linear")])
+            .collect();
+    }
+    Ok(())
+}
+
+/// Where a sequence writes its frames. `--frames` alone always numbers PNGs
+/// beside --output, as it did; a `--mesh` sequence also takes `%05d`, a GIF
+/// and `--sheet`.
+#[derive(Clone, Copy, PartialEq)]
+enum MeshOutput {
+    /// `seq.png` -> `seq_0000.png`...
+    Numbered,
+    /// `frames/f-%05d.png`
+    Pattern,
+    Gif,
+    Sheet,
+}
+
+impl MeshOutput {
+    fn of(args: &RenderArgs, mesh: bool) -> Self {
+        match () {
+            _ if !mesh => Self::Numbered,
+            _ if args.sheet => Self::Sheet,
+            _ if render_plan::is_gif(&args.output) => Self::Gif,
+            _ if render_plan::is_sequence(&args.output) => Self::Pattern,
+            _ => Self::Numbered,
+        }
+    }
+
+    fn path(self, output: &str, index: u32, frames: u32) -> std::path::PathBuf {
+        match self {
+            Self::Pattern => render_plan::sequence_path(output, index as usize).into(),
+            _ => super::frame_seq::numbered(output, index, frames),
+        }
+    }
+}
+
+/// A frame's name on a `--mesh` sheet: its file's, or each binding's joined.
+fn mesh_label(meshes: &[super::mesh_seq::MeshBinding], index: usize) -> String {
+    meshes
+        .iter()
+        .map(|b| super::mesh_seq::label(&b.files[index]))
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 /// `--frames N` (#345): N frames on one renderer, `--frame-dt` apart, the
@@ -1583,13 +1807,24 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         mut camera,
         camera_path,
         mut particles,
+        meshes,
+        scene_name,
     } = rig;
-    let dt = args.frame_dt.unwrap_or(1.0 / 60.0);
+    // A mesh sequence's frames are --fps apart, as its GIF plays them
+    let dt = args.frame_dt.unwrap_or(if meshes.is_empty() {
+        1.0 / 60.0
+    } else {
+        1.0 / args.fps
+    });
     let wants_flips = args.flip_stats || args.flip_json.is_some();
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
     let base_time = renderer.ocean_time;
     let yaw0 = camera.yaw;
     let (width, height) = (ctx.width, ctx.height);
+    let mut mesh_textures = Vec::new();
+    // Where each frame goes: a numbered PNG, a `%05d` PNG, one GIF, or a sheet
+    let out = MeshOutput::of(args, !meshes.is_empty());
+    let mut sheet_cells = Vec::new();
     if !args.no_images {
         if let Some(dir) = Path::new(&args.output).parent() {
             if !dir.as_os_str().is_empty() {
@@ -1598,6 +1833,15 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
             }
         }
     }
+    let mut gif = match out {
+        MeshOutput::Gif => Some(super::gif_writer::Spool::new(
+            Path::new(&args.output),
+            width,
+            height,
+            frames as usize,
+        )?),
+        _ => None,
+    };
     let number = |p: &Option<String>, i: u32| {
         p.as_ref()
             .map(|p| numbered(p, i, frames).to_string_lossy().into_owned())
@@ -1629,6 +1873,11 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
             }
             p.pack(Some(camera.position_array()));
             renderer.update_particles_from(&ctx.device, &ctx.queue, &p.sync);
+        }
+        if !meshes.is_empty() {
+            swap_meshes(ctx, renderer, meshes, i as usize, &mut mesh_textures)?;
+            // The draw lists hold the meshes they were built with
+            renderer.update_from_world(world, &ctx.device);
         }
         renderer.render_to(
             &ctx.device,
@@ -1670,17 +1919,69 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
                 pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
             let img = image::RgbaImage::from_raw(width, height, pixels)
                 .context("Failed to create image from pixel data")?;
-            let path = numbered(&args.output, i, frames);
-            img.save(&path)
-                .context(format!("Failed to save image to {}", path.display()))?;
+            match out {
+                MeshOutput::Numbered | MeshOutput::Pattern => {
+                    let path = out.path(&args.output, i, frames);
+                    img.save(&path)
+                        .context(format!("Failed to save image to {}", path.display()))?;
+                }
+                MeshOutput::Gif => {
+                    let rgb = image::DynamicImage::ImageRgba8(img).into_rgb8();
+                    gif.as_mut().expect("made above").push(&rgb)?;
+                }
+                MeshOutput::Sheet => sheet_cells.push(img),
+            }
         }
     }
     if !args.no_images {
-        say!(
-            "Rendered {frames} {width}x{height} frames to {} .. {}",
-            numbered(&args.output, 0, frames).display(),
-            numbered(&args.output, frames - 1, frames).display()
-        );
+        match out {
+            MeshOutput::Numbered | MeshOutput::Pattern => say!(
+                "Rendered {frames} {width}x{height} frames to {} .. {}",
+                out.path(&args.output, 0, frames).display(),
+                out.path(&args.output, frames - 1, frames).display()
+            ),
+            MeshOutput::Gif => {
+                let fps = 1.0 / dt;
+                if fps > render_plan::GIF_MAX_FPS {
+                    eprintln!(
+                        "warning: --frame-dt {dt} is {fps:.0} fps; the GIF plays at \
+                         {} (its delays count hundredths of a second)",
+                        render_plan::GIF_MAX_FPS
+                    );
+                }
+                gif.take()
+                    .expect("made above")
+                    .finish(fps.min(render_plan::GIF_MAX_FPS))?;
+                say!(
+                    "Rendered {frames} {width}x{height} frames at {fps:.1} fps to {}",
+                    args.output
+                );
+            }
+            MeshOutput::Sheet => {
+                let labels = (0..frames as usize)
+                    .map(|i| mesh_label(meshes, i))
+                    .collect();
+                let bound: Vec<String> = meshes
+                    .iter()
+                    .map(|b| format!("{} <- {} files", b.entity, b.files.len()))
+                    .collect();
+                let text = super::style_sheet::SheetText::new(
+                    scene_name.to_string(),
+                    format!("--mesh {}", bound.join(", ")),
+                    labels,
+                );
+                let sheet = super::style_sheet::compose(&sheet_cells, &text);
+                sheet
+                    .save(&args.output)
+                    .context(format!("Failed to save image to {}", args.output))?;
+                say!(
+                    "Rendered {frames} {width}x{height} frames as one {}x{} sheet to {}",
+                    sheet.width(),
+                    sheet.height(),
+                    args.output
+                );
+            }
+        }
     }
     if wants_flips {
         let stats = flips.stats();
@@ -2100,17 +2401,26 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         )?);
     }
 
-    let times = render_plan::capture_times(args.time, args.fps);
+    let times = render_plan::capture_times(args.time.as_ref(), args.fps);
     let mut warnings = stage_warnings(args, sweep, &stages[0]);
     for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
 
+    let output = Path::new(&args.output);
+    // Where each frame goes as it's captured, so a span costs memory for one
+    // frame however long it runs (#588).
+    let sequence = animated && render_plan::is_sequence(&args.output);
+    // A still a moment (#614), numbered in the order the moments were given.
+    let moments = matches!(args.time, Some(TimeSpec::List(_)));
+    let mut gif = None;
+    let mut still = None;
+    let mut written_bytes = 0u64;
+    let (mut frame_width, mut frame_height) = (width, height);
     let mut captures = Vec::new();
-    let mut frames: Vec<image::RgbaImage> = Vec::with_capacity(times.len());
     // Whether each pair of neighbouring columns has differed in any frame yet.
     let mut columns_differ = vec![false; columns.saturating_sub(1)];
-    for &t in &times {
+    for (index, &t) in times.iter().enumerate() {
         let mut cells = Vec::with_capacity(columns);
         for (column, stage) in stages.iter_mut().enumerate() {
             cells.push(stage.capture(args, ctx, t, frame_step)?);
@@ -2132,12 +2442,54 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         for (differ, pair) in columns_differ.iter_mut().zip(cells.windows(2)) {
             *differ |= pair[0] != pair[1];
         }
-        frames.push(match sweep {
+        let frame = match sweep {
             Some(sweep) => {
                 super::style_sheet::compose(&cells, &sheet_text(sweep, &scene_name, t, &stages))
             }
             None => cells.remove(0),
-        });
+        };
+        (frame_width, frame_height) = frame.dimensions();
+        if sequence {
+            let path = render_plan::sequence_path(&args.output, index);
+            if let Some(parent) = Path::new(&path)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            frame
+                .save(&path)
+                .with_context(|| format!("Failed to save frame {index} to {path}"))?;
+            written_bytes += std::fs::metadata(&path).map_or(0, |m| m.len());
+        } else if moments {
+            let path = render_plan::numbered_still(&args.output, index, times.len());
+            frame
+                .save(&path)
+                .context(format!("Failed to save image to {}", path.display()))?;
+        } else if animated {
+            let frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
+            let spool = match &mut gif {
+                Some(spool) => spool,
+                None => gif.insert(gif_writer::Spool::new(
+                    output,
+                    frame.width(),
+                    frame.height(),
+                    times.len(),
+                )?),
+            };
+            spool.push(&frame)?;
+        } else {
+            still = Some(frame);
+        }
+    }
+
+    // A span's clocks run on to its end (the end itself is never a frame, so that
+    // the GIF loops), so what the scripts log covers all of it.
+    if let Some(TimeSpec::Range(_, end)) = args.time {
+        for stage in &mut stages {
+            stage.advance(end, frame_step);
+        }
     }
 
     // What the scripts asked for that isn't in the picture, said once as it
@@ -2157,32 +2509,49 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     }
 
     // Write the file
-    let output = Path::new(&args.output);
-    if animated {
-        let rgb: Vec<image::RgbImage> = frames
-            .iter()
-            .map(|f| image::DynamicImage::ImageRgba8(f.clone()).into_rgb8())
-            .collect();
-        gif_writer::write(output, &rgb, args.fps)?;
+    if sequence {
         say!(
-            "Rendered {} frames of {}x{} at {} fps to {} ({:.1} MB)",
-            rgb.len(),
-            rgb[0].width(),
-            rgb[0].height(),
+            "Rendered {} frames of {frame_width}x{frame_height} at {} fps to {} ({:.1} MB)",
+            times.len(),
+            args.fps,
+            args.output,
+            written_bytes as f64 / 1e6,
+        );
+    } else if animated {
+        let spool = gif.context("a span captured no frames")?;
+        let (frames, spilled) = (spool.frames(), spool.spilled());
+        spool.finish(args.fps)?;
+        say!(
+            "Rendered {frames} frames of {frame_width}x{frame_height} at {} fps to {} \
+             ({:.1} MB; {:.1} MB waited on disk)",
             args.fps,
             args.output,
             std::fs::metadata(output).map_or(0.0, |m| m.len() as f64 / 1e6),
+            spilled as f64 / 1e6,
+        );
+    } else if moments {
+        let count = times.len();
+        say!(
+            "Rendered {count} moments ({}) as {frame_width}x{frame_height} to {} .. {}",
+            times
+                .iter()
+                .map(|t| format!("{t}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            render_plan::numbered_still(&args.output, 0, count).display(),
+            render_plan::numbered_still(&args.output, count - 1, count).display()
         );
     } else {
-        frames[0]
+        let still = still.context("the render captured no frame")?;
+        still
             .save(&args.output)
             .context(format!("Failed to save image to {}", args.output))?;
         match sweep {
             Some(_) => say!(
                 "Rendered {} columns of {width}x{height} as {}x{} to {}",
                 columns,
-                frames[0].width(),
-                frames[0].height(),
+                frame_width,
+                frame_height,
                 args.output
             ),
             None => say!("Rendered {width}x{height} image to {}", args.output),
@@ -2732,6 +3101,13 @@ impl Stage {
         // Two-bone IK (ADR 0070): pose authored chains before the single frame.
         flint_animation::IkPass::new().run(&mut world);
 
+        if let Some(name) = &args.select {
+            let id = world
+                .get_id(name)
+                .with_context(|| format!("--select: no entity named '{name}'"))?;
+            renderer.set_selected_entity(Some(id));
+        }
+
         // Last, since the model loader expands a GLB into the entities a group holds.
         if let Some(clocks) = &mut wooze {
             let draws = clocks.step(&world, camera.position_array(), 0.0);
@@ -2762,13 +3138,7 @@ impl Stage {
         t: f64,
         frame_step: f64,
     ) -> Result<image::RgbaImage> {
-        let (steps, rest) = render_plan::steps_within(t - self.clock, frame_step);
-        for _ in 0..steps {
-            self.step_clocks(frame_step);
-        }
-        if rest > 0.0 {
-            self.step_clocks(rest);
-        }
+        self.advance(t, frame_step);
         if let Some(run) = &mut self.living {
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
@@ -2832,6 +3202,18 @@ impl Stage {
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
             .context("Failed to create image from pixel data")
+    }
+
+    /// Move the clocks on to `t` a `frame_step` at a time, landing on `t` exactly,
+    /// without a picture. `t` only goes forward.
+    fn advance(&mut self, t: f64, frame_step: f64) {
+        let (steps, rest) = render_plan::steps_within(t - self.clock, frame_step);
+        for _ in 0..steps {
+            self.step_clocks(frame_step);
+        }
+        if rest > 0.0 {
+            self.step_clocks(rest);
+        }
     }
 
     /// One step of everything on the clock, in the order of the player's frame:

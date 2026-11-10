@@ -203,12 +203,14 @@ to `main` that touches the player, and on a manual run:
 
 1. `trunk build --release --cargo-profile web-release` in
    `crates/flint-player`, the player page (the profile is under Size);
-2. `cargo build -p flint-cli`, for `flint bundle`;
+2. `cargo build -p flint-cli`, for `flint export web`;
 3. `python tools/play-site/build.py`, which fetches each game in
-   `games.toml` at its pinned commit (a GitHub tarball; nothing to clone),
-   packs it with `flint bundle --name <id>` into `games/<id>/`, and writes
-   `games.json` (what the page shows) and `built-from.txt` (the Flint
-   commit and each game's);
+   `games.toml` at its pinned commit (a GitHub tarball; nothing to clone)
+   and runs `flint export web <game> --out site --player <dist> --name <id>
+   --meta ...` on it ([#106](#flint-export-web-106)): the player into the
+   site root, the bundles into `games/<id>/`, the game's entry into
+   `games.json` (what the page shows). It then writes `built-from.txt` (the
+   Flint commit and each game's);
 4. `actions/upload-pages-artifact` and `actions/deploy-pages`. This repo's
    Pages site serves the result, with `play.chaps.dev` as its custom domain.
 
@@ -228,7 +230,9 @@ means changing its `ref`. Float is pinned to its `engine-catchup` branch
 `index.html` decides whether this visit can play:
 
 - no `?game=` (or `bundle`/`scene`) and a `games.json` beside the page:
-  the chooser, a card per game with its poster;
+  the chooser, a card per game with its poster. A `games.json` of one game
+  (a `flint export web` folder) plays that game instead: the doorway writes
+  its `?game=` into the address before it opens;
 - a `?game=` the site doesn't have: the chooser, saying so;
 - no `navigator.gpu`, or no adapter from `requestAdapter()`: the game's
   film from chaps.dev, full-bleed and muted, with the reason and the
@@ -285,6 +289,32 @@ stood in for by Firefox on Windows with WebGPU turned off, which takes the
 same path. A threaded AudioWorklet build would need cross-origin isolation
 headers, which GitHub Pages can't set (the issue's second risk). #136 mixes
 in an AudioWorklet without them, in a second wasm (see Sound).
+
+## flint export web (#106)
+
+`flint export web <game> [--out dir]` runs the site's steps for any one
+game: it copies the player (or builds it with trunk from the CLI's own
+tree, so packer and player agree on `bundle::FORMAT_VERSION`), packs
+`games/<id>/` with the game's `bundle.toml`, and merges the game's entry
+into `games.json`. Several exports into one folder make one site, which is
+what `build.py` now does for play.chaps.dev. A folder of one game plays it
+at its bare address, and `?scene=` picks another scene from its bundle.
+`bundle.toml` gained `[web]` (the `games.json` keys) and `[mount]` (a
+folder outside the game packed inside it); a game with no `engine/schemas`
+packs the engine's. Book: guides/publishing-to-the-web.md.
+
+**Checked locally** (2026-11-09, Windows 11, Chrome 156 headed over CDP,
+`python -m http.server`):
+
+| Run | Result |
+|---|---|
+| `flint export web demo/`, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
+| `/` | the address became `/?game=demo`; the gate read "Flint demos"; the tavern loaded (49 entities), its scripts started, the late audio bundle arrived |
+| `/?scene=pencil_sketch.scene.toml` | `&game=demo` added; Pencil Sketch (11 entities) drawn from the same bundle |
+| `build.py` (Float `3e0b75f`, FlintKart `bd910be`) through export | float 16.03 MB in 3 bundles, kart 91.88 MB in 2 plus its film and poster; `games.json` holds the keys and values the old script wrote |
+
+The demo bundle is large because the tavern's `wooden_bench.glb` (31 MB) and
+`wood_planks.png` (27 MB) are. The packer doesn't drop files no scene reads.
 
 ## Flint Kart (#104)
 

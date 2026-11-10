@@ -3,17 +3,17 @@
 
     python tools/play-site/build.py --player <trunk dist> --flint <flint exe> --out site
 
-1. Copies the player (`trunk build --release` of crates/flint-player) into
-   the site root.
-2. For each game in games.toml, fetches its repo at the pinned commit as a
-   tarball (no git needed; the repos are public) and packs it with
-   `flint bundle <game> --name <id> --out-dir site/games/<id>`, so
-   `?game=<id>` finds games/<id>/<id>.flintpack (flint_web.rs).
-   A `video` or `poster` given as a path in the game's repo is copied
-   there too (copy_media).
-3. Writes games.json (what the page's chooser and fallback read) and
-   built-from.txt (the Flint commit and each game's). The domain is a Pages
-   setting, not a CNAME file: Actions deploys ignore one.
+For each game in games.toml, fetches its repo at the pinned commit as a
+tarball (no git needed; the repos are public) and exports it into the site
+with `flint export web <game> --out site --player <dist> --name <id>
+--meta key=value...` (#106), the command any Flint game ships to the web
+with. Export copies the player into the site root, packs the bundle into
+games/<id>/ (so `?game=<id>` finds games/<id>/<id>.flintpack, flint_web.rs),
+copies a `video` or `poster` given as a path in the game's repo beside it,
+and adds the game to games.json (what the page's chooser and fallback read),
+in games.toml's order. This script then writes built-from.txt (the Flint
+commit and each game's). The domain is a Pages setting, not a CNAME file:
+Actions deploys ignore one.
 
 `--games-src DIR` packs from DIR/<id> folders already there instead of
 fetching, for trying a local checkout. docs/design/web.md has the rest.
@@ -34,7 +34,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ID = re.compile(r"^[a-z0-9_-]+$")
-# What the page shows; repo and ref go in built-from.txt.
+# What the page shows (games.json, through export's --meta); repo and ref go in built-from.txt.
 PUBLIC = ("id", "title", "line", "controls", "touch", "orientation", "page", "video", "poster", "film")
 # What `orientation` may say; unset, a phone turns the game freely.
 ORIENTATIONS = ("landscape",)
@@ -79,29 +79,22 @@ def fetch(game, into):
             tar.extract(member, into, filter="data")
 
 
-def pack(flint, game, src, out):
-    cmd = [flint, "bundle", str(src), "--name", game["id"], "--out-dir", str(out)]
+def export(flint, game, src, player, out):
+    """`flint export web` (#106). games.toml's words for the game go in as
+    --meta, over the game's own bundle.toml [web]. A `video` or `poster`
+    that is a path in the game's repo, not a URL, export copies next to the
+    bundle (a game with no film on chaps.dev can ship one in its own repo,
+    FlintKart #104)."""
+    cmd = [flint, "export", "web", str(src), "--out", str(out), "--player", str(player), "--name", game["id"]]
+    for key in PUBLIC:
+        if key != "id" and game.get(key):
+            cmd += ["--meta", f"{key}={game[key]}"]
     print("$ " + " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
-    main = out / f"{game['id']}.flintpack"
-    if not main.is_file():
-        sys.exit(f"flint bundle wrote no {main}")
-    return sorted(p.name for p in out.iterdir())
-
-
-def copy_media(game, src, out):
-    """A `video` or `poster` that is a path in the game's repo, not a URL,
-    is copied next to its bundle, and games.json names it there. A game
-    with no film on chaps.dev can ship one in its own repo (FlintKart, #104)."""
-    for key in ("video", "poster"):
-        value = game.get(key)
-        if not value or re.match(r"^https?://", value):
-            continue
-        path = (src / value).resolve()
-        if not path.is_file() or src.resolve() not in path.parents:
-            sys.exit(f"{game['id']}: {key} {value!r} is not a file in the game's repo")
-        shutil.copy2(path, out / path.name)
-        game[key] = f"games/{game['id']}/{path.name}"
+    games = out / "games" / game["id"]
+    if not (games / f"{game['id']}.flintpack").is_file():
+        sys.exit(f"flint export web wrote no {games}/{game['id']}.flintpack")
+    return sorted(p.name for p in games.iterdir())
 
 
 def flint_commit():
@@ -124,6 +117,9 @@ def main():
     ap.add_argument("--games", type=Path, default=HERE / "games.toml")
     ap.add_argument("--games-src", type=Path, help="pack DIR/<id> instead of fetching each repo")
     args = ap.parse_args()
+    # The --meta lines carry games.toml's words (◀ ▶, ·), which a Windows
+    # console's code page can't print.
+    sys.stdout.reconfigure(errors="backslashreplace")
 
     if not (args.player / "index.html").is_file():
         sys.exit(f"{args.player} has no index.html: run `trunk build --release` in crates/flint-player")
@@ -133,7 +129,6 @@ def main():
 
     if args.out.exists():
         shutil.rmtree(args.out)
-    shutil.copytree(args.player, args.out)
 
     work = args.out.parent / (args.out.name + "-src")
     source = [f"flint {flint_commit()}"]
@@ -145,15 +140,15 @@ def main():
         else:
             src = work / game["id"]
             fetch(game, src)
-        files = pack(flint, game, src, args.out / "games" / game["id"])
-        copy_media(game, src, args.out / "games" / game["id"])
+        files = export(flint, game, src, args.player, args.out)
         print(f"{game['id']}: {', '.join(files)}", flush=True)
         source.append(f"{game['id']} {game['repo']}@{game['ref']}")
     if not args.games_src and work.exists():
         shutil.rmtree(work)
 
-    listing = {"games": [{k: g[k] for k in PUBLIC if g.get(k)} for g in games]}
-    (args.out / "games.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
+    listed = [g["id"] for g in json.loads((args.out / "games.json").read_text(encoding="utf-8"))["games"]]
+    if listed != [g["id"] for g in games]:
+        sys.exit(f"games.json lists {listed}, not games.toml's {[g['id'] for g in games]}")
     (args.out / "built-from.txt").write_text("\n".join(source) + "\n", encoding="utf-8")
     print(f"site: {args.out} ({len(games)} game{'s' if len(games) != 1 else ''})")
 

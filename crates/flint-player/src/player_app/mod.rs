@@ -404,6 +404,11 @@ pub struct PlayerApp {
     /// Initial window size in physical pixels (`--width`/`--height`).
     /// Ignored on Android, where the surface is the screen.
     pub window_size: (u32, u32),
+    /// Where the window opens, its frame, whether it stays on top and whether
+    /// it takes the keyboard (`--position`, `--borderless`, `--always-on-top`,
+    /// `--no-activate`; #611). Its width and height are ignored here: the
+    /// size is `window_size`.
+    pub window_options: crate::WindowArgs,
     /// Screenshot capture driven by `--screenshot` / `--screenshot-at` /
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame
     /// (scene + egui HUD) right before `present()`.
