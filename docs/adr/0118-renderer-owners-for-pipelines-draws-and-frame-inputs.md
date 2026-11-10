@@ -1,8 +1,6 @@
 # ADR 0118: The renderer gets one owner each for pipelines, draw kinds and frame inputs
 
-Status: proposed, 2026-11-10 (#736, with #735, #737, #739; audit epic #674).
-Not accepted: the "Decisions needed" at the end are Chris's to make before work
-starts.
+Status: accepted, 2026-11-10 ()
 
 ## Context
 
@@ -133,15 +131,13 @@ Behind the misses is the shape of `SceneRenderer`:
 - Subsystems make the per-feature cost visible: a scene with no grass
   constructs no `GrassRenderer` state beyond an empty struct.
 
-## Decisions needed
+## Decisions
 
-1. **Is the order right**: bug fix, constructor, subsystems, frame inputs,
-   then draw items? Draw items are the riskiest for performance and are last
-   so they land on a smaller struct; they could go earlier if the veil bug
-   matters more than the tidy-up.
-2. **How much of `flint_render`'s public surface may break?** Proposed:
-   anything not used by the player, viewer or CLI becomes `pub(crate)` with
-   no deprecation period, since no game repo imports those types directly
-   (to be confirmed against Float, FlintKart and Kandinski before step 4).
-3. **A render graph later?** If yes, the subsystems' draw hooks should be
-   shaped as passes now. The ADR assumes no.
+Chris accepted the recommendations on 2026-11-10:
+
+1. **The order stands**: the `set_msaa` fix, one constructor, subsystems,
+   frame inputs, then draw items.
+2. **`flint_render`'s surface narrows with no deprecation period**: what the
+   player, viewer and CLI don't use becomes `pub(crate)`, after a check that
+   Float, FlintKart and Kandinski import none of it (before step 4).
+3. **No render graph.** The subsystems' draw hooks are not shaped as passes.
