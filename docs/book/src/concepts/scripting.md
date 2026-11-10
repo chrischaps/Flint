@@ -102,6 +102,8 @@ All functions are available globally in every script. Entity IDs are passed as `
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
+A setter given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and `set_field`, `set_position`, `set_rotation`, `set_rotation_quat`, `set_scale`, `set_shear`, `clear_shear`, `rotate_local`, `set_visible`, `set_joint_target`, `set_parent`, `set_material_color`, `set_material_override`, `set_material_emissive` and `clear_material_override` given it, or a despawned id, log a warning the first time for each script and function: `seeded_stars.rhai: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. Getters stay quiet and return their empty value. Test with `entity_exists(id)` where a missing entity is expected.
+
 #### Hiding entities
 
 `set_visible(id, false)` writes a `visibility { visible = false }` component, which a scene can also author:
@@ -264,7 +266,7 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
-| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, a seeded sequence that's the same every run |
+| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, and in a player run with `--frame-step` or `--seed N`, a seeded sequence that's the same every run |
 | `random_range(min, max)` | `f64` | Random value in `[min, max)`, seeded the same way |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |

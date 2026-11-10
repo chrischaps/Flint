@@ -119,8 +119,29 @@ impl ScriptSystem {
     /// (`flint render --scripts`, #8). `random()` and `random_range(a, b)` draw
     /// from one SplitMix64 started at `seed`, shared by every script in the
     /// order they run; Rhai's `timestamp()`, which reads the wall clock, fails
-    /// and says to use `total_time()`. The player keeps its own.
+    /// and says to use `total_time()`. The player keeps its own, and seeds
+    /// only `random()` ([`Self::seed_random`]).
     pub fn make_deterministic(&mut self, seed: u64) {
+        self.seed_random(seed);
+        self.rhai_engine_mut().register_fn(
+            "timestamp",
+            || -> std::result::Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+                Err(
+                    "timestamp() reads the wall clock, which a deterministic run doesn't \
+                     have: use total_time() or delta_time()"
+                        .into(),
+                )
+            },
+        );
+    }
+
+    /// Make `random()` and `random_range(a, b)` one SplitMix64 sequence
+    /// started at `seed`, shared by every script in the order they call it,
+    /// in place of the wall-clock hash they draw from by default. The
+    /// player's `--seed` (and `--frame-step`, #635) and `flint render
+    /// --scripts` both come here, so the same seed gives the same numbers.
+    /// The sequence lives as long as the engine, through scene changes.
+    pub fn seed_random(&mut self, seed: u64) {
         let state = std::sync::Arc::new(std::sync::Mutex::new(seed));
         let next = move || -> f64 {
             let mut s = lock_or_recover(&state);
@@ -138,16 +159,6 @@ impl ScriptSystem {
         rhai.register_fn("random_range", move |min: f64, max: f64| -> f64 {
             min + (max - min) * next()
         });
-        rhai.register_fn(
-            "timestamp",
-            || -> std::result::Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
-                Err(
-                    "timestamp() reads the wall clock, which a deterministic run doesn't \
-                     have: use total_time() or delta_time()"
-                        .into(),
-                )
-            },
-        );
     }
 
     /// The expression state scripts see now (`expression()`): the last one
@@ -862,6 +873,91 @@ mod tests {
         }
         // Not stuck on one value.
         assert_ne!(first[0], first[1]);
+    }
+
+    #[test]
+    fn seed_random_is_make_deterministics_sequence_and_keeps_the_clock() {
+        // The player's --seed and flint render --scripts draw the same numbers
+        let source = r#"fn on_update() {
+            record(`${random()} ${random_range(-1.0, 1.0)}`);
+            try { let t = timestamp(); record("clock"); }
+            catch (e) { record("no clock"); }
+        }"#;
+        let run = |seeded_only: bool| {
+            let (mut system, seen) = recording_system();
+            if seeded_only {
+                system.seed_random(0x5EED);
+            } else {
+                system.make_deterministic(0x5EED);
+            }
+            let mut world = FlintWorld::new();
+            let id = world.spawn("dice").unwrap();
+            let ast = system.engine.compile(source).unwrap();
+            system.engine.add_script(id, ast, "dice.rhai".into());
+            for _ in 0..3 {
+                system.update(&mut world, 1.0 / 60.0).unwrap();
+            }
+            let out = seen.lock().unwrap().clone();
+            out
+        };
+        let (player, render) = (run(true), run(false));
+        let numbers = |lines: &[String]| -> Vec<String> {
+            lines
+                .iter()
+                .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(numbers(&player), numbers(&render));
+        assert_eq!(numbers(&player).len(), 3);
+        // Only the render takes the wall clock away
+        assert!(player.iter().any(|l| l == "clock"), "{player:?}");
+        assert!(render.iter().any(|l| l == "no clock"), "{render:?}");
+    }
+
+    #[test]
+    fn a_setter_on_a_missing_entity_warns_once_per_script_and_function() {
+        let source = r#"fn on_update() {
+            let gone = get_entity("car_body");
+            set_position(gone, 1.0, 2.0, 3.0);
+            set_position(gone, 1.0, 2.0, 3.0);
+            set_rotation_quat(gone, 0.0, 0.0, 0.0, 1.0);
+            set_field(9999, "transform", "position", [0.0, 0.0, 0.0]);
+            set_position(self_entity(), 4.0, 5.0, 6.0);
+        }"#;
+        let mut system = ScriptSystem::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("driver").unwrap();
+        world
+            .set_field(
+                id,
+                "script",
+                "source",
+                toml::Value::String("driver.rhai".into()),
+            )
+            .unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "driver.rhai".into());
+        for _ in 0..3 {
+            system.update(&mut world, 1.0 / 60.0).unwrap();
+        }
+        let warned = lock_or_recover(&system.engine.ctx)
+            .bad_target_warned
+            .clone();
+        let mut warned: Vec<_> = warned.into_iter().collect();
+        warned.sort();
+        let named = |f: &'static str| ("driver.rhai".to_string(), f);
+        assert_eq!(
+            warned,
+            vec![
+                named("set_field"),
+                named("set_position"),
+                named("set_rotation_quat")
+            ]
+        );
+        // A real entity is still set, and doesn't warn
+        let pos = world.get_transform(id).unwrap().position;
+        assert_eq!((pos.x, pos.y, pos.z), (4.0, 5.0, 6.0));
     }
 
     #[test]

@@ -155,6 +155,13 @@ struct Args {
     #[arg(long, value_name = "SECS")]
     frame_step: Option<f64>,
 
+    /// Seed scripts' `random()` and `random_range()`: one sequence, the same
+    /// every run (#635). `--frame-step` seeds them too, with the seed
+    /// `flint render --scripts` uses, unless this names another; without
+    /// either they draw from the wall clock
+    #[arg(long, value_name = "N")]
+    seed: Option<u64>,
+
     /// Play every scene under a look (#279, #435): a built-in
     /// (ascii_noir, matrix, ink_wash, graphite, watercolor), a
     /// `styles/<name>.look.toml` beside the scene, or a path. Merged over the
@@ -363,6 +370,13 @@ fn main() -> Result<()> {
         app.enable_perf(true);
     }
     app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
+    // A stepped run is meant to repeat, so its scripts' randomness does too
+    if let Some(seed) = args
+        .seed
+        .or(app.clock.frame_step.map(|_| flint_player::SCRIPT_SEED))
+    {
+        app.script.seed_random(seed);
+    }
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio

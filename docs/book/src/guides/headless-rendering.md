@@ -314,7 +314,7 @@ Scripts start once the models are loaded, as in the player, and tick once per cl
 It's deterministic, so a review can diff two renders:
 
 - The clock is the step, and it is the only one: `timestamp()`, Rhai's wall clock, fails and says to use `total_time()`.
-- `random()` and `random_range()` draw from a seeded sequence, the same every run. The player's are unchanged.
+- `random()` and `random_range()` draw from a seeded sequence, the same every run. A player run with `--frame-step` draws the same one (#635), unless its `--seed N` picks another.
 - Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
 - There is no input.
 

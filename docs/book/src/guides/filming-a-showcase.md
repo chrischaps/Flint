@@ -46,7 +46,8 @@ flint-player demo/film/02_type.scene.toml --schemas schemas \
 - `--frame-step 1/fps` advances game time exactly one frame per frame, and
   `--screenshot-every` the same writes each one. Scripts, animation,
   particles, a style's `boil` and egui's own animations all run on that
-  clock.
+  clock, and scripts' `random()` is seeded, so two takes draw the same
+  numbers (`--seed N` for another sequence).
 - `--pixels-per-point width/1920` lays every frame out on a 1920x1080-point
   canvas. ASCII cells, pencil spacing and egui are sized in points, which
   otherwise follow the window's scale factor, so the same take would differ
