@@ -5097,10 +5097,8 @@ impl SceneRenderer {
             self.scaled_depth = Some(std::sync::Arc::new(depth));
         }
         // The recreated resources drop the FXAA intermediate; re-allocate it
-        // at the new size when the pass is active (ADR 0050). Likewise the
-        // contour's texture (#214).
+        // at the new size when the pass is active (ADR 0050).
         self.ensure_fxaa_resources(device);
-        self.ensure_contour_resources(device);
     }
 
     /// Draw the scene at `scale` of the surface's size on each side, and
@@ -5468,24 +5466,6 @@ impl SceneRenderer {
                     h,
                     self.surface_format,
                 ));
-            }
-        }
-    }
-
-    /// Ensure the contour pass's GPU resources exist (#214): call after enabling it
-    /// at runtime and after resize. No-op when it's off, which allocates nothing.
-    pub fn ensure_contour_resources(&mut self, device: &wgpu::Device) {
-        if !self.postprocess_config.contour_enabled {
-            return;
-        }
-        if let Some(pp) = &mut self.postprocess_pipeline {
-            pp.contour
-                .get_or_insert_with(|| crate::contour::ContourPipeline::new(device));
-        }
-        if let Some(resources) = &mut self.postprocess_resources {
-            if resources.contour.is_none() {
-                let (w, h) = (resources.width, resources.height);
-                resources.contour = Some(crate::contour::ContourTextures::new(device, w, h));
             }
         }
     }

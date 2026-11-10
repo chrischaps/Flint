@@ -515,7 +515,6 @@ impl PlayerApp {
                 renderer.set_post_process_config(config);
                 renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
-                renderer.ensure_contour_resources(&context.device);
             }
         }
 

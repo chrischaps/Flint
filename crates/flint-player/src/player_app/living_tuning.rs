@@ -428,7 +428,8 @@ impl PlayerApp {
             .as_ref()
             .map(|renderer| renderer.post_process_config());
         let (paint, ink, on) = config.map_or((0.0, 0.0, 2), |config| {
-            (config.kuwahara_boil, config.contour_boil, config.boil_on)
+            let (paint, ink) = config.boil_amounts();
+            (paint, ink, config.boil_on)
         });
         let (paint, ink) = self.living_tune.boil_off.unwrap_or((paint, ink));
         BoilDef {
@@ -595,15 +596,16 @@ impl PlayerApp {
         let mut config = renderer.post_process_config().clone();
         let tune = &mut self.living_tune;
         // Where the amounts live now: the passes, or what off remembers.
-        let (mut paint, mut ink) = tune
-            .boil_off
-            .unwrap_or((config.kuwahara_boil, config.contour_boil));
+        let (mut paint, mut ink) = tune.boil_off.unwrap_or(config.boil_amounts());
         paint = boil.kuwahara.unwrap_or(paint);
         ink = boil.contour.unwrap_or(ink);
         let on = boil.enabled.unwrap_or(tune.boil_off.is_none());
         tune.boil_off = (!on).then_some((paint, ink));
-        config.kuwahara_boil = if on { paint } else { 0.0 };
-        config.contour_boil = if on { ink } else { 0.0 };
+        if on {
+            config.set_boil_amounts(paint, ink);
+        } else {
+            config.set_boil_amounts(0.0, 0.0);
+        }
         if let Some(cadence) = boil.on {
             config.boil_on = cadence.clamp(1, 3);
         }
@@ -1278,7 +1280,10 @@ pub(super) mod panel {
                     .as_ref()
                     .map_or((false, false), |renderer| {
                         let config = renderer.post_process_config();
-                        (config.styles.is_enabled("kuwahara"), config.contour_enabled)
+                        (
+                            config.styles.is_enabled("kuwahara"),
+                            config.styles.is_enabled("contour"),
+                        )
                     });
             let ab = self
                 .living_ab_state()

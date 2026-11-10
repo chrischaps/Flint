@@ -178,21 +178,21 @@ desaturate = 0.0                # 0 = full colour, 1 = ash-grey
 dof_strength = 0.0              # 0 = sharp
 dof_focus_distance = 10.0       # view metres
 dof_focus_range = 5.0
-kuwahara_boil = 0.0             # with [wooze]: how far each drawing moves the paint
-contour_enabled = false         # ink lines from depth and luminance
-contour_width = 1.25            # half a line, in pixels at 1080p
-contour_threshold = 0.08        # lower draws more
-contour_strength = 0.9
-contour_luma = 0.5              # 0 = silhouettes only
-contour_color = [0.015, 0.012, 0.02]
-contour_fade = 30.0             # metres to fade by half; 0 never
-contour_boil = 0.0              # with [wooze]: how far each drawing moves the lines
-boil_on = 2                     # film frames a drawing holds: 1, 2 or 3
+boil_on = 2                     # with [wooze]: film frames a boil's drawing holds: 1, 2 or 3
 film_grain = 0.0                # 0.02-0.05 is subtle
 grade_lift = [0.0, 0.0, 0.0]    # after ACES; neutral 0,0,0
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.0, 1.0, 1.0]
 fxaa = false                    # off by default so pixel gates stay single-path
+
+[post_process.styles.contour]   # ink lines from depth and luminance (a table switches it on)
+width = 1.25                    # half a line, in pixels at 1080p
+threshold = 0.08                # lower draws more
+strength = 0.9
+luma = 0.5                      # 0 = silhouettes only
+color = [0.015, 0.012, 0.02]
+fade = 30.0                     # metres to fade by half; 0 never
+boil = 0.0                      # with [wooze]: how far each drawing moves the lines
 ```
 
 ### Lighting Levers

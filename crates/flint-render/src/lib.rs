@@ -10,7 +10,6 @@ pub mod billboard_pipeline;
 pub mod bitmap_font;
 mod camera;
 mod context;
-pub mod contour;
 mod debug;
 mod file_watch;
 pub mod frustum;
@@ -157,7 +156,7 @@ mod tests {
     #[test]
     fn shading_boil_shaders_validate() {
         for source in [
-            include_str!("contour_shader.wgsl"),
+            include_str!("stylize/contour.wgsl"),
             include_str!("stylize/kuwahara.wgsl"),
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("failed to parse");

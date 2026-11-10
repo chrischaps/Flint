@@ -1513,36 +1513,6 @@ impl SceneRenderer {
             _ => None,
         };
         let hdr_scene = hdr_result.as_ref().map(|(t, id)| (&t.view, *id));
-        // Ink over whatever the HDR styles left (#214): the contour pass is
-        // still a plain post pass, so it reads the stage's result and the
-        // composite reads its output in place of it
-        let inked = config.enabled && config.contour_enabled && pp.contour_ready(resources);
-        if inked {
-            let input = match hdr_scene {
-                Some((view, id)) => crate::stylize::StyleInput { view, id },
-                None => crate::stylize::StyleInput {
-                    view: &resources.hdr_view,
-                    id: crate::stylize::input_id::HDR,
-                },
-            };
-            scoped("Contour", encoder, &mut |encoder| {
-                pp.run_contour(
-                    queue,
-                    encoder,
-                    device,
-                    resources,
-                    config,
-                    &input,
-                    depth_view,
-                    depth_key,
-                    camera,
-                )
-            });
-        }
-        let hdr_scene = match (inked, resources.contour.as_ref()) {
-            (true, Some(contour)) => Some((&contour.output_view, crate::stylize::input_id::CONTOUR)),
-            _ => hdr_scene,
-        };
 
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {

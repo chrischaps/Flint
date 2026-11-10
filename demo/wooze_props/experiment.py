@@ -166,10 +166,10 @@ def bob_scene(name: str, scripts: bool, boil: bool) -> Path:
             script = f'[entities.beetle_{side}.script]\nsource = "beetle_idle.rhai"\n\n'
             text = text.replace(model, script + model)
     if not boil:
-        for key in ("kuwahara_boil", "contour_boil"):
-            text, n = re.subn(rf"^{key} = [^\n]*", f"{key} = 0.0", text, flags=re.M)
-            if n != 1:
-                raise SystemExit(f"{key}: found {n} times")
+        # The kuwahara and contour tables' `boil` (#599), one each
+        text, n = re.subn(r"^boil = [^\n]*", "boil = 0.0", text, flags=re.M)
+        if n != 2:
+            raise SystemExit(f"boil: found {n} times, wanted kuwahara's and contour's")
     path = SCENE.with_name(f".wooze_props_{name}.scene.toml")
     path.write_text(text, encoding="utf-8")
     return path
