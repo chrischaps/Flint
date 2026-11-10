@@ -6514,6 +6514,59 @@ mod tests {
         }
     }
 
+    /// A sheared tile (#625): its culling bounds hold every corner the
+    /// matrix moves, and its normals, through the inverse transpose, stay
+    /// perpendicular to the sheared surface rather than leaning with it.
+    #[test]
+    fn a_sheared_entity_is_bounded_and_lit_by_its_own_matrix() {
+        use super::helpers::mat4_inv_transpose;
+        use flint_core::{Transform, Vec3};
+        // An 8 m tile, 20 m wide, leaning 0.5 m sideways per metre along z
+        // and climbing 0.25 m per metre along z, then yawed 30 degrees.
+        let t = Transform::default()
+            .with_position(Vec3::new(3.0, 0.0, 1.0))
+            .with_rotation(Vec3::new(0.0, 30.0, 0.0))
+            .with_shear([0.0, 0.5, 0.0, 0.25, 0.0, 0.0]);
+        let m = t.to_matrix();
+        let apply = |p: [f32; 3]| {
+            let mut out = [m[3][0], m[3][1], m[3][2]];
+            for (row, o) in out.iter_mut().enumerate() {
+                for (col, v) in p.iter().enumerate() {
+                    *o += m[col][row] * v;
+                }
+            }
+            out
+        };
+        let (lo, hi) = ([-10.0, 0.0, -4.0], [10.0, 0.1, 4.0]);
+        let (min, max) = transform_aabb(&m, lo, hi);
+        for corner in 0..8 {
+            let p = [
+                if corner & 1 == 0 { lo[0] } else { hi[0] },
+                if corner & 2 == 0 { lo[1] } else { hi[1] },
+                if corner & 4 == 0 { lo[2] } else { hi[2] },
+            ];
+            let w = apply(p);
+            for axis in 0..3 {
+                assert!(w[axis] >= min[axis] - 1e-4 && w[axis] <= max[axis] + 1e-4);
+            }
+        }
+
+        // Two edges of the tile's top face, in world space.
+        let o = apply([0.0, 0.0, 0.0]);
+        let along_x = apply([1.0, 0.0, 0.0]);
+        let along_z = apply([0.0, 0.0, 1.0]);
+        let ex: Vec<f32> = (0..3).map(|i| along_x[i] - o[i]).collect();
+        let ez: Vec<f32> = (0..3).map(|i| along_z[i] - o[i]).collect();
+        let it = mat4_inv_transpose(&m);
+        let n: Vec<f32> = (0..3).map(|row| it[1][row]).collect(); // local +Y
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        assert!(dot(&n, &ex).abs() < 1e-5, "normal leans along x");
+        assert!(dot(&n, &ez).abs() < 1e-5, "normal leans along z");
+        // The plain model matrix would have tilted it with the shear.
+        let naive: Vec<f32> = (0..3).map(|row| m[1][row]).collect();
+        assert!(dot(&naive, &ez).abs() > 0.1);
+    }
+
     /// A render-scale step keeps the surface's size, so it keeps the
     /// display-stage style targets (ASCII's cell history, #277) and the
     /// history in them (#270); a real resize still drops them.

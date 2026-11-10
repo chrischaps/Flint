@@ -79,6 +79,9 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_rotation_quat(id)` | `Map` | The rotation the entity renders with, as `#{x, y, z, w}` (`rotation_quat` if present, else the euler angles converted) |
 | `set_rotation_quat(id, x, y, z, w)` | --- | Set the rotation as a quaternion (normalised); euler `rotation` is zeroed |
 | `rotate_local(id, x, y, z)` | --- | Compose a rotation (euler degrees) about the entity's own axes onto its current orientation, rest quaternion included (ADR 0069) |
+| `set_shear(id, map)` | --- | Set `transform.shear` from any of `#{xy, xz, yx, yz, zx, zy}` (`ab` = how far `a` moves per unit of `b`, between rotation and scale); missing terms are 0, all zeros removes it (#625; [Transforms](scenes.md#transforms)) |
+| `get_shear(id)` | `Map` | All six shear terms, zeros when the entity has none |
+| `clear_shear(id)` | --- | Remove the shear |
 | `distance(a, b)` | `f64` | Euclidean distance between two entities |
 | `set_parent(child_id, parent_id)` | --- | Set an entity's parent in the hierarchy |
 | `get_parent(id)` | `i64` | Get the parent entity ID (`-1` if none) |

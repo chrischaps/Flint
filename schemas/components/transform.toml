@@ -5,3 +5,4 @@ description = "Spatial transform for positioning entities"
 position = { type = "vec3", default = [0, 0, 0] }
 rotation = { type = "vec3", default = [0, 0, 0], description = "Euler angles in degrees" }
 scale = { type = "vec3", default = [1, 1, 1] }
+shear = { type = "table", description = "Optional shear between rotation and scale: any of xy, xz, yx, yz, zx, zy, where ab is how far a moves per unit of b (x' = x + xy*y + xz*z). { xz = 0.25 } leans the far end sideways" }

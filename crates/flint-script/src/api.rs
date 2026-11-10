@@ -705,6 +705,64 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         );
     }
 
+    // set_shear(id: i64, shear: Map) — any of #{xy, xz, yx, yz, zx, zy}
+    // (#625): `ab` is how far `a` moves per unit of `b`, applied between
+    // rotation and scale. Missing terms are 0, and the map replaces the
+    // whole shear; an all-zero map removes it. `set_shear(id, #{xz: 0.2})`
+    // leans an entity's far end 0.2 m sideways per metre along z.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_shear", move |id: i64, shear: Map| {
+            if id < 0 {
+                return;
+            }
+            let terms = shear_terms(&shear);
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                write_shear(comps, terms);
+            }
+        });
+    }
+
+    // get_shear(id: i64) -> Map #{xy, xz, yx, yz, zx, zy}, all six; zeros
+    // for an entity without a shear (or without a transform).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_shear", move |id: i64| -> Map {
+            let terms = if id < 0 {
+                [0.0; 6]
+            } else {
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_ref() };
+                world
+                    .get_transform(EntityId::from_raw(id as u64))
+                    .and_then(|t| t.shear)
+                    .unwrap_or([0.0; 6])
+            };
+            let mut map = Map::new();
+            for (key, v) in flint_core::Shear::KEYS.iter().zip(terms) {
+                map.insert((*key).into(), Dynamic::from(v as f64));
+            }
+            map
+        });
+    }
+
+    // clear_shear(id: i64) — the entity goes back to rotation and scale.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_shear", move |id: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                write_shear(comps, [0.0; 6]);
+            }
+        });
+    }
+
     // rotate_local(id: i64, x_deg: f64, y_deg: f64, z_deg: f64)
     // Composes a rotation about the entity's OWN axes onto its current
     // orientation (rest quaternion included), so a node whose rest pose is
@@ -1887,6 +1945,46 @@ fn edit_anim_layer(
 }
 
 // ─── Physics / Raycast API ───────────────────────────────
+
+/// A script's shear map as the six terms, in `Shear::KEYS` order. Integers
+/// count (`#{xz: 1}`); an unknown key or a non-number warns and is skipped.
+fn shear_terms(shear: &Map) -> [f32; 6] {
+    let mut terms = [0.0f32; 6];
+    for (key, value) in shear.iter() {
+        let Some(i) = flint_core::Shear::KEYS
+            .iter()
+            .position(|k| *k == key.as_str())
+        else {
+            tracing::warn!(
+                "set_shear: unknown term '{}' (expected xy, xz, yx, yz, zx, zy)",
+                key
+            );
+            continue;
+        };
+        let v = value
+            .as_float()
+            .ok()
+            .or_else(|| value.as_int().ok().map(|n| n as f64));
+        match v {
+            Some(v) => terms[i] = v as f32,
+            None => tracing::warn!("set_shear: '{}' is not a number", key),
+        }
+    }
+    terms
+}
+
+/// Store a shear (#625) as the table a scene would write, only the terms
+/// that aren't zero; an all-zero shear removes the key.
+fn write_shear(comps: &mut flint_ecs::DynamicComponents, terms: [f32; 6]) {
+    if terms.iter().any(|v| *v != 0.0) {
+        comps.set_field(comp::TRANSFORM, "shear", flint_core::Shear::to_toml(&terms));
+    } else if let Some(table) = comps
+        .get_mut(comp::TRANSFORM)
+        .and_then(|t| t.as_table_mut())
+    {
+        table.remove("shear");
+    }
+}
 
 /// Store a quaternion as the entity's rotation. The Euler `rotation` is
 /// zeroed so readers that only know Euler see a neutral value rather than a
