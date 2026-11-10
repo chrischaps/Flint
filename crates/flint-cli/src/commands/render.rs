@@ -256,7 +256,7 @@ pub struct RenderArgs {
     pub ascii_font: Option<String>,
 
     /// ASCII style: the glyph set's ramp (built-in: classic, blocks,
-    /// minimal, detailed; default the set's own)
+    /// minimal, detailed, quadrants, braille; default the set's own)
     #[arg(long)]
     pub ascii_ramp: Option<String>,
 

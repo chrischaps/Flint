@@ -315,7 +315,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--no-images` | `false` | With `--frames`: write no PNGs |
 | `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
-| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
+| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`, `quadrants`, `braille`) |
 | `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
 | `--ascii-palette <name>` | `phosphor` | *Style:* palette for `palette` mode: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` or `palettes/<name>.palette.toml` beside the scene; sets `--ascii-color palette` unless that's given |
 | `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |

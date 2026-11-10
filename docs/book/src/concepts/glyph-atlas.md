@@ -4,7 +4,9 @@ Every ASCII look needs glyphs on the GPU. `flint_render::glyph_atlas` rasterizes
 
 ![The built-in 8x8 atlas](../images/glyph-atlas-builtin.png)
 
-*The built-in set, 4x: printable ASCII, the box-drawing edge glyphs `─ │ ╱ ╲` and the shade blocks `░ ▒ ▓ █`, each in an 8x8 cell with a one-pixel gutter.*
+*The built-in set, 4x, each glyph in an 8x8 cell with a one-pixel gutter: printable ASCII; the box-drawing edge glyphs `─ │ ╱ ╲` and their corners and tees `┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼`; the shade blocks `░ ▒ ▓ █`; the half and quadrant blocks `▀ ▄ ▌ ▐ ▖ ▗ ▘ ▝ ▚ ▞ ▙ ▛ ▜ ▟`; and the 256 braille patterns `⠀`…`⣿` (#285).*
+
+The last two groups are generated rather than drawn, since a block or braille glyph is its bit pattern (`generated_8x8_text` in `glyph_atlas/mod.rs`; `QUADRANT_BLOCKS`, `braille_char` and `braille_dot` name the bits). A quadrant fills a 4x4 corner of the cell. A braille dot is 2 px wide and 1 tall at x 1-2 or 5-6 and y 0, 2, 4 or 6, so dots keep a regular 4 x 2 px pitch into the next cell, with a dark row and column between them; at 8x8 that reads as a fine stipple rather than round dots, and `⣿` is a quarter ink. The corners and tees are drawn on the edge glyphs' own row and column (y 3, x 3), so a line turns into them without a gap. The new groups sit after the old ones, so every older glyph kept its cell.
 
 ## The pieces
 
@@ -33,10 +35,26 @@ An atlas comes from one of four sources:
 | `blocks` | ` ░▒▓█` | as written (0, 25, 50, 75, 100% ink) |
 | `minimal` | ` .oO@` | as written |
 | `detailed` | Paul Bourke's 70-glyph ramp | sorted by measured coverage |
+| `quadrants` | ` ▖▞▟█` | as written: each step the last plus one quadrant (0, 25, 50, 75, 100% ink) |
+| `braille` | ` ⠁⠡⠩⠭⠯⢯⢿⣿` | as written: each step the last plus one dot, scattered so the dots spread before they fill (0 to 25% ink) |
 
 ![A lit sphere drawn through the classic ramp](../images/glyph-atlas-specimen-classic.png)
 
 *The `glyph_atlas` example lights a sphere on the CPU, picks a glyph per cell from the `classic` ramp and outlines the silhouette with the edge glyphs. Because the built-in edge glyphs fill their cells, the outline joins into one line.*
+
+The two sub-cell ramps (#285) trade letterforms for resolution. `quadrants` is chunky pixels at half a cell, and its middle step `▞` is a checkerboard, so a gradient dithers instead of banding. `braille` is the finest texture the set has: a fill of 2x1 dots on a 4 x 2 px pitch that never closes into a solid cell, which suits haze, sky and anything meant to read light.
+
+![The same sphere through the quadrants ramp](../images/glyph-atlas-specimen-quadrants.png)
+
+![The same sphere through the braille ramp](../images/glyph-atlas-specimen-braille.png)
+
+*`cargo run -p flint-render --example glyph_atlas -- out/` writes both, beside the other ramps.*
+
+![The lantern scene in the quadrants and braille ramps](../images/ascii-lantern-sub-cell-ramps.png)
+
+*`flint render demo/ascii_lantern.scene.toml --sweep ascii.ramp=quadrants,braille --width 960 --height 540`*
+
+Both ramps still pick a glyph by the cell's mean luminance, one step of the ramp per band. Picking a pattern to match the cell's *sub-cell* luminance instead (a quadrant or braille pattern from each part's own brightness, so an edge falls inside a cell) needs the glyph pass to sample those parts, and isn't done yet; every one of the 16 quadrant and 256 braille patterns is in the atlas for it.
 
 ## A glyph set file
 
