@@ -226,7 +226,17 @@ impl PhysicsSync {
         let (pos, quat) = mat4_to_rigid(&mat);
 
         let scale = mat4_scale(&mat);
-        if scale.iter().any(|s| (s - 1.0).abs() > 1e-3) && self.warned.insert(entity_id) {
+        let skew = flint_core::mat4_skew(&mat);
+        if skew > 1e-3 && self.warned.insert(entity_id) {
+            // A shear (#625, or a non-uniform scale above a rotation) has no
+            // rigid body: the collider is placed by the matrix's rotation
+            // alone and keeps its square shape.
+            tracing::warn!(
+                "physics: entity {:?} is sheared (basis {:.1} degrees off square); bodies and colliders ignore shear",
+                world.get_name(entity_id).unwrap_or("?"),
+                90.0 - skew.clamp(0.0, 1.0).acos().to_degrees()
+            );
+        } else if scale.iter().any(|s| (s - 1.0).abs() > 1e-3) && self.warned.insert(entity_id) {
             tracing::warn!(
                 "physics: entity {:?} has non-unit world scale {:?}; bodies, colliders and joints assume unit scale on the physics chain",
                 world.get_name(entity_id).unwrap_or("?"),

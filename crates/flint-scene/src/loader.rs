@@ -34,6 +34,35 @@ fn fill_in_preset(scene_file: &mut SceneFile, path: &Path) {
     }
 }
 
+/// A `transform.shear` that shears nothing, or folds space flat, says so
+/// (#625): `xzz = 0.2` is a typo that would otherwise draw an unsheared tile,
+/// and `xy = yx = 1` has no inverse for the normals to use.
+fn warn_on_shear(entity: &str, transform: &toml::Value) {
+    let Some(shear) = transform.get("shear") else {
+        return;
+    };
+    let unknown = flint_core::Shear::unknown_keys(shear);
+    if !unknown.is_empty() {
+        tracing::warn!(
+            "[scene] entity '{}' transform.shear: unknown term(s) {} (expected xy, xz, yx, yz, zx, zy)",
+            entity,
+            unknown.join(", ")
+        );
+    }
+    match flint_core::Shear::from_toml(shear) {
+        Some(terms) if flint_core::Shear::determinant(&terms).abs() < 1e-3 => tracing::warn!(
+            "[scene] entity '{}' transform.shear flattens it (determinant {:.4}); lighting will be wrong",
+            entity,
+            flint_core::Shear::determinant(&terms)
+        ),
+        None if !matches!(shear, toml::Value::Table(_)) => tracing::warn!(
+            "[scene] entity '{}' transform.shear should be a table like {{ xz = 0.25 }}",
+            entity
+        ),
+        _ => {}
+    }
+}
+
 /// Load a scene from a TOML string (no prefab expansion — no filesystem access)
 pub fn load_scene_string(
     content: &str,
@@ -151,6 +180,9 @@ fn populate_world(
                 if let Err(e) = validate_component_data(schema, comp_data) {
                     tracing::warn!("[scene] entity '{}' component '{}': {}", name, comp_name, e);
                 }
+            }
+            if comp_name == "transform" {
+                warn_on_shear(name, comp_data);
             }
             world.merge_component(id, comp_name, comp_data.clone())?;
         }

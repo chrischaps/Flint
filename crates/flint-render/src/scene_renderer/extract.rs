@@ -294,6 +294,7 @@ impl SceneRenderer {
                 material_override.emissive,
                 material_override.emissive_strength,
             );
+            material_uniforms.set_double_sided(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
@@ -528,6 +529,7 @@ impl SceneRenderer {
                     Some(transform_aabb(&model_matrix, lo, hi))
                 },
                 wooze: None,
+                double_sided: gpu_mesh.material.double_sided,
             };
 
             if is_transparent {
@@ -627,6 +629,7 @@ impl SceneRenderer {
                 material_override.emissive,
                 material_override.emissive_strength,
             );
+            material_uniforms.set_double_sided(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
@@ -716,6 +719,7 @@ impl SceneRenderer {
                 blend_mode,
             );
             draw.casts_shadow = Self::ecs_casts_shadow(world, entity_id);
+            draw.double_sided = gpu_mesh.material.double_sided;
             draw.world_aabb = Some(transform_aabb(
                 &model_matrix,
                 gpu_mesh.aabb_min,

@@ -6,6 +6,12 @@
 // half its direction in half turns, y = its length in cell widths, z =
 // outline + 2 when the line's cross axis is x, w = the line's offset from
 // the cell centre on that axis).
+//
+// An edge cell draws one of up to 13 glyphs, numbered as
+// `EdgeGlyphs::slots()` packs them: 0..3 the lines - | / \, 4..7 the
+// corners, 8..11 the tees, 12 the cross (#348); NO_EDGE for none.
+
+const NO_EDGE: u32 = 15u;
 
 fn edge_cell_at(c: vec2<i32>) -> vec4<f32> {
     let cmax = vec2<i32>(textureDimensions(edge_cells)) - vec2<i32>(1);
@@ -52,7 +58,7 @@ fn edge_crosses_x(e: vec4<f32>) -> bool {
 fn thinned_slot(c: vec2<i32>) -> u32 {
     let e = edge_cell_at(c);
     if e.x < 0.5 {
-        return 4u;
+        return NO_EDGE;
     }
     let slot = min(u32(e.x - 0.5), 3u);
     let cross_x = edge_crosses_x(e);
@@ -80,5 +86,64 @@ fn thinned_slot(c: vec2<i32>) -> u32 {
     if (offset > -0.5 && offset <= 0.5) || n.x < 0.5 {
         return slot;
     }
-    return 4u;
+    return NO_EDGE;
+}
+
+// The edge cell pass's corner mark in z (#348, ascii_edge_cells.wgsl):
+// the cell's edge pixels run in no one direction
+const CORNER_BIT: u32 = 0x800000u;
+
+// The glyph a cell's arms make, by arms right 1, left 2, down 4, up 8: a
+// corner, tee or cross (4..12), the straight line for two opposite arms,
+// or NO_EDGE (keep the cell's own line). A table, not a `switch`, which
+// FXC has miscompiled (CLAUDE.md).
+const ARM_GLYPHS = array<u32, 16>(
+    NO_EDGE, NO_EDGE, NO_EDGE, 0u, // -, right, left, right+left
+    NO_EDGE, 4u, 5u, 10u,          // down, right+down, left+down, right+left+down
+    NO_EDGE, 6u, 7u, 11u,          // up, right+up, left+up, right+left+up
+    1u, 8u, 9u, 12u,               // up+down, +right, +left, all four
+);
+
+// The line a neighbour at texel `c` lends a corner as an arm: its thinned
+// line, if it's sure of one direction. A neighbour the cell pass marked a
+// corner too is part of the same turn, not a straight arm, and lends none:
+// two such cells side by side would each take the other for an arm and
+// draw a corner apiece.
+fn arm_slot(c: vec2<i32>) -> u32 {
+    if (u32(edge_cell_at(c).z) & CORNER_BIT) != 0u {
+        return NO_EDGE;
+    }
+    return thinned_slot(c);
+}
+
+// The glyph the edge cell at texel `c` draws (#348): its thinned line, or,
+// in a cell the cell pass marked a corner, the corner or tee its
+// neighbours' lines meet in. An arm is a neighbour drawing the line that
+// runs into this cell: - beside it, | above or below. `corners` is how many
+// corner glyphs the drawing font has (0, 4 or 9); a meeting it has no glyph
+// for keeps the line, which is what a set without corners always draws.
+fn cornered_slot(c: vec2<i32>, corners: u32) -> u32 {
+    let line = thinned_slot(c);
+    if line == NO_EDGE || corners == 0u || (u32(edge_cell_at(c).z) & CORNER_BIT) == 0u {
+        return line;
+    }
+    var arms = 0u;
+    if arm_slot(c + vec2<i32>(1, 0)) == 0u {
+        arms |= 1u;
+    }
+    if arm_slot(c - vec2<i32>(1, 0)) == 0u {
+        arms |= 2u;
+    }
+    if arm_slot(c + vec2<i32>(0, 1)) == 1u {
+        arms |= 4u;
+    }
+    if arm_slot(c - vec2<i32>(0, 1)) == 1u {
+        arms |= 8u;
+    }
+    var table = ARM_GLYPHS;
+    let shape = table[arms];
+    if shape == NO_EDGE || shape >= 4u + corners {
+        return line;
+    }
+    return shape;
 }

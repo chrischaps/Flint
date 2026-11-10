@@ -310,6 +310,8 @@ position = [0, 0, 0]
 | `set_field(id, comp, field, val)` | --- | Write a component field |
 | `get_position(id)` | `#{x,y,z}` | Entity position |
 | `set_position(id, x, y, z)` | --- | Set entity position |
+| `set_scale(id, x, y, z)` / `get_scale(id)` | --- / `#{x,y,z}` | Entity scale |
+| `set_visible(id, bool)` / `is_visible(id)` | --- / `bool` | Hide an entity and its children from every draw, or show it |
 | `distance(a, b)` | `f64` | Distance between two entities |
 | `is_action_pressed(action)` | `bool` | Check if action is held |
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |

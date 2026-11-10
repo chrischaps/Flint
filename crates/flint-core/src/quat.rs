@@ -121,6 +121,21 @@ pub fn mat4_scale(m: &[[f32; 4]; 4]) -> [f32; 3] {
     s
 }
 
+/// How far a matrix's basis is from square: the largest |cos| between two of
+/// its columns. 0 for rotation and scale (any per-axis scale), above 0 when
+/// it shears, whether from `transform.shear` or from a non-uniform scale
+/// under a rotated child. Physics warns past a small tolerance (#625).
+pub fn mat4_skew(m: &[[f32; 4]; 4]) -> f32 {
+    let (basis, scale) = orthonormal_basis(m);
+    if scale.iter().any(|s| *s <= 1e-10) {
+        return 0.0;
+    }
+    let dot = |a: [f32; 3], b: [f32; 3]| (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).abs();
+    dot(basis[0], basis[1])
+        .max(dot(basis[0], basis[2]))
+        .max(dot(basis[1], basis[2]))
+}
+
 /// Express a world-space pose relative to `parent_world`, assuming the parent
 /// is rigid (its scale is normalised away). Returns `(local_pos, local_quat)`.
 pub fn rigid_inverse_apply(
@@ -229,6 +244,21 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn skew_is_zero_until_something_shears() {
+        let rigid = Transform::default()
+            .with_rotation(Vec3::new(20.0, 40.0, 0.0))
+            .with_scale(Vec3::new(3.0, 1.0, 0.5));
+        assert!(mat4_skew(&rigid.to_matrix()) < 1e-5);
+        let sheared = rigid.with_shear([0.0, 0.5, 0.0, 0.0, 0.0, 0.0]);
+        assert!(mat4_skew(&sheared.to_matrix()) > 0.1);
+        // A non-uniform parent over a rotated child shears too.
+        let parent = Transform::default().with_scale(Vec3::new(4.0, 1.0, 1.0));
+        let child = Transform::default().with_rotation(Vec3::new(0.0, 30.0, 0.0));
+        let world = mat4_mul(&parent.to_matrix(), &child.to_matrix());
+        assert!(mat4_skew(&world) > 0.1);
     }
 
     fn quat_close(a: &[f32; 4], b: &[f32; 4]) -> bool {

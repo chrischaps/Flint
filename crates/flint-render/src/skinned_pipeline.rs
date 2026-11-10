@@ -8,6 +8,8 @@ pub const MAX_BONES: usize = 256;
 /// The skinned mesh render pipeline
 pub struct SkinnedPipeline {
     pub pipeline: wgpu::RenderPipeline,
+    /// `pipeline` culling nothing, for glTF `doubleSided` materials (#623).
+    pub pipeline_double_sided: wgpu::RenderPipeline,
     /// Skinned wireframe lines (LineList, LessEqual + negative bias so the
     /// edges sit on top of the animated surface).
     pub wire_line_pipeline: wgpu::RenderPipeline,
@@ -70,8 +72,9 @@ impl SkinnedPipeline {
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Skinned PBR Render Pipeline"),
+        let make_opaque = |label: &str, cull_mode: Option<wgpu::Face>| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -93,7 +96,7 @@ impl SkinnedPipeline {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -111,7 +114,11 @@ impl SkinnedPipeline {
             },
             multiview: None,
             cache: None,
-        });
+        })
+        };
+        let pipeline = make_opaque("Skinned PBR Render Pipeline", Some(wgpu::Face::Back));
+        let pipeline_double_sided =
+            make_opaque("Skinned PBR Render Pipeline (double-sided)", None);
 
         // The skinned wireframe's vertex and fragment stages (#602: what is
         // left of the old outline shader)
@@ -330,6 +337,7 @@ impl SkinnedPipeline {
 
         Self {
             pipeline,
+            pipeline_double_sided,
             wire_line_pipeline,
             transparent_alpha_pipeline,
             transparent_alpha_back_pipeline,

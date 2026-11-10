@@ -64,3 +64,19 @@ page = "https://chaps.dev/projects/flint-kart/"
 video = "web/kart-race.mp4"
 poster = "web/kart-poster.jpg"
 film = "Meanwhile, the first lap of a race on Lighthouse Bay, filmed in the game."
+
+[[game]]
+id = "afterglow"
+title = "AFTERGLOW"
+line = "Outrun the dark: a neon road, a clock, and fifteen events to win."
+controls = "sound on · WASD or arrows, or a pad · Space handbrake · Shift boost · Enter to choose"
+touch = "needs a keyboard or a paired pad: there are no touch controls yet"
+orientation = "landscape"
+repo = "chrischaps/Kandinski"
+# main: the second pass (the two-axle car model, the Grand Tour's fifteen
+# events, the hero car), with bundle.toml and the poster under web/. Its
+# engine subtree is Flint main as of 9886650. No film yet, so a browser
+# without WebGPU sees the poster alone.
+ref = "10e2009db47b2645346aa01e846a1a6c4cb652dd"
+# A path, not a URL: build.py copies it from the repo beside the bundle.
+poster = "web/afterglow-poster.jpg"
