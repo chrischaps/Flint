@@ -45,6 +45,10 @@ pub struct ResolvedStyle {
     pub padding: [f32; 4], // L, T, R, B
     pub stroke_color: [f32; 4],
     pub stroke_width: f32,
+    /// Glow under the text and its stroke (#626): colour, and reach in
+    /// points (0 = none).
+    pub glow_color: [f32; 4],
+    pub glow_radius: f32,
     /// Image sub-rectangle `[u0, v0, u1, v1]` in 0..1 texture space
     /// (sprite-sheet cells, cropped atlases). Images only.
     pub uv: [f32; 4],
@@ -82,6 +86,8 @@ impl Default for ResolvedStyle {
             padding: [0.0; 4],
             stroke_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 0.0,
+            glow_color: [1.0, 1.0, 1.0, 0.5],
+            glow_radius: 0.0,
             uv: [0.0, 0.0, 1.0, 1.0],
             font: None,
             letter_spacing: 0.0,
@@ -123,6 +129,8 @@ pub const KNOWN_PROPERTIES: &[&str] = &[
     "padding",
     "stroke_color",
     "stroke_width",
+    "glow_color",
+    "glow_radius",
     "layout",
     "margin_bottom",
     "uv",
@@ -161,6 +169,8 @@ pub fn apply_property(style: &mut ResolvedStyle, key: &str, val: &StyleValue) ->
         ("bg_color", Color(c)) => style.bg_color = *c,
         ("stroke_color", Color(c)) => style.stroke_color = *c,
         ("stroke_width", Float(v)) => style.stroke_width = *v,
+        ("glow_color", Color(c)) => style.glow_color = *c,
+        ("glow_radius", Float(v)) => style.glow_radius = *v,
         ("letter_spacing", Float(v)) => style.letter_spacing = *v,
         ("shadow", Shadow(dx, dy, c)) => style.shadow = Some((*c, *dx, *dy)),
         // Reuse Color([f32; 4]) for 4-value padding and image uv rects

@@ -82,6 +82,7 @@ impl PlayerApp {
             ui_textures: HashMap::new(),
             ui_fonts: HashSet::new(),
             ui_fonts_warned: HashSet::new(),
+            text_halos: Default::default(),
             ui_fonts_root: None,
             ui_fonts_installed: false,
             egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),

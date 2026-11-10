@@ -8,12 +8,14 @@
 //! depth, and text on a plane is laid in that plane and projected corner by
 //! corner. They're drawn onto the HUD's target before the HUD, against the
 //! scene's resolved depth (`LessEqual`, no depth write), sampling egui's
-//! font atlas. Colours, strokes and shadows are the HUD's, and so is the
+//! font atlas (and, for a wide stroke or a glow, the HUD's halo picture,
+//! #626). Colours, strokes, glows and shadows are the HUD's, and so is the
 //! blend, so a name looks the same as it would drawn with `draw_text_opts`.
 //! Fog, bloom and tonemapping don't touch it.
 
 use super::fonts::{resolve_font_id, text_layout_job};
 use super::hud_render::to_color32;
+use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_text::WorldText;
 use flint_render::world_line_pipeline::DEPTH_SLACK;
@@ -114,6 +116,7 @@ pub(super) fn lay_out(
     view: &TextView,
     fonts: &HashSet<String>,
     warned: &mut HashSet<String>,
+    halos: &mut TextHalos,
 ) -> Vec<Laid> {
     let mut out = Vec::new();
     for t in texts {
@@ -141,18 +144,26 @@ pub(super) fn lay_out(
             -size.x * f32::from(t.align.min(2)) * 0.5,
             -size.y * f32::from(t.valign.min(2)) * 0.5,
         );
-        // The HUD's order: shadow, then the stroke's eight offsets, then
-        // the text itself.
+        // The HUD's order: shadow, then the stroke (eight offsets, or a
+        // picture with the glow), then the text itself.
         let mut shapes = Vec::new();
         if let Some((color, dx, dy)) = t.shadow {
             let c = to_color32(&color);
             shapes.push(egui::Shape::galley(pos + egui::vec2(dx, dy) * scale, galley(c), c));
         }
-        if let Some((color, width)) = t.stroke {
+        // Lengths in the label's own units, as points of its layout.
+        let stroke = t.stroke.map(|(c, w)| (c, w * scale));
+        let glow = t.glow.map(|(c, r)| (c, r * scale));
+        if wants_halo(stroke, glow) {
+            // Wide strokes and glows are one picture, as on the HUD (#626).
+            let key = (t.text.as_str(), &font_id, (t.spacing * scale).to_bits());
+            if let Some(shape) = halos.shape(ctx, &body, key, pos, HaloSpec { stroke, glow }) {
+                shapes.push(shape);
+            }
+        } else if let Some((color, w)) = stroke {
             let c = to_color32(&color);
             let stroke = galley(c);
-            let w = width * scale;
-            for (dx, dy) in [(-w, 0.0), (w, 0.0), (0.0, -w), (0.0, w), (-w, -w), (w, -w), (-w, w), (w, w)] {
+            for (dx, dy) in stamp_offsets(w) {
                 shapes.push(egui::Shape::galley(pos + egui::vec2(dx, dy), stroke.clone(), c));
             }
         }
@@ -525,6 +536,7 @@ mod tests {
             font: None,
             spacing: 0.0,
             shadow: None,
+            glow: None,
             plane,
         }
     }
@@ -543,7 +555,7 @@ mod tests {
         let ctx = context();
         let mut laid = Vec::new();
         let _ = ctx.run(Default::default(), |ctx| {
-            laid = lay_out(ctx, texts, v, &HashSet::new(), &mut HashSet::new());
+            laid = lay_out(ctx, texts, v, &HashSet::new(), &mut HashSet::new(), &mut TextHalos::default());
         });
         tessellate(&ctx, laid, v)
     }

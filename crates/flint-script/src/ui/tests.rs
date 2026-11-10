@@ -459,3 +459,24 @@ fn style_without_tokens_still_loads() {
     };
     assert_eq!(st.color, [1.0, 0.0, 0.0, 1.0]);
 }
+
+// ── Glow (#626) ─────────────────────────────────────────────────────────
+
+#[test]
+fn glow_properties_reach_the_text_draw() {
+    let (_tp, mut sys, _) = project();
+    let text_glow = |sys: &mut UiSystem| {
+        sys.generate_draw_commands(1280.0, 720.0)
+            .into_iter()
+            .find_map(|c| match c {
+                crate::context::DrawCommand::Text { glow, .. } => Some(glow),
+                _ => None,
+            })
+            .expect("the header draws text")
+    };
+    assert_eq!(text_glow(&mut sys), None, "no glow_radius, no glow");
+    assert!(is_known_property("glow_color") && is_known_property("glow_radius"));
+    sys.set_style("header", "glow_color", StyleValue::Color([0.2, 0.9, 1.0, 0.8]));
+    sys.set_style("header", "glow_radius", StyleValue::Float(14.0));
+    assert_eq!(text_glow(&mut sys), Some(([0.2, 0.9, 1.0, 0.8], 14.0)));
+}
