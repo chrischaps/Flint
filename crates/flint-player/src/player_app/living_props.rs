@@ -331,6 +331,28 @@ impl LivingRun {
         self.time
     }
 
+    /// The seconds `beats` whole beats take where the clock now stands, as the
+    /// player's `step_living` counts them: the field's global step, or in a scene
+    /// with no field, the first prop's own.
+    pub fn beat_seconds(&self, beats: f64) -> f64 {
+        let step = match &self.field {
+            Some(field) => f64::from(field.global(self.time).step),
+            None => (self.props().props().first()).map_or(0.0, |prop| f64::from(prop.clock().step)),
+        };
+        step * beats
+    }
+
+    /// Move every prop on by `beats` whole beats, however long a beat is where it
+    /// stands, and the field's clock by `seconds`: a script's `step_living`, as the
+    /// player's `before_living_tick` does it (#579). Poses are made by the next
+    /// [`Self::step`].
+    pub fn advance_beats(&mut self, beats: f64, seconds: f64) {
+        self.props_mut().advance_beats(beats, seconds);
+        if self.field.is_some() {
+            self.time += seconds;
+        }
+    }
+
     /// The props as they stand.
     pub fn props(&self) -> &LivingProps {
         self.resolver.living_props()
@@ -418,6 +440,33 @@ impl WoozeClocks {
         self.boil.tick(dt, &sample);
         match &mut self.shallow {
             Some(shallow) => shallow.advance(world, &self.field, self.time, dt),
+            None => &[],
+        }
+    }
+
+    /// The field's global step where its clock now stands, in seconds a beat.
+    pub fn beat_seconds(&self, beats: f64) -> f64 {
+        f64::from(self.field.global(self.time).step) * beats
+    }
+
+    /// A script's `step_living` (#579), as the player's `before_living_tick` does
+    /// it: the boil moves on by `beats` whole beats of the field at `viewer`, and
+    /// the field's clock and shallow wooze by `seconds`. Returns what shallow wooze
+    /// draws with now.
+    pub fn advance_beats(
+        &mut self,
+        world: &FlintWorld,
+        viewer: [f32; 3],
+        beats: f64,
+        seconds: f64,
+    ) -> &[(flint_core::EntityId, flint_render::ShallowWoozeDraw)] {
+        let sample = self.field.sample(viewer, self.time);
+        self.boil.tick(f64::from(sample.step) * beats, &sample);
+        self.time += seconds;
+        // Shallow wooze runs its own clocks in seconds, so inside a zone with its
+        // own step this isn't a whole beat of theirs.
+        match &mut self.shallow {
+            Some(shallow) => shallow.advance(world, &self.field, self.time, seconds),
             None => &[],
         }
     }

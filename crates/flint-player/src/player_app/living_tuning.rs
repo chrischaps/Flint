@@ -460,9 +460,7 @@ impl PlayerApp {
             }
         }
         if let Some(boil) = tune.boil {
-            if let Some(on) = boil.on.filter(|on| !(1..=3).contains(on)) {
-                problems.push(format!("boil.on = {on} must be 1, 2 or 3"));
-            }
+            problems.extend(boil_problem(&boil));
             self.tune_boil(boil);
         }
         if problems.is_empty() {
@@ -519,15 +517,9 @@ impl PlayerApp {
     /// One species' own values made exactly `def` (#249): what it had and `def`
     /// doesn't say goes back to the layers below.
     fn replace_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
-        let mut problems = Vec::new();
-        let over = species_of(def, &mut |problem| {
-            problems.push(format!("species '{name}': {problem}"));
-        });
-        if !self
-            .procgen_resolver
-            .living_props_mut()
-            .set_species(name, over)
-        {
+        let (mut problems, grown) =
+            replace_species(self.procgen_resolver.living_props_mut(), name, def);
+        if !grown {
             problems.push(self.no_such_species(name));
         }
         problems
@@ -594,21 +586,7 @@ impl PlayerApp {
             return;
         };
         let mut config = renderer.post_process_config().clone();
-        let tune = &mut self.living_tune;
-        // Where the amounts live now: the passes, or what off remembers.
-        let (mut paint, mut ink) = tune.boil_off.unwrap_or(config.boil_amounts());
-        paint = boil.kuwahara.unwrap_or(paint);
-        ink = boil.contour.unwrap_or(ink);
-        let on = boil.enabled.unwrap_or(tune.boil_off.is_none());
-        tune.boil_off = (!on).then_some((paint, ink));
-        if on {
-            config.set_boil_amounts(paint, ink);
-        } else {
-            config.set_boil_amounts(0.0, 0.0);
-        }
-        if let Some(cadence) = boil.on {
-            config.boil_on = cadence.clamp(1, 3);
-        }
+        tune_boil(&mut config, &mut self.living_tune.boil_off, boil);
         renderer.set_post_process_config(config);
     }
 
@@ -732,21 +710,7 @@ impl PlayerApp {
     /// Load a preset file, or a built-in, which holds only the field's knobs. A
     /// file comes first, as it does when a scene names one.
     pub(super) fn load_living_preset(&mut self, name: &str) -> Result<(), String> {
-        let found = read_preset(Path::new(&self.scene_path), name)
-            .or_else(|| {
-                builtin_preset(name).map(|sample| {
-                    Ok(WoozePreset {
-                        wooze: WoozeKnobs {
-                            amplitude: Some(sample.amplitude),
-                            step: Some(sample.step),
-                            glide: Some(sample.glide),
-                            jitter: Some(sample.jitter),
-                        },
-                        ..Default::default()
-                    })
-                })
-            })
-            .ok_or_else(|| format!("there's no preset named '{name}'"))??;
+        let found = find_preset(Path::new(&self.scene_path), name)?;
         self.tune_living_as(&found, true)
     }
 
@@ -954,6 +918,72 @@ pub(crate) fn tune_props(
     props.tune_echoes(LivingScope::All, echoes);
     props.tune_variance(LivingScope::All, variance);
     problems
+}
+
+/// Turn the shading boil's knobs on `config`. `off` is what the amounts come back
+/// to while the boil is switched off, which the passes see as zeroes. The player
+/// and `flint render --scripts` (#579) tune it the same way.
+pub(crate) fn tune_boil(
+    config: &mut flint_render::PostProcessConfig,
+    off: &mut Option<(f32, f32)>,
+    boil: BoilDef,
+) {
+    // Where the amounts live now: the passes, or what off remembers.
+    let (mut paint, mut ink) = off.unwrap_or(config.boil_amounts());
+    paint = boil.kuwahara.unwrap_or(paint);
+    ink = boil.contour.unwrap_or(ink);
+    let on = boil.enabled.unwrap_or(off.is_none());
+    *off = (!on).then_some((paint, ink));
+    if on {
+        config.set_boil_amounts(paint, ink);
+    } else {
+        config.set_boil_amounts(0.0, 0.0);
+    }
+    if let Some(cadence) = boil.on {
+        config.boil_on = cadence.clamp(1, 3);
+    }
+}
+
+/// What's wrong with a tune's boil, if anything.
+pub(crate) fn boil_problem(boil: &BoilDef) -> Option<String> {
+    boil.on
+        .filter(|on| !(1..=3).contains(on))
+        .map(|on| format!("boil.on = {on} must be 1, 2 or 3"))
+}
+
+/// A preset that names `name`: this scene's file of that name, else the built-in.
+pub(crate) fn find_preset(scene_path: &Path, name: &str) -> Result<WoozePreset, String> {
+    read_preset(scene_path, name)
+        .or_else(|| {
+            builtin_preset(name).map(|sample| {
+                Ok(WoozePreset {
+                    wooze: WoozeKnobs {
+                        amplitude: Some(sample.amplitude),
+                        step: Some(sample.step),
+                        glide: Some(sample.glide),
+                        jitter: Some(sample.jitter),
+                    },
+                    ..Default::default()
+                })
+            })
+        })
+        .ok_or_else(|| format!("there's no preset named '{name}'"))?
+}
+
+/// One species' own values made exactly `def` (#249): what it had and `def`
+/// doesn't say goes back to the layers below. Returns what couldn't be used, and
+/// whether any prop grows from the species.
+pub(crate) fn replace_species(
+    props: &mut flint_procgen::LivingProps,
+    name: &str,
+    def: &LivingSpeciesDef,
+) -> (Vec<String>, bool) {
+    let mut problems = Vec::new();
+    let over = species_of(def, &mut |problem| {
+        problems.push(format!("species '{name}': {problem}"));
+    });
+    let grown = props.set_species(name, over);
+    (problems, grown)
 }
 
 /// One species' own values (#246), over whatever it has already. Returns what

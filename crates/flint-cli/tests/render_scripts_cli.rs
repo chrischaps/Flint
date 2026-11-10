@@ -442,3 +442,299 @@ fn the_report_says_what_each_capture_heard_and_what_didnt_run() {
     let warnings = report["warnings"].to_string();
     assert!(warnings.contains("LoadScene"), "{warnings}");
 }
+
+// #579: the boil, step_living and particles from scripts.
+
+/// A block on a floor under the shading boil, which nothing else moves: what
+/// changes from frame to frame is the paint and ink re-deciding themselves on the
+/// field's beat. `{boil}` is both passes' amount.
+const BOILING: &str = r#"
+[scene]
+name = "A Boiling Block"
+
+[wooze]
+step = 0.25
+
+[camera]
+position = [2.5, 2.0, 4.0]
+target = [0.0, 0.5, 0.0]
+fov = 45.0
+
+[post_process]
+boil_on = 1
+
+[post_process.styles.kuwahara]
+radius = 4
+boil = {boil}
+
+[post_process.styles.contour]
+width = 1.5
+boil = {boil}
+
+[entities.sun.light]
+type = "directional"
+direction = [0.5, 0.8, 0.3]
+color = [1.0, 0.95, 0.9]
+intensity = 3.0
+
+[entities.floor]
+archetype = "floor"
+[entities.floor.bounds]
+min = [-5.0, -0.1, -5.0]
+max = [5.0, 0.0, 5.0]
+[entities.floor.material]
+color = [0.7, 0.7, 0.65, 1.0]
+roughness = 0.9
+
+[entities.block]
+archetype = "floor"
+[entities.block.bounds]
+min = [-0.5, 0.0, -0.5]
+max = [0.5, 1.0, 0.5]
+[entities.block.material]
+color = [0.8, 0.3, 0.2, 1.0]
+roughness = 0.6
+
+[entities.director.script]
+source = "director.rhai"
+"#;
+
+fn boiling(name: &str, boil: f32, director: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("render_scripts_cli")
+        .join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    let scene = BOILING.replace("{boil}", &format!("{boil:.1}"));
+    std::fs::write(dir.join("block.scene.toml"), scene).unwrap();
+    std::fs::write(dir.join("scripts/director.rhai"), director).unwrap();
+    dir
+}
+
+fn render_block(dir: &Path, out: &str, args: &[&str]) -> Output {
+    std::process::Command::new(FLINT)
+        .arg("render")
+        .arg(dir.join("block.scene.toml"))
+        .arg("--schemas")
+        .arg(schemas())
+        .args([
+            "--width", "96", "--height", "72", "--time", "0..2", "--fps", "4",
+        ])
+        .arg("-o")
+        .arg(dir.join(out))
+        .args(args)
+        .output()
+        .expect("run flint")
+}
+
+fn all_alike(frames: &[image::RgbaImage]) -> bool {
+    frames.iter().all(|frame| frame == &frames[0])
+}
+
+#[test]
+fn a_script_switches_the_boil_off_and_on() {
+    // The scene boils, and a script switches it off from the first frame.
+    let off = boiling(
+        "boil_off",
+        1.0,
+        "fn on_init() { tune_living(#{ boil: #{ enabled: false } }); }",
+    );
+    let o = render_block(&off, "off.gif", &["--scripts"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    assert!(!said.contains("tune_living"), "{said}");
+    let held = gif_frames(&off.join("off.gif"));
+    assert!(held.len() > 1);
+    assert!(
+        all_alike(&held),
+        "the boil was switched off and still moved"
+    );
+    ok(&render_block(&off, "boiling.gif", &[]));
+    let boiling_frames = gif_frames(&off.join("boiling.gif"));
+    assert!(
+        !all_alike(&boiling_frames),
+        "the scene's own boil never moves"
+    );
+
+    // A still scene, and a script gives it a boil.
+    let on = boiling(
+        "boil_on",
+        0.0,
+        "fn on_init() { tune_living(#{ boil: #{ kuwahara: 1.0, contour: 1.0, on: 2 } }); }",
+    );
+    ok(&render_block(&on, "plain.gif", &[]));
+    assert!(all_alike(&gif_frames(&on.join("plain.gif"))));
+    ok(&render_block(&on, "a.gif", &["--scripts"]));
+    ok(&render_block(&on, "b.gif", &["--scripts"]));
+    let read = |name: &str| std::fs::read(on.join(name)).unwrap();
+    assert!(
+        read("a.gif") == read("b.gif"),
+        "two runs boiled differently"
+    );
+    assert!(
+        !all_alike(&gif_frames(&on.join("a.gif"))),
+        "the script's boil never moved"
+    );
+}
+
+#[test]
+fn step_living_moves_a_frozen_grove_a_beat_at_a_time() {
+    // Frozen from the first frame, and stepped a beat each second.
+    let stepped = grove(
+        "step",
+        r#"
+let frames = 0;
+fn on_init() { freeze_living(true); }
+fn on_update() {
+    frames += 1;
+    if frames % 60 == 0 { step_living(); }
+}
+"#,
+    );
+    let o = render_grove(&stepped, "a.gif", &["--scripts"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    assert!(!said.contains("StepLiving"), "{said}");
+    ok(&render_grove(&stepped, "b.gif", &["--scripts"]));
+    let read = |name: &str| std::fs::read(stepped.join(name)).unwrap();
+    assert!(
+        read("a.gif") == read("b.gif"),
+        "two runs stepped differently"
+    );
+    // 0, 0.25 ... 1.75 s: held for the first second, a beat on from then.
+    let frames = gif_frames(&stepped.join("a.gif"));
+    assert_eq!(frames.len(), 8);
+    assert!(
+        all_alike(&frames[..4]),
+        "a frozen grove moved before its step"
+    );
+    assert!(frames[4] != frames[0], "step_living didn't move the grove");
+    assert!(all_alike(&frames[4..]), "the grove moved on after one step");
+}
+
+const SPARKS: &str = r#"
+name = "sparks"
+seed = 3
+
+[[emitters]]
+name = "sparks"
+emission_rate = 80.0
+max_particles = 200
+lifetime = [0.6, 1.0]
+speed = [1.5, 2.5]
+direction = [0, 1, 0]
+spread = 30.0
+gravity = [0, -1.0, 0]
+blend_mode = "additive"
+size = { start = [0.12, 0.12], end = [0.04, 0.04] }
+color = { start = [1.0, 0.8, 0.2, 1.0], end = [1.0, 0.2, 0.0, 0.0] }
+"#;
+
+#[test]
+fn a_script_plays_a_particle_effect() {
+    let dir = project("sparks");
+    std::fs::create_dir_all(dir.join("particles")).unwrap();
+    std::fs::write(dir.join("particles/sparks.particles.toml"), SPARKS).unwrap();
+    // Played half a second in, and stopped a second later.
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        r#"
+let fx = -1;
+let frames = 0;
+fn on_update() {
+    frames += 1;
+    if frames == 30 { fx = play_effect("sparks", 0.0, 0.5, 0.0); }
+    if frames == 90 { stop_effect(fx); }
+}
+"#,
+    )
+    .unwrap();
+    let at = |t: &str, out: &str, scripts: bool| {
+        let mut args = vec!["--time", t];
+        if scripts {
+            args.push("--scripts");
+        }
+        render(&dir, out, &args)
+    };
+    let o = at("1", "a.png", true);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    assert!(!said.contains("PlayEffect"), "{said}");
+    assert!(!said.contains("play_effect:"), "{said}");
+    ok(&at("1", "b.png", true));
+    ok(&at("1", "plain.png", false));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert!(
+        read("a.png") == read("b.png"),
+        "two runs sparked differently"
+    );
+    assert!(
+        read("a.png") != read("plain.png"),
+        "the effect drew nothing"
+    );
+    // Before it's played the picture is the plain one, and well after it's
+    // stopped, with every spark spent, it is again.
+    ok(&at("0.25", "early.png", true));
+    ok(&at("0.25", "early_plain.png", false));
+    assert!(read("early.png") == read("early_plain.png"));
+    ok(&at("3", "late.png", true));
+    ok(&at("3", "late_plain.png", false));
+    assert!(
+        read("late.png") == read("late_plain.png"),
+        "sparks outlived their stop"
+    );
+
+    // A still with no clock draws no particles, and says so.
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        r#"fn on_init() { play_effect("sparks", 0.0, 0.5, 0.0); }"#,
+    )
+    .unwrap();
+    let o = render(&dir, "still.png", &["--scripts"]);
+    ok(&o);
+    assert!(stderr(&o).contains("--particle-time"), "{}", stderr(&o));
+}
+
+#[test]
+fn a_script_loads_a_living_preset() {
+    let dir = grove("preset", r#"fn on_init() { load_living_preset("quick"); }"#);
+    std::fs::create_dir_all(dir.join("wooze")).unwrap();
+    std::fs::write(dir.join("wooze/quick.wooze.toml"), "[wooze]\nstep = 0.1\n").unwrap();
+    let o = render_grove(&dir, "a.gif", &["--scripts"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    assert!(!said.contains("LoadLivingPreset"), "{said}");
+    assert!(!said.contains("load_living_preset:"), "{said}");
+    ok(&render_grove(&dir, "b.gif", &["--scripts"]));
+    ok(&render_grove(&dir, "plain.gif", &[]));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert!(read("a.gif") == read("b.gif"), "two runs differed");
+    assert!(
+        read("a.gif") != read("plain.gif"),
+        "the preset changed nothing"
+    );
+
+    // The same as the tune it holds.
+    std::fs::write(
+        dir.join("scripts/director.rhai"),
+        "fn on_init() { tune_living(#{ wooze: #{ step: 0.1 } }); }",
+    )
+    .unwrap();
+    ok(&render_grove(&dir, "tuned.gif", &["--scripts"]));
+    assert!(
+        read("a.gif") == read("tuned.gif"),
+        "the preset isn't its tune"
+    );
+}

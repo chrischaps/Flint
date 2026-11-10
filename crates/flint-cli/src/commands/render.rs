@@ -3154,6 +3154,11 @@ struct Stage {
     particles: Option<flint_particles::ParticleSystem>,
     /// How many fixed steps the particles have taken.
     particle_steps: u32,
+    /// Whether the particles step with the other clocks, for the scripts' sake,
+    /// rather than all at once at a capture.
+    particles_on_clock: bool,
+    /// Whether the first capture's particle count has been said.
+    particles_said: bool,
     /// The scene's scripts, with `--scripts` (#8).
     scripts: Option<HeadlessScripts>,
     /// What the scripts' look was when it last went to the renderer.
@@ -3480,9 +3485,24 @@ impl Stage {
                 (ctx.width as f32, ctx.height as f32),
             )
         });
+        // A capture that draws particles has them from here, so what the scripts
+        // emit reaches them where it would in the player (#579), and they step
+        // on the scripts' clock. One drawing them at --particle-time steps there.
+        let particles_drawn = args.particle_time.is_some() || args.time.is_some();
+        let mut particles = None;
+        if scripts.is_some() && particles_drawn {
+            particles = Some(new_particles(&args.scene, &mut world, &mut renderer, ctx)?);
+        }
+        let particles_on_clock = particles.is_some() && args.particle_time.is_none();
         if let Some(scripts) = &mut scripts {
             let commands = scripts.tick(&mut world, 0.0, 0.0, view_of(&camera));
-            scripts.apply(commands, living.as_mut(), &mut wooze, moment);
+            scripts.apply(
+                commands,
+                living.as_mut(),
+                &mut wooze,
+                particles.as_mut(),
+                moment,
+            );
             follow_script_camera(&mut camera, scripts);
             if let Some(run) = &mut living {
                 run.step(0.0);
@@ -3513,8 +3533,10 @@ impl Stage {
             wooze,
             clock: 0.0,
             captured: None,
-            particles: None,
+            particles,
             particle_steps: 0,
+            particles_on_clock,
+            particles_said: false,
             scripts,
             look_applied: ScriptLook::default(),
             moment,
@@ -3533,15 +3555,20 @@ impl Stage {
         if let Some(run) = &mut self.living {
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
-        // The scripts' post-processing, as sticky as the player's.
-        if let Some(scripts) = &self.scripts {
+        // The scripts' post-processing, as sticky as the player's: their boil
+        // tunes in order (#579), then the overrides.
+        if let Some(scripts) = &mut self.scripts {
+            let mut config = self.renderer.post_process_config().clone();
+            let mut changed = scripts.tune_boil_into(&mut config);
             let look = scripts.look();
             if look != self.look_applied {
-                let mut config = self.renderer.post_process_config().clone();
                 flint_player::apply_look(&mut config, &look);
+                self.look_applied = look;
+                changed = true;
+            }
+            if changed {
                 self.renderer.set_post_process_config(config);
                 self.renderer.ensure_style_resources(&ctx.device);
-                self.look_applied = look;
             }
         }
         if let (Some(clocks), None) = (&self.wooze, args.boil_time) {
@@ -3637,12 +3664,27 @@ impl Stage {
         let mut dt_living = dt;
         if let Some(scripts) = &mut self.scripts {
             let commands = scripts.tick(&mut self.world, self.clock, dt, view_of(&self.camera));
-            scripts.apply(commands, self.living.as_mut(), &mut self.wooze, self.moment);
+            scripts.apply(
+                commands,
+                self.living.as_mut(),
+                &mut self.wooze,
+                self.particles.as_mut(),
+                self.moment,
+            );
             follow_script_camera(&mut self.camera, scripts);
             // freeze_living stops the clock the field and the props run on.
             if scripts.frozen() {
                 dt_living = 0.0;
             }
+            // step_living moves it on by whole beats, frozen or not.
+            let steps = scripts.take_steps();
+            if steps > 0 {
+                self.step_beats(f64::from(steps));
+            }
+        }
+        // The player's particles run after its scripts, on the frame's clock.
+        if self.particles_on_clock {
+            self.step_particles_to(self.clock as f32);
         }
         let dt = dt_living;
         if let Some(clocks) = &mut self.wooze {
@@ -3659,41 +3701,54 @@ impl Stage {
         }
     }
 
+    /// A script's `step_living` (#579): every prop, the boil and shallow wooze
+    /// move on by `beats` whole beats, as the player's `before_living_tick` does.
+    fn step_beats(&mut self, beats: f64) {
+        let seconds = match (&self.wooze, &self.living) {
+            (Some(clocks), _) => clocks.beat_seconds(beats),
+            (None, Some(run)) => run.beat_seconds(beats),
+            (None, None) => return,
+        };
+        if let Some(run) = &mut self.living {
+            run.advance_beats(beats, seconds);
+        }
+        if let Some(clocks) = &mut self.wooze {
+            let viewer = self.camera.position_array();
+            let draws = clocks.advance_beats(&self.world, viewer, beats, seconds);
+            self.renderer.set_shallow_wooze(draws.iter().copied());
+        }
+    }
+
+    /// Step the particles on to `seconds` in fixed steps, counting them, so that
+    /// a capture at `seconds` finds nothing left to do.
+    fn step_particles_to(&mut self, seconds: f32) {
+        let Some(particles) = &mut self.particles else {
+            return;
+        };
+        let wanted = (seconds.max(0.0) / PARTICLE_DT).round() as u32;
+        let steps = wanted.saturating_sub(self.particle_steps);
+        particles.simulate_to(&self.world, steps as f32 * PARTICLE_DT, PARTICLE_DT);
+        self.particle_steps += steps;
+    }
+
     fn step_particles(
         &mut self,
         args: &RenderArgs,
         ctx: &HeadlessContext,
         seconds: f32,
     ) -> Result<()> {
-        use flint_runtime::RuntimeSystem;
-        const DT: f32 = 1.0 / 60.0;
-        let first = self.particles.is_none();
-        if first {
-            let mut particles = flint_particles::ParticleSystem::new();
-            flint_particles::load_particle_effects_from_world(&args.scene, &mut particles);
-            particles
-                .initialize(&mut self.world)
-                .context("Failed to initialize particles")?;
-            let dirs = flint_particles::texture_search_dirs(&args.scene);
-            flint_render::load_particle_textures(
-                &mut self.renderer,
-                &ctx.device,
-                &ctx.queue,
-                &particles.sync,
-                &dirs,
-            );
+        if self.particles.is_none() {
+            let particles = new_particles(&args.scene, &mut self.world, &mut self.renderer, ctx)?;
             self.particles = Some(particles);
         }
+        self.step_particles_to(seconds);
         let Some(particles) = &mut self.particles else {
             return Ok(());
         };
-        let wanted = (seconds.max(0.0) / DT).round() as u32;
-        let steps = wanted.saturating_sub(self.particle_steps);
-        particles.simulate_to(&self.world, steps as f32 * DT, DT);
-        self.particle_steps += steps;
         particles.pack(Some(self.camera.position_array()));
         self.renderer
             .update_particles_from(&ctx.device, &ctx.queue, &particles.sync);
+        let first = !std::mem::replace(&mut self.particles_said, true);
         if first && (args.particle_time.is_some() || particles.sync.emitter_count() > 0) {
             say!(
                 "Particles: {} alive across {} emitter(s) at t = {:.2}s",
@@ -3704,6 +3759,29 @@ impl Stage {
         }
         Ok(())
     }
+}
+
+/// The particles' fixed step (ADR 0068), so a capture at a time is the same run
+/// to run.
+const PARTICLE_DT: f32 = 1.0 / 60.0;
+
+/// The scene's particle system: every effect beside it registered, the world's
+/// emitters found, and their textures uploaded.
+fn new_particles(
+    scene: &str,
+    world: &mut flint_ecs::FlintWorld,
+    renderer: &mut SceneRenderer,
+    ctx: &HeadlessContext,
+) -> Result<flint_particles::ParticleSystem> {
+    use flint_runtime::RuntimeSystem;
+    let mut particles = flint_particles::ParticleSystem::new();
+    flint_particles::load_particle_effects_from_world(scene, &mut particles);
+    particles
+        .initialize(world)
+        .context("Failed to initialize particles")?;
+    let dirs = flint_particles::texture_search_dirs(scene);
+    flint_render::load_particle_textures(renderer, &ctx.device, &ctx.queue, &particles.sync, &dirs);
+    Ok(particles)
 }
 
 /// Where `camera` is, for the scripts' `world_to_screen` and the like.
