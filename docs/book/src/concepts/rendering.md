@@ -195,6 +195,23 @@ Configure post-processing per-scene via the `[post_process]` TOML block, overrid
 
 *PBR materials with varying roughness and metallic values. Left to right: rough dielectric, smooth dielectric, rough metal, polished metal.*
 
+### Double-sided materials
+
+A glTF material with `"doubleSided": true` is drawn from both sides (#623). That is what thin cards need: leaves and palm fronds, flat roadside figures, wire strips, a flag, anything modelled as one sheet rather than a closed solid. A material that doesn't say is single-sided, glTF's default, and its back faces are culled.
+
+![Two palms built alike, their fronds single cards seen from below: the left palm's material is doubleSided](../images/double-sided-palms.png)
+
+*`demo/double_sided.scene.toml`: the same palm twice, each frond one strip of cards wound with its face up, seen from under the crowns. The left palm's frond material is `doubleSided`, so every underside draws. The right palm's isn't, so only the fronds that face the camera are left.*
+
+A double-sided material:
+
+- **draws with no face culled** in every mode: opaque, alpha-mask and blended (blended ones still draw their back faces before their front faces), static or skinned, with or without shallow wooze;
+- **lights a back face as the side you see:** its normal is turned toward the viewer, so the underside of a leaf is lit by what is under it and is dark when the sun is above, as a glTF viewer shows it. Normal maps and the shadow lookup's normal offset use the turned normal too;
+- **casts shadows from both sides**, so a card shadows the ground whichever way it faces the sun;
+- **is outlined and styled on both faces**, since the style mask and veil already draw both.
+
+For a runtime mesh, set `ImportedMaterial::double_sided`. Single-sided is the cheaper choice for closed solids: culling saves the back half of their fragments. A card generator that writes every card twice, the second copy wound the other way, can write it once with `doubleSided` instead, at half the triangles. The palms' models come from `tools/test-models/double_sided_palm.py`, and the test fixture `testModels/DoubleSidedCard.glb` from `double_sided_card.py` beside it.
+
 ### Emission
 
 A material can give off light of its own (ADR 0076): lamps, lit windows, embers, a glowing crown. Emission is added after lighting and before tonemapping, so it doesn't depend on facing, the sun or the ambient, and with post-processing on, bloom picks up anything brighter than its threshold. It lights only its own surface. To light the things around it, put a point light beside it.

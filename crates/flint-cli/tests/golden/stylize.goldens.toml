@@ -137,6 +137,16 @@ name = "ascii-edges-view"
 scene = "demo/ascii_edges.scene.toml"
 args = ["--no-grid", "--debug-mode", "edges"]
 
+# Corners (#348): ascii-edges above draws the pillar's top corners `┌ ┐`
+# and the tees where the horizon and the box's edges meet it. A font with
+# no corner glyphs (halftone names only the four lines) keeps the line
+# glyphs it drew before, exactly as with the corner test off
+[[case]]
+name = "ascii-edges-no-corner-glyphs"
+scene = "demo/ascii_edges.scene.toml"
+args = ["--no-grid", "--style", "ascii:font=halftone"]
+matches = ["--no-grid", "--style", "ascii:font=halftone,edge_corner=0"]
+
 # Edges in an ink of their own (#351): amber outlines over a green tint
 # fill, never the fill's colour
 [[case]]

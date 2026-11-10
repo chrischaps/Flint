@@ -1377,7 +1377,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                     .collect();
                 say!("ascii edges: {thresholds}");
                 say!(
-                    "  pixels cyan/amber/magenta: {}; cells green/dashed/red/grey: {}",
+                    "  pixels cyan/amber/magenta: {}; cells green/dashed/yellow/red/grey: {}",
                     names[..3].join(", "),
                     names[3..].join(", ")
                 );

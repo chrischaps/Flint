@@ -36,7 +36,8 @@ struct MaterialUniforms {
     // How much of a per-vertex light part is also lit surface (ADR 0096),
     // with its light unchanged.
     glow_surface: f32,
-    _pad_e2: u32,
+    // 1 for a glTF `doubleSided` material (#623): back faces flip N.
+    double_sided: u32,
     // Multiplies the vertex colour, as surface and as per-vertex light
     // (ADR 0102: the entity's `material.vertex_tint_*`). w is unused.
     vertex_tint: vec4<f32>,
@@ -412,17 +413,28 @@ fn evaluate_light(
     return (kD * albedo / PI + specular) * radiance * n_dot_l;
 }
 
+// glTF `doubleSided` (#623): a back face is lit as the side the viewer sees,
+// its normal turned round. Single-sided draws cull their back faces, so for
+// them this is the normal as it came.
+fn facing(input: VertexOutput, front: bool) -> VertexOutput {
+    var v = input;
+    if (material.double_sided == 1u && !front) {
+        v.normal = -v.normal;
+    }
+    return v;
+}
+
 @fragment
-fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
-    return shade_skinned(in);
+fn fs_skinned(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade_skinned(facing(in, front));
 }
 
 // A living prop's echo that may only add light (`[living] echo_blend =
 // "lighten"`): its colour premultiplied by its opacity, for a max blend, so a
 // pixel ends as the brighter of what was there and the echo's share of light.
 @fragment
-fn fs_skinned_lighten(in: VertexOutput) -> @location(0) vec4<f32> {
-    let c = shade_skinned(in);
+fn fs_skinned_lighten(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let c = shade_skinned(facing(in, front));
     return vec4<f32>(c.rgb * c.a, c.a);
 }
 

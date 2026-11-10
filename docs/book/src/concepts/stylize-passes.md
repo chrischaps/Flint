@@ -167,6 +167,7 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `edge_max` | `3` | More edge than this is texture-like geometry (grass, foliage) and keeps its tone glyph. A styled entity's outline ignores it |
 | `edge_depth` | `0.6` | The relative view-distance step that counts as a silhouette (lower finds more) |
 | `edge_normal` | `2.5` | The normal change, as a Sobel over normals rebuilt from depth, that counts as a crease (lower finds more) |
+| `edge_corner` | `0.9` | A cell whose edge has no one direction (its tensor's coherence under this) draws the [corner or tee](#corners) its neighbours' lines meet in; 0 turns corners off (#348) |
 | `edge_ink` | `cell` | What inks the line glyphs ([Edge ink](#edge-ink), #351): `cell` (as the cell's tone glyph), `color` (`edge_color`) or `hue` (the near side's own colour) |
 | `edge_color` | `[0.85, 0.82, 0.74]` | The line glyphs' ink for `edge_ink = "color"`, a warm off-white; `[r, g, b]` or `"#rrggbb"` |
 | `edge_tint` | `0` | For `edge_ink = "color"`: mix the colour toward the near side's hue (0--1) |
@@ -333,6 +334,31 @@ Edges come from geometry, never from colour, so a wood texture makes none but a 
 2. **Cells**, one fragment a glyph cell. It reads every edge pixel in its cell, not a sparse lattice, so a one-pixel outline can't slip between samples, and sums their structure tensors: the dominant orientation picks the glyph. The cell draws a line when it holds at least `edge_threshold` cell widths of edge and at most `edge_max` (an outline needs only the threshold).
 3. **The glyph pass** draws the cell's line glyph in the one cell the line passes within half a cell of, measured across it: down the cell's centre column for a line nearer horizontal, along its centre row for one nearer vertical (#352). The cell pass finds where that is from the edge pixels' centroid, each pixel weighted by how much its gradient agrees with the cell's line, so a corner's other arm doesn't pull it. That is the cell a Bresenham line lights, so a line along a cell border, a coarse diagonal or a silhouette at render scale 0.5 draws one chain of cells, not two. A band of edge pixels wider than one (two-pixel stairs at scale 0.5) can straddle the border; the two halves count as one line when they run within 10° of each other and lie within three quarters of a cell, and the pair's centroid decides. Two real edges a cell apart, or converging at an angle like a box's silhouette and the crease below it, each keep their own.
 
+#### Corners
+
+At a corner the outline turns 90° inside one cell, and the summed tensor has no dominant direction: the cell used to pick whichever of the four lines won by a hair, a stray `╱` at a box's top corner. Two more steps fix it (#348):
+
+- The cell pass measures the tensor's **coherence**, (λ1 − λ2) / (λ1 + λ2): nearly 1 for a straight line, (a − b) / (a + b) for two arms at right angles of lengths a and b, 0 when the corner sits in the cell's middle. A cell that draws a line with coherence under `edge_corner` is marked a corner.
+- The glyph pass asks the marked cell's four neighbours which **arms** run into it: a `─` beside it, a `│` above or below. The arms pick the glyph: right and down make `┌`, three arms a tee (`├ ┤ ┬ ┴`), four the cross `┼`, and two opposite arms the straight line, which also cleans up a stray diagonal inside a run. Only a neighbour sure of its own direction lends an arm, so two marked cells side by side don't each take the other for one. With fewer than two arms that meet, the cell keeps its line.
+
+```text
+edge_corner = 0                       edge_corner = 0.9 (the default)
+%%%%%╱──────────╲%%%%%%%%%%%%%%%%%    %%%%%┌──────────┐%%%%%%%%%%%%%%%%%   row 10: the pillar's top
+%%%%%│++++++++++│%%%%%%%%%%%%%%%%%    %%%%%│++++++++++│%%%%%%%%%%%%%%%%%
+...
+%%%%%│++++++++++│%%%%%%%%%%%%%%%%%    %%%%%│++++++++++│%%%%%%%%%%%%%%%%%
+─────╱++++++++++╲─────────────────    ─────┤++++++++++└─────────────────   row 30: the horizon meets it
+*****│+++++++++│******************    *****│+++++++++│******************
+...
+*****│++++++│::::───────########──    *****│++++++│::::───────########──
+╲****│++++++│:::::::::::────────**    ╲****│++++++│:::::::::::───┬────**   row 37: the box's top edges
+╲****│++++++│::::::::::::::│******    ╲****│++++++│::::::::::::::│******           meet its vertical
+```
+
+*`demo/ascii_edges.scene.toml` at 1280x720, columns 72 to 105 of `--ascii-text`. These five cells are all that changed in the frame. At the horizon's right the pillar's edge steps a column left below it, so the cell sees no `│` beneath and draws `└`.*
+
+The glyphs come from the set's `[edges] corners` ([glyph sets](glyph-atlas.md#a-glyph-set-file)); the built-in set has all nine. A set without them, like `demo/fonts/halftone.glyphs.toml`, draws the line glyphs it always did (the golden `ascii-edges-no-corner-glyphs` holds that to the pixel against `edge_corner = 0`), and a set with only the four corners keeps its lines at tees. A per-entity variant in a font of its own uses that font's corners. The edge view below draws a cell's corner in yellow, its arms from the cell's centre. Corners don't reach a gap: a corner cell that holds too little edge to draw a line is still empty.
+
 Under a render scale the edge pixels are the scene's, so a line is still one cell wide. The editor grid of `flint render` (on unless `--no-grid`) is an overlay drawn after the opaque geometry that writes no depth (#346), so the edges never trace it; its lines still lift the tone glyphs they cross, which is why renders of the look pass `--no-grid`.
 
 Edges come with the colour modes: by default (`edge_ink = "cell"`) line glyphs are inked as the cell's tone glyph would be, cut out of the ink under `ground = "inverse"`, and glow around them. The edge cells lie on the screen grid, so per-entity variants on that grid get them, and a variant on `grid = "object"` keeps its tone glyphs. Edge cells keep no history: under #277's temporal stability the tone glyphs hold still and the lines follow the geometry each frame. The [stylize goldens](#goldens) pin pbr_test without edges (the #265 golden, unchanged), with edges, and the sphere and box above.
@@ -370,7 +396,7 @@ flint render demo/ascii_edges.scene.toml --debug-mode edges --no-grid --style as
 ```
 
 - **Edge pixels**, by the source that marked them: cyan a depth step, amber a crease, magenta a styled entity's outline.
-- **Each cell's decision**: a green line in the glyph's direction where the cell draws one; a dim dashed line where it holds a line that runs more than half a cell from its centre, which a neighbour draws (pass 3's thinning); a red wash where it holds more than `edge_max` and counts as texture; nothing where it holds less than `edge_threshold`.
+- **Each cell's decision**: a green line in the glyph's direction where the cell draws one; a yellow corner or tee, its arms from the cell's centre, where it draws one of those ([corners](#corners)); a dim dashed line where it holds a line that runs more than half a cell from its centre, which a neighbour draws (pass 3's thinning); a red wash where it holds more than `edge_max` and counts as texture; nothing where it holds less than `edge_threshold`.
 - **Each cell's edge length**: a bar along the cell's foot, full at `edge_max`, with a white tick at `edge_threshold`. In cells 12 pixels or wider the length is also written in the top left, in cell widths.
 
 ![The ASCII edges demo in the edge view: cyan silhouettes on the pillar and the horizon, amber creases on the box, magenta outlines around the sphere and the box, green line glyphs through the cells, and the legend card in the lower left](../images/ascii-edges-debug.png)

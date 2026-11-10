@@ -107,6 +107,9 @@ pub(super) struct DrawCall {
     lod: Option<DrawLod>,
     /// Its drift this frame, if its entity has shallow wooze (#215).
     wooze: Option<ShallowWoozeUniforms>,
+    /// Drawn with no face culled, in the scene and shadow passes: its
+    /// material is glTF `doubleSided` (#623).
+    double_sided: bool,
 }
 
 /// A draw's level of detail in world space: the band of camera distances it
@@ -486,6 +489,8 @@ struct SkinnedDrawCall {
     world_aabb: Option<([f32; 3], [f32; 3])>,
     /// As [`DrawCall::wooze`].
     wooze: Option<ShallowWoozeUniforms>,
+    /// As [`DrawCall::double_sided`].
+    double_sided: bool,
 }
 
 /// One faint copy of a skinned entity (#228): bones of its own and how opaque
@@ -3860,7 +3865,14 @@ impl SceneRenderer {
         // The ray targets, placed afresh (ADR 0105).
         let mut ray_scene = flint_core::ray_mesh::RayScene::new();
 
+        // What `visibility { visible = false }` hides, descendants included
+        // (#628): empty and unwalked in a scene that never hides anything.
+        let hidden = world.hidden_entities();
+
         for entity in world.all_entities() {
+            if hidden.contains(&entity.id) {
+                continue;
+            }
             let archetype = entity.archetype.as_deref().unwrap_or("unknown");
             let visual =
                 self.archetype_visuals
@@ -4230,6 +4242,7 @@ impl SceneRenderer {
             style_aabb: None,
             lod: None,
             wooze: None,
+            double_sided: false,
         }
     }
 
@@ -4362,6 +4375,7 @@ impl SceneRenderer {
             style_aabb: None,
             lod: None,
             wooze: None,
+            double_sided: false,
         }
     }
 
@@ -4908,6 +4922,11 @@ impl SceneRenderer {
             .iter()
             .copied()
             .collect();
+        // A hidden entity's light goes out with it (#628)
+        let hidden = world.hidden_entities();
+        if !hidden.is_empty() {
+            light_entities.retain(|id| !hidden.contains(id));
+        }
         light_entities.sort_by(|a, b| {
             world
                 .get_name(*a)
@@ -5616,6 +5635,7 @@ impl SceneRenderer {
         let f = RenderPipeline::new(device, format, samples);
         let p = &mut self.pipeline;
         p.pipeline = f.pipeline;
+        p.pipeline_double_sided = f.pipeline_double_sided;
         p.line_pipeline = f.line_pipeline;
         p.overlay_line_pipeline = f.overlay_line_pipeline;
         p.skeleton_line_pipeline = f.skeleton_line_pipeline;
@@ -5635,6 +5655,7 @@ impl SceneRenderer {
                 samples,
             );
             s.pipeline = f.pipeline;
+            s.pipeline_double_sided = f.pipeline_double_sided;
             s.wire_line_pipeline = f.wire_line_pipeline;
             s.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
             s.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;
@@ -6556,6 +6577,59 @@ mod tests {
         for (got, want) in max.iter().zip([r, 1.0, r]) {
             assert!((got - want).abs() < 1e-5, "{max:?}");
         }
+    }
+
+    /// A sheared tile (#625): its culling bounds hold every corner the
+    /// matrix moves, and its normals, through the inverse transpose, stay
+    /// perpendicular to the sheared surface rather than leaning with it.
+    #[test]
+    fn a_sheared_entity_is_bounded_and_lit_by_its_own_matrix() {
+        use super::helpers::mat4_inv_transpose;
+        use flint_core::{Transform, Vec3};
+        // An 8 m tile, 20 m wide, leaning 0.5 m sideways per metre along z
+        // and climbing 0.25 m per metre along z, then yawed 30 degrees.
+        let t = Transform::default()
+            .with_position(Vec3::new(3.0, 0.0, 1.0))
+            .with_rotation(Vec3::new(0.0, 30.0, 0.0))
+            .with_shear([0.0, 0.5, 0.0, 0.25, 0.0, 0.0]);
+        let m = t.to_matrix();
+        let apply = |p: [f32; 3]| {
+            let mut out = [m[3][0], m[3][1], m[3][2]];
+            for (row, o) in out.iter_mut().enumerate() {
+                for (col, v) in p.iter().enumerate() {
+                    *o += m[col][row] * v;
+                }
+            }
+            out
+        };
+        let (lo, hi) = ([-10.0, 0.0, -4.0], [10.0, 0.1, 4.0]);
+        let (min, max) = transform_aabb(&m, lo, hi);
+        for corner in 0..8 {
+            let p = [
+                if corner & 1 == 0 { lo[0] } else { hi[0] },
+                if corner & 2 == 0 { lo[1] } else { hi[1] },
+                if corner & 4 == 0 { lo[2] } else { hi[2] },
+            ];
+            let w = apply(p);
+            for axis in 0..3 {
+                assert!(w[axis] >= min[axis] - 1e-4 && w[axis] <= max[axis] + 1e-4);
+            }
+        }
+
+        // Two edges of the tile's top face, in world space.
+        let o = apply([0.0, 0.0, 0.0]);
+        let along_x = apply([1.0, 0.0, 0.0]);
+        let along_z = apply([0.0, 0.0, 1.0]);
+        let ex: Vec<f32> = (0..3).map(|i| along_x[i] - o[i]).collect();
+        let ez: Vec<f32> = (0..3).map(|i| along_z[i] - o[i]).collect();
+        let it = mat4_inv_transpose(&m);
+        let n: Vec<f32> = (0..3).map(|row| it[1][row]).collect(); // local +Y
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        assert!(dot(&n, &ex).abs() < 1e-5, "normal leans along x");
+        assert!(dot(&n, &ez).abs() < 1e-5, "normal leans along z");
+        // The plain model matrix would have tilted it with the shear.
+        let naive: Vec<f32> = (0..3).map(|row| m[1][row]).collect();
+        assert!(dot(&naive, &ez).abs() > 0.1);
     }
 
     /// A render-scale step keeps the surface's size, so it keeps the

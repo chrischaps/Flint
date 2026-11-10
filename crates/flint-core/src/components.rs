@@ -14,6 +14,9 @@ pub const MODEL: &str = "model";
 pub const BOUNDS: &str = "bounds";
 pub const SPRITE: &str = "sprite";
 pub const LIGHT: &str = "light";
+/// `visibility { visible = false }` keeps an entity and its descendants out of
+/// every draw, shadow, light and ray target (#628). See `FlintWorld::hidden_entities`.
+pub const VISIBILITY: &str = "visibility";
 
 // --- Scripting & interaction ---
 pub const SCRIPT: &str = "script";

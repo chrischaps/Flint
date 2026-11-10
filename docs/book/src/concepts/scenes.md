@@ -53,6 +53,59 @@ open_angle = 90.0
 
 **Component tables** are nested under the entity. Each component name (e.g., `transform`, `door`, `bounds`) corresponds to a schema in `schemas/components/`.
 
+### Transforms
+
+An entity's `transform` places it in its parent's frame (or the world's):
+
+```toml
+[entities.tile.transform]
+position = [0, 0, -12]            # metres
+rotation = [0, 30, 0]             # Euler degrees (pitch, yaw, roll)
+rotation_quat = [0, 0.26, 0, 0.97] # optional [x, y, z, w]; wins over rotation
+scale = [1, 1, 1]
+shear = { xz = 0.25 }             # optional, see below
+```
+
+The matrix is `translate × rotate × shear × scale`: a point is scaled,
+then sheared, then rotated, then moved. A child's world matrix is its
+parent's times its own, so a child inherits a parent's shear as it does
+its scale.
+
+**Shear** (#625) is a table of up to six terms, `xy`, `xz`, `yx`, `yz`,
+`zx`, `zy`, where `ab` is how far `a` moves per unit of `b`:
+
+```text
+x' = x + xy·y + xz·z
+y' = y + yx·x + yz·z
+z' = z + zx·x + zy·y
+```
+
+A missing term is 0, and an entity without `shear` draws exactly as it did
+before shear existed. Shear is what a strip of ground needs to follow a
+curve without turning: `{ xz = s }` slides its far end sideways by `s`
+metres per metre while its near and far edges stay square to the road, so
+neighbouring strips meet edge to edge however wide they are. Turning
+(yawing) each strip instead swings its far corners through its
+neighbours. `demo/shear_road.scene.toml` is a scanline road of 22 such
+tiles, each one entity with `{ xz, yz }` for the bend and the hill, and
+`demo/shear_road_yawed.scene.toml` is the same road laid with yaw:
+
+![A sunset road of sheared tiles, curving right then left, edges and lane line continuous](../images/shear-road.png)
+
+| Sheared (one entity a tile) | Yawed (the old way) |
+|---|---|
+| ![Overhead: the sheared road and its 120 m wide ground meet without a gap](../images/shear-road-overhead.png) | ![Overhead: the yawed tiles fan apart, sky showing through wedge-shaped gaps](../images/shear-road-yawed-overhead.png) |
+
+Normals go through the inverse transpose of the full matrix, so a sheared
+surface is lit as the surface it became, and culling bounds are the
+sheared box's. Scripts set it with `set_shear(id, #{xz: 0.25})`, read it
+with `get_shear(id)` and remove it with `clear_shear(id)`
+(`scripts/shear_road.rhai` re-lays the demo road every frame that way).
+Physics has no sheared bodies: a sheared rigidbody or collider warns once
+and is placed by the matrix's rotation alone, as non-unit scale is.
+Loading warns on an unknown term (`xzz`) and on a shear that folds space
+flat (`xy = yx = 1`).
+
 ## Scene Operations
 
 ### Creating a Scene

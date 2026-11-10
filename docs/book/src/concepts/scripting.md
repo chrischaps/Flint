@@ -78,18 +78,79 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `set_rotation(id, x, y, z)` | --- | Set entity rotation (euler degrees); clears any `rotation_quat` |
 | `get_rotation_quat(id)` | `Map` | The rotation the entity renders with, as `#{x, y, z, w}` (`rotation_quat` if present, else the euler angles converted) |
 | `set_rotation_quat(id, x, y, z, w)` | --- | Set the rotation as a quaternion (normalised); euler `rotation` is zeroed |
+| `get_scale(id)` | `Map` | Get entity scale as `#{x, y, z}` (`1, 1, 1` when unset) |
+| `set_scale(id, x, y, z)` | --- | Set entity scale (writes `transform.scale`) |
+| `set_visible(id, visible)` | --- | Show or hide an entity and everything under it (writes `visibility.visible`; see [Hiding entities](#hiding-entities)) |
+| `is_visible(id)` | `bool` | The entity's own visibility switch (`true` when unset; a hidden ancestor isn't counted) |
 | `rotate_local(id, x, y, z)` | --- | Compose a rotation (euler degrees) about the entity's own axes onto its current orientation, rest quaternion included (ADR 0069) |
+| `set_shear(id, map)` | --- | Set `transform.shear` from any of `#{xy, xz, yx, yz, zx, zy}` (`ab` = how far `a` moves per unit of `b`, between rotation and scale); missing terms are 0, all zeros removes it (#625; [Transforms](scenes.md#transforms)) |
+| `get_shear(id)` | `Map` | All six shear terms, zeros when the entity has none |
+| `clear_shear(id)` | --- | Remove the shear |
 | `distance(a, b)` | `f64` | Euclidean distance between two entities |
 | `set_parent(child_id, parent_id)` | --- | Set an entity's parent in the hierarchy |
 | `get_parent(id)` | `i64` | Get the parent entity ID (`-1` if none) |
 | `get_children(id)` | `Array` | Get child entity IDs as an array |
 | `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
 | `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
-| `set_material_override(id, material, r, g, b, a)` | --- | Tint one named glTF material on this entity and all its expanded child nodes (writes `material_overrides.<material>`) |
+| `set_material_override(id, material, r, g, b, a)` | --- | Replace one named glTF material's base colour on this entity and all its expanded child nodes (writes `material_overrides.<material>`; colours above 1 are allowed, see [Colours above 1](#colours-above-1)) |
 | `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
 | `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
 | `despawn_entity(id)` | --- | Remove an entity from the world |
+
+Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
+
+#### Hiding entities
+
+`set_visible(id, false)` writes a `visibility { visible = false }` component, which a scene can also author:
+
+```toml
+[entities.spare_tile.visibility]
+visible = false
+```
+
+A hidden entity and all its descendants are left out of every draw: the scene pass, shadows, the style mask, the entity's lights and the ray targets `raycast_meshes` / `screen_to_mesh` meet (physics `raycast()` still meets its collider). It isn't culled, it is never extracted, so it costs nothing per frame and doesn't depend on being out of view. It still exists in every other way: its transform, physics body, collider and script go on, and particles it emits still draw (`stop_effect` those). `set_visible(id, true)` shows it again; showing an entity that was never hidden adds no component, and a scene where nothing is hidden pays nothing for the switch. A hidden parent hides a visible child, and `is_visible` reads only the entity's own switch.
+
+That is the call for a pool of reused entities: hide the ones not in use rather than parking them far away.
+
+```rhai
+for i in 0..TILE_POOL {
+    let id = tiles[i];
+    if i < tiles_in_use {
+        set_position(id, 0.0, 0.0, i.to_float() * TILE_LEN - scroll);
+        set_visible(id, true);
+    } else {
+        set_visible(id, false);   // unchanged calls write nothing
+    }
+}
+```
+
+#### Colours above 1
+
+`set_material_override` (and `set_material_color`) take linear colours that are not clamped. With post-processing on, the frame is HDR, and a base colour above 1 reflects more light than it receives: the surface reads brighter than any real paint, and past the bloom threshold it glows. That is supported and useful for neon, signage and flashes. It still scales *reflected* light, so it does nothing in the dark; for a surface that gives light, use `emissive_scale` or emissive vertex colours. Alpha is opacity and stays 0–1.
+
+#### Script state
+
+Every script runs once at load: its top-level statements, including `let`s, fill a scope that belongs to that entity and lasts as long as the script does (and across a [hot reload](#hot-reload)). Every callback (`on_init`, `on_update`, `on_collision`, ...) runs inside that scope, so it reads and writes those variables directly, and what it writes is still there next frame.
+
+A helper function you write yourself does **not** see them. A Rhai `fn` is pure: it sees its arguments and nothing else, and reading `frames` inside one is an error ("Variable not found"), even when a callback calls it. This shapes how a longer script is written:
+
+```rhai
+let frames = 0;
+let tiles = [];
+
+fn on_update() {
+    frames += 1;              // top-level state: read, written, kept
+    tiles.add_tile(frames);   // method call: the helper gets `tiles` as `this`
+    copy_add(tiles, 99);      // plain call: the helper gets a copy
+}
+
+fn add_tile(x) { this.push(x); }   // changes the caller's array
+fn copy_add(arr, x) { arr.push(x); } // changes a copy; `tiles` is untouched
+fn peek() { frames }                 // error: no `frames` in here
+```
+
+So there are three ways to share state with a helper: pass values in and return the result (`let speed = clamp_speed(speed, dt);`), which is fine for numbers but copies an array or map each call; call the helper as a method on the one array or map it changes, which hands it over by reference as `this`; or keep the work in the callback itself. Constants that never change can simply be repeated as `const`s. `crates/flint-script/src/engine.rs`'s `test_top_level_state_reaches_callbacks_not_helpers` holds all of this.
 
 ### Input API
 

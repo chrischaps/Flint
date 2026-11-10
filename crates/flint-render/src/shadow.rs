@@ -70,8 +70,12 @@ impl Default for ShadowUniforms {
 /// The shadow mapping system
 pub struct ShadowPass {
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// `shadow_pipeline` culling nothing, for glTF `doubleSided` casters (#623).
+    pub shadow_pipeline_double_sided: wgpu::RenderPipeline,
     pub shadow_bind_group_layout: wgpu::BindGroupLayout,
     pub skinned_shadow_pipeline: wgpu::RenderPipeline,
+    /// `skinned_shadow_pipeline` culling nothing (#623).
+    pub skinned_shadow_pipeline_double_sided: wgpu::RenderPipeline,
     pub skinned_shadow_bone_layout: wgpu::BindGroupLayout,
     pub shadow_texture: wgpu::Texture,
     pub shadow_view: wgpu::TextureView,
@@ -110,6 +114,9 @@ pub(crate) struct ShadowWooze {
     layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
     pub skinned_pipeline: wgpu::RenderPipeline,
+    /// The two above culling nothing, for glTF `doubleSided` casters (#623).
+    pub pipeline_double_sided: wgpu::RenderPipeline,
+    pub skinned_pipeline_double_sided: wgpu::RenderPipeline,
     /// Over the same buffer as `draw_bind_group`, seeing more of each slot.
     pub bind_group: wgpu::BindGroup,
 }
@@ -150,8 +157,9 @@ impl ShadowPass {
                 push_constant_ranges: &[],
             });
 
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Shadow Depth Pipeline"),
+        let make_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
             layout: Some(&shadow_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shadow_shader,
@@ -164,7 +172,7 @@ impl ShadowPass {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -183,7 +191,12 @@ impl ShadowPass {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
-        });
+        })
+        };
+        let shadow_pipeline = make_shadow("Shadow Depth Pipeline", Some(wgpu::Face::Back));
+        // glTF `doubleSided` casters (#623): a card shadows from either side
+        let shadow_pipeline_double_sided =
+            make_shadow("Shadow Depth Pipeline (double-sided)", None);
 
         // Skinned shadow pipeline: bind group 0 = shadow uniforms, bind group 1 = bone matrices
         let skinned_shadow_bone_layout =
@@ -208,9 +221,9 @@ impl ShadowPass {
                 push_constant_ranges: &[],
             });
 
-        let skinned_shadow_pipeline =
+        let make_skinned_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Skinned Shadow Depth Pipeline"),
+                label: Some(label),
                 layout: Some(&skinned_shadow_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
@@ -223,7 +236,7 @@ impl ShadowPass {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
+                    cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     unclipped_depth: false,
                     conservative: false,
@@ -242,7 +255,12 @@ impl ShadowPass {
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
+        let skinned_shadow_pipeline =
+            make_skinned_shadow("Skinned Shadow Depth Pipeline", Some(wgpu::Face::Back));
+        let skinned_shadow_pipeline_double_sided =
+            make_skinned_shadow("Skinned Shadow Depth Pipeline (double-sided)", None);
 
         // Create shadow depth texture array (one layer per cascade)
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -305,8 +323,10 @@ impl ShadowPass {
 
         Self {
             shadow_pipeline,
+            shadow_pipeline_double_sided,
             shadow_bind_group_layout,
             skinned_shadow_pipeline,
+            skinned_shadow_pipeline_double_sided,
             skinned_shadow_bone_layout,
             shadow_texture,
             shadow_view,
@@ -398,7 +418,8 @@ impl ShadowPass {
         let pipeline_for = |label: &str,
                             entry: &str,
                             groups: &[&wgpu::BindGroupLayout],
-                            buffer: wgpu::VertexBufferLayout<'static>| {
+                            buffer: wgpu::VertexBufferLayout<'static>,
+                            cull_mode: Option<wgpu::Face>| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
                 bind_group_layouts: groups,
@@ -418,7 +439,7 @@ impl ShadowPass {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
+                    cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     unclipped_depth: false,
                     conservative: false,
@@ -444,18 +465,36 @@ impl ShadowPass {
             "vs_shadow_wooze",
             &[&layout],
             Vertex::desc(),
+            Some(wgpu::Face::Back),
+        );
+        let pipeline_double_sided = pipeline_for(
+            "Shallow Wooze Shadow Pipeline (double-sided)",
+            "vs_shadow_wooze",
+            &[&layout],
+            Vertex::desc(),
+            None,
         );
         let skinned_pipeline = pipeline_for(
             "Shallow Wooze Skinned Shadow Pipeline",
             "vs_skinned_shadow_wooze",
             &[&layout, &self.skinned_shadow_bone_layout],
             SkinnedVertex::desc(),
+            Some(wgpu::Face::Back),
+        );
+        let skinned_pipeline_double_sided = pipeline_for(
+            "Shallow Wooze Skinned Shadow Pipeline (double-sided)",
+            "vs_skinned_shadow_wooze",
+            &[&layout, &self.skinned_shadow_bone_layout],
+            SkinnedVertex::desc(),
+            None,
         );
         let bind_group = Self::woozy_bind_group(device, &layout, &self.draw_buffer);
         self.wooze = Some(ShadowWooze {
             layout,
             pipeline,
             skinned_pipeline,
+            pipeline_double_sided,
+            skinned_pipeline_double_sided,
             bind_group,
         });
     }

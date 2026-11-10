@@ -128,6 +128,80 @@ pub struct Transform {
     /// over Euler angles in to_matrix() to avoid gimbal lock.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation_quat: Option<[f32; 4]>,
+    /// Optional shear, applied between rotation and scale (#625):
+    /// `[xy, xz, yx, yz, zx, zy]`, where `ab` is how far `a` moves per unit
+    /// of `b`, so `x' = x + xy*y + xz*z` and so on. `None` (or all zeros) is
+    /// the rigid-plus-scale matrix it always was. See [`Shear`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shear: Option<[f32; 6]>,
+}
+
+/// Names of the six shear terms, in the order [`Transform::shear`] stores
+/// them. `xz` is the one a ground strip curving sideways wants: x moves by
+/// `xz` metres for every metre along z.
+pub struct Shear;
+
+impl Shear {
+    pub const KEYS: [&'static str; 6] = ["xy", "xz", "yx", "yz", "zx", "zy"];
+
+    /// The shear as a 3x3 matrix, row-major: `h[row][col]`.
+    pub fn matrix(s: &[f32; 6]) -> [[f32; 3]; 3] {
+        let [xy, xz, yx, yz, zx, zy] = *s;
+        [[1.0, xy, xz], [yx, 1.0, yz], [zx, zy, 1.0]]
+    }
+
+    /// Read `transform.shear` from a scene or a script: a table of any of
+    /// the six named terms (`{ xz = 0.25 }`; a missing term is 0). `None`
+    /// for anything else, a term that isn't a number, or a shear that is
+    /// all zeros, so an unsheared entity stays `None`.
+    pub fn from_toml(value: &toml::Value) -> Option<[f32; 6]> {
+        let num = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        let mut out = [0.0f32; 6];
+        match value {
+            toml::Value::Table(t) => {
+                for (i, key) in Self::KEYS.iter().enumerate() {
+                    if let Some(v) = t.get(*key) {
+                        out[i] = num(v)? as f32;
+                    }
+                }
+            }
+            _ => return None,
+        }
+        out.iter().any(|v| *v != 0.0).then_some(out)
+    }
+
+    /// Unknown keys in a `shear` table, for warnings: `xzz` is a typo that
+    /// would otherwise shear nothing, silently.
+    pub fn unknown_keys(value: &toml::Value) -> Vec<String> {
+        match value {
+            toml::Value::Table(t) => t
+                .keys()
+                .filter(|k| !Self::KEYS.contains(&k.as_str()))
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The table form a writer stores: only the terms that aren't zero.
+    pub fn to_toml(s: &[f32; 6]) -> toml::Value {
+        let mut t = toml::map::Map::new();
+        for (key, v) in Self::KEYS.iter().zip(s) {
+            if *v != 0.0 {
+                t.insert((*key).to_string(), toml::Value::Float(*v as f64));
+            }
+        }
+        toml::Value::Table(t)
+    }
+
+    /// Determinant of [`Self::matrix`]. Near zero the shear flattens space
+    /// (`xy = yx = 1` folds x onto y) and normals have no inverse to use.
+    pub fn determinant(s: &[f32; 6]) -> f32 {
+        let h = Self::matrix(s);
+        h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1])
+            - h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0])
+            + h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0])
+    }
 }
 
 impl Default for Transform {
@@ -137,6 +211,7 @@ impl Default for Transform {
             rotation: Vec3::ZERO,
             scale: Vec3::ONE,
             rotation_quat: None,
+            shear: None,
         }
     }
 }
@@ -147,6 +222,7 @@ impl Transform {
         rotation: Vec3::ZERO,
         scale: Vec3::ONE,
         rotation_quat: None,
+        shear: None,
     };
 
     pub fn from_position(position: Vec3) -> Self {
@@ -173,6 +249,12 @@ impl Transform {
 
     pub fn with_rotation_quat(mut self, q: [f32; 4]) -> Self {
         self.rotation_quat = Some(q);
+        self
+    }
+
+    /// Shear terms `[xy, xz, yx, yz, zx, zy]` (see [`Shear`]).
+    pub fn with_shear(mut self, shear: [f32; 6]) -> Self {
+        self.shear = Some(shear);
         self
     }
 
@@ -217,29 +299,38 @@ impl Transform {
                 )
             };
 
-        // Apply scale and translation
-        let mat = [
-            [
-                r00 * self.scale.x,
-                r10 * self.scale.x,
-                r20 * self.scale.x,
-                0.0,
-            ],
-            [
-                r01 * self.scale.y,
-                r11 * self.scale.y,
-                r21 * self.scale.y,
-                0.0,
-            ],
-            [
-                r02 * self.scale.z,
-                r12 * self.scale.z,
-                r22 * self.scale.z,
-                0.0,
-            ],
+        // Shear sits between rotation and scale: M = T * R * H * S, so a
+        // point is scaled, then sheared, then rotated. Column j of R*H*S is
+        // R times column j of H, times scale j. With no shear H is the
+        // identity and this is exactly the old R*S, bit for bit.
+        let r = [[r00, r01, r02], [r10, r11, r12], [r20, r21, r22]];
+        let scale = [self.scale.x, self.scale.y, self.scale.z];
+        let mut cols = [[0.0f32; 3]; 3];
+        match self.shear {
+            Some(sh) if sh.iter().any(|v| *v != 0.0) => {
+                let h = Shear::matrix(&sh);
+                for (j, col) in cols.iter_mut().enumerate() {
+                    for (i, out) in col.iter_mut().enumerate() {
+                        let rh = r[i][0] * h[0][j] + r[i][1] * h[1][j] + r[i][2] * h[2][j];
+                        *out = rh * scale[j];
+                    }
+                }
+            }
+            _ => {
+                for (j, col) in cols.iter_mut().enumerate() {
+                    for (i, out) in col.iter_mut().enumerate() {
+                        *out = r[i][j] * scale[j];
+                    }
+                }
+            }
+        }
+
+        [
+            [cols[0][0], cols[0][1], cols[0][2], 0.0],
+            [cols[1][0], cols[1][1], cols[1][2], 0.0],
+            [cols[2][0], cols[2][1], cols[2][2], 0.0],
             [self.position.x, self.position.y, self.position.z, 1.0],
-        ];
-        mat
+        ]
     }
 }
 
@@ -346,6 +437,81 @@ mod tests {
         assert_eq!(t.position, Vec3::ZERO);
         assert_eq!(t.rotation, Vec3::ZERO);
         assert_eq!(t.scale, Vec3::ONE);
+    }
+
+    fn apply(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
+        let mut out = [m[3][0], m[3][1], m[3][2]];
+        for (row, o) in out.iter_mut().enumerate() {
+            for (col, v) in p.iter().enumerate() {
+                *o += m[col][row] * v;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn shear_moves_x_with_z() {
+        // The scanline road's tile: x' = x + s*z.
+        let t = Transform::default().with_shear([0.0, 0.25, 0.0, 0.0, 0.0, 0.0]);
+        let m = t.to_matrix();
+        assert_eq!(apply(&m, [0.0, 0.0, 4.0]), [1.0, 0.0, 4.0]);
+        assert_eq!(apply(&m, [2.0, 3.0, 0.0]), [2.0, 3.0, 0.0]);
+    }
+
+    #[test]
+    fn shear_sits_between_rotation_and_scale() {
+        // Scale first: a 2x z stretch doubles how far the shear carries x.
+        let t = Transform::default()
+            .with_scale(Vec3::new(1.0, 1.0, 2.0))
+            .with_shear([0.0, 0.5, 0.0, 0.0, 0.0, 0.0])
+            .with_rotation(Vec3::new(0.0, 90.0, 0.0));
+        let p = apply(&t.to_matrix(), [0.0, 0.0, 1.0]);
+        // scaled (0,0,2) -> sheared (1,0,2) -> yawed 90 deg: (x,z) -> (z,-x)
+        for (got, want) in p.iter().zip([2.0, 0.0, -1.0]) {
+            assert!((got - want).abs() < 1e-5, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn no_shear_is_the_old_matrix_bit_for_bit() {
+        let t = Transform::default()
+            .with_position(Vec3::new(1.0, 2.0, 3.0))
+            .with_rotation(Vec3::new(10.0, 20.0, 30.0))
+            .with_scale(Vec3::new(2.0, 0.5, 3.0));
+        let plain = t.to_matrix();
+        assert_eq!(t.with_shear([0.0; 6]).to_matrix(), plain);
+        // The old composition, written out: column j is R's column j times scale j.
+        let r = Transform {
+            scale: Vec3::ONE,
+            position: Vec3::ZERO,
+            ..t
+        }
+        .to_matrix();
+        let s = [2.0, 0.5, 3.0];
+        for col in 0..3 {
+            for row in 0..3 {
+                assert_eq!(plain[col][row], r[col][row] * s[col]);
+            }
+        }
+    }
+
+    #[test]
+    fn shear_reads_named_terms_from_toml() {
+        let v: toml::Value = toml::from_str("xz = 0.25\nzy = -1").unwrap();
+        assert_eq!(Shear::from_toml(&v), Some([0.0, 0.25, 0.0, 0.0, 0.0, -1.0]));
+        let zero: toml::Value = toml::from_str("xz = 0.0").unwrap();
+        assert_eq!(Shear::from_toml(&zero), None);
+        let typo: toml::Value = toml::from_str("xzz = 0.25").unwrap();
+        assert_eq!(Shear::unknown_keys(&typo), vec!["xzz".to_string()]);
+        let round = Shear::to_toml(&[0.0, 0.25, 0.0, 0.0, 0.0, -1.0]);
+        assert_eq!(Shear::from_toml(&round), Shear::from_toml(&v));
+        assert_eq!(round.as_table().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_folding_shear_has_no_determinant() {
+        assert!(Shear::determinant(&[1.0, 0.0, 1.0, 0.0, 0.0, 0.0]).abs() < 1e-6);
+        assert_eq!(Shear::determinant(&[0.0, 0.7, 0.0, 0.3, 0.0, 0.0]), 1.0);
     }
 
     #[test]

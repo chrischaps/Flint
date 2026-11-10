@@ -14,7 +14,7 @@ The last two groups are generated rather than drawn, since a block or braille gl
 |---|---|
 | `GlyphAtlas` | Equal cells in an 8-bit coverage image (0 paper, 255 ink), 16 cells a row, one-pixel gutters. Lookups: `index_of`, `uv_rect`, `cell_origin`, `sample`, and `coverage` (each glyph's measured mean ink, 0..1). |
 | `GlyphRamp` | Named glyphs from least ink to most. `pick(luminance)` maps 0..1 onto equal bands, or for a calibrated ramp onto the glyph whose measured ink is nearest; `atlas_indices()` is what a shader's ramp buffer holds, `coverage()` each step's ink, `bounds()` where each step's band starts, `inversions()` the neighbours that step backwards in ink. |
-| `EdgeGlyphs` | `horizontal`, `vertical`, `diagonal`, `antidiagonal`; `for_angle(radians)` picks one from an edge's direction on screen. |
+| `EdgeGlyphs` | `horizontal`, `vertical`, `diagonal`, `antidiagonal`; `for_angle(radians)` picks one from an edge's direction on screen. `corners` (#348): none, the four corners or all nine with the tees, in `CORNER_ORDER`; `for_arms(right, left, down, up)` picks one, and `slots()` is every edge glyph in the order the ASCII style packs them. |
 | `GlyphSet` | An atlas with its ramps, a default ramp and edge glyphs, loaded from a `*.glyphs.toml`. |
 | `GlyphSetCache` | Sets by name, each loaded once. |
 | `GpuGlyphAtlas` | The atlas uploaded once as an `R8Unorm` texture: sample `.r` for ink. |
@@ -86,7 +86,10 @@ map = "coverage"            # luminance picks the glyph whose measured ink is ne
 
 [edges]                     # each defaults to - | / \
 horizontal = "~"
+corners = "┌┐└┘├┤┬┴┼"       # optional (#348): 4 glyphs (the corners) or 9 (and the tees, the cross)
 ```
+
+- `corners` lists the glyphs where edge lines meet, in this order: `┌ ┐ └ ┘` (corners), `├ ┤ ┬ ┴` (tees), `┼`. Without it, ASCII edges keep their line glyphs at corners ([corners](stylize-passes.md#corners)).
 
 - A TTF atlas holds printable ASCII plus every glyph the set's ramps and edges name. A glyph the font lacks is an error that names it (`the font has no glyph for '漢'`).
 - A set with no `[ramps]` gets the built-in ramps that its font can draw, re-sorted by coverage in that font.
