@@ -1918,6 +1918,8 @@ impl PlayerApp {
         let ui_textures = &self.ui_textures;
         let ui_fonts = &self.ui_fonts;
         let ui_fonts_warned = &mut self.ui_fonts_warned;
+        let text_halos = &mut self.text_halos;
+        text_halos.begin_frame();
 
         // World text needs the frame's depth to be drawn against.
         let world_texts = std::mem::take(&mut self.world_texts);
@@ -1973,13 +1975,27 @@ impl PlayerApp {
             // (see render_draw_commands). Items a script pushed over the
             // UI go on their own Middle layer, above the game's panels and
             // windows and below the debug panels (ADR 0085).
-            render_draw_commands(ctx, &draw_commands, ui_textures, ui_fonts, ui_fonts_warned);
+            render_draw_commands(
+                ctx,
+                &draw_commands,
+                ui_textures,
+                ui_fonts,
+                ui_fonts_warned,
+                text_halos,
+            );
 
             // World text is laid out here, so the glyphs it needs go up
             // with this pass's font atlas.
             if let Some(view) = &text_view {
                 laid_text =
-                    super::world_text::lay_out(ctx, &world_texts, view, ui_fonts, ui_fonts_warned);
+                    super::world_text::lay_out(
+                        ctx,
+                        &world_texts,
+                        view,
+                        ui_fonts,
+                        ui_fonts_warned,
+                        text_halos,
+                    );
             }
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on

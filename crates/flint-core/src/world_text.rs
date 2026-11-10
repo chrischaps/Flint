@@ -35,6 +35,8 @@ pub struct WorldText {
     pub spacing: f32,
     /// Shadow colour and its offset (right, down).
     pub shadow: Option<([f32; 4], f32, f32)>,
+    /// Glow colour and reach, as `draw_text_opts`'s (#626).
+    pub glow: Option<([f32; 4], f32)>,
     /// The plane it's written on, or `None` for a billboard.
     pub plane: Option<TextPlane>,
 }

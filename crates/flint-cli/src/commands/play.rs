@@ -63,6 +63,12 @@ pub struct PlayArgs {
     /// 127.0.0.1 or ::1 can listen (Flint#518)
     #[arg(long, value_name = "IP:PORT")]
     pub expression_listen: Option<String>,
+
+    /// Don't watch the game's files for changes (#633): scripts, UI
+    /// documents, user styles, glyph sets and palettes load once and never
+    /// reload, and nothing polls the disk. For captures and shipped builds
+    #[arg(long)]
+    pub no_hot_reload: bool,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -77,6 +83,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
         return Ok(());
     }
     flint_render::set_gpu_override(args.gpu.clone());
+    if args.no_hot_reload {
+        flint_core::file_watch::disable();
+    }
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {

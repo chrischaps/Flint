@@ -14,6 +14,8 @@ pub mod draw2d;
 pub mod engine;
 pub mod module_resolver;
 pub mod projector;
+#[cfg(not(target_arch = "wasm32"))]
+mod reload_worker;
 pub mod style_reader;
 pub mod sync;
 pub mod ui;

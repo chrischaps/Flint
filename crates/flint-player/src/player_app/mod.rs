@@ -55,6 +55,7 @@ pub mod web_pacing;
 mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
+mod text_halo;
 mod world_text;
 
 #[cfg(target_os = "android")]
@@ -244,6 +245,8 @@ pub struct PlayerApp {
     ui_fonts: HashSet<String>,
     /// Unknown font names already warned about (one warn per name).
     ui_fonts_warned: HashSet<String>,
+    /// Wide-stroke and glow pictures for HUD and world text (#626).
+    text_halos: text_halo::TextHalos,
     /// The `fonts/` root the current font set was scanned from; rescan on
     /// scene change only when this differs.
     ui_fonts_root: Option<std::path::PathBuf>,

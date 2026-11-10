@@ -1078,15 +1078,105 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let c = crate::lock_or_recover(&ctx);
                 let world = unsafe { c.world_mut() };
                 let eid = EntityId::from_raw(id as u64);
-                let value = toml::Value::Array(vec![
+                let colour = toml::Value::Array(vec![
                     toml::Value::Float(r),
                     toml::Value::Float(g),
                     toml::Value::Float(b),
                     toml::Value::Float(a),
                 ]);
+                // An entry that already holds a light (a table) keeps it.
+                let holds_light = world
+                    .get_components(eid)
+                    .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
+                    .and_then(|m| m.get(material))
+                    .is_some_and(|v| v.is_table());
+                let table = holds_light
+                    .then(|| material_override_table(world, eid, material))
+                    .flatten();
+                let value = match table {
+                    Some(mut t) => {
+                        t.insert("base_color".into(), colour);
+                        toml::Value::Table(t)
+                    }
+                    None => colour,
+                };
                 let _ = world.set_field(eid, comp::MATERIAL_OVERRIDES, material, value);
             },
         );
+    }
+
+    // set_material_emissive(entity_id, material, r, g, b[, strength]) (#624)
+    // Recolours one named glTF material's emission (linear RGB) on this
+    // entity and every descendant; `strength` replaces its
+    // emissive_strength. Writes `material_overrides.<material>` as a table,
+    // keeping a base colour set by set_material_override.
+    fn set_material_emissive(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        id: i64,
+        material: &str,
+        rgb: [f64; 3],
+        strength: Option<f64>,
+    ) {
+        if id < 0 || material.is_empty() {
+            return;
+        }
+        let c = crate::lock_or_recover(ctx);
+        let world = unsafe { c.world_mut() };
+        let eid = EntityId::from_raw(id as u64);
+        let mut t = material_override_table(world, eid, material).unwrap_or_default();
+        t.insert(
+            "emissive".into(),
+            toml::Value::Array(rgb.iter().map(|&v| toml::Value::Float(v)).collect()),
+        );
+        if let Some(s) = strength {
+            t.insert("emissive_strength".into(), toml::Value::Float(s));
+        }
+        let _ = world.set_field(
+            eid,
+            comp::MATERIAL_OVERRIDES,
+            material,
+            toml::Value::Table(t),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_emissive",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64| {
+                set_material_emissive(&ctx, id, material, [r, g, b], None);
+            },
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_emissive",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64, strength: f64| {
+                set_material_emissive(&ctx, id, material, [r, g, b], Some(strength));
+            },
+        );
+    }
+
+    // clear_material_override(entity_id, material) (#624)
+    // Drops the entity's own override of one material, base colour and
+    // light alike, so the material (or an ancestor's override) shows again.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_material_override", move |id: i64, material: &str| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(t) = world
+                .get_components_mut(eid)
+                .and_then(|comps| comps.get_mut(comp::MATERIAL_OVERRIDES))
+                .and_then(|v| v.as_table_mut())
+            {
+                t.remove(material);
+            }
+        });
     }
 
     // find_entities_with(component: &str) -> Array of entity IDs
@@ -1115,6 +1205,29 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
 }
 
 // ─── Spline API ──────────────────────────────────────────
+
+/// The entity's own `material_overrides.<material>` as a table (#624): a
+/// table as is, a plain base colour array as `{ base_color = [...] }`,
+/// `None` when it has none.
+fn material_override_table(
+    world: &flint_ecs::FlintWorld,
+    id: EntityId,
+    material: &str,
+) -> Option<toml::Table> {
+    match world
+        .get_components(id)?
+        .get(comp::MATERIAL_OVERRIDES)?
+        .get(material)?
+    {
+        toml::Value::Table(t) => Some(t.clone()),
+        colour @ toml::Value::Array(_) => {
+            let mut t = toml::Table::new();
+            t.insert("base_color".into(), colour.clone());
+            Some(t)
+        }
+        _ => None,
+    }
+}
 
 fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // spline_closest_point(spline_entity, x, y, z) -> Map #{t, x, y, z, dist_sq}
@@ -3085,6 +3198,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3117,6 +3231,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3153,6 +3268,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3190,6 +3306,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3197,7 +3314,8 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 
     // draw_text_opts(x, y, text, size, opts) — opts is a map with optional keys:
     //   font (string), color ([r,g,b,a]), align ("left"|"center"|"right"),
-    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a])
+    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a]),
+    //   glow ([r,g,b,a,radius]: a soft halo under the stroke, #626)
     {
         let ctx = ctx.clone();
         engine.register_fn(
@@ -3217,6 +3335,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: o.font,
                     letter_spacing: o.spacing,
                     shadow: o.shadow,
+                    glow: o.glow,
                 });
             },
         );
@@ -3605,7 +3724,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // draw_world_text(x, y, z, text, size, opts)
     // Text at a world point, drawn in the 3D frame with a depth test
     // (ADR 0104): geometry in front hides it. opts are draw_text_opts's
-    // (font, color, align, stroke, spacing, shadow; no layer), centred on
+    // (font, color, align, stroke, spacing, shadow, glow; no layer), centred on
     // the point by default, plus valign ("top"|"middle"|"bottom"), and
     // facing ([nx, ny, nz]) with up ([x, y, z], world up by default) to lay
     // it in a plane. A billboard's size is in points; on a plane, every
@@ -5900,6 +6019,8 @@ pub(crate) struct TextOpts {
     pub font: Option<String>,
     pub spacing: f32,
     pub shadow: Option<([f32; 4], f32, f32)>,
+    /// A blurred halo under the stroke: colour and reach in points (#626).
+    pub glow: Option<([f32; 4], f32)>,
 }
 
 impl Default for TextOpts {
@@ -5912,6 +6033,7 @@ impl Default for TextOpts {
             font: None,
             spacing: 0.0,
             shadow: None,
+            glow: None,
         }
     }
 }
@@ -5965,6 +6087,13 @@ impl TextOpts {
             if let Some(arr) = v.clone().try_cast::<Array>() {
                 if let [dx, dy, r, g, b, a] = array_to_f32s(&arr)[..] {
                     o.shadow = Some(([r, g, b, a], dx, dy));
+                }
+            }
+        }
+        if let Some(v) = opts.get("glow") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a, radius] = array_to_f32s(&arr)[..] {
+                    o.glow = Some(([r, g, b, a], radius));
                 }
             }
         }
@@ -6022,6 +6151,7 @@ pub(crate) fn world_text_from(
         font: o.font,
         spacing: o.spacing,
         shadow: o.shadow,
+        glow: o.glow,
         plane,
     }
 }
@@ -6096,7 +6226,19 @@ mod text_opts_tests {
                 Dynamic::from(0.6_f64),
             ]),
         );
+        m.insert(
+            "glow".into(),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0.2_f64),
+                Dynamic::from(0.6_f64),
+                Dynamic::from(0.9_f64),
+                Dynamic::from(18_i64),
+            ]),
+        );
         let o = TextOpts::from_map(&m);
+        assert_eq!(o.glow, Some(([1.0, 0.2, 0.6, 0.9], 18.0)));
+        assert_eq!(world_text_from([0.0; 3], "x", 1.0, &m).glow, o.glow);
         assert_eq!(o.font.as_deref(), Some("display"));
         assert_eq!(o.color, [1.0, 0.5, 0.0, 1.0]);
         assert_eq!(o.align, 1);
@@ -6113,7 +6255,9 @@ mod text_opts_tests {
         m.insert("color".into(), arr(&[Dynamic::from(1.0_f64)]));
         m.insert("align".into(), Dynamic::from("right"));
         m.insert("stroke".into(), Dynamic::from("nope"));
+        m.insert("glow".into(), arr(&vec![Dynamic::from(1.0_f64); 4]));
         let o = TextOpts::from_map(&m);
+        assert_eq!(o.glow, None, "a glow needs five numbers");
         assert_eq!(o.font, None);
         assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(o.align, 2);

@@ -13,6 +13,7 @@ pub mod callbacks;
 pub mod components;
 mod error;
 pub mod events;
+pub mod file_watch;
 mod hash;
 mod id;
 pub mod ik;
