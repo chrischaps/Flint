@@ -86,6 +86,30 @@ Failures are cached too, so a bad name warns once rather than every frame.
 
 **Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and the candidates searched ahead of it (absent ones too). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. On the web the bundle is fixed and nothing is polled. `demo/ascii_tidepool.scene.toml` names `demo/fonts/tidepool.glyphs.toml` to try it on.
 
+## Sprite text
+
+`ui_text` sprites draw from the same atlases ([ADR 0113](https://github.com/chrischaps/flint/blob/main/docs/adr/0113-one-glyph-atlas-for-text.md), #283), so a HUD can use the font its ASCII look draws in. `ui_text.font` names:
+
+- `builtin`, the 8x8 set;
+- a set, by name or `.glyphs.toml` path, resolved as above: a TTF, a PNG grid or pixel text;
+- a `.font.toml`, the older format, kept for compatibility:
+
+```toml
+[font]
+texture = "fonts/default_font.png"  # a PNG grid, found as an image texture is
+glyph_width = 8
+glyph_height = 16
+columns = 16
+first_char = 32                     # default 32
+char_count = 95                     # default 95
+spacing = 1.0                       # advance as a multiple of the cell width
+# glyphs = "terminal"               # or a glyph set in place of the grid, keeping spacing
+```
+
+`flint_render::BitmapFont` is the layout over the atlas. `BitmapFont::resolve(spec, scene_dir)` builds it, the grid PNG going through `GlyphAtlas::from_grid_image`. The scene loader calls `SceneRenderer::load_ui_font` once per name, which uploads the atlas as white RGBA with the coverage as alpha (`font:<name>` in the texture cache). After that each `ui_text` is just sprites in the sprite2d pipeline. A font that fails warns once and draws nothing. Every grid now has the atlas's one-pixel gutter, so a linearly filtered glyph no longer picks up its neighbour's edge.
+
+![The ui_text demo, its HUD text in three fonts](../images/glyph-atlas-sprite-text.png)
+
 ## Web and bundles
 
 Every read goes through `flint_core::vfs`: the TOML through `vfs::read_to_string`, fonts through `vfs::read`, grid images through `flint_render::open_image`. A game bundle served on the web loads a set exactly as the disk does. `flint bundle` packs `fonts/` and fails if a `*.glyphs.toml` names a font file that isn't packed.
