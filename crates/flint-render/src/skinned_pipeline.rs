@@ -8,8 +8,6 @@ pub const MAX_BONES: usize = 256;
 /// The skinned mesh render pipeline
 pub struct SkinnedPipeline {
     pub pipeline: wgpu::RenderPipeline,
-    pub outline_pipeline: wgpu::RenderPipeline,
-    pub depth_prepass_pipeline: wgpu::RenderPipeline,
     /// Skinned wireframe lines (LineList, LessEqual + negative bias so the
     /// edges sit on top of the animated surface).
     pub wire_line_pipeline: wgpu::RenderPipeline,
@@ -115,99 +113,12 @@ impl SkinnedPipeline {
             cache: None,
         });
 
-        // Outline pipeline for skinned meshes (inverted hull, front-face culled)
-        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Skinned Outline Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("outline_shader.wgsl").into()),
+        // The skinned wireframe's vertex and fragment stages (#602: what is
+        // left of the old outline shader)
+        let wire_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Skinned Wire Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_wire_shader.wgsl").into()),
         });
-
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Skinned Outline Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_skinned_outline"),
-                buffers: &[SkinnedVertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_outline"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Front),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Depth prepass for skinned meshes (writes depth only, no color)
-        let depth_prepass_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Skinned Depth Prepass Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &outline_shader,
-                    entry_point: Some("vs_skinned_depth_prepass"),
-                    buffers: &[SkinnedVertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &outline_shader,
-                    entry_point: Some("fs_outline"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::empty(),
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
 
         // Alpha-blended meshes draw in two passes, back faces first (cull front) then
         // front faces (cull back). Depth write stays off, but with no sort inside one
@@ -372,19 +283,19 @@ impl SkinnedPipeline {
             });
 
         // Wireframe line pipeline for skinned meshes — same skinning vertex
-        // path as the depth prepass, drawn as edge lines with a depth bias so
+        // path as the scene's, drawn as edge lines with a depth bias so
         // they follow the animated pose and sit on top of the solid surface.
         let wire_line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Skinned Wireframe Line Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_skinned_depth_prepass"),
+                module: &wire_shader,
+                entry_point: Some("vs_skinned_wire"),
                 buffers: &[SkinnedVertex::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
+                module: &wire_shader,
                 entry_point: Some("fs_wire"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
@@ -419,8 +330,6 @@ impl SkinnedPipeline {
 
         Self {
             pipeline,
-            outline_pipeline,
-            depth_prepass_pipeline,
             wire_line_pipeline,
             transparent_alpha_pipeline,
             transparent_alpha_back_pipeline,

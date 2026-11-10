@@ -145,6 +145,110 @@ pub struct LivingConfig {
     /// while the prop moves only as its other terms say. Up to 2 steps.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub echo_slide: f32,
+    /// Where its echoes stand once they're spread wide: a few set places
+    /// rather than a continuous spread, so the copies there can be counted.
+    /// None, the default. It's the spec's alone, like the blend. See
+    /// [`EchoPlaces`].
+    #[serde(default, skip_serializing_if = "EchoPlaces::is_empty")]
+    pub echo_places: EchoPlaces,
+}
+
+/// One of [`EchoPlaces::at`]: `[along, up, steps]`. The first two are metres
+/// along the prop's place axes (`form_v1`: along its lines of writing, and up
+/// the form; any other generator: the prop's X and Y), the third where on the
+/// clock a copy there stands, in steps from now. Negative is behind.
+pub type EchoPlace = [f32; 3];
+
+/// `[living] echo_places` (chrischaps/Embodiment#68): the far end of a spread
+/// as a few copies you can count. Echoes spread continuously, each a little
+/// further from now than the last, so at a wide spread their poses blur into
+/// one another: a smear, not several copies. With places, a spread of `from`
+/// steps or less is exactly as it was, and from there to `whole` every echo
+/// moves to one of the places, its clock to that place's steps and itself to
+/// its offset, the echoes taking the places in turn. At `whole` and beyond the
+/// echoes at a place are one copy, in one pose, at one offset: with
+/// `echo_blend = "lighten"` they draw as one. A spread falling back gathers
+/// them in the same way, so nothing jumps.
+///
+/// An offset is the prop's alone to measure: a page offset half a line up its
+/// length puts its copy's writing between the page's rows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct EchoPlaces {
+    /// The places, at most [`MAX_ECHOES`]. Empty is none.
+    pub at: Vec<EchoPlace>,
+    /// The spread, in steps, at which the echoes start toward their places.
+    pub from: f32,
+    /// The spread at which they've reached them.
+    pub whole: f32,
+}
+
+impl EchoPlaces {
+    fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+
+    /// How far from its spread toward its places an echo config of `spread`
+    /// stands: 0 up to `from`, 1 from `whole`, eased in between so its rate
+    /// of change is 0 at both ends.
+    pub fn reached(&self, spread: f32) -> f32 {
+        if self.at.is_empty() || spread <= self.from {
+            return 0.0;
+        }
+        if spread >= self.whole {
+            return 1.0;
+        }
+        let x = (spread - self.from) / (self.whole - self.from);
+        x * x * (3.0 - 2.0 * x)
+    }
+
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        if self.at.is_empty() {
+            return Ok(());
+        }
+        if self.at.len() > MAX_ECHOES as usize {
+            return Err((
+                "at",
+                format!("{} places: at most {MAX_ECHOES}", self.at.len()),
+            ));
+        }
+        for &[along, up, steps] in &self.at {
+            if !(along.is_finite() && up.is_finite() && along.abs() <= 1.0 && up.abs() <= 1.0) {
+                return Err((
+                    "at",
+                    format!("[{along}, {up}, {steps}]: an offset must be within 1 metre"),
+                ));
+            }
+            if !(steps.is_finite() && steps != 0.0 && steps.abs() <= MAX_ECHO_SPREAD) {
+                return Err((
+                    "at",
+                    format!(
+                        "[{along}, {up}, {steps}]: a place's steps must be off now and within {MAX_ECHO_SPREAD:.2}"
+                    ),
+                ));
+            }
+        }
+        if !(self.from.is_finite() && (0.0..MAX_ECHO_SPREAD).contains(&self.from)) {
+            return Err((
+                "from",
+                format!(
+                    "{}: must be from 0 to under {MAX_ECHO_SPREAD:.2} steps",
+                    self.from
+                ),
+            ));
+        }
+        if !(self.whole.is_finite() && self.whole > self.from && self.whole <= MAX_ECHO_SPREAD) {
+            return Err((
+                "whole",
+                format!(
+                    "{}: must be more than from ({}) and at most {MAX_ECHO_SPREAD:.2} steps",
+                    self.whole, self.from
+                ),
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn is_zero(x: &f32) -> bool {
@@ -230,6 +334,9 @@ impl LivingConfig {
                 "echo_slide",
                 format!("{}: must be in [0.0, 2.0] steps", self.echo_slide),
             );
+        }
+        if let Err((key, reason)) = self.echo_places.check() {
+            return bad(&format!("echo_places.{key}"), reason);
         }
         if !unit(self.glide) {
             return bad("glide", format!("{}: must be in [0.0, 1.0]", self.glide));
@@ -389,6 +496,21 @@ pub struct EchoCopy {
     pub offset: f32,
     /// How opaque it's drawn, 0 to 1.
     pub opacity: f32,
+    /// How far it's moved from the prop, `[along, up]` in metres along the
+    /// prop's place axes: `[0, 0]` but for [`EchoPlaces`].
+    pub place: [f32; 2],
+    /// How far it's gone toward its place, 0 to 1 ([`EchoPlaces::reached`]).
+    pub placed: f32,
+}
+
+impl EchoCopy {
+    /// How much of its poses' slide it shows, with a spec's `echo_slide` of
+    /// `steps`: [`slide_shown`] at its offset, less what its place has taken.
+    /// A copy at its place holds there, its writing unslid, so the copies
+    /// at one place stay one copy and don't smear along their lines.
+    pub fn slide_shown(&self, steps: f32) -> f32 {
+        slide_shown(steps, self.offset) * (1.0 - self.placed)
+    }
 }
 
 impl EchoConfig {
@@ -401,14 +523,36 @@ impl EchoConfig {
     /// trailing copy reads better than one that leads. Nothing that would draw
     /// nothing is listed, so `count = 0` and `alpha = 0` are both no copies.
     pub fn copies(&self) -> Vec<EchoCopy> {
+        self.copies_placed(&EchoPlaces::default())
+    }
+
+    /// [`Self::copies`], with a spec's [`EchoPlaces`]: copy `i` goes toward
+    /// place `i % places`, so with two places they alternate behind and
+    /// ahead as the copies do. Its opacity is its distance from now's, where
+    /// it stands on the clock. With no places, or at a spread of `from` or
+    /// less, this is [`Self::copies`] exactly.
+    pub fn copies_placed(&self, places: &EchoPlaces) -> Vec<EchoCopy> {
         let pairs = self.count.div_ceil(2);
+        let reached = places.reached(self.spread);
         (0..self.count)
             .map(|i| {
                 let pair = pairs - i / 2;
                 let reach = self.spread * (pair as f32 / pairs as f32).powf(ECHO_BUNCHING);
+                let offset = if i % 2 == 0 { -reach } else { reach };
+                let (offset, place) = if reached > 0.0 {
+                    let [along, up, steps] = places.at[i as usize % places.at.len()];
+                    (
+                        offset + (steps - offset) * reached,
+                        [along * reached, up * reached],
+                    )
+                } else {
+                    (offset, [0.0; 2])
+                };
                 EchoCopy {
-                    offset: if i % 2 == 0 { -reach } else { reach },
-                    opacity: self.alpha * (1.0 - reach * ECHO_FALLOFF),
+                    offset,
+                    opacity: self.alpha * (1.0 - offset.abs() * ECHO_FALLOFF),
+                    place,
+                    placed: reached,
                 }
             })
             .filter(|copy| copy.offset != 0.0 && copy.opacity > 0.0)
@@ -878,6 +1022,115 @@ variance = { amount = 1, steady = 0, keep_size = false }
             let text = with_living(&format!("lineage_seed = 3\necho_slide = {bad}"));
             let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
             assert!(error.contains("living.echo_slide"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn echo_places_are_none_by_default_and_change_nothing_up_to_from() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert!(living.echo_places.at.is_empty());
+        assert!(!toml::to_string(&spec).unwrap().contains("echo_places"));
+
+        let text = with_living(
+            "lineage_seed = 3\necho_places = { at = [[-0.05, 0.015, -0.6], [0.05, -0.015, 0.6]], from = 0.6, whole = 1.6 }",
+        );
+        let spec = ProcGenSpec::parse(&text).unwrap();
+        let places = &spec.living.as_ref().unwrap().echo_places;
+        assert_eq!(places.at.len(), 2);
+        assert!(toml::to_string(&spec).unwrap().contains("echo_places"));
+        // At `from` or less, the copies are the continuous spread's, bit for bit.
+        for spread in [0.0, 0.2, 0.45, 0.6] {
+            let echoes = EchoConfig {
+                count: 9,
+                spread,
+                alpha: 0.45,
+            };
+            assert_eq!(
+                echoes.copies_placed(places),
+                echoes.copies(),
+                "spread {spread}"
+            );
+        }
+    }
+
+    #[test]
+    fn at_a_whole_spread_the_echoes_at_a_place_are_one_copy() {
+        let places = EchoPlaces {
+            at: vec![[-0.05, 0.015, -0.6], [0.05, -0.015, 0.6]],
+            from: 0.6,
+            whole: 1.6,
+        };
+        let echoes = EchoConfig {
+            count: 9,
+            spread: 1.8,
+            alpha: 0.45,
+        };
+        let copies = echoes.copies_placed(&places);
+        assert_eq!(copies.len(), 9);
+        // They take the places in turn, behind then ahead, as the copies do.
+        for (i, copy) in copies.iter().enumerate() {
+            let [along, up, steps] = places.at[i % 2];
+            assert_eq!(copy.offset, steps);
+            assert_eq!(copy.place, [along, up]);
+            // At its place it holds: none of its poses' slide.
+            assert_eq!(copy.placed, 1.0);
+            assert_eq!(copy.slide_shown(1.5), 0.0);
+            assert!((copy.opacity - 0.45 * (1.0 - 0.6 * ECHO_FALLOFF)).abs() < 1e-6);
+        }
+        // In between they move toward their places together, eased, never back.
+        let mut last: Option<Vec<EchoCopy>> = None;
+        for k in 0..=40 {
+            let spread = 0.6 + k as f32 * 0.025;
+            let copies = EchoConfig { spread, ..echoes }.copies_placed(&places);
+            if let Some(last) = &last {
+                for (a, b) in last.iter().zip(&copies) {
+                    assert!(b.place[0].abs() >= a.place[0].abs(), "spread {spread}");
+                    assert!(
+                        (b.place[0] - a.place[0]).abs() < 0.004,
+                        "a jump at {spread}"
+                    );
+                    assert!((b.offset - a.offset).abs() < 0.06, "a jump at {spread}");
+                }
+            }
+            last = Some(copies);
+        }
+        assert_eq!(places.reached(0.6), 0.0);
+        assert_eq!(places.reached(1.6), 1.0);
+        assert!((places.reached(1.1) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn echo_places_are_checked_at_parse() {
+        for (places, says) in [
+            (
+                "at = [[0.0, 0.0, 0.0]], from = 0.5, whole = 1.5",
+                "living.echo_places.at",
+            ),
+            (
+                "at = [[0.0, 2.0, 0.5]], from = 0.5, whole = 1.5",
+                "living.echo_places.at",
+            ),
+            (
+                "at = [[0.0, 0.0, 1.9]], from = 0.5, whole = 1.5",
+                "living.echo_places.at",
+            ),
+            (
+                "at = [[0.0, 0.0, 0.5]], from = 1.5, whole = 1.5",
+                "living.echo_places.whole",
+            ),
+            (
+                "at = [[0.0, 0.0, 0.5]], from = 0.5, whole = 1.9",
+                "living.echo_places.whole",
+            ),
+            (
+                "at = [[0.0, 0.0, 0.5]], from = -0.1, whole = 1.5",
+                "living.echo_places.from",
+            ),
+        ] {
+            let text = with_living(&format!("lineage_seed = 3\necho_places = {{ {places} }}"));
+            let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
+            assert!(error.contains(says), "{places}: {error}");
         }
     }
 

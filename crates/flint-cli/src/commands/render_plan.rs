@@ -71,6 +71,42 @@ pub fn is_gif(path: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("gif"))
 }
 
+/// Where a frame sequence's `%d` or `%05d` sits in `path`, and its width: a span
+/// written as numbered PNGs, one a frame as it's captured (#588).
+fn sequence_slot(path: &str) -> Option<(usize, usize, usize)> {
+    let start = path.rfind('%')?;
+    let rest = &path[start + 1..];
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if rest.as_bytes().get(digits) != Some(&b'd') {
+        return None;
+    }
+    let width = if digits == 0 {
+        0
+    } else {
+        rest[..digits].parse().ok()?
+    };
+    Some((start, start + 1 + digits + 1, width))
+}
+
+/// Whether `path` asks for a PNG a frame: `dir/frame-%05d.png`.
+pub fn is_sequence(path: &str) -> bool {
+    let png = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    png && sequence_slot(path).is_some()
+}
+
+/// Frame `index`'s file in a sequence: `frame-%05d.png` and 7 make `frame-00007.png`.
+pub fn sequence_path(pattern: &str, index: usize) -> String {
+    match sequence_slot(pattern) {
+        Some((from, to, width)) => {
+            format!("{}{index:0width$}{}", &pattern[..from], &pattern[to..])
+        }
+        None => pattern.to_string(),
+    }
+}
+
 /// Parse `--fps`, for a span's frames or a strip's.
 pub fn parse_gif_fps(text: &str) -> Result<f32, String> {
     match text.parse::<f32>() {
@@ -106,8 +142,16 @@ pub fn check_output(output: &str, time: Option<&TimeSpec>) -> Result<()> {
         );
     }
     let span = matches!(time, Some(TimeSpec::Range(..)));
-    if span && !is_gif(output) {
-        bail!("a --time span makes an animation, so --output has to end in .gif, and {output} doesn't");
+    if span && !is_gif(output) && !is_sequence(output) {
+        bail!(
+            "a --time span makes an animation, so --output has to end in .gif, or be a \
+             PNG a frame such as frames/f-%05d.png, and {output} isn't either"
+        );
+    }
+    if !span && is_sequence(output) {
+        bail!(
+            "{output} numbers a frame sequence, which needs a span of game time: try --time 0..4"
+        );
     }
     if !span && is_gif(output) {
         bail!("a GIF needs a span of game time to show: try --time 0..4, or a .png for one moment");
@@ -209,6 +253,9 @@ mod tests {
     fn a_span_needs_a_gif_and_a_gif_needs_a_span() {
         let span = Some(&TimeSpec::Range(0.0, 1.0));
         assert!(check_output("out.gif", span).is_ok());
+        assert!(check_output("frames/f-%05d.png", span).is_ok());
+        assert!(check_output("frames/f-%05d.png", None).is_err());
+        assert!(check_output("frames/f-%05d.jpg", span).is_err());
         assert!(check_output("OUT.GIF", span).is_ok());
         assert!(check_output("out.png", span).is_err());
         assert!(check_output("out.gif", Some(&TimeSpec::At(1.0))).is_err());
@@ -224,6 +271,17 @@ mod tests {
         assert_eq!(steps, 1);
         assert!((rest - 0.0375).abs() < 1e-12);
         assert_eq!(steps_within(0.0, 0.0625), (0, 0.0));
+    }
+
+    #[test]
+    fn a_sequence_numbers_its_frames() {
+        assert_eq!(sequence_path("out/f-%05d.png", 7), "out/f-00007.png");
+        assert_eq!(sequence_path("out/f-%d.png", 1234), "out/f-1234.png");
+        assert_eq!(sequence_path("100%/f%3d.png", 5), "100%/f005.png");
+        assert!(is_sequence("a/%04d.PNG"));
+        assert!(!is_sequence("a/f.png"));
+        assert!(!is_sequence("a/%04x.png"));
+        assert!(!is_sequence("a/%04d.gif"));
     }
 
     #[test]

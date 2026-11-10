@@ -1688,6 +1688,7 @@ dependencies = [
  "flint-viewer",
  "gif",
  "image",
+ "miniz_oxide",
  "naga",
  "notify",
  "notify-debouncer-mini",

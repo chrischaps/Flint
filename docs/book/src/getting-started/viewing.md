@@ -31,6 +31,14 @@ The viewer uses an orbit camera that rotates around a focus point. If the scene 
 
 Any manual orbit input cancels auto-orbit. Start in turntable mode with `--auto-orbit`.
 
+## The Selection Outline
+
+Whatever you pick, in the viewport or the scene tree, is outlined in selection yellow. The outline goes round the entity and everything under it in the hierarchy, so picking a parent with no mesh of its own (or a glTF model whose nodes were expanded into child entities) outlines the whole of it. It follows what was drawn: a skinned figure in its pose, a woozy prop where it has drifted to, a sprite by its cut-out, glass by its edge rather than filled. Where the selection is hidden behind something, its outline carries on through, fainter, so you can see where it is.
+
+![The selection outline on a mesh-less parent (the cart), a skinned figure and a barrel whose underside sinks below the floor, its hidden part drawn faint](../images/selection-outline.png)
+
+The outline is drawn over the finished image, after tonemapping, post-processing and every style, so it is the same colour and width (2 points) in every scene and on every display. It changes nothing else: with nothing selected the frame is what `flint render` makes. `flint render --select <entity>` draws the same outline headlessly; the colour is `SELECTION_COLOR_SRGB` in `crates/flint-render/src/selection_outline.rs`.
+
 ## Transform Gizmo
 
 When you select an entity in the inspector, a gizmo appears at its position with colored axis arrows and plane handles:

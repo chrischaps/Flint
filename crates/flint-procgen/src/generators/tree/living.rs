@@ -78,6 +78,7 @@ impl LivingGenerator for TreeGenerator {
             leaf_mesh,
             card_index_count: card_indices,
             leaf_bindings,
+            place_axes: Vec::new(),
         })
     }
 
@@ -927,6 +928,7 @@ mod tests {
             echoes: Default::default(),
             echo_blend: Default::default(),
             echo_slide: 0.0,
+            echo_places: Default::default(),
         });
         living.variance = variance;
         spec.living = Some(living);

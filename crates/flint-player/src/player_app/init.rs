@@ -146,6 +146,7 @@ impl PlayerApp {
             scene_preload_audio: true,
             audio_vfs_generation: flint_core::vfs::generation(),
             window_size: (1280, 720),
+            window_options: crate::WindowArgs::default(),
             capture: CaptureConfig::default(),
             expression_feed: None,
             exit_requested: false,
@@ -452,6 +453,8 @@ impl PlayerApp {
             self.window_size.0.max(1),
             self.window_size.1.max(1),
         ));
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        let window_attrs = self.window_options.apply(window_attrs);
 
         let window = Arc::new(
             event_loop
