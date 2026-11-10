@@ -2439,7 +2439,12 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     props: stage
                         .living
                         .as_ref()
-                        .map_or_else(Vec::new, render_report::props_report),
+                        .map_or_else(Vec::new, |run| {
+                            render_report::props_report(
+                                run,
+                                stage.wooze.as_ref().map(|clocks| clocks.reading()),
+                            )
+                        }),
                 });
             }
         }
@@ -2563,7 +2568,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     }
 
     if report_json {
-        let field = stages[0].living.as_ref().and_then(|l| l.field());
+        let field = stages[0].wooze.as_ref().map(|clocks| clocks.field());
         let report = render_report::RenderReport {
             scene: scene_name,
             output: args.output.clone(),
@@ -2923,7 +2928,6 @@ impl Stage {
             LivingRun::load(
                 &args.scene,
                 scene_file.living.as_ref(),
-                scene_file.wooze.as_ref(),
                 &mut world,
                 GpuSink {
                     renderer: &mut renderer,
@@ -2941,23 +2945,20 @@ impl Stage {
             Some(preset) => Some(preset_wooze_table(&preset.wooze)),
             None => sweep.and_then(|sweep| sweep.wooze_table(column)),
         };
-        if let (Some(run), Some(knobs)) = (&mut living, &column_knobs) {
-            run.change_field(knobs)
-                .map_err(|reason| anyhow!("--sweep: {reason}"))?;
-        }
         if let (Some(run), Some(preset)) = (&mut living, &column_preset) {
             for problem in run.apply_preset(&preset.living) {
                 eprintln!("Warning: --sweep preset: {problem}");
             }
         }
-        // What else reads the field: the shading boil always, and shallow wooze in a
+        // The stage's one wooze field (#581), with the column's knobs over the scene's:
+        // the living props read it, the shading boil always, and shallow wooze in a
         // capture of a moment. A plain render shows those meshes at rest (#215).
         let mut wooze =
             WoozeClocks::of_scene(scene_file.wooze.as_ref(), column_knobs.as_ref(), moment)
                 .map_err(|reason| anyhow!("--sweep: {reason}"))?;
         // As the player's first frame: no time passes, and the field is read.
         if let Some(run) = &mut living {
-            run.step(0.0);
+            run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));
         }
 
         model_loader::load_models_from_world(
@@ -3098,7 +3099,7 @@ impl Stage {
             scripts.apply(commands, living.as_mut(), &mut wooze, moment);
             follow_script_camera(&mut camera, scripts);
             if let Some(run) = &mut living {
-                run.step(0.0);
+                run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));
             }
         }
 
@@ -3245,7 +3246,7 @@ impl Stage {
             );
         }
         if let Some(run) = &mut self.living {
-            run.step(dt);
+            run.step(dt, self.wooze.as_ref().map(WoozeClocks::reading));
         }
     }
 

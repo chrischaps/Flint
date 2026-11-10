@@ -153,9 +153,12 @@ pub struct WoozeReport {
 
 /// Every prop as it stands, by name, since a scene's entities load in no fixed
 /// order and two runs ought to read the same.
-pub fn props_report(run: &LivingRun) -> Vec<PropReport> {
+/// `field` is the stage's, where its clock stands.
+pub fn props_report(
+    run: &LivingRun,
+    field: Option<(&flint_core::wooze::WoozeField, f64)>,
+) -> Vec<PropReport> {
     let props = run.props();
-    let field = run.field().map(|field| (field, run.time()));
     let mut report: Vec<PropReport> = props
         .props()
         .iter()
