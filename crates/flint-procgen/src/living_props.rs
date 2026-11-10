@@ -1096,6 +1096,41 @@ pub struct LivingProps {
     rehold_turn: bool,
 }
 
+/// The budget arithmetic of [`LivingProps::fill_within`], apart from the clock
+/// and the generator, so a test can give it a pose cost of its own (#597).
+/// `used_ms` is the frame's time so far; `fill` makes the next pose and says
+/// whether that took generating and how many ms it took, or `None` if nothing
+/// is missing. Returns whether it generated anything.
+fn fill_while_it_fits(
+    estimate_ms: &mut f64,
+    budget_ms: f64,
+    mut used_ms: impl FnMut() -> f64,
+    mut fill: impl FnMut() -> Option<(bool, f64)>,
+) -> bool {
+    let mut made = false;
+    loop {
+        let used = used_ms();
+        let estimate = *estimate_ms;
+        let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
+        if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
+            // Only making a pose teaches the estimate anything, so one that came
+            // down to just under the budget would be turned away by every frame
+            // after it, and the rings would run dry with the budget unspent.
+            if !made {
+                *estimate_ms *= POSE_ESTIMATE_DECAY;
+            }
+            return made;
+        }
+        let Some((generated, took)) = fill() else {
+            return made;
+        };
+        if generated {
+            made = true;
+            *estimate_ms = (*estimate_ms * POSE_ESTIMATE_DECAY).max(took);
+        }
+    }
+}
+
 impl LivingProps {
     /// No props, and a pose cache that keeps `pose_cache_bytes`.
     pub fn new(pose_cache_bytes: usize) -> Self {
@@ -2052,30 +2087,19 @@ impl LivingProps {
         start: Instant,
         registry: &GeneratorRegistry,
     ) -> bool {
-        let mut made = false;
-        loop {
-            let used = start.elapsed().as_secs_f64() * 1000.0;
-            let estimate = self.pose_estimate_ms;
-            let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
-            if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
-                // Only making a pose teaches the estimate anything, so one that came
-                // down to just under the budget would be turned away by every frame
-                // after it, and the rings would run dry with the budget unspent.
-                if !made {
-                    self.pose_estimate_ms *= POSE_ESTIMATE_DECAY;
-                }
-                return made;
-            }
-            let began = Instant::now();
-            let Some(generated) = self.fill_one(registry) else {
-                return made;
-            };
-            if generated {
-                made = true;
-                let took = began.elapsed().as_secs_f64() * 1000.0;
-                self.pose_estimate_ms = (self.pose_estimate_ms * POSE_ESTIMATE_DECAY).max(took);
-            }
-        }
+        let mut estimate = self.pose_estimate_ms;
+        let made = fill_while_it_fits(
+            &mut estimate,
+            budget_ms,
+            || start.elapsed().as_secs_f64() * 1000.0,
+            || {
+                let began = Instant::now();
+                let generated = self.fill_one(registry)?;
+                Some((generated, began.elapsed().as_secs_f64() * 1000.0))
+            },
+        );
+        self.pose_estimate_ms = estimate;
+        made
     }
 
     /// Give the emptiest ring its next pose. Returns whether that took
@@ -3215,27 +3239,129 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
     /// frame reads as having used nothing, and an estimate at the budget still fits.
     #[test]
     fn an_estimate_just_under_the_budget_does_not_stop_the_poses() {
+        // Four props at a step of 0.1 s want 40 poses a second, two thirds of
+        // one a 60 Hz frame. So the rings keep up as long as most frames make
+        // a pose at all, whatever a pose costs here (#597: 256 props needed
+        // ~43 a frame, which a debug build can't make in 4 ms, and the test
+        // measured the machine instead of the estimate).
+        const PROPS: u64 = 4;
+        const BUDGET_MS: f64 = 4.0;
         let mut resolver = resolver_with(&sapling("step = 0.1"));
-        for n in 0..256u64 {
+        for n in 0..PROPS {
             let name = format!("oak_{n}");
             resolver.add_living_prop(request(n + 1, &name)).unwrap();
         }
         resolver.make_living_now();
-        resolver.frame_budget_for_test(4.0);
+        resolver.frame_budget_for_test(BUDGET_MS);
         let made_before = resolver.living_props().stats().poses_made;
-        resolver.living_props_mut().pose_estimate_ms = 4.0;
+        // Any time spent before the first pose puts it over. Whether a frame
+        // spends any before it is the machine's clock's to say (a few props can
+        // finish inside one tick of it), so the decay that keeps this estimate
+        // from turning away every frame is pinned on a clock of the tests' own,
+        // in `a_refused_frame_brings_a_stuck_estimate_down` below.
+        resolver.living_props_mut().pose_estimate_ms = BUDGET_MS;
 
-        run(&mut resolver, 4.0, 1.0 / 60.0);
+        let frames = 240u32;
+        run(&mut resolver, f64::from(frames) / 60.0, 1.0 / 60.0);
 
         let props = resolver.living_props();
+        let stats = props.stats();
+        assert!(stats.poses_made > made_before, "no poses in 4 s: {stats:?}");
+        // What 4 s of beats asked for, give or take the ring's spare.
+        let wanted = PROPS * u64::from(frames) / 6;
         assert!(
-            props.stats().poses_made > made_before,
-            "no poses in 4 s: {:?}",
-            props.stats()
+            stats.poses_made - made_before >= wanted - PROPS,
+            "{} poses for {wanted} beats: {stats:?}",
+            stats.poses_made - made_before
+        );
+        assert!(
+            props.pose_estimate_ms < BUDGET_MS,
+            "the estimate never came down: {} ms",
+            props.pose_estimate_ms
         );
         for prop in props.props() {
-            assert_eq!(prop.ready(), prop.ring_len(), "{:?}", props.stats());
+            assert_eq!(prop.ready(), prop.ring_len(), "{stats:?}");
         }
+    }
+
+    /// Frames of [`fill_while_it_fits`] on a clock of the test's own: each frame
+    /// spends `overhead_ms` before its first pose and `pose_ms` on each, and a
+    /// pose more goes missing every frame. Returns the poses each frame made and
+    /// the estimate after the last.
+    fn fake_frames(
+        frames: usize,
+        budget_ms: f64,
+        overhead_ms: f64,
+        pose_ms: f64,
+        mut estimate_ms: f64,
+    ) -> (Vec<u32>, f64) {
+        let missing = std::cell::Cell::new(0u32);
+        let mut made = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            missing.set(missing.get() + 1);
+            let clock = std::cell::Cell::new(overhead_ms);
+            let mut this_frame = 0;
+            fill_while_it_fits(
+                &mut estimate_ms,
+                budget_ms,
+                || clock.get(),
+                || {
+                    if missing.get() == 0 {
+                        return None;
+                    }
+                    clock.set(clock.get() + pose_ms);
+                    missing.set(missing.get() - 1);
+                    this_frame += 1;
+                    Some((true, pose_ms))
+                },
+            );
+            made.push(this_frame);
+        }
+        (made, estimate_ms)
+    }
+
+    #[test]
+    fn a_refused_frame_brings_a_stuck_estimate_down() {
+        // An estimate at the budget, a frame that has spent 0.05 ms before its
+        // first pose: refused. Without the decay every later frame would be too,
+        // whatever a pose really costs (0.2 ms here).
+        let (made, estimate) = fake_frames(240, 4.0, 0.05, 0.2, 4.0);
+        assert_eq!(made[0], 0, "the first frame can't fit the estimate");
+        let first = made.iter().position(|&n| n > 0).expect("never made a pose");
+        // 4 x 0.99^n <= 3.95 at n = 2: the third frame fits.
+        assert_eq!(first, 2, "{made:?}");
+        // A pose a frame is wanted; the backlog is gone well before the end.
+        assert_eq!(made.iter().sum::<u32>(), 240, "{made:?}");
+        assert!(estimate < 1.0, "the estimate stayed at {estimate} ms");
+    }
+
+    #[test]
+    fn a_pose_dearer_than_the_budget_still_gets_one_a_frame() {
+        // A debug build whose pose costs more than the whole budget.
+        let (made, estimate) = fake_frames(60, 4.0, 0.05, 6.0, 0.0);
+        assert!(made.iter().all(|&n| n == 1), "{made:?}");
+        assert_eq!(estimate, 6.0);
+    }
+
+    #[test]
+    fn a_frame_stops_at_the_pose_that_would_pass_the_budget() {
+        // 0.5 ms poses in a 4 ms budget after 0.05 ms: seven fit, an eighth
+        // would end at 4.05 ms.
+        let mut estimate = 0.5;
+        let clock = std::cell::Cell::new(0.05);
+        let mut made = 0;
+        fill_while_it_fits(
+            &mut estimate,
+            4.0,
+            || clock.get(),
+            || {
+                clock.set(clock.get() + 0.5);
+                made += 1;
+                Some((true, 0.5))
+            },
+        );
+        assert_eq!(made, 7);
+        assert!(clock.get() <= 4.0);
     }
 
     #[test]
