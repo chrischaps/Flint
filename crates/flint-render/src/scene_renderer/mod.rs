@@ -605,6 +605,14 @@ pub struct SceneRenderer {
     /// the built-in default; stored so the zero-light fallback in
     /// `extract_lights_from_world` cannot stomp it.
     ambient_override: Option<([f32; 3], [f32; 3])>,
+    /// The scene's `[environment] shadows` (#627): false keeps the shadow
+    /// pass from drawing whatever the quality tier or F4 say. True unless
+    /// a scene says otherwise.
+    scene_shadows: bool,
+    /// The scene's `[environment] default_lights` (#627): false lights a
+    /// scene with no light entities by its ambient alone, instead of the
+    /// built-in key and fill. True unless a scene says otherwise.
+    default_lights: bool,
     /// Scene-authored diffuse terminator wrap. Rides ambient_sky.w encoded as
     /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 in the shader.
     diffuse_wrap_override: Option<f32>,
@@ -1001,6 +1009,8 @@ impl SceneRenderer {
             light_bind_group,
             light_uniforms,
             ambient_override: None,
+            scene_shadows: true,
+            default_lights: true,
             diffuse_wrap_override: None,
             oren_nayar_override: None,
             sheen_override: None,
@@ -2542,6 +2552,8 @@ impl SceneRenderer {
             light_bind_group,
             light_uniforms,
             ambient_override: None,
+            scene_shadows: true,
+            default_lights: true,
             diffuse_wrap_override: None,
             oren_nayar_override: None,
             sheen_override: None,
@@ -3291,7 +3303,7 @@ impl SceneRenderer {
         // Shadow stats: estimate as main pass × the cascades drawn, counting
         // only the draws that cast (ADR 0100)
         let cascade_count = match &self.shadow_pass {
-            Some(sp) if sp.enabled => sp.cascades() as u32,
+            Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
             _ => 0,
         };
         let casting = self.entity_draws.iter().filter(|d| d.casts_shadow);
@@ -3652,6 +3664,38 @@ impl SceneRenderer {
     /// Whether shadow rendering is currently enabled
     pub fn shadows_enabled(&self) -> bool {
         self.shadow_pass.as_ref().is_some_and(|sp| sp.enabled)
+    }
+
+    /// The scene's `[environment] shadows` (#627). False keeps the shadow
+    /// pass from drawing at all, over the quality tier and F4,
+    /// which keep their own setting for the next scene.
+    pub fn set_scene_shadows(&mut self, on: bool) {
+        self.scene_shadows = on;
+    }
+
+    /// The scene's `[environment] default_lights` (#627). False lights a
+    /// scene with no light entities by its ambient alone (and emission),
+    /// instead of the built-in key and fill. Takes effect at the next
+    /// `update_from_world`.
+    pub fn set_default_lights(&mut self, on: bool) {
+        self.default_lights = on;
+    }
+
+    /// Whether this frame draws the shadow cascades (#627): shadows are on,
+    /// the scene allows them, and its strongest directional light gives
+    /// light or god rays. A sun of intensity 0 contributes nothing the
+    /// maps could darken, so its pass is skipped and every caster with it.
+    pub fn shadows_drawn(&self) -> bool {
+        self.shadows_enabled() && self.scene_shadows && self.sun_casts()
+    }
+
+    /// The light the cascades follow, directional 0 after the sort that
+    /// puts the strongest first, gives light or god rays.
+    fn sun_casts(&self) -> bool {
+        self.light_uniforms.directional_count > 0 && {
+            let sun = &self.light_uniforms.directional_lights[0];
+            sun.intensity > 0.0 || sun.volumetric_intensity > 0.0
+        }
     }
 
     /// Current shadow map resolution per cascade
@@ -5007,7 +5051,7 @@ impl SceneRenderer {
         });
 
         // If no lights found in scene, use defaults
-        if dir_count == 0 && point_count == 0 && spot_count == 0 {
+        if dir_count == 0 && point_count == 0 && spot_count == 0 && self.default_lights {
             self.light_uniforms = LightUniforms::default_scene_lights();
             self.apply_ambient_override();
         } else {

@@ -3,8 +3,9 @@
 //! A cache records every path an entry depended on: the file it loaded, the
 //! files it references, and the candidates searched before it (absent ones
 //! too, so a file that appears, or a typo fixed on disk, is noticed).
-//! Native only: hot reload reads the disk with `std::fs`, never the vfs, and
-//! a web bundle never changes, so on wasm nothing is recorded or changes.
+//! Native only: hot reload reads the disk (through `flint_core::file_watch`),
+//! never the vfs, and a web bundle never changes, so on wasm nothing is
+//! recorded or changes.
 
 use std::path::Path;
 
@@ -44,8 +45,8 @@ impl FileStamps {
 
 #[cfg(not(target_arch = "wasm32"))]
 /// The modified time and length (a coarse clock can miss a quick edit's
-/// time; its length often differs).
+/// time; its length often differs), through `flint_core::file_watch`, which
+/// in the player never waits on the disk (#633).
 fn modified(path: &Path) -> Option<(std::time::SystemTime, u64)> {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
+    flint_core::file_watch::stamp(path)
 }

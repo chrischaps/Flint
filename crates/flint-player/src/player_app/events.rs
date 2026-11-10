@@ -403,6 +403,27 @@ impl PlayerApp {
     }
 }
 
+/// What a real Escape press does (#639). Without a binding it lets go of a
+/// captured cursor, or else closes the window. A game whose input config
+/// binds Escape gets the press as any other key: the cursor still lets go,
+/// so a pause menu it opens can be clicked, but the window stays open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Escape {
+    pub release_cursor: bool,
+    pub exit: bool,
+    pub to_game: bool,
+}
+
+impl Escape {
+    pub(crate) fn decide(cursor_captured: bool, game_binds_escape: bool) -> Self {
+        Self {
+            release_cursor: cursor_captured,
+            exit: !cursor_captured && !game_binds_escape,
+            to_game: game_binds_escape,
+        }
+    }
+}
+
 /// The axes read again when the window regains focus.
 const STICKS: [Axis; 8] = [
     Axis::LeftStickX,
@@ -420,9 +441,14 @@ impl ApplicationHandler for PlayerApp {
         // No window yet means first launch. (On the web the window exists
         // while the device is still on its way; don't start twice.)
         if self.window.is_none() && self.render_context.is_none() {
+            // Hot reload's polls are answered by a watcher thread from here
+            // on, so none of them waits on the disk in a frame (#633); a
+            // no-op after `--no-hot-reload` (`file_watch::disable`)
+            flint_core::file_watch::start();
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize player: {e:#}");
+                self.init_error = Some(format!("{e:#}"));
                 event_loop.exit();
             }
         } else {
@@ -674,19 +700,29 @@ impl PlayerApp {
                 match event.state {
                     ElementState::Pressed => {
                         // Handle escape to toggle cursor capture, once it
-                        // has let go of any tree picked in the world (#248)
+                        // has let go of any tree picked in the world (#248).
+                        // A game that binds Escape gets it (#639): the
+                        // cursor still lets go, but the window stays open
+                        // (Alt+F4 and the close button still close it).
                         if key_code == KeyCode::Escape {
                             if self.living_let_go() {
                                 return;
                             }
-                            if self.cursor_captured {
+                            let escape = Escape::decide(
+                                self.cursor_captured,
+                                self.input.config().binds_key(KeyCode::Escape),
+                            );
+                            if escape.release_cursor {
                                 self.release_cursor();
-                            } else {
+                            }
+                            if escape.exit {
                                 // A page has nowhere to exit to.
                                 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
                                 event_loop.exit();
                             }
-                            return;
+                            if !escape.to_game {
+                                return;
+                            }
                         }
 
                         // Debug keys, shared with `--input-script` (H9)
@@ -755,7 +791,8 @@ impl PlayerApp {
     /// The player's debug keys: F2 stats overlay, F3/F4 panels, the music
     /// guide and timeline, F9 force-fail, F11 fullscreen. Called for a real
     /// key press and for one the input script presses, so a capture can
-    /// open the overlay (H9). Escape stays window-only: it exits.
+    /// open the overlay (H9). A real Escape exits only when no action binds
+    /// it (`Escape::decide`, #639); a scripted one never does.
     pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
         match key_code {
             KeyCode::F2 => {

@@ -798,6 +798,27 @@ pub struct EnvironmentDef {
     /// values over-brighten). Absent = 0 = exact legacy shading (ADR 0048).
     #[serde(default)]
     pub sheen_strength: Option<f32>,
+    /// False: the scene casts no shadows, whatever the quality tier says
+    /// (#627). Absent = true.
+    #[serde(default)]
+    pub shadows: Option<bool>,
+    /// False: a scene with no light entities is lit by its ambient (and
+    /// its emission) alone, not the renderer's built-in key and fill
+    /// (#627). Absent = true.
+    #[serde(default)]
+    pub default_lights: Option<bool>,
+}
+
+impl EnvironmentDef {
+    /// `shadows`, true when absent (#627).
+    pub fn casts_shadows(&self) -> bool {
+        self.shadows.unwrap_or(true)
+    }
+
+    /// `default_lights`, true when absent (#627).
+    pub fn uses_default_lights(&self) -> bool {
+        self.default_lights.unwrap_or(true)
+    }
 }
 
 /// Scene metadata

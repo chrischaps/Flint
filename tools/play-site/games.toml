@@ -70,13 +70,14 @@ id = "afterglow"
 title = "AFTERGLOW"
 line = "Outrun the dark: a neon road, a clock, and fifteen events to win."
 controls = "sound on · WASD or arrows, or a pad · Space handbrake · Shift boost · Enter to choose"
-touch = "needs a keyboard or a paired pad: there are no touch controls yet"
+touch = "held sideways, sound on · left thumb steers, the gas is automatic · right thumb: BRAKE, DRIFT, BOOST · menus are tapped"
 orientation = "landscape"
 repo = "chrischaps/Kandinski"
 # main: the second pass (the two-axle car model, the Grand Tour's fifteen
 # events, the hero car), with bundle.toml and the poster under web/. Its
 # engine subtree is Flint main as of 9886650. No film yet, so a browser
 # without WebGPU sees the poster alone.
-ref = "10e2009db47b2645346aa01e846a1a6c4cb652dd"
+# Now with touch controls: a stick, BRAKE, DRIFT and BOOST, and menus by tap.
+ref = "167e7e25d287d884aea9805c2c74bcd1afe6ad00"
 # A path, not a URL: build.py copies it from the repo beside the bundle.
 poster = "web/afterglow-poster.jpg"

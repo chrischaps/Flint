@@ -268,14 +268,16 @@ impl<'a> ExtensionAudio<'a> {
         self.system.engine.load_sound_from_bytes(name, bytes)
     }
 
-    /// Play the cached sound `name` once. An unknown name is an error;
-    /// with no device it does nothing.
+    /// Play the cached sound `name` once. A preloaded file answers to its
+    /// path (`audio/door.ogg`) or its bare stem (`door`), as in scripts.
+    /// An unknown name is an error naming the nearest cached sound; with
+    /// no device it does nothing.
     pub fn play(&mut self, name: &str, options: &SoundOptions) -> flint_core::Result<()> {
         let engine = &mut self.system.engine;
+        let resolved = engine.resolve_sound(name).into_owned();
+        let name = resolved.as_str();
         if !engine.has_sound(name) {
-            return Err(flint_core::FlintError::AudioError(format!(
-                "Sound not cached: {name}"
-            )));
+            return Err(engine.not_cached(name));
         }
         if !engine.is_available() {
             return Ok(());

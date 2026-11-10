@@ -93,6 +93,8 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
 | `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
 | `set_material_override(id, material, r, g, b, a)` | --- | Replace one named glTF material's base colour on this entity and all its expanded child nodes (writes `material_overrides.<material>`; colours above 1 are allowed, see [Colours above 1](#colours-above-1)) |
+| `set_material_emissive(id, material, r, g, b[, strength])` | --- | Recolour one named glTF material's glow (linear RGB; `strength` replaces its `emissive_strength`) on this entity and its expanded child nodes; works on a material with no emission of its own. See [Recolouring an imported model's glow](rendering.md#recolouring-an-imported-models-glow) |
+| `clear_material_override(id, material)` | --- | Drop this entity's own override of one material, colour and glow, so the material or an ancestor's override shows again |
 | `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
 | `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
@@ -194,7 +196,19 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
 
-Sound names match the audio files loaded from the `audio/` directory (without extension). A one-shot naming a file that is not there fails silently — it logs a warning and plays nothing.
+A sound's name is its file's path from the game root, extension included: the scene preloads `audio/whoosh.ogg` as `"audio/whoosh.ogg"`. The bare stem works too: a name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, so these three play the same file:
+
+```rust
+play_sound("audio/whoosh.ogg", 0.8);
+play_sound("whoosh.ogg", 0.8);
+play_sound("whoosh", 0.8);
+```
+
+A name cached as written always wins, so a sound an extension loaded as `"blip"` stays `"blip"`, and two files that share a stem (`whoosh.ogg`, `whoosh.wav`) want the full path. A one-shot naming a sound that is not there plays nothing and logs a warning that names the nearest cached sound:
+
+```text
+WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
+```
 
 Varying `pitch` slightly per trigger (say 0.9–1.1) is the cheapest way to stop a
 repeated one-shot sounding like a repeated one-shot.
@@ -1465,6 +1479,10 @@ To pick out the new names, the reload runs the new source's top-level statements
 This enables a fast iteration workflow: edit a script in your text editor, save, and see the result in the running game without restarting.
 
 Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
+
+In the player none of this waits on the disk in a frame (#633). A watcher thread (`flint_core::file_watch`) stats the files every quarter second and passes a change on only once the file has held still for two of its looks, so a change lands a quarter to half a second after the last write. A second thread reads and compiles the changed script, checking that the file didn't move while it read it, and compiles a changed `scripts/lib` module by module; the frame only swaps finished ASTs in. Before this, a frame could wait seconds on a file another process was writing, and a script half-written when it was read could be compiled as a shorter one. UI documents, user styles, glyph sets, palettes and style images ask the same watcher. Tools such as `flint render --scripts` poll the disk directly, as they always did.
+
+`flint-player --no-hot-reload` (and `flint play --no-hot-reload`) turns all of it off: everything loads once and nothing polls the disk, which is what a capture or a shipped build wants. A game that embeds `PlayerApp` calls `flint_core::file_watch::disable()` before its event loop starts.
 
 ## Interactable System
 

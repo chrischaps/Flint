@@ -731,8 +731,15 @@ impl PlayerApp {
         self.perf_mark(super::perf::Phase::Hud);
 
         // Capture the composited frame (scene + HUD) before it is presented.
+        self.capture.last_frame_time = Some(self.clock.total_time);
         if let Some(path) = self.capture_path_due() {
-            self.write_screenshot(&output.texture, &path);
+            match self.write_screenshot(&output.texture, &path) {
+                Ok(()) => self.capture.written += 1,
+                Err(reason) => {
+                    tracing::warn!("screenshot: {reason}");
+                    self.capture.note_failure(reason);
+                }
+            }
         }
 
         output.present();
@@ -764,7 +771,9 @@ impl PlayerApp {
                     }
                 }
             }
-            if self.clock.total_time >= exit_after {
+            // A shot that's due but failed waits for its retries (#639).
+            let now = self.clock.total_time;
+            if now >= exit_after && !self.capture.shot_pending(now) {
                 self.exit_requested = true;
                 // Headless perf figure: average frame time over the run, so a
                 // scene change can be A/B'd without watching the overlay.
@@ -913,48 +922,43 @@ impl PlayerApp {
         }
     }
 
-    /// Read the swapchain texture back and save it as a PNG.
-    fn write_screenshot(&self, texture: &wgpu::Texture, path: &std::path::Path) {
+    /// Read the swapchain texture back and save it as a PNG; the reason
+    /// it couldn't, if it couldn't (#639).
+    fn write_screenshot(
+        &self,
+        texture: &wgpu::Texture,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
         let Some(context) = &self.render_context else {
-            return;
+            return Err("no render context".into());
         };
         if !context.surface_copyable {
-            tracing::warn!(
-                "screenshot skipped: surface has no COPY_SRC usage on this adapter ({})",
+            return Err(format!(
+                "skipped {}: the surface has no COPY_SRC usage on this adapter",
                 path.display()
-            );
-            return;
+            ));
         }
-        let pixels = match context.read_surface_rgba(texture) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!("screenshot readback failed: {e}");
-                return;
-            }
-        };
-        let Some(img) = image::RgbaImage::from_raw(texture.width(), texture.height(), pixels)
-        else {
-            tracing::warn!("screenshot: pixel buffer size mismatch");
-            return;
-        };
+        let pixels = context
+            .read_surface_rgba(texture)
+            .map_err(|e| format!("read-back of {} failed: {e}", path.display()))?;
+        let img = image::RgbaImage::from_raw(texture.width(), texture.height(), pixels)
+            .ok_or_else(|| format!("pixel buffer size mismatch for {}", path.display()))?;
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    tracing::warn!("screenshot: cannot create {}: {e}", parent.display());
-                    return;
-                }
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
             }
         }
-        match img.save(path) {
-            Ok(()) => tracing::info!(
-                "screenshot written: {} ({}x{} at t={:.2}s)",
-                path.display(),
-                texture.width(),
-                texture.height(),
-                self.clock.total_time
-            ),
-            Err(e) => tracing::warn!("screenshot: failed to save {}: {e}", path.display()),
-        }
+        img.save(path)
+            .map_err(|e| format!("failed to save {}: {e}", path.display()))?;
+        tracing::info!(
+            "screenshot written: {} ({}x{} at t={:.2}s)",
+            path.display(),
+            texture.width(),
+            texture.height(),
+            self.clock.total_time
+        );
+        Ok(())
     }
 
     #[profiling::function]

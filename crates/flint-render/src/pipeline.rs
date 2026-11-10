@@ -151,6 +151,11 @@ pub struct MaterialUniforms {
     /// per-vertex light (ADR 0102: the entity's `material.vertex_tint_*`).
     /// White is the mesh as uploaded. Unused without `use_vertex_color`.
     pub vertex_tint: [f32; 4],
+    /// Unlit (#627: the entity's `material.unlit`). `x` is 1 when the
+    /// material skips lighting and draws its base colour (texture and
+    /// vertex colour included) times `y`, its `emissive_scale`, plus its
+    /// emission, straight to the HDR target; 0 is lit. `zw` unused.
+    pub unlit: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -176,6 +181,7 @@ impl MaterialUniforms {
             glow_surface: 0.0,
             double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
@@ -201,13 +207,27 @@ impl MaterialUniforms {
             glow_surface: 0.0,
             double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
     /// Sets the emission from an imported material.
     pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
-        let [r, g, b] = material.emissive;
-        let s = material.emissive_strength;
+        self.set_emission_overridden(material, None, None);
+    }
+
+    /// [`set_emission`](Self::set_emission) with the material's `emissive`
+    /// colour and `emissive_strength` replaced where given (#624: a
+    /// `material_overrides` entry recolouring an imported model's glow). The
+    /// strength reaches per-vertex light too, as the material's own does.
+    pub fn set_emission_overridden(
+        &mut self,
+        material: &flint_import::ImportedMaterial,
+        emissive: Option<[f32; 3]>,
+        strength: Option<f32>,
+    ) {
+        let [r, g, b] = emissive.unwrap_or(material.emissive);
+        let s = strength.unwrap_or(material.emissive_strength);
         let per_vertex = material.vertex_emission && material.use_vertex_color;
         self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
         self.vertex_emission = per_vertex as u32;
@@ -217,6 +237,12 @@ impl MaterialUniforms {
     /// imported material's glTF `doubleSided` (#623).
     pub fn set_double_sided(&mut self, material: &flint_import::ImportedMaterial) {
         self.double_sided = material.double_sided as u32;
+    }
+
+    /// Draw unlit (#627): base colour times `scale` plus emission, no
+    /// lights, ambient or shadows. `scale` below 0 counts as 0.
+    pub fn set_unlit(&mut self, scale: f32) {
+        self.unlit = [1.0, scale.max(0.0), 0.0, 0.0];
     }
 
     /// Multiplies all of the emission, the material's own and per-vertex,
@@ -837,10 +863,14 @@ impl RenderPipeline {
                 cache: None,
             })
         };
-        let transparent_alpha_back_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
-        let transparent_alpha_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
+        let transparent_alpha_back_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (back faces)",
+            Some(wgpu::Face::Front),
+        );
+        let transparent_alpha_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (front faces)",
+            Some(wgpu::Face::Back),
+        );
 
         // Transparent additive pipeline: src*SrcAlpha + dst*One
         let transparent_additive_pipeline =

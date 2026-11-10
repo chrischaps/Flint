@@ -16,9 +16,15 @@ The listener position and orientation are updated each frame to match the first-
 
 Non-spatial sounds play on the main audio track at constant volume regardless of listener position. Set `spatial = false` on an `audio_source` to use this mode --- useful for background music, ambient atmosphere, and UI sounds.
 
+### What a loop loops over
+
+A looping `audio_source` (`loop = true`) plays the whole decoded sound, first sample to last, then starts again with nothing between: no crossfade, no silence, nothing trimmed. So a loop has to be authored to close on its own length. Its last sample should lead into its first the way any two neighbouring samples do. A loop that only closes after a fade, or that carries a tail of silence or reverb, clicks or gaps at every wrap.
+
+What "the whole sound" means is exactly the samples the encoder was given. A Vorbis encoder ends a stream on a whole block, so its last packet decodes up to a few hundred samples past the source. Flint decodes gaplessly (#632): it reads the stream's last granule position and drops that excess, as ffmpeg does, so an OGG loop is as long as the WAV it was encoded from. Before #632 that padding played (64 to 832 samples, up to 19 ms, on plain `ffmpeg -c:a libvorbis` encodes), and since ffmpeg's own decode trims it, a check made with ffmpeg didn't show the gap. WAV and FLAC have no padding. MP3 encoders pad both ends, and how much of that can be trimmed depends on the file's headers; prefer OGG or WAV for loops.
+
 ## Preloading
 
-At scene load the player loads every file named by an `audio_source` component, then preloads every audio file it finds under `audio/` (searching the scene directory, then its parent, the game root) so that `play_sound("name")` from a script never stalls on decode. A scene with a large stem library pays for that in load time. Opt out per scene:
+At scene load the player loads every file named by an `audio_source` component, then preloads every audio file it finds under `audio/` (searching the scene directory, then its parent, the game root) so that `play_sound("audio/name.ogg")` from a script never stalls on decode. Each file is cached under its path from there, extension included (`audio/whoosh.ogg`); subfolders of `audio/` are not searched. See [Sound names](#sound-names). A scene with a large stem library pays for that in load time. Opt out per scene:
 
 ```toml
 [scene]
@@ -171,7 +177,7 @@ loop = true
 spatial = false
 ```
 
-Supported audio formats: OGG, WAV, MP3, FLAC (via Kira's symphonia backend).
+Supported audio formats: OGG, WAV, MP3, FLAC (decoded with symphonia, gapless; see [What a loop loops over](#what-a-loop-loops-over)).
 
 ## Scripting Integration
 
@@ -190,12 +196,24 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 ```rust
 // In a Rhai script:
 fn on_interact() {
-    play_sound("door_open");                          // Non-spatial
-    play_sound_at("glass_clink", 5.0, 1.0, 3.0, 0.8); // Spatial at position
+    play_sound("audio/door_open.ogg");                // Non-spatial
+    play_sound_at("glass_clink", 5.0, 1.0, 3.0, 0.8); // Spatial; the bare stem finds audio/glass_clink.ogg
     play_sound_at("bell", 0.0, 30.0, 0.0,             // Heard across town
         #{ volume: 0.6, min_distance: 20.0, max_distance: 600.0, rolloff: 0.7 });
 }
 ```
+
+### Sound names
+
+A sound is cached under its file's path from the game root, extension included: `audio/door_open.ogg`. That full name always works. A name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, in that order, so `"door_open"`, `"door_open.ogg"` and `"audio/door_open.ogg"` all play the same file. A sound cached under exactly the name given wins over the search (one an extension loaded as `"blip"` is `"blip"`), and two files that share a stem want the full path, since the search takes the first extension it finds.
+
+A name that finds nothing plays nothing. The warning names the nearest cached sound, by file stem first:
+
+```text
+WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
+```
+
+Extensions' `ctx.audio.play` resolves names the same way.
 
 A placed sound is at full volume within `min_distance` and silent past `max_distance`. Between them it is `-60·r^rolloff` dB, where `r` is how far the listener is along the way from one to the other. The default `rolloff` of 2 holds a sound up most of the way and drops it near `max_distance`, which suits a small room. A sound heard across open ground wants a rolloff below 1: it falls away soon after `min_distance` and then tails off slowly, close to a real sound's inverse-distance fade. For example, `rolloff: 0.6` between 32 m and 1250 m stays within 1.5 dB of `(32/d)^1.2` out to 300 m.
 

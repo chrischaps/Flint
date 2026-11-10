@@ -1067,6 +1067,9 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
     if let Some(env) = &scene_file.environment {
+        // No shadows, no built-in lights (#627)
+        renderer.set_scene_shadows(env.casts_shadows());
+        renderer.set_default_lights(env.uses_default_lights());
         if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
             renderer.set_ambient(
                 env.ambient_sky
@@ -2881,6 +2884,9 @@ impl Stage {
 
         // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
         if let Some(env) = &scene_file.environment {
+            // No shadows, no built-in lights (#627)
+            renderer.set_scene_shadows(env.casts_shadows());
+            renderer.set_default_lights(env.uses_default_lights());
             if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
                 renderer.set_ambient(
                     env.ambient_sky
