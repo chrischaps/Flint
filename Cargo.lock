@@ -1851,7 +1851,6 @@ dependencies = [
  "flint-script",
  "flint-terrain",
  "getrandom 0.3.4",
- "gilrs",
  "image",
  "js-sys",
  "kira",

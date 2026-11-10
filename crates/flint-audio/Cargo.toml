@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "Spatial audio system for Flint engine (Kira backend)"
 
+[features]
+default = ["device"]
+# The sound card: kira's cpal backend, which links ALSA on Linux. Off, the
+# engine runs silent, as it does on a machine with no device (#221).
+device = ["kira/cpal"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }

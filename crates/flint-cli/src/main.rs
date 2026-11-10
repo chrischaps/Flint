@@ -1,6 +1,7 @@
 //! Flint CLI - Command-line interface for the Flint engine
 
 mod commands;
+mod file_dialog;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

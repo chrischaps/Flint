@@ -37,7 +37,7 @@ use crate::tempo::ms_to_samples;
 use crate::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
 use flint_core::{vfs, FlintError, Result};
 use kira::backend::Backend;
-use kira::{AudioManager, AudioManagerSettings, DefaultBackend};
+use kira::{AudioManager, DefaultBackend};
 use std::path::{Path, PathBuf};
 use web_time::Instant;
 
@@ -1185,8 +1185,7 @@ impl ChartSession {
     /// via [`ChartSession::set_input`].
     pub fn open(cfg: &ChartSessionConfig) -> Result<(Self, Vec<String>)> {
         let (manifest, chart) = Self::validate(cfg)?;
-        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
-            .map_err(|e| FlintError::AudioError(format!("no audio device: {e}")))?;
+        let mut manager = crate::session::open_device()?;
         let session = SuiteSession::start(
             &manifest,
             &mut manager,

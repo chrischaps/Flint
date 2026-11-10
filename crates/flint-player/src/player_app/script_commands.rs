@@ -16,7 +16,7 @@ use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_runtime::GameEvent;
 use flint_script::context::{LogLevel, ScriptCommand};
-use gilrs::Gilrs;
+use flint_input_capture::pad::Gilrs;
 use std::path::Path;
 
 impl PlayerApp {

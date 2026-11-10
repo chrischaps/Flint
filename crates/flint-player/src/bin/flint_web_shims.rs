@@ -49,7 +49,7 @@ mod web {
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
     };
-    use gilrs::{Axis, EventType, Gilrs};
+    use flint_input_capture::pad::{Axis, EventType, Gilrs};
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;

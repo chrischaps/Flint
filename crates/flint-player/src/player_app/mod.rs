@@ -71,7 +71,7 @@ use flint_runtime::{
 };
 use flint_script::context::DrawItem;
 use flint_script::ScriptSystem;
-use gilrs::Gilrs;
+use flint_input_capture::pad::Gilrs;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use transition::TransitionPhase;

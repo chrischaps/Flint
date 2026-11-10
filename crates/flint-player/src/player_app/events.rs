@@ -16,8 +16,8 @@ use super::input_config::{
     write_user_override_file, PendingRebind,
 };
 use anyhow::Result;
+use flint_input_capture::pad::{Axis, EventType};
 use flint_runtime::{Binding, RebindMode};
-use gilrs::EventType;
 use std::path::Path;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -404,15 +404,15 @@ impl PlayerApp {
 }
 
 /// The axes read again when the window regains focus.
-const STICKS: [gilrs::Axis; 8] = [
-    gilrs::Axis::LeftStickX,
-    gilrs::Axis::LeftStickY,
-    gilrs::Axis::LeftZ,
-    gilrs::Axis::RightStickX,
-    gilrs::Axis::RightStickY,
-    gilrs::Axis::RightZ,
-    gilrs::Axis::DPadX,
-    gilrs::Axis::DPadY,
+const STICKS: [Axis; 8] = [
+    Axis::LeftStickX,
+    Axis::LeftStickY,
+    Axis::LeftZ,
+    Axis::RightStickX,
+    Axis::RightStickY,
+    Axis::RightZ,
+    Axis::DPadX,
+    Axis::DPadY,
 ];
 
 impl ApplicationHandler for PlayerApp {

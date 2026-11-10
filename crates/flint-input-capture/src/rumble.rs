@@ -317,7 +317,7 @@ pub fn haptic_sink(
 /// Acquire an ff device for the capture loop: first connected ff-capable
 /// pad, or a loud warning and `None` (commands become no-ops — rumble must
 /// never take the input path down with it).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 pub(crate) fn ff_device_or_warn() -> Option<gilrs_core::FfDevice> {
     match open_ff_device() {
         Ok((pad, dev)) => {
@@ -431,7 +431,7 @@ fn fmt(v: f64) -> String {
 }
 
 /// Acquire the first connected ff-capable pad's device via gilrs-core.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 fn open_ff_device() -> flint_core::Result<(String, gilrs_core::FfDevice)> {
     let gilrs = gilrs_core::Gilrs::new().map_err(|e| {
         flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
@@ -460,19 +460,27 @@ fn open_ff_device() -> flint_core::Result<(String, gilrs_core::FfDevice)> {
 }
 
 /// Motor magnitudes for the three weight-axis prototypes (u16 full scale).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 const TICK_WEAK: u16 = 22_000;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 const THUMP_STRONG: u16 = 45_000;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 const THUMP_WEAK: u16 = 25_000;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 const GRIND_STRONG: u16 = 14_000;
+
+/// Without the `gamepad` feature there are no motors to reach (#221).
+#[cfg(all(not(feature = "gamepad"), not(target_arch = "wasm32")))]
+pub fn spike_rumble(_feel: bool) -> flint_core::Result<RumbleSpikeReport> {
+    Err(flint_core::FlintError::InputError(
+        "gamepad backend unavailable: built without the `gamepad` feature".into(),
+    ))
+}
 
 /// Run the H1 spike: prove ff fires, let the operator feel the three
 /// weight-axis prototypes, and time both command paths. Blocking; prints
 /// progress. `feel = false` skips the operator-felt patterns (timing only).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     let (pad, mut dev) = open_ff_device()?;
     println!("rumble spike on: {pad}");
@@ -536,7 +544,7 @@ pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 fn time_effect_play() -> flint_core::Result<CallStats> {
     use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
     let mut gilrs = gilrs::Gilrs::new().map_err(|e| {

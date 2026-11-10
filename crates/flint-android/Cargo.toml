@@ -9,7 +9,7 @@ description = "Android entry point for Flint engine"
 crate-type = ["cdylib"]
 
 [dependencies]
-flint-player = { workspace = true }
+flint-player = { workspace = true, features = ["default"] }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }

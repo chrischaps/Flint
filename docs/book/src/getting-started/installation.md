@@ -40,7 +40,27 @@ sudo apt-get install build-essential pkg-config libasound2-dev libudev-dev
 
 With those four, `cargo build -p flint-cli` finishes. A prebuilt `flint` on another machine needs only the runtime halves: `libasound2t64` (`libasound2` before Ubuntu 24.04) and `libudev1`, which base images already have. Without the ALSA library the binary doesn't start: `error while loading shared libraries: libasound.so.2`.
 
+The editors' file dialogs go through the XDG desktop portal over D-Bus, which needs no headers to build, only a portal service at run time.
+
 Other distributions need the same things under their own names (a C toolchain, pkg-config, the ALSA and libudev development files, Mesa's Vulkan drivers). Only the Ubuntu list above has been tested.
+
+### To build without the devices
+
+A machine that only renders, generates or packs (a CI runner, a cloud agent, a build server) can leave the devices out:
+
+```bash
+cargo build -p flint-cli --no-default-features
+```
+
+Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `render-suite`, `query` and the rest work exactly as in the full build, and their output is byte for byte the same, but nothing links ALSA or libudev, so a Linux box needs only `build-essential` and `pkg-config` from the list above, and about sixty crates (the audio and gamepad backends and the dialogs' async D-Bus stack) aren't built at all. What leaves is each device:
+
+| Feature | Off means |
+|---------|-----------|
+| `audio` | `flint play` runs silent, as on a machine with no sound card (sounds still load, scripts still play them). `calibrate` and `play-chart` won't start. `render-suite` renders offline either way. |
+| `gamepad` | No pads are seen; `spike-rumble` says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
+| `dialogs` | The editors' Save As, Export and Browse buttons open no dialog and say why on stderr. |
+
+Put back any one of them with `--features`, for example `--no-default-features --features audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and CI builds it on a Linux runner with the ALSA and libudev headers removed.
 
 ### To render without a GPU
 

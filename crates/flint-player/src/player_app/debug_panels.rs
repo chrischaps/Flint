@@ -104,6 +104,7 @@ impl PlayerApp {
     /// After a look changes (#356): F4 shows it as the one in use, and the
     /// style editors' Authored button and markers follow the scene's keys
     /// under it, which is what the scene draws with now.
+    #[cfg(feature = "debug-hud")]
     pub(super) fn refresh_style_panels_after_look(&mut self) {
         let authored = self.authored_styles();
         let current = self.current_look().map(str::to_string);

@@ -11,6 +11,9 @@ Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The pri
 ```bash
 cargo build                    # Debug build
 cargo build --release          # Release build
+cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, gamepads or file dialogs,
+                               #   so no ALSA/libudev headers on Linux (#221; features audio/gamepad/dialogs;
+                               #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
 cargo run --bin flint -- <cmd> # Run CLI
 cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
@@ -317,6 +320,7 @@ folder at load; every option is closed, so #318 warns); options are `u32` indice
 - Rapier v0.22: character controller types in `rapier3d::control`, NOT `rapier3d::prelude`
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
+- Device crates are features (#221): kira's `cpal` is flint-audio/flint-music `device`, gilrs is flint-input-capture `gamepad`, rfd is flint-cli `dialogs`; the workspace declares flint-audio/music/input-capture/player with `default-features = false`, so a dependent names what it wants. Read pads through `flint_input_capture::pad` (gilrs, or an uninhabited stand-in), never `gilrs` directly, and file dialogs through flint-cli's `file_dialog::FileDialog`
 - Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`; no implicit numeric coercion (`0.0` is NOT `0`); draw `_ex` functions take `layer` as int (`0`), not float (`0.0`)
 - `ScriptCallContext` uses raw `*mut FlintWorld` -- only valid during `call_update()`/`process_events()` scope
 - `on_update()` is parameterless -- use `delta_time()` API; `on_interact` checks `interactable.range` + `.enabled`

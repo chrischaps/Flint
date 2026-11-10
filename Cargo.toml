@@ -110,7 +110,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 rapier3d = { version = "0.22", features = ["default"] }
 
 # Audio
-kira = { version = "0.11", features = ["cpal", "ogg", "flac"] }
+# No `cpal` here: the audio device (ALSA on Linux) is flint-audio's and
+# flint-music's `device` feature, on by default, off in a headless CLI (#221).
+# Without it kira's DefaultBackend is its MockBackend, which they never open.
+kira = { version = "0.11", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
 hound = "3.5"
 glam = { version = "0.30", features = ["mint"] }
 
@@ -183,10 +186,14 @@ flint-import = { path = "crates/flint-import" }
 flint-viewer = { path = "crates/flint-viewer" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
-flint-audio = { path = "crates/flint-audio" }
+# The crates that open devices take default-features = false here, so a
+# dependent says which devices it wants (#221): `device` (sound) on
+# flint-audio and flint-music, `gamepad` on flint-input-capture, and
+# `audio` / `gamepad` / `debug-hud` on flint-player.
+flint-audio = { path = "crates/flint-audio", default-features = false }
 flint-audio-worklet = { path = "crates/flint-audio-worklet" }
-flint-music = { path = "crates/flint-music" }
-flint-input-capture = { path = "crates/flint-input-capture" }
+flint-music = { path = "crates/flint-music", default-features = false }
+flint-input-capture = { path = "crates/flint-input-capture", default-features = false }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
@@ -195,7 +202,7 @@ flint-terrain = { path = "crates/flint-terrain" }
 flint-procgen = { path = "crates/flint-procgen" }
 flint-procgen-ai = { path = "crates/flint-procgen-ai" }
 flint-debug-ui = { path = "crates/flint-debug-ui" }
-flint-player = { path = "crates/flint-player" }
+flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }
 
 # The web player's build (#123): `trunk build --release --cargo-profile

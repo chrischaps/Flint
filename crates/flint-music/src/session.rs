@@ -17,7 +17,7 @@ use flint_core::{vfs, FlintError, Result};
 use kira::backend::Backend;
 use kira::clock::{ClockHandle, ClockSpeed, ClockTime};
 use kira::sound::static_sound::StaticSoundData;
-use kira::{AudioManager, AudioManagerSettings, DefaultBackend, StartTime};
+use kira::{AudioManager, DefaultBackend, StartTime};
 use std::path::{Path, PathBuf};
 
 /// `StaticSoundData::from_file`, read through the vfs: the bytes come from
@@ -300,14 +300,29 @@ pub struct RealtimePlayer {
     _manager: AudioManager<DefaultBackend>,
 }
 
+/// A kira manager on the sound card, for a realtime session. Without the
+/// `device` feature (#221) kira's DefaultBackend is its MockBackend, which
+/// would never advance a session's clock, so this fails as no device does.
+#[cfg(any(feature = "device", target_arch = "wasm32"))]
+pub(crate) fn open_device() -> Result<AudioManager<DefaultBackend>> {
+    AudioManager::<DefaultBackend>::new(kira::AudioManagerSettings::default())
+        .map_err(|e| FlintError::AudioError(format!("no audio device: {e}")))
+}
+
+#[cfg(not(any(feature = "device", target_arch = "wasm32")))]
+pub(crate) fn open_device() -> Result<AudioManager<DefaultBackend>> {
+    Err(FlintError::AudioError(
+        "no audio device: built without the `device` feature".into(),
+    ))
+}
+
 impl RealtimePlayer {
     pub fn start(
         manifest: &SuiteManifest,
         base_dir: &Path,
         latency_ms: Option<f64>,
     ) -> Result<Self> {
-        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
-            .map_err(|e| FlintError::AudioError(format!("no audio device: {e}")))?;
+        let mut manager = open_device()?;
         let session = SuiteSession::start(
             manifest,
             &mut manager,
