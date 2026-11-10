@@ -41,6 +41,17 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 impl PlayerApp {
+    /// Why the run failed, once `run_app` has returned: the player didn't
+    /// start, or a run that asked for a screenshot doesn't have it (#639).
+    /// A binary exits non-zero on `Some`, so a capture that left no file
+    /// can't pass for one that did.
+    pub fn run_failure(&self) -> Option<String> {
+        if let Some(e) = &self.init_error {
+            return Some(format!("the player failed to start: {e}"));
+        }
+        self.capture.missing()
+    }
+
     pub fn new(
         world: FlintWorld,
         scene_path: String,
@@ -153,6 +164,7 @@ impl PlayerApp {
             capture: CaptureConfig::default(),
             expression_feed: None,
             exit_requested: false,
+            init_error: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,

@@ -56,7 +56,7 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | F11 | Toggle fullscreen |
 
 The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
-| Escape | Release cursor / Exit |
+| Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](concepts/physics-and-runtime.md#escape)) |
 
 ### Scene Viewer (`flint edit <scene.toml>`)
 

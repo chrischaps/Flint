@@ -273,7 +273,7 @@ fn main() -> Result<()> {
     println!("  Mouse    - Look");
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
-    println!("  Escape   - Release cursor / Exit");
+    println!("  Escape   - Release cursor / Exit (the game's, if it binds Escape)");
     println!("  F2       - Rendering stats overlay");
     println!("  F3       - Scene debug panels");
     println!("  F4       - Rendering & Effects menu");
@@ -374,6 +374,11 @@ fn main() -> Result<()> {
     app.set_schema_paths(all_schemas);
 
     event_loop.run_app(&mut app)?;
+    // A failed start or a screenshot that never reached the disk exits
+    // non-zero, never as a clean run (#639).
+    if let Some(failure) = app.run_failure() {
+        anyhow::bail!(failure);
+    }
 
     Ok(())
 }

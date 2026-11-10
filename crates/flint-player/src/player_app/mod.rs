@@ -135,6 +135,15 @@ pub struct CaptureConfig {
     pub(crate) taken: bool,
     /// Internal: number of numbered frames written so far.
     pub(crate) sequence: u32,
+    /// Internal: files actually on disk, and attempts that failed, with the
+    /// last failure's reason (#639: a run that asks for a shot writes it or
+    /// says why it didn't).
+    pub(crate) written: u32,
+    pub(crate) failed: u32,
+    pub(crate) last_failure: Option<String>,
+    /// Internal: the last game time a frame reached the capture point,
+    /// so a missing shot can say how far the run got.
+    pub(crate) last_frame_time: Option<f64>,
     /// Internal: game time of the next scheduled interval capture.
     pub(crate) next_due: f64,
     /// Internal: frames presented and game time accumulated after the first
@@ -158,6 +167,10 @@ pub struct CaptureConfig {
     pub(crate) perf_pacing: pacing::Pacing,
 }
 
+/// Frames a single screenshot is retried on after a failed read-back or
+/// save before the run gives up on it (#639).
+pub(crate) const CAPTURE_RETRIES: u32 = 30;
+
 /// Game seconds ignored by the `--exit-after` frame-time report (loading,
 /// shader warm-up, first-frame texture uploads).
 pub(crate) const PERF_SKIP_SECS: f64 = 2.0;
@@ -170,6 +183,58 @@ impl CaptureConfig {
     /// (ADR 0110's amendment).
     pub fn is_capture(&self) -> bool {
         self.path.is_some() || self.exit_after.is_some() || self.input_script.is_some()
+    }
+
+    /// A single shot is due (its time reached) but not yet on disk, and
+    /// still has retries left: `--exit-after` waits for it (#639).
+    pub(crate) fn shot_pending(&self, now: f64) -> bool {
+        self.path.is_some()
+            && self.every.is_none()
+            && self.written == 0
+            && self.failed <= CAPTURE_RETRIES
+            && now + 1e-6 >= self.at
+    }
+
+    /// Record a capture that didn't reach the disk. A single shot is tried
+    /// again on the next frame until `CAPTURE_RETRIES` run out; a sequence's
+    /// frame is lost, and the run will fail for it.
+    pub(crate) fn note_failure(&mut self, reason: String) {
+        self.failed += 1;
+        self.last_failure = Some(reason);
+        if self.every.is_none() && self.failed <= CAPTURE_RETRIES {
+            self.taken = false;
+        }
+    }
+
+    /// Why a run that asked for screenshots didn't get them all, if it
+    /// didn't: none written, or (in a sequence) any frame lost.
+    pub fn missing(&self) -> Option<String> {
+        let path = self.path.as_ref()?;
+        let why = || match (&self.last_failure, self.last_frame_time) {
+            (Some(reason), _) => reason.clone(),
+            (None, None) => "no frame was drawn".to_string(),
+            (None, Some(t)) => format!(
+                "the run ended at t={t:.3}s, before --screenshot-at {:.3}",
+                self.at
+            ),
+        };
+        if self.written == 0 {
+            return Some(format!(
+                "--screenshot {} was never written: {}",
+                path.display(),
+                why()
+            ));
+        }
+        if self.every.is_some() && self.failed > 0 {
+            return Some(format!(
+                "--screenshot-every lost {} of {} frames of {}: {}",
+                self.failed,
+                self.failed + self.written,
+                path.display(),
+                why()
+            ));
+        }
+        None
     }
 
     /// Build a capture schedule. `every <= 0` means single-shot.
@@ -426,6 +491,8 @@ pub struct PlayerApp {
     pub expression_feed: Option<expression_feed::ExpressionFeed>,
     /// Set once `--exit-after` elapses; the redraw handler exits the loop.
     exit_requested: bool,
+    /// Why `initialize` failed, kept so the binary can exit non-zero (#639).
+    init_error: Option<String>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,

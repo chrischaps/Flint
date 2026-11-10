@@ -281,6 +281,20 @@ When no config files are present, the built-in defaults provide:
 
 Games can define any number of custom actions in their config files. Scripts access them with `is_action_pressed("custom_action")`.
 
+### Escape
+
+With nothing bound to it, Escape is the player's: it releases a captured cursor, and otherwise closes the window. Bind it to any action and it becomes the game's (#639). The press reaches the game like any other key, so `back` in a menu or `pause` can be Escape, and the window stays open. A captured cursor is still let go, so the menu Escape opens can be clicked. Alt+F4 and the window's close button still quit.
+
+```toml
+[actions.pause]
+kind = "button"
+[[actions.pause.bindings]]
+type = "key"
+code = "Escape"
+```
+
+`demo/showcase_crucible.scene.toml` binds it this way through `demo/input_showcase.toml`, and Escape opens its pause screen. An Escape from `--input-script` never quits the player, bound or not.
+
 ### Gamepad Support
 
 Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs) crate. The player polls gamepad events each frame and routes them through the same binding system as keyboard/mouse:
