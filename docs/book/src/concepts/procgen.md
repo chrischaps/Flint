@@ -378,6 +378,15 @@ They draw after everything opaque, tree by tree from the back, with each tree's 
 
 **`echo_blend`**, beside `echoes` in a spec's `[living]` (not a scene's, and not live), is how the copies meet what's behind them. `"over"`, the default, draws each over it at its opacity, so a copy in shadow darkens a lit prop behind it. `"lighten"` keeps the brighter of the two, channel by channel, with the copy's colour taken at its opacity: a copy only ever adds light, it can never darken the prop it's behind, and copies laid over each other don't add up. It's for a form drawn light on a dark ground, like Embodiment's page, whose echoes made a dark crescent over its upper edge (chrischaps/Embodiment#40). Over a bright sky a lightened copy that's darker than the sky doesn't show at all.
 
+**`echo_places`**, also the spec's alone, gives the wide end of a spread a few set copies you can count, where a continuous spread blurs one copy into the next (chrischaps/Flint#610, for chrischaps/Embodiment#68):
+
+```toml
+[living]
+echo_places = { at = [[-0.25, 0.045, -0.6], [0.25, -0.045, 0.6]], from = 1.3, whole = 1.8 }
+```
+
+Each place is `[along, up, steps]`: metres along the prop's place axes, and where on the clock a copy there stands, in steps from now (not 0). `form_v1`'s axes are along its lines of writing and up the form, segment by segment, so an offset never lifts a mark off the page; a tree's are the prop's X and Y. Up to a spread of `from` the copies are exactly the continuous spread's. From there to `whole` copy `i` moves toward place `i % n`, eased: its clock toward the place's steps and itself toward the place's offset. From `whole` on, the copies at a place share one offset and one pose, so they're one copy, and under `"lighten"` they draw as one. A copy's opacity is its distance from now's, as ever, and its share of `echo_slide`'s slide fades as it reaches its place, so a placed copy holds still instead of smearing along its lines. An offset rides on the segment's slide, which doesn't carry to its children. On Embodiment's page an offset of 1.5 lines up or down puts a copy's writing between the page's rows, and 25 cm along the lines stands it clear enough to count.
+
 `count = 0` costs nothing and draws nothing. Against the build before echoes existed, the bench is pixel for pixel the same, and a strip is byte for byte the same.
 
 Each echo is another palette and a draw per part, so what count does is worth knowing. 40 oaks, uncapped at 1600 x 900 on an RTX 5070 laptop, two alternating runs of each:

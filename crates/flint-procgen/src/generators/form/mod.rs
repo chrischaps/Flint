@@ -430,12 +430,27 @@ impl FormGenerator {
             &mut SeededRng::new(lineage_seed).fork("cards"),
         );
         let leaf_bindings = bind_cards(&leaf_mesh, &built.segments);
+        // An echo's place (`[living] echo_places`) is measured along the
+        // lines of writing, the section's broad axis, and up the form, each
+        // segment's own way: the same frame the pose's slide moves along.
+        let n = built.segments.len();
+        let place_axes = built
+            .segments
+            .iter()
+            .enumerate()
+            .map(|(i, segment)| {
+                let u = (i as f32 + 0.5) / n as f32;
+                let along = body::broad_axis(&built.p, &built.spine, u);
+                [along.to_array(), segment.direction().to_array()]
+            })
+            .collect();
         LivingSkeleton {
             lineage_seed,
             segments: built.segments.clone(),
             leaf_mesh,
             card_index_count: CARD_INDICES,
             leaf_bindings,
+            place_axes,
         }
     }
 }
