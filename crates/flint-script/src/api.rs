@@ -1654,6 +1654,39 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // is_touch_device() -> bool
+    // True on a touch-first device (a web page whose main pointer is a
+    // finger, `pointer: coarse`, or Android) from the first frame, before
+    // any finger has landed (#660). A title screen can show touch hints and
+    // size its rows for a thumb up front; last_input_device() still says
+    // what was used last.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_touch_device", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touch_device
+        });
+    }
+
+    // safe_area() -> #{ left, top, right, bottom }
+    // The page's safe-area insets in points, the space of screen_width()
+    // and draw_*: what a notch, a rounded corner or a home bar covers
+    // (#660). Zeros where there are none (every desktop). The engine's own
+    // touch controls keep inside the same insets.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("safe_area", move || -> rhai::Map {
+            let c = crate::lock_or_recover(&ctx);
+            let [left, top, right, bottom] = c.input.safe_area;
+            let mut map = rhai::Map::new();
+            map.insert("left".into(), left.into());
+            map.insert("top".into(), top.into());
+            map.insert("right".into(), right.into());
+            map.insert("bottom".into(), bottom.into());
+            map
+        });
+    }
+
     // set_lod_scale(scale) / set_draw_distance_scale(scale) (#56)
     // The renderer's distance levers, for quality settings: the LOD scale
     // multiplies every level-of-detail switch distance (0.5 drops models to

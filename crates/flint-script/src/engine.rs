@@ -1343,6 +1343,53 @@ mod tests {
     }
 
     #[test]
+    fn safe_area_and_touch_device_reach_scripts() {
+        // #660: a HUD keeps out of the notch, and knows a phone before the
+        // first finger lands.
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("safe").unwrap();
+        probe_component(&mut world, id);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                let s = safe_area();
+                set_field(me, "probe", "l", s.left);
+                set_field(me, "probe", "t", s.top);
+                set_field(me, "probe", "r", s.right);
+                set_field(me, "probe", "b", s.bottom);
+                set_field(me, "probe", "touch", if is_touch_device() { 1.0 } else { 0.0 });
+                set_field(me, "probe", "last", if last_input_device() == "touch" { 1.0 } else { 0.0 });
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "safe.rhai".into());
+
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        engine.call_updates(&mut world);
+        for k in ["l", "t", "r", "b", "touch"] {
+            assert_eq!(probe_float(&world, id, k), 0.0, "{k} on a desktop");
+        }
+
+        let input = InputSnapshot {
+            touch_device: true,
+            safe_area: [47.0, 0.0, 47.0, 21.0],
+            ..Default::default()
+        };
+        engine.provide_context(input, 0.016, 0.016);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, id, "l"), 47.0);
+        assert_eq!(probe_float(&world, id, "t"), 0.0);
+        assert_eq!(probe_float(&world, id, "r"), 47.0);
+        assert_eq!(probe_float(&world, id, "b"), 21.0);
+        assert_eq!(probe_float(&world, id, "touch"), 1.0);
+        assert_eq!(probe_float(&world, id, "last"), 0.0, "nothing touched yet");
+    }
+
+    #[test]
     fn test_conducted_neutral_defaults() {
         // Never call set_conducted: getters must read as a clean, settled
         // world so bindings never branch on session existence.

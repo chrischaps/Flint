@@ -170,9 +170,13 @@
 
       /* The perf readout (?perf=1, #120): the player fills it twice a
          second. It sits over the gate so it reads from the first frame,
-         and Copy takes the whole of it as one line for an issue. */
+         and Copy takes the whole of it as one line for an issue. It lies
+         over the canvas's top right, where a game puts its menu button, so
+         only Copy takes a pointer: every other touch and click goes through
+         to the game (#660). */
       #perf {
-        position: fixed; z-index: 5;
+        position: fixed; z-index: 5; pointer-events: none;
+        display: flex; flex-direction: column; align-items: flex-start;
         top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
         max-width: calc(100vw - 24px); box-sizing: border-box;
         padding: 10px 12px; border-radius: 8px;
@@ -183,13 +187,15 @@
         font-variant-numeric: tabular-nums;
       }
       #perf[hidden] { display: none; }
-      /* On a phone the whole readout would cover Begin: smaller, shorter,
-         and scrolled with a finger. */
+      /* On a phone the whole readout would cover Begin: smaller and
+         shorter. What doesn't fit is cut, not scrolled (a scroller would
+         take the game's touches); Copy, always shown, still takes all of it. */
       @media (max-width: 600px), (max-height: 500px) {
-        #perf { font-size: 9px; max-height: 36dvh; overflow: auto; touch-action: pan-y; }
+        #perf { font-size: 9px; max-height: 36dvh; }
       }
-      #perf pre { margin: 0; font: inherit; white-space: pre; overflow-x: auto; }
+      #perf pre { margin: 0; font: inherit; white-space: pre; overflow: hidden; min-height: 0; max-width: 100%; }
       #perf button {
+        pointer-events: auto; flex: none;
         margin-top: 8px; padding: 5px 12px; border: 0; border-radius: 999px; cursor: pointer;
         font: 500 10px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.18em;
         text-transform: uppercase; color: #0d1229; background: rgba(255, 250, 242, 0.88);

@@ -90,6 +90,17 @@ struct Args {
     #[arg(long, value_name = "auto|always|never", default_value = "auto")]
     touch_controls: String,
 
+    /// Stand-in safe-area insets in points, `left,top,right,bottom` (#660):
+    /// what a notch or home bar would cover, for trying a HUD that reads
+    /// `safe_area()` on a desktop. The touch controls keep inside them too
+    #[arg(long, value_name = "L,T,R,B")]
+    safe_area: Option<String>,
+
+    /// Report a touch-first device to scripts (`is_touch_device()`, #660),
+    /// as a phone's page or Android does from the first frame
+    #[arg(long)]
+    touch_device: bool,
+
     /// Turn on a registered style over the scene's post-processing, as
     /// `flint render --style` does (#328): `name[:key=value,...]`, e.g.
     /// `ascii`, `ascii:cell=12,ramp=blocks`, `pencil:spacing=5`,
@@ -327,6 +338,21 @@ fn main() -> Result<()> {
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
     app.input.touch_controls_mut().set_mode(touch_mode);
+    if let Some(spec) = &args.safe_area {
+        let sides: Vec<f32> = spec
+            .split(',')
+            .map(|v| v.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| anyhow::anyhow!("--safe-area: four numbers, left,top,right,bottom"))?;
+        let [l, t, r, b] = sides[..] else {
+            anyhow::bail!("--safe-area: four numbers, left,top,right,bottom");
+        };
+        if sides.iter().any(|v| !v.is_finite() || *v < 0.0) {
+            anyhow::bail!("--safe-area: insets are points, 0 or more");
+        }
+        app.safe_area = Some([l, t, r, b]);
+    }
+    app.touch_device = args.touch_device;
     app.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may

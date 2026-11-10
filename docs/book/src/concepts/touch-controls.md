@@ -127,6 +127,8 @@ The controls are drawn on their own Foreground egui layer, over the script UI an
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `touch_controls_visible()` | `bool` | Whether the controls are on screen now |
+| `is_touch_device()` | `bool` | Whether the device is touch-first (a web page whose main pointer is a finger, `pointer: coarse`, or Android), from the first frame, before any finger has landed. A title screen can show tap hints and size rows for a thumb up front |
+| `safe_area()` | `Map` | `#{ left, top, right, bottom }`: the safe-area insets in points (the space of `screen_width()` and `draw_*`), the same ones the controls keep inside. Zeros where there are none, as on every desktop |
 | `set_touch_controls(enabled)` | | `false` puts the controls away, `true` brings them back. While away they hold no fingers and every touch reaches the game, so a menu's rows can be tapped where a floating stick would take them. Applied after the frame's scripts; it lasts across scene changes, like `set_cursor_captured` |
 
 Flint Kart's menu scene calls `set_touch_controls(false)` on entering, and its race HUD brings them out while racing and puts them away under the pause and finish menus:
