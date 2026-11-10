@@ -268,6 +268,11 @@ impl DecodeQueue {
         self.queue.iter().any(|q| q.name == name)
     }
 
+    /// Every queued sound's name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.queue.iter().map(|q| q.name.as_str())
+    }
+
     /// The encoded size of a queued sound.
     pub fn size_of(&self, name: &str) -> Option<usize> {
         self.queue.iter().find(|q| q.name == name).map(|q| q.size)

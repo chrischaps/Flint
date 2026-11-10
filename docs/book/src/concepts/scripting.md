@@ -196,7 +196,19 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
 
-Sound names match the audio files loaded from the `audio/` directory (without extension). A one-shot naming a file that is not there fails silently — it logs a warning and plays nothing.
+A sound's name is its file's path from the game root, extension included: the scene preloads `audio/whoosh.ogg` as `"audio/whoosh.ogg"`. The bare stem works too: a name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, so these three play the same file:
+
+```rust
+play_sound("audio/whoosh.ogg", 0.8);
+play_sound("whoosh.ogg", 0.8);
+play_sound("whoosh", 0.8);
+```
+
+A name cached as written always wins, so a sound an extension loaded as `"blip"` stays `"blip"`, and two files that share a stem (`whoosh.ogg`, `whoosh.wav`) want the full path. A one-shot naming a sound that is not there plays nothing and logs a warning that names the nearest cached sound:
+
+```text
+WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
+```
 
 Varying `pitch` slightly per trigger (say 0.9–1.1) is the cheapest way to stop a
 repeated one-shot sounding like a repeated one-shot.
