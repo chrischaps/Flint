@@ -766,7 +766,11 @@ pub fn run(args: RenderArgs) -> Result<()> {
 /// `flint render` on `host`'s GPU (made on first use).
 pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             say!("{a}");
         }
         return Ok(());

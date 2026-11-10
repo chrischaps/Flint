@@ -62,7 +62,7 @@ pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use context::{RenderContext, RenderError};
-pub use gpu_select::{list_adapters, set_gpu_override};
+pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
 pub use ground_fog::GroundFog;
 pub use debug::{DebugMode, DebugState};

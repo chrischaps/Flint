@@ -378,7 +378,7 @@ Why the runtime values are here and not in `flint query`: query reads scene file
 
 ## CI Pipeline Integration
 
-Headless rendering works on machines without a display. Use it in CI to catch visual regressions:
+Headless rendering works on machines without a display. On one without a GPU, it needs a software adapter: lavapipe (`mesa-vulkan-drivers`) on Linux, WARP on Windows. [Linux and Headless Setup](../getting-started/installation.md#linux-and-headless-setup) has the packages. Use it in CI to catch visual regressions:
 
 ```yaml
 # Example GitHub Actions step
