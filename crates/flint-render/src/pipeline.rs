@@ -151,6 +151,11 @@ pub struct MaterialUniforms {
     /// per-vertex light (ADR 0102: the entity's `material.vertex_tint_*`).
     /// White is the mesh as uploaded. Unused without `use_vertex_color`.
     pub vertex_tint: [f32; 4],
+    /// Unlit (#627: the entity's `material.unlit`). `x` is 1 when the
+    /// material skips lighting and draws its base colour (texture and
+    /// vertex colour included) times `y`, its `emissive_scale`, plus its
+    /// emission, straight to the HDR target; 0 is lit. `zw` unused.
+    pub unlit: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -176,6 +181,7 @@ impl MaterialUniforms {
             glow_surface: 0.0,
             double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
@@ -201,6 +207,7 @@ impl MaterialUniforms {
             glow_surface: 0.0,
             double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
@@ -230,6 +237,12 @@ impl MaterialUniforms {
     /// imported material's glTF `doubleSided` (#623).
     pub fn set_double_sided(&mut self, material: &flint_import::ImportedMaterial) {
         self.double_sided = material.double_sided as u32;
+    }
+
+    /// Draw unlit (#627): base colour times `scale` plus emission, no
+    /// lights, ambient or shadows. `scale` below 0 counts as 0.
+    pub fn set_unlit(&mut self, scale: f32) {
+        self.unlit = [1.0, scale.max(0.0), 0.0, 0.0];
     }
 
     /// Multiplies all of the emission, the material's own and per-vertex,

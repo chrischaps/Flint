@@ -1531,6 +1531,216 @@ fn thousands_of_distinct_looks_draw() {
     assert_eq!(stats.entity_draws as usize, LOOKS);
     assert!(gpu.centre_pixel()[1] > 0, "the tiles drew");
 }
+/// A directional light of `intensity`, pointing at `direction`, on the
+/// entity `name` (spawned the first time).
+fn sun(world: &mut FlintWorld, name: &str, intensity: f64, direction: [f64; 3]) {
+    let id = world
+        .get_id(name)
+        .unwrap_or_else(|| world.spawn(name).unwrap());
+    let mut light = toml::Table::new();
+    light.insert("type".into(), "directional".into());
+    light.insert("intensity".into(), intensity.into());
+    light.insert(
+        "direction".into(),
+        toml::Value::Array(direction.iter().map(|&d| d.into()).collect()),
+    );
+    world.set_component(id, "light", light.into()).unwrap();
+}
+
+/// A grey double-sided ground filling the view, rough and vertex-coloured.
+fn grey_ground(gpu: &Gpu, renderer: &mut SceneRenderer, world: &mut FlintWorld) {
+    let (ground, indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
+    let material = ImportedMaterial {
+        roughness: 1.0,
+        ..ImportedMaterial::vertex_colored("ground")
+    };
+    renderer.load_procedural_mesh(&gpu.device, "ground", &ground, &indices, material);
+    spawn(world, "ground", "ground", [0.0; 3]);
+}
+
+/// A sun of intensity 0 (#627) lights nothing the shadow maps could darken:
+/// its pass is skipped with every caster, the stats count 0 shadow
+/// triangles, and the frame is the one shadows off draws. God rays still
+/// read the maps, so a dark sun with a `volumetric_intensity` keeps them.
+#[test]
+fn a_dark_sun_draws_no_shadow_pass() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_shadows(true);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    grey_ground(&gpu, &mut renderer, &mut world);
+
+    sun(&mut world, "sun", 3.0, [0.5, 1.0, 0.0]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(renderer.shadows_drawn());
+    assert!(
+        renderer.collect_stats().shadow_triangles > 0,
+        "a lit sun casts"
+    );
+
+    sun(&mut world, "sun", 0.0, [0.5, 1.0, 0.0]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let dark = gpu.centre_pixel();
+    assert!(!renderer.shadows_drawn(), "a sun of 0 draws no cascades");
+    let stats = renderer.collect_stats();
+    assert_eq!((stats.shadow_triangles, stats.shadow_draw_calls), (0, 0));
+    assert!(renderer.shadows_enabled(), "the setting itself is kept");
+
+    renderer.set_shadows(false);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert_eq!(dark, gpu.centre_pixel(), "the frame shadows off draws");
+    renderer.set_shadows(true);
+
+    let id = world.get_id("sun").unwrap();
+    let mut light = world
+        .get_components(id)
+        .unwrap()
+        .get("light")
+        .unwrap()
+        .clone();
+    light
+        .as_table_mut()
+        .unwrap()
+        .insert("volumetric_intensity".into(), 1.0.into());
+    world.set_component(id, "light", light).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(renderer.shadows_drawn(), "a dark sun with god rays casts");
+}
+
+/// `[environment] shadows = false` (#627) holds the pass off over the
+/// quality setting, which keeps its own value, and `default_lights =
+/// false` lights a scene with no light entities by its ambient alone.
+#[test]
+fn the_scene_says_no_shadows_and_no_default_lights() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_shadows(true);
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    grey_ground(&gpu, &mut renderer, &mut world);
+
+    // No light entities: the built-in key and fill light it, and the key casts
+    gpu.frame(&mut renderer, &world, &camera);
+    let built_in = gpu.centre_pixel();
+    assert!(
+        built_in[0] > 40,
+        "the default lights light it: {built_in:?}"
+    );
+    assert!(renderer.collect_stats().shadow_triangles > 0);
+
+    renderer.set_scene_shadows(false);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(!renderer.shadows_drawn() && renderer.shadows_enabled());
+    assert_eq!(renderer.collect_stats().shadow_triangles, 0);
+
+    // Without them: black under a black ambient, grey under a white one
+    renderer.set_default_lights(false);
+    gpu.frame(&mut renderer, &world, &camera);
+    let [r, g, b, _] = gpu.centre_pixel();
+    assert!(r < 3 && g < 3 && b < 3, "nothing lights it: {r} {g} {b}");
+    renderer.set_ambient([1.0; 3], [1.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let ambient = gpu.centre_pixel();
+    assert!(ambient[0] > 150, "the ambient alone lights it: {ambient:?}");
+
+    renderer.set_scene_shadows(true);
+    renderer.set_default_lights(true);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert_eq!(gpu.centre_pixel(), built_in, "back as it was");
+}
+
+/// `material.unlit` (#627) draws the base colour times `emissive_scale`,
+/// whatever the sun, the ambient and the way it faces, and a parent's
+/// reaches its children.
+#[test]
+fn unlit_draws_its_colour_whatever_the_light() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let (up, indices) = square(20.0, [0.5, 0.25, 0.0, 1.0]);
+    let mut down = up.clone();
+    down.iter_mut().for_each(|v| v.normal = [0.0, -1.0, 0.0]);
+    let material = ImportedMaterial {
+        roughness: 1.0,
+        ..ImportedMaterial::vertex_colored("card")
+    };
+    let group = world.spawn("group").unwrap();
+    spawn(&mut world, "card", "card", [0.0; 3]);
+    world
+        .set_parent(world.get_id("card").unwrap(), group)
+        .unwrap();
+    let set = |world: &mut FlintWorld, name: &str, fields: &[(&str, toml::Value)]| {
+        let id = world.get_id(name).unwrap();
+        let mut table = toml::Table::new();
+        for (k, v) in fields {
+            table.insert((*k).into(), v.clone());
+        }
+        world.set_component(id, "material", table.into()).unwrap();
+    };
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 2);
+    // `albedo`: draw in the albedo debug view, which returns the surface
+    // colour with no light at all, through the same composite
+    let mut shoot = |world: &mut FlintWorld,
+                     vertices: &[Vertex],
+                     ambient: f32,
+                     sun_on: f64,
+                     albedo: bool| {
+        sun(world, "sun", 4.0 * sun_on, [0.0, 1.0, 0.0]);
+        renderer.set_ambient([ambient; 3], [ambient; 3]);
+        renderer.set_debug_mode(if albedo {
+            DebugMode::Unlit
+        } else {
+            DebugMode::Pbr
+        });
+        renderer.load_procedural_mesh(&gpu.device, "card", vertices, &indices, material.clone());
+        gpu.frame(&mut renderer, world, &camera);
+        gpu.centre_pixel()
+    };
+
+    // Lit, the sun and the ambient move it
+    let lit_dark = shoot(&mut world, &up, 0.0, 0.0, false);
+    let lit_bright = shoot(&mut world, &up, 1.0, 1.0, false);
+    assert!(
+        lit_bright[0] > lit_dark[0] + 40,
+        "{lit_dark:?} {lit_bright:?}"
+    );
+
+    // Unlit from the parent: its colour, every time
+    let colour = shoot(&mut world, &up, 0.0, 0.0, true);
+    set(&mut world, "group", &[("unlit", true.into())]);
+    let unlit = shoot(&mut world, &up, 0.0, 0.0, false);
+    assert!(close(unlit, colour), "{unlit:?} vs its colour {colour:?}");
+    for (vertices, ambient, sun_on, what) in [
+        (&up, 1.0, 0.0, "the ambient"),
+        (&up, 0.0, 1.0, "the sun"),
+        (&down, 1.0, 1.0, "facing away"),
+    ] {
+        let seen = shoot(&mut world, vertices, ambient, sun_on, false);
+        assert!(
+            close(unlit, seen),
+            "{what} changed it: {unlit:?} vs {seen:?}"
+        );
+    }
+
+    // Times emissive_scale, and the child's own false wins
+    let (twice, _) = square(20.0, [1.0, 0.5, 0.0, 1.0]);
+    let twice = shoot(&mut world, &twice, 0.0, 0.0, true);
+    set(&mut world, "card", &[("emissive_scale", 2.0.into())]);
+    let doubled = shoot(&mut world, &up, 0.0, 0.0, false);
+    assert!(
+        close(doubled, twice),
+        "{doubled:?} vs twice its colour {twice:?}"
+    );
+    set(&mut world, "card", &[("unlit", false.into())]);
+    let lit = shoot(&mut world, &up, 0.0, 0.0, false);
+    assert!(close(lit_dark, lit), "lit again: {lit:?}");
+}
 
 /// Several entities sharing one skinned GLB all draw it skinned (#624).
 /// The second used to be re-imported and expanded into glTF nodes, which
