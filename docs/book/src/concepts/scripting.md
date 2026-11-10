@@ -916,7 +916,7 @@ Load and manipulate TOML-defined UI documents at runtime:
 | `ui_set_color(element_id, r, g, b, a)` | --- | Set element text/foreground color |
 | `ui_set_bg_color(element_id, r, g, b, a)` | --- | Set element background color |
 | `ui_set_style(element_id, property, value)` | --- | Override a single style property |
-| `ui_set_style_array(id, prop, array)` | --- | Override an array-valued property at runtime: `color`, `bg_color`, `stroke_color`, `padding` (4 numbers) or `shadow` (6 numbers) |
+| `ui_set_style_array(id, prop, array)` | --- | Override an array-valued property at runtime: `color`, `bg_color`, `stroke_color`, `glow_color`, `padding` (4 numbers) or `shadow` (6 numbers) |
 | `ui_reset_style(element_id)` | --- | Remove all style overrides |
 | `ui_set_class(element_id, class_name)` | --- | Change an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if a UI element exists |
@@ -1009,9 +1009,9 @@ Rust hosts can set the same lines on the renderer directly with `SceneRenderer::
 
 `draw_text_opts` at a `world_to_screen` point floats over everything, so a name on a sign shows through the roof in front of it. `draw_world_text(x, y, z, text, size, opts)` writes text in the world instead. Like a world line, it's drawn over the finished image, before the HUD, and hidden wherever the scene's depth is nearer, glyph by glyph: a name half behind a post is half drawn. It doesn't write depth, and fog, bloom and tonemapping don't touch it. It's laid out in the HUD's fonts and colours, so it looks like the same text drawn with `draw_text_opts`.
 
-`opts` takes `draw_text_opts`'s keys: `font`, `color`, `align`, `stroke`, `spacing` and `shadow`. There's no `layer`, and no clip rect. The text is centred on the point unless `align` (`"left"`, `"center"`, `"right"`) or `valign` (`"top"`, `"middle"`, `"bottom"`) say otherwise.
+`opts` takes `draw_text_opts`'s keys: `font`, `color`, `align`, `stroke`, `spacing`, `shadow` and `glow`. There's no `layer`, and no clip rect. The text is centred on the point unless `align` (`"left"`, `"center"`, `"right"`) or `valign` (`"top"`, `"middle"`, `"bottom"`) say otherwise.
 
-Without `facing`, the text is a billboard: it faces the screen at `size` logical points wherever the point is, like a name tag, and takes the point's depth. With `facing: [nx, ny, nz]` it lies in the plane through the point with that normal, as if painted there, and reads from that side. It isn't drawn from behind, so paint a two-sided sign twice, once on each face. `up` (default `[0, 1, 0]`) says which way the letters stand; only its part across the plane counts. On a plane every length is in world units: `size` is the em, and `spacing`, the stroke's width and the shadow's offset are world units too. The letters are rasterised at the size the em spans on screen, in whole pixels from 4 to 128, so they stay sharp as the camera comes close.
+Without `facing`, the text is a billboard: it faces the screen at `size` logical points wherever the point is, like a name tag, and takes the point's depth. With `facing: [nx, ny, nz]` it lies in the plane through the point with that normal, as if painted there, and reads from that side. It isn't drawn from behind, so paint a two-sided sign twice, once on each face. `up` (default `[0, 1, 0]`) says which way the letters stand; only its part across the plane counts. On a plane every length is in world units: `size` is the em, and `spacing`, the stroke's width, the glow's radius and the shadow's offset are world units too. The letters are rasterised at the size the em spans on screen, in whole pixels from 4 to 128, so they stay sharp as the camera comes close.
 
 ```rust
 // A shop's name on both faces of its sign, fitted to a 0.5 m board.
@@ -1062,11 +1062,29 @@ draw_text_opts(40.0, 40.0, "128", 96.0, #{
     stroke: [0.0, 0.0, 0.0, 1.0, 2.0],     // r, g, b, a, width
     spacing: 1.5,                          // extra letter spacing in points
     layer: 6,                              // integer
-    shadow: [3.0, 3.0, 0.0, 0.0, 0.0, 0.7] // dx, dy, r, g, b, a
+    shadow: [3.0, 3.0, 0.0, 0.0, 0.0, 0.7],// dx, dy, r, g, b, a
+    glow: [1.0, 0.6, 0.1, 0.8, 16.0]       // r, g, b, a, radius
 });
 ```
 
-Array entries may mix ints and floats. The shadow is drawn once, offset by `(dx, dy)`, beneath the stroke and the text.
+| Key | Value | Default | What it draws |
+|-----|-------|---------|---------------|
+| `font` | string | default font | A family from `<project>/fonts/` (below) |
+| `color` | `[r, g, b, a]` | white | The text's face |
+| `align` | `"left"` \| `"center"` \| `"right"` (or 0--2) | `"left"` | Which edge of the text `x` names |
+| `stroke` | `[r, g, b, a, width]` | none | A band `width` points wide round the glyphs, beneath them |
+| `spacing` | points | `0` | Extra space between letters |
+| `layer` | integer | `0` | Draw order among script UI |
+| `shadow` | `[dx, dy, r, g, b, a]` | none | The text once more, offset by `(dx, dy)`, beneath everything else |
+| `glow` | `[r, g, b, a, radius]` | none | A soft halo of the glyphs and their stroke, fading out by `radius` points, beneath the stroke |
+
+Array entries may mix ints and floats. Back to front: shadow, glow, stroke, text.
+
+A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best (`demo/hud_glow.scene.toml`).
+
+![A 12 point translucent stroke as eight copies, the same stroke as one band, and two glows](../images/hud-glow.png)
+
+*`demo/hud_glow.scene.toml`: left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
 
 **Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found the same way as `sprites/`: the scene file's directory, then its parent). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folder is scanned non-recursively once at startup and again on scene change when the project root changes. An optional `fonts/fonts.toml` adds aliases that point at the same files:
 
@@ -1259,6 +1277,8 @@ y = 10
 | `font` | string | --- | Font family from `<project>/fonts/` (file stem or `fonts.toml` alias); unset = default font |
 | `letter_spacing` | float | `0` | Extra spacing between glyphs, in points |
 | `shadow` | [dx,dy,r,g,b,a] | --- | Drop shadow offset and colour, drawn beneath the text |
+| `stroke_color`, `stroke_width` | [r,g,b,a], float | `[0,0,0,1]`, `0` | A text stroke, as `draw_text_opts`'s `stroke` |
+| `glow_color`, `glow_radius` | [r,g,b,a], float | `[1,1,1,0.5]`, `0` | A text glow, as `draw_text_opts`'s `glow`; on while `glow_radius` is above 0 |
 | `text_align` | string | `"left"` | Text alignment: `left`, `center`, `right` |
 | `rounding` | float | `0` | Corner rounding for panels/rects |
 | `opacity` | float | `1.0` | Element opacity multiplier |
@@ -1335,7 +1355,7 @@ Every loaded document remembers its `.ui.toml`, `.style.toml` and shared token f
 | `ui_set_color(element_id, r, g, b, a)` | --- | Override primary color |
 | `ui_set_bg_color(element_id, r, g, b, a)` | --- | Override background color |
 | `ui_set_style(element_id, prop, value)` | --- | Override any style property by name --- every property the `.style.toml` parser accepts (see below) |
-| `ui_set_style_array(element_id, prop, array)` | --- | Same, for array values: `color` / `bg_color` / `stroke_color` / `padding` (3--4 numbers) or `shadow` (6 numbers). `ui_set_style` also accepts arrays directly |
+| `ui_set_style_array(element_id, prop, array)` | --- | Same, for array values: `color` / `bg_color` / `stroke_color` / `glow_color` / `padding` (3--4 numbers) or `shadow` (6 numbers). `ui_set_style` also accepts arrays directly |
 | `ui_reset_style(element_id)` | --- | Clear all runtime overrides |
 | `ui_set_class(element_id, class)` | --- | Switch an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if an element exists in any loaded document |
@@ -1345,7 +1365,7 @@ Every loaded document remembers its `.ui.toml`, `.style.toml` and shared token f
 
 Element IDs are the TOML key names from the layout file (e.g., `"speed_label"`, `"lap_counter"`). Functions search all loaded documents when resolving an element ID.
 
-`ui_set_style` takes whatever the property takes in the style file --- a number (`x`, `width_pct`, `font_size`, `thickness`, `stroke_width`, `letter_spacing`, `radius`, `rounding`, `margin_bottom`, `layer`, `opacity`), a string (`text_align`, `layout`, `font`), a bool (`height_auto`), an array (`color`, `bg_color`, `stroke_color`, `padding`, `shadow`) or a `"$token"` string for any of them, resolved through the owning document's tokens:
+`ui_set_style` takes whatever the property takes in the style file --- a number (`x`, `width_pct`, `font_size`, `thickness`, `stroke_width`, `glow_radius`, `letter_spacing`, `radius`, `rounding`, `margin_bottom`, `layer`, `opacity`), a string (`text_align`, `layout`, `font`), a bool (`height_auto`), an array (`color`, `bg_color`, `stroke_color`, `glow_color`, `padding`, `shadow`) or a `"$token"` string for any of them, resolved through the owning document's tokens:
 
 ```rhai
 ui_set_style("card_1_border", "color", "$accent");        // token -> colour

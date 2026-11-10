@@ -303,6 +303,11 @@ impl UiDocument {
                                 sc[3] *= opacity;
                                 (sc, dx, dy)
                             }),
+                            glow: (style.glow_radius > 0.0).then(|| {
+                                let mut gc = style.glow_color;
+                                gc[3] *= opacity;
+                                (gc, style.glow_radius)
+                            }),
                         });
                     }
                 }

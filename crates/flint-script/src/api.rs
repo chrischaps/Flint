@@ -3085,6 +3085,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3117,6 +3118,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3153,6 +3155,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3190,6 +3193,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: None,
                     letter_spacing: 0.0,
                     shadow: None,
+                    glow: None,
                 });
             },
         );
@@ -3197,7 +3201,8 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 
     // draw_text_opts(x, y, text, size, opts) — opts is a map with optional keys:
     //   font (string), color ([r,g,b,a]), align ("left"|"center"|"right"),
-    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a])
+    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a]),
+    //   glow ([r,g,b,a,radius]: a soft halo under the stroke, #626)
     {
         let ctx = ctx.clone();
         engine.register_fn(
@@ -3217,6 +3222,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     font: o.font,
                     letter_spacing: o.spacing,
                     shadow: o.shadow,
+                    glow: o.glow,
                 });
             },
         );
@@ -3605,7 +3611,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // draw_world_text(x, y, z, text, size, opts)
     // Text at a world point, drawn in the 3D frame with a depth test
     // (ADR 0104): geometry in front hides it. opts are draw_text_opts's
-    // (font, color, align, stroke, spacing, shadow; no layer), centred on
+    // (font, color, align, stroke, spacing, shadow, glow; no layer), centred on
     // the point by default, plus valign ("top"|"middle"|"bottom"), and
     // facing ([nx, ny, nz]) with up ([x, y, z], world up by default) to lay
     // it in a plane. A billboard's size is in points; on a plane, every
@@ -5900,6 +5906,8 @@ pub(crate) struct TextOpts {
     pub font: Option<String>,
     pub spacing: f32,
     pub shadow: Option<([f32; 4], f32, f32)>,
+    /// A blurred halo under the stroke: colour and reach in points (#626).
+    pub glow: Option<([f32; 4], f32)>,
 }
 
 impl Default for TextOpts {
@@ -5912,6 +5920,7 @@ impl Default for TextOpts {
             font: None,
             spacing: 0.0,
             shadow: None,
+            glow: None,
         }
     }
 }
@@ -5965,6 +5974,13 @@ impl TextOpts {
             if let Some(arr) = v.clone().try_cast::<Array>() {
                 if let [dx, dy, r, g, b, a] = array_to_f32s(&arr)[..] {
                     o.shadow = Some(([r, g, b, a], dx, dy));
+                }
+            }
+        }
+        if let Some(v) = opts.get("glow") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a, radius] = array_to_f32s(&arr)[..] {
+                    o.glow = Some(([r, g, b, a], radius));
                 }
             }
         }
@@ -6022,6 +6038,7 @@ pub(crate) fn world_text_from(
         font: o.font,
         spacing: o.spacing,
         shadow: o.shadow,
+        glow: o.glow,
         plane,
     }
 }
@@ -6096,7 +6113,19 @@ mod text_opts_tests {
                 Dynamic::from(0.6_f64),
             ]),
         );
+        m.insert(
+            "glow".into(),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0.2_f64),
+                Dynamic::from(0.6_f64),
+                Dynamic::from(0.9_f64),
+                Dynamic::from(18_i64),
+            ]),
+        );
         let o = TextOpts::from_map(&m);
+        assert_eq!(o.glow, Some(([1.0, 0.2, 0.6, 0.9], 18.0)));
+        assert_eq!(world_text_from([0.0; 3], "x", 1.0, &m).glow, o.glow);
         assert_eq!(o.font.as_deref(), Some("display"));
         assert_eq!(o.color, [1.0, 0.5, 0.0, 1.0]);
         assert_eq!(o.align, 1);
@@ -6113,7 +6142,9 @@ mod text_opts_tests {
         m.insert("color".into(), arr(&[Dynamic::from(1.0_f64)]));
         m.insert("align".into(), Dynamic::from("right"));
         m.insert("stroke".into(), Dynamic::from("nope"));
+        m.insert("glow".into(), arr(&vec![Dynamic::from(1.0_f64); 4]));
         let o = TextOpts::from_map(&m);
+        assert_eq!(o.glow, None, "a glow needs five numbers");
         assert_eq!(o.font, None);
         assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(o.align, 2);

@@ -420,7 +420,8 @@ pub enum DrawCommand {
         layer: i32,
         /// 0 = left (default), 1 = center, 2 = right
         align: u8,
-        /// Optional stroke (outline): color + pixel width
+        /// Optional stroke (outline): colour + width in points. Up to 2 pt it's
+        /// the text at eight offsets; wider, a round band (#626)
         stroke: Option<([f32; 4], f32)>,
         /// Font family name (a file stem or manifest alias under `<project>/fonts/`);
         /// `None` or an unknown name falls back to the default proportional font.
@@ -429,6 +430,9 @@ pub enum DrawCommand {
         letter_spacing: f32,
         /// Optional drop shadow: (colour, dx, dy) drawn once beneath the text.
         shadow: Option<([f32; 4], f32, f32)>,
+        /// Optional glow: colour + reach in points, a blur of the text and
+        /// its stroke drawn beneath them (#626).
+        glow: Option<([f32; 4], f32)>,
     },
     RectFilled {
         x: f32,

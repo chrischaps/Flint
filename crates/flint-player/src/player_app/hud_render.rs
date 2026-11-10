@@ -1,6 +1,7 @@
 //! Script-driven UI rendering via egui layer painter.
 
 use super::fonts::{resolve_font_id, text_layout_job};
+use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use flint_script::context::{DrawCommand, DrawItem};
 use flint_script::draw2d::{ring_indices, ring_points, ring_steps};
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,7 @@ pub(super) fn render_draw_commands(
     ui_textures: &HashMap<String, egui::TextureHandle>,
     ui_fonts: &HashSet<String>,
     ui_fonts_warned: &mut HashSet<String>,
+    halos: &mut TextHalos,
 ) {
     if commands.is_empty() {
         return;
@@ -95,6 +97,7 @@ pub(super) fn render_draw_commands(
                 font,
                 letter_spacing,
                 shadow,
+                glow,
                 ..
             } => {
                 let anchor = match align {
@@ -126,23 +129,24 @@ pub(super) fn render_draw_commands(
                     painter.galley(egui::Pos2::new(pos.x + dx, pos.y + dy), shadow_galley, sc);
                 }
 
-                // Draw stroke (outline) by rendering the text at 8 compass offsets
-                if let Some((stroke_color, stroke_width)) = stroke {
+                if wants_halo(*stroke, *glow) {
+                    // A wide stroke and any glow: one picture under the
+                    // text, round and even at any width (#626).
+                    let key = (text.as_str(), &font_id, letter_spacing.to_bits());
+                    let spec = HaloSpec {
+                        stroke: *stroke,
+                        glow: *glow,
+                    };
+                    if let Some(shape) = halos.shape(ctx, &galley, key, pos, spec) {
+                        painter.add(shape);
+                    }
+                } else if let Some((stroke_color, stroke_width)) = stroke {
+                    // A thin stroke (outline): the text at 8 compass offsets
                     let sc = to_color32(stroke_color);
                     let stroke_galley = ctx.fonts(|f| {
                         f.layout_job(text_layout_job(text, font_id.clone(), sc, *letter_spacing))
                     });
-                    let w = *stroke_width;
-                    for &(dx, dy) in &[
-                        (-w, 0.0),
-                        (w, 0.0),
-                        (0.0, -w),
-                        (0.0, w),
-                        (-w, -w),
-                        (w, -w),
-                        (-w, w),
-                        (w, w),
-                    ] {
+                    for (dx, dy) in stamp_offsets(*stroke_width) {
                         painter.galley(
                             egui::Pos2::new(pos.x + dx, pos.y + dy),
                             stroke_galley.clone(),
@@ -393,6 +397,7 @@ mod tests {
                 &HashMap::new(),
                 &HashSet::new(),
                 &mut HashSet::new(),
+                &mut TextHalos::default(),
             );
             egui::TopBottomPanel::top("header").show(ctx, |ui| ui.label("header"));
             egui::Window::new("panel")
