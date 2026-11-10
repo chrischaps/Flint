@@ -90,6 +90,9 @@ Flint uses an **edit -> validate -> play** loop:
    #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
    #                          (#267 line glyphs on depth/crease/mask edges; the editor grid is a
    #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
+   #                          (#348 corners: a drawn cell whose tensor coherence is under
+   #                           ascii:edge_corner=0.9 takes ┌ ├ ┼... from its neighbours' ─ │
+   #                           (ARM_GLYPHS, ascii_edge_thin.wgsl); a set's [edges] corners, else lines)
    #                          (#351 their ink: --style ascii:edge_ink=cell|color|hue,
    #                           edge_color=#rrggbb,edge_tint=0..1; hue = the near side's own colour)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)

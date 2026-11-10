@@ -56,8 +56,10 @@ struct Variant {
     // #398: the first row + 1 of the variant's band in the dissolve rank
     // state (ascii_dissolve.wgsl), 0 when it has none
     dissolve_row: u32,
-    // Scalars, not a vec3 (which would align to 16 and leave a hole)
-    _pad_dissolve_a: u32,
+    // #348: how many corner glyphs the variant's own font has (0, 4 or 9),
+    // read only with an `edge_start` of its own
+    corners: u32,
+    // Scalars, not a vec2 (which would align to 8)
     _pad_dissolve_b: u32,
     _pad_dissolve_c: u32,
 };
@@ -114,10 +116,12 @@ struct AsciiUniforms {
     chroma: f32,
     palette_dither: f32,
     edge_tint: f32,
-    _pad_palette: u32,
+    // How many corner glyphs the whole frame's font has: 0, 4 or 9 (#348)
+    corners: u32,
     // The edge glyphs' atlas origins, horizontal, vertical, diagonal,
-    // antidiagonal, two per vec4 like the ramp
-    edge_glyphs: array<vec4<u32>, 2>,
+    // antidiagonal, then the corners, tees and cross (#348; slots 4..12,
+    // ascii_edge_thin.wgsl), two per vec4 like the ramp
+    edge_glyphs: array<vec4<u32>, 7>,
     // Each ramp step's atlas cell origin, two steps per vec4: (x0, y0, x1, y1).
     ramp: array<vec4<u32>, 64>,
     // Every variant's palette inks, display values (rgb, unused w); the

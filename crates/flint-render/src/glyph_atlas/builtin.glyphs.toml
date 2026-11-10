@@ -46,3 +46,8 @@ horizontal = "─"
 vertical = "│"
 diagonal = "╱"
 antidiagonal = "╲"
+# Where lines meet (#348), drawn by a cell whose edge has no one direction
+# from the line glyphs beside it: the corners ┌┐└┘, then the tees and the
+# cross. Their arms run on the same row and column as ─ and │, so a box's
+# outline closes. A set without them keeps its line glyphs at corners.
+corners = "┌┐└┘├┤┬┴┼"

@@ -340,6 +340,70 @@ fn edge_glyphs_follow_the_edge_direction() {
 }
 
 #[test]
+fn corners_are_picked_by_the_arms_that_meet() {
+    let set = GlyphSet::builtin();
+    let e = set.edges();
+    assert_eq!(e.corner_count(), 9);
+    assert_eq!(
+        e.slots().iter().collect::<String>(),
+        "─│╱╲┌┐└┘├┤┬┴┼",
+        "lines, then corners, tees and the cross: the shader's slot order"
+    );
+    // (right, left, down, up), as ascii_edge_thin.wgsl's ARM_GLYPHS
+    assert_eq!(e.for_arms(true, false, true, false), Some('┌'));
+    assert_eq!(e.for_arms(false, true, true, false), Some('┐'));
+    assert_eq!(e.for_arms(true, false, false, true), Some('└'));
+    assert_eq!(e.for_arms(false, true, false, true), Some('┘'));
+    assert_eq!(e.for_arms(true, false, true, true), Some('├'));
+    assert_eq!(e.for_arms(false, true, true, true), Some('┤'));
+    assert_eq!(e.for_arms(true, true, true, false), Some('┬'));
+    assert_eq!(e.for_arms(true, true, false, true), Some('┴'));
+    assert_eq!(e.for_arms(true, true, true, true), Some('┼'));
+    assert_eq!(e.for_arms(true, true, false, false), Some('─'));
+    assert_eq!(e.for_arms(false, false, true, true), Some('│'));
+    assert_eq!(e.for_arms(true, false, false, false), None);
+    assert_eq!(e.for_arms(false, false, false, false), None);
+    // A corner's arms meet a line's stroke: `┌` inks `─`'s row to its
+    // right and `│`'s column below it, so an outline closes
+    let atlas = set.atlas();
+    assert_eq!(atlas.sample('┌', 7, 3), atlas.sample('─', 7, 3));
+    assert_eq!(atlas.sample('┌', 3, 7), atlas.sample('│', 3, 7));
+    assert_eq!(atlas.sample('┌', 0, 3), Some(0));
+}
+
+#[test]
+fn a_set_names_four_corners_nine_or_none() {
+    let none = GlyphSet::from_toml("x", "[ramps.a]\nglyphs = \" .\"\n", Path::new("")).unwrap();
+    assert_eq!(none.edges().corner_count(), 0);
+    assert_eq!(none.edges().slots().len(), 4);
+    assert_eq!(
+        none.edges().for_arms(true, false, true, false),
+        None,
+        "no corner glyphs: the cell keeps its line"
+    );
+    let four = GlyphSet::from_toml(
+        "x",
+        "[ramps.a]\nglyphs = \" .\"\n[edges]\ncorners = \"++++\"\n",
+        Path::new(""),
+    )
+    .unwrap();
+    assert_eq!(four.edges().corner_count(), 4);
+    assert_eq!(four.edges().for_arms(true, false, true, false), Some('+'));
+    assert_eq!(
+        four.edges().for_arms(true, true, true, false),
+        None,
+        "no tees"
+    );
+    let err = GlyphSet::from_toml(
+        "x",
+        "[ramps.a]\nglyphs = \" .\"\n[edges]\ncorners = \"+++\"\n",
+        Path::new(""),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("corners"), "{err}");
+}
+
+#[test]
 fn builtin_edge_glyphs_tile_into_unbroken_lines() {
     let atlas = GlyphAtlas::builtin();
     // `│` inks the same column top to bottom; `─` the same row edge to edge.
