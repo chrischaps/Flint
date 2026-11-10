@@ -229,6 +229,45 @@ fn a_still_at_a_time_hears_everything_due_by_then() {
 }
 
 #[test]
+fn a_list_of_moments_is_one_run_with_a_still_each() {
+    let dir = project("list");
+    let tl = timeline(&dir);
+    let o = render(
+        &dir,
+        "at.png",
+        &["--expression-timeline", &tl, "--time", "0.5,1.5,2.5"],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    for (i, (moment, colour)) in [("0.5", BLUE), ("1.5", RED), ("2.5", GREEN)]
+        .into_iter()
+        .enumerate()
+    {
+        let still = format!("at_{i:04}.png");
+        let image = image::open(dir.join(&still)).unwrap().into_rgba8();
+        assert_eq!(strongest(&image), colour, "{still} at {moment} s");
+        // The same bytes as the moment rendered alone, seeded flicker and all.
+        let alone = format!("alone_{i}.png");
+        ok(&render(
+            &dir,
+            &alone,
+            &["--expression-timeline", &tl, "--time", moment],
+        ));
+        assert!(
+            read(&still) == read(&alone),
+            "{still} differs from --time {moment} alone"
+        );
+    }
+    assert!(
+        !dir.join("at.png").exists(),
+        "a list writes only its numbered stills"
+    );
+}
+
+#[test]
 fn without_scripts_a_scene_with_one_says_so() {
     let dir = project("warns");
     let o = render(&dir, "t.png", &["--time", "0.5"]);

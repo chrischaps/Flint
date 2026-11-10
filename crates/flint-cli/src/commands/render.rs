@@ -629,10 +629,12 @@ pub struct RenderArgs {
     pub particle_time: Option<f32>,
 
     /// The game time to capture: living props, the wooze field and everything else
-    /// a clock drives, as the player has them at that time. Seconds (3.5), or a span
+    /// a clock drives, as the player has them at that time. Seconds (3.5), a span
     /// (0..4) for an animated --output x.gif or a PNG a frame to --output
-    /// frames/f-%05d.png, in one frame's memory however long. Physics and animation
-    /// clips don't run, and scripts only with --scripts. Same value, same pixels
+    /// frames/f-%05d.png, in one frame's memory however long, or a list (2,5,9.5) of
+    /// moments of one run, each written as a still beside --output (x.png gives
+    /// x_0000.png...). Physics and animation clips don't run, and scripts only with
+    /// --scripts. Same value, same pixels
     #[arg(long, value_parser = render_plan::parse_time)]
     pub time: Option<TimeSpec>,
 
@@ -808,7 +810,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // A mesh sequence (#222) is its own span: its files are the frames
     let meshes = super::mesh_seq::resolve(&args.mesh)?;
     if meshes.is_empty() {
-        render_plan::check_output(&args.output, args.time)?;
+        render_plan::check_output(&args.output, args.time.as_ref())?;
     } else {
         check_mesh_output(&args, meshes[0].files.len())?;
     }
@@ -2399,7 +2401,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         )?);
     }
 
-    let times = render_plan::capture_times(args.time, args.fps);
+    let times = render_plan::capture_times(args.time.as_ref(), args.fps);
     let mut warnings = stage_warnings(args, sweep, &stages[0]);
     for warning in &warnings {
         eprintln!("Warning: {warning}");
@@ -2409,6 +2411,8 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     // Where each frame goes as it's captured, so a span costs memory for one
     // frame however long it runs (#588).
     let sequence = animated && render_plan::is_sequence(&args.output);
+    // A still a moment (#614), numbered in the order the moments were given.
+    let moments = matches!(args.time, Some(TimeSpec::List(_)));
     let mut gif = None;
     let mut still = None;
     let mut written_bytes = 0u64;
@@ -2458,6 +2462,11 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .save(&path)
                 .with_context(|| format!("Failed to save frame {index} to {path}"))?;
             written_bytes += std::fs::metadata(&path).map_or(0, |m| m.len());
+        } else if moments {
+            let path = render_plan::numbered_still(&args.output, index, times.len());
+            frame
+                .save(&path)
+                .context(format!("Failed to save image to {}", path.display()))?;
         } else if animated {
             let frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
             let spool = match &mut gif {
@@ -2519,6 +2528,18 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             args.output,
             std::fs::metadata(output).map_or(0.0, |m| m.len() as f64 / 1e6),
             spilled as f64 / 1e6,
+        );
+    } else if moments {
+        let count = times.len();
+        say!(
+            "Rendered {count} moments ({}) as {frame_width}x{frame_height} to {} .. {}",
+            times
+                .iter()
+                .map(|t| format!("{t}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            render_plan::numbered_still(&args.output, 0, count).display(),
+            render_plan::numbered_still(&args.output, count - 1, count).display()
         );
     } else {
         let still = still.context("the render captured no frame")?;
