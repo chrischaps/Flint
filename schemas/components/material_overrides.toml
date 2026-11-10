@@ -1,13 +1,20 @@
 [component.material_overrides]
-description = """Per-glTF-material base-colour overrides for model entities.
-Each key is a material name from the GLB (e.g. Frame, Capsule); each value is
-[r, g, b] or [r, g, b, a] in 0.0-1.0. A three-component value keeps the
-material's own alpha, so a blended glass stays translucent. The renderer looks
-the component up on the drawn entity and then every ancestor, so placing it on
-a model's root entity recolours the matching materials on all expanded nodes,
-including nodes whose mesh mixes several materials. Wins over
-material.base_color_r/g/b for the named material only. Scripts:
-set_material_override(id, name, r, g, b, a)."""
+description = """Per-glTF-material overrides for model entities: base colour, and
+the colour and strength of the glow.
+Each key is a material name from the GLB (e.g. Frame, Capsule). A value is
+either a base colour, [r, g, b] or [r, g, b, a] in 0.0-1.0, or a table with
+any of base_color = [r, g, b(, a)], emissive = [r, g, b] (linear, replaces
+the material's emissive colour) and emissive_strength (replaces its
+emissive_strength). A three-component colour keeps the material's own alpha,
+so a blended glass stays translucent. The renderer reads it every frame on the
+drawn entity and then every ancestor, each field from the nearest that sets
+it, so placing it on a model's root entity recolours the matching materials on
+all expanded nodes, including nodes whose mesh mixes several materials. The
+base colour wins over material.base_color_r/g/b for the named material only;
+material.emissive_scale still multiplies the glow. Scripts:
+set_material_override(id, name, r, g, b, a),
+set_material_emissive(id, name, r, g, b[, strength]),
+clear_material_override(id, name)."""
 
 # Keys are material names, so no fixed fields are declared.
 [component.material_overrides.fields]

@@ -61,7 +61,7 @@ Imported glTF models are rendered with their full mesh geometry and materials. T
 Two ECS components tint an imported model without touching the GLB:
 
 - `material.base_color_r/g/b[/a]` on the entity (or its direct parent) replaces the base colour of **every** primitive the entity draws. Scripts write it with `set_material_color`.
-- `material_overrides` maps glTF **material names** to colours: `Frame = [0.9, 0.3, 0.1]`, `Capsule = [0.2, 0.6, 1.0, 0.5]`. The renderer looks it up on the drawn entity and then on each ancestor, so a single component on a model's root entity recolours the matching materials on all of its expanded child nodes, including meshes that mix several materials. A three-component value keeps the material's own alpha. It takes precedence over `material.base_color_*` for the named material. Scripts write it with `set_material_override(id, name, r, g, b, a)`.
+- `material_overrides` maps glTF **material names** to colours: `Frame = [0.9, 0.3, 0.1]`, `Capsule = [0.2, 0.6, 1.0, 0.5]`. The renderer looks it up on the drawn entity and then on each ancestor, so a single component on a model's root entity recolours the matching materials on all of its expanded child nodes, including meshes that mix several materials. A three-component value keeps the material's own alpha. It takes precedence over `material.base_color_*` for the named material. Scripts write it with `set_material_override(id, name, r, g, b, a)`. A value can also be a table that recolours the material's glow: see [Recolouring an imported model's glow](#recolouring-an-imported-models-glow).
 
 Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live. A vertex-coloured mesh ignores both: tint it with `material.vertex_tint_*` ([Tinting vertex colours per entity](#tinting-vertex-colours-per-entity)).
 
@@ -244,6 +244,50 @@ let mut material = toml::Table::new();
 material.insert("emissive_scale".into(), (night * 1.6).into());
 world.set_component(id, "material", material.into())?;
 ```
+
+#### Recolouring an imported model's glow
+
+`emissive_scale` changes how bright a glow is, not its colour. To change the colour of one named glTF material's light, give its `material_overrides` entry a table instead of a plain colour (#624):
+
+```toml
+[entities.road.material_overrides]
+Paint = [0.05, 0.05, 0.06]                                   # a base colour, as before
+Neon  = { emissive = [0.05, 0.95, 1.0], emissive_strength = 6 }
+Sign  = { base_color = [0.1, 0.1, 0.1], emissive = [1.0, 0.2, 0.6] }
+```
+
+| Key | Replaces | Default |
+|---|---|---|
+| `base_color` | the base colour, exactly as the array form does | the material's |
+| `emissive` | the material's `emissive` colour, linear RGB; may pass 1 | the material's |
+| `emissive_strength` | its `emissive_strength` (`KHR_materials_emissive_strength`), per-vertex light included | the material's, 1 if the file has none |
+
+- **Any material can glow,** even one imported with no emission at all: an emissive colour on a material whose `emissive` is black lights it.
+- **An emissive texture keeps its pattern.** The colour multiplies it, as glTF's `emissiveFactor` does, so a lantern's glass keeps its leading and takes the new hue.
+- **Field by field, nearest first.** Each key is read from the nearest entity that sets it, the drawn entity and then each ancestor, so a model's root can paint a material and one of its expanded nodes light it.
+- **`emissive_scale` still applies on top,** so a stage can be a colour from the override and a dimmer from the entity.
+- **The scene keeps its lighting.** It's a real emission, through bloom like any other, so nothing has to be painted bright under a flat ambient to look lit.
+- **Cost:** the same as a new `base_color` override or `emissive_scale`: that draw's small material uniform is rebuilt on the next frame. Nothing is re-imported or re-uploaded.
+
+From a script:
+
+| Function | Does |
+|---|---|
+| `set_material_emissive(id, material, r, g, b)` | sets `emissive`, keeping the entry's strength and base colour |
+| `set_material_emissive(id, material, r, g, b, strength)` | sets `emissive` and `emissive_strength` |
+| `set_material_override(id, material, r, g, b, a)` | sets the base colour, keeping a light set before it |
+| `clear_material_override(id, material)` | drops the entity's own entry, light and colour, so the material (or an ancestor's entry) shows again |
+
+```rhai
+fn on_update() {
+    let hue = if total_time() % 5.0 < 2.5 { [0.05, 0.95, 1.0] } else { [1.0, 0.12, 0.75] };
+    set_material_emissive(self_entity(), "Alpha_Joints_MAT.002", hue[0], hue[1], hue[2], 6.0);
+}
+```
+
+`demo/emissive_recolor.scene.toml` is five figures of one skinned GLB, whose joints have no emission of their own, and two lanterns whose glass glows through a texture, all walking one palette a stage every 2.5 s under a moon that still lights them (`flint render demo/emissive_recolor.scene.toml --scripts --time 0..10 --fps 12 -o glow.gif`).
+
+![Five figures from one GLB, their joints glowing magenta to cyan along the row, under moonlight](../images/emissive-recolor.png)
 
 #### Lighting the glow as surface too
 

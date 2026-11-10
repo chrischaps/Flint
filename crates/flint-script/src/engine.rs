@@ -2316,6 +2316,46 @@ mod tests {
     }
 
     #[test]
+    fn test_set_material_emissive_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("road").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_material_override(me, "Neon", 0.1, 0.1, 0.1, 1.0);
+                set_material_emissive(me, "Neon", 0.0, 1.0, 0.8, 4.0);
+                set_material_emissive(me, "Sign", 1.0, 0.2, 0.6);
+                set_material_override(me, "Sign", 0.5, 0.5, 0.5, 1.0);
+                set_material_emissive(me, "Gone", 1.0, 1.0, 1.0);
+                clear_material_override(me, "Gone");
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let ov = world.get_component(id, "material_overrides").unwrap();
+        let num = |v: &toml::Value| v.as_float().unwrap();
+        // The paint set first survives the light set after it.
+        let neon = ov.get("Neon").unwrap().as_table().unwrap();
+        assert!((num(&neon["base_color"][0]) - 0.1).abs() < 1e-6);
+        assert!((num(&neon["emissive"][1]) - 1.0).abs() < 1e-6);
+        assert!((num(&neon["emissive_strength"]) - 4.0).abs() < 1e-6);
+        // And a light set first survives the paint set after it.
+        let sign = ov.get("Sign").unwrap().as_table().unwrap();
+        assert!((num(&sign["emissive"][2]) - 0.6).abs() < 1e-6);
+        assert!((num(&sign["base_color"][0]) - 0.5).abs() < 1e-6);
+        assert!(!sign.contains_key("emissive_strength"));
+        assert!(ov.get("Gone").is_none());
+    }
+
+    #[test]
     fn test_find_entities_with_from_script() {
         let mut engine = ScriptEngine::new();
         let mut world = FlintWorld::new();

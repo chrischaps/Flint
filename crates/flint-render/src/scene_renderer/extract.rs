@@ -3,7 +3,7 @@
 //! Each method examines one entity type and pushes draw calls into the
 //! appropriate draw-list on `SceneRenderer`.
 
-use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
+use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode, MaterialOverride};
 use super::{
     hash_parts, transform_aabb, CachedBoneBind, EchoDrawCall, SceneRenderer, SkinnedDrawCall,
     SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
@@ -166,43 +166,43 @@ impl SceneRenderer {
         read(entity_id).or_else(|| world.get_parent(entity_id).and_then(read))
     }
 
-    /// ECS `material_overrides.<name>` tint for one glTF material, looked up on
-    /// the entity and then every ancestor (a GLB expanded into a node hierarchy
+    /// ECS `material_overrides.<name>` for one glTF material, looked up on the
+    /// entity and then every ancestor (a GLB expanded into a node hierarchy
     /// keeps its meshes several levels below the entity a scene author sees).
-    /// Values are `[r, g, b]` or `[r, g, b, a]`; a missing alpha keeps
-    /// `gltf_alpha` so a three-component override on a blended glass material
-    /// stays translucent. `None` when no ancestor overrides this material.
+    ///
+    /// A value is either a base colour, `[r, g, b]` or `[r, g, b, a]`, or a
+    /// table `{ base_color, emissive, emissive_strength }` with any of the
+    /// three (#624). Each field is the nearest ancestor's that sets it, so a
+    /// model's root can paint a material and a child light it. A missing
+    /// alpha keeps `gltf_alpha`, so a three-component colour on a blended
+    /// glass material stays translucent.
     fn ecs_material_override(
         world: &FlintWorld,
         entity_id: EntityId,
         material_name: &str,
         gltf_alpha: f32,
-    ) -> Option<[f32; 4]> {
+    ) -> MaterialOverride {
+        let mut found = MaterialOverride::default();
         if material_name.is_empty() {
-            return None;
+            return found;
         }
         let mut cur = Some(entity_id);
         let mut depth = 0;
         while let Some(id) = cur {
-            if depth > 32 {
+            if depth > 32 || found.is_full() {
                 break;
             }
-            let hit = world
+            if let Some(v) = world
                 .get_components(id)
                 .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
                 .and_then(|m| m.get(material_name))
-                .and_then(|v| v.as_array())
-                .and_then(|arr| {
-                    let f = |i: usize| arr.get(i).and_then(toml_f32);
-                    Some([f(0)?, f(1)?, f(2)?, f(3).unwrap_or(gltf_alpha)])
-                });
-            if hit.is_some() {
-                return hit;
+            {
+                found.fill_from(v, gltf_alpha);
             }
             cur = world.get_parent(id);
             depth += 1;
         }
-        None
+        found
     }
 
     /// Extract a skinned (skeletal) entity into draw calls.
@@ -267,14 +267,16 @@ impl SceneRenderer {
             // Material color override (entity, then parent) — same contract as
             // the static model path, so a scene can tint a skinned figure via
             // `material.base_color_r/g/b` too.
-            let base_color = Self::ecs_material_override(
+            let material_override = Self::ecs_material_override(
                 world,
                 entity_id,
                 &gpu_mesh.material.name,
                 gpu_mesh.material.base_color[3],
-            )
-            .or_else(|| Self::ecs_base_color_override(world, entity_id))
-            .unwrap_or(gpu_mesh.material.base_color);
+            );
+            let base_color = material_override
+                .base_color
+                .or_else(|| Self::ecs_base_color_override(world, entity_id))
+                .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,
@@ -287,7 +289,11 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
-            material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.set_emission_overridden(
+                &gpu_mesh.material,
+                material_override.emissive,
+                material_override.emissive_strength,
+            );
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
@@ -594,14 +600,16 @@ impl SceneRenderer {
             // Material colour: a per-material-name override on any ancestor wins
             // (`material_overrides`), then the entity/parent `material.base_color_*`
             // tint, then the glTF material itself.
-            let base_color = Self::ecs_material_override(
+            let material_override = Self::ecs_material_override(
                 world,
                 entity_id,
                 &gpu_mesh.material.name,
                 gpu_mesh.material.base_color[3],
-            )
-            .or_else(|| Self::ecs_base_color_override(world, entity_id))
-            .unwrap_or(gpu_mesh.material.base_color);
+            );
+            let base_color = material_override
+                .base_color
+                .or_else(|| Self::ecs_base_color_override(world, entity_id))
+                .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,
@@ -614,7 +622,11 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
-            material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.set_emission_overridden(
+                &gpu_mesh.material,
+                material_override.emissive,
+                material_override.emissive_strength,
+            );
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
