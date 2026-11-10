@@ -32,6 +32,35 @@ use std::collections::HashSet;
 const AUDIO_DECODE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl PlayerApp {
+    /// The screen in points as scripts see it (`screen_width()` and
+    /// `screen_height()`, and the UI documents' layout): egui's screen, once
+    /// it agrees with the window. For egui's first passes its `screen_rect()`
+    /// is a 10,000-point placeholder (15,000 once a `--pixels-per-point`
+    /// zoom lands on a 1.5x display), and a script sizing its HUD by the
+    /// screen asked for lettering 14 to 21 times too big, whose glow wanted
+    /// a texture past the GPU's limit (#657). Until egui agrees, it's the
+    /// window's size at the scale egui is about to use.
+    pub(super) fn script_screen_size(&self) -> (f32, f32) {
+        let rect = self.egui_ctx.screen_rect();
+        let egui_size = (rect.width(), rect.height());
+        let Some(window) = &self.window else {
+            return egui_size;
+        };
+        let size = window.inner_size();
+        let ppp = self
+            .pixels_per_point
+            .unwrap_or(window.scale_factor() as f32)
+            .max(0.01);
+        let window_size = (size.width as f32 / ppp, size.height as f32 / ppp);
+        let agrees = (egui_size.0 - window_size.0).abs() <= 1.0
+            && (egui_size.1 - window_size.1).abs() <= 1.0;
+        if agrees || size.width == 0 || size.height == 0 {
+            egui_size
+        } else {
+            window_size
+        }
+    }
+
     #[profiling::function]
     pub(super) fn render(&mut self) {
         // On Android, window may be None between suspended() and resumed()
@@ -1382,9 +1411,8 @@ impl PlayerApp {
             self.clock.total_time,
             self.clock.delta_time,
         );
-        let screen_rect = self.egui_ctx.screen_rect();
-        self.script
-            .set_screen_size(screen_rect.width(), screen_rect.height());
+        let (screen_w, screen_h) = self.script_screen_size();
+        self.script.set_screen_size(screen_w, screen_h);
         // Cursor in the same logical-point space as screen_width()/draw_*:
         // InputState holds physical pixels, egui's ppp is the window scale.
         {
@@ -1511,10 +1539,8 @@ impl PlayerApp {
 
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.script.drain_draw_commands();
-        let screen_rect = self.egui_ctx.screen_rect();
-        let ui_commands = self
-            .script
-            .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
+        let (screen_w, screen_h) = self.script_screen_size();
+        let ui_commands = self.script.generate_ui_draw_commands(screen_w, screen_h);
         commands.extend(ui_commands);
         self.draw_commands = commands;
 
