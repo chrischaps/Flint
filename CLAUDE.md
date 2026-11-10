@@ -66,6 +66,9 @@ Flint uses an **edit -> validate -> play** loop:
    #                           Also on flint-player. ADR 0058)
    #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
+   #                          (#222: a frame per GLB on that entity, one renderer; natural order;
+   #                           multi-node GLBs baked flat, mesh_seq.rs; demo/mesh_sequence.scene.toml)
    #   --frames 181 --frame-dt 0.0166667 --orbit 6.8755 | --camera-path cam.toml
    #                          (#345: N frames on one renderer as out_0000.png...; temporal
    #                           styles see consecutive frames; --flip-stats / --flip-json f.json
