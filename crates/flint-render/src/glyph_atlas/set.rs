@@ -483,12 +483,17 @@ fn build_atlas(
 /// too, so a bad name is reported once rather than every frame.
 /// [`Self::poll`] forgets them all when a file one depended on (the
 /// `.glyphs.toml`, its font file, a candidate searched ahead of it) changes
-/// on disk (#323).
+/// on disk (#323). A set that loaded once and then fails to reload (a
+/// broken edit) keeps its last good glyphs, with one warning, until the
+/// files change again (#286).
 #[derive(Default)]
 pub struct GlyphSetCache {
     search: Vec<PathBuf>,
     sets: HashMap<String, Result<Arc<GlyphSet>, GlyphError>>,
     stamps: FileStamps,
+    /// The last set each name loaded, kept across [`Self::poll`] so a
+    /// broken edit draws what was there before.
+    last_good: HashMap<String, Arc<GlyphSet>>,
 }
 
 impl GlyphSetCache {
@@ -498,6 +503,7 @@ impl GlyphSetCache {
             search,
             sets: HashMap::new(),
             stamps: FileStamps::default(),
+            last_good: HashMap::new(),
         }
     }
 
@@ -516,29 +522,44 @@ impl GlyphSetCache {
         if let Some(found) = self.sets.get(name) {
             return found.clone();
         }
-        let loaded = self.resolve(name);
-        if let Err(e) = &loaded {
-            tracing::warn!("glyph set `{name}`: {e}");
-        }
+        let loaded = match (self.resolve(name), self.last_good.get(name)) {
+            (Ok(set), _) => {
+                self.last_good.insert(name.to_string(), set.clone());
+                Ok(set)
+            }
+            (Err(e), Some(previous)) => {
+                tracing::warn!("glyph set `{name}`: {e}; keeping the previous glyphs");
+                Ok(previous.clone())
+            }
+            (Err(e), None) => {
+                tracing::warn!("glyph set `{name}`: {e}");
+                Err(e)
+            }
+        };
         self.sets.insert(name.to_string(), loaded.clone());
         loaded
     }
 
-    /// Forget every set, so the next [`Self::get`] reads the files again.
+    /// Forget every set, so the next [`Self::get`] reads the files again,
+    /// and with them the last good ones a failed reload would fall back on.
     pub fn clear(&mut self) {
         self.sets.clear();
         self.stamps.clear();
+        self.last_good.clear();
     }
 
     /// Whether a file a set was read from (or looked for at) has changed on
     /// disk since; if so the cache is cleared, so the next [`Self::get`]
-    /// reads it again and hands out a new `Arc`. Native only (a bundle
+    /// reads it again and hands out a new `Arc` (or, if the new files
+    /// fail, the last good one, so nothing re-uploads). Native only (a bundle
     /// never changes): on the web this is always `false`. A few `stat`s;
     /// hosts call it a few times a second, not every frame.
     pub fn poll(&mut self) -> bool {
         let changed = self.stamps.changed();
         if changed {
-            self.clear();
+            // Not `clear`: a reload that fails falls back on `last_good`
+            self.sets.clear();
+            self.stamps.clear();
         }
         changed
     }
