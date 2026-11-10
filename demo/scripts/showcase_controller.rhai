@@ -1,9 +1,13 @@
 // Showcase Controller — Pause menu + game state machine
-// Demonstrates: register_state(), push_state(), pop_state(), set_radial_blur(), set_audio_lowpass()
+// Demonstrates: register_state(), push_state(), pop_state(), set_radial_blur(), set_audio_lowpass(),
+// quit_game() (#659: Escape is the game's here, so the pause screen offers the way out)
 
 let paused = false;
+// A page has no window to close, so the web shows no quit line.
+let can_quit = true;
 
 fn on_init() {
+    can_quit = gpu_info().platform != "web";
     register_state("paused", #{
         physics: "pause",
         scripts: "pause",
@@ -15,8 +19,10 @@ fn on_init() {
     });
 }
 
-fn on_action(action) {
-    if action == "pause" {
+fn on_draw_ui() {
+    // The menu reads its keys here: on_draw_ui runs while the "paused"
+    // state holds the scripts, and on_action doesn't.
+    if is_action_just_pressed("pause") {
         if paused {
             pop_state();
             paused = false;
@@ -24,10 +30,10 @@ fn on_action(action) {
             push_state("paused");
             paused = true;
         }
+    } else if paused && can_quit && is_action_just_pressed("quit") {
+        quit_game();
     }
-}
 
-fn on_draw_ui() {
     if paused {
         let sw = screen_width();
         let sh = screen_height();
@@ -59,6 +65,11 @@ fn on_draw_ui() {
         let sm = measure_text(sub, 18.0);
         let sx = (sw - sm.width) / 2.0;
         draw_text_ex(sx, line_y + 24.0, sub, 18.0, 0.8, 0.75, 0.65, 0.7, 5);
+        if can_quit {
+            let out = "Press [Q] to quit";
+            let om = measure_text(out, 18.0);
+            draw_text_ex((sw - om.width) / 2.0, line_y + 50.0, out, 18.0, 0.8, 0.75, 0.65, 0.45, 5);
+        }
 
         // Decorative corners
         let m = 40.0;

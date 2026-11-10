@@ -337,6 +337,7 @@ position = [0, 0, 0]
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |
 | `load_scene(path)` | --- | Transition to a new scene |
+| `quit_game()` | --- | End the run as closing the window does (exit code 0; on the web, back to the page's doorway) |
 | `push_state("paused")` | --- | Push a game state (e.g., pause) |
 | `pop_state()` | --- | Pop to previous game state |
 | `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to `save/persist.toml` 1 s later, on transitions and on exit |

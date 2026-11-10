@@ -1771,6 +1771,38 @@ mod tests {
         }
     }
 
+    /// `quit_game()` from `on_update` and from `on_draw_ui` (a pause menu's
+    /// EXIT row) both reach the player as one `QuitGame` each (#659).
+    #[test]
+    fn quit_game_queues_a_quit_from_update_and_draw_ui() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("menu").unwrap();
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() { quit_game(); }
+            fn on_draw_ui() { quit_game(); }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "menu.rhai".into());
+
+        engine.call_updates(&mut world);
+        let commands = engine.drain_commands();
+        assert!(
+            matches!(commands.as_slice(), [ScriptCommand::QuitGame]),
+            "on_update: {commands:?}"
+        );
+
+        engine.call_draw_uis(&mut world);
+        let commands = engine.drain_commands();
+        assert!(
+            matches!(commands.as_slice(), [ScriptCommand::QuitGame]),
+            "on_draw_ui: {commands:?}"
+        );
+    }
+
     #[test]
     fn test_play_sound_pitch_and_falloff() {
         let mut engine = ScriptEngine::new();
