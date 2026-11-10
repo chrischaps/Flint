@@ -770,50 +770,57 @@ impl PlayerApp {
             }
             // A shot that's due but failed waits for its retries (#639).
             let now = self.clock.total_time;
-            if now >= exit_after && !self.capture.shot_pending(now) {
+            // A script's `quit_game()` this frame has already said it (#659).
+            if now >= exit_after && !self.capture.shot_pending(now) && !self.exit_requested {
                 self.exit_requested = true;
-                // Headless perf figure: average frame time over the run, so a
-                // scene change can be A/B'd without watching the overlay.
-                let frames = self.capture.perf_frames;
-                if frames > 0 {
-                    let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
-                    eprintln!(
-                        "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
-                        self.capture.perf_time,
-                        super::PERF_SKIP_SECS,
-                        1000.0 / avg_ms
-                    );
-                    // How even they were: a mean hides bursts (#406).
-                    if let Some(dt) = self.capture.perf_pacing.dt() {
-                        eprintln!("[perf] dt: {dt}");
-                    }
-                    if let Some(present) = self.capture.perf_pacing.present() {
-                        eprintln!("[perf] present to present: {present}");
-                    }
-                    // The F2 overlay's main figures, averaged, so a capture
-                    // can compare draw counts and culling headlessly (H9).
-                    let avg = |sum: u64| sum as f64 / frames as f64;
-                    eprintln!(
-                        "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
-                        avg(self.capture.perf_draws),
-                        avg(self.capture.perf_entity_draws),
-                        avg(self.capture.perf_culled),
-                        avg(self.capture.perf_lod_culled),
-                        avg(self.capture.perf_triangles),
-                        avg(self.capture.perf_shadow_triangles)
-                    );
-                    // GPU time, when the frames were timed (--stats, ADR 0108).
-                    let gpu_frames = self.capture.perf_gpu_frames;
-                    if gpu_frames > 0 {
-                        eprintln!(
-                            "[perf] avg GPU {:.2} ms/frame over {gpu_frames} timed frames",
-                            self.capture.perf_gpu_ms / gpu_frames as f64
-                        );
-                    }
-                }
-                self.print_living_report();
+                self.print_exit_report();
             }
         }
+    }
+
+    /// `--exit-after`'s report, at its time or at a script's `quit_game()`
+    /// before it (#659).
+    pub(super) fn print_exit_report(&self) {
+        // Headless perf figure: average frame time over the run, so a
+        // scene change can be A/B'd without watching the overlay.
+        let frames = self.capture.perf_frames;
+        if frames > 0 {
+            let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
+            eprintln!(
+                "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
+                self.capture.perf_time,
+                super::PERF_SKIP_SECS,
+                1000.0 / avg_ms
+            );
+            // How even they were: a mean hides bursts (#406).
+            if let Some(dt) = self.capture.perf_pacing.dt() {
+                eprintln!("[perf] dt: {dt}");
+            }
+            if let Some(present) = self.capture.perf_pacing.present() {
+                eprintln!("[perf] present to present: {present}");
+            }
+            // The F2 overlay's main figures, averaged, so a capture
+            // can compare draw counts and culling headlessly (H9).
+            let avg = |sum: u64| sum as f64 / frames as f64;
+            eprintln!(
+                "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
+                avg(self.capture.perf_draws),
+                avg(self.capture.perf_entity_draws),
+                avg(self.capture.perf_culled),
+                avg(self.capture.perf_lod_culled),
+                avg(self.capture.perf_triangles),
+                avg(self.capture.perf_shadow_triangles)
+            );
+            // GPU time, when the frames were timed (--stats, ADR 0108).
+            let gpu_frames = self.capture.perf_gpu_frames;
+            if gpu_frames > 0 {
+                eprintln!(
+                    "[perf] avg GPU {:.2} ms/frame over {gpu_frames} timed frames",
+                    self.capture.perf_gpu_ms / gpu_frames as f64
+                );
+            }
+        }
+        self.print_living_report();
     }
 
     /// Whether the rings stayed full and within budget. Silent with no props.

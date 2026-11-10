@@ -4711,6 +4711,15 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // quit_game(): end the run, as closing the window does (#659)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("quit_game", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::QuitGame);
+        });
+    }
+
     // reload_scene()
     {
         let ctx = ctx.clone();

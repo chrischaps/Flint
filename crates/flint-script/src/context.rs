@@ -386,6 +386,10 @@ pub enum ScriptCommand {
         path: String,
     },
     ReloadScene,
+    /// End the run, as closing the window does (#659): natively the player
+    /// flushes its saves and exits with code 0; on the web the page lets go
+    /// of full screen and the pointer and goes back to its doorway, if any.
+    QuitGame,
     PushState {
         name: String,
     },

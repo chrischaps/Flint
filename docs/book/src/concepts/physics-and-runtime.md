@@ -295,6 +295,21 @@ code = "Escape"
 
 `demo/showcase_crucible.scene.toml` binds it this way through `demo/input_showcase.toml`, and Escape opens its pause screen. An Escape from `--input-script` never quits the player, bound or not.
 
+A game that takes Escape takes its player's way out with it, so it offers its own: an EXIT row on the title screen and the pause menu that calls `quit_game()` (#659). The run ends as closing the window ends it, with saves flushed and exit code 0. The crucible's pause screen reads Q for it:
+
+```rhai
+fn on_draw_ui() {
+    // on_draw_ui runs while a "paused" state holds the scripts; on_action doesn't
+    if is_action_just_pressed("pause") {
+        if paused { pop_state(); paused = false; } else { push_state("paused"); paused = true; }
+    } else if paused && is_action_just_pressed("quit") {
+        quit_game();
+    }
+}
+```
+
+On the web a page has no window to close: `quit_game()` leaves full screen and the pointer lock and goes back to the list of games where the page has one. A game can hide its EXIT row there with `gpu_info().platform == "web"`.
+
 ### Gamepad Support
 
 Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs) crate. The player polls gamepad events each frame and routes them through the same binding system as keyboard/mouse:

@@ -20,6 +20,31 @@ use flint_input_capture::pad::Gilrs;
 use std::path::Path;
 
 impl PlayerApp {
+    /// A script's `quit_game()` (#659): the run ends as closing the window
+    /// ends it. Natively the event loop exits after this frame's redraw, and
+    /// `exiting` flushes the persistent store, so the code is 0; a run with
+    /// `--exit-after` prints its report first, as it would at its time. A
+    /// page has no window to close: it lets go of the pointer and full
+    /// screen and goes back to its doorway (`web_page::quit`).
+    pub(super) fn quit_game(&mut self) {
+        if self.exit_requested {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.release_cursor();
+            super::web_page::quit();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            println!("[quit] a script asked to quit");
+            self.exit_requested = true;
+            if self.capture.exit_after.is_some() {
+                self.print_exit_report();
+            }
+        }
+    }
+
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
             if style_commands::is_post_style_command(&cmd) {
@@ -253,6 +278,7 @@ impl PlayerApp {
                         };
                     }
                 }
+                ScriptCommand::QuitGame => self.quit_game(),
                 ScriptCommand::PushState { name } => {
                     if self.state_machine.push_state(&name) {
                         println!("[state] Pushed '{}'", name);

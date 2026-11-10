@@ -834,6 +834,7 @@ Load new scenes, manage game state, and persist data across transitions:
 |----------|---------|-------------|
 | `load_scene(path)` | --- | Begin transition to a new scene |
 | `reload_scene()` | --- | Reload the current scene |
+| `quit_game()` | --- | End the run, as closing the window does: saves flush and the player exits with code 0 after this frame (`--exit-after`'s report prints first). On the web there's no window to close: the page leaves full screen and the pointer lock and goes back to its list of games, where it has one (`gpu_info().platform == "web"` lets a menu hide its EXIT row there) |
 | `current_scene()` | `String` | Path of the current scene |
 | `transition_progress()` | `f64` | Progress of the current transition (0.0--1.0) |
 | `transition_phase()` | `String` | Current transition phase (`"idle"`, `"exiting"`, `"loading"`, `"entering"`) |

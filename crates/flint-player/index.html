@@ -638,6 +638,19 @@
         let open;
         window.flintDoorway = new Promise((resolve) => (open = resolve));
 
+        // A script's quit_game() (#659, web_page.rs): there is no window to
+        // close, so full screen is let go of and, where the page lists more
+        // than one game, the player goes back to that list. A folder of one
+        // game has no doorway to go back to; it stays on the game.
+        let home = null;
+        window.flintQuit = () => {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen;
+          if ((document.fullscreenElement || document.webkitFullscreenElement) && exit) {
+            Promise.resolve(exit.call(document)).catch(() => {});
+          }
+          if (home) location.assign(home);
+        };
+
         const BROWSERS =
           "It plays in Chrome and Edge 113 or later, in Safari 26 or later, and in Firefox on Windows.";
 
@@ -660,6 +673,7 @@
             query.set("game", game);
             history.replaceState(null, "", `?${query}${location.hash}`);
           }
+          if (games && games.length > 1) home = `${location.pathname}${embed ? "?embed=1" : ""}`;
           const entry = games && games.find((g) => g.id === game);
           if (games && games.length && !named) return list(games);
           if (games && game && !entry) return list(games, game);
