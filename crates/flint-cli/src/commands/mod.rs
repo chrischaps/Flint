@@ -17,6 +17,7 @@ pub mod gen_refine;
 pub mod gen_store;
 pub mod golden_sheet;
 pub mod gen_strip;
+pub mod glyph_preview;
 pub mod gif_writer;
 pub mod init;
 pub mod look;

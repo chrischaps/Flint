@@ -19,6 +19,7 @@
 
 mod gpu;
 pub mod set;
+pub mod specimen;
 
 pub use gpu::{stack_pixels, GpuGlyphAtlas, GpuGlyphStack};
 pub use set::{

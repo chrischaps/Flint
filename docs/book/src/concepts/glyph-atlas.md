@@ -154,9 +154,25 @@ Every read goes through `flint_core::vfs`: the TOML through `vfs::read_to_string
 
 ## Looking at a set
 
+`flint gen` takes a glyph set as well as a procgen spec (#284). Nothing is drawn on the GPU and no cargo is involved, so it works in a game repo with the engine as a subtree:
+
 ```bash
-cargo run -p flint-render --example glyph_atlas -- out/                                # the built-in set
-cargo run -p flint-render --example glyph_atlas -- out/ fonts/terminal.glyphs.toml
+flint gen fonts/terminal.glyphs.toml -o terminal.png    # one labelled sheet
+flint gen fonts/terminal.glyphs.toml -o out/            # the sheet and every piece
+flint gen fonts/terminal.glyphs.toml --dry-run          # the summary alone
 ```
 
-This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` and `<set>_<ramp>.png` (the sphere specimen above), plus `<set>_<ramp>_calibrated.png` for each ramp that isn't calibrated already. The JSON holds each glyph's ink and, per ramp, its glyphs, `map`, coverage, band starts (`bounds`), `inversions`, its calibrated order and bands, and a 101-point ink `curve`: `luminance`, `as_mapped` (the ink each luminance gets from the ramp as it is) and `calibrated`.
+![flint gen on demo/fonts/halftone.glyphs.toml](../images/glyph-set-sheet-halftone.png)
+
+*`flint gen demo/fonts/halftone.glyphs.toml -o halftone.png`: the atlas as packed, the edge glyphs, then a row for each ramp with the sphere specimen next to the ramp's measured ink, one bar per step with its glyph underneath. The dotted line runs evenly from the first step's ink to the last. A step whose ink falls below the step before it is drawn in red, and so is the note above the chart.*
+
+Every run prints a summary with a line for each ramp: its glyphs, each step's ink, and either `rises`, `calibrated` for a `map = "coverage"` ramp, or the neighbours where a brighter input gets less ink (`GlyphRamp::inversions`):
+
+```text
+tidepool: 103 glyphs in 8x8 cells, atlas 145x64, edges -|/  still  " .~*@"  ink 0.00 0.06 0.08 0.17 0.28  rises
+  swell  " .,~=*#%@"  ink 0.00 0.06 0.06 0.08 0.16 0.17 0.31 0.20 0.28  falls at #>%; map = "coverage" fixes it (default)
+```
+
+When `-o` ends in a separator or names a folder that exists, the command writes `<set>_sheet.png`, `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each glyph's ink, plus per ramp its coverage, `rising`, `map`, `bounds`, `inversions` and calibrated order and bands), and for each ramp `<set>_<ramp>.png` (the specimen) and `<set>_<ramp>.txt` (the same specimen as text, one line per cell row, which an agent can read without opening the picture). Without `-o` it writes `<set>_sheet.png` in the current folder. Flags that only apply to procgen specs, such as `--seed`, `--batch`, `--validate` or the AI steps, are refused by name.
+
+Inside the engine, `cargo run -p flint-render --example glyph_atlas -- out/ [fonts/x.glyphs.toml]` draws the same specimens through `flint_render::glyph_atlas::specimen`. This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` and `<set>_<ramp>.png` (the sphere specimen above), plus `<set>_<ramp>_calibrated.png` for each ramp that isn't calibrated already. The JSON holds each glyph's ink and, per ramp, its glyphs, `map`, coverage, band starts (`bounds`), `inversions`, its calibrated order and bands, and a 101-point ink `curve`: `luminance`, `as_mapped` (the ink each luminance gets from the ramp as it is) and `calibrated`.
