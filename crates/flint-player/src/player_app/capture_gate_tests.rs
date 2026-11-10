@@ -264,3 +264,81 @@ fn the_script_pad_plays_on_while_the_window_is_unfocused() {
     app.tick();
     assert!(app.input.action_value("walk") > 0.7);
 }
+
+#[test]
+fn escape_is_the_games_when_it_binds_it() {
+    use super::events::Escape;
+    // Unbound: let go of the cursor, or else close the window.
+    let captured = Escape::decide(true, false);
+    assert!(captured.release_cursor && !captured.exit && !captured.to_game);
+    let free = Escape::decide(false, false);
+    assert!(!free.release_cursor && free.exit && !free.to_game);
+    // Bound (#639): the game hears it and the window stays open; a
+    // captured cursor still lets go, so its pause menu can be clicked.
+    let free = Escape::decide(false, true);
+    assert!(!free.exit && free.to_game && !free.release_cursor);
+    let captured = Escape::decide(true, true);
+    assert!(!captured.exit && captured.to_game && captured.release_cursor);
+}
+
+#[test]
+fn a_shot_that_never_reached_the_disk_fails_the_run() {
+    use super::{CaptureConfig, CAPTURE_RETRIES};
+    // No screenshot asked for: nothing can be missing.
+    assert_eq!(
+        CaptureConfig::new(None, 0.0, None, Some(1.0)).missing(),
+        None
+    );
+
+    // Asked for, and the run ended first.
+    let mut capture = CaptureConfig::new(Some("x.png".into()), 3.0, None, Some(2.0));
+    capture.last_frame_time = Some(2.0);
+    let why = capture.missing().expect("missing");
+    assert!(
+        why.contains("x.png") && why.contains("before --screenshot-at"),
+        "{why}"
+    );
+
+    // A failed read-back is retried, and `--exit-after` waits for it.
+    let mut capture = CaptureConfig::new(Some("x.png".into()), 1.0, None, Some(1.2));
+    assert!(!capture.shot_pending(0.5), "not due yet");
+    assert!(capture.shot_pending(1.2));
+    capture.taken = true;
+    capture.note_failure("read-back of x.png failed: lost".into());
+    assert!(!capture.taken, "tried again next frame");
+    assert!(capture.shot_pending(1.3), "the exit waits");
+    capture.taken = true;
+    capture.written = 1;
+    assert!(!capture.shot_pending(1.3));
+    assert_eq!(capture.missing(), None, "a retry that wrote it passes");
+
+    // Retries run out: the exit stops waiting and the reason is reported.
+    let mut capture = CaptureConfig::new(Some("x.png".into()), 0.0, None, Some(1.0));
+    for _ in 0..=CAPTURE_RETRIES {
+        capture.taken = true;
+        capture.note_failure("read-back of x.png failed: lost".into());
+    }
+    assert!(capture.taken, "given up");
+    assert!(!capture.shot_pending(2.0));
+    let why = capture.missing().expect("missing");
+    assert!(
+        why.contains("never written") && why.contains("read-back"),
+        "{why}"
+    );
+
+    // A sequence that lost a frame fails too: a capture needs them all.
+    let mut capture = CaptureConfig::new(Some("f.png".into()), 0.0, Some(0.1), None);
+    capture.written = 9;
+    capture.note_failure("failed to save f_0004.png: disk full".into());
+    let why = capture.missing().expect("missing");
+    assert!(why.contains("lost 1 of 10"), "{why}");
+}
+
+#[test]
+fn a_player_that_failed_to_start_reports_it() {
+    let mut app = headless_app("");
+    assert_eq!(app.run_failure(), None);
+    app.init_error = Some("Failed to get adapter".into());
+    let why = app.run_failure().expect("failure");
+    assert!(why.contains("failed to start"), "{why}");
+}

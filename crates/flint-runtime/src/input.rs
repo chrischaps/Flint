@@ -271,6 +271,16 @@ impl InputConfig {
         }
     }
 
+    /// Whether any action binds `key`. The player asks this of Escape: a
+    /// game that binds it gets it, and the window doesn't close (#639).
+    pub fn binds_key(&self, key: KeyCode) -> bool {
+        self.actions.values().any(|action| {
+            action.bindings.iter().any(
+                |b| matches!(b, Binding::Key { code, .. } if parse_key_code(code) == Some(key)),
+            )
+        })
+    }
+
     pub fn from_toml_str(content: &str) -> Result<Self> {
         let config: InputConfig = toml::from_str(content)
             .map_err(|e| FlintError::RuntimeError(format!("invalid input config: {e}")))?;
@@ -1536,6 +1546,29 @@ pub fn parse_key_code(code: &str) -> Option<KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binds_key_sees_a_games_escape() {
+        let built_in = InputConfig::built_in_defaults();
+        assert!(!built_in.binds_key(KeyCode::Escape));
+        assert!(built_in.binds_key(KeyCode::KeyW));
+        let game = InputConfig::from_toml_str(
+            r#"
+version = 1
+game_id = "menus"
+[actions.back]
+kind = "button"
+[[actions.back.bindings]]
+type = "key"
+code = "Escape"
+"#,
+        )
+        .unwrap();
+        assert!(game.binds_key(KeyCode::Escape));
+        let mut state = InputState::new();
+        state.merge_bindings(game).unwrap();
+        assert!(state.config().binds_key(KeyCode::Escape));
+    }
 
     #[test]
     fn every_key_code_name_round_trips() {

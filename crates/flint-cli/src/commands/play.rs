@@ -183,6 +183,10 @@ pub fn run(args: PlayArgs) -> Result<()> {
     app.set_schema_paths(all_schemas);
 
     event_loop.run_app(&mut app)?;
+    // A player that failed to start exits non-zero (#639).
+    if let Some(failure) = app.run_failure() {
+        anyhow::bail!(failure);
+    }
 
     Ok(())
 }
