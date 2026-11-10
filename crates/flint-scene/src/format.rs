@@ -1,5 +1,6 @@
 //! Scene file format definitions
 
+use flint_core::toml_util::edit_distance;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -547,26 +548,6 @@ fn closest_name(key: &str, known: &[String]) -> Option<String> {
         .filter(|(d, _)| *d <= 3)
         .min_by_key(|(d, _)| *d)
         .map(|(_, k)| k.clone())
-}
-
-/// Levenshtein distance, small and good enough for field names.
-fn edit_distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut prev = row[0];
-        row[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cur = row[j + 1];
-            row[j + 1] = if ca == *cb {
-                prev
-            } else {
-                1 + prev.min(row[j]).min(row[j + 1])
-            };
-            prev = cur;
-        }
-    }
-    row[b.len()]
 }
 
 fn default_edge_depth() -> f32 {

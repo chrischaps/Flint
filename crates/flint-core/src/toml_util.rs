@@ -3,8 +3,16 @@
 //! TOML integers and floats are distinct types — `1` parses as integer, `1.0` as
 //! float. These helpers coerce either form into Rust numeric types so callers
 //! don't have to repeat the `as_float().or_else(|| as_integer().map(...))` dance.
+//!
+//! [`check_keys`] checks a fixed-shape file's keys against a [`Shape`], so a
+//! misspelled or misplaced key is reported instead of silently ignored (#282).
 
 use crate::Vec3;
+
+mod keys;
+pub use keys::{
+    check_keys, closest_key, edit_distance, Hint, IssueKind, KeyIssue, Shape, TablePath,
+};
 
 /// Coerce a TOML integer or float to `f64`.
 pub fn toml_f64(v: &toml::Value) -> Option<f64> {

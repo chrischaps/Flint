@@ -104,7 +104,7 @@ run_2   = [128, 64, 64, 64]
 run_3   = [192, 64, 64, 64]
 ```
 
-Each region is `[x, y, width, height]` in pixel coordinates. The `AtlasRegistry` loads all `.atlas.toml` files from a directory and resolves region names to UV rectangles at runtime.
+Each region is `[x, y, width, height]` in pixel coordinates. The `AtlasRegistry` loads all `.atlas.toml` files from a directory and resolves region names to UV rectangles at runtime. A region that isn't four whole numbers is skipped with a warning naming it, and so is any key the format doesn't know (see [A key belongs to the header above it](scenes.md#a-key-belongs-to-the-header-above-it)).
 
 ## Sprite Sheet Animation
 
