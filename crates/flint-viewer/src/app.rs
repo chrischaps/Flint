@@ -1026,7 +1026,6 @@ impl ViewerApp {
             return;
         };
         renderer.ensure_kuwahara_resources(&context.device, &context.queue);
-        renderer.ensure_contour_resources(&context.device);
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
@@ -1171,9 +1170,6 @@ impl ViewerApp {
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
-                }
-                if flags.contour_needs_resources {
-                    renderer.ensure_contour_resources(&context.device);
                 }
             }
             if flags.shadows_changed {
@@ -2414,6 +2410,9 @@ impl ViewerApp {
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
+            // The user style and glyph set polls ask a watcher thread from
+            // here on, never the disk in a frame (#633)
+            flint_core::file_watch::start();
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize viewer: {e:#}");
                 event_loop.exit();

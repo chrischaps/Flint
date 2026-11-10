@@ -566,11 +566,13 @@ pub struct RenderArgs {
     pub mode_params: Option<[f32; 4]>,
 
     /// How far each drawing moves the paint, as a share of the Kuwahara radius
-    /// (0 = still; needs the scene's [wooze] table)
+    /// (0 = still; needs the scene's [wooze] table): `--style kuwahara:boil=..`
     #[arg(long)]
     pub kuwahara_boil: Option<f32>,
 
-    /// Ink lines over the scene, from breaks in depth and luminance
+    /// Ink lines over the scene, from breaks in depth and luminance: the
+    /// `contour` style (#599), as `--style contour`; the `--contour-*` flags
+    /// set its table's keys
     #[arg(long)]
     pub contour: bool,
 
@@ -590,7 +592,7 @@ pub struct RenderArgs {
     #[arg(long)]
     pub contour_luma: Option<f32>,
 
-    /// The ink's colour as linear R,G,B (enables contour)
+    /// The ink's colour as linear R,G,B (enables contour; `--style contour:color=r/g/b`)
     #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub contour_color: Option<[f32; 3]>,
 
@@ -1067,6 +1069,9 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
     if let Some(env) = &scene_file.environment {
+        // No shadows, no built-in lights (#627)
+        renderer.set_scene_shadows(env.casts_shadows());
+        renderer.set_default_lights(env.uses_default_lights());
         if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
             renderer.set_ambient(
                 env.ambient_sky
@@ -2149,36 +2154,35 @@ fn post_process_config(
     }
 }
 
-/// The shading boil's and the contour's flags (#214) over `pp`. Applied again
-/// over a sweep column's preset, whose `[boil]` they win over.
+/// The shading boil's and the contour's flags (#214) over `pp`: shorthands
+/// for `--style kuwahara:boil=..` and `--style contour:width=..`, the two
+/// styles' tables since #599. Applied again over a sweep column's preset,
+/// whose `[boil]` they win over.
 fn apply_boil_flags(args: &RenderArgs, pp: &mut flint_render::PostProcessConfig) {
     if let Some(boil) = args.kuwahara_boil {
-        pp.kuwahara_boil = boil;
-    }
-    if args.contour {
-        pp.contour_enabled = true;
+        pp.styles.set_param("kuwahara", "boil", boil);
     }
     let contour = [
-        (args.contour_width, &mut pp.contour_width),
-        (args.contour_threshold, &mut pp.contour_threshold),
-        (args.contour_strength, &mut pp.contour_strength),
-        (args.contour_luma, &mut pp.contour_luma),
-        (args.contour_fade, &mut pp.contour_fade),
-        (args.contour_boil, &mut pp.contour_boil),
+        ("width", args.contour_width),
+        ("threshold", args.contour_threshold),
+        ("strength", args.contour_strength),
+        ("luma", args.contour_luma),
+        ("fade", args.contour_fade),
+        ("boil", args.contour_boil),
     ];
-    let mut any = false;
-    for (flag, field) in contour {
+    let mut any = args.contour;
+    for (param, flag) in contour {
         if let Some(value) = flag {
-            *field = value;
+            pp.styles.set_param("contour", param, value);
             any = true;
         }
     }
     if let Some(color) = args.contour_color {
-        pp.contour_color = color;
+        pp.styles.set_color("contour", "color", color);
         any = true;
     }
     if any {
-        pp.contour_enabled = true;
+        pp.styles.set_enabled("contour", true);
     }
     if let Some(on) = args.boil_on {
         pp.boil_on = on;
@@ -2881,6 +2885,9 @@ impl Stage {
 
         // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
         if let Some(env) = &scene_file.environment {
+            // No shadows, no built-in lights (#627)
+            renderer.set_scene_shadows(env.casts_shadows());
+            renderer.set_default_lights(env.uses_default_lights());
             if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
                 renderer.set_ambient(
                     env.ambient_sky
@@ -3009,12 +3016,9 @@ impl Stage {
         // under the CLI's boil flags
         if let Some(boil) = column_preset.as_ref().and_then(|preset| preset.boil) {
             let on = boil.enabled.unwrap_or(true);
-            if let Some(paint) = boil.kuwahara {
-                pp_config.kuwahara_boil = if on { paint } else { 0.0 };
-            }
-            if let Some(ink) = boil.contour {
-                pp_config.contour_boil = if on { ink } else { 0.0 };
-            }
+            let (paint, ink) = pp_config.boil_amounts();
+            let amount = |v: Option<f32>, was: f32| v.map_or(was, |v| if on { v } else { 0.0 });
+            pp_config.set_boil_amounts(amount(boil.kuwahara, paint), amount(boil.contour, ink));
             if let Some(cadence) = boil.on {
                 pp_config.boil_on = cadence.clamp(1, 3);
             }
@@ -3023,7 +3027,8 @@ impl Stage {
         // The shading boil's drawing (#214) comes from the field where the camera
         // is. --boil-time picks one and holds it, in one tick at the tempo of that
         // moment. Otherwise each capture stamps the drawing its clock has reached.
-        let boil_wanted = pp_config.kuwahara_boil > 0.0 || pp_config.contour_boil > 0.0;
+        let (paint, ink) = pp_config.boil_amounts();
+        let boil_wanted = paint > 0.0 || ink > 0.0;
         match (&wooze, args.boil_time) {
             (Some(clocks), Some(time)) => {
                 pp_config.boil =
@@ -3037,7 +3042,6 @@ impl Stage {
         renderer.set_post_process_config(pp_config);
         renderer.ensure_style_resources(&ctx.device);
         renderer.ensure_fxaa_resources(&ctx.device);
-        renderer.ensure_contour_resources(&ctx.device);
 
         if let Some(scale) = args.render_scale {
             renderer.set_render_scale(&ctx.device, scale);

@@ -158,7 +158,6 @@ impl Gpu {
         bench
             .renderer
             .ensure_kuwahara_resources(&self.device, &self.queue);
-        bench.renderer.ensure_contour_resources(&self.device);
         bench.renderer.set_boil(boil);
         bench.renderer.update_from_world(&bench.world, &self.device);
         bench.renderer.render_to(
@@ -218,10 +217,8 @@ fn drawing(seed: u32, amount: f32) -> BoilFrame {
     }
 }
 
-fn inked() -> PostProcessConfig {
+fn bare() -> PostProcessConfig {
     PostProcessConfig {
-        contour_enabled: true,
-        contour_boil: 1.0,
         ssao_enabled: false,
         bloom_enabled: false,
         vignette_enabled: false,
@@ -229,18 +226,29 @@ fn inked() -> PostProcessConfig {
     }
 }
 
+/// `config` with `style`'s boil at `amount`.
+fn boiling(mut config: PostProcessConfig, style: &str, amount: f32) -> PostProcessConfig {
+    config.styles.set_param(style, "boil", amount);
+    config
+}
+
+/// `config` with the contour style on or off.
+fn contour(mut config: PostProcessConfig, on: bool) -> PostProcessConfig {
+    config.styles.set_enabled("contour", on);
+    config
+}
+
+/// The contour, a registered style since #599, boiling.
+fn inked() -> PostProcessConfig {
+    boiling(contour(bare(), true), "contour", 1.0)
+}
+
 fn painted() -> PostProcessConfig {
-    let mut config = PostProcessConfig {
-        kuwahara_boil: 0.5,
-        ssao_enabled: false,
-        bloom_enabled: false,
-        vignette_enabled: false,
-        ..Default::default()
-    };
-    // Kuwahara is a style since #298; its boil stays a flat key (#487)
+    let mut config = bare();
+    // Kuwahara is a style since #298, and its boil one of its params (#599)
     config.styles.set_enabled("kuwahara", true);
     config.styles.set_param("kuwahara", "radius", 3.0);
-    config
+    boiling(config, "kuwahara", 0.5)
 }
 
 /// Pixels darker by more than a little than the same pixel of `plain`.
@@ -255,15 +263,9 @@ fn darkened(with: &[u8], plain: &[u8]) -> usize {
 fn the_contour_inks_a_silhouette_and_leaves_flat_ground_alone() {
     let gpu = gpu_or_skip!();
     let mut bench = gpu.bench();
-    let plain = PostProcessConfig {
-        contour_enabled: false,
-        ..inked()
-    };
+    let plain = contour(inked(), false);
     let without = gpu.pixels(&mut bench, &plain, BoilFrame::default());
-    let still = PostProcessConfig {
-        contour_boil: 0.0,
-        ..inked()
-    };
+    let still = boiling(inked(), "contour", 0.0);
     let with = gpu.pixels(&mut bench, &still, BoilFrame::default());
 
     let lines = darkened(&with, &without);
@@ -313,14 +315,8 @@ fn with_no_amount_the_drawing_means_nothing() {
     }
     // Likewise a scene with a field that hasn't asked its passes to boil.
     for config in [
-        PostProcessConfig {
-            contour_boil: 0.0,
-            ..inked()
-        },
-        PostProcessConfig {
-            kuwahara_boil: 0.0,
-            ..painted()
-        },
+        boiling(inked(), "contour", 0.0),
+        boiling(painted(), "kuwahara", 0.0),
     ] {
         let a = gpu.pixels(&mut bench, &config, drawing(1, 1.0));
         let b = gpu.pixels(&mut bench, &config, drawing(2, 1.0));
@@ -345,10 +341,7 @@ fn the_contour_survives_a_resize() {
 fn turning_the_contour_off_goes_back_to_the_same_pixels() {
     let gpu = gpu_or_skip!();
     let mut bench = gpu.bench();
-    let off = PostProcessConfig {
-        contour_enabled: false,
-        ..inked()
-    };
+    let off = contour(inked(), false);
     let never_on = gpu.pixels(&mut bench, &off, drawing(4, 1.0));
     let on = gpu.pixels(&mut bench, &inked(), drawing(4, 1.0));
     let off_again = gpu.pixels(&mut bench, &off, drawing(4, 1.0));

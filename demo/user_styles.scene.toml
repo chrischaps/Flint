@@ -9,7 +9,7 @@
 #
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --output holo.png
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --style risograph
-#   cargo run --bin flint -- render demo/user_styles.scene.toml --style contour
+#   cargo run --bin flint -- render demo/user_styles.scene.toml --style contour_map
 #   cargo run --bin flint -- render demo/user_styles.scene.toml --style radial_blur
 #
 # radial_blur's loop runs a parameter's count of times; every user loop is

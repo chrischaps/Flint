@@ -2206,10 +2206,12 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
 
 /// The modified time of `path` on disk, for the reload polls (native
 /// only: hot reload reads the disk, never the vfs, and a bundle never
-/// changes).
+/// changes). Through `flint_core::file_watch`, which in the player never
+/// waits on the disk (#633): the stamp taken at a load and the one a poll
+/// compares it with must come from the same place.
 #[cfg(not(target_arch = "wasm32"))]
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+    flint_core::file_watch::modified(path)
 }
 
 /// Whether user WGSL calls `flint_style_blend` outside a line comment.
@@ -2496,14 +2498,10 @@ pub fn reload_changed(scene_dir: &Path) -> Reload {
         static REFUSED: Mutex<BTreeMap<PathBuf, Option<std::time::SystemTime>>> =
             Mutex::new(BTreeMap::new());
         for dir in style_dirs(scene_dir) {
-            let Ok(mut entries) = std::fs::read_dir(&dir).map(|rd| {
-                rd.filter_map(|e| e.ok().map(|e| e.path()))
-                    .collect::<Vec<_>>()
-            }) else {
+            let Some(entries) = flint_core::file_watch::list(&dir) else {
                 continue;
             };
-            entries.sort();
-            for path in entries {
+            for (path, _) in entries {
                 let is_style = path
                     .file_name()
                     .and_then(|f| f.to_str())
@@ -3083,7 +3081,7 @@ impl ImageSet {
             };
             let path = self.dir.join(&want);
             #[cfg(not(target_arch = "wasm32"))]
-            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let now = modified(&path);
             #[cfg(target_arch = "wasm32")]
             let now: Option<std::time::SystemTime> = None;
             let is_loaded = slot.loaded.as_ref().is_some_and(|(f, _)| *f == want);
@@ -3277,7 +3275,7 @@ impl CustomPass {
         let path = &source.passes[i].wgsl_path;
         let gpu = &self.passes[i];
         #[cfg(not(target_arch = "wasm32"))]
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let modified = modified(path);
         let user = match flint_core::vfs::read_to_string(path) {
             Ok(user) => user,
             Err(e) => {
@@ -3422,9 +3420,7 @@ impl CustomPass {
                     continue;
                 }
                 build.since_poll = 0;
-                let now = std::fs::metadata(&pass.wgsl_path)
-                    .and_then(|m| m.modified())
-                    .ok();
+                let now = modified(&pass.wgsl_path);
                 now.is_some() && now != build.modified
             };
             if changed {

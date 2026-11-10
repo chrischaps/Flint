@@ -1072,15 +1072,106 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     return;
                 };
                 let world = unsafe { c.world_mut() };
-                let value = toml::Value::Array(vec![
+                let colour = toml::Value::Array(vec![
                     toml::Value::Float(r),
                     toml::Value::Float(g),
                     toml::Value::Float(b),
                     toml::Value::Float(a),
                 ]);
+                // An entry that already holds a light (a table) keeps it.
+                let holds_light = world
+                    .get_components(eid)
+                    .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
+                    .and_then(|m| m.get(material))
+                    .is_some_and(|v| v.is_table());
+                let table = holds_light
+                    .then(|| material_override_table(world, eid, material))
+                    .flatten();
+                let value = match table {
+                    Some(mut t) => {
+                        t.insert("base_color".into(), colour);
+                        toml::Value::Table(t)
+                    }
+                    None => colour,
+                };
                 let _ = world.set_field(eid, comp::MATERIAL_OVERRIDES, material, value);
             },
         );
+    }
+
+    // set_material_emissive(entity_id, material, r, g, b[, strength]) (#624)
+    // Recolours one named glTF material's emission (linear RGB) on this
+    // entity and every descendant; `strength` replaces its
+    // emissive_strength. Writes `material_overrides.<material>` as a table,
+    // keeping a base colour set by set_material_override.
+    fn set_material_emissive(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        id: i64,
+        material: &str,
+        rgb: [f64; 3],
+        strength: Option<f64>,
+    ) {
+        if material.is_empty() {
+            return;
+        }
+        let mut c = crate::lock_or_recover(ctx);
+        let Some(eid) = c.setter_target("set_material_emissive", id) else {
+            return;
+        };
+        let world = unsafe { c.world_mut() };
+        let mut t = material_override_table(world, eid, material).unwrap_or_default();
+        t.insert(
+            "emissive".into(),
+            toml::Value::Array(rgb.iter().map(|&v| toml::Value::Float(v)).collect()),
+        );
+        if let Some(s) = strength {
+            t.insert("emissive_strength".into(), toml::Value::Float(s));
+        }
+        let _ = world.set_field(
+            eid,
+            comp::MATERIAL_OVERRIDES,
+            material,
+            toml::Value::Table(t),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_emissive",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64| {
+                set_material_emissive(&ctx, id, material, [r, g, b], None);
+            },
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_emissive",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64, strength: f64| {
+                set_material_emissive(&ctx, id, material, [r, g, b], Some(strength));
+            },
+        );
+    }
+
+    // clear_material_override(entity_id, material) (#624)
+    // Drops the entity's own override of one material, base colour and
+    // light alike, so the material (or an ancestor's override) shows again.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_material_override", move |id: i64, material: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("clear_material_override", id) else {
+                return;
+            };
+            let world = unsafe { c.world_mut() };
+            if let Some(t) = world
+                .get_components_mut(eid)
+                .and_then(|comps| comps.get_mut(comp::MATERIAL_OVERRIDES))
+                .and_then(|v| v.as_table_mut())
+            {
+                t.remove(material);
+            }
+        });
     }
 
     // find_entities_with(component: &str) -> Array of entity IDs
@@ -1109,6 +1200,29 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
 }
 
 // ─── Spline API ──────────────────────────────────────────
+
+/// The entity's own `material_overrides.<material>` as a table (#624): a
+/// table as is, a plain base colour array as `{ base_color = [...] }`,
+/// `None` when it has none.
+fn material_override_table(
+    world: &flint_ecs::FlintWorld,
+    id: EntityId,
+    material: &str,
+) -> Option<toml::Table> {
+    match world
+        .get_components(id)?
+        .get(comp::MATERIAL_OVERRIDES)?
+        .get(material)?
+    {
+        toml::Value::Table(t) => Some(t.clone()),
+        colour @ toml::Value::Array(_) => {
+            let mut t = toml::Table::new();
+            t.insert("base_color".into(), colour.clone());
+            Some(t)
+        }
+        _ => None,
+    }
+}
 
 fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // spline_closest_point(spline_entity, x, y, z) -> Map #{t, x, y, z, dist_sq}

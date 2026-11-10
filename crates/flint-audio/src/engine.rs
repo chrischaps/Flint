@@ -18,7 +18,7 @@
     allow(dead_code, unused_imports)
 )]
 
-use crate::decode::{DecodeQueue, Need};
+use crate::decode::{decode_all, DecodeQueue, Need};
 pub use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::{volume_and_pan, Ears, Falloff};
 use crate::remote::{Command, Link, RemoteTrack, RemoteVoice, SoundLoad, Target};
@@ -34,14 +34,13 @@ use std::time::Duration;
 use web_time::Instant;
 
 /// `StaticSoundData::from_file`, read through the vfs: the bytes come from
-/// the active file source (the disk, or the web's bundle) and kira decodes
-/// them from memory, which is all its `from_file` does after opening the
-/// file. kira leaves `from_file` out of wasm32 builds anyway.
-fn static_sound_from_file(
-    path: impl AsRef<Path>,
-) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
-    let bytes = vfs::read(path)?;
-    StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
+/// the active file source (the disk, or the web's bundle) and are decoded
+/// from memory. Not through kira's loader, which keeps a Vorbis stream's
+/// end padding (#632): [`decode_all`] trims it. kira leaves `from_file` out
+/// of wasm32 builds anyway.
+fn static_sound_from_file(path: impl AsRef<Path>) -> std::result::Result<StaticSoundData, String> {
+    let bytes = vfs::read(path).map_err(|e| e.to_string())?;
+    decode_all(bytes)
 }
 
 /// The kira backend a local mix goes through: cpal's default device on the
@@ -753,17 +752,66 @@ impl AudioEngine {
                     "'{name}' skipped: still decoding, moved to the front of the queue"
                 )))
             }
-            None => Err(flint_core::FlintError::AudioError(format!(
-                "Sound not cached: {name}"
-            ))),
+            None => Err(self.not_cached(name)),
         }
+    }
+
+    /// Whether a sound is cached or waiting to be decoded under `name`.
+    fn knows_sound(&self, name: &str) -> bool {
+        self.has_sound(name) || self.decodes.contains(name)
+    }
+
+    /// The name a sound is kept under (#629). A scene's preload keys each
+    /// file by its path from the game root, `audio/whoosh.ogg`, so a name
+    /// that isn't one tries `audio/<name>`, then `audio/<name>.ogg`,
+    /// `.wav`, `.flac` and `.mp3`: `play_sound("whoosh")` finds it. A name
+    /// cached as given always wins, so a sound loaded as "blip" stays
+    /// "blip". Nothing found: the name as given, for the error to name.
+    pub fn resolve_sound<'a>(&self, name: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.knows_sound(name) {
+            return name.into();
+        }
+        let bare = name.strip_prefix("audio/").unwrap_or(name);
+        let mut candidates = vec![format!("audio/{bare}")];
+        candidates.extend(
+            SOUND_EXTENSIONS
+                .iter()
+                .map(|ext| format!("audio/{bare}.{ext}")),
+        );
+        candidates
+            .into_iter()
+            .find(|c| self.knows_sound(c))
+            .map_or(name.into(), Into::into)
+    }
+
+    /// "Sound not cached", naming the nearest sound there is, since in play
+    /// the failure is otherwise only a warning.
+    pub fn not_cached(&self, name: &str) -> flint_core::FlintError {
+        let names = self
+            .sound_cache
+            .keys()
+            .map(String::as_str)
+            .chain(
+                match &self.mixer {
+                    Mixer::Remote(r) => Some(r.sounds.keys().map(String::as_str)),
+                    _ => None,
+                }
+                .into_iter()
+                .flatten(),
+            )
+            .chain(self.decodes.names());
+        let hint = match nearest_sound(name, names) {
+            Some(near) => format!(" (nearest: \"{near}\")"),
+            None => " (no sounds are cached)".to_string(),
+        };
+        flint_core::FlintError::AudioError(format!("Sound not cached: {name}{hint}"))
     }
 
     /// Cache an encoded sound held in memory (WAV, OGG, FLAC or MP3 bytes,
     /// e.g. from `include_bytes!`) under `name`. Replaces any sound already
     /// cached under that name; sounds already playing keep the old data.
     pub fn load_sound_from_bytes(&mut self, name: &str, bytes: Vec<u8>) -> Result<()> {
-        let data = StaticSoundData::from_cursor(std::io::Cursor::new(bytes)).map_err(|e| {
+        let data = decode_all(bytes).map_err(|e| {
             flint_core::FlintError::AudioError(format!("Failed to decode '{name}': {e}"))
         })?;
         self.cache_sound(name, data);
@@ -960,9 +1008,7 @@ impl AudioEngine {
         let mut data = self
             .sound_cache
             .get(sound_name)
-            .ok_or_else(|| {
-                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
-            })?
+            .ok_or_else(|| self.not_cached(sound_name))?
             .volume(amplitude_to_db(volume * self.master_volume))
             .playback_rate(kira::PlaybackRate(pitch));
         if looping {
@@ -1013,6 +1059,7 @@ impl AudioEngine {
         pitch: f64,
         looping: bool,
     ) -> Result<SoundHandle> {
+        let sound_name = &*self.resolve_sound(sound_name);
         let play_error = |e: kira::PlaySoundError<()>| {
             flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
         };
@@ -1054,6 +1101,7 @@ impl AudioEngine {
         if !self.is_available() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
+        let sound_name = &*self.resolve_sound(sound_name);
         self.ensure_decoded(sound_name)?;
         if matches!(self.mixer, Mixer::Remote(_)) {
             return self.play_remote(
@@ -1112,6 +1160,7 @@ impl AudioEngine {
         rolloff: f32,
         bus: Bus,
     ) -> Result<()> {
+        let sound_name = &*self.resolve_sound(sound_name);
         self.ensure_decoded(sound_name)?;
         let falloff = Falloff {
             min: distances.0,
@@ -1322,6 +1371,47 @@ fn to_glam_vec3(v: Vec3) -> glam::Vec3 {
     glam::Vec3::new(v.x, v.y, v.z)
 }
 
+/// The extensions a bare sound name tries, in order (#629).
+pub const SOUND_EXTENSIONS: [&str; 4] = ["ogg", "wav", "flac", "mp3"];
+
+/// A name's file stem: `audio/sfx/whoosh.ogg` -> `whoosh`.
+fn sound_stem(name: &str) -> &str {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    file.rsplit_once('.').map_or(file, |(stem, _)| stem)
+}
+
+/// Edit distance between two short names, case folded.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.to_lowercase().chars().collect();
+    let b: Vec<char> = b.to_lowercase().chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let next = (diag + usize::from(ca != cb))
+                .min(row[j] + 1)
+                .min(row[j + 1] + 1);
+            diag = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
+
+/// The known name nearest `name`, by its stem first and then the whole
+/// name, ties to the first in name order so the hint is the same each run.
+fn nearest_sound<'a>(name: &str, known: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let stem = sound_stem(name);
+    known.min_by_key(|k| {
+        (
+            edit_distance(stem, sound_stem(k)),
+            edit_distance(name, k),
+            *k,
+        )
+    })
+}
+
 /// Convert linear amplitude (0.0–2.0) to decibels
 pub fn amplitude_to_db(amplitude: f64) -> kira::Decibels {
     if amplitude <= 0.0 {
@@ -1387,6 +1477,43 @@ mod tests {
         engine.load_sound_from_bytes("wav", wav).unwrap();
         assert_eq!(engine.sound_cache["wav"].frames.len(), 441);
         assert!(engine.load_sound_from_bytes("junk", vec![1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn a_bare_stem_finds_the_preloaded_file_and_a_miss_names_the_nearest() {
+        // #629: the scene preload keys files by path, extension and all.
+        let mut engine = AudioEngine::silent();
+        let tick = [0.0, 0.1, 0.0];
+        for name in ["audio/whoosh.ogg", "audio/thud.wav", "blip"] {
+            engine
+                .load_sound_from_samples(name, 22_050, &[&tick])
+                .unwrap();
+        }
+        // A queued sound counts too, before it is decoded.
+        engine
+            .decodes
+            .push("audio/rain.flac", crate::decode::tests::wav(8), Need::Later);
+        let resolve = |n: &str| engine.resolve_sound(n).into_owned();
+        assert_eq!(resolve("audio/whoosh.ogg"), "audio/whoosh.ogg");
+        assert_eq!(resolve("whoosh"), "audio/whoosh.ogg");
+        assert_eq!(resolve("audio/whoosh"), "audio/whoosh.ogg");
+        assert_eq!(resolve("thud"), "audio/thud.wav");
+        assert_eq!(resolve("thud.wav"), "audio/thud.wav");
+        assert_eq!(resolve("blip"), "blip", "a name cached as given wins");
+        assert_eq!(resolve("whosh"), "whosh", "a miss stays as written");
+        assert_eq!(resolve("rain"), "audio/rain.flac");
+
+        let message = |n: &str| engine.not_cached(n).to_string();
+        assert!(
+            message("whosh").contains("nearest: \"audio/whoosh.ogg\""),
+            "{}",
+            message("whosh")
+        );
+        assert!(message("audio/thudd.ogg").contains("nearest: \"audio/thud.wav\""));
+        assert!(AudioEngine::silent()
+            .not_cached("x")
+            .to_string()
+            .contains("no sounds are cached"));
     }
 
     #[test]

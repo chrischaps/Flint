@@ -157,6 +157,19 @@ fn validate_callbacks(ast: &AST, source_path: &str) {
     }
 }
 
+/// A Rhai engine that parses as Flint's does, with none of its API: what
+/// [`ScriptEngine::new`] starts from, and what the hot-reload worker compiles
+/// with off the frame thread (#633). Compiling needs no registered function
+/// (the default optimizer folds only built-in operators, and Flint registers
+/// no operator, custom syntax or symbol), so its ASTs are the same; a limit
+/// or parser setting belongs here, not in `new`, to keep them so.
+pub fn compiler() -> Engine {
+    let mut engine = Engine::new();
+    // Game scripts can have deep nesting (state machines, type checks, etc.)
+    engine.set_max_expr_depths(128, 128);
+    engine
+}
+
 /// The scripting engine — owns the Rhai Engine and per-entity script instances
 pub struct ScriptEngine {
     engine: Engine,
@@ -174,10 +187,7 @@ pub struct ScriptEngine {
 impl ScriptEngine {
     pub fn new() -> Self {
         let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
-        let mut engine = Engine::new();
-
-        // Game scripts can have deep nesting (state machines, type checks, etc.)
-        engine.set_max_expr_depths(128, 128);
+        let mut engine = compiler();
 
         // Register all API functions
         api::register_all(&mut engine, ctx.clone());
@@ -209,6 +219,19 @@ impl ScriptEngine {
     pub fn reset_module_cache(&mut self) {
         if let Some(dir) = self.module_base.clone() {
             self.set_module_base(dir);
+        }
+    }
+
+    /// [`Self::reset_module_cache`] with modules already compiled (by the
+    /// hot-reload worker, #633), keyed by file: an import of one of them
+    /// evaluates its AST instead of reading the file in a frame.
+    pub fn reset_module_cache_with(
+        &mut self,
+        compiled: std::collections::HashMap<std::path::PathBuf, Result<AST, String>>,
+    ) {
+        if let Some(dir) = self.module_base.clone() {
+            self.engine
+                .set_module_resolver(VfsModuleResolver::new(dir).with_compiled(compiled));
         }
     }
 
@@ -248,6 +271,54 @@ impl ScriptEngine {
             tracing::warn!("module init error ({}): {}", instance.source_path, e);
         }
         self.scripts.insert(entity, instance);
+    }
+
+    /// Hot-reload an entity's script with a new AST (#634). The entity's scope
+    /// is kept, so every variable it already has keeps its value; a top-level
+    /// `let` or `const` the new source adds gets its initial value. Returns the
+    /// names it added (empty when there is no script on `entity`).
+    ///
+    /// The new source's top-level statements run once, into a scope of their
+    /// own, and only names the kept scope lacks are copied over. Running them
+    /// again has no cost a script doesn't already pay: `call_fn` evaluates a
+    /// script's top-level statements before every callback (that is how a
+    /// global `import` reaches `on_update`), rewinding the `let`s it pushes.
+    pub fn reload_script(&mut self, entity: EntityId, ast: AST) -> Vec<String> {
+        let Some(script) = self.scripts.get_mut(&entity) else {
+            return Vec::new();
+        };
+        script.hot_reload(ast);
+
+        let mut fresh = Scope::new();
+        if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
+            tracing::warn!(
+                "module init error on reload ({}): {}",
+                script.source_path,
+                e
+            );
+        }
+        // A name the source declares twice appears twice, oldest first; the
+        // last declaration is the one the callbacks would see.
+        let mut new_vars: Vec<(String, bool, rhai::Dynamic)> = Vec::new();
+        for (name, is_constant, value) in fresh.iter() {
+            if script.scope.contains(name) {
+                continue;
+            }
+            match new_vars.iter_mut().find(|(n, ..)| n == name) {
+                Some(entry) => *entry = (name.to_string(), is_constant, value),
+                None => new_vars.push((name.to_string(), is_constant, value)),
+            }
+        }
+        for (name, is_constant, value) in &new_vars {
+            if *is_constant {
+                script
+                    .scope
+                    .push_constant_dynamic(name.clone(), value.clone());
+            } else {
+                script.scope.push_dynamic(name.clone(), value.clone());
+            }
+        }
+        new_vars.into_iter().map(|(name, ..)| name).collect()
     }
 
     /// Say which entity a script is on, by name, so it runs in its place in
@@ -1474,6 +1545,96 @@ mod tests {
     }
 
     #[test]
+    fn test_hot_reload_compiles_on_the_worker() {
+        // #633: with the worker, a frame only swaps finished ASTs in. An
+        // edited script and an edited lib module both arrive a few calls
+        // later, and an import after the lib change takes the worker's AST.
+        use crate::sync::ScriptSync;
+        let dir = std::env::temp_dir().join(format!("flint-reload-worker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        let script = dir.join("greeter.rhai");
+        let module = dir.join("lib/greet.rhai");
+        let write = |path: &std::path::Path, text: &str, ahead: u64| {
+            std::fs::write(path, text).unwrap();
+            // Windows mtime granularity would otherwise swallow a fast rewrite
+            let f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+            f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(ahead))
+                .unwrap();
+        };
+        let body = |field: &str| {
+            format!(
+                r#"fn on_update() {{
+                    import "greet" as greet;
+                    set_field(self_entity(), "probe", "{field}", greet::value());
+                }}"#
+            )
+        };
+        write(&script, &body("coh"), 0);
+        write(&module, "fn value() { 1.0 }", 0);
+
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("greeter").unwrap();
+        probe_component(&mut world, id);
+        let mut sync = ScriptSync::new();
+        sync.use_reload_worker();
+        sync.set_scripts_dir(dir.clone());
+        engine.set_module_base(sync.lib_dir().unwrap());
+        let ast = engine.compile_file(&script).unwrap();
+        engine.add_script(id, ast, "greeter.rhai".into());
+
+        // Calls the frame loop makes until `done` holds (the worker's
+        // results land on a later call, never during one)
+        let mut run_until = |engine: &mut ScriptEngine,
+                             world: &mut FlintWorld,
+                             done: &dyn Fn(&FlintWorld) -> bool| {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                sync.check_hot_reload(engine);
+                engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+                engine.call_updates(world);
+                if done(world) || std::time::Instant::now() > until {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        run_until(&mut engine, &mut world, &|w| {
+            probe_float(w, id, "coh") == 1.0
+        });
+        assert_eq!(probe_float(&world, id, "coh"), 1.0);
+
+        // The script changes: it writes another field
+        write(&script, &body("lx"), 5);
+        run_until(&mut engine, &mut world, &|w| {
+            probe_float(w, id, "lx") == 1.0
+        });
+        assert_eq!(probe_float(&world, id, "lx"), 1.0, "the edited script runs");
+
+        // The module changes: the import resolves to the worker's compile
+        write(&module, "fn value() { 2.0 }", 10);
+        run_until(&mut engine, &mut world, &|w| {
+            probe_float(w, id, "lx") == 2.0
+        });
+        assert_eq!(probe_float(&world, id, "lx"), 2.0, "the edited module runs");
+
+        // A broken edit keeps the last good script running
+        write(&script, "fn on_update( {", 15);
+        for _ in 0..40 {
+            sync.check_hot_reload(&mut engine);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        engine.call_updates(&mut world);
+        assert_eq!(
+            probe_float(&world, id, "lx"),
+            2.0,
+            "old AST after a bad edit"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_script_loads_from_memory_source() {
         // A web build has no disk: the scene's scripts/ folder is found, and
         // the script and the module it imports are read and run, entirely
@@ -1890,6 +2051,87 @@ mod tests {
         assert!(script.init_called);
         assert!(script.has_on_update);
         assert!(!script.has_on_init);
+    }
+
+    #[test]
+    fn test_hot_reload_initialises_new_top_level_lets() {
+        // #634: a reload that adds `let boost_s` (read by on_update) used to
+        // fail every frame with `Variable not found`. Now the new variable gets
+        // its initial value and the old one keeps the value it had reached.
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("reload_lets").unwrap();
+        let mut state = toml::map::Map::new();
+        state.insert("ticks".into(), toml::Value::Float(-1.0));
+        state.insert("boost".into(), toml::Value::Float(-1.0));
+        state.insert("limit".into(), toml::Value::Float(-1.0));
+        world
+            .set_component(id, "state", toml::Value::Table(state))
+            .unwrap();
+
+        let v1 = engine
+            .compile(
+                r#"
+            let ticks = 0.0;
+            fn on_update() {
+                ticks += 1.0;
+                set_field(self_entity(), "state", "ticks", ticks);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, v1, "audio.rhai".into());
+        engine.call_inits(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+
+        let v2 = engine
+            .compile(
+                r#"
+            let ticks = 0.0;
+            let boost_s = 0.5;
+            let boost_s = 0.25;
+            const LIMIT = 3.0;
+            fn on_update() {
+                ticks += 1.0;
+                boost_s += 1.0;
+                let me = self_entity();
+                set_field(me, "state", "ticks", ticks);
+                set_field(me, "state", "boost", boost_s);
+                set_field(me, "state", "limit", LIMIT);
+            }
+        "#,
+            )
+            .unwrap();
+        let added = engine.reload_script(id, v2);
+        assert_eq!(added, vec!["boost_s".to_string(), "LIMIT".to_string()]);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+
+        let field = |name: &str| {
+            world
+                .get_components(id)
+                .unwrap()
+                .get_field("state", name)
+                .and_then(|v| v.as_float())
+                .unwrap()
+        };
+        assert_eq!(field("ticks"), 5.0, "kept state carries on counting");
+        assert_eq!(
+            field("boost"),
+            2.25,
+            "new let starts at its last declaration"
+        );
+        assert_eq!(field("limit"), 3.0, "new const is there");
+
+        // A second reload of the same source adds nothing and resets nothing.
+        let v3 = engine
+            .compile("let boost_s = 0.25; fn on_update() {}")
+            .unwrap();
+        assert!(engine.reload_script(id, v3).is_empty());
+        let script = engine.scripts.get(&id).unwrap();
+        assert_eq!(script.scope.get_value::<f64>("boost_s"), Some(2.25));
     }
 
     #[test]
@@ -2356,6 +2598,46 @@ mod tests {
         assert!((f(2) - 0.6).abs() < 1e-6 && (f(3) - 1.0).abs() < 1e-6);
         let glass = ov.get("Capsule").unwrap().as_array().unwrap();
         assert!((glass[3].as_float().unwrap() - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_material_emissive_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("road").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_material_override(me, "Neon", 0.1, 0.1, 0.1, 1.0);
+                set_material_emissive(me, "Neon", 0.0, 1.0, 0.8, 4.0);
+                set_material_emissive(me, "Sign", 1.0, 0.2, 0.6);
+                set_material_override(me, "Sign", 0.5, 0.5, 0.5, 1.0);
+                set_material_emissive(me, "Gone", 1.0, 1.0, 1.0);
+                clear_material_override(me, "Gone");
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let ov = world.get_component(id, "material_overrides").unwrap();
+        let num = |v: &toml::Value| v.as_float().unwrap();
+        // The paint set first survives the light set after it.
+        let neon = ov.get("Neon").unwrap().as_table().unwrap();
+        assert!((num(&neon["base_color"][0]) - 0.1).abs() < 1e-6);
+        assert!((num(&neon["emissive"][1]) - 1.0).abs() < 1e-6);
+        assert!((num(&neon["emissive_strength"]) - 4.0).abs() < 1e-6);
+        // And a light set first survives the paint set after it.
+        let sign = ov.get("Sign").unwrap().as_table().unwrap();
+        assert!((num(&sign["emissive"][2]) - 0.6).abs() < 1e-6);
+        assert!((num(&sign["base_color"][0]) - 0.5).abs() < 1e-6);
+        assert!(!sign.contains_key("emissive_strength"));
+        assert!(ov.get("Gone").is_none());
     }
 
     #[test]

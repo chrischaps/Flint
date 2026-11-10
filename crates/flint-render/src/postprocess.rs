@@ -96,25 +96,9 @@ pub struct PostProcessConfig {
     /// the strengths it reads.
     pub edge_depth: f32,
     pub edge_normal: f32,
-    /// How far each drawing moves the paint, as a share of the radius (#214).
-    pub kuwahara_boil: f32,
-    /// Ink lines over the scene (#214); the pass runs only with this on.
-    pub contour_enabled: bool,
-    /// Half a line's width, in pixels at 1080p.
-    pub contour_width: f32,
-    /// How strong an edge must be before it starts to ink.
-    pub contour_threshold: f32,
-    /// How dark the ink goes, 0 to 1.
-    pub contour_strength: f32,
-    /// How much edges in luminance count, against edges in depth.
-    pub contour_luma: f32,
-    /// The ink's colour, linear.
-    pub contour_color: [f32; 3],
-    /// Metres at which a line has faded by half, so distance doesn't go solid.
-    pub contour_fade: f32,
-    /// How far each drawing moves the lines (#214).
-    pub contour_boil: f32,
-    /// Film frames each drawing is held: 1, 2 or 3.
+    /// Film frames each drawing of the shading boil (#214) is held: 1, 2
+    /// or 3. Shared by the boils of the `kuwahara` and `contour` styles,
+    /// whose amounts are their own `boil` parameters (#599).
     pub boil_on: u32,
     /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
@@ -202,15 +186,6 @@ impl Default for PostProcessConfig {
             volumetric_decay: 0.98,
             edge_depth: 0.6,
             edge_normal: 2.5,
-            kuwahara_boil: 0.0,
-            contour_enabled: false,
-            contour_width: 1.25,
-            contour_threshold: 0.08,
-            contour_strength: 0.9,
-            contour_luma: 0.5,
-            contour_color: [0.015, 0.012, 0.02],
-            contour_fade: 30.0,
-            contour_boil: 0.0,
             boil_on: 2,
             boil: Default::default(),
             render_mode: 0,
@@ -233,6 +208,26 @@ impl PostProcessConfig {
     /// trusted to be bit-exact across drivers.
     pub fn grade_active(&self) -> bool {
         self.grade_lift != [0.0; 3] || self.grade_gamma != [1.0; 3] || self.grade_gain != [1.0; 3]
+    }
+
+    /// The shading boil's two amounts (#214): Kuwahara's paint and the
+    /// contour's ink, each its style's `boil` parameter (#599).
+    pub fn boil_amounts(&self) -> (f32, f32) {
+        let boil = |style: &str| crate::stylize::find(style).map_or(0.0, |d| d.param(self, "boil"));
+        (boil("kuwahara"), boil("contour"))
+    }
+
+    /// Set the shading boil's two amounts ([`boil_amounts`](Self::boil_amounts)).
+    /// Neither style is switched on or off, and an amount already held
+    /// writes nothing, so a style with no table doesn't get one.
+    pub fn set_boil_amounts(&mut self, paint: f32, ink: f32) {
+        let (was_paint, was_ink) = self.boil_amounts();
+        if paint != was_paint {
+            self.styles.set_param("kuwahara", "boil", paint);
+        }
+        if ink != was_ink {
+            self.styles.set_param("contour", "boil", ink);
+        }
     }
 }
 
@@ -283,22 +278,14 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.volumetric_decay = pp_def.volumetric_decay;
     config.edge_depth = pp_def.edge_depth;
     config.edge_normal = pp_def.edge_normal;
-    config.kuwahara_boil = pp_def.kuwahara_boil;
-    config.contour_enabled = pp_def.contour_enabled;
-    config.contour_width = pp_def.contour_width;
-    config.contour_threshold = pp_def.contour_threshold;
-    config.contour_strength = pp_def.contour_strength;
-    config.contour_luma = pp_def.contour_luma;
-    config.contour_color = pp_def.contour_color;
-    config.contour_fade = pp_def.contour_fade;
-    config.contour_boil = pp_def.contour_boil;
     config.boil_on = pp_def.boil_on;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;
     config.grade_gain = pp_def.grade_gain;
     config.fxaa_enabled = pp_def.fxaa;
-    // The old `kuwahara_*` keys arrive folded into the kuwahara table (#298)
+    // The old `kuwahara_*` (#298) and `contour_*` (#599) keys arrive folded
+    // into their styles' tables
     let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.style_tables());
     for warning in warnings {
         tracing::warn!("{warning}");
@@ -616,8 +603,6 @@ pub struct PostProcessResources {
     /// The stylize chain's ping-pong targets and the styles' own
     /// intermediates, made on first use (#262).
     pub styles: crate::stylize::StyleTargets,
-    // Contour output (Rgba16Float) — only allocated when enabled (#214)
-    pub contour: Option<crate::contour::ContourTextures>,
     // FXAA intermediate (full resolution, surface format) — only allocated when enabled
     pub fxaa: Option<FxaaResources>,
     /// The chain's bind groups, kept until a resize replaces it (#139).
@@ -689,8 +674,6 @@ pub struct PostProcessPipeline {
     pub styles: crate::stylize::StyleSet,
     /// The composite's target format, which display-stage styles draw in.
     pub surface_format: wgpu::TextureFormat,
-    // Contour pipeline — only created when enabled (#214)
-    pub contour: Option<crate::contour::ContourPipeline>,
     // FXAA pipeline — only created when enabled (ADR 0050)
     pub fxaa: Option<FxaaPipeline>,
 }
@@ -1697,7 +1680,6 @@ impl PostProcessPipeline {
             ground_fog_empty_view,
             styles: Default::default(),
             surface_format,
-            contour: None,
             // FXAA is created on demand via ensure_fxaa_resources (ADR 0050)
             fxaa: None,
         }
@@ -2209,46 +2191,6 @@ impl PostProcessPipeline {
         );
     }
 
-    /// Whether the contour pass can run: its pipeline and texture exist.
-    pub fn contour_ready(&self, resources: &PostProcessResources) -> bool {
-        self.contour.is_some() && resources.contour.is_some()
-    }
-
-    /// Ink `scene` (the HDR stage's result, #214) into the contour texture,
-    /// which the composite then reads in its place. Returns early (no-op) if
-    /// the pipeline or texture wasn't allocated.
-    #[allow(clippy::too_many_arguments)]
-    pub fn run_contour(
-        &self,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-        resources: &PostProcessResources,
-        config: &PostProcessConfig,
-        scene: &crate::stylize::StyleInput<'_>,
-        depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
-        camera: &Camera,
-    ) {
-        if !(config.enabled && config.contour_enabled && self.contour_ready(resources)) {
-            return;
-        }
-        if let Some(contour) = &self.contour {
-            contour.run(
-                device,
-                queue,
-                encoder,
-                resources,
-                config,
-                scene,
-                (&self.linear_sampler, &self.depth_sampler),
-                depth_view,
-                depth_key,
-                (camera.near, camera.far),
-            );
-        }
-    }
-
     /// Run the composite pass: combine HDR scene + bloom + SSAO + volumetric + fog → tonemapped sRGB surface.
     #[allow(clippy::too_many_arguments)]
     pub fn composite(
@@ -2684,8 +2626,6 @@ impl PostProcessResources {
             volumetric_blur_texture,
             volumetric_blur_view,
             styles: Default::default(),
-            // So is the contour's (#214)
-            contour: None,
             // FXAA intermediate is allocated on demand (ADR 0050)
             fxaa: None,
             binds: Default::default(),
@@ -2786,40 +2726,14 @@ mod tests {
     /// at 272..304 (ADR 0101), ground fog rows (color+density / origin+size
     /// / floor base, ceiling, falloff, steps / texel, max lod, enabled, pad)
     /// at 304..368 (ADR 0106).
-    #[test]
-    fn boil_uniforms_match_wgsl_layout() {
-        // Kuwahara's (in stylize/kuwahara.rs) is held at 32 bytes there.
-        // texel/width/threshold, colour/strength, near/far/luma/boil, seed/fade/pad.
-        assert_eq!(std::mem::size_of::<crate::contour::ContourUniforms>(), 64);
-    }
-
     /// Boil is opt-in twice over: a scene asks for it, and has a field.
     #[test]
     fn boil_and_contour_default_off() {
         let config = PostProcessConfig::default();
-        assert!(!config.contour_enabled);
-        assert_eq!(config.kuwahara_boil, 0.0);
-        assert_eq!(config.contour_boil, 0.0);
+        assert!(!config.styles.is_enabled("contour"));
+        assert_eq!(config.styles.param("kuwahara", "boil"), None);
+        assert_eq!(config.styles.param("contour", "boil"), None);
         assert_eq!(config.boil, Default::default());
-    }
-
-    /// A width is authored at 1080p, and the field's jitter scales the boil.
-    #[test]
-    fn contour_uniforms_scale_with_the_frame_and_the_field() {
-        let mut config = PostProcessConfig {
-            contour_width: 2.0,
-            contour_boil: 0.5,
-            ..Default::default()
-        };
-        config.boil.amount = 1.5;
-        config.boil.seed = 9;
-        let u = crate::contour::ContourUniforms::new(&config, 1920, 540, 0.1, 100.0);
-        assert_eq!(u.width, 1.0);
-        assert_eq!(u.boil, 0.75);
-        assert_eq!(u.seed, 9);
-        config.boil.amount = 0.0;
-        let still = crate::contour::ContourUniforms::new(&config, 1920, 540, 0.1, 100.0);
-        assert_eq!(still.boil, 0.0);
     }
 
     #[test]

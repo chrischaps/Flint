@@ -162,9 +162,9 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `section_deg` | number -360–360 | `0.0` | Turn of the section's broad axis away from the curl's plane, degrees: 90 folds a ribbon across its width |
 | `segments` | integer 2–64 | `10` | Bones along the spine: more is a smoother bend and more palette per prop |
 | `sides` | integer 6–1024 | `64` | Vertices around each ring |
-| `stretch` | number 0–0.5 | `0.05000000074505806` | Pose: how much a pose lengthens or shortens the spine, as a fraction (`[living] variance.keep_size` evens the box out again) |
 | `slide` | number 0–1 | `0.0` | Pose: how far a pose moves the form along its section's broad axis at most, metres: along the lines of a page in rows. Unlike a bend it doesn't pivot at the base, so an echo can stand beside the form rather than fan from its root |
 | `slide_reflow` | number 0–1 | `0.5` | Pose: how much of the slide changes along the length rather than moving the whole form: 0 slides it as one, 1 lets lines at one height go one way and lines at another the other |
+| `stretch` | number 0–0.5 | `0.05000000074505806` | Pose: how much a pose lengthens or shortens the spine, as a fraction (`[living] variance.keep_size` evens the box out again) |
 | `swell` | number 0–0.9 | `0.14000000059604645` | Pose: how much the section breathes wider and narrower along the length, as a fraction of its radius |
 | `turn_deg` | number 0–180 | `0.0` | Pose: how far a pose turns the section about the spine at the tip, degrees: what a flat form shows |
 | `twist_turns` | number -8–8 | `0.0` | Turns the section makes about the spine from base to tip, at rest |

@@ -366,6 +366,9 @@ impl PlayerApp {
                         )
                     })
                 });
+                let env = scene_file.environment.as_ref();
+                self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
+                self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
                 self.scene_diffuse_wrap = scene_file
                     .environment
                     .as_ref()
@@ -477,6 +480,8 @@ impl PlayerApp {
             // previous scene's values never leak into one that doesn't
             // author them (reset clears both ambient and wrap)
             renderer.reset_ambient();
+            renderer.set_scene_shadows(self.scene_shadows);
+            renderer.set_default_lights(self.scene_default_lights);
             if let Some((sky, ground)) = self.scene_ambient {
                 renderer.set_ambient(sky, ground);
             }
@@ -515,7 +520,6 @@ impl PlayerApp {
                 renderer.set_post_process_config(config);
                 renderer.ensure_style_resources(&context.device);
                 renderer.ensure_fxaa_resources(&context.device);
-                renderer.ensure_contour_resources(&context.device);
             }
         }
 

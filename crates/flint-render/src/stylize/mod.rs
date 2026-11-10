@@ -27,8 +27,9 @@
 //!   [`PostProcessConfig::styles`], which a scene sets with
 //!   `[post_process.styles.<name>]`; the F4 Rendering & Effects menu draws
 //!   its sliders from the descriptor. Every style lives there, Kuwahara
-//!   included (#298; a scene's older `kuwahara_*` keys are folded into its
-//!   table on load, `flint_scene::fold_legacy_style_keys`).
+//!   and contour included (#298, #599; a scene's older `kuwahara_*` and
+//!   `contour_*` keys are folded into their tables on load,
+//!   `flint_scene::fold_legacy_style_keys`).
 //!
 //! ## Order
 //!
@@ -2209,9 +2210,6 @@ pub(crate) mod input_id {
     pub const DISPLAY_PING: u64 = 4;
     /// FXAA's intermediate, when the display stage draws through it (#302).
     pub const FXAA_IN: u64 = 6;
-    /// The contour pass's ink over the HDR stage (#214), which the composite
-    /// reads in its place.
-    pub const CONTOUR: u64 = 7;
 }
 
 const HDR_PINGS: [&str; 2] = ["style hdr ping 0", "style hdr ping 1"];
@@ -2337,7 +2335,10 @@ register_styles!(
     display_bloom,
     invert,
     mask_view,
-    edges_view
+    edges_view,
+    // Last of the built-ins, so the ink goes over every other HDR style
+    // (Kuwahara's paint) as the old post pass did (#599)
+    contour
 );
 
 /// The built-ins followed by user styles registered at run time

@@ -93,6 +93,8 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
 | `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
 | `set_material_override(id, material, r, g, b, a)` | --- | Replace one named glTF material's base colour on this entity and all its expanded child nodes (writes `material_overrides.<material>`; colours above 1 are allowed, see [Colours above 1](#colours-above-1)) |
+| `set_material_emissive(id, material, r, g, b[, strength])` | --- | Recolour one named glTF material's glow (linear RGB; `strength` replaces its `emissive_strength`) on this entity and its expanded child nodes; works on a material with no emission of its own. See [Recolouring an imported model's glow](rendering.md#recolouring-an-imported-models-glow) |
+| `clear_material_override(id, material)` | --- | Drop this entity's own override of one material, colour and glow, so the material or an ancestor's override shows again |
 | `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
 | `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
@@ -100,7 +102,7 @@ All functions are available globally in every script. Entity IDs are passed as `
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
-A setter given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and `set_field`, `set_position`, `set_rotation`, `set_rotation_quat`, `set_scale`, `set_shear`, `clear_shear`, `rotate_local`, `set_visible`, `set_joint_target`, `set_parent`, `set_material_color` and `set_material_override` given it, or a despawned id, log a warning the first time for each script and function: `seeded_stars.rhai: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. Getters stay quiet and return their empty value. Test with `entity_exists(id)` where a missing entity is expected.
+A setter given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and `set_field`, `set_position`, `set_rotation`, `set_rotation_quat`, `set_scale`, `set_shear`, `clear_shear`, `rotate_local`, `set_visible`, `set_joint_target`, `set_parent`, `set_material_color`, `set_material_override`, `set_material_emissive` and `clear_material_override` given it, or a despawned id, log a warning the first time for each script and function: `seeded_stars.rhai: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. Getters stay quiet and return their empty value. Test with `entity_exists(id)` where a missing entity is expected.
 
 #### Hiding entities
 
@@ -196,7 +198,19 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
 
-Sound names match the audio files loaded from the `audio/` directory (without extension). A one-shot naming a file that is not there fails silently — it logs a warning and plays nothing.
+A sound's name is its file's path from the game root, extension included: the scene preloads `audio/whoosh.ogg` as `"audio/whoosh.ogg"`. The bare stem works too: a name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, so these three play the same file:
+
+```rust
+play_sound("audio/whoosh.ogg", 0.8);
+play_sound("whoosh.ogg", 0.8);
+play_sound("whoosh", 0.8);
+```
+
+A name cached as written always wins, so a sound an extension loaded as `"blip"` stays `"blip"`, and two files that share a stem (`whoosh.ogg`, `whoosh.wav`) want the full path. A one-shot naming a sound that is not there plays nothing and logs a warning that names the nearest cached sound:
+
+```text
+WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
+```
 
 Varying `pitch` slightly per trigger (say 0.9–1.1) is the cheapest way to stop a
 repeated one-shot sounding like a repeated one-shot.
@@ -1460,9 +1474,17 @@ The script system checks file modification timestamps each frame. When a `.rhai`
 2. If compilation succeeds, the old AST is replaced and the new version takes effect immediately
 3. If compilation fails, the old AST is kept and an error is logged --- the game never crashes from a script typo
 
+**What a reload keeps and what it starts** (#634). The entity's [scope](#script-state) survives a reload, so every top-level variable the script already had keeps the value it had reached: a counter keeps counting, a timer keeps running. A top-level `let` or `const` that the new source adds, and the old scope lacks, gets its initial value from the new source, so `on_update` can read it on the very next frame (the player prints `new top-level variables: boost_s`). Changing the initial value of a variable that already exists does nothing until a restart, since the kept value wins; removing a `let` leaves the old variable in the scope, unused. `on_init` does not run again.
+
+To pick out the new names, the reload runs the new source's top-level statements once, into a scope of its own, and copies over only what the kept scope doesn't have. A script's top-level statements already run before every callback (Rhai evaluates them to load imports, then drops the `let`s they push), so a top-level call with a side effect runs on each callback anyway: keep the top level to declarations and imports.
+
 This enables a fast iteration workflow: edit a script in your text editor, save, and see the result in the running game without restarting.
 
 Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
+
+In the player none of this waits on the disk in a frame (#633). A watcher thread (`flint_core::file_watch`) stats the files every quarter second and passes a change on only once the file has held still for two of its looks, so a change lands a quarter to half a second after the last write. A second thread reads and compiles the changed script, checking that the file didn't move while it read it, and compiles a changed `scripts/lib` module by module; the frame only swaps finished ASTs in. Before this, a frame could wait seconds on a file another process was writing, and a script half-written when it was read could be compiled as a shorter one. UI documents, user styles, glyph sets, palettes and style images ask the same watcher. Tools such as `flint render --scripts` poll the disk directly, as they always did.
+
+`flint-player --no-hot-reload` (and `flint play --no-hot-reload`) turns all of it off: everything loads once and nothing polls the disk, which is what a capture or a shipped build wants. A game that embeds `PlayerApp` calls `flint_core::file_watch::disable()` before its event loop starts.
 
 ## Interactable System
 

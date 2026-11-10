@@ -1,12 +1,13 @@
-# A user-authored style that reads depth (#274): a surveyor's map laid over
+# A user-authored style that reads depth (#274; `contour` until #599 gave
+# that name to the built-in ink style): a surveyor's map laid over
 # the picture, ink isolines of world height and range rings round the eye.
 #
-#   flint render demo/user_styles.scene.toml --style contour
+#   flint render demo/user_styles.scene.toml --style contour_map
 version = 1
-name = "contour"
+name = "contour_map"
 label = "Survey contours"
 stage = "display"
-shader = "contour.wgsl"
+shader = "contour_map.wgsl"
 inputs = ["depth"]
 
 [params.spacing]

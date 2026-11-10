@@ -6,8 +6,9 @@
 //! like every other style's (#298); a scene's older `kuwahara_enabled`,
 //! `kuwahara_radius`... keys are folded into that table when it loads
 //! (`flint_scene::fold_legacy_style_keys`). In a scene with a `[wooze]`
-//! field the paint also boils (#214): `[post_process] kuwahara_boil` moves
-//! the kernel and turns the strokes a little on each drawing of the field.
+//! field the paint also boils (#214): `boil` moves the kernel and turns the
+//! strokes a little on each drawing of the field (the flat
+//! `[post_process] kuwahara_boil` before #599, folded in the same way).
 
 use super::kit;
 use super::{
@@ -28,6 +29,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     StyleParam::new("sharpness", 8.0, 1.0..=16.0),
     StyleParam::new("hardness", 8.0, 1.0..=16.0),
     StyleParam::new("anisotropy", 1.0, 0.0..=2.0),
+    StyleParam::new("boil", 0.0, 0.0..=1.0),
 ])
 .hints(&[
     StyleHint::new(
@@ -50,6 +52,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
         "anisotropy",
         "Anisotropy",
         "How far strokes stretch along the image's edges; 0 is round",
+    ),
+    StyleHint::new(
+        "boil",
+        "Boil",
+        "How far each drawing of the wooze field moves the paint, as a share of the radius; needs a [wooze] table",
     ),
 ]);
 
@@ -221,10 +228,10 @@ impl StylePass for Kuwahara {
             sharpness: frame.param("sharpness"),
             hardness: frame.param("hardness"),
             anisotropy: frame.param("anisotropy"),
-            // The shading boil (#214): `[post_process] kuwahara_boil`, scaled
-            // by this frame's drawing from the wooze field (0 with no field)
+            // The shading boil (#214): `boil`, scaled by this frame's
+            // drawing from the wooze field (0 with no field)
             boil_seed: frame.config.boil.seed,
-            boil: frame.config.kuwahara_boil.max(0.0) * frame.config.boil.amount,
+            boil: frame.param("boil").max(0.0) * frame.config.boil.amount,
         };
         frame
             .queue
