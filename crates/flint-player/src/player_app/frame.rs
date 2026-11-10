@@ -1427,6 +1427,12 @@ impl PlayerApp {
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
         self.script.set_loaded_chunk_ids(chunk_ids);
 
+        // Where each audio_source is in its sound (#658), read every frame,
+        // paused or not: loops play on under a pause menu.
+        self.audio.sample_positions();
+        self.script
+            .set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
+
         // Conducted parameters (F4, ADR 0020): the music session's per-frame
         // state for scene bindings; neutral defaults when no session (also
         // resets the frame after a session ends).

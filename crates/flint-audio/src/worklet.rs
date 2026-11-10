@@ -51,6 +51,7 @@ extern "C" {
         meter_frames: u32,
         latency: &str,
         on_stats: &js_sys::Function,
+        on_report: &js_sys::Function,
     ) -> Result<FlintWorklet, JsValue>;
 
     #[wasm_bindgen(method, getter)]
@@ -64,6 +65,9 @@ extern "C" {
 
     #[wasm_bindgen(method)]
     fn kick(this: &FlintWorklet, f: &js_sys::Function);
+
+    #[wasm_bindgen(method)]
+    fn clock(this: &FlintWorklet) -> js_sys::Float64Array;
 }
 
 /// Start fetching the worklet's wasm. Called when an engine is made, long
@@ -148,19 +152,31 @@ impl WorkletStream {
                     console(lines.summary_warns, &s);
                 }
             });
+        // The link and the flush that empties it hold each other; both live
+        // as long as the page.
+        let slot: Arc<Mutex<Option<Link>>> = Arc::default();
+        // Where the watched voices are, as the processor says (#658).
+        let on_report = {
+            let slot = slot.clone();
+            Closure::<dyn FnMut(f64, js_sys::Float64Array)>::new(
+                move |at: f64, v: js_sys::Float64Array| {
+                    if let Some(link) = slot.lock().ok().and_then(|s| s.clone()) {
+                        link.receive_report(at, &v.to_vec());
+                    }
+                },
+            )
+        };
         let worklet = FlintWorklet::new(
             WASM_URL,
             meter_frames.max(128),
             LATENCY_HINT,
             on_stats.as_ref().unchecked_ref(),
+            on_report.as_ref().unchecked_ref(),
         )
         .map_err(|e| console(true, &format!("[flint-audio] no AudioContext: {e:?}")))
         .ok()?;
         on_stats.forget();
-
-        // The link and the flush that empties it hold each other; both live
-        // as long as the page.
-        let slot: Arc<Mutex<Option<Link>>> = Arc::default();
+        on_report.forget();
         let flush = {
             let worklet = worklet.clone();
             let slot = slot.clone();
@@ -183,6 +199,14 @@ impl WorkletStream {
             let (worklet, flush) = &*kick;
             worklet.kick(flush.as_ref().unchecked_ref());
         })));
+        let clock = SendWrapper::new(worklet.clone());
+        link.set_clock(Box::new(move || {
+            let v = clock.clock().to_vec();
+            [
+                v.first().copied().unwrap_or(0.0),
+                v.get(1).copied().unwrap_or(0.0),
+            ]
+        }));
         if let Ok(mut s) = slot.lock() {
             *s = Some(link.clone());
         }
