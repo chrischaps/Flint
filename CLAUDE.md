@@ -226,7 +226,12 @@ Flint uses an **edit -> validate -> play** loop:
    (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`).
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
-   (`gpu_select::skip_without_gpu`; a new GPU test calls it). A golden (image or text) may have
+   (`gpu_select::skip_without_gpu`; a new GPU test calls it). flint-render's GPU test binaries
+   share one device (`tests/shared_gpu`, #598: a device per test deadlocked NVIDIA's Vulkan
+   driver against the loader lock as test threads exited, hanging a run for hours): `lease()`
+   alongside other tests, `lease_alone()` to count device-wide objects or use error scopes
+   (per device in wgpu 23); a watchdog aborts, naming the test, past `FLINT_GPU_TEST_TIMEOUT`
+   (300 s). A new GPU test file uses it, not its own `request_device`. A golden (image or text) may have
    a per-adapter variant `<stem>.<warp|lavapipe|vulkan|dx12>.<ext>` (`--bless-variant`); wgpu
    hides WARP on a machine with a GPU, so WARP variants come from the job's `stylize-goldens-warp`
    artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and

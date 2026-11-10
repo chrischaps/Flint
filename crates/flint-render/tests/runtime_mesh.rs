@@ -9,6 +9,8 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
+mod shared_gpu;
+
 use flint_ecs::FlintWorld;
 use flint_import::{ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_render::{Camera, DebugMode, GroundFog, RendererConfig, SceneRenderer, Vertex};
@@ -17,22 +19,31 @@ const SIZE: u32 = 64;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct Gpu {
-    instance: wgpu::Instance,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    instance: &'static wgpu::Instance,
+    device: &'static wgpu::Device,
+    queue: &'static wgpu::Queue,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    _lease: shared_gpu::Lease,
 }
 
+/// The shared device (#598), alongside the other tests.
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(async {
-        let instance = flint_render::gpu_select::instance();
-        let adapter = flint_render::gpu_select::request_adapter(&instance, None).await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .ok()?;
+    shared_gpu::lease().map(frame_for)
+}
+
+/// The shared device with no other test on it: for a test that counts
+/// the device's objects or catches its errors in a scope (wgpu 23 keeps
+/// those per device, not per thread).
+fn gpu_alone() -> Option<Gpu> {
+    shared_gpu::lease_alone().map(frame_for)
+}
+
+fn frame_for(lease: shared_gpu::Lease) -> Gpu {
+    let shared = lease.gpu;
+    let device = &shared.device;
+    {
         let target = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -55,20 +66,27 @@ fn gpu() -> Option<Gpu> {
             wgpu::TextureFormat::Depth32Float,
             attach | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        Some(Gpu {
+        Gpu {
             color_view: color.create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             color,
-            instance,
+            instance: &shared.instance,
             device,
-            queue,
-        })
-    })
+            queue: &shared.queue,
+            _lease: lease,
+        }
+    }
 }
 
 macro_rules! gpu_or_skip {
     () => {
-        match gpu() {
+        gpu_or_skip!(gpu)
+    };
+    (alone) => {
+        gpu_or_skip!(gpu_alone)
+    };
+    ($lend:ident) => {
+        match $lend() {
             Some(g) => g,
             None => {
                 flint_render::gpu_select::skip_without_gpu("no GPU adapter");
@@ -81,8 +99,8 @@ macro_rules! gpu_or_skip {
 impl Gpu {
     fn renderer(&self) -> SceneRenderer {
         SceneRenderer::new_headless(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             FORMAT,
             SIZE,
             SIZE,
@@ -92,10 +110,10 @@ impl Gpu {
 
     /// Extract and render one frame, then wait for the GPU.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld, camera: &Camera) {
-        renderer.update_from_world(world, &self.device);
+        renderer.update_from_world(world, self.device);
         renderer.render_to(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             &self.depth_view,
             camera,
             &self.color_view,
@@ -183,7 +201,8 @@ fn spawn(world: &mut FlintWorld, name: &str, mesh: &str, position: [f32; 3]) {
 
 #[test]
 fn replacing_a_mesh_1000_times_does_not_grow_gpu_memory() {
-    let gpu = gpu_or_skip!();
+    // Alone: it counts the whole device's buffers and bytes
+    let gpu = gpu_or_skip!(alone);
     let mut renderer = gpu.renderer();
     let mut world = FlintWorld::new();
     spawn(&mut world, "a", "m", [0.0; 3]);
@@ -194,7 +213,7 @@ fn replacing_a_mesh_1000_times_does_not_grow_gpu_memory() {
         let (vertices, indices) = square(1.0 + (i % 7) as f32, [0.5, 0.5, 0.5, 1.0]);
         let vertices: Vec<Vertex> = (0..1 + i % 5).flat_map(|_| vertices.clone()).collect();
         renderer.load_procedural_mesh(
-            &gpu.device,
+            gpu.device,
             "m",
             &vertices,
             &indices,
@@ -251,7 +270,7 @@ fn hidden_entities_and_their_children_are_not_drawn() {
     let mut world = FlintWorld::new();
     let (vertices, indices) = square(1.0, [1.0; 4]);
     renderer.load_procedural_mesh(
-        &gpu.device,
+        gpu.device,
         "tile",
         &vertices,
         &indices,
@@ -292,7 +311,7 @@ fn meshes_outside_the_view_are_culled() {
     let mut world = FlintWorld::new();
     let (vertices, indices) = square(1.0, [1.0; 4]);
     renderer.load_procedural_mesh(
-        &gpu.device,
+        gpu.device,
         "tile",
         &vertices,
         &indices,
@@ -315,8 +334,8 @@ fn meshes_outside_the_view_are_culled() {
     camera.target = flint_core::Vec3::new(60.0, 0.0, 60.0);
     camera.position = flint_core::Vec3::new(70.0, 10.0, 70.0);
     renderer.render_to(
-        &gpu.device,
-        &gpu.queue,
+        gpu.device,
+        gpu.queue,
         &gpu.depth_view,
         &camera,
         &gpu.color_view,
@@ -341,7 +360,7 @@ fn vertex_colours_render() {
         base_color: [1.0, 0.0, 0.0, 1.0],
         ..ImportedMaterial::vertex_colored("ground")
     };
-    renderer.load_procedural_mesh(&gpu.device, "ground", &vertices, &indices, material.clone());
+    renderer.load_procedural_mesh(gpu.device, "ground", &vertices, &indices, material.clone());
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
     assert!(g > 150 && r < 60 && b < 60, "expected green, got {r} {g} {b}");
@@ -351,7 +370,7 @@ fn vertex_colours_render() {
         use_vertex_color: false,
         ..material
     };
-    renderer.load_procedural_mesh(&gpu.device, "ground", &vertices, &indices, material);
+    renderer.load_procedural_mesh(gpu.device, "ground", &vertices, &indices, material);
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
     assert!(r > 150 && g < 60 && b < 60, "expected red, got {r} {g} {b}");
@@ -372,7 +391,7 @@ fn emission_ignores_facing_and_light() {
     let camera = Camera::default();
     for (name, texel) in [("lamp_green", [0, 255, 0, 255]), ("lamp_black", [0, 0, 0, 255])] {
         renderer
-            .load_texture_rgba(&gpu.device, &gpu.queue, name, 1, 1, &texel, false)
+            .load_texture_rgba(gpu.device, gpu.queue, name, 1, 1, &texel, false)
             .unwrap();
     }
 
@@ -387,7 +406,7 @@ fn emission_ignores_facing_and_light() {
         );
         world.set_component(sun, "light", light.into()).unwrap();
         renderer.set_ambient([ambient; 3], [ambient; 3]);
-        renderer.load_procedural_mesh(&gpu.device, "lamp", vertices, &indices, material);
+        renderer.load_procedural_mesh(gpu.device, "lamp", vertices, &indices, material);
         gpu.frame(&mut renderer, &world, &camera);
         gpu.centre_pixel()
     };
@@ -485,7 +504,7 @@ fn emissive_scale_changes_glow_after_upload() {
         vertex_emission: true,
         ..ImportedMaterial::vertex_colored("windows")
     };
-    renderer.load_procedural_mesh(&gpu.device, "windows", &light, &indices, glowing);
+    renderer.load_procedural_mesh(gpu.device, "windows", &light, &indices, glowing);
     spawn(&mut world, "windows", "windows", [0.0; 3]);
     gpu.frame(&mut renderer, &world, &camera);
     let one = gpu.centre_pixel();
@@ -518,7 +537,7 @@ fn emissive_scale_changes_glow_after_upload() {
         vertex_emission: true,
         ..ImportedMaterial::vertex_colored("windows")
     };
-    renderer.load_procedural_mesh(&gpu.device, "windows", &surface, &indices, surface_mat);
+    renderer.load_procedural_mesh(gpu.device, "windows", &surface, &indices, surface_mat);
     gpu.frame(&mut renderer, &world, &camera);
     let lit = gpu.centre_pixel();
     set_scale(&mut world, "windows", Some(0.0));
@@ -536,7 +555,7 @@ fn emissive_scale_changes_glow_after_upload() {
         emissive: [0.0, 0.25, 0.0],
         ..ImportedMaterial::default()
     };
-    renderer.load_procedural_mesh(&gpu.device, "lamp", &light, &indices, lamp);
+    renderer.load_procedural_mesh(gpu.device, "lamp", &light, &indices, lamp);
     let parent = world.spawn("lamp_post").unwrap();
     spawn(&mut world, "lamp", "lamp", [0.0; 3]);
     let child = world.get_id("lamp").unwrap();
@@ -584,8 +603,8 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     // The same colour twice: once as lit surface, once as light.
     let (paint, indices) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
     let (light, _) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
-    renderer.load_procedural_mesh(&gpu.device, "paint", &paint, &indices, material("paint"));
-    renderer.load_procedural_mesh(&gpu.device, "gold", &light, &indices, material("gold"));
+    renderer.load_procedural_mesh(gpu.device, "paint", &paint, &indices, material("paint"));
+    renderer.load_procedural_mesh(gpu.device, "gold", &light, &indices, material("gold"));
     // A sun that's off, so the default scene lights stay out: the only
     // light is the ambient each step sets.
     let sun = world.spawn("sun").unwrap();
@@ -680,9 +699,9 @@ fn vertex_tint_colours_light_and_surface_after_upload() {
     let (white, indices) = square(20.0, [0.25, 0.25, 0.25, 0.0]);
     let (light, _) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
     let (paint, _) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
-    renderer.load_procedural_mesh(&gpu.device, "lamp", &white, &indices, material("lamp"));
-    renderer.load_procedural_mesh(&gpu.device, "light", &light, &indices, material("light"));
-    renderer.load_procedural_mesh(&gpu.device, "paint", &paint, &indices, material("paint"));
+    renderer.load_procedural_mesh(gpu.device, "lamp", &white, &indices, material("lamp"));
+    renderer.load_procedural_mesh(gpu.device, "light", &light, &indices, material("light"));
+    renderer.load_procedural_mesh(gpu.device, "paint", &paint, &indices, material("paint"));
     // The sun off, as in the test above: the ambient is the only light.
     let sun = world.spawn("sun").unwrap();
     let mut off = toml::Table::new();
@@ -831,7 +850,7 @@ fn model_data_maps_are_linear() {
         nodes: Vec::new(),
         root_nodes: Vec::new(),
     };
-    renderer.load_model(&gpu.device, &gpu.queue, "plate", &model);
+    renderer.load_model(gpu.device, gpu.queue, "plate", &model);
 
     let format = |name: &str| {
         let cache = renderer.texture_cache().unwrap();
@@ -854,7 +873,7 @@ fn model_data_maps_are_linear() {
             roughness,
             ..surface.clone()
         };
-        renderer.load_procedural_mesh(&gpu.device, "plate", &vertices, &indices, material);
+        renderer.load_procedural_mesh(gpu.device, "plate", &vertices, &indices, material);
         gpu.frame(&mut renderer, &world, &camera);
         gpu.centre_pixel()
     };
@@ -878,7 +897,7 @@ fn part_of_a_grass_mask_repaints_in_place() {
     }
     // Nothing to repaint before a ground is set.
     assert!(renderer
-        .update_grass_mask(&gpu.queue, 0, 0, 1, 1, &[255])
+        .update_grass_mask(gpu.queue, 0, 0, 1, 1, &[255])
         .is_err());
 
     // A bare 20 m square round the origin, which the default camera
@@ -901,7 +920,7 @@ fn part_of_a_grass_mask_repaints_in_place() {
         height: flint_render::GrassHeight::Flat(0.0),
     };
     renderer
-        .set_grass_ground(&gpu.device, &gpu.queue, &config, &ground)
+        .set_grass_ground(gpu.device, gpu.queue, &config, &ground)
         .unwrap();
     // The blade count is read back a frame or two late.
     let blades = |renderer: &mut SceneRenderer| {
@@ -915,7 +934,7 @@ fn part_of_a_grass_mask_repaints_in_place() {
     // Fill the middle quarter: grass grows there, with the same buffers.
     let full = vec![255u8; (N / 2 * N / 2) as usize];
     renderer
-        .update_grass_mask(&gpu.queue, N / 4, N / 4, N / 2, N / 2, &full)
+        .update_grass_mask(gpu.queue, N / 4, N / 4, N / 2, N / 2, &full)
         .unwrap();
     let grown = blades(&mut renderer);
     assert!(grown > 0, "the repainted patch grows grass");
@@ -923,23 +942,23 @@ fn part_of_a_grass_mask_repaints_in_place() {
     // Clear a corner of it again: fewer blades, but some.
     let clear = vec![0u8; (N / 4 * N / 4) as usize];
     renderer
-        .update_grass_mask(&gpu.queue, N / 4, N / 4, N / 4, N / 4, &clear)
+        .update_grass_mask(gpu.queue, N / 4, N / 4, N / 4, N / 4, &clear)
         .unwrap();
     let fewer = blades(&mut renderer);
     assert!(fewer > 0 && fewer < grown, "{fewer} of {grown} blades left");
 
     // A patch off the mask's edge, or of the wrong length, is refused.
     assert!(renderer
-        .update_grass_mask(&gpu.queue, N - 1, 0, 2, 1, &[0, 0])
+        .update_grass_mask(gpu.queue, N - 1, 0, 2, 1, &[0, 0])
         .is_err());
     assert!(renderer
-        .update_grass_mask(&gpu.queue, 0, 0, 2, 2, &[0; 3])
+        .update_grass_mask(gpu.queue, 0, 0, 2, 2, &[0; 3])
         .is_err());
 
     // Once the grass is gone, so is the mask.
     renderer.unload_grass();
     assert!(renderer
-        .update_grass_mask(&gpu.queue, 0, 0, 1, 1, &[255])
+        .update_grass_mask(gpu.queue, 0, 0, 1, 1, &[255])
         .is_err());
 }
 
@@ -953,7 +972,7 @@ fn slope(x: f32, z: f32) -> f32 {
 /// default camera looks down on, and the blades it grew.
 fn grown_blades(gpu: &Gpu, renderer: &mut SceneRenderer) -> Vec<flint_render::GrassInstanceGpu> {
     gpu.frame(renderer, &FlintWorld::new(), &Camera::default());
-    let blades = renderer.read_grass_blades(&gpu.device, &gpu.queue);
+    let blades = renderer.read_grass_blades(gpu.device, gpu.queue);
     assert!(blades.len() > 500, "only {} blades grew", blades.len());
     blades
 }
@@ -990,7 +1009,7 @@ fn grass_blades_come_out_in_grid_order_every_run() {
             return None;
         }
         renderer
-            .set_grass_ground(&gpu.device, &gpu.queue, &config, &ground)
+            .set_grass_ground(gpu.device, gpu.queue, &config, &ground)
             .unwrap();
         let first = grown_blades(&gpu, &mut renderer);
         let again = grown_blades(&gpu, &mut renderer);
@@ -1060,7 +1079,7 @@ fn grass_stands_on_the_blend_of_a_ground_maps_heights() {
         },
     };
     renderer
-        .set_grass_ground(&gpu.device, &gpu.queue, &grass_config(), &ground)
+        .set_grass_ground(gpu.device, gpu.queue, &grass_config(), &ground)
         .unwrap();
 
     // On the plane between the outermost cells' middles, and level past them.
@@ -1095,8 +1114,8 @@ fn terrain_grass_stands_where_the_terrain_mesh_does() {
         .flat_map(|j| (0..N).map(move |i| slope(corner(i), corner(j)) / SCALE))
         .collect();
     renderer.load_grass(
-        &gpu.device,
-        &gpu.queue,
+        gpu.device,
+        gpu.queue,
         &grass_config(),
         &heights,
         N,
@@ -1152,8 +1171,8 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     // camera sees past the sheet's side to the ground there.
     let (ground, indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
     let (sheet, _) = square(1.5, [0.5, 0.5, 0.5, 1.0]);
-    renderer.load_procedural_mesh(&gpu.device, "ground", &ground, &indices, material("ground"));
-    renderer.load_procedural_mesh(&gpu.device, "sheet", &sheet, &indices, material("sheet"));
+    renderer.load_procedural_mesh(gpu.device, "ground", &ground, &indices, material("ground"));
+    renderer.load_procedural_mesh(gpu.device, "sheet", &sheet, &indices, material("sheet"));
     let sun = world.spawn("sun").unwrap();
     let mut light = toml::Table::new();
     light.insert("type".into(), "directional".into());
@@ -1239,7 +1258,7 @@ fn a_double_sided_glb_card_draws_from_behind() {
     renderer.set_debug_mode(DebugMode::Unlit);
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testModels/DoubleSidedCard.glb");
     let model = flint_import::import_gltf(path).unwrap();
-    renderer.load_model(&gpu.device, &gpu.queue, "cards", &model);
+    renderer.load_model(gpu.device, gpu.queue, "cards", &model);
     let mut world = FlintWorld::new();
     spawn(&mut world, "cards", "cards", [0.0; 3]);
 
@@ -1281,7 +1300,7 @@ fn a_double_sided_back_face_is_lit_as_the_side_it_shows() {
         double_sided: true,
         ..ImportedMaterial::vertex_colored("card")
     };
-    renderer.load_procedural_mesh(&gpu.device, "card", &vertices, &indices, material);
+    renderer.load_procedural_mesh(gpu.device, "card", &vertices, &indices, material);
     let mut shoot = |sun_up: bool, above: bool| {
         set_sun(&mut world, [0.0, if sun_up { 1.0 } else { -1.0 }, 0.0], 3.0);
         gpu.frame(&mut renderer, &world, &looking_at([0.0; 3], above));
@@ -1320,7 +1339,7 @@ fn a_double_sided_sheet_casts_from_either_side() {
     let (ground, ground_indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
     let (sheet, sheet_indices) = card(1.5, [0.5, 0.5, 0.5, 1.0], false);
     renderer.load_procedural_mesh(
-        &gpu.device,
+        gpu.device,
         "ground",
         &ground,
         &ground_indices,
@@ -1335,7 +1354,7 @@ fn a_double_sided_sheet_casts_from_either_side() {
     spawn(&mut world, "sheet", "sheet", [1.0, 2.0, 0.0]);
     let mut shadow_with = |double_sided: bool| {
         let sheet_material = material("sheet", double_sided);
-        renderer.load_procedural_mesh(&gpu.device, "sheet", &sheet, &sheet_indices, sheet_material);
+        renderer.load_procedural_mesh(gpu.device, "sheet", &sheet, &sheet_indices, sheet_material);
         gpu.frame(&mut renderer, &world, &camera);
         gpu.centre_pixel()
     };
@@ -1362,7 +1381,7 @@ fn a_ray_target_is_met_where_each_entity_draws_it() {
     let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
     let upload = |renderer: &mut SceneRenderer, name: &str| {
         renderer.load_procedural_mesh(
-            &gpu.device,
+            gpu.device,
             name,
             &vertices,
             &indices,
@@ -1409,7 +1428,7 @@ fn a_ground_fog_lies_on_its_floors() {
     let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
     let (ground, indices) = square(40.0, [0.2, 0.2, 0.2, 1.0]);
     let material = ImportedMaterial::vertex_colored("ground");
-    renderer.load_procedural_mesh(&gpu.device, "ground", &ground, &indices, material);
+    renderer.load_procedural_mesh(gpu.device, "ground", &ground, &indices, material);
     spawn(&mut world, "ground", "ground", [0.0; 3]);
     gpu.frame(&mut renderer, &world, &camera);
     let clear = gpu.centre_pixel();
@@ -1432,7 +1451,7 @@ fn a_ground_fog_lies_on_its_floors() {
             depth: 16,
             texels,
         };
-        renderer.set_ground_fog(&gpu.device, &gpu.queue, &map)
+        renderer.set_ground_fog(gpu.device, gpu.queue, &map)
     };
     // On the ground's floor it lies thick round the middle.
     let on_ground = vec![[0.0, 1.0]; 256];
@@ -1490,14 +1509,15 @@ fn a_ground_fog_lies_on_its_floors() {
 #[test]
 fn thousands_of_distinct_looks_draw() {
     const LOOKS: usize = 3000;
-    let gpu = gpu_or_skip!();
+    // Alone: its error scopes are the device's, not this thread's
+    let gpu = gpu_or_skip!(alone);
     let mut renderer = gpu.renderer();
     renderer.set_tonemapping(false);
     let mut world = FlintWorld::new();
     let camera = Camera::default();
     let (tile, indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
     renderer.load_procedural_mesh(
-        &gpu.device,
+        gpu.device,
         "tile",
         &tile,
         &indices,
@@ -1554,8 +1574,8 @@ fn every_instance_of_a_skinned_model_stays_skinned() {
     let loaded = flint_render::model_loader::load_models_from_world(
         &mut world,
         &mut renderer,
-        &gpu.device,
-        &gpu.queue,
+        gpu.device,
+        gpu.queue,
         &config,
     );
     for id in ids {

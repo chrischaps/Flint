@@ -4,6 +4,8 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
+mod shared_gpu;
+
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, QualitySettings, RendererConfig, SceneRenderer, Vertex};
@@ -12,21 +14,24 @@ const SIZE: u32 = 96;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: &'static wgpu::Device,
+    queue: &'static wgpu::Queue,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    _lease: shared_gpu::Lease,
 }
 
+/// The shared device (#598), with no other test on it: every frame here
+/// is drawn in an error scope, and wgpu 23 keeps those per device.
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(async {
-        let instance = flint_render::gpu_select::instance();
-        let adapter = flint_render::gpu_select::request_adapter(&instance, None).await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .ok()?;
+    shared_gpu::lease_alone().map(frame_for)
+}
+
+fn frame_for(lease: shared_gpu::Lease) -> Gpu {
+    let shared = lease.gpu;
+    let device = &shared.device;
+    {
         let target = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -49,14 +54,15 @@ fn gpu() -> Option<Gpu> {
             wgpu::TextureFormat::Depth32Float,
             attach | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        Some(Gpu {
+        Gpu {
             color_view: color.create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             color,
             device,
-            queue,
-        })
-    })
+            queue: &shared.queue,
+            _lease: lease,
+        }
+    }
 }
 
 macro_rules! gpu_or_skip {
@@ -109,8 +115,8 @@ fn spawn(world: &mut FlintWorld, name: &str, mesh: &str) {
 /// are in the frame.
 fn scene(gpu: &Gpu) -> (SceneRenderer, FlintWorld) {
     let mut renderer = SceneRenderer::new_headless(
-        &gpu.device,
-        &gpu.queue,
+        gpu.device,
+        gpu.queue,
         FORMAT,
         SIZE,
         SIZE,
@@ -122,7 +128,7 @@ fn scene(gpu: &Gpu) -> (SceneRenderer, FlintWorld) {
         ("slab", square(1.5, 2.0, [0.9, 0.3, 0.2, 1.0])),
     ] {
         renderer.load_procedural_mesh(
-            &gpu.device,
+            gpu.device,
             name,
             &vertices,
             &indices,
@@ -139,10 +145,10 @@ impl Gpu {
     /// the wrong sample count, or a target at the wrong size, would give.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        renderer.update_from_world(world, &self.device);
+        renderer.update_from_world(world, self.device);
         renderer.render_to(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             &self.depth_view,
             &Camera::default(),
             &self.color_view,
@@ -279,7 +285,7 @@ fn toggling_every_setting_brings_the_frame_back() {
         for q in &settings {
             let msaa_before = renderer.msaa();
             let start = std::time::Instant::now();
-            let applied = renderer.set_quality(&gpu.device, q);
+            let applied = renderer.set_quality(gpu.device, q);
             if msaa_before != q.msaa {
                 msaa_changes.push(start.elapsed().as_secs_f64() * 1000.0);
             }
@@ -297,7 +303,7 @@ fn toggling_every_setting_brings_the_frame_back() {
         msaa_changes[msaa_changes.len() - 1]
     );
 
-    renderer.set_quality(&gpu.device, &d);
+    renderer.set_quality(gpu.device, &d);
     let back = gpu.frame(&mut renderer, &world);
     assert_eq!(
         differing(&base, &back, 0),
@@ -314,7 +320,7 @@ fn each_setting_changes_what_is_drawn() {
     let base = gpu.frame(&mut renderer, &world);
 
     let mut at = |q: QualitySettings| {
-        renderer.set_quality(&gpu.device, &q);
+        renderer.set_quality(gpu.device, &q);
         gpu.frame(&mut renderer, &world)
     };
     let msaa = at(QualitySettings { msaa: 4, ..d });
@@ -403,7 +409,7 @@ fn a_scene_load_keeps_the_caps() {
         ssao_samples: 16,
         ..QualitySettings::default()
     };
-    renderer.set_quality(&gpu.device, &q);
+    renderer.set_quality(gpu.device, &q);
 
     // A scene load hands the renderer its own look, bloom and all.
     let mut look = renderer.post_process_config().clone();
@@ -421,7 +427,7 @@ fn a_scene_load_keeps_the_caps() {
     assert_eq!(renderer.effective_post_process_config().ssao_samples, 16);
 
     // Lifting the cap brings the scene's bloom back.
-    renderer.set_quality(&gpu.device, &QualitySettings::default());
+    renderer.set_quality(gpu.device, &QualitySettings::default());
     assert!(renderer.effective_post_process_config().bloom_enabled);
     assert_eq!(renderer.effective_post_process_config().ssao_samples, 64);
 }
@@ -436,11 +442,11 @@ fn the_shadow_settings_hold_through_a_resolution_change() {
         shadow_resolution: 1024,
         ..QualitySettings::default()
     };
-    let applied = renderer.set_quality(&gpu.device, &q);
+    let applied = renderer.set_quality(gpu.device, &q);
     assert_eq!(applied, q);
     assert_eq!(renderer.shadow_resolution(), 1024);
     // A debug panel changing the resolution alone keeps the cascades.
-    renderer.set_shadow_resolution(&gpu.device, 2048);
+    renderer.set_shadow_resolution(gpu.device, 2048);
     gpu.frame(&mut renderer, &world);
     // Two casters (ground and slab), each drawn into two cascades.
     assert_eq!(renderer.collect_stats().shadow_draw_calls, 4);

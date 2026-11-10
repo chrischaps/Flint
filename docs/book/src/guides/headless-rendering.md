@@ -540,6 +540,8 @@ Two adapters never render exactly alike. The difference is usually small, but a 
 
 On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs, with the contact sheet: open its `index.html`. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. wgpu hides WARP on a machine that has a GPU, so WARP variants can't be rendered locally. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
 
+flint-render's own GPU tests (`stylize`, `runtime_mesh`, `quality`, `shading_boil`) share one device per test binary, made on first use by `tests/shared_gpu`. Each test made its own device until a run hung for hours: on Windows with an NVIDIA card, creating a Vulkan device while a finished test's thread exits can deadlock the driver against the Windows loader lock. A test borrows the shared device alongside the others, or alone when it counts objects across the whole device or catches errors in an error scope (wgpu 23 keeps one stack of scopes per device). A watchdog aborts the binary and names the test once any test has held the device longer than `FLINT_GPU_TEST_TIMEOUT` seconds (300 by default), so a hang ends in minutes with a name, not in hours with none.
+
 ## Visual Regression Testing
 
 For a game's own scenes, a golden suite as above is the shortest path. By hand, the same workflow is:
