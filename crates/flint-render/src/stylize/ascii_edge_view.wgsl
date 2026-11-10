@@ -8,7 +8,8 @@
 //     glyph's direction where it draws one, a dim dashed one where it
 //     yields the line to a neighbour, a red wash where the cell holds more
 //     than `edge_max` (texture, keeps its tone glyph), nothing where it
-//     holds less than `edge_threshold`;
+//     holds less than `edge_threshold`; a yellow corner or tee, arms from
+//     the cell's centre, where the cell draws one (#348);
 //   - along each cell's foot, a bar of its edge length over `edge_max`,
 //     with a white tick at `edge_threshold`; in cells 12 px or wider the
 //     length in cell widths is written in the top left.
@@ -26,7 +27,8 @@ struct EdgeViewUniforms {
     dim: f32,
     // Line width in pixels (a point)
     thick: f32,
-    _pad0: f32,
+    // How many corner glyphs the frame's font has (#348)
+    corners: u32,
     _pad1: vec2<f32>,
 };
 
@@ -47,6 +49,11 @@ const LINE_COLOR: vec3<f32> = vec3<f32>(0.4, 1.0, 0.45);
 const YIELD_COLOR: vec3<f32> = vec3<f32>(0.25, 0.55, 0.3);
 const SHORT_COLOR: vec3<f32> = vec3<f32>(0.55, 0.55, 0.55);
 const TEXTURE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.25, 0.2);
+const CORNER_COLOR: vec3<f32> = vec3<f32>(1.0, 0.9, 0.3);
+
+// A corner glyph slot's arms (#348), right 1, left 2, down 4, up 8: the
+// inverse of ascii_edge_thin.wgsl's ARM_GLYPHS, slots 4..12
+const SLOT_ARMS = array<u32, 9>(5u, 6u, 9u, 10u, 13u, 14u, 7u, 11u, 15u);
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -133,9 +140,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let e = edge_cell_at(c);
     let len = e.y;
     let has_line = e.x > 0.5;
-    let drawn = has_line && thinned_slot(c) < 4u;
+    let drawn = has_line && thinned_slot(c) != NO_EDGE;
+    let shape = cornered_slot(c, u.corners);
+    let corner = drawn && shape >= 4u && shape != NO_EDGE;
     var decision = SHORT_COLOR;
-    if drawn {
+    if corner {
+        decision = CORNER_COLOR;
+    } else if drawn {
         decision = LINE_COLOR;
     } else if has_line {
         decision = YIELD_COLOR;
@@ -158,8 +169,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         out = CREASE_COLOR;
     }
 
+    // The corner the cell draws (#348): its arms, from the centre out
+    if corner {
+        var table = SLOT_ARMS;
+        let arms = table[shape - 4u];
+        let d = local - 0.5 * u.cell;
+        let half = 0.5 * u.thick;
+        let on_row = abs(d.y) <= half;
+        let on_col = abs(d.x) <= half;
+        if (on_row && ((d.x >= -half && (arms & 1u) != 0u) || (d.x <= half && (arms & 2u) != 0u)))
+            || (on_col && ((d.y >= -half && (arms & 4u) != 0u) || (d.y <= half && (arms & 8u) != 0u))) {
+            out = mix(out, decision, 0.85);
+        }
+    } else if has_line {
     // The line glyph the cell draws (or yields), through its centre
-    if has_line {
         let slot = min(u32(e.x - 0.5), 3u);
         let d = local - 0.5 * u.cell;
         let dir = glyph_direction(slot);

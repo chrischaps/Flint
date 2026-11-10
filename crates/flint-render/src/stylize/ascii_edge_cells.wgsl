@@ -37,6 +37,13 @@
 // cell's mix of it and what's behind. z stays a whole number under 2^23,
 // exact in the Rgba32Float target. x, y and w are rounded to f16, as the
 // Rgba16Float target stored them before.
+// Corners (#348): z's bit 23 (CORNER_BIT, 2^23; z stays under 2^24, still
+// exact) marks a cell that draws a line glyph but whose edge pixels run in
+// no one direction: the coherence of its summed tensor, (l1 - l2) /
+// (l1 + l2), is under `corner`. Two arms of a corner at right angles give
+// (a - b) / (a + b) for arm lengths a and b, 0 when the corner sits in the
+// cell's middle; a straight line gives nearly 1. The glyph pass picks which
+// corner from the neighbours' line glyphs (ascii_edge_thin.wgsl).
 
 struct CellUniforms {
     cell: vec2<f32>,
@@ -49,7 +56,8 @@ struct CellUniforms {
     edge_size: vec2<f32>,
     // 1: the picture arrives linear (an sRGB target)
     srgb: u32,
-    _pad: f32,
+    // Coherence under which a drawn cell is marked a corner (#348; 0 off)
+    corner: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: CellUniforms;
@@ -95,6 +103,8 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 
 const PI: f32 = 3.14159265;
+// z's corner mark (#348), 2^23: above the hue's 21 bits and the two below
+const CORNER_BIT: f32 = 8388608.0;
 
 // The edge glyph slot for a line whose direction is `angle` radians from
 // +x with y up, as `EdgeGlyphs::for_angle` picks it.
@@ -222,11 +232,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Where the line meets the centre column (cross axis x) or row (y)
     let across = select(n.y, n.x, cross_x);
     let offset = dot(centroid, n) / select(across, 1e-6, abs(across) < 1e-6);
+    // How sure the tensor is of one direction (#348): 1 for a straight
+    // line, toward 0 where two arms at right angles share the cell
+    let spread = sqrt((j.x - j.z) * (j.x - j.z) + 4.0 * j.y * j.y);
+    let coherence = spread / max(j.x + j.z, 1e-6);
+    let corner = select(0.0, CORNER_BIT, slot_plus >= 0.0 && coherence < u.corner);
     // y = the length that decided it
     return vec4<f32>(
         as_f16(select(f32(slot) + 1.0 + turn, -0.25 - turn, slot_plus < 0.0)),
         as_f16(len),
-        outline + select(0.0, 2.0, cross_x) + 4.0 * packed_hue(near),
+        outline + select(0.0, 2.0, cross_x) + 4.0 * packed_hue(near) + corner,
         as_f16(offset),
     );
 }

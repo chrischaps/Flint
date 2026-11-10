@@ -33,6 +33,8 @@
 //! vertical = "|"
 //! diagonal = "/"
 //! antidiagonal = "\\"
+//! corners = "┌┐└┘├┤┬┴┼"      # #348: where two lines meet; no default. Four
+//!                             # (the corners alone) or all nine with the tees
 //! ```
 //!
 //! A set whose file names no `[ramps]` gets the built-in ones (those its font
@@ -95,6 +97,7 @@ struct EdgesDef {
     vertical: Option<char>,
     diagonal: Option<char>,
     antidiagonal: Option<char>,
+    corners: Option<String>,
 }
 
 /// How a ramp's glyphs are ordered.
@@ -330,7 +333,25 @@ pub struct EdgeGlyphs {
     pub diagonal: char,
     /// Falling to the right: `\`.
     pub antidiagonal: char,
+    /// Where lines meet (#348), in [`CORNER_ORDER`]'s order (`┌ ┐ └ ┘`,
+    /// then the tees `├ ┤ ┬ ┴` and the cross `┼`): none, the four corners,
+    /// or all nine. A meeting the set has no glyph for draws its line glyph.
+    pub corners: [Option<char>; 9],
 }
+
+/// The shapes [`EdgeGlyphs::corners`] holds, in order, each by the arms it
+/// joins: right, left, down, up (#348).
+pub const CORNER_ORDER: [&str; 9] = [
+    "right+down",
+    "left+down",
+    "right+up",
+    "left+up",
+    "right+up+down",
+    "left+up+down",
+    "right+left+down",
+    "right+left+up",
+    "all four",
+];
 
 impl Default for EdgeGlyphs {
     fn default() -> Self {
@@ -339,12 +360,13 @@ impl Default for EdgeGlyphs {
             vertical: '|',
             diagonal: '/',
             antidiagonal: '\\',
+            corners: [None; 9],
         }
     }
 }
 
 impl EdgeGlyphs {
-    /// The four glyphs, horizontal, vertical, diagonal, antidiagonal.
+    /// The four line glyphs, horizontal, vertical, diagonal, antidiagonal.
     pub fn all(&self) -> [char; 4] {
         [
             self.horizontal,
@@ -352,6 +374,42 @@ impl EdgeGlyphs {
             self.diagonal,
             self.antidiagonal,
         ]
+    }
+
+    /// How many corner glyphs the set has: 0, 4 or 9 (#348).
+    pub fn corner_count(&self) -> usize {
+        self.corners.iter().take_while(|c| c.is_some()).count()
+    }
+
+    /// Every glyph an edge cell can draw, in slot order: the four lines,
+    /// then the corners the set has (#348). The ASCII style packs them in
+    /// this order and its shaders number them so.
+    pub fn slots(&self) -> Vec<char> {
+        let mut out = self.all().to_vec();
+        out.extend(self.corners.iter().map_while(|c| *c));
+        out
+    }
+
+    /// The glyph where arms `right`, `left`, `down` and `up` meet, as the
+    /// glyph pass picks it from a cell's neighbours (#348): a corner, tee or
+    /// cross when the set has one, the straight line for two opposite arms,
+    /// and `None` otherwise (the cell keeps its own line glyph).
+    pub fn for_arms(&self, right: bool, left: bool, down: bool, up: bool) -> Option<char> {
+        let index = match (right, left, down, up) {
+            (true, true, false, false) => return Some(self.horizontal),
+            (false, false, true, true) => return Some(self.vertical),
+            (true, false, true, false) => 0,
+            (false, true, true, false) => 1,
+            (true, false, false, true) => 2,
+            (false, true, false, true) => 3,
+            (true, false, true, true) => 4,
+            (false, true, true, true) => 5,
+            (true, true, true, false) => 6,
+            (true, true, false, true) => 7,
+            (true, true, true, true) => 8,
+            _ => return None,
+        };
+        self.corners[index]
     }
 
     /// The glyph for an edge whose direction on screen is `angle` radians
@@ -426,11 +484,12 @@ impl GlyphSet {
             vertical: file.edges.vertical.unwrap_or('|'),
             diagonal: file.edges.diagonal.unwrap_or('/'),
             antidiagonal: file.edges.antidiagonal.unwrap_or('\\'),
+            corners: corner_glyphs(file.edges.corners.as_deref())?,
         };
         let atlas = build_atlas(&file, &edges, dir)?;
 
         let missing: BTreeSet<char> = edges
-            .all()
+            .slots()
             .into_iter()
             .filter(|c| !atlas.contains(*c))
             .collect();
@@ -521,6 +580,26 @@ impl GlyphSet {
     }
 }
 
+/// `[edges] corners`: four glyphs (the corners) or nine (with the tees and
+/// the cross), in [`CORNER_ORDER`]'s order (#348).
+fn corner_glyphs(text: Option<&str>) -> Result<[Option<char>; 9], GlyphError> {
+    let mut out = [None; 9];
+    let Some(text) = text else {
+        return Ok(out);
+    };
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() != 4 && chars.len() != 9 {
+        return Err(GlyphError::Parse(format!(
+            "[edges] corners: give 4 glyphs (┌┐└┘) or 9 (┌┐└┘├┤┬┴┼), not {}",
+            chars.len()
+        )));
+    }
+    for (slot, c) in out.iter_mut().zip(chars) {
+        *slot = Some(c);
+    }
+    Ok(out)
+}
+
 fn in_ramp(ramp: &str, e: GlyphError) -> GlyphError {
     match e {
         GlyphError::Parse(m) => GlyphError::Parse(format!("ramp `{ramp}`: {m}")),
@@ -563,7 +642,7 @@ fn build_atlas(
             for ramp in file.ramps.values() {
                 chars.extend(ramp.glyphs.chars());
             }
-            chars.extend(edges.all());
+            chars.extend(edges.slots());
             if file.ramps.is_empty() {
                 // The built-in ramps it may inherit, where the font has them.
                 let font_ref = ab_glyph::FontRef::try_from_slice(&bytes)
