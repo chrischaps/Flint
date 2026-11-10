@@ -11,7 +11,7 @@ Every ASCII look needs glyphs on the GPU. `flint_render::glyph_atlas` rasterizes
 | Type | What it is |
 |---|---|
 | `GlyphAtlas` | Equal cells in an 8-bit coverage image (0 paper, 255 ink), 16 cells a row, one-pixel gutters. Lookups: `index_of`, `uv_rect`, `cell_origin`, `sample`, and `coverage` (each glyph's measured mean ink, 0..1). |
-| `GlyphRamp` | Named glyphs from least ink to most. `pick(luminance)` maps 0..1 onto equal bands; `atlas_indices()` is what a shader's ramp buffer holds. |
+| `GlyphRamp` | Named glyphs from least ink to most. `pick(luminance)` maps 0..1 onto equal bands, or for a calibrated ramp onto the glyph whose measured ink is nearest; `atlas_indices()` is what a shader's ramp buffer holds, `coverage()` each step's ink, `bounds()` where each step's band starts, `inversions()` the neighbours that step backwards in ink. |
 | `EdgeGlyphs` | `horizontal`, `vertical`, `diagonal`, `antidiagonal`; `for_angle(radians)` picks one from an edge's direction on screen. |
 | `GlyphSet` | An atlas with its ramps, a default ramp and edge glyphs, loaded from a `*.glyphs.toml`. |
 | `GlyphSetCache` | Sets by name, each loaded once. |
@@ -62,6 +62,10 @@ glyphs = " .|!lI"
 glyphs = "@#. *+=%"
 sort = "coverage"           # re-order by each glyph's measured ink in this font
 
+[ramps.even]
+glyphs = " .:-=+*#%@"
+map = "coverage"            # luminance picks the glyph whose measured ink is nearest
+
 [edges]                     # each defaults to - | / \
 horizontal = "~"
 ```
@@ -69,6 +73,22 @@ horizontal = "~"
 - A TTF atlas holds printable ASCII plus every glyph the set's ramps and edges name. A glyph the font lacks is an error that names it (`the font has no glyph for '漢'`).
 - A set with no `[ramps]` gets the built-in ramps that its font can draw, re-sorted by coverage in that font.
 - Unknown keys are errors, so a misspelled `glyph =` fails loudly rather than being ignored.
+- A ramp in a project's set that steps backwards in ink in its font (a later glyph with less than the one before) is logged when the set loads, naming the pairs: `ramp `x` gives a brighter input less ink in its font at ':' > '-'`. The built-in `classic` is left as written on purpose and isn't reported.
+
+## Calibrated ramps
+
+A ramp written for one font rarely rises evenly in another. In the built-in 8x8 font the classic ramp's ink goes 0, .063, **.125**, .078, **.156**, .141, .172, **.313**, .203, .281: `:` out-inks `-`, `=` out-inks `+`, and `#` out-inks both `%` and `@`, so on equal bands a brighter pixel can get less ink. On the sphere below, the bright cap draws `%` and `@` inside a ring of denser `#`.
+
+`map = "coverage"` (#281) calibrates a ramp instead. Each glyph's measured coverage is normalised to the ramp's own range (least ink 0, most 1), the steps are put in that order, and a luminance draws the glyph whose normalised ink is nearest: each band runs between the midpoints of its neighbours. The result is monotone by construction, and its bands are as wide as the font's own spacing, so a glyph that adds little ink over the one before holds only a narrow band. In the 8x8 font the calibrated classic ramp runs ` .-:+=*%@#`, with bands starting at 0, .1, .225, .325, .425, .475, .525, .6, .775 and .95.
+
+`sort = "coverage"` fixes the order but keeps equal bands; `map = "coverage"` fixes both. In code, `GlyphRamp::calibrated()` gives the calibrated copy of any ramp and `GlyphRamp::mapped` builds one directly.
+
+![The classic ramp on equal bands](../images/glyph-atlas-specimen-classic.png)
+![The classic ramp calibrated by coverage](../images/glyph-atlas-specimen-classic-calibrated.png)
+
+*The same sphere, classic ramp. Above: as written, on equal bands; the highlight is ringed by `#`, the densest glyph. Below: calibrated; ink rises all the way to the highlight, and the floor's gradient reaches `-`.*
+
+On the GPU the ASCII style packs each step's band start beside its glyph in the ramp table (`ramp_tone` in the uniform, four to a `vec4`), and `ramp_step` in `ascii_common.wgsl` binary-searches it, at most seven reads for a 128-step ramp. A ramp on equal bands stores `-1` at its first step and takes the old `floor(t * n)`, so every existing ASCII frame is byte-identical. Hysteresis, dither and tone bands still count in steps, and calibrated steps are ordered by ink, so they keep their meaning. With `ground = "inverse"` the ramp runs backwards as before, so ink still falls monotonically as the cell brightens.
 
 ![The same sphere in Hack, detailed ramp](../images/glyph-atlas-specimen-hack.png)
 
@@ -121,4 +141,4 @@ cargo run -p flint-render --example glyph_atlas -- out/                         
 cargo run -p flint-render --example glyph_atlas -- out/ fonts/terminal.glyphs.toml
 ```
 
-This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each glyph's ink and each ramp's coverage curve) and `<set>_<ramp>.png` (the sphere specimen above).
+This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` and `<set>_<ramp>.png` (the sphere specimen above), plus `<set>_<ramp>_calibrated.png` for each ramp that isn't calibrated already. The JSON holds each glyph's ink and, per ramp, its glyphs, `map`, coverage, band starts (`bounds`), `inversions`, its calibrated order and bands, and a 101-point ink `curve`: `luminance`, `as_mapped` (the ink each luminance gets from the ramp as it is) and `calibrated`.

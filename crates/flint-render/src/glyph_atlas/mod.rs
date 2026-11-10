@@ -22,7 +22,8 @@ pub mod set;
 
 pub use gpu::{stack_pixels, GpuGlyphAtlas, GpuGlyphStack};
 pub use set::{
-    EdgeGlyphs, GlyphRamp, GlyphSet, GlyphSetCache, RampOrder, BUILTIN_SET, GLYPHS_SUFFIX,
+    calibrated_bounds, EdgeGlyphs, GlyphRamp, GlyphSet, GlyphSetCache, RampMap, RampOrder,
+    BUILTIN_SET, GLYPHS_SUFFIX,
 };
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
