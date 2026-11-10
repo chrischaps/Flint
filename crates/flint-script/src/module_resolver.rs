@@ -6,7 +6,7 @@
 //! too, on every target.
 
 use flint_core::vfs;
-use rhai::{Engine, EvalAltResult, Module, ModuleResolver, Position, Scope, Shared};
+use rhai::{Engine, EvalAltResult, Module, ModuleResolver, Position, Scope, Shared, AST};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -16,6 +16,11 @@ use std::sync::RwLock;
 pub struct VfsModuleResolver {
     base_path: PathBuf,
     cache: RwLock<HashMap<PathBuf, Shared<Module>>>,
+    /// Modules already read and compiled elsewhere (hot reload's worker,
+    /// #633), by resolved path: used in place of reading the file, so an
+    /// import after a lib change doesn't wait on the disk in a frame. An
+    /// error is the compile's, reported where the module is imported.
+    compiled: HashMap<PathBuf, Result<AST, String>>,
 }
 
 impl VfsModuleResolver {
@@ -23,7 +28,14 @@ impl VfsModuleResolver {
         Self {
             base_path: base_path.into(),
             cache: RwLock::new(HashMap::new()),
+            compiled: HashMap::new(),
         }
+    }
+
+    /// Resolve these paths from their compiled ASTs instead of the files.
+    pub fn with_compiled(mut self, compiled: HashMap<PathBuf, Result<AST, String>>) -> Self {
+        self.compiled = compiled;
+        self
     }
 
     /// The file an import names: relative paths join the base directory,
@@ -57,23 +69,17 @@ impl ModuleResolver for VfsModuleResolver {
         }
         drop(cache);
 
-        let mut source = vfs::read_to_string(&file_path)
-            .map_err(|_| Box::new(EvalAltResult::ErrorModuleNotFound(path.to_string(), pos)))?;
-        // rhai's file loader skips a leading shebang line.
-        if source.starts_with("#!") {
-            match source.find('\n') {
-                Some(n) => drop(source.drain(..n)),
-                None => source.clear(),
+        let mut ast = match self.compiled.get(&file_path) {
+            Some(Ok(ast)) => ast.clone(),
+            Some(Err(e)) => {
+                return Err(Box::new(EvalAltResult::ErrorInModule(
+                    path.to_string(),
+                    e.as_str().into(),
+                    pos,
+                )))
             }
-        }
-
-        let mut ast = engine.compile(&source).map_err(|err| {
-            Box::new(EvalAltResult::ErrorInModule(
-                path.to_string(),
-                err.into(),
-                pos,
-            ))
-        })?;
+            None => compile_module(engine, &file_path, path, pos)?,
+        };
         ast.set_source(path);
 
         let module: Shared<Module> = Module::eval_ast_as_new(Scope::new(), &ast, engine)
@@ -86,4 +92,41 @@ impl ModuleResolver for VfsModuleResolver {
             .insert(file_path, Shared::clone(&module));
         Ok(module)
     }
+}
+
+/// Read and compile the module `path` names (at `file_path`), as rhai's file
+/// loader does.
+pub fn compile_module(
+    engine: &Engine,
+    file_path: &Path,
+    path: &str,
+    pos: Position,
+) -> Result<AST, Box<EvalAltResult>> {
+    let source = vfs::read_to_string(file_path)
+        .map_err(|_| Box::new(EvalAltResult::ErrorModuleNotFound(path.to_string(), pos)))?;
+    compile_module_source(engine, source, path, pos)
+}
+
+/// Compile a module's text as rhai's file loader does: a leading shebang
+/// line is skipped. The hot-reload worker compiles lib modules with this,
+/// off the frame thread (#633).
+pub fn compile_module_source(
+    engine: &Engine,
+    mut source: String,
+    path: &str,
+    pos: Position,
+) -> Result<AST, Box<EvalAltResult>> {
+    if source.starts_with("#!") {
+        match source.find('\n') {
+            Some(n) => drop(source.drain(..n)),
+            None => source.clear(),
+        }
+    }
+    engine.compile(&source).map_err(|err| {
+        Box::new(EvalAltResult::ErrorInModule(
+            path.to_string(),
+            err.into(),
+            pos,
+        ))
+    })
 }

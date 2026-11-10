@@ -2414,6 +2414,9 @@ impl ViewerApp {
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
+            // The user style and glyph set polls ask a watcher thread from
+            // here on, never the disk in a frame (#633)
+            flint_core::file_watch::start();
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize viewer: {e:#}");
                 event_loop.exit();
