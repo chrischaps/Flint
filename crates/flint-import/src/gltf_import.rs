@@ -319,6 +319,7 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
             emissive_strength: material.emissive_strength().unwrap_or(1.0),
             emissive_texture,
             vertex_emission: false,
+            double_sided: material.double_sided(),
         });
     }
 
@@ -935,6 +936,22 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!((first.as_str(), kept.as_str()), ("first", "first"));
         assert_eq!(fresh, "second");
+    }
+
+    /// glTF `doubleSided` reaches the material (#623), and a material that
+    /// doesn't say stays single-sided, glTF's default. The fixture is
+    /// `tools/test-models/double_sided_card.py`'s.
+    #[test]
+    fn double_sided_is_read() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testModels/DoubleSidedCard.glb");
+        let model = import_gltf(path).unwrap();
+        let sides: Vec<_> = model
+            .materials
+            .iter()
+            .map(|m| (m.name.as_str(), m.double_sided))
+            .collect();
+        assert_eq!(sides, [("two_sided", true), ("one_sided", false)]);
+        assert!(!ImportedMaterial::default().double_sided);
     }
 
     /// A material with painted-on lights keeps its emissive map's name, the

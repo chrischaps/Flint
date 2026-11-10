@@ -108,6 +108,8 @@ pub(crate) fn grow_bounds(bounds: &mut ([f32; 3], [f32; 3]), uniforms: &ShallowW
 /// The woozy twin of each solid and blended pipeline of one kind of mesh.
 pub(crate) struct WoozePipelineSet {
     pub opaque: wgpu::RenderPipeline,
+    /// `opaque` culling nothing, for glTF `doubleSided` materials (#623).
+    pub opaque_double_sided: wgpu::RenderPipeline,
     pub alpha_back: wgpu::RenderPipeline,
     pub alpha_front: wgpu::RenderPipeline,
     pub additive: wgpu::RenderPipeline,
@@ -182,6 +184,7 @@ impl Stages<'_> {
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
         WoozePipelineSet {
             opaque: self.pipeline(device, alpha, Some(wgpu::Face::Back), true),
+            opaque_double_sided: self.pipeline(device, alpha, None, true),
             alpha_back: self.pipeline(device, alpha, Some(wgpu::Face::Front), false),
             alpha_front: self.pipeline(device, alpha, Some(wgpu::Face::Back), false),
             additive: self.pipeline(device, ADDITIVE_BLEND, None, false),

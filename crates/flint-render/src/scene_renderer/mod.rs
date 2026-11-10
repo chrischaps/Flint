@@ -107,6 +107,9 @@ pub(super) struct DrawCall {
     lod: Option<DrawLod>,
     /// Its drift this frame, if its entity has shallow wooze (#215).
     wooze: Option<ShallowWoozeUniforms>,
+    /// Drawn with no face culled, in the scene and shadow passes: its
+    /// material is glTF `doubleSided` (#623).
+    double_sided: bool,
 }
 
 /// A draw's level of detail in world space: the band of camera distances it
@@ -486,6 +489,8 @@ struct SkinnedDrawCall {
     world_aabb: Option<([f32; 3], [f32; 3])>,
     /// As [`DrawCall::wooze`].
     wooze: Option<ShallowWoozeUniforms>,
+    /// As [`DrawCall::double_sided`].
+    double_sided: bool,
 }
 
 /// One faint copy of a skinned entity (#228): bones of its own and how opaque
@@ -4186,6 +4191,7 @@ impl SceneRenderer {
             style_aabb: None,
             lod: None,
             wooze: None,
+            double_sided: false,
         }
     }
 
@@ -4318,6 +4324,7 @@ impl SceneRenderer {
             style_aabb: None,
             lod: None,
             wooze: None,
+            double_sided: false,
         }
     }
 
@@ -5572,6 +5579,7 @@ impl SceneRenderer {
         let f = RenderPipeline::new(device, format, samples);
         let p = &mut self.pipeline;
         p.pipeline = f.pipeline;
+        p.pipeline_double_sided = f.pipeline_double_sided;
         p.line_pipeline = f.line_pipeline;
         p.overlay_line_pipeline = f.overlay_line_pipeline;
         p.skeleton_line_pipeline = f.skeleton_line_pipeline;
@@ -5591,6 +5599,7 @@ impl SceneRenderer {
                 samples,
             );
             s.pipeline = f.pipeline;
+            s.pipeline_double_sided = f.pipeline_double_sided;
             s.wire_line_pipeline = f.wire_line_pipeline;
             s.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
             s.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;

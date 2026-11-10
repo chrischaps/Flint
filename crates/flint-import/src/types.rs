@@ -402,6 +402,11 @@ pub struct ImportedMaterial {
     /// Vertex alpha is then no longer opacity; the entity material's
     /// `opacity` still applies. Needs `use_vertex_color`.
     pub vertex_emission: bool,
+    /// Whether both faces of the surface are drawn (glTF `doubleSided`).
+    /// False culls back faces, as glTF's default does; true draws thin cards
+    /// (leaves, fronds, flat figures) from either side, lights a back face
+    /// with its normal turned toward the viewer, and casts shadows from both.
+    pub double_sided: bool,
 }
 
 impl Default for ImportedMaterial {
@@ -422,6 +427,7 @@ impl Default for ImportedMaterial {
             emissive_strength: 1.0,
             emissive_texture: None,
             vertex_emission: false,
+            double_sided: false,
         }
     }
 }

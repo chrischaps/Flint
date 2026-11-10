@@ -1153,6 +1153,156 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     assert!(close(solid, gpu.centre_pixel()), "the child's own value wins");
 }
 
+/// A flat square of half-width `half` at the origin wound once, so it has
+/// one face: up (+Y, normal up) or down.
+fn card(half: f32, color: [f32; 4], up: bool) -> (Vec<Vertex>, Vec<u32>) {
+    let (mut vertices, _) = square(half, color);
+    let ny = if up { 1.0 } else { -1.0 };
+    vertices.iter_mut().for_each(|v| v.normal = [0.0, ny, 0.0]);
+    let indices = if up { vec![0, 1, 2, 0, 2, 3] } else { vec![0, 2, 1, 0, 3, 2] };
+    (vertices, indices)
+}
+
+/// A camera 8 m above (or below) `target` and 4 m back, looking at it.
+fn looking_at(target: [f32; 3], above: bool) -> Camera {
+    let [x, y, z] = target;
+    Camera {
+        position: flint_core::Vec3::new(x, y + if above { 8.0 } else { -8.0 }, z + 4.0),
+        target: flint_core::Vec3::new(x, y, z),
+        ..Camera::default()
+    }
+}
+
+fn set_sun(world: &mut FlintWorld, direction: [f64; 3], intensity: f64) {
+    let sun = world.get_id("sun").unwrap_or_else(|| world.spawn("sun").unwrap());
+    let mut light = toml::Table::new();
+    light.insert("type".into(), "directional".into());
+    light.insert("intensity".into(), intensity.into());
+    light.insert(
+        "direction".into(),
+        toml::Value::Array(direction.iter().map(|&d| d.into()).collect()),
+    );
+    world.set_component(sun, "light", light.into()).unwrap();
+}
+
+/// glTF `doubleSided` (#623): `testModels/DoubleSidedCard.glb` holds two
+/// cards wound once with their normals up, one `doubleSided`. From above
+/// both draw; from below only the double-sided one does, where before the
+/// fix both were culled.
+#[test]
+fn a_double_sided_glb_card_draws_from_behind() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_debug_mode(DebugMode::Unlit);
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testModels/DoubleSidedCard.glb");
+    let model = flint_import::import_gltf(path).unwrap();
+    renderer.load_model(&gpu.device, &gpu.queue, "cards", &model);
+    let mut world = FlintWorld::new();
+    spawn(&mut world, "cards", "cards", [0.0; 3]);
+
+    // The GLB's colours, warm and cool, as against the cool grey sky.
+    let orange = |[r, _, b, _]: [u8; 4]| r > b + 50;
+    let blue = |[r, _, b, _]: [u8; 4]| b > r + 45;
+    let mut seen = |x: f32, above: bool| {
+        gpu.frame(&mut renderer, &world, &looking_at([x, 0.0, 0.0], above));
+        gpu.centre_pixel()
+    };
+    let two_above = seen(-1.25, true);
+    let one_above = seen(1.25, true);
+    let two_below = seen(-1.25, false);
+    let one_below = seen(1.25, false);
+    assert!(orange(two_above), "the two-sided card from above: {two_above:?}");
+    assert!(blue(one_above), "the one-sided card from above: {one_above:?}");
+    assert!(orange(two_below), "the two-sided card from below: {two_below:?}");
+    assert!(
+        !blue(one_below) && !orange(one_below),
+        "the one-sided card from below is culled: {one_below:?}"
+    );
+}
+
+/// A double-sided card's back face is lit with its normal turned toward the
+/// viewer (#623): seen from below under a sun below, it reads as its front
+/// does from above under a sun above, and from below under a sun above it
+/// is in the dark, as the side that faces away from the light.
+#[test]
+fn a_double_sided_back_face_is_lit_as_the_side_it_shows() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    spawn(&mut world, "card", "card", [0.0; 3]);
+    let (vertices, indices) = card(20.0, [0.5, 0.5, 0.5, 1.0], true);
+    let material = ImportedMaterial {
+        roughness: 1.0,
+        double_sided: true,
+        ..ImportedMaterial::vertex_colored("card")
+    };
+    renderer.load_procedural_mesh(&gpu.device, "card", &vertices, &indices, material);
+    let mut shoot = |sun_up: bool, above: bool| {
+        set_sun(&mut world, [0.0, if sun_up { 1.0 } else { -1.0 }, 0.0], 3.0);
+        gpu.frame(&mut renderer, &world, &looking_at([0.0; 3], above));
+        gpu.centre_pixel()
+    };
+    let front = shoot(true, true);
+    let back = shoot(false, false);
+    let back_in_the_dark = shoot(true, false);
+    assert!(front[0] > 60, "the front is lit: {front:?}");
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    assert!(close(front, back), "the back lit as a front: {back:?} vs {front:?}");
+    assert!(
+        back_in_the_dark[0] + 50 < front[0],
+        "the back faces away from a sun above: {back_in_the_dark:?} vs {front:?}"
+    );
+}
+
+/// A double-sided sheet casts a shadow whichever way it faces the sun
+/// (#623): wound to face the ground, away from the sun, a single-sided
+/// sheet is culled from the shadow map and the ground under it stays lit.
+#[test]
+fn a_double_sided_sheet_casts_from_either_side() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let material = |name: &str, double_sided: bool| ImportedMaterial {
+        roughness: 1.0,
+        double_sided,
+        ..ImportedMaterial::vertex_colored(name)
+    };
+    // As in the cast_shadows test: a sheet 2 m up whose shadow falls on the
+    // middle of the view, while the camera sees past it to the ground there.
+    let (ground, ground_indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
+    let (sheet, sheet_indices) = card(1.5, [0.5, 0.5, 0.5, 1.0], false);
+    renderer.load_procedural_mesh(
+        &gpu.device,
+        "ground",
+        &ground,
+        &ground_indices,
+        material("ground", false),
+    );
+    set_sun(&mut world, [0.5, 1.0, 0.0], 3.0);
+    spawn(&mut world, "ground", "ground", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let lit = gpu.centre_pixel();
+    assert!(lit[0] > 40, "the ground is lit: {lit:?}");
+
+    spawn(&mut world, "sheet", "sheet", [1.0, 2.0, 0.0]);
+    let mut shadow_with = |double_sided: bool| {
+        let sheet_material = material("sheet", double_sided);
+        renderer.load_procedural_mesh(&gpu.device, "sheet", &sheet, &sheet_indices, sheet_material);
+        gpu.frame(&mut renderer, &world, &camera);
+        gpu.centre_pixel()
+    };
+    let one_sided = shadow_with(false);
+    let two_sided = shadow_with(true);
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    assert!(close(lit, one_sided), "a one-sided sheet facing away casts: {one_sided:?}");
+    assert!(two_sided[0] + 30 < lit[0], "a two-sided one casts: {two_sided:?} vs {lit:?}");
+}
+
 #[test]
 fn a_ray_target_is_met_where_each_entity_draws_it() {
     use flint_core::ray_mesh::RayMesh;
