@@ -30,6 +30,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
+| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, checking every reference first |
+| `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
 | `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
 | `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
 | `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
