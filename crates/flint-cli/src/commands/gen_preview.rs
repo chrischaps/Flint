@@ -684,7 +684,7 @@ impl GenPreviewApp {
         }
 
         if has_mesh {
-            let dialog = rfd::FileDialog::new()
+            let dialog = crate::file_dialog::FileDialog::new()
                 .set_title("Export GLB")
                 .add_filter("glTF Binary", &["glb"])
                 .set_file_name(format!("{base_name}.glb"));
@@ -699,7 +699,7 @@ impl GenPreviewApp {
             }
         } else if has_images {
             if self.last_images.len() == 1 {
-                let dialog = rfd::FileDialog::new()
+                let dialog = crate::file_dialog::FileDialog::new()
                     .set_title("Export PNG")
                     .add_filter("PNG Image", &["png"])
                     .set_file_name(format!("{base_name}.png"));
@@ -714,7 +714,7 @@ impl GenPreviewApp {
                 }
             } else {
                 // Multiple images: pick a directory, save with suffixed names
-                let dialog = rfd::FileDialog::new()
+                let dialog = crate::file_dialog::FileDialog::new()
                     .set_title("Export PNGs (select folder)")
                     .set_file_name(format!("{base_name}.png"));
                 let dialog = if let Some(parent) = self.spec_path.parent() {
@@ -799,7 +799,7 @@ impl GenPreviewApp {
     // ─── Save spec as ────────────────────────────────────────────────────
 
     fn save_spec_as(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Save Spec As")
             .add_filter("ProcGen Spec", &["toml"])
             .set_file_name(

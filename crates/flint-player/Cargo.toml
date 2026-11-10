@@ -24,7 +24,13 @@ name = "flint-web-shims"
 path = "src/bin/flint_web_shims.rs"
 
 [features]
-default = ["debug-hud"]
+default = ["debug-hud", "audio", "gamepad"]
+# The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
+# silent and a music session won't start, as on a machine without a device.
+audio = ["flint-audio/device", "flint-music/device"]
+# Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
+# mouse, touch and --input-script's pad still work (#221).
+gamepad = ["flint-input-capture/gamepad"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
@@ -68,7 +74,6 @@ pollster = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 image = { workspace = true }
-gilrs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

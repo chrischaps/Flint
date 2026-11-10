@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Musical suite manifests, beatmap charts, tempo maps, and validation for rhythm-driven Flint games"
 
+[features]
+default = ["device"]
+# Realtime playback through the sound card (kira's cpal backend, ALSA on
+# Linux). Off, a realtime session fails to start as with no device; offline
+# rendering (`render-suite`) never needs it (#221).
+device = ["kira/cpal"]
+
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }

@@ -31,7 +31,7 @@ use flint_runtime::{
 };
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
-use gilrs::Gilrs;
+use flint_input_capture::pad::Gilrs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;

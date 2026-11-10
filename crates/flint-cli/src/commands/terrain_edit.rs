@@ -531,7 +531,7 @@ impl TerrainEditApp {
     }
 
     fn save_spec_as(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Save Terrain Spec As")
             .add_filter("Terrain Spec", &["toml"])
             .set_file_name(
@@ -561,7 +561,7 @@ impl TerrainEditApp {
     }
 
     fn export_maps(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Export Heightmap PNG")
             .add_filter("PNG Image", &["png"])
             .set_file_name("heightmap.png");

@@ -36,6 +36,37 @@ jobs:
       - name: cargo clippy --target wasm32-unknown-unknown -p flint-player
         run: bash scripts/wasm-check.sh
 
+  # The headless CLI (#221): flint-cli with --no-default-features leaves out
+  # the sound card, gamepads and file dialogs, so it builds on a Linux box
+  # without ALSA or libudev headers. Nothing is installed here first; the
+  # script also fails if a device crate is back in the tree.
+  # Run it locally with `bash scripts/headless-check.sh --build`.
+  headless:
+    name: headless CLI (no device headers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: headless
+
+      # The image may ship some of them; take them away so the check proves
+      # the build needs none.
+      - name: No device headers
+        run: |
+          sudo apt-get remove -y libasound2-dev libudev-dev >/dev/null 2>&1 || true
+          for lib in alsa libudev; do
+            if pkg-config --exists "$lib" 2>/dev/null; then echo "::error::$lib headers still present"; exit 1; fi
+            echo "$lib: absent"
+          done
+
+      - name: cargo check -p flint-cli --no-default-features
+        run: bash scripts/headless-check.sh --build
+
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip
   # without an adapter, so before this job they passed on every PR without

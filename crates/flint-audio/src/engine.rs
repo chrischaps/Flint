@@ -9,6 +9,14 @@
 //! thread: every call below then becomes a command to that mixer, and each
 //! sound crosses to it once, as samples ([`Mixer::Remote`],
 //! `crate::remote`). Handles ([`SoundHandle`], [`SpatialTrack`]) hide which.
+//!
+//! Built without the `device` feature (#221) there is no local mix to start,
+//! so the local mixer's builders and its variant go unused.
+
+#![cfg_attr(
+    not(any(feature = "device", target_arch = "wasm32")),
+    allow(dead_code, unused_imports)
+)]
 
 use crate::decode::{DecodeQueue, Need};
 pub use crate::handle::{SoundHandle, SpatialTrack};
@@ -390,6 +398,17 @@ impl AudioEngine {
     }
 
     /// Mix with kira here, on [`AudioBackend`].
+    ///
+    /// Built without the sound card (#221), kira's DefaultBackend is its
+    /// MockBackend, which would take sounds and never play them, so this
+    /// runs silent instead, exactly as on a machine with no device.
+    #[cfg(not(any(feature = "device", target_arch = "wasm32")))]
+    fn start_local(&mut self) -> bool {
+        tracing::info!("[flint-audio] built without the `device` feature, running silent");
+        false
+    }
+
+    #[cfg(any(feature = "device", target_arch = "wasm32"))]
     fn start_local(&mut self) -> bool {
         // Main track with a low-pass filter, at the cutoff last asked for
         // (fully open at 20 kHz by default)

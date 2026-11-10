@@ -9,6 +9,20 @@ description = "CLI application for Flint engine"
 name = "flint"
 path = "src/main.rs"
 
+# The device crates are default-on features (#221). Off, `cargo build -p
+# flint-cli --no-default-features` builds every command with no ALSA or
+# libudev headers, and without rfd's async D-Bus stack; `flint render`,
+# `gen`, `bundle` and the rest never needed them. What each costs when off:
+#   audio    `play` runs silent; `calibrate` and `play-chart` won't start
+#            (`render-suite` renders offline either way)
+#   gamepad  no pads; `spike-rumble` reports it
+#   dialogs  the editors' Save As / Export / Browse buttons say so instead
+[features]
+default = ["audio", "gamepad", "dialogs"]
+audio = ["flint-player/audio", "flint-music/device"]
+gamepad = ["flint-player/gamepad", "flint-input-capture/gamepad"]
+dialogs = ["dep:rfd"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-schema = { workspace = true }
@@ -23,7 +37,7 @@ flint-import = { workspace = true }
 flint-animation = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
-flint-player = { workspace = true }
+flint-player = { workspace = true, features = ["debug-hud"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
@@ -55,7 +69,7 @@ bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rfd = { workspace = true }
+rfd = { workspace = true, optional = true }
 
 [dev-dependencies]
 naga = { version = "23", features = ["wgsl-in"] }
