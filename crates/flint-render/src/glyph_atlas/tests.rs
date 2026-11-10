@@ -81,6 +81,111 @@ fn ramp_pick_maps_luminance_into_equal_bands() {
     assert_eq!(ramp.pick(7.0), '@');
 }
 
+/// The ink each of `ramp`'s picks gives across 0..1 in `samples` steps.
+fn ink_curve(ramp: &GlyphRamp, atlas: &GlyphAtlas, samples: usize) -> Vec<(f32, char, f32)> {
+    (0..=samples)
+        .map(|i| {
+            let l = i as f32 / samples as f32;
+            let c = ramp.pick(l);
+            (l, c, atlas.coverage(c).unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn the_classic_ramp_as_written_gives_brighter_inputs_less_ink() {
+    // #281's finding, kept as a test so a redrawn font that fixes it says so
+    let set = GlyphSet::builtin();
+    let classic = set.ramp("classic").unwrap();
+    assert_eq!(classic.map(), RampMap::Index);
+    assert_eq!(
+        classic.inversions(),
+        vec![(':', '-'), ('=', '+'), ('#', '%')]
+    );
+    let curve = ink_curve(classic, set.atlas(), 1000);
+    assert!(curve.windows(2).any(|w| w[1].2 < w[0].2));
+}
+
+#[test]
+fn a_calibrated_classic_ramp_never_gives_a_brighter_input_less_ink() {
+    // #281's done-when, in the built-in 8x8 font and in Hack at 16 px
+    let hack = GlyphAtlas::from_ttf(HACK, 16.0, printable_ascii()).unwrap();
+    let builtin = GlyphAtlas::builtin();
+    for atlas in [&*builtin, &hack] {
+        let ramp = GlyphRamp::mapped(
+            "classic",
+            " .:-=+*#%@",
+            RampOrder::AsWritten,
+            RampMap::Coverage,
+            atlas,
+        )
+        .unwrap();
+        assert_eq!(ramp.map(), RampMap::Coverage);
+        assert!(ramp.inversions().is_empty());
+        assert_eq!(ramp.len(), 10, "every glyph kept");
+        let curve = ink_curve(&ramp, atlas, 10_000);
+        for w in curve.windows(2) {
+            assert!(
+                w[1].2 >= w[0].2,
+                "{:?} at {} inks less than {:?} at {}",
+                w[1].1,
+                w[1].0,
+                w[0].1,
+                w[0].0
+            );
+        }
+        // The ends stay paper and the most ink
+        assert_eq!(ramp.pick(0.0), ' ');
+        let most = ramp.coverage().iter().copied().fold(0.0, f32::max);
+        assert_eq!(atlas.coverage(ramp.pick(1.0)), Some(most));
+        // Nearest measured ink: each glyph is picked where its normalised
+        // coverage lies
+        let (lo, hi) = (ramp.coverage()[0], most);
+        for (c, cov) in ramp.glyphs().iter().zip(ramp.coverage()) {
+            let at = (cov - lo) / (hi - lo);
+            assert_eq!(atlas.coverage(ramp.pick(at)), Some(*cov), "{c:?} at {at}");
+        }
+    }
+    // In the 8x8 font `#` (.313) out-inks `@` (.281): it becomes the top step
+    let ramp = GlyphSet::builtin().ramp("classic").unwrap().calibrated();
+    assert_eq!(ramp.glyphs().iter().collect::<String>(), " .-:+=*%@#");
+    assert_eq!(ramp.pick(1.0), '#');
+}
+
+#[test]
+fn calibrated_bands_start_at_the_midpoints_between_neighbours() {
+    let b = calibrated_bounds(&[0.0, 0.1, 0.3, 0.5]);
+    let want = [0.0, 0.1, 0.4, 0.8];
+    for (got, want) in b.iter().zip(want) {
+        assert!((got - want).abs() < 1e-6, "{b:?}");
+    }
+    // No range at all: equal bands
+    assert_eq!(calibrated_bounds(&[0.2, 0.2]), vec![0.0, 0.5]);
+    assert!(calibrated_bounds(&[]).is_empty());
+    // Ties keep a step that is never picked rather than a step backwards
+    let tied = calibrated_bounds(&[0.0, 0.5, 0.5, 1.0]);
+    assert_eq!(tied, vec![0.0, 0.25, 0.5, 0.75]);
+}
+
+#[test]
+fn a_ramp_maps_by_coverage_when_its_toml_says_so() {
+    let toml = "[ramps.classic]\nglyphs = \" .:-=+*#%@\"\nmap = \"coverage\"\n\
+                [ramps.plain]\nglyphs = \" .:-=+*#%@\"\n";
+    let set = GlyphSet::from_toml("cal", toml, Path::new("")).unwrap();
+    let classic = set.ramp("classic").unwrap();
+    assert_eq!(classic.map(), RampMap::Coverage);
+    let plain = set.ramp("plain").unwrap().calibrated();
+    assert_eq!(classic.glyphs(), plain.glyphs());
+    assert_eq!(classic.bounds(), plain.bounds());
+    assert_eq!(set.ramp("plain").unwrap().map(), RampMap::Index);
+    assert!(GlyphSet::from_toml(
+        "x",
+        "[ramps.a]\nglyphs = \" .\"\nmap = \"ink\"\n",
+        Path::new("")
+    )
+    .is_err());
+}
+
 #[test]
 fn edge_glyphs_follow_the_edge_direction() {
     let e = EdgeGlyphs::default();

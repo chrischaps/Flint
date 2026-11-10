@@ -23,6 +23,10 @@
 //! [ramps.detailed]
 //! glyphs = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrx..."
 //! sort = "coverage"           # re-order by each glyph's measured ink
+//! [ramps.calibrated]
+//! glyphs = " .:-=+*#%@"
+//! map = "coverage"            # luminance picks the glyph whose measured ink is
+//!                             # nearest (#281): monotone, spaced as the font inks
 //!
 //! [edges]                     # each defaults to the one shown
 //! horizontal = "-"
@@ -80,6 +84,8 @@ struct RampDef {
     glyphs: String,
     #[serde(default)]
     sort: RampOrder,
+    #[serde(default)]
+    map: RampMap,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -102,12 +108,49 @@ pub enum RampOrder {
     Coverage,
 }
 
+/// How a ramp turns luminance into a step (#281).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RampMap {
+    /// Equal bands, one a step, in the ramp's order: what the ramp was
+    /// written for, even where its font inks a later glyph less.
+    #[default]
+    Index,
+    /// The glyph whose measured coverage, normalised to the ramp's own
+    /// least..most ink, is nearest the luminance. The steps are put in
+    /// coverage order and each band runs between its neighbours' midpoints,
+    /// so a brighter input never gets less ink.
+    Coverage,
+}
+
 /// Glyphs ordered from no ink to the most, that a style maps luminance onto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlyphRamp {
     name: String,
     glyphs: Vec<char>,
     indices: Vec<u32>,
+    /// Each step's measured coverage, in ramp order.
+    coverage: Vec<f32>,
+    /// With [`RampMap::Coverage`], the least luminance each step draws at
+    /// (the first 0); `None` for equal bands.
+    bounds: Option<Vec<f32>>,
+}
+
+/// The least luminance each step of a ramp draws at when luminance picks
+/// the step whose `coverage` (least ink first) is nearest, normalised to
+/// the ramp's own range: the midpoints between neighbours, the first 0. A
+/// ramp with no range at all (every glyph the same ink) gets equal bands.
+pub fn calibrated_bounds(coverage: &[f32]) -> Vec<f32> {
+    let n = coverage.len();
+    let lo = coverage.iter().copied().fold(f32::INFINITY, f32::min);
+    let hi = coverage.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if n == 0 || hi - lo <= f32::EPSILON {
+        return (0..n).map(|i| i as f32 / n as f32).collect();
+    }
+    let norm: Vec<f32> = coverage.iter().map(|c| (c - lo) / (hi - lo)).collect();
+    std::iter::once(0.0)
+        .chain(norm.windows(2).map(|w| 0.5 * (w[0] + w[1])))
+        .collect()
 }
 
 impl GlyphRamp {
@@ -143,11 +186,88 @@ impl GlyphRamp {
             .iter()
             .map(|c| atlas.index_of(*c).expect("checked above"))
             .collect();
+        let coverage = glyphs
+            .iter()
+            .map(|c| atlas.coverage(*c).expect("checked above"))
+            .collect();
         Ok(Self {
             name,
             glyphs,
             indices,
+            coverage,
+            bounds: None,
         })
+    }
+
+    /// A ramp of `glyphs` from `atlas` mapped by `map` (#281); with
+    /// [`RampMap::Coverage`] the order is always coverage's.
+    pub fn mapped(
+        name: impl Into<String>,
+        glyphs: &str,
+        order: RampOrder,
+        map: RampMap,
+        atlas: &GlyphAtlas,
+    ) -> Result<Self, GlyphError> {
+        let ramp = Self::new(name, glyphs, order, atlas)?;
+        Ok(match map {
+            RampMap::Index => ramp,
+            RampMap::Coverage => ramp.calibrated(),
+        })
+    }
+
+    /// This ramp mapped by measured coverage ([`RampMap::Coverage`]): its
+    /// steps re-ordered least ink first (ties keep their order) and each
+    /// luminance given the step whose normalised ink is nearest.
+    pub fn calibrated(&self) -> Self {
+        let mut order: Vec<usize> = (0..self.glyphs.len()).collect();
+        order.sort_by(|a, b| self.coverage[*a].total_cmp(&self.coverage[*b]));
+        let coverage: Vec<f32> = order.iter().map(|i| self.coverage[*i]).collect();
+        Self {
+            name: self.name.clone(),
+            glyphs: order.iter().map(|i| self.glyphs[*i]).collect(),
+            indices: order.iter().map(|i| self.indices[*i]).collect(),
+            bounds: Some(calibrated_bounds(&coverage)),
+            coverage,
+        }
+    }
+
+    /// How the ramp maps luminance to a step.
+    pub fn map(&self) -> RampMap {
+        if self.bounds.is_some() {
+            RampMap::Coverage
+        } else {
+            RampMap::Index
+        }
+    }
+
+    /// Each step's measured coverage (mean ink, 0..1), in ramp order (#281).
+    pub fn coverage(&self) -> &[f32] {
+        &self.coverage
+    }
+
+    /// The least luminance each step draws at, the first 0: the bands
+    /// [`Self::step`] picks from, equal ones (`i / len`) for
+    /// [`RampMap::Index`]. What the ASCII style's `ramp_tone` table holds.
+    pub fn bounds(&self) -> Vec<f32> {
+        match &self.bounds {
+            Some(b) => b.clone(),
+            None => {
+                let n = self.glyphs.len();
+                (0..n).map(|i| i as f32 / n as f32).collect()
+            }
+        }
+    }
+
+    /// Neighbouring steps where the later glyph has less ink than the
+    /// earlier, as (earlier, later) pairs: where an equal-band ramp gives a
+    /// brighter input less ink in its font. Empty for a calibrated ramp.
+    pub fn inversions(&self) -> Vec<(char, char)> {
+        self.coverage
+            .windows(2)
+            .zip(self.glyphs.windows(2))
+            .filter(|(c, _)| c[1] < c[0])
+            .map(|(_, g)| (g[0], g[1]))
+            .collect()
     }
 
     /// The ramp's name in its set.
@@ -176,7 +296,8 @@ impl GlyphRamp {
     }
 
     /// The step for `luminance` (0 dark .. 1 bright, clamped): equal bands,
-    /// the last glyph only at full brightness's band.
+    /// the last glyph only at full brightness's band; or, calibrated
+    /// ([`RampMap::Coverage`]), the step whose measured ink is nearest.
     pub fn step(&self, luminance: f32) -> usize {
         let n = self.glyphs.len();
         let l = if luminance.is_nan() {
@@ -184,7 +305,12 @@ impl GlyphRamp {
         } else {
             luminance.clamp(0.0, 1.0)
         };
-        ((l * n as f32) as usize).min(n - 1)
+        match &self.bounds {
+            // The last step whose band starts at or below it, as the
+            // shader's `ramp_step` finds it
+            Some(bounds) => bounds.partition_point(|b| *b <= l).max(1) - 1,
+            None => ((l * n as f32) as usize).min(n - 1),
+        }
     }
 
     /// The glyph for `luminance` (0 dark .. 1 bright).
@@ -314,8 +440,21 @@ impl GlyphSet {
 
         let mut ramps = BTreeMap::new();
         for (ramp_name, def) in &file.ramps {
-            let ramp = GlyphRamp::new(ramp_name, &def.glyphs, def.sort, &atlas)
+            let ramp = GlyphRamp::mapped(ramp_name, &def.glyphs, def.sort, def.map, &atlas)
                 .map_err(|e| in_ramp(ramp_name, e))?;
+            let inverted = ramp.inversions();
+            if name != BUILTIN_SET && !inverted.is_empty() {
+                // (The built-in classic ramp is kept as written on purpose.)
+                tracing::warn!(
+                    "glyph set `{name}`: ramp `{ramp_name}` gives a brighter input less ink \
+                     in its font at {}; `map = \"coverage\"` (or `sort = \"coverage\"`) fixes it",
+                    inverted
+                        .iter()
+                        .map(|(a, b)| format!("{a:?} > {b:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             ramps.insert(ramp_name.clone(), ramp);
         }
         if ramps.is_empty() && name != BUILTIN_SET {

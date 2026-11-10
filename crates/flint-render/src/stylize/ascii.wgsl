@@ -604,7 +604,7 @@ fn variant_cell(slot: u32, p: vec2<f32>) -> Drawn {
         t = round(t * v.levels) / v.levels;
     }
     let n = max(v.ramp_len, 1u);
-    let step = min(u32(t * f32(n)), n - 1u);
+    let step = ramp_step(t, v.ramp_start, n);
     // The edge cells are on the screen grid: a variant on that grid shares
     // them; one on an object grid keeps its tone glyphs
     var edge = 4u;

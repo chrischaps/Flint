@@ -7,14 +7,20 @@
 //! ```
 //!
 //! Writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each
-//! glyph's measured ink) and `<set>_<ramp>.png` (a sphere and a floor
-//! gradient, one glyph per cell, with edge glyphs on the silhouette).
+//! glyph's measured ink, and per ramp its ink curve: the ink each
+//! luminance gets as the ramp maps it and calibrated by coverage, #281,
+//! with the pairs where the first gives a brighter input less ink) and
+//! `<set>_<ramp>.png` (a sphere and a floor gradient, one glyph per cell,
+//! with edge glyphs on the silhouette), plus `<set>_<ramp>_calibrated.png`
+//! for a ramp that isn't calibrated already.
 
-use flint_render::{GlyphAtlas, GlyphRamp, GlyphSet};
+use flint_render::{GlyphAtlas, GlyphRamp, GlyphSet, RampMap};
 use std::path::{Path, PathBuf};
 
 const COLS: u32 = 72;
 const ROWS: u32 = 36;
+/// Luminance steps in each ramp's ink curve (#281).
+const CURVE_SAMPLES: u32 = 100;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -56,11 +62,50 @@ fn main() {
                 .iter()
                 .map(|c| format!("{:.4}", atlas.coverage(*c).unwrap()))
                 .collect();
+            let calibrated = r.calibrated();
+            let curve = |ramp: &GlyphRamp| {
+                (0..=CURVE_SAMPLES)
+                    .map(|i| {
+                        let c = ramp.pick(i as f32 / CURVE_SAMPLES as f32);
+                        format!("{:.4}", atlas.coverage(c).unwrap())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            let luminance: Vec<String> = (0..=CURVE_SAMPLES)
+                .map(|i| format!("{:.4}", i as f32 / CURVE_SAMPLES as f32))
+                .collect();
+            let inversions: Vec<String> = r
+                .inversions()
+                .iter()
+                .map(|(a, b)| format!("[{},{}]", serde_json_escape(*a), serde_json_escape(*b)))
+                .collect();
+            let bounds = |ramp: &GlyphRamp| {
+                ramp.bounds()
+                    .iter()
+                    .map(|b| format!("{b:.4}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
             format!(
-                "{{\"name\":\"{}\",\"glyphs\":{},\"coverage\":[{}]}}",
+                "{{\"name\":\"{}\",\"glyphs\":{},\"map\":\"{}\",\"coverage\":[{}],\
+                 \"bounds\":[{}],\"inversions\":[{}],\"calibrated\":{{\"glyphs\":{},\
+                 \"bounds\":[{}]}},\"curve\":{{\"luminance\":[{}],\"as_mapped\":[{}],\
+                 \"calibrated\":[{}]}}}}",
                 r.name(),
                 json_string(&glyphs),
-                cov.join(",")
+                match r.map() {
+                    RampMap::Index => "index",
+                    RampMap::Coverage => "coverage",
+                },
+                cov.join(","),
+                bounds(r),
+                inversions.join(","),
+                json_string(&calibrated.glyphs().iter().collect::<String>()),
+                bounds(&calibrated),
+                luminance.join(","),
+                curve(r),
+                curve(&calibrated)
             )
         })
         .collect();
@@ -82,6 +127,11 @@ fn main() {
         specimen
             .save(out.join(format!("{}_{}.png", set.name(), ramp.name())))
             .unwrap();
+        if ramp.map() == RampMap::Index {
+            draw_specimen(atlas, &ramp.calibrated(), &set)
+                .save(out.join(format!("{}_{}_calibrated.png", set.name(), ramp.name())))
+                .unwrap();
+        }
     }
     println!(
         "{}: {} glyphs in {}x{} cells, atlas {}x{}, ramps {}",
