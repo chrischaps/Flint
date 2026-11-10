@@ -176,9 +176,12 @@ impl ScriptSync {
         for (entity_id, script_path) in to_reload {
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
-                    if let Some(script) = engine.scripts.get_mut(&entity_id) {
+                    if let Some(script) = engine.scripts.get(&entity_id) {
                         println!("[script] Hot-reloaded: {}", script.source_path);
-                        script.hot_reload(ast);
+                    }
+                    let added = engine.reload_script(entity_id, ast);
+                    if !added.is_empty() {
+                        println!("[script]   new top-level variables: {}", added.join(", "));
                     }
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {

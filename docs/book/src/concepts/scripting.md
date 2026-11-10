@@ -1458,6 +1458,10 @@ The script system checks file modification timestamps each frame. When a `.rhai`
 2. If compilation succeeds, the old AST is replaced and the new version takes effect immediately
 3. If compilation fails, the old AST is kept and an error is logged --- the game never crashes from a script typo
 
+**What a reload keeps and what it starts** (#634). The entity's [scope](#script-state) survives a reload, so every top-level variable the script already had keeps the value it had reached: a counter keeps counting, a timer keeps running. A top-level `let` or `const` that the new source adds, and the old scope lacks, gets its initial value from the new source, so `on_update` can read it on the very next frame (the player prints `new top-level variables: boost_s`). Changing the initial value of a variable that already exists does nothing until a restart, since the kept value wins; removing a `let` leaves the old variable in the scope, unused. `on_init` does not run again.
+
+To pick out the new names, the reload runs the new source's top-level statements once, into a scope of its own, and copies over only what the kept scope doesn't have. A script's top-level statements already run before every callback (Rhai evaluates them to load imports, then drops the `let`s they push), so a top-level call with a side effect runs on each callback anyway: keep the top level to declarations and imports.
+
 This enables a fast iteration workflow: edit a script in your text editor, save, and see the result in the running game without restarting.
 
 Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
