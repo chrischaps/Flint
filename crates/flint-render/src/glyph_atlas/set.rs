@@ -384,7 +384,7 @@ pub struct GlyphSet {
 
 impl GlyphSet {
     /// The built-in set: the hand-drawn 8x8 atlas and its ramps (`classic`,
-    /// `blocks`, `minimal`, `detailed`). Built once per process.
+    /// `blocks`, `minimal`, `detailed`, `quadrants`, `braille`). Built once per process.
     pub fn builtin() -> Arc<GlyphSet> {
         static BUILTIN: OnceLock<Arc<GlyphSet>> = OnceLock::new();
         BUILTIN

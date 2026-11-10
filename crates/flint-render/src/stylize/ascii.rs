@@ -172,7 +172,7 @@ pub const GROUND_MODES: &[&str] = &["dim", "black", "inverse"];
 pub const DEFAULT_PALETTE: &str = "phosphor";
 
 /// The built-in glyph set's ramps, in the order the menu offers them.
-pub const RAMPS: &[&str] = &["classic", "blocks", "minimal", "detailed"];
+pub const RAMPS: &[&str] = &["classic", "blocks", "minimal", "detailed", "quadrants", "braille"];
 
 /// The fonts to offer (#322): the built-in set, then every
 /// `fonts/*.glyphs.toml` beside the scene or in its parent.

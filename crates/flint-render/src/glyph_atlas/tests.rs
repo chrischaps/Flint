@@ -13,9 +13,149 @@ fn builtin_atlas_holds_printable_ascii_and_the_shade_blocks() {
     for c in printable_ascii().chain("─│╱╲░▒▓█".chars()) {
         assert!(atlas.contains(c), "built-in atlas lacks {c:?}");
     }
-    assert_eq!(atlas.glyphs().len(), 95 + 8);
+    // ASCII, edges + shades, corners and tees, quadrant blocks, braille.
+    assert_eq!(atlas.glyphs().len(), 95 + 8 + 9 + 14 + 256);
     // 16 columns of 8 px cells with a 1 px gutter.
-    assert_eq!(atlas.size(), [1 + 16 * 9, 1 + 7 * 9]);
+    assert_eq!(atlas.size(), [1 + 16 * 9, 1 + 24 * 9]);
+    // The new groups go after the old, so every older glyph keeps its cell.
+    assert_eq!(atlas.index_of('█'), Some(95 + 8 + 9 - 1));
+}
+
+#[test]
+fn builtin_corners_and_tees_meet_the_edge_strokes() {
+    let atlas = GlyphAtlas::builtin();
+    // Which of a glyph's arms (left, right, up, down) leave the cell, on
+    // the row and column the edge glyphs `─` and `│` use.
+    let arms = |c: char| {
+        let ink = |x, y| atlas.sample(c, x, y) == Some(255);
+        [ink(0, 3), ink(7, 3), ink(3, 0), ink(3, 7)]
+    };
+    let cases = [
+        ('┌', [false, true, false, true]),
+        ('┐', [true, false, false, true]),
+        ('└', [false, true, true, false]),
+        ('┘', [true, false, true, false]),
+        ('├', [false, true, true, true]),
+        ('┤', [true, false, true, true]),
+        ('┬', [true, true, false, true]),
+        ('┴', [true, true, true, false]),
+        ('┼', [true, true, true, true]),
+    ];
+    for (c, want) in cases {
+        assert_eq!(arms(c), want, "{c:?} arms (left, right, up, down)");
+        // Every arm reaches the centre pixel, so the turn has no gap.
+        assert_eq!(atlas.sample(c, 3, 3), Some(255), "{c:?} centre");
+        // One pixel wide: nothing but its arms is inked.
+        // The centre is (3, 3): left and up arms are 3 px, right and down 4.
+        let arm_px = 1 + [3, 4, 3, 4]
+            .iter()
+            .zip(want)
+            .filter(|(_, on)| *on)
+            .map(|(n, _)| n)
+            .sum::<usize>();
+        let inked = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| atlas.sample(c, x, y) == Some(255))
+            .count();
+        assert_eq!(inked, arm_px, "{c:?} stroke width");
+    }
+    assert_eq!(arms('─'), [true, true, false, false]);
+    assert_eq!(arms('│'), [false, false, true, true]);
+}
+
+#[test]
+fn builtin_quadrant_blocks_ink_their_quadrants() {
+    let atlas = GlyphAtlas::builtin();
+    let quadrant_ink = |c: char, q: u32| {
+        let (x0, y0) = ((q % 2) * 4, (q / 2) * 4);
+        let all = (0..4).all(|dy| (0..4).all(|dx| atlas.sample(c, x0 + dx, y0 + dy) == Some(255)));
+        let none = (0..4).all(|dy| (0..4).all(|dx| atlas.sample(c, x0 + dx, y0 + dy) == Some(0)));
+        assert!(all || none, "{c:?} quadrant {q} is half inked");
+        all
+    };
+    for (c, bits) in QUADRANT_BLOCKS {
+        for q in 0..4 {
+            assert_eq!(
+                quadrant_ink(c, q),
+                bits & (1 << q) != 0,
+                "{c:?} quadrant {q}"
+            );
+        }
+        assert_eq!(atlas.coverage(c), Some(bits.count_ones() as f32 / 4.0));
+    }
+    // With space and `█`, the fourteen are every one of the 16 patterns.
+    let mut seen: Vec<u8> = QUADRANT_BLOCKS.iter().map(|(_, b)| *b).collect();
+    seen.extend([0, 15]);
+    seen.sort();
+    assert_eq!(seen, (0..16).collect::<Vec<u8>>());
+    // The halves are what their names say.
+    assert_eq!(atlas.sample('▀', 7, 3), Some(255));
+    assert_eq!(atlas.sample('▀', 0, 4), Some(0));
+    assert_eq!(atlas.sample('▐', 4, 7), Some(255));
+    assert_eq!(atlas.sample('▐', 3, 0), Some(0));
+}
+
+#[test]
+fn builtin_braille_glyphs_are_their_dot_patterns() {
+    let atlas = GlyphAtlas::builtin();
+    assert_eq!(braille_char(0), '⠀');
+    assert_eq!(braille_char(0xff), '⣿');
+    assert_eq!(braille_char(braille_dot(0, 0)), '⠁');
+    assert_eq!(braille_char(braille_dot(0, 3)), '⡀');
+    assert_eq!(braille_char(braille_dot(1, 3)), '⢀');
+    for dots in 0..=255u8 {
+        let c = braille_char(dots);
+        assert!(atlas.contains(c), "{c:?}");
+        for column in 0..2 {
+            for row in 0..4 {
+                let on = dots & braille_dot(column, row) != 0;
+                // A dot is the 2x1 px at (1 + 4 column, 2 row).
+                let (x, y) = (1 + column * 4, row * 2);
+                let want = Some(if on { 255 } else { 0 });
+                assert_eq!(atlas.sample(c, x, y), want, "{c:?} dot ({column}, {row})");
+                assert_eq!(
+                    atlas.sample(c, x + 1, y),
+                    want,
+                    "{c:?} dot ({column}, {row})"
+                );
+                // The row and column round each dot stay paper.
+                assert_eq!(atlas.sample(c, x, y + 1), Some(0));
+                assert_eq!(atlas.sample(c, x - 1, y), Some(0));
+            }
+        }
+        assert_eq!(atlas.coverage(c), Some(dots.count_ones() as f32 / 32.0));
+    }
+}
+
+#[test]
+fn the_sub_cell_ramps_add_one_piece_a_step() {
+    let set = GlyphSet::builtin();
+    let atlas = set.atlas();
+    let ink = |c: char| -> Vec<bool> {
+        (0..64)
+            .map(|i| atlas.sample(c, i % 8, i / 8) == Some(255))
+            .collect()
+    };
+    for (name, steps, piece) in [("quadrants", 5, 16), ("braille", 9, 2)] {
+        let ramp = set.ramp(name).unwrap();
+        assert_eq!(ramp.glyphs().len(), steps, "{name}");
+        assert_eq!(ramp.glyphs()[0], ' ');
+        for pair in ramp.glyphs().windows(2) {
+            let (a, b) = (ink(pair[0]), ink(pair[1]));
+            // Each step keeps every inked pixel and adds exactly one piece.
+            assert!(
+                a.iter().zip(&b).all(|(a, b)| !a || *b),
+                "{name}: {pair:?} drops ink"
+            );
+            let added = a.iter().zip(&b).filter(|(a, b)| !**a && **b).count();
+            assert_eq!(added, piece, "{name}: {pair:?}");
+        }
+    }
+    assert_eq!(
+        *set.ramp("quadrants").unwrap().glyphs().last().unwrap(),
+        '█'
+    );
+    assert_eq!(*set.ramp("braille").unwrap().glyphs().last().unwrap(), '⣿');
 }
 
 #[test]
@@ -32,7 +172,7 @@ fn every_builtin_ramp_glyph_has_a_cell() {
             assert!(uv[0] < uv[2] && uv[1] < uv[3] && uv[2] <= 1.0 && uv[3] <= 1.0);
         }
     }
-    assert_eq!(ramps, 4);
+    assert_eq!(ramps, 6);
     for c in set.edges().all() {
         assert!(atlas.contains(c), "edge glyph {c:?}");
     }

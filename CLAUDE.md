@@ -75,7 +75,7 @@ Flint uses an **edit -> validate -> play** loop:
    #                           count ASCII glyph flips and A-B-A reversals from its own grid,
    #                           --no-images skips the PNGs; byte-identical run to run)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
-   #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed
+   #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed|quadrants|braille
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
    #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
    #                          (nearest inks match in OKLab; --style ascii:chroma=2,palette_dither=1
