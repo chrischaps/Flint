@@ -129,7 +129,9 @@ Flint uses an **edit -> validate -> play** loop:
    #                          wooze.<knob> (#216; one Sweep type in commands/sweep.rs,
    #                          one sheet in style_sheet.rs, #353; a render with clocks
    #                          -- --time, wooze.*, --scripts, --report json, a living or
-   #                          [wooze] scene -- draws a Stage a column, one axis, #487);
+   #                          [wooze] scene -- draws a Stage a cell, #487; it takes grids,
+   #                          crops, --reference, --report FILE, --ascii-text, --gpu-time, --frames
+   #                          and --ai-refine too, measures at one moment only, #596);
    #                          cells 640x360 unless --width/--height. Cells are in points:
    #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
    #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
