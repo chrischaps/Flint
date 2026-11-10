@@ -754,7 +754,7 @@ The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s control
 | Function | Description |
 |----------|-------------|
 | `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is, prop by prop: `echoes: #{ count: 3 }` gives every prop three echoes and leaves each species its own `spread` and `alpha` |
-| `tune_living(#{ species: name, ... })` | One species' own values, which beat the global ones, the field and its zones: the shape of a scene's [`[living.species.<spec>]`](procgen.md#species-values), so `step`, `glide`, `amplitude`, `jitter`, `stagger`, `echoes` and `variance`. A field it leaves out stays as the species has it. A species no prop grows from is logged and kept, for none |
+| `tune_living(#{ species: name, ... })` | One species' own values, which beat the global ones, the field and its zones: the shape of a scene's [`[living.species.<spec>]`](procgen.md#species-values), so `step`, `glide`, `amplitude`, `jitter`, `stagger`, `echoes`, `variance` and `softness`. A field it leaves out stays as the species has it. A species no prop grows from is logged and kept, for none |
 | `clear_living(name)`, `clear_living(name, keys)` | Give a species' values back to the layers below: all of them, or the keys named, such as `["step", "echoes.count", "variance"]` |
 | `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
 | `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |

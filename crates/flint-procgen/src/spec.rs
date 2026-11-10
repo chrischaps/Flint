@@ -151,6 +151,15 @@ pub struct LivingConfig {
     /// [`EchoPlaces`].
     #[serde(default, skip_serializing_if = "EchoPlaces::is_empty")]
     pub echo_places: EchoPlaces,
+    /// How soft its silhouette is, 0 to 1 (#582): the body fades where its
+    /// surface turns away from the eye, so the outline feathers at rest,
+    /// however still or busy the prop is. 0, the default, is a hard edge and
+    /// draws exactly as before; above 0 the body draws translucent, after
+    /// everything opaque. Cards (leaves, marks) keep their edges. A scene's
+    /// `[living] softness`, a species' own and `tune_living` turn it at run
+    /// time; nothing baked reads it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub softness: f32,
 }
 
 /// One of [`EchoPlaces::at`]: `[along, up, steps]`. The first two are metres
@@ -333,6 +342,12 @@ impl LivingConfig {
             return bad(
                 "echo_slide",
                 format!("{}: must be in [0.0, 2.0] steps", self.echo_slide),
+            );
+        }
+        if !(self.softness.is_finite() && unit(self.softness)) {
+            return bad(
+                "softness",
+                format!("{}: must be in [0.0, 1.0]", self.softness),
             );
         }
         if let Err((key, reason)) = self.echo_places.check() {
@@ -1022,6 +1037,23 @@ variance = { amount = 1, steady = 0, keep_size = false }
             let text = with_living(&format!("lineage_seed = 3\necho_slide = {bad}"));
             let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
             assert!(error.contains("living.echo_slide"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn softness_is_a_hard_edge_unless_a_spec_says_otherwise() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        assert_eq!(spec.living.as_ref().unwrap().softness, 0.0);
+        assert!(!toml::to_string(&spec).unwrap().contains("softness"));
+
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3\nsoftness = 0.6")).unwrap();
+        assert_eq!(spec.living.as_ref().unwrap().softness, 0.6);
+        assert!(toml::to_string(&spec).unwrap().contains("softness = 0.6"));
+
+        for bad in ["-0.1", "1.5", "nan"] {
+            let text = with_living(&format!("lineage_seed = 3\nsoftness = {bad}"));
+            let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
+            assert!(error.contains("living.softness"), "{bad}: {error}");
         }
     }
 

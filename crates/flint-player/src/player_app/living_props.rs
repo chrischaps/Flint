@@ -76,7 +76,20 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
         echoes: echoes_of(table.echoes.as_ref(), &mut warn),
         stagger,
         variance: variance_of(table.variance.as_ref(), &mut warn),
+        softness: softness_of(table.softness, &mut warn),
         species,
+    }
+}
+
+/// A softness (#582) as a scene or a tune gives it: 0 to 1, or `None` with the
+/// reason sent to `say`.
+pub fn softness_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
+    let value = value?;
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Some(value)
+    } else {
+        say(format!("softness = {value} must be in [0.0, 1.0]"));
+        None
     }
 }
 
@@ -111,6 +124,7 @@ pub fn species_of(
             .and_then(|name| checked_stagger(name, say)),
         echoes: echoes_of(def.echoes.as_ref(), say),
         variance: variance_of(def.variance.as_ref(), say),
+        softness: softness_of(def.softness, say),
     }
 }
 
@@ -281,6 +295,7 @@ impl LivingRun {
         let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
         let echoes = echoes_of(living.echoes.as_ref(), &mut say);
         let variance = variance_of(living.variance.as_ref(), &mut say);
+        let softness = softness_of(living.softness, &mut say);
         let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
             .map(|(name, def)| {
                 let mut say = |problem: String| say(format!("species '{name}': {problem}"));
@@ -293,6 +308,9 @@ impl LivingRun {
         }
         props.tune_echoes(LivingScope::All, echoes);
         props.tune_variance(LivingScope::All, variance);
+        if let Some(softness) = softness {
+            props.tune_softness(LivingScope::All, softness);
+        }
         for (name, over) in species {
             if !props.set_species(&name, over) {
                 problems.push(format!("no living prop grows from '{name}'"));
@@ -498,6 +516,14 @@ pub fn upload_props(
         }
         for (part, tint) in &frame.tints {
             renderer.set_entity_part_tint(blend.entity, *part, *tint);
+        }
+        // The body's silhouette (#582); the cards keep their edges. A write of
+        // what's there already changes nothing, so it can go every frame.
+        if let Some((_, rig)) = props.rig_of(id) {
+            let softness = props.softness(id);
+            for part in rig.body_parts() {
+                renderer.set_entity_part_softness(blend.entity, part, softness);
+            }
         }
         for echo in 0..props.prop(id).echo_count() {
             if let Some(first) = props.blend_echo(id, echo, frame) {

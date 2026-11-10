@@ -826,6 +826,19 @@ pub struct LivingRig {
 }
 
 impl LivingRig {
+    /// The parts that aren't leaves (a tree's bark, a form's body), counting as
+    /// [`Self::leaf_parts`] does: what a prop's softness (#582) feathers.
+    pub fn body_parts(&self) -> impl Iterator<Item = usize> + '_ {
+        let parts = self
+            .mesh
+            .submeshes
+            .iter()
+            .filter(|sub| sub.index_count > 0)
+            .count()
+            .max(1);
+        (0..parts).filter(|part| !self.leaf_parts.contains(part))
+    }
+
     /// `pose` as bone matrices (column-major, what the skinned pipeline
     /// uploads), written over `out`. Each takes a rest vertex to where the
     /// pose puts it, and all of a pose's scale is in here: the skeleton's

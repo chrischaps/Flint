@@ -64,6 +64,10 @@ pub struct LivingDef {
     /// `per_level` or `per_branch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stagger: Option<String>,
+    /// How soft every prop's silhouette is, 0 to 1 (#582), over each spec's:
+    /// the body fades where it turns away from the eye. 0 is a hard edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub softness: Option<f32>,
     /// Faint time-offset copies of every prop. Fields left unset are each spec's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echoes: Option<LivingEchoesDef>,
@@ -99,6 +103,9 @@ pub struct LivingSpeciesDef {
     /// `none`, `per_level` or `per_branch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stagger: Option<String>,
+    /// How soft its silhouette is, 0 to 1 (#582).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub softness: Option<f32>,
     /// Its echoes, a field at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echoes: Option<LivingEchoesDef>,

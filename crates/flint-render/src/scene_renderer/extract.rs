@@ -256,6 +256,11 @@ impl SceneRenderer {
             _ => None,
         };
         let echoes_lighten = self.entity_echo_lighten.contains(&entity_id);
+        // A soft silhouette (#582). Debug views are of the geometry, opaque.
+        let part_softness = match self.debug_state.mode {
+            crate::debug::DebugMode::Pbr => self.entity_part_softness.get(&entity_id),
+            _ => None,
+        };
 
         for (mesh_index, gpu_mesh) in skinned_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
@@ -332,6 +337,12 @@ impl SceneRenderer {
                 }
             }
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
+            if let Some(softness) = part_softness
+                .and_then(|parts| parts.get(mesh_index))
+                .filter(|softness| **softness > 0.0)
+            {
+                material_uniforms.set_edge_softness(*softness);
+            }
 
             // Cached like a static model's binds (`cached_binds`), keyed
             // the same way: uniforms plus texture identity.
@@ -500,11 +511,14 @@ impl SceneRenderer {
                 .and_then(toml_f32)
                 .unwrap_or(1.0);
 
-            let is_transparent = ecs_opacity < 1.0
+            let see_through = ecs_opacity < 1.0
                 || gltf_alpha < 1.0
                 || base_color[3] < 1.0
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
+            // A soft edge (#582) draws translucent too, but stops the light whole.
+            let soft_edge_only = !see_through && material_uniforms.edge_softness() > 0.0;
+            let is_transparent = see_through || soft_edge_only;
 
             // Wireframe edges for debug modes: unique edges of the triangle
             // list, indexed into the same skinned vertex buffer so the lines
@@ -554,6 +568,7 @@ impl SceneRenderer {
                 },
                 wooze: None,
                 double_sided: gpu_mesh.material.double_sided,
+                soft_edge_only,
             };
 
             if is_transparent {

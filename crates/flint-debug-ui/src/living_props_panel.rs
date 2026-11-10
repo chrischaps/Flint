@@ -51,6 +51,8 @@ pub struct LivingKnobs {
     pub variance_amount: f32,
     pub variance_steady: f32,
     pub keep_size: bool,
+    /// How soft the silhouette is (#582): 0 a hard edge.
+    pub softness: f32,
 }
 
 impl Default for LivingKnobs {
@@ -85,6 +87,7 @@ impl LivingKnobs {
             variance_amount: variance.amount.unwrap_or(0.35),
             variance_steady: variance.steady.unwrap_or(0.8),
             keep_size: variance.keep_size.unwrap_or(true),
+            softness: preset.living.softness.unwrap_or(0.0),
         }
     }
 
@@ -110,6 +113,7 @@ impl LivingKnobs {
                     steady: Some(self.variance_steady),
                     keep_size: Some(self.keep_size),
                 }),
+                softness: Some(self.softness),
                 ..Default::default()
             },
             boil: Some(BoilDef {
@@ -167,6 +171,7 @@ impl LivingKnobs {
                 stagger: pick(&self.stagger, &before.stagger, t.stagger),
                 echoes: (echoes != LivingEchoesDef::default()).then_some(echoes),
                 variance: (variance != LivingVarianceDef::default()).then_some(variance),
+                softness: pick(&self.softness, &before.softness, t.softness),
                 ..Default::default()
             },
             boil: (boil != BoilDef::default()).then_some(boil),
@@ -189,6 +194,7 @@ pub struct KnobFlags {
     pub variance_amount: bool,
     pub variance_steady: bool,
     pub keep_size: bool,
+    pub softness: bool,
 }
 
 impl KnobFlags {
@@ -206,6 +212,7 @@ impl KnobFlags {
             Knob::VarianceAmount => self.variance_amount,
             Knob::VarianceSteady => self.variance_steady,
             Knob::KeepSize => self.keep_size,
+            Knob::Softness => self.softness,
         }
     }
 
@@ -223,6 +230,7 @@ impl KnobFlags {
             Knob::VarianceAmount => &mut self.variance_amount,
             Knob::VarianceSteady => &mut self.variance_steady,
             Knob::KeepSize => &mut self.keep_size,
+            Knob::Softness => &mut self.softness,
         };
         *flag = on;
     }
@@ -248,6 +256,7 @@ impl KnobFlags {
             variance_amount: variance.amount.is_some(),
             variance_steady: variance.steady.is_some(),
             keep_size: variance.keep_size.is_some(),
+            softness: preset.living.softness.is_some(),
         }
     }
 
@@ -265,6 +274,7 @@ impl KnobFlags {
             variance_amount: self.variance_amount && !other.variance_amount,
             variance_steady: self.variance_steady && !other.variance_steady,
             keep_size: self.keep_size && !other.keep_size,
+            softness: self.softness && !other.softness,
         }
     }
 }
@@ -283,10 +293,11 @@ pub enum Knob {
     VarianceAmount,
     VarianceSteady,
     KeepSize,
+    Softness,
 }
 
 impl Knob {
-    pub const ALL: [Knob; 11] = [
+    pub const ALL: [Knob; 12] = [
         Knob::Amplitude,
         Knob::Step,
         Knob::Glide,
@@ -298,6 +309,7 @@ impl Knob {
         Knob::VarianceAmount,
         Knob::VarianceSteady,
         Knob::KeepSize,
+        Knob::Softness,
     ];
 
     /// Its key in `[living.species.<spec>]`, in `clear_living` and in `flint
@@ -315,6 +327,7 @@ impl Knob {
             Knob::VarianceAmount => "variance.amount",
             Knob::VarianceSteady => "variance.steady",
             Knob::KeepSize => "variance.keep_size",
+            Knob::Softness => "softness",
         }
     }
 
@@ -327,7 +340,7 @@ impl Knob {
 /// each layer once, by the label `flint render --report json` gives it, `spec`,
 /// `entity`, `global`, `zone:<name>` or `species`.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct KnobSources([Vec<String>; 11]);
+pub struct KnobSources([Vec<String>; 12]);
 
 impl KnobSources {
     pub fn of(&self, knob: Knob) -> &[String] {
@@ -1030,6 +1043,15 @@ impl LivingPropsDebugPanel {
             }
         });
 
+        section(ui, "Silhouette", true, |ui| {
+            let knob = Knob::Softness;
+            let moved = row(ui, knob, &mut |ui| {
+                control(ui, knob, &mut k, mixed.get(knob), says, "living_panel")
+            });
+            touched.set_flag(knob, moved);
+            ui.weak("Feathers the body's outline at rest; the cards keep their edges.");
+        });
+
         // A touch says a knob moved where its number alone can't: a `mixed` one
         // set to the value it showed, or Unheld on a knob already there.
         let moved = k.moved(&before, &touched);
@@ -1542,7 +1564,7 @@ impl LivingPropsDebugPanel {
 }
 
 /// The knobs in the order the panel's sections give them.
-const PANEL_ORDER: [Knob; 11] = [
+const PANEL_ORDER: [Knob; 12] = [
     Knob::Step,
     Knob::Glide,
     Knob::Amplitude,
@@ -1554,6 +1576,7 @@ const PANEL_ORDER: [Knob; 11] = [
     Knob::VarianceAmount,
     Knob::VarianceSteady,
     Knob::KeepSize,
+    Knob::Softness,
 ];
 
 /// The zones a tree stands in, as its window says it.
@@ -1856,6 +1879,12 @@ fn control(
         Knob::VarianceSteady => knob(
             ui,
             Slider::new(&mut k.variance_steady, 0.0..=1.0).text("steady"),
+            mixed,
+            says,
+        ),
+        Knob::Softness => knob(
+            ui,
+            Slider::new(&mut k.softness, 0.0..=1.0).text("softness"),
             mixed,
             says,
         ),
@@ -2167,6 +2196,7 @@ mod tests {
             variance_amount: 1.0,
             variance_steady: 0.0,
             keep_size: false,
+            softness: 0.4,
         };
         assert_eq!(LivingKnobs::from_preset(&knobs.to_preset()), knobs);
     }
@@ -2227,6 +2257,7 @@ mod tests {
             f.variance_amount,
             f.variance_steady,
             f.keep_size,
+            f.softness,
             boil.enabled.is_some(),
             boil.kuwahara.is_some(),
             boil.contour.is_some(),
@@ -2265,11 +2296,13 @@ mod tests {
                 echo_alpha: all.echo_alpha || f.echo_alpha,
                 variance_amount: all.variance_amount || f.variance_amount,
                 variance_steady: all.variance_steady || f.variance_steady,
+                softness: all.softness || f.softness,
                 ..all
             };
         }
         assert!(all.step && all.echo_count && all.echo_spread && all.echo_alpha);
         assert!(all.variance_amount && all.variance_steady, "{sets:?}");
+        assert!(all.softness, "the Silhouette slider: {sets:?}");
     }
 
     #[test]
@@ -2765,6 +2798,7 @@ mod tests {
                 "variance.amount",
                 "variance.steady",
                 "variance.keep_size",
+                "softness",
             ]
         );
         for knob in Knob::ALL {
