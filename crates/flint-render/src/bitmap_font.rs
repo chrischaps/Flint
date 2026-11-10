@@ -6,9 +6,10 @@
 //! pipeline with zero new shaders.
 
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
-use flint_core::toml_util::toml_f32;
-use std::collections::HashMap;
-use std::path::Path;
+use flint_core::toml_util::{check_keys, toml_f32, KeyIssue, Shape};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Parsed bitmap font definition.
 #[derive(Clone, Debug)]
@@ -31,37 +32,98 @@ pub struct BitmapFont {
     pub char_widths: HashMap<char, u32>,
 }
 
+/// The keys a `.font.toml` may hold (#282).
+const FONT_FILE: Shape = Shape::Table(&[(
+    "font",
+    Shape::Table(&[
+        ("texture", Shape::Value),
+        ("glyph_width", Shape::Value),
+        ("glyph_height", Shape::Value),
+        ("columns", Shape::Value),
+        ("first_char", Shape::Value),
+        ("char_count", Shape::Value),
+        ("spacing", Shape::Value),
+    ]),
+)]);
+
 impl BitmapFont {
-    /// Parse a `.font.toml` file. Returns `None` on parse failure.
+    /// Parse a `.font.toml` file. Returns `None` if it can't be read or
+    /// parsed, warning once per path with the reason; keys the format
+    /// doesn't know are warned about and ignored.
     pub fn load(path: &Path) -> Option<Self> {
-        let content = flint_core::vfs::read_to_string(path).ok()?;
-        let table: toml::Value = content.parse().ok()?;
-        let font = table.get("font")?;
+        let parsed = flint_core::vfs::read_to_string(path)
+            .map_err(|e| format!("cannot read: {e}"))
+            .and_then(|text| Self::parse(&text));
+        match parsed {
+            Ok((font, issues)) => {
+                for issue in issues {
+                    tracing::warn!("{}: {issue}", path.display());
+                }
+                Some(font)
+            }
+            Err(e) => {
+                // A font that failed is looked for again every frame: say so once
+                static REPORTED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+                let mut reported = REPORTED.lock().unwrap_or_else(|p| p.into_inner());
+                if reported
+                    .get_or_insert_with(HashSet::new)
+                    .insert(path.to_path_buf())
+                {
+                    tracing::warn!("{}: {e}", path.display());
+                }
+                None
+            }
+        }
+    }
 
-        let texture = font.get("texture")?.as_str()?.to_string();
-        let glyph_width = font.get("glyph_width")?.as_integer()? as u32;
-        let glyph_height = font.get("glyph_height")?.as_integer()? as u32;
-        let columns = font.get("columns")?.as_integer()? as u32;
-        let first_char = font
-            .get("first_char")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(32) as u32;
-        let char_count = font
-            .get("char_count")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(95) as u32;
-        let spacing = font.get("spacing").and_then(toml_f32).unwrap_or(1.0);
+    /// Parse a `.font.toml` document: the font, and the keys in it that
+    /// will be ignored. An error names what is missing or malformed.
+    pub fn parse(text: &str) -> Result<(Self, Vec<KeyIssue>), String> {
+        let doc: toml::Value = text.parse().map_err(|e| format!("parse error: {e}"))?;
+        let issues = check_keys(&doc, &FONT_FILE);
+        let font = doc.get("font").ok_or("missing the [font] table")?;
+        let required_int = |key: &str| {
+            font.get(key)
+                .and_then(|v| v.as_integer())
+                .map(|i| i as u32)
+                .ok_or(format!("[font] needs `{key}`, an integer"))
+        };
+        let optional_int = |key: &str, default: u32| match font.get(key) {
+            None => Ok(default),
+            Some(v) => v
+                .as_integer()
+                .map(|i| i as u32)
+                .ok_or(format!("[font] `{key}` should be an integer")),
+        };
 
-        Some(Self {
-            texture,
-            glyph_width,
-            glyph_height,
-            columns,
-            first_char,
-            char_count,
-            spacing,
-            char_widths: HashMap::new(),
-        })
+        let texture = font
+            .get("texture")
+            .and_then(|v| v.as_str())
+            .ok_or("[font] needs `texture`, a file name")?
+            .to_string();
+        let glyph_width = required_int("glyph_width")?;
+        let glyph_height = required_int("glyph_height")?;
+        let columns = required_int("columns")?;
+        let first_char = optional_int("first_char", 32)?;
+        let char_count = optional_int("char_count", 95)?;
+        let spacing = match font.get("spacing") {
+            None => 1.0,
+            Some(v) => toml_f32(v).ok_or("[font] `spacing` should be a number")?,
+        };
+
+        Ok((
+            Self {
+                texture,
+                glyph_width,
+                glyph_height,
+                columns,
+                first_char,
+                char_count,
+                spacing,
+                char_widths: HashMap::new(),
+            },
+            issues,
+        ))
     }
 
     /// UV rect `[u_min, v_min, u_max, v_max]` for a character, normalized 0–1.
@@ -160,6 +222,35 @@ mod tests {
             spacing: 1.0,
             char_widths: HashMap::new(),
         }
+    }
+
+    const DEFAULT_FONT: &str = include_str!("../../../demo/ui_test/fonts/default.font.toml");
+
+    #[test]
+    fn parse_the_demo_font_with_no_issues() {
+        let (font, issues) = BitmapFont::parse(DEFAULT_FONT).unwrap();
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!((font.glyph_width, font.glyph_height), (8, 16));
+        assert_eq!(font.columns, 16);
+    }
+
+    #[test]
+    fn misspelled_font_key_is_named() {
+        // #282: `spacng` used to be ignored and the spacing stayed 1.0
+        let text = DEFAULT_FONT.replace("spacing = 1.0", "spacng = 1.5");
+        let (font, issues) = BitmapFont::parse(&text).unwrap();
+        assert_eq!(font.spacing, 1.0);
+        assert_eq!(issues.len(), 1);
+        let message = issues[0].to_string();
+        assert!(message.contains("`spacng` in [font]"), "{message}");
+        assert!(message.contains("did you mean `spacing`?"), "{message}");
+    }
+
+    #[test]
+    fn missing_font_key_is_an_error_naming_it() {
+        let text = DEFAULT_FONT.replace("columns = 16", "");
+        let err = BitmapFont::parse(&text).unwrap_err();
+        assert!(err.contains("`columns`"), "{err}");
     }
 
     #[test]

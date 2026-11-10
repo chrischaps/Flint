@@ -30,6 +30,7 @@
 //! build their layout jobs through [`text_layout_job`] so measurement and
 //! drawing can never disagree.
 
+use flint_core::toml_util::{check_keys, KeyIssue, Shape};
 use flint_core::vfs;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -42,8 +43,33 @@ pub struct FontAlias {
     pub file: String,
 }
 
+/// The keys a `fonts.toml` may hold (#282).
+const MANIFEST: Shape = Shape::Table(&[
+    (
+        "font",
+        Shape::Tables(&Shape::Table(&[
+            ("name", Shape::Value),
+            ("file", Shape::Value),
+        ])),
+    ),
+    (
+        "egui",
+        Shape::Table(&[("proportional", Shape::Value), ("monospace", Shape::Value)]),
+    ),
+]);
+
+/// The keys of a `fonts.toml` manifest that will be ignored: misspelled,
+/// in the wrong table, or a `[font]` where the format wants `[[font]]`.
+/// Empty for a document that doesn't parse (`parse_manifest` says why).
+pub fn manifest_issues(text: &str) -> Vec<KeyIssue> {
+    text.parse::<toml::Value>()
+        .map(|doc| check_keys(&doc, &MANIFEST))
+        .unwrap_or_default()
+}
+
 /// Parse a `fonts.toml` manifest. Entries missing `name` or `file` are
 /// dropped with a warning; a malformed document yields an empty list.
+/// Keys the format doesn't know are warned about ([`manifest_issues`]).
 pub fn parse_manifest(text: &str) -> Vec<FontAlias> {
     let doc: toml::Value = match text.parse() {
         Ok(v) => v,
@@ -52,6 +78,9 @@ pub fn parse_manifest(text: &str) -> Vec<FontAlias> {
             return Vec::new();
         }
     };
+    for issue in check_keys(&doc, &MANIFEST) {
+        tracing::warn!("fonts.toml: {issue}");
+    }
     let Some(entries) = doc.get("font").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -361,6 +390,48 @@ file = "NoName.ttf"
                 },
             ]
         );
+    }
+
+    #[test]
+    fn manifest_keys_it_ignores_are_named() {
+        // #282: each of these used to change nothing, without a word
+        let text = r#"
+proportional = "body"
+
+[[font]]
+name = "body"
+fiel = "Barlow-Medium.ttf"
+
+[egui]
+monospce = "code"
+"#;
+        let issues: Vec<String> = manifest_issues(text)
+            .iter()
+            .map(|i| i.to_string())
+            .collect();
+        assert_eq!(issues.len(), 3, "{issues:#?}");
+        let all = issues.join("\n");
+        assert!(all.contains("`proportional` in the top level") && all.contains("[egui]"));
+        assert!(
+            all.contains("`fiel` in [[font]] #1") && all.contains("`file`?"),
+            "{all}"
+        );
+        assert!(
+            all.contains("`monospce` in [egui]") && all.contains("`monospace`?"),
+            "{all}"
+        );
+
+        // One `[font]` where the format wants an array of them
+        let single = manifest_issues("[font]\nname = \"a\"\nfile = \"a.ttf\"\n");
+        assert_eq!(single.len(), 1);
+        assert!(
+            single[0].to_string().contains("`[[font]]`"),
+            "{}",
+            single[0]
+        );
+
+        let clean = "[[font]]\nname = \"a\"\nfile = \"a.ttf\"\n[egui]\nproportional = \"a\"\n";
+        assert!(manifest_issues(clean).is_empty());
     }
 
     #[test]

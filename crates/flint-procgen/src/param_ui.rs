@@ -4,6 +4,7 @@
 //! structured field descriptors (`ParamFieldSpec`) that a UI layer can consume
 //! directly — keeping JSON Schema interpretation out of the rendering code.
 
+use flint_core::toml_util::edit_distance;
 use serde_json::Value;
 
 /// Describes a single parameter field for UI rendering.
@@ -430,20 +431,6 @@ fn closest<'a>(key: &str, candidates: impl Iterator<Item = &'a String>) -> Optio
         .filter(|(d, _)| *d <= limit)
         .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)))
         .map(|(_, c)| c.clone())
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut cur = vec![i + 1; b.len() + 1];
-        for (j, cb) in b.iter().enumerate() {
-            let sub = prev[j] + usize::from(ca != *cb);
-            cur[j + 1] = sub.min(prev[j + 1] + 1).min(cur[j] + 1);
-        }
-        prev = cur;
-    }
-    prev[b.len()]
 }
 
 // ─── Parameter reference ───────────────────────────────────────────────────

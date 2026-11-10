@@ -53,6 +53,30 @@ open_angle = 90.0
 
 **Component tables** are nested under the entity. Each component name (e.g., `transform`, `door`, `bounds`) corresponds to a schema in `schemas/components/`.
 
+### A key belongs to the header above it
+
+TOML has no indentation and no closing brackets: every key after a `[table]` header belongs to that table, until the next header. A key meant for the top level, or for an earlier table, has to be written *above* the first header that would claim it. This is easy to get wrong, because the file still parses:
+
+```toml
+[font]
+file = "Tidepool.ttf"
+
+default_ramp = "classic"   # meant for the top level; TOML reads it as font.default_ramp
+```
+
+Move `default_ramp` above `[font]`. The same goes for `[entities.lamp]` followed by a key meant for the lamp's `[entities.lamp.light]`: once the `light` header is written, every key below it is the light's.
+
+What a misplaced key costs depends on the file:
+
+- **Fixed-shape files say so.** `.font.toml`, `.atlas.toml` and `fonts/fonts.toml` warn about every key they don't read, naming the key, its table and the likeliest fix (#282):
+  ```text
+  fonts/hud.font.toml: unknown key `default_ramp` in [font], ignored; it is a top-level key,
+  but TOML puts every key after a `[font]` header into that table, so move it above the header
+  fonts/hud.font.toml: unknown key `spacng` in [font], ignored; did you mean `spacing`? (expected one of: ...)
+  ```
+  A single `[font]` in `fonts.toml`, where the format wants `[[font]]` entries, is called out the same way. Files read with strict parsing, such as `*.glyphs.toml`, palettes and a procgen spec's `[living]` table, refuse an unknown key outright. A loader that reads a new fixed-shape format should describe it with `flint_core::toml_util::Shape` and log what `check_keys` returns.
+- **Component tables are open.** A component's fields are checked against its schema's types, but a field the schema doesn't declare is allowed, so a misspelled component field is still silently ignored and the field keeps its default. Check a scene's results with `flint render` rather than trusting that it loaded.
+
 ## Scene Operations
 
 ### Creating a Scene
