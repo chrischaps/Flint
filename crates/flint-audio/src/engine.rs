@@ -18,7 +18,7 @@
     allow(dead_code, unused_imports)
 )]
 
-use crate::decode::{DecodeQueue, Need};
+use crate::decode::{decode_all, DecodeQueue, Need};
 pub use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::{volume_and_pan, Ears, Falloff};
 use crate::remote::{Command, Link, RemoteTrack, RemoteVoice, SoundLoad, Target};
@@ -34,14 +34,13 @@ use std::time::Duration;
 use web_time::Instant;
 
 /// `StaticSoundData::from_file`, read through the vfs: the bytes come from
-/// the active file source (the disk, or the web's bundle) and kira decodes
-/// them from memory, which is all its `from_file` does after opening the
-/// file. kira leaves `from_file` out of wasm32 builds anyway.
-fn static_sound_from_file(
-    path: impl AsRef<Path>,
-) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
-    let bytes = vfs::read(path)?;
-    StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
+/// the active file source (the disk, or the web's bundle) and are decoded
+/// from memory. Not through kira's loader, which keeps a Vorbis stream's
+/// end padding (#632): [`decode_all`] trims it. kira leaves `from_file` out
+/// of wasm32 builds anyway.
+fn static_sound_from_file(path: impl AsRef<Path>) -> std::result::Result<StaticSoundData, String> {
+    let bytes = vfs::read(path).map_err(|e| e.to_string())?;
+    decode_all(bytes)
 }
 
 /// The kira backend a local mix goes through: cpal's default device on the
@@ -812,7 +811,7 @@ impl AudioEngine {
     /// e.g. from `include_bytes!`) under `name`. Replaces any sound already
     /// cached under that name; sounds already playing keep the old data.
     pub fn load_sound_from_bytes(&mut self, name: &str, bytes: Vec<u8>) -> Result<()> {
-        let data = StaticSoundData::from_cursor(std::io::Cursor::new(bytes)).map_err(|e| {
+        let data = decode_all(bytes).map_err(|e| {
             flint_core::FlintError::AudioError(format!("Failed to decode '{name}': {e}"))
         })?;
         self.cache_sound(name, data);

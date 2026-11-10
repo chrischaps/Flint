@@ -14,9 +14,9 @@ use std::io::Cursor;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use symphonia::core::audio::{AudioBufferRef, Signal};
-use symphonia::core::codecs::Decoder;
+use symphonia::core::codecs::{Decoder, CODEC_TYPE_VORBIS};
 use symphonia::core::conv::IntoSample;
-use symphonia::core::formats::FormatReader;
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::MediaSourceStream;
 use web_time::{Duration, Instant};
 
@@ -33,11 +33,13 @@ pub struct Decoding {
 /// from, sized by the stream's frame count. Collecting a `Vec` and turning
 /// it into an `Arc` at the end copies the whole song in one frame: 26 MB,
 /// a 67 ms frame in Chrome. A stream that runs past its stated count spills
-/// into a `Vec` and pays that copy.
+/// into a `Vec` and pays that copy, unless the count is the sound's length
+/// (`exact`), when the frames past it are dropped.
 struct Frames {
     buf: Arc<[MaybeUninit<Frame>]>,
     filled: usize,
     spill: Vec<Frame>,
+    exact: bool,
 }
 
 impl Frames {
@@ -46,6 +48,15 @@ impl Frames {
             buf: Arc::new_uninit_slice(capacity),
             filled: 0,
             spill: Vec::new(),
+            exact: false,
+        }
+    }
+
+    /// Frames that stop at `length`: whatever decodes past it is dropped.
+    fn exact(length: usize) -> Self {
+        Self {
+            exact: true,
+            ..Self::new(length)
         }
     }
 
@@ -57,6 +68,7 @@ impl Frames {
                     slot.write(frame);
                     self.filled += 1;
                 }
+                None if self.exact => return,
                 None => self.spill.push(frame),
             }
         }
@@ -94,21 +106,48 @@ fn error(e: impl std::fmt::Display) -> String {
 impl Decoding {
     /// Open an encoded sound (Ogg Vorbis, FLAC, WAV or MP3) held in memory.
     /// Reading its headers is quick; the packets wait for [`step`](Self::step).
+    ///
+    /// Gapless (#632): the sound is exactly the samples its encoder was
+    /// given. A Vorbis stream ends on a whole block, so its last packet
+    /// decodes up to a few hundred samples past the source (64 to 832 in
+    /// Kandinski's loops); the stream's last granule position says where the
+    /// source stopped, and with `enable_gapless` the Ogg reader marks the
+    /// excess on that packet and the Vorbis decoder drops it. Off, as in
+    /// kira's own loader, a looping sound loops over the padding and gaps
+    /// at every wrap. WAV and FLAC have none, so nothing changes for them.
+    ///
+    /// symphonia 0.5 marks the excess only when the stream has more than one
+    /// audio page. On a lone page (a sound under about a second) it reads
+    /// the padding as a start delay instead and trims nothing, though the
+    /// length it reports is still the granule position's. By the Vorbis
+    /// spec that granule position is the length, so a Vorbis stream's frames
+    /// stop at it whatever the packets say.
     pub fn open(bytes: Vec<u8>) -> Result<Self, String> {
+        Self::open_with(bytes, true)
+    }
+
+    fn open_with(bytes: Vec<u8>, gapless: bool) -> Result<Self, String> {
         let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let options = FormatOptions {
+            enable_gapless: gapless,
+            ..Default::default()
+        };
         let format = symphonia::default::get_probe()
-            .format(
-                &Default::default(),
-                mss,
-                &Default::default(),
-                &Default::default(),
-            )
+            .format(&Default::default(), mss, &options, &Default::default())
             .map_err(error)?
             .format;
         let track = format.default_track().ok_or("no default track")?;
         let params = &track.codec_params;
         let sample_rate = params.sample_rate.ok_or("unknown sample rate")?;
-        let frames = Frames::new(params.n_frames.unwrap_or(0) as usize);
+        let stated = params.n_frames.unwrap_or(0) as usize;
+        let frames = match params.n_frames {
+            // Only Vorbis: an MP3's count can be an estimate, and cutting
+            // at an estimate would cut music.
+            Some(n) if n > 0 && gapless && params.codec == CODEC_TYPE_VORBIS => {
+                Frames::exact(stated)
+            }
+            _ => Frames::new(stated),
+        };
         let decoder = symphonia::default::get_codecs()
             .make(params, &Default::default())
             .map_err(error)?;
@@ -153,6 +192,13 @@ impl Decoding {
             }
         }
     }
+}
+
+/// Decode a whole encoded sound now, gapless: what the engine uses in
+/// place of kira's `StaticSoundData::from_cursor`, which keeps a Vorbis
+/// stream's end padding (#632).
+pub fn decode_all(bytes: Vec<u8>) -> Result<StaticSoundData, String> {
+    Decoding::open(bytes)?.finish()
 }
 
 /// Append a decoded buffer's frames, as kira's own loader does: one channel
@@ -428,6 +474,67 @@ pub(crate) mod tests {
             .all(|(a, b)| a == b));
     }
 
+    /// 441 Hz tones of exactly 11000 and 88200 frames (whole periods, so
+    /// each closes on its own length), encoded by plain ffmpeg/libvorbis
+    /// (`-ac 1 -c:a libvorbis -q:a 2`). Neither is a multiple of a Vorbis
+    /// block, so each one's last packet decodes past it. The short one fits
+    /// on one audio page, the long one doesn't: symphonia trims the long one
+    /// itself and only our cap at the stated length trims the short one.
+    const PADDED_LOOPS: [(&str, &[u8], usize, usize); 2] = [
+        (
+            "one page",
+            include_bytes!("../tests/fixtures/loop_11000.ogg"),
+            11_000,
+            840,
+        ),
+        (
+            "several pages",
+            include_bytes!("../tests/fixtures/loop_88200.ogg"),
+            88_200,
+            440,
+        ),
+    ];
+
+    fn decode(bytes: &[u8], gapless: bool) -> StaticSoundData {
+        Decoding::open_with(bytes.to_vec(), gapless)
+            .unwrap()
+            .finish()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_padded_vorbis_loop_decodes_to_its_exact_length() {
+        for (name, bytes, length, padding) in PADDED_LOOPS {
+            // The fixture really is padded: decoded as kira's loader does,
+            // it runs long, which is the gap a loop heard at every wrap.
+            let raw = decode(bytes, false);
+            assert_eq!(raw.frames.len(), length + padding, "{name}: padded");
+            let exact = decode(bytes, true);
+            assert_eq!(exact.frames.len(), length, "{name}");
+            assert_eq!(exact.sample_rate, 44_100);
+            // The same through the public path the queue and engine use.
+            let all = decode_all(bytes.to_vec()).unwrap();
+            assert_eq!(all.frames.len(), length, "{name}: decode_all");
+            // Only the end goes: every sample kept is the sample that was
+            // there, so the loop's start is untouched.
+            assert!(
+                exact
+                    .frames
+                    .iter()
+                    .zip(raw.frames.iter())
+                    .all(|(a, b)| a == b),
+                "{name}: trimmed off the end only"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wav_is_the_same_with_gapless_on_or_off() {
+        let bytes = wav(12_345);
+        assert_eq!(decode(&bytes, true).frames.len(), 12_345);
+        assert_eq!(decode(&bytes, false).frames.len(), 12_345);
+    }
+
     #[test]
     fn frames_fill_in_place_and_spill_or_shrink_when_the_count_is_wrong() {
         let tone = |n: usize| (0..n).map(|i| Frame::from_mono(i as f32));
@@ -445,6 +552,12 @@ pub(crate) mod tests {
         let mut unknown = Frames::new(0);
         unknown.extend(tone(3));
         assert_eq!(unknown.finish().len(), 3);
+        // An exact length drops the overrun instead of spilling it.
+        let mut capped = Frames::exact(3);
+        capped.extend(tone(2));
+        capped.extend(tone(4));
+        let capped = capped.finish();
+        assert_eq!((capped.len(), capped[2].left), (3, 0.0));
     }
 
     #[test]

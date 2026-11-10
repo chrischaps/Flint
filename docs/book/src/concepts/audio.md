@@ -16,6 +16,12 @@ The listener position and orientation are updated each frame to match the first-
 
 Non-spatial sounds play on the main audio track at constant volume regardless of listener position. Set `spatial = false` on an `audio_source` to use this mode --- useful for background music, ambient atmosphere, and UI sounds.
 
+### What a loop loops over
+
+A looping `audio_source` (`loop = true`) plays the whole decoded sound, first sample to last, then starts again with nothing between: no crossfade, no silence, nothing trimmed. So a loop has to be authored to close on its own length. Its last sample should lead into its first the way any two neighbouring samples do. A loop that only closes after a fade, or that carries a tail of silence or reverb, clicks or gaps at every wrap.
+
+What "the whole sound" means is exactly the samples the encoder was given. A Vorbis encoder ends a stream on a whole block, so its last packet decodes up to a few hundred samples past the source. Flint decodes gaplessly (#632): it reads the stream's last granule position and drops that excess, as ffmpeg does, so an OGG loop is as long as the WAV it was encoded from. Before #632 that padding played (64 to 832 samples, up to 19 ms, on plain `ffmpeg -c:a libvorbis` encodes), and since ffmpeg's own decode trims it, a check made with ffmpeg didn't show the gap. WAV and FLAC have no padding. MP3 encoders pad both ends, and how much of that can be trimmed depends on the file's headers; prefer OGG or WAV for loops.
+
 ## Preloading
 
 At scene load the player loads every file named by an `audio_source` component, then preloads every audio file it finds under `audio/` (searching the scene directory, then its parent, the game root) so that `play_sound("audio/name.ogg")` from a script never stalls on decode. Each file is cached under its path from there, extension included (`audio/whoosh.ogg`); subfolders of `audio/` are not searched. See [Sound names](#sound-names). A scene with a large stem library pays for that in load time. Opt out per scene:
@@ -171,7 +177,7 @@ loop = true
 spatial = false
 ```
 
-Supported audio formats: OGG, WAV, MP3, FLAC (via Kira's symphonia backend).
+Supported audio formats: OGG, WAV, MP3, FLAC (decoded with symphonia, gapless; see [What a loop loops over](#what-a-loop-loops-over)).
 
 ## Scripting Integration
 
