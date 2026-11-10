@@ -43,6 +43,7 @@ notify-debouncer-mini = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
+glam = { workspace = true }
 image = { workspace = true, features = ["gif"] }
 # Already in the tree through `image`. Used directly so that a GIF can share one
 # palette across its frames, which `image`'s encoder doesn't do (gif_writer.rs).
