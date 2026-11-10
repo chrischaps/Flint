@@ -233,7 +233,11 @@ fn main() -> Result<()> {
         Commands::GenPreview(args) => gen_preview::run(args),
         Commands::TerrainEdit(args) => terrain_edit::run(args),
         Commands::TexEdit(args) => tex_edit::run(args),
-        Commands::Render(args) => render::run(args),
+        Commands::Render(mut args) => {
+            // --variant builds each variant's command line on this one (#291)
+            args.command_line = commands::variants::subcommand_words(std::env::args_os());
+            render::run(args)
+        }
         Commands::Style(cmd) => style::run(cmd),
     }
 }

@@ -482,12 +482,13 @@ fn render_in_process(
     argv: &[std::ffi::OsString],
 ) -> Result<Rendered> {
     use clap::Parser;
-    let cli = match RenderCli::try_parse_from(
+    let mut cli = match RenderCli::try_parse_from(
         std::iter::once(std::ffi::OsString::from("flint render")).chain(argv[1..].iter().cloned()),
     ) {
         Ok(cli) => cli,
         Err(e) => return Ok(Rendered::Failed(e.to_string())),
     };
+    cli.args.command_line = argv[1..].to_vec();
     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::render::run_in(cli.args, host)
     }));

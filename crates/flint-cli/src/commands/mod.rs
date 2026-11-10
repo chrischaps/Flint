@@ -42,6 +42,7 @@ pub mod schema;
 pub mod spike_rumble;
 pub mod style_sheet;
 pub mod sweep;
+pub mod variants;
 pub mod spline_edit;
 pub mod style;
 pub mod terrain_edit;
