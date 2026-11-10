@@ -39,6 +39,7 @@ flint render levels/tavern.scene.toml \
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
 | `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |
 | `--frames <n>` | (none) | Draw a moving sequence of `n` frames ([Frame sequences](#frame-sequences)) |
+| `--mesh <entity>=<files>` | (none) | Draw a frame per mesh file on that entity, one renderer for all ([Mesh sequences](#mesh-sequences)) |
 
 ## Post-Processing Flags
 
@@ -253,6 +254,30 @@ flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
 A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
+
+### Mesh sequences
+
+A procgen look test often has its frames already, as mesh files: one GLB per seed, per pose or per setting. `--mesh <entity>=<files>` draws a frame per file on one renderer, showing each file in turn on that entity, so twelve files cost one start-up instead of twelve (#222). The files are one GLB, a folder of them, or a wildcard in the file name, taken in natural order (`f2` before `f10`):
+
+```bash
+for s in $(seq 1 12); do flint gen specs/oak_tree.procgen.toml --seed $s -o out/oaks/oak_seed$s.glb; done
+flint render demo/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oaks.png --no-grid
+#   Sequence: 12 frames, 0.083333 s apart
+#   Rendered 12 640x360 frames as one 2664x1346 sheet to oaks.png
+```
+
+![Twelve seeds of one oak spec on a labelled contact sheet, one cell per GLB, drawn in one flint render run](../images/mesh-sequence-oaks.png)
+
+| Output | What it writes |
+|--------|----------------|
+| `-o seq.png` | `seq_0000.png`... as `--frames` numbers them |
+| `-o frames/f-%03d.png` | a PNG a frame, numbered as the pattern says |
+| `-o oaks.gif` | one GIF at `--fps` (default 12; at most 50) |
+| `--sheet -o oaks.png` | one contact sheet, each cell labelled with its file's name (cells 640x360 unless `--width`/`--height`) |
+
+Repeat `--mesh` to move several entities at once, frame for frame: `--mesh tree_a=out/oaks --mesh tree_b='out/willows/w*.glb'` gives frame *n* the *n*th file of each, and refuses lists of different lengths. Frames are 1/`--fps` apart (or `--frame-dt`), so `--orbit`, `--camera-path`, post time and particles move as in any sequence. `demo/mesh_sequence.scene.toml` has three slots (`tree_a` in the middle, `tree_b` and `tree_c` either side) and a bench for scale.
+
+The bound entity's `model` is pointed at an asset of its own (`mesh-seq/<entity>`) and marked `runtime`, so the scene's loader leaves it alone and other entities naming the same asset keep theirs. An entity with no model gets one. A GLB of several mesh nodes, or one moved by its node, is baked into one mesh, so a swap is one upload. Skinned files draw their rest pose. A mesh sequence draws on the still path, so it refuses `--time`, `--scripts`, `--sweep` and scenes with living props or a `[wooze]` table. On a shared machine, release build, 960x540: 12 oaks in one run took 2.05 s, and 12 runs of one file each took 24.2 s (the minimum of three alternating rounds). `crates/flint-cli/tests/render_mesh_cli.rs` checks that the last frame of a sequence is byte-identical to that file rendered alone.
 ## A Chosen Moment
 
 `--time` captures a scene at a game time, so that two settings can be compared at the same instant:
@@ -386,7 +411,7 @@ Why the runtime values are here and not in `flint query`: query reads scene file
 
 ## CI Pipeline Integration
 
-Headless rendering works on machines without a display. Use it in CI to catch visual regressions:
+Headless rendering works on machines without a display. On one without a GPU, it needs a software adapter: lavapipe (`mesa-vulkan-drivers`) on Linux, WARP on Windows. [Linux and Headless Setup](../getting-started/installation.md#linux-and-headless-setup) has the packages. Use it in CI to catch visual regressions:
 
 ```yaml
 # Example GitHub Actions step

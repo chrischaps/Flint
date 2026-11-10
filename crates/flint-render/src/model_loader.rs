@@ -601,16 +601,12 @@ pub fn load_textures_from_world(
                     }
                 }
             }
-            // Load font textures referenced by ui_text components
+            // Fonts ui_text names: built into glyph atlases and uploaded
+            // here, so extraction only lays text out (ADR 0113)
             if let Some(ui_text) = comps.get(comp::UI_TEXT) {
-                if let Some(font_path_str) = ui_text.get("font").and_then(|v| v.as_str()) {
-                    if !font_path_str.is_empty() {
-                        let font_file = config.scene_dir.join(font_path_str);
-                        if let Some(font) = crate::bitmap_font::BitmapFont::load(&font_file) {
-                            if !font.texture.is_empty() {
-                                tex_names.push(font.texture);
-                            }
-                        }
+                if let Some(font) = ui_text.get("font").and_then(|v| v.as_str()) {
+                    if !font.is_empty() {
+                        renderer.load_ui_font(device, queue, font, &config.scene_dir);
                     }
                 }
             }

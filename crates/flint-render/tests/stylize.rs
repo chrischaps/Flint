@@ -406,6 +406,97 @@ fn ascii_draws_one_glyph_per_cell_on_one_grid() {
     assert_ne!(block(&gpu.frame(&mut renderer, &world), 8, 0, 0), first);
 }
 
+#[test]
+fn a_calibrated_ramp_draws_the_glyph_its_cpu_pick_names() {
+    // #281: the shader's `ramp_step` over the `ramp_tone` table picks what
+    // `GlyphRamp::pick` does. With contrast 0 the tone is 0.5 + brightness
+    // everywhere, so each frame is one glyph over the whole grid
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_core::vfs::{self, MemorySource};
+    let classic = " .:-=+*#%@";
+    let calibrated = flint_render::GlyphSet::builtin()
+        .ramp("classic")
+        .unwrap()
+        .calibrated();
+    let order: String = calibrated.glyphs().iter().collect();
+    let mut src = MemorySource::new();
+    src.insert(
+        "fonts/cal.glyphs.toml",
+        format!("[ramps.r]\nglyphs = \"{classic}\"\nmap = \"coverage\"\n"),
+    );
+    // The same glyphs, written in the calibrated order on equal bands: the
+    // reference that names each glyph by its band's centre
+    src.insert(
+        "fonts/ref.glyphs.toml",
+        format!("[ramps.r]\nglyphs = \"{order}\"\n"),
+    );
+    vfs::scoped(std::sync::Arc::new(src), || {
+        let world = FlintWorld::new();
+        let mut renderer = SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("ascii", true);
+        for (k, v) in [
+            ("contrast", 0.0),
+            ("hysteresis", 0.0),
+            ("smoothing", 0.0),
+            ("dither", 0.0),
+            ("edges", 0.0),
+            ("glow", 0.0),
+        ] {
+            config.styles.set_param("ascii", k, v);
+        }
+        config.styles.set_option("ascii", "ramp", "r");
+        config.styles.set_option("ascii", "color", "tint");
+        config.styles.set_option("ascii", "ground", "black");
+        renderer.ensure_style_resources(&gpu.device);
+        let mut draw = |font: &str, tone: f32| -> Vec<bool> {
+            let mut c = config.clone();
+            c.styles.set_option("ascii", "font", font);
+            c.styles.set_param("ascii", "brightness", tone - 0.5);
+            renderer.set_post_process_config(c);
+            renderer.reset_style_history();
+            let frame = gpu.frame(&mut renderer, &world);
+            block(&frame, 8, 3, 3)
+                .chunks(4)
+                .map(|p| p[..3] != [0, 0, 0])
+                .collect()
+        };
+        let n = calibrated.len();
+        let reference: Vec<Vec<bool>> = (0..n)
+            .map(|i| draw("ref", (i as f32 + 0.5) / n as f32))
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let bounds = calibrated.bounds();
+        for i in 0..=40 {
+            let tone = i as f32 / 40.0;
+            // A tone on a band's edge is either side of it after the
+            // shader's arithmetic
+            if bounds.iter().any(|b| (b - tone).abs() < 1e-3) {
+                continue;
+            }
+            let want = calibrated.step(tone);
+            seen.insert(want);
+            assert_eq!(
+                draw("cal", tone),
+                reference[want],
+                "tone {tone}: the CPU picks {:?}",
+                calibrated.glyphs()[want]
+            );
+        }
+        assert!(seen.len() >= 8, "the sweep crossed most bands: {seen:?}");
+    });
+}
+
 /// The distinct RGB colours of an RGBA8 frame.
 fn colours(pixels: &[u8]) -> std::collections::BTreeSet<[u8; 3]> {
     pixels.chunks(4).map(|p| [p[0], p[1], p[2]]).collect()

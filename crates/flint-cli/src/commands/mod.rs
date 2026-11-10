@@ -8,6 +8,7 @@ pub mod edit_router;
 pub mod entity;
 pub mod export;
 pub mod frame_seq;
+pub mod mesh_seq;
 pub mod gen;
 pub mod gen_ai;
 pub mod gen_preview;

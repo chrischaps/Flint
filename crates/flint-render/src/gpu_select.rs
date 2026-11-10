@@ -160,6 +160,48 @@ pub fn skip_without_gpu(why: &str) {
     eprintln!("{why}; skipping (FLINT_REQUIRE_GPU=1 fails instead)");
 }
 
+/// What to do about finding no adapter (#220), for the end of the
+/// no-adapter error and for an empty `--list-gpus`. It names what narrowed
+/// the search (`--gpu`, `WGPU_ADAPTER_NAME`, `WGPU_BACKEND`), then the
+/// platform's software adapter: lavapipe on Linux (a machine with no GPU,
+/// such as a container or a cloud agent, has no Vulkan driver until
+/// `mesa-vulkan-drivers` is installed), WARP on Windows.
+pub fn no_adapter_hint() -> String {
+    let mut lines = Vec::new();
+    if let Some(name) = name_filter() {
+        lines.push(format!(
+            "only adapters named like {name:?} were asked for (--gpu or WGPU_ADAPTER_NAME)"
+        ));
+    }
+    if let Ok(b) = std::env::var("WGPU_BACKEND") {
+        if !b.is_empty() {
+            lines.push(format!(
+                "only the {b:?} backend was searched (WGPU_BACKEND)"
+            ));
+        }
+    }
+    lines.push(software_adapter_hint().to_string());
+    lines.join("; ")
+}
+
+#[cfg(target_os = "linux")]
+fn software_adapter_hint() -> &'static str {
+    "with no GPU, install a software Vulkan driver (lavapipe): \
+     `sudo apt-get install mesa-vulkan-drivers` on Debian/Ubuntu, \
+     then `flint render --list-gpus` should list \"llvmpipe\""
+}
+
+#[cfg(target_os = "windows")]
+fn software_adapter_hint() -> &'static str {
+    "with no GPU, Windows' software adapter is WARP: \
+     WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME=\"Microsoft Basic Render Driver\""
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn software_adapter_hint() -> &'static str {
+    "check `flint render --list-gpus` and the GPU driver"
+}
+
 /// List available adapters as `(name, device type, backend)` strings.
 pub fn list_adapters() -> Vec<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -173,4 +215,24 @@ pub fn list_adapters() -> Vec<String> {
             format!("{} [{:?}, {:?}]", i.name, i.device_type, i.backend)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::RenderError;
+
+    // `render-suite` tells "no GPU" from a failed case by these words
+    // (`looks_like_no_gpu`), so the hint goes after them
+    #[test]
+    fn no_adapter_error_keeps_its_words_and_names_the_fix() {
+        let message = RenderError::AdapterNotFound.to_string();
+        assert!(message.starts_with("Failed to get adapter: "), "{message}");
+        #[cfg(target_os = "linux")]
+        assert!(message.contains("mesa-vulkan-drivers"), "{message}");
+        #[cfg(target_os = "windows")]
+        assert!(
+            message.contains("Microsoft Basic Render Driver"),
+            "{message}"
+        );
+    }
 }

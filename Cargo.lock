@@ -1687,6 +1687,7 @@ dependencies = [
  "flint-terrain",
  "flint-viewer",
  "gif",
+ "glam",
  "image",
  "miniz_oxide",
  "naga",
