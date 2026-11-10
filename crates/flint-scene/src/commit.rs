@@ -224,6 +224,33 @@ pub fn look_edits(base: &WoozePreset, now: &WoozePreset) -> Vec<SceneEdit> {
         .collect()
 }
 
+/// Fit `edits` to the file `doc` holds, returning whether boil values were
+/// left out: with no `[post_process]` they go unwritten, since making one
+/// would turn passes on. A boil goes where the scene keeps it (#599):
+/// `boil` in the style's table when the file has one, else the old flat
+/// key, which loads the same and makes no table (a table would switch the
+/// style on).
+pub(crate) fn fit_edits(doc: &SceneDocument, edits: &mut Vec<SceneEdit>) -> bool {
+    let mut skipped = false;
+    if !doc.has_table(&["post_process"]) {
+        let before = edits.len();
+        edits.retain(|edit| edit.table != ["post_process"]);
+        skipped = edits.len() != before;
+    }
+    for edit in edits.iter_mut() {
+        let style = match (edit.table.as_slice(), edit.key.as_slice()) {
+            ([post], [key]) if post == "post_process" && key == "kuwahara_boil" => "kuwahara",
+            ([post], [key]) if post == "post_process" && key == "contour_boil" => "contour",
+            _ => continue,
+        };
+        if doc.has_table(&["post_process", "styles", style]) {
+            edit.table = vec!["post_process".into(), "styles".into(), style.into()];
+            edit.key = vec!["boil".into()];
+        }
+    }
+    skipped
+}
+
 /// What came of a commit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CommitReport {
@@ -254,11 +281,7 @@ pub fn commit_look(
         return Ok(report);
     }
     let mut doc = SceneDocument::from_file(path)?;
-    if !doc.has_table(&["post_process"]) {
-        let before = edits.len();
-        edits.retain(|edit| edit.table != ["post_process"]);
-        report.boil_skipped = edits.len() != before;
-    }
+    report.boil_skipped = fit_edits(&doc, &mut edits);
     for edit in &edits {
         doc.apply_edit(edit)?;
     }

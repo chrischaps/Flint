@@ -122,10 +122,10 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
     if let (Some(boil), Some(post)) = (preset.boil, &mut scene.post_process) {
         let on = boil.enabled.unwrap_or(true);
         if let Some(paint) = boil.kuwahara {
-            post.kuwahara_boil = if on { paint } else { 0.0 };
+            post.set_boil("kuwahara", if on { paint } else { 0.0 });
         }
         if let Some(ink) = boil.contour {
-            post.contour_boil = if on { ink } else { 0.0 };
+            post.set_boil("contour", if on { ink } else { 0.0 });
         }
         if let Some(cadence) = boil.on {
             post.boil_on = cadence;
@@ -665,9 +665,11 @@ mod preset_tests {
         assert_eq!(living.variance.unwrap().amount, Some(1.0));
 
         let post = scene.post_process.as_ref().unwrap();
-        assert_eq!(post.kuwahara_boil, 0.5);
-        assert_eq!(post.contour_boil, 1.25);
+        assert_eq!(post.boil("kuwahara"), Some(0.5));
+        assert_eq!(post.boil("contour"), Some(1.25));
         assert_eq!(post.boil_on, 3);
+        // Made no table, so switched neither style on
+        assert!(post.styles.is_empty());
     }
 
     #[test]
@@ -726,7 +728,25 @@ mod preset_tests {
         let mut scene = scene_naming("[post_process]\nbloom_enabled = true\n");
         apply_preset_file(&mut scene, &folder.scene());
         let post = scene.post_process.unwrap();
-        assert_eq!((post.kuwahara_boil, post.contour_boil), (0.0, 0.0));
+        assert_eq!(
+            (post.boil("kuwahara"), post.boil("contour")),
+            (Some(0.0), Some(0.0))
+        );
+    }
+
+    /// A preset's boil beats the scene's own, in either spelling (#599).
+    #[test]
+    fn a_preset_boil_beats_the_scenes_style_table() {
+        let folder = Folder::new("table");
+        write_preset(&folder.scene(), "misty", &tuned()).unwrap();
+        let mut scene = scene_naming(
+            "[post_process]\n[post_process.styles.contour]\nboil = 0.2\nwidth = 2.0\n",
+        );
+        apply_preset_file(&mut scene, &folder.scene());
+        let post = scene.post_process.unwrap();
+        assert_eq!(post.boil("contour"), Some(1.25));
+        assert_eq!(post.styles["contour"]["width"].as_float(), Some(2.0));
+        assert!(!post.styles.contains_key("kuwahara"));
     }
 }
 

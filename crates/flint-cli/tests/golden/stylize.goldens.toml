@@ -410,6 +410,33 @@ scene = "demo/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5,blend=0"]
 matches = ["--no-grid"]
 
+# Contour (#214; a registered style since #599): ink from depth's second
+# difference and luminance edges, so the flat ground draws no line. Lines
+# are high contrast, so they take the suite's tolerance, not the smooth one
+[[case]]
+name = "contour"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "contour:width=1.5"]
+
+# Last of the HDR chain: the ink over Kuwahara's paint, never smeared by it
+[[case]]
+name = "contour-over-kuwahara"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "contour:width=1.5"]
+
+# The old flags are shorthands for its table's keys
+[[case]]
+name = "contour-flags-are-its-table"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--contour-width", "1.5", "--contour-color", "0.2,0.05,0.02"]
+matches = ["--no-grid", "--style", "contour:width=1.5,color=0.2/0.05/0.02"]
+
+[[case]]
+name = "contour-blend-zero"
+scene = "demo/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "contour:blend=0"]
+matches = ["--no-grid"]
+
 # Palette quantize (#324): a ladder dithered in 2-point blocks, and nearest
 # inks undithered. A colour on an ink boundary flips a whole block by a big
 # step, so these take the glyph styles' tolerance, not the smooth one
@@ -485,11 +512,12 @@ name = "user-style-risograph"
 scene = "demo/user_styles.scene.toml"
 args = ["--no-grid", "--style", "risograph"]
 
-# Contour: lines of equal distance from `flint_view_depth`, the depth binding
+# Contour map: lines of equal distance from `flint_view_depth`, the depth binding
+# (named `contour` until #599 gave the name to the built-in ink)
 [[case]]
-name = "user-style-contour"
+name = "user-style-contour-map"
 scene = "demo/user_styles.scene.toml"
-args = ["--no-grid", "--style", "contour"]
+args = ["--no-grid", "--style", "contour_map"]
 
 # A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
 # its input unchanged and say where it failed. The passthrough runs the

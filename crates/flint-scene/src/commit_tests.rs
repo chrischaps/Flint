@@ -57,9 +57,7 @@ fn grove_look() -> WoozePreset {
 fn commit(text: &str, base: &WoozePreset, now: &WoozePreset) -> String {
     let mut doc = SceneDocument::from_str(text).unwrap();
     let mut edits = look_edits(base, now);
-    if !doc.has_table(&["post_process"]) {
-        edits.retain(|edit| edit.table != ["post_process"]);
-    }
+    fit_edits(&doc, &mut edits);
     for edit in &edits {
         doc.apply_edit(edit).unwrap();
     }
@@ -228,8 +226,37 @@ fn global_values_land_in_wooze_and_living_and_the_boil_in_post_process() {
     let living = scene.living.unwrap();
     assert_eq!(living.stagger.as_deref(), Some("per_level"));
     assert_eq!(living.echoes.unwrap().alpha, Some(0.35));
-    assert_eq!(scene.post_process.unwrap().kuwahara_boil, 0.0, "off is 0");
+    assert_eq!(
+        scene.post_process.unwrap().boil("kuwahara"),
+        Some(0.0),
+        "off is 0"
+    );
     assert!(after.contains("# Every tree, unless its species says otherwise."));
+}
+
+/// A scene that keeps its boil in the style tables (#599) gets it written
+/// there, and one with neither table keeps the flat key, making no table.
+#[test]
+fn the_boil_lands_where_the_scene_keeps_it() {
+    let tabled = GROVE.replace(
+        "kuwahara_boil = 0.5",
+        "\n[post_process.styles.kuwahara]\nradius = 3\nboil = 0.5",
+    );
+    let mut now = grove_look();
+    now.boil.as_mut().unwrap().kuwahara = Some(0.25);
+    let after = commit(&tabled, &grove_look(), &now);
+    let scene: SceneFile = toml::from_str(&after).unwrap();
+    let post = scene.post_process.unwrap();
+    assert_eq!(post.boil("kuwahara"), Some(0.25));
+    assert_eq!(post.kuwahara_boil, None, "{after}");
+
+    let flat = commit(GROVE, &grove_look(), &now);
+    let post = toml::from_str::<SceneFile>(&flat)
+        .unwrap()
+        .post_process
+        .unwrap();
+    assert_eq!(post.kuwahara_boil, Some(0.25));
+    assert!(post.styles.is_empty(), "{flat}");
 }
 
 #[test]

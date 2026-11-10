@@ -701,7 +701,6 @@ impl PlayerApp {
             scene_renderer.set_post_process_config(config);
             scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
-            scene_renderer.ensure_contour_resources(&render_context.device);
         }
     }
 

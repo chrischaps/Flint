@@ -326,38 +326,32 @@ pub struct PostProcessDef {
     /// renderer checks names and parameters against its registry.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub styles: std::collections::BTreeMap<String, toml::Table>,
-    /// How far each drawing moves the paint in a scene with a `[wooze]` table: a
-    /// share of the radius, turning the strokes too. 0 holds it still.
-    #[serde(default)]
-    pub kuwahara_boil: f32,
-    /// Ink lines over the scene, from breaks in depth and luminance (#214).
-    #[serde(default)]
-    pub contour_enabled: bool,
-    /// Half a line's width, in pixels at 1080p.
-    #[serde(default = "default_contour_width")]
-    pub contour_width: f32,
-    /// How strong an edge must be before it starts to ink. Lower draws more.
-    #[serde(default = "default_contour_threshold")]
-    pub contour_threshold: f32,
-    /// How dark the ink goes, 0 to 1.
-    #[serde(default = "default_contour_strength")]
-    pub contour_strength: f32,
-    /// How much edges in luminance count, against edges in depth. 0 is silhouettes only.
-    #[serde(default = "default_contour_luma")]
-    pub contour_luma: f32,
-    /// The ink's colour, linear.
-    #[serde(default = "default_contour_color")]
-    pub contour_color: [f32; 3],
-    /// Metres at which a line has faded by half, so that distant foliage doesn't
-    /// go solid with ink. 0 never fades.
-    #[serde(default = "default_contour_fade")]
-    pub contour_fade: f32,
-    /// How far each drawing moves the lines in a scene with a `[wooze]` table,
-    /// and how much it changes their width and pressure. 0 holds them still.
-    #[serde(default)]
-    pub contour_boil: f32,
-    /// Film frames each drawing is held: 1, 2 or 3 ("on twos"). A beat of the
-    /// field's `step` is six film frames.
+    /// The old spellings of the shading boil's and the contour's settings
+    /// (#214), which are `[post_process.styles.kuwahara] boil` and
+    /// `[post_process.styles.contour]` since #599. Kept so older scenes
+    /// still load, and read through [`style_tables`](Self::style_tables)
+    /// like the `kuwahara_*` keys above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kuwahara_boil: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_threshold: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_strength: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_luma: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_color: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_fade: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contour_boil: Option<f32>,
+    /// Film frames each drawing of the shading boil is held: 1, 2 or 3 ("on
+    /// twos"). A beat of the field's `step` is six film frames. Shared by
+    /// both styles' boils.
     #[serde(default = "default_boil_on")]
     pub boil_on: u32,
     /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
@@ -491,13 +485,22 @@ fn default_volumetric_decay() -> f32 {
 }
 
 /// The `[post_process]` keys that predate the style table, and the
-/// `[post_process.styles.<style>]` key each one is now (#298).
+/// `[post_process.styles.<style>]` key each one is now (#298, #599).
 pub const LEGACY_STYLE_KEYS: &[(&str, &str, &str)] = &[
     ("kuwahara_enabled", "kuwahara", "enabled"),
     ("kuwahara_radius", "kuwahara", "radius"),
     ("kuwahara_sharpness", "kuwahara", "sharpness"),
     ("kuwahara_hardness", "kuwahara", "hardness"),
     ("kuwahara_anisotropy", "kuwahara", "anisotropy"),
+    ("kuwahara_boil", "kuwahara", "boil"),
+    ("contour_enabled", "contour", "enabled"),
+    ("contour_width", "contour", "width"),
+    ("contour_threshold", "contour", "threshold"),
+    ("contour_strength", "contour", "strength"),
+    ("contour_luma", "contour", "luma"),
+    ("contour_color", "contour", "color"),
+    ("contour_fade", "contour", "fade"),
+    ("contour_boil", "contour", "boil"),
 ];
 
 /// Move a `[post_process]` table's old style keys (`kuwahara_radius = 4`)
@@ -505,7 +508,8 @@ pub const LEGACY_STYLE_KEYS: &[(&str, &str, &str)] = &[
 /// spellings mean the same thing. A key the style table already sets is
 /// the table's, and the old key is dropped. A style table made here is on
 /// only if the old keys say so (`kuwahara_enabled = true`): before the
-/// table, `kuwahara_radius` alone left the filter off.
+/// table, `kuwahara_radius` alone left the filter off (and `contour_width`
+/// alone the ink).
 pub fn fold_legacy_style_keys(post_process: &mut toml::Table) {
     let mut made: Vec<&str> = Vec::new();
     for &(old, style, key) in LEGACY_STYLE_KEYS {
@@ -581,7 +585,7 @@ impl PostProcessDef {
     /// Every key a `[post_process]` block can name, sorted: the struct's
     /// own fields, read back from a serialized one (so a new field is
     /// known the moment it exists), with the ones skipped when empty
-    /// (`kuwahara_*`, `styles`) filled in so they serialize too.
+    /// (`kuwahara_*`, `contour_*`, `styles`) filled in so they serialize too.
     pub fn field_names() -> Vec<String> {
         let mut def: PostProcessDef = toml::Value::Table(toml::Table::new())
             .try_into()
@@ -591,6 +595,15 @@ impl PostProcessDef {
         def.kuwahara_sharpness = Some(0.0);
         def.kuwahara_hardness = Some(0.0);
         def.kuwahara_anisotropy = Some(0.0);
+        def.kuwahara_boil = Some(0.0);
+        def.contour_enabled = Some(false);
+        def.contour_width = Some(0.0);
+        def.contour_threshold = Some(0.0);
+        def.contour_strength = Some(0.0);
+        def.contour_luma = Some(0.0);
+        def.contour_color = Some([0.0; 3]);
+        def.contour_fade = Some(0.0);
+        def.contour_boil = Some(0.0);
         def.styles.insert("_".into(), toml::Table::new());
         def.look = Some(String::new());
         let mut names: Vec<String> = toml::Table::try_from(&def)
@@ -659,8 +672,36 @@ impl PostProcessDef {
         Ok(def)
     }
 
-    /// The style tables, with the old `kuwahara_*` keys folded in
-    /// ([`fold_legacy_style_keys`]). What the renderer reads.
+    /// Style `style`'s shading boil (`kuwahara` or `contour`, #214) as the
+    /// scene gives it: its table's `boil`, or the old flat key. `None` when
+    /// neither says.
+    pub fn boil(&self, style: &str) -> Option<f32> {
+        let table = self.style_tables();
+        let value = table.get(style)?.get("boil")?;
+        value
+            .as_float()
+            .or_else(|| value.as_integer().map(|i| i as f64))
+            .map(|v| v as f32)
+    }
+
+    /// Set style `style`'s shading boil (a wooze preset's `[boil]`, which
+    /// wins over the scene's): in its table when the scene has one, so
+    /// the table's value can't outrank it, else in the old flat key, so no
+    /// table is made and no style switched on.
+    pub fn set_boil(&mut self, style: &str, amount: f32) {
+        if let Some(table) = self.styles.get_mut(style) {
+            table.insert("boil".into(), toml::Value::Float(amount as f64));
+            return;
+        }
+        match style {
+            "kuwahara" => self.kuwahara_boil = Some(amount),
+            "contour" => self.contour_boil = Some(amount),
+            _ => {}
+        }
+    }
+
+    /// The style tables, with the old `kuwahara_*` and `contour_*` keys
+    /// folded in ([`fold_legacy_style_keys`]). What the renderer reads.
     pub fn style_tables(&self) -> std::collections::BTreeMap<String, toml::Table> {
         let mut table = toml::Table::new();
         let float = |v: Option<f32>| v.map(|v| toml::Value::Float(v as f64));
@@ -676,6 +717,23 @@ impl PostProcessDef {
             ("kuwahara_sharpness", float(self.kuwahara_sharpness)),
             ("kuwahara_hardness", float(self.kuwahara_hardness)),
             ("kuwahara_anisotropy", float(self.kuwahara_anisotropy)),
+            ("kuwahara_boil", float(self.kuwahara_boil)),
+            (
+                "contour_enabled",
+                self.contour_enabled.map(toml::Value::Boolean),
+            ),
+            ("contour_width", float(self.contour_width)),
+            ("contour_threshold", float(self.contour_threshold)),
+            ("contour_strength", float(self.contour_strength)),
+            ("contour_luma", float(self.contour_luma)),
+            (
+                "contour_color",
+                self.contour_color.map(|rgb| {
+                    toml::Value::Array(rgb.iter().map(|&c| toml::Value::Float(c as f64)).collect())
+                }),
+            ),
+            ("contour_fade", float(self.contour_fade)),
+            ("contour_boil", float(self.contour_boil)),
         ];
         for (key, value) in legacy {
             if let Some(value) = value {
@@ -706,30 +764,6 @@ impl PostProcessDef {
         }
         styles
     }
-}
-
-fn default_contour_width() -> f32 {
-    1.25
-}
-
-fn default_contour_threshold() -> f32 {
-    0.08
-}
-
-fn default_contour_strength() -> f32 {
-    0.9
-}
-
-fn default_contour_luma() -> f32 {
-    0.5
-}
-
-fn default_contour_color() -> [f32; 3] {
-    [0.015, 0.012, 0.02]
-}
-
-fn default_contour_fade() -> f32 {
-    30.0
 }
 
 fn default_boil_on() -> u32 {
@@ -966,6 +1000,42 @@ mod legacy_style_key_tests {
         assert_eq!(k["enabled"].as_bool(), Some(true));
         assert_eq!(k["radius"].as_integer(), Some(4));
         assert_eq!(k["sharpness"].as_float(), Some(6.0));
+    }
+
+    /// The contour's and the paint boil's flat keys (#214) are its table's
+    /// and Kuwahara's since #599, colour and all.
+    #[test]
+    fn old_contour_and_boil_keys_fold_into_their_tables() {
+        let old = def(
+            "kuwahara_boil = 0.5\ncontour_enabled = true\ncontour_width = 1.5\n\
+             contour_color = [0.1, 0.2, 0.3]\ncontour_boil = 1.0\nboil_on = 2",
+        );
+        let tables = old.style_tables();
+        let c = &tables["contour"];
+        assert_eq!(c["enabled"].as_bool(), Some(true));
+        assert_eq!(c["width"].as_float(), Some(1.5));
+        assert_eq!(c["boil"].as_float(), Some(1.0));
+        let rgb: Vec<f64> = c["color"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_float().unwrap())
+            .collect();
+        assert_eq!(rgb.len(), 3);
+        assert!((rgb[1] - 0.2).abs() < 1e-6);
+        // Boil alone never switched the filter on, and doesn't now
+        let k = &tables["kuwahara"];
+        assert_eq!(k["boil"].as_float(), Some(0.5));
+        assert_eq!(k["enabled"].as_bool(), Some(false));
+        assert_eq!(old.boil_on, 2);
+        // The ink stays off without its old switch
+        let width_only = def("contour_width = 2.0").style_tables();
+        assert_eq!(width_only["contour"]["enabled"].as_bool(), Some(false));
+        assert!(PostProcessDef::unknown_field_warnings(
+            "[post_process]\ncontour_fade = 26.0\nkuwahara_boil = 0.5\n",
+            None
+        )
+        .is_empty());
     }
 
     #[test]

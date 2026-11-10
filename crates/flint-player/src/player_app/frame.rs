@@ -286,9 +286,6 @@ impl PlayerApp {
                     if flags.fxaa_needs_resources {
                         renderer.ensure_fxaa_resources(&context.device);
                     }
-                    if flags.contour_needs_resources {
-                        renderer.ensure_contour_resources(&context.device);
-                    }
                 }
                 if flags.shadows_changed {
                     renderer.set_shadows(rp.shadows_enabled);
