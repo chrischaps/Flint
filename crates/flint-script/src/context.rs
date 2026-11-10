@@ -63,6 +63,11 @@ pub struct InputSnapshot {
     pub gamepad_connected: bool,
     /// True while the on-screen touch controls are drawn (#133).
     pub touch_controls_visible: bool,
+    /// True on a touch-first device (`pointer: coarse` page, Android) from
+    /// the first frame, whatever has been touched so far (#660).
+    pub touch_device: bool,
+    /// Safe-area insets in points: left, top, right, bottom (#660).
+    pub safe_area: [f64; 4],
     pub mouse_delta: (f64, f64),
     /// Wheel lines (notches) this frame, (x, y); up and right are positive.
     pub mouse_wheel: (f64, f64),

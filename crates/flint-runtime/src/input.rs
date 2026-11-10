@@ -360,6 +360,8 @@ pub struct InputState {
 
     last_device: InputDevice,
     gamepad_connected: bool,
+    /// The host says the device is touch-first (#660).
+    touch_device: bool,
 
     /// While set, every pad reads as idle ([`InputState::hold_gamepads`]).
     gamepads_held: bool,
@@ -406,6 +408,7 @@ impl InputState {
             last_frame_pressed_actions: HashSet::new(),
             last_device: InputDevice::Keyboard,
             gamepad_connected: false,
+            touch_device: false,
             gamepads_held: false,
             gamepad_buttons_swallowed: HashSet::new(),
         }
@@ -424,6 +427,18 @@ impl InputState {
 
     pub fn set_gamepad_connected(&mut self, connected: bool) {
         self.gamepad_connected = connected;
+    }
+
+    /// True on a touch-first device: a web page whose main pointer is a
+    /// finger (`pointer: coarse`), or Android. A fact about the device, not
+    /// about the last input, so it holds from the first frame, before any
+    /// finger lands (#660). The host sets it; the state never infers it.
+    pub fn touch_device(&self) -> bool {
+        self.touch_device
+    }
+
+    pub fn set_touch_device(&mut self, touch_first: bool) {
+        self.touch_device = touch_first;
     }
 
     pub fn config(&self) -> &InputConfig {

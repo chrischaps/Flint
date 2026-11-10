@@ -114,6 +114,8 @@ impl PlayerApp {
             dynamic_scale: Default::default(),
             quality_overrides: String::new(),
             pixels_per_point: None,
+            safe_area: None,
+            touch_device: false,
             look: None,
             quality: Default::default(),
             frame_pacer: None,

@@ -309,6 +309,8 @@ A handful of probes per frame is cheap. Thousands are not.
 | `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed, or a finger landed |
 | `last_input_device()` | `String` | `"keyboard"`, `"mouse"`, `"gamepad"` or `"touch"`: the device of the most recent deliberate input |
 | `gamepad_connected()` | `bool` | True while at least one gamepad is attached |
+| `is_touch_device()` | `bool` | True on a touch-first device (a `pointer: coarse` web page, or Android) from the first frame, whatever has been touched |
+| `safe_area()` | `Map` | `#{ left, top, right, bottom }`: safe-area insets in points (a notch, rounded corner or home bar); zeros where there are none |
 | `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor, at the end of this frame |
 | `is_cursor_captured()` | `bool` | Whether the cursor is captured now ([Cursor Capture and Input Gates](input-gates.md)) |
 
@@ -323,6 +325,9 @@ and idle stick drift never flip it, so a HUD that swaps prompt glyphs
 (`[E]` vs the `(A)` button) on it does not flicker when the mouse is nudged.
 `gamepad_connected` is the companion for "show pad prompts before the first
 press"; it starts `false` and follows the host's gamepad backend each frame.
+`is_touch_device` is the same for a phone: it is a fact about the device, not
+the last input, so a title screen shows "TAP" rather than "ENTER" before the
+first touch, while `last_input_device` still starts at `"keyboard"`.
 
 `set_cursor_captured(true)` is how a scene gets mouse-look without a
 character-controller player entity. The engine only captures automatically for

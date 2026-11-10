@@ -389,6 +389,12 @@ impl TouchControls {
         self.insets = insets.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
     }
 
+    /// The safe-area insets in points (left, top, right, bottom), as last
+    /// set by [`TouchControls::set_metrics`]: zeros where there are none.
+    pub fn insets(&self) -> [f32; 4] {
+        self.insets
+    }
+
     /// Put the controls away (`false`) or bring them back (`true`). While
     /// away they hold no fingers and every touch reaches the game, but a
     /// finger still counts as seen, so they return already showing.
@@ -867,6 +873,8 @@ mod tests {
     fn anchors_respect_safe_area_and_points() {
         let mut c = controls();
         c.set_metrics((2000.0, 1000.0), 2.0, [10.0, 0.0, 30.0, 20.0]);
+        // Scripts read the same insets (`safe_area()`, #660).
+        assert_eq!(c.insets(), [10.0, 0.0, 30.0, 20.0]);
         let w = c.widgets();
         // Stick: bottom-left, 100 pt in from the left inset (10) and up from
         // the bottom inset (20): screen is 1000 x 500 points.

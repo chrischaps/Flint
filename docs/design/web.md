@@ -566,7 +566,12 @@ the page's `#perf` panel):
   running totals in `window.flintGpuCalls`; each readout divides what moved
   by the frames since the last.
 
-**Copy line** puts the whole readout on one line for an issue:
+**Copy line** puts the whole readout on one line for an issue. The panel
+lies over the canvas's top right, where a game puts its menu button, so
+Copy is the only part of it that takes a pointer (#660): every other click
+and touch goes through to the game. On a small screen the readout is cut at
+36 % of the height rather than scrolled, since a scroller would take the
+game's touches; Copy still takes all of it.
 
 ```
 flint perf · float · t=34s | Chrome 156 · nvidia lovelace | 1280x720 DPR 1 | frame p50 16.7 p99 16.8 max 16.8 ms (600 frames/10s) | cpu 9.07 ms: … | gpu 2.71 ms: Shadows 1.40, Scene 0.29, SSAO 0.69, Bloom 0.30, … | 71 draws 50.4K tris | audio 0/948 late

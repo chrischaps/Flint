@@ -372,6 +372,14 @@ pub struct PlayerApp {
     /// at (ASCII cells, egui, the HUD) instead of the window's scale factor,
     /// so a capture looks the same on any display. `None` follows the window.
     pub pixels_per_point: Option<f32>,
+    /// `--safe-area L,T,R,B` (#660): stand-in safe-area insets in points,
+    /// for trying a notch-aware HUD on a desktop. `None` reads the page's
+    /// (zeros natively).
+    pub safe_area: Option<[f32; 4]>,
+    /// `--touch-device` (#660): report a touch-first device to scripts
+    /// (`is_touch_device()`) on a desktop. A phone page and Android are one
+    /// anyway.
+    pub touch_device: bool,
     /// The quality settings in force (see `quality.rs`).
     quality: flint_render::QualitySettings,
     /// Which refreshes the web player draws (#140, `?fps=`); `None` draws
