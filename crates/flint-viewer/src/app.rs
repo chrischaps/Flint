@@ -2133,7 +2133,17 @@ impl ViewerApp {
 
                     {
                         let mut state = self.state.lock().unwrap();
+                        // A reload spawns every entity again under a new id:
+                        // keep the selection (and its outline, #602) by name
+                        let selected_name = self
+                            .scene_tree
+                            .selected_entity()
+                            .and_then(|id| state.world.get_name(id))
+                            .map(str::to_owned);
                         state.world = new_world;
+                        self.scene_tree.select(
+                            selected_name.and_then(|name| state.world.get_id(&name)),
+                        );
                         state.scene_post = with_look(
                             scene_file.post_process.clone(),
                             &state.scene_path,

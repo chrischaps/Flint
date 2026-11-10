@@ -184,6 +184,11 @@ pub struct RenderArgs {
     #[arg(long)]
     pub no_grid: bool,
 
+    /// Draw the editor's selection outline around this entity, by name, as
+    /// `flint edit` does when it is picked (#602)
+    #[arg(long, value_name = "ENTITY")]
+    pub select: Option<String>,
+
     /// Debug visualization mode
     #[arg(long, value_parser = crate::commands::common_args::parse_debug_mode)]
     pub debug_mode: Option<String>,
@@ -1136,6 +1141,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Two-bone IK (ADR 0070): pose authored chains before the single frame.
     flint_animation::IkPass::new().run(&mut world);
 
+    if let Some(name) = &args.select {
+        let id = world
+            .get_id(name)
+            .with_context(|| format!("--select: no entity named '{name}'"))?;
+        renderer.set_selected_entity(Some(id));
+    }
     renderer.update_from_world(&world, &ctx.device);
 
     // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
@@ -2731,6 +2742,13 @@ impl Stage {
 
         // Two-bone IK (ADR 0070): pose authored chains before the single frame.
         flint_animation::IkPass::new().run(&mut world);
+
+        if let Some(name) = &args.select {
+            let id = world
+                .get_id(name)
+                .with_context(|| format!("--select: no entity named '{name}'"))?;
+            renderer.set_selected_entity(Some(id));
+        }
 
         // Last, since the model loader expands a GLB into the entities a group holds.
         if let Some(clocks) = &mut wooze {

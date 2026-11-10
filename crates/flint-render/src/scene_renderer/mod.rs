@@ -4,6 +4,7 @@ mod extract;
 mod helpers;
 mod particles;
 mod render_passes;
+mod selection;
 
 pub use particles::load_particle_textures;
 use render_passes::RenderPhase;
@@ -607,6 +608,12 @@ pub struct SceneRenderer {
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
     selected_entity: Option<flint_core::EntityId>,
+    /// Each entity's children, as the last `update_from_world` saw them,
+    /// so the selection outline covers a selected entity's subtree (#602)
+    entity_children: HashMap<flint_core::EntityId, Vec<flint_core::EntityId>>,
+    /// The selection outline's pipelines and mask, made the first frame
+    /// something is selected (#602)
+    selection_outline: Option<crate::selection_outline::SelectionOutline>,
     // Skybox
     skybox_pipeline: Option<SkyboxPipeline>,
     skybox_uniform_buffer: Option<wgpu::Buffer>,
@@ -994,6 +1001,8 @@ impl SceneRenderer {
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
+            entity_children: HashMap::new(),
+            selection_outline: None,
             skybox_pipeline: Some(skybox_pipeline),
             skybox_uniform_buffer: None,
             skybox_uniform_bind_group: None,
@@ -2533,6 +2542,8 @@ impl SceneRenderer {
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
+            entity_children: HashMap::new(),
+            selection_outline: None,
             skybox_pipeline: Some(skybox_pipeline),
             skybox_uniform_buffer: None,
             skybox_uniform_bind_group: None,
@@ -3471,11 +3482,6 @@ impl SceneRenderer {
         self.shadow_pass = Some(shadow_pass);
     }
 
-    /// Set the entity to highlight with a selection glow, or None to clear
-    pub fn set_selected_entity(&mut self, id: Option<flint_core::EntityId>) {
-        self.selected_entity = id;
-    }
-
     /// Toggle shadows on/off, returns the new state
     /// Load an equirectangular panorama image as a skybox
     pub fn load_skybox(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) {
@@ -3707,6 +3713,14 @@ impl SceneRenderer {
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
         self.extract_frame = self.extract_frame.wrapping_add(1);
+
+        // The hierarchy, for the selection outline's subtree (#602)
+        self.entity_children.clear();
+        for entity in world.all_entities() {
+            if let Some(parent) = world.get_parent(entity.id) {
+                self.entity_children.entry(parent).or_default().push(entity.id);
+            }
+        }
 
         self.sync_debug_styles();
         // Ids for every styled entity: they say which styles are on for
@@ -5515,8 +5529,6 @@ impl SceneRenderer {
         p.line_pipeline = f.line_pipeline;
         p.overlay_line_pipeline = f.overlay_line_pipeline;
         p.skeleton_line_pipeline = f.skeleton_line_pipeline;
-        p.outline_pipeline = f.outline_pipeline;
-        p.depth_prepass_pipeline = f.depth_prepass_pipeline;
         p.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
         p.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;
         p.transparent_additive_pipeline = f.transparent_additive_pipeline;
@@ -5533,8 +5545,6 @@ impl SceneRenderer {
                 samples,
             );
             s.pipeline = f.pipeline;
-            s.outline_pipeline = f.outline_pipeline;
-            s.depth_prepass_pipeline = f.depth_prepass_pipeline;
             s.wire_line_pipeline = f.wire_line_pipeline;
             s.transparent_alpha_pipeline = f.transparent_alpha_pipeline;
             s.transparent_alpha_back_pipeline = f.transparent_alpha_back_pipeline;
@@ -5544,7 +5554,6 @@ impl SceneRenderer {
         if let Some(b) = &mut self.billboard_pipeline {
             let f = BillboardPipeline::new(device, format, samples);
             b.pipeline = f.pipeline;
-            b.outline_pipeline = f.outline_pipeline;
         }
         if let Some(t) = &mut self.terrain_pipeline {
             let f = TerrainPipeline::new(
@@ -6256,6 +6265,18 @@ impl SceneRenderer {
             }
         }
 
+        // The editor's selection (#602): its draws into a mask, against the
+        // same depth. Nothing selected, nothing drawn.
+        let selection = self.selection_set();
+        let outlining = !selection.is_empty();
+        if outlining {
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Selection mask"));
+            self.encode_selection_mask(device, encoder, depth_view, &selection);
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(encoder, scope);
+            }
+        }
+
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
             self.render_postprocess(
@@ -6274,6 +6295,16 @@ impl SceneRenderer {
         // below and the caller's own (world text, gizmos) test against.
         if let (Some(_), Some(upscale)) = (&scaled_depth, &self.depth_upscale) {
             upscale.record(encoder, surface_depth_view);
+        }
+
+        // The selection outline, over the finished image: after every
+        // style and the tonemap, so its colour is the one asked for (#602)
+        if outlining {
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Selection outline"));
+            self.encode_selection_outline(queue, encoder, target_view);
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(encoder, scope);
+            }
         }
 
         // World lines (ADR 0083) go over the finished image, tested against

@@ -41,6 +41,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                          decision + length bar; ascii alone, on at defaults if absent;
    #                          ascii_edge_view.wgsl; StyleFrame::debug_mode carries the mode)
    #   --wireframe-overlay    --show-normals    --no-tonemapping
+   #   --select <entity>      (#602: the editor's selection outline round it and its subtree,
+   #                          drawn over the finished image; flint_render::selection_outline)
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
    #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
