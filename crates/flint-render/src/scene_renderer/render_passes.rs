@@ -233,14 +233,22 @@ impl SceneRenderer {
                     }
                     let woozy = draw.wooze.as_ref().and(shadow_wooze);
                     if let Some(wooze) = woozy {
-                        bind_woozy(&mut pass, &mut next_slot, wooze, &wooze.pipeline);
+                        let pipeline = if draw.double_sided {
+                            &wooze.pipeline_double_sided
+                        } else {
+                            &wooze.pipeline
+                        };
+                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
                     } else {
+                        if draw.double_sided {
+                            pass.set_pipeline(&shadow_pass.shadow_pipeline_double_sided);
+                        }
                         bind_next(&mut pass, &mut next_slot);
                     }
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() {
+                    if woozy.is_some() || draw.double_sided {
                         pass.set_pipeline(&shadow_pass.shadow_pipeline);
                     }
                 }
@@ -292,14 +300,22 @@ impl SceneRenderer {
                     }
                     let woozy = draw.wooze.as_ref().and(shadow_wooze);
                     if let Some(wooze) = woozy {
-                        bind_woozy(&mut pass, &mut next_slot, wooze, &wooze.pipeline);
+                        let pipeline = if draw.double_sided {
+                            &wooze.pipeline_double_sided
+                        } else {
+                            &wooze.pipeline
+                        };
+                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
                     } else {
+                        if draw.double_sided {
+                            pass.set_pipeline(&shadow_pass.shadow_pipeline_double_sided);
+                        }
                         bind_next(&mut pass, &mut next_slot);
                     }
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() {
+                    if woozy.is_some() || draw.double_sided {
                         pass.set_pipeline(&shadow_pass.shadow_pipeline);
                     }
                 }
@@ -310,15 +326,23 @@ impl SceneRenderer {
                 for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
                     let woozy = draw.wooze.as_ref().and(shadow_wooze);
                     if let Some(wooze) = woozy {
-                        bind_woozy(&mut pass, &mut next_slot, wooze, &wooze.skinned_pipeline);
+                        let pipeline = if draw.double_sided {
+                            &wooze.skinned_pipeline_double_sided
+                        } else {
+                            &wooze.skinned_pipeline
+                        };
+                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
                     } else {
+                        if draw.double_sided {
+                            pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline_double_sided);
+                        }
                         bind_next(&mut pass, &mut next_slot);
                     }
                     pass.set_bind_group(1, &*draw.shadow_bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() {
+                    if woozy.is_some() || draw.double_sided {
                         pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
                     }
                 }
@@ -1054,7 +1078,13 @@ impl SceneRenderer {
                 if draw.is_wireframe {
                     render_pass.set_pipeline(&self.pipeline.line_pipeline);
                 } else if let Some(woozy) = draw.wooze.as_ref().and(self.wooze_standard.as_ref()) {
-                    render_pass.set_pipeline(&woozy.opaque);
+                    render_pass.set_pipeline(if draw.double_sided {
+                        &woozy.opaque_double_sided
+                    } else {
+                        &woozy.opaque
+                    });
+                } else if draw.double_sided {
+                    render_pass.set_pipeline(&self.pipeline.pipeline_double_sided);
                 } else {
                     render_pass.set_pipeline(&self.pipeline.pipeline);
                 }
@@ -1069,13 +1099,20 @@ impl SceneRenderer {
             // Render skinned entities
             if let Some(sp) = &self.skinned_pipeline {
                 if !self.skinned_entity_draws.is_empty() {
-                    render_pass.set_pipeline(&sp.pipeline);
-                    let mut bound_woozy = false;
+                    // Rebound only when a draw needs another of the four
+                    // (woozy or not, double-sided or not)
+                    let mut bound = None;
                     for draw in &self.skinned_entity_draws {
                         let woozy = draw.wooze.as_ref().and(self.wooze_skinned.as_ref());
-                        if woozy.is_some() != bound_woozy {
-                            bound_woozy = woozy.is_some();
-                            render_pass.set_pipeline(woozy.map_or(&sp.pipeline, |w| &w.opaque));
+                        let wants = (woozy.is_some(), draw.double_sided);
+                        if bound != Some(wants) {
+                            bound = Some(wants);
+                            render_pass.set_pipeline(match (woozy, draw.double_sided) {
+                                (Some(w), true) => &w.opaque_double_sided,
+                                (Some(w), false) => &w.opaque,
+                                (None, true) => &sp.pipeline_double_sided,
+                                (None, false) => &sp.pipeline,
+                            });
                         }
                         render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                         render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
