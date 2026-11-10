@@ -1,92 +1,153 @@
-//! Bitmap font loader and text layout for GPU sprite rendering.
+//! Text for `ui_text` sprites, laid out over a [`GlyphAtlas`] (ADR 0113).
 //!
-//! Grid-based ASCII font atlas: a `.font.toml` file defines the texture,
-//! glyph grid dimensions, and character range. Each character maps to one
-//! [`Sprite2dInstanceGpu`] so entire strings batch into the existing sprite2d
-//! pipeline with zero new shaders.
+//! World and sprite text uses the same glyphs as the ASCII styles: a
+//! `ui_text.font` names any glyph source the engine knows, and every one of
+//! them becomes a [`GlyphAtlas`]:
+//!
+//! - `builtin`, the hand-drawn 8x8 set;
+//! - a glyph set, by name (`fonts/<name>.glyphs.toml` beside the scene or in
+//!   its parent) or by a path ending `.glyphs.toml`, so a TTF, a PNG grid or
+//!   hand-drawn pixel text;
+//! - a `.font.toml`, the older format (#283 kept it): a `[font]` table naming a
+//!   PNG grid (`texture`, `glyph_width`, `glyph_height`, `columns`,
+//!   `first_char`, `char_count`), cut into an atlas with
+//!   [`GlyphAtlas::from_grid_image`], or naming a set (`glyphs = "<name>"`)
+//!   to give it a `spacing`.
+//!
+//! The atlas's coverage goes up once as white RGBA whose alpha is the ink
+//! ([`BitmapFont::rgba`]), under [`BitmapFont::texture`] in the
+//! `TextureCache`, and each character becomes one [`Sprite2dInstanceGpu`], so
+//! whole strings batch into the sprite2d pipeline with no shader of their own.
 
+use crate::glyph_atlas::{GlyphAtlas, GlyphError, GlyphSetCache, BUILTIN_SET};
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use flint_core::toml_util::toml_f32;
-use std::collections::HashMap;
-use std::path::Path;
+use flint_core::vfs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-/// Parsed bitmap font definition.
+/// The suffix of the older bitmap-font description.
+pub const FONT_TOML_SUFFIX: &str = ".font.toml";
+
+/// Prefix of the `TextureCache` names fonts upload under, so a font never
+/// shares a name with an image file.
+pub const FONT_TEXTURE_PREFIX: &str = "font:";
+
+/// A font for sprite text: a glyph atlas and how far apart to set its cells.
 #[derive(Clone, Debug)]
 pub struct BitmapFont {
-    /// Texture name (used as key in TextureCache)
+    /// `TextureCache` name of the uploaded atlas (`font:<what ui_text named>`).
     pub texture: String,
-    /// Glyph cell width in pixels
-    pub glyph_width: u32,
-    /// Glyph cell height in pixels
-    pub glyph_height: u32,
-    /// Number of columns in the atlas grid
-    pub columns: u32,
-    /// ASCII code of the first glyph in the atlas
-    pub first_char: u32,
-    /// Number of glyphs in the atlas
-    pub char_count: u32,
-    /// Horizontal spacing multiplier (1.0 = no extra space)
+    /// Horizontal spacing multiplier (1.0 = cells edge to edge).
     pub spacing: f32,
-    /// Per-character width overrides (glyph_char -> width in pixels), for variable-width
-    pub char_widths: HashMap<char, u32>,
+    atlas: Arc<GlyphAtlas>,
 }
 
 impl BitmapFont {
-    /// Parse a `.font.toml` file. Returns `None` on parse failure.
-    pub fn load(path: &Path) -> Option<Self> {
-        let content = flint_core::vfs::read_to_string(path).ok()?;
-        let table: toml::Value = content.parse().ok()?;
-        let font = table.get("font")?;
-
-        let texture = font.get("texture")?.as_str()?.to_string();
-        let glyph_width = font.get("glyph_width")?.as_integer()? as u32;
-        let glyph_height = font.get("glyph_height")?.as_integer()? as u32;
-        let columns = font.get("columns")?.as_integer()? as u32;
-        let first_char = font
-            .get("first_char")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(32) as u32;
-        let char_count = font
-            .get("char_count")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(95) as u32;
-        let spacing = font.get("spacing").and_then(toml_f32).unwrap_or(1.0);
-
-        Some(Self {
-            texture,
-            glyph_width,
-            glyph_height,
-            columns,
-            first_char,
-            char_count,
+    /// A font over `atlas`, uploaded under `font:<name>`.
+    pub fn new(name: &str, atlas: Arc<GlyphAtlas>, spacing: f32) -> Self {
+        Self {
+            texture: format!("{FONT_TEXTURE_PREFIX}{name}"),
             spacing,
-            char_widths: HashMap::new(),
-        })
+            atlas,
+        }
     }
 
-    /// UV rect `[u_min, v_min, u_max, v_max]` for a character, normalized 0–1.
-    /// `tex_w`/`tex_h` are the texture dimensions in pixels.
-    pub fn glyph_uv(&self, ch: char, tex_w: u32, tex_h: u32) -> Option<[f32; 4]> {
-        let code = ch as u32;
-        if code < self.first_char || code >= self.first_char + self.char_count {
-            return None;
+    /// Resolve what a `ui_text.font` names, against the scene's folder (then
+    /// its parent): `builtin`, a glyph set name or `.glyphs.toml` path, or a
+    /// `.font.toml`. Everything is read through the vfs.
+    pub fn resolve(spec: &str, scene_dir: &Path) -> Result<Self, GlyphError> {
+        if spec.ends_with(FONT_TOML_SUFFIX) {
+            return Self::load_font_toml(spec, &scene_dir.join(spec), scene_dir);
         }
-        let index = code - self.first_char;
-        let col = index % self.columns;
-        let row = index / self.columns;
+        let atlas = glyph_set_atlas(spec, scene_dir)?;
+        Ok(Self::new(spec, atlas, 1.0))
+    }
 
-        let u_min = (col * self.glyph_width) as f32 / tex_w as f32;
-        let v_min = (row * self.glyph_height) as f32 / tex_h as f32;
-        let u_max = ((col + 1) * self.glyph_width) as f32 / tex_w as f32;
-        let v_max = ((row + 1) * self.glyph_height) as f32 / tex_h as f32;
+    /// Load a `.font.toml` (`name` is what `ui_text.font` said). Its PNG
+    /// resolves as an image texture does: beside the scene, in its
+    /// `textures/`, then the parent and its `textures/`, then beside the
+    /// font file.
+    pub fn load_font_toml(name: &str, path: &Path, scene_dir: &Path) -> Result<Self, GlyphError> {
+        let text = vfs::read_to_string(path)
+            .map_err(|e| GlyphError::Read(format!("{}: {e}", path.display())))?;
+        let table: toml::Value = text
+            .parse()
+            .map_err(|e: toml::de::Error| parse_error(path, e.to_string().trim_end()))?;
+        let font = table
+            .get("font")
+            .ok_or_else(|| parse_error(path, "no [font] table"))?;
+        let spacing = font.get("spacing").and_then(toml_f32).unwrap_or(1.0);
 
-        Some([u_min, v_min, u_max, v_max])
+        if let Some(set) = font.get("glyphs").and_then(|v| v.as_str()) {
+            let atlas = glyph_set_atlas(set, scene_dir)?;
+            return Ok(Self::new(name, atlas, spacing));
+        }
+
+        let int = |key: &str| font.get(key).and_then(|v| v.as_integer());
+        let need = |key: &str| {
+            int(key)
+                .filter(|v| *v > 0)
+                .map(|v| v as u32)
+                .ok_or_else(|| parse_error(path, &format!("[font] needs `{key}` (or `glyphs`)")))
+        };
+        let texture = font
+            .get("texture")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| parse_error(path, "[font] needs `texture` (or `glyphs`)"))?;
+        let cell = [need("glyph_width")?, need("glyph_height")?];
+        let columns = need("columns")?;
+        let first_char = int("first_char").unwrap_or(32).max(0) as u32;
+        let char_count = int("char_count").unwrap_or(95).max(0) as u32;
+
+        let image_path = font_image_path(texture, path, scene_dir).ok_or_else(|| {
+            GlyphError::Read(format!(
+                "{}: no image `{texture}` beside the scene or the font",
+                path.display()
+            ))
+        })?;
+        let image = crate::open_image(&image_path)
+            .map_err(|e| GlyphError::Read(format!("{}: {e}", image_path.display())))?;
+        // The grid is `columns` cells wide whatever the image's width, as the
+        // old UV maths had it: crop to that before cutting.
+        let image = image.crop_imm(0, 0, (columns * cell[0]).min(image.width()), image.height());
+        let chars = (first_char..first_char + char_count).filter_map(char::from_u32);
+        let atlas = GlyphAtlas::from_grid_image(&image, cell, chars, false)?;
+        Ok(Self::new(name, Arc::new(atlas), spacing))
+    }
+
+    /// The glyph atlas the font draws from.
+    pub fn atlas(&self) -> &Arc<GlyphAtlas> {
+        &self.atlas
+    }
+
+    /// The atlas as the texture the sprite2d pipeline samples: white, with
+    /// the coverage as alpha. `width * height * 4` bytes, `[w, h]`.
+    pub fn rgba(&self) -> (Vec<u8>, [u32; 2]) {
+        let pixels = self
+            .atlas
+            .pixels()
+            .iter()
+            .flat_map(|&ink| [255, 255, 255, ink])
+            .collect();
+        (pixels, self.atlas.size())
+    }
+
+    /// UV rect `[u_min, v_min, u_max, v_max]` of a character's cell, 0..1,
+    /// or `None` when the font has no glyph for it.
+    pub fn glyph_uv(&self, ch: char) -> Option<[f32; 4]> {
+        self.atlas.uv_rect(ch)
+    }
+
+    /// Width over height of one glyph cell.
+    fn aspect(&self) -> f32 {
+        let [w, h] = self.atlas.cell_size();
+        w as f32 / h as f32
     }
 
     /// World-unit width of a single glyph at the given scale.
     fn glyph_advance(&self, scale: f32) -> f32 {
-        let aspect = self.glyph_width as f32 / self.glyph_height as f32;
-        scale * aspect * self.spacing
+        scale * self.aspect() * self.spacing
     }
 
     /// Expand a text string into per-glyph sprite instances.
@@ -96,10 +157,11 @@ impl BitmapFont {
     /// * `tint` — RGBA colour
     /// * `layer` — sprite layer for z-ordering
     /// * `align` — "left", "center", or "right"
-    /// * `tex_w, tex_h` — font texture dimensions in pixels
     ///
+    /// A character the font lacks draws nothing but still takes its cell.
     /// Returns `Vec<(texture_name, layer, instance)>` ready to push into
     /// `sprite2d_collected`.
+    #[allow(clippy::too_many_arguments)]
     pub fn layout_text(
         &self,
         text: &str,
@@ -109,11 +171,9 @@ impl BitmapFont {
         tint: [f32; 4],
         layer: i32,
         align: &str,
-        tex_w: u32,
-        tex_h: u32,
     ) -> Vec<(String, i32, Sprite2dInstanceGpu)> {
         let advance = self.glyph_advance(scale);
-        let total_width = text.len() as f32 * advance;
+        let total_width = text.chars().count() as f32 * advance;
 
         let start_x = match align {
             "center" => x - total_width * 0.5,
@@ -121,14 +181,14 @@ impl BitmapFont {
             _ => x, // "left" or default
         };
 
-        let glyph_w = scale * (self.glyph_width as f32 / self.glyph_height as f32);
+        let glyph_w = scale * self.aspect();
         let glyph_h = scale;
 
         let mut result = Vec::with_capacity(text.len());
         let mut cursor_x = start_x;
 
         for ch in text.chars() {
-            if let Some(uv_rect) = self.glyph_uv(ch, tex_w, tex_h) {
+            if let Some(uv_rect) = self.glyph_uv(ch) {
                 let instance = Sprite2dInstanceGpu {
                     pos_layer: [cursor_x + glyph_w * 0.5, y, 0.5, layer as f32 * 0.01],
                     size: [glyph_w, glyph_h, 0.0, 0.0],
@@ -145,55 +205,175 @@ impl BitmapFont {
     }
 }
 
+/// The atlas of the glyph set `spec` names (`builtin`, a set name or a
+/// `.glyphs.toml` path), searched for beside the scene and then its parent.
+fn glyph_set_atlas(spec: &str, scene_dir: &Path) -> Result<Arc<GlyphAtlas>, GlyphError> {
+    if spec.is_empty() || spec == BUILTIN_SET {
+        return Ok(crate::glyph_atlas::GlyphSet::builtin().atlas().clone());
+    }
+    let mut search = vec![scene_dir.to_path_buf()];
+    if let Some(parent) = scene_dir.parent() {
+        search.push(parent.to_path_buf());
+    }
+    let set = GlyphSetCache::new(search).get(spec)?;
+    Ok(set.atlas().clone())
+}
+
+/// Where a `.font.toml`'s `texture` is: the texture search (scene, its
+/// `textures/`, parent, its `textures/`), then beside the font file.
+fn font_image_path(texture: &str, font_path: &Path, scene_dir: &Path) -> Option<PathBuf> {
+    let mut dirs = vec![scene_dir.to_path_buf(), scene_dir.join("textures")];
+    if let Some(parent) = scene_dir.parent() {
+        dirs.push(parent.to_path_buf());
+        dirs.push(parent.join("textures"));
+    }
+    if let Some(dir) = font_path.parent() {
+        dirs.push(dir.to_path_buf());
+    }
+    dirs.into_iter()
+        .map(|d| d.join(texture))
+        .find(|p| vfs::is_file(p))
+}
+
+fn parse_error(path: &Path, message: &str) -> GlyphError {
+    GlyphError::Parse(format!("{}: {message}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::vfs::MemorySource;
+
+    /// A 16-column, 6-row grid of 8x16 cells, like `demo/ui_test`'s font:
+    /// each glyph's cell has a solid column at `x = index % 8`, so which cell
+    /// a character came from can be read back off the atlas.
+    fn grid_png() -> Vec<u8> {
+        let mut img = image::RgbaImage::new(128, 96);
+        for i in 0..95u32 {
+            let (gx, gy) = ((i % 16) * 8, (i / 16) * 16);
+            for y in 0..16 {
+                img.put_pixel(gx + i % 8, gy + y, image::Rgba([255, 255, 255, 255]));
+            }
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    const LEGACY: &str = "[font]\ntexture = \"fonts/default_font.png\"\nglyph_width = 8\n\
+        glyph_height = 16\ncolumns = 16\nfirst_char = 32\nchar_count = 95\nspacing = 1.25\n";
+
+    fn scene_files() -> Arc<MemorySource> {
+        let mut src = MemorySource::new();
+        src.insert("game/levels/fonts/default.font.toml", LEGACY);
+        src.insert("game/levels/fonts/default_font.png", grid_png());
+        src.insert(
+            "game/levels/fonts/wide.font.toml",
+            "[font]\nglyphs = \"builtin\"\nspacing = 2.0\n",
+        );
+        src.insert(
+            "game/fonts/dots.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n",
+        );
+        Arc::new(src)
+    }
 
     fn test_font() -> BitmapFont {
-        BitmapFont {
-            texture: "test_font.png".to_string(),
-            glyph_width: 8,
-            glyph_height: 16,
-            columns: 16,
-            first_char: 32,
-            char_count: 95,
-            spacing: 1.0,
-            char_widths: HashMap::new(),
+        vfs::scoped(scene_files(), || {
+            BitmapFont::resolve("fonts/default.font.toml", Path::new("game/levels")).unwrap()
+        })
+    }
+
+    #[test]
+    fn a_font_toml_cuts_its_grid_into_an_atlas() {
+        let font = test_font();
+        assert_eq!(font.texture, "font:fonts/default.font.toml");
+        assert_eq!(font.spacing, 1.25);
+        let atlas = font.atlas();
+        assert_eq!(atlas.cell_size(), [8, 16]);
+        assert_eq!(atlas.glyphs().len(), 95);
+        // 'A' = 65 was grid cell 33: its ink column is at x = 33 % 8 = 1.
+        assert_eq!(atlas.sample('A', 1, 0), Some(255));
+        assert_eq!(atlas.sample('A', 0, 0), Some(0));
+        assert_eq!(atlas.sample('~', ('~' as u32 - 32) % 8, 15), Some(255));
+    }
+
+    #[test]
+    fn glyph_uv_is_the_atlas_cell() {
+        let font = test_font();
+        assert_eq!(font.glyph_uv('A'), font.atlas().uv_rect('A'));
+        assert!(font.glyph_uv('\x00').is_none());
+        assert!(font.glyph_uv('\u{FF}').is_none());
+    }
+
+    #[test]
+    fn rgba_is_white_with_coverage_alpha() {
+        let font = test_font();
+        let (rgba, [w, h]) = font.rgba();
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        let cov = font.atlas().pixels();
+        for (px, ink) in rgba.as_chunks::<4>().0.iter().zip(cov) {
+            assert_eq!(px, &[255, 255, 255, *ink]);
         }
     }
 
     #[test]
-    fn glyph_uv_space() {
-        let font = test_font();
-        // Space is char 32, first_char is 32, so index 0 → col 0, row 0
-        let uv = font.glyph_uv(' ', 128, 96).unwrap();
-        assert_eq!(uv[0], 0.0); // u_min
-        assert_eq!(uv[1], 0.0); // v_min
-        assert!((uv[2] - 8.0 / 128.0).abs() < 1e-6); // u_max
-        assert!((uv[3] - 16.0 / 96.0).abs() < 1e-6); // v_max
+    fn builtin_and_glyph_sets_resolve_like_the_ascii_styles() {
+        vfs::scoped(scene_files(), || {
+            let dir = Path::new("game/levels");
+            let builtin = BitmapFont::resolve("builtin", dir).unwrap();
+            assert_eq!(builtin.atlas().cell_size(), [8, 8]);
+            assert_eq!(builtin.spacing, 1.0);
+            // A set name looks in `fonts/` beside the scene, then its parent.
+            let dots = BitmapFont::resolve("dots", dir).unwrap();
+            assert!(dots.atlas().contains('A'));
+            let by_path = BitmapFont::resolve("fonts/dots.glyphs.toml", dir).unwrap();
+            assert_eq!(by_path.atlas().size(), dots.atlas().size());
+            // A `.font.toml` can name a set to give it spacing.
+            let wide = BitmapFont::resolve("fonts/wide.font.toml", dir).unwrap();
+            assert_eq!(wide.spacing, 2.0);
+            assert_eq!(wide.atlas().cell_size(), [8, 8]);
+        });
     }
 
     #[test]
-    fn glyph_uv_a() {
-        let font = test_font();
-        // 'A' = 65, index = 65 - 32 = 33, col = 33 % 16 = 1, row = 33 / 16 = 2
-        let uv = font.glyph_uv('A', 128, 96).unwrap();
-        assert!((uv[0] - 1.0 * 8.0 / 128.0).abs() < 1e-6);
-        assert!((uv[1] - 2.0 * 16.0 / 96.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn glyph_uv_out_of_range() {
-        let font = test_font();
-        assert!(font.glyph_uv('\x00', 128, 96).is_none());
-        assert!(font.glyph_uv('\u{FF}', 128, 96).is_none());
+    fn bad_fonts_say_why() {
+        vfs::scoped(scene_files(), || {
+            let dir = Path::new("game/levels");
+            assert!(matches!(
+                BitmapFont::resolve("fonts/gone.font.toml", dir),
+                Err(GlyphError::Read(_))
+            ));
+            assert!(BitmapFont::resolve("nope", dir).is_err());
+        });
+        let mut src = MemorySource::new();
+        src.insert("s/a.font.toml", "[font]\ntexture = \"x.png\"\n");
+        src.insert("s/b.font.toml", "[font]\nglyph_width = 8\n");
+        vfs::scoped(Arc::new(src), || {
+            let a = BitmapFont::resolve("a.font.toml", Path::new("s")).unwrap_err();
+            assert!(a.to_string().contains("glyph_width"), "{a}");
+            let b = BitmapFont::resolve("b.font.toml", Path::new("s")).unwrap_err();
+            assert!(b.to_string().contains("texture"), "{b}");
+        });
     }
 
     #[test]
     fn layout_text_count() {
         let font = test_font();
-        let glyphs = font.layout_text("Hi", 0.0, 0.0, 1.0, [1.0; 4], 0, "left", 128, 96);
+        let glyphs = font.layout_text("Hi", 0.0, 0.0, 1.0, [1.0; 4], 0, "left");
         assert_eq!(glyphs.len(), 2);
+        assert!(glyphs.iter().all(|g| g.0 == font.texture));
+    }
+
+    #[test]
+    fn a_missing_glyph_keeps_its_cell() {
+        let font = test_font();
+        let glyphs = font.layout_text("A\u{FF}B", 0.0, 0.0, 1.0, [1.0; 4], 0, "left");
+        assert_eq!(glyphs.len(), 2);
+        let advance = font.glyph_advance(1.0);
+        assert!((glyphs[1].2.pos_layer[0] - glyphs[0].2.pos_layer[0] - 2.0 * advance).abs() < 1e-5);
     }
 
     #[test]
@@ -202,7 +382,7 @@ mod tests {
         let advance = font.glyph_advance(1.0);
         let total_w = 3.0 * advance;
 
-        let glyphs = font.layout_text("ABC", 10.0, 5.0, 1.0, [1.0; 4], 0, "center", 128, 96);
+        let glyphs = font.layout_text("ABC", 10.0, 5.0, 1.0, [1.0; 4], 0, "center");
         assert_eq!(glyphs.len(), 3);
 
         let glyph_w = 1.0 * (8.0 / 16.0); // scale * aspect
@@ -216,7 +396,7 @@ mod tests {
         let advance = font.glyph_advance(1.0);
         let total_w = 2.0 * advance;
 
-        let glyphs = font.layout_text("AB", 10.0, 5.0, 1.0, [1.0; 4], 0, "right", 128, 96);
+        let glyphs = font.layout_text("AB", 10.0, 5.0, 1.0, [1.0; 4], 0, "right");
         let glyph_w = 1.0 * (8.0 / 16.0);
         let expected_first_x = 10.0 - total_w + glyph_w * 0.5;
         assert!((glyphs[0].2.pos_layer[0] - expected_first_x).abs() < 1e-4);

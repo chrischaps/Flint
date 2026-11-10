@@ -9,7 +9,7 @@ use super::{
     SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
 };
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
-use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
+use crate::bitmap_font::{anchor_origin, apply_fill};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
 use crate::primitives::{
     create_box_mesh, create_wireframe_box_mesh, generate_normal_arrows,
@@ -1018,22 +1018,11 @@ impl SceneRenderer {
                 .unwrap_or("left");
 
             if !font_path_str.is_empty() && !text.is_empty() {
-                // Load/cache the bitmap font
-                if !self.bitmap_font_cache.contains_key(font_path_str) {
-                    if let Some(scene_dir) = &self.scene_dir {
-                        let font_file = scene_dir.join(font_path_str);
-                        if let Some(font) = BitmapFont::load(&font_file) {
-                            self.bitmap_font_cache
-                                .insert(font_path_str.to_string(), font);
-                        }
-                    }
-                }
-
-                if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
-                    let (tex_w, tex_h) = tex_cache.get_dimensions(&font.texture).unwrap_or((1, 1));
-                    let glyphs = font.layout_text(
-                        text, final_x, final_y, text_size, text_color, layer, align, tex_w, tex_h,
-                    );
+                // Fonts load and upload with the scene's textures
+                // (`SceneRenderer::load_ui_font`); one that didn't draws nothing.
+                if let Some(font) = self.ui_font(tex_cache, font_path_str) {
+                    let glyphs = font
+                        .layout_text(text, final_x, final_y, text_size, text_color, layer, align);
                     sprite2d_collected.extend(glyphs);
                 }
             }
@@ -1219,22 +1208,9 @@ impl SceneRenderer {
             (world_pos[0], world_pos[1])
         };
 
-        // Load/cache the bitmap font
-        if !self.bitmap_font_cache.contains_key(font_path_str) {
-            if let Some(scene_dir) = &self.scene_dir {
-                let font_file = scene_dir.join(font_path_str);
-                if let Some(font) = BitmapFont::load(&font_file) {
-                    self.bitmap_font_cache
-                        .insert(font_path_str.to_string(), font);
-                }
-            }
-        }
-
-        if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
-            let (tex_w, tex_h) = tex_cache.get_dimensions(&font.texture).unwrap_or((1, 1));
-            let glyphs = font.layout_text(
-                text, text_x, text_y, text_size, text_color, layer, align, tex_w, tex_h,
-            );
+        if let Some(font) = self.ui_font(tex_cache, font_path_str) {
+            let glyphs =
+                font.layout_text(text, text_x, text_y, text_size, text_color, layer, align);
             sprite2d_collected.extend(glyphs);
         }
 
