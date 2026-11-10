@@ -3,6 +3,8 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
+mod shared_gpu;
+
 use flint_core::wooze::BoilFrame;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
@@ -12,21 +14,23 @@ const SIZE: u32 = 128;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: &'static wgpu::Device,
+    queue: &'static wgpu::Queue,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    _lease: shared_gpu::Lease,
 }
 
+/// The shared device (#598), alongside the other tests.
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(async {
-        let instance = flint_render::gpu_select::instance();
-        let adapter = flint_render::gpu_select::request_adapter(&instance, None).await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .ok()?;
+    shared_gpu::lease().map(frame_for)
+}
+
+fn frame_for(lease: shared_gpu::Lease) -> Gpu {
+    let shared = lease.gpu;
+    let device = &shared.device;
+    {
         let target = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -49,14 +53,15 @@ fn gpu() -> Option<Gpu> {
             wgpu::TextureFormat::Depth32Float,
             attach | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        Some(Gpu {
+        Gpu {
             color_view: color.create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             color,
             device,
-            queue,
-        })
-    })
+            queue: &shared.queue,
+            _lease: lease,
+        }
+    }
 }
 
 macro_rules! gpu_or_skip {
@@ -114,8 +119,8 @@ fn spawn(world: &mut FlintWorld, name: &str, position: [f32; 3]) {
 impl Gpu {
     fn bench(&self) -> Bench {
         let mut renderer = SceneRenderer::new_headless(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             FORMAT,
             SIZE,
             SIZE,
@@ -128,7 +133,7 @@ impl Gpu {
         ] {
             let (vertices, indices) = square(half, color);
             renderer.load_procedural_mesh(
-                &self.device,
+                self.device,
                 name,
                 &vertices,
                 &indices,
@@ -157,12 +162,12 @@ impl Gpu {
         bench.renderer.set_post_process_config(config.clone());
         bench
             .renderer
-            .ensure_kuwahara_resources(&self.device, &self.queue);
+            .ensure_kuwahara_resources(self.device, self.queue);
         bench.renderer.set_boil(boil);
-        bench.renderer.update_from_world(&bench.world, &self.device);
+        bench.renderer.update_from_world(&bench.world, self.device);
         bench.renderer.render_to(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             &self.depth_view,
             &bench.camera,
             &self.color_view,
@@ -330,7 +335,7 @@ fn the_contour_survives_a_resize() {
     let mut bench = gpu.bench();
     let config = inked();
     let before = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
-    bench.renderer.resize_postprocess(&gpu.device, SIZE, SIZE);
+    bench.renderer.resize_postprocess(gpu.device, SIZE, SIZE);
     // Nothing calls ensure here: the resize must have made its texture again.
     bench.renderer.set_boil(drawing(3, 1.0));
     let after = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
