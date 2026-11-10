@@ -816,8 +816,9 @@ pub struct SceneRenderer {
     pub camera_offset: [f32; 2],
     pub ortho_height: f32,
     pub aspect_ratio: f32,
-    // Bitmap font cache for ui_text rendering
-    bitmap_font_cache: HashMap<String, BitmapFont>,
+    /// `ui_text` fonts by what the component named, each uploaded once
+    /// (`load_ui_font`); `None` for one that failed, warned about once.
+    bitmap_font_cache: HashMap<String, Option<BitmapFont>>,
     /// Scene directory for resolving relative font/texture paths
     pub scene_dir: Option<std::path::PathBuf>,
     /// Physical pixels per logical point of the window it draws into: the
@@ -2994,6 +2995,51 @@ impl SceneRenderer {
         self.entity_echoes.clear();
         self.entity_echo_lighten.clear();
         self.skinned_bone_binds.clear();
+    }
+
+    /// Load the font a `ui_text.font` names (`builtin`, a glyph set, or a
+    /// `.font.toml`; ADR 0113) and upload its atlas to the texture cache,
+    /// once per name. Returns whether the font is ready to draw.
+    pub fn load_ui_font(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        spec: &str,
+        scene_dir: &Path,
+    ) -> bool {
+        if let Some(found) = self.bitmap_font_cache.get(spec) {
+            return found.is_some();
+        }
+        let font = match BitmapFont::resolve(spec, scene_dir) {
+            Ok(font) => match &mut self.texture_cache {
+                Some(cache) => {
+                    let (rgba, [w, h]) = font.rgba();
+                    match cache.upload_rgba(device, queue, &font.texture, w, h, &rgba, false) {
+                        Ok(_) => Some(font),
+                        Err(e) => {
+                            tracing::warn!("ui_text font `{spec}`: {e}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            },
+            Err(e) => {
+                tracing::warn!("ui_text font `{spec}`: {e}");
+                None
+            }
+        };
+        let ready = font.is_some();
+        self.bitmap_font_cache.insert(spec.to_string(), font);
+        ready
+    }
+
+    /// A loaded `ui_text` font whose atlas is in `tex_cache`.
+    pub(super) fn ui_font(&self, tex_cache: &TextureCache, spec: &str) -> Option<&BitmapFont> {
+        self.bitmap_font_cache
+            .get(spec)?
+            .as_ref()
+            .filter(|f| tex_cache.contains(&f.texture))
     }
 
     /// Load a texture from an image file into the texture cache

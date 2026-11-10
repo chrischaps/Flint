@@ -51,7 +51,8 @@ pub enum ReportFormat {
 ))]
 pub struct GenArgs {
     /// Path to a .procgen.toml spec file (not needed with --ai-create or
-    /// --cost-report)
+    /// --cost-report), or a .glyphs.toml glyph set to preview: its atlas,
+    /// ramps and a specimen as one sheet (-o x.png) or every piece (-o dir/)
     #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
     pub spec: Option<String>,
 
@@ -295,6 +296,9 @@ pub fn run(args: GenArgs) -> Result<()> {
             &flint_procgen_ai::CostLedger::open_default(),
             args.since.as_deref(),
         );
+    }
+    if args.spec.as_deref().is_some_and(super::glyph_preview::is_glyph_set) {
+        return super::glyph_preview::run(&args);
     }
     let json = args.report == Some(ReportFormat::Json);
     HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);

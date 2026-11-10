@@ -1,5 +1,5 @@
 [component.ui_text]
-font = { type = "string", default = "", description = "Path to .font.toml bitmap font definition" }
+font = { type = "string", default = "", description = "Glyph font: builtin, a glyph set name (fonts/<name>.glyphs.toml), a .glyphs.toml path, or a .font.toml PNG grid (ADR 0113)" }
 text = { type = "string", default = "", description = "Text content to display" }
 size = { type = "f32", default = 1.0, description = "Text height in world units" }
 color = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "Text tint color (RGBA)" }

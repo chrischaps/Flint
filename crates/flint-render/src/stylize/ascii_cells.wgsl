@@ -61,9 +61,10 @@ fn shown(p: vec2<i32>) -> vec3<f32> {
     return select(c, to_display(c), u.srgb == 1u);
 }
 
-// The ramp step a tone draws, after the optional tone bands.
+// The ramp step a tone draws, after the optional tone bands; the whole
+// frame's ramp starts the ramp table.
 fn step_of(tone_in: f32, n: u32) -> u32 {
-    return min(u32(banded(tone_in) * f32(n)), n - 1u);
+    return ramp_step(banded(tone_in), 0u, n);
 }
 
 // A 4x4 Bayer threshold in [0, 1), fixed to the cell grid.

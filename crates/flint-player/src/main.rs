@@ -207,7 +207,11 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             println!("{a}");
         }
         return Ok(());

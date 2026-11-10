@@ -151,7 +151,40 @@ struct AsciiUniforms {
     // many, then each one's (slot, first row, rows, columns)
     dissolve_meta: vec4<u32>,
     dissolve: array<vec4<u32>, 8>,
+    // Beside `ramp` (#281), each step's least tone, four per vec4: a
+    // calibrated ramp's bands, which follow its glyphs' measured ink, or
+    // EQUAL_BANDS at a ramp's first step for equal bands
+    ramp_tone: array<vec4<f32>, 32>,
 };
+
+// A `ramp_tone` first step saying its ramp takes equal bands; `EQUAL_BANDS`
+// in ascii.rs.
+const EQUAL_BANDS: f32 = -1.0;
+
+fn ramp_tone_at(i: u32) -> f32 {
+    return u.ramp_tone[i / 4u][i & 3u];
+}
+
+// The step tone `t` draws in the `n`-step ramp at `start` of the ramp table:
+// equal bands, or (#281, `map = "coverage"`) the last step whose band
+// starts at or below it, so the glyph whose measured ink is nearest. A
+// binary search, at most 7 reads for the longest ramp.
+fn ramp_step(t: f32, start: u32, n: u32) -> u32 {
+    if ramp_tone_at(start) < 0.0 {
+        return min(u32(t * f32(n)), n - 1u);
+    }
+    var lo = 0u;
+    var hi = n - 1u;
+    while lo < hi {
+        let mid = (lo + hi + 1u) / 2u;
+        if ramp_tone_at(start + mid) <= t {
+            lo = mid;
+        } else {
+            hi = mid - 1u;
+        }
+    }
+    return lo;
+}
 
 // Bands the variant cell state holds (#313); `MAX_BANDS` in ascii.rs.
 const MAX_BANDS: u32 = 8u;
