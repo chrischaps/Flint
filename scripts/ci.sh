@@ -24,7 +24,7 @@ fi
 
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
-    cargo clippy --all-targets
+    cargo clippy --all-targets --keep-going
     echo "ci: scripts/wasm-check.sh"
     bash scripts/wasm-check.sh
 fi
