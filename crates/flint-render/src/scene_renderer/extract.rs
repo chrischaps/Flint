@@ -93,6 +93,29 @@ impl SceneRenderer {
             .unwrap_or([1.0; 4])
     }
 
+    /// ECS `material.unlit` for an entity (#627), on it and then its parent
+    /// like `cast_shadows`: true draws its base colour times its
+    /// `emissive_scale`, with no lighting. False when neither sets one.
+    pub(super) fn ecs_unlit(world: &FlintWorld, entity_id: EntityId) -> bool {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("unlit"))
+                .and_then(|v| v.as_bool())
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or(false)
+    }
+
+    /// Mark `material` unlit when the entity asks for it (#627).
+    fn apply_unlit(world: &FlintWorld, entity_id: EntityId, material: &mut MaterialUniforms) {
+        if Self::ecs_unlit(world, entity_id) {
+            material.set_unlit(Self::ecs_emissive_scale(world, entity_id));
+        }
+    }
+
     /// ECS `material.cast_shadows` for an entity (ADR 0100): false keeps
     /// its draws out of the shadow cascades, opaque, transparent and
     /// skinned alike. True when neither it nor its parent sets one, so a GLB
@@ -289,6 +312,7 @@ impl SceneRenderer {
             }
             material_uniforms.set_emission(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
+            Self::apply_unlit(world, entity_id, &mut material_uniforms);
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             if let Some(tint) = self
@@ -616,6 +640,7 @@ impl SceneRenderer {
             }
             material_uniforms.set_emission(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
+            Self::apply_unlit(world, entity_id, &mut material_uniforms);
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
@@ -1372,6 +1397,7 @@ impl SceneRenderer {
                     material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
                     material_uniforms.opacity = proc_opacity;
                     material_uniforms.texture_scale = proc_texture_scale;
+                    Self::apply_unlit(world, entity_id, &mut material_uniforms);
 
                     let material_key = hash_parts(&[
                         b"textured",
@@ -1411,7 +1437,8 @@ impl SceneRenderer {
                         self.entity_draws.push(draw);
                     }
                 } else {
-                    let material_uniforms = MaterialUniforms::procedural();
+                    let mut material_uniforms = MaterialUniforms::procedural();
+                    Self::apply_unlit(world, entity_id, &mut material_uniforms);
                     let material_key =
                         hash_parts(&[b"procedural", bytemuck::bytes_of(&material_uniforms)]);
                     let binds = Self::cached_binds(
@@ -1467,6 +1494,7 @@ impl SceneRenderer {
                 };
                 mat_uniforms.opacity = proc_opacity;
                 mat_uniforms.texture_scale = proc_texture_scale;
+                Self::apply_unlit(world, entity_id, &mut mat_uniforms);
 
                 let material_key = hash_parts(&[b"colour", bytemuck::bytes_of(&mat_uniforms)]);
                 let binds = Self::cached_binds(

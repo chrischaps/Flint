@@ -48,7 +48,7 @@ Point and spot lights sit at their entity's world position, so they follow trans
 
 There is no `light.toml` in `schemas/components`; the renderer reads these keys straight from the component table, so `flint validate` will not catch a typo in a light field. Scenes that need a schema can add one in their own `schemas/` layer.
 
-Limits: the shader takes a fixed number of directional, point and spot lights. Only one directional light casts cascaded shadows: the one with the highest `intensity`, with entity-name order breaking ties (ADR 0045), so a fill light can never steal the sun's shadows because of how it was named. If no scene light exists at all, the renderer falls back to a built-in warm key light and cool fill.
+Limits: the shader takes a fixed number of directional, point and spot lights. Only one directional light casts cascaded shadows: the one with the highest `intensity`, with entity-name order breaking ties (ADR 0045), so a fill light can never steal the sun's shadows because of how it was named. If no scene light exists at all, the renderer falls back to a built-in warm key light and cool fill, unless the scene says `default_lights = false` in [`[environment]`](#the-environment-block).
 
 ## Area Lights
 
@@ -56,7 +56,9 @@ Limits: the shader takes a fixed number of directional, point and spot lights. O
 
 ## Shadows
 
-Directional lights cast shadows through cascaded shadow maps: several cascades cover increasing distance bands from the camera, giving crisp shadows nearby and broad coverage far away. Shadows can be disabled per launch with `--no-shadows`, and toggled at runtime in the Rendering & Effects menu (F4).
+Directional lights cast shadows through cascaded shadow maps: several cascades cover increasing distance bands from the camera, giving crisp shadows nearby and broad coverage far away. Shadows can be disabled per launch with `--no-shadows`, toggled at runtime in the Rendering & Effects menu (F4), and turned off for a whole scene with `[environment] shadows = false` (below).
+
+**A dark sun casts nothing.** When the shadow-casting directional light has `intensity = 0` (and no `volumetric_intensity`, whose god rays read the maps), or there is no directional light at all, the shadow pass is skipped with every caster in it (#627). Nothing it drew could have darkened a pixel, so the frame is byte-identical; the stats line's `in shadows` reads 0. The tavern with its sun at 0 went from 166,884 shadow triangles a frame to 0.
 
 **Resolution.** `--shadow-resolution` defaults to 2048 texels per cascade. Before ADR 0049 the shader hardcoded a 1/2048 texel size, so any other resolution filtered incorrectly and the flag was effectively decorative. The texel size is now uploaded with the cascade uniforms, so 512, 1024 and 4096 are real choices; the F4 menu's Shadows section rebuilds the shadow pass when you pick one.
 
@@ -100,8 +102,33 @@ sheen_strength = 0.15
 | `oren_nayar` | f32 | `0.0` | Blend from Lambert toward the Fujii Oren-Nayar approximation, 0--1. Roughness supplies sigma; this only blends (ADR 0048) |
 | `sheen_color` | [f32; 3] | `[1, 1, 1]` | Charlie-sheen rim tint |
 | `sheen_strength` | f32 | `0.0` | Rim strength. No energy compensation, so keep it at or below about 0.3 (ADR 0048) |
+| `shadows` | bool | `true` | `false`: the scene casts no shadows, whatever the quality tier or F4 say; they keep their own setting for the next scene (#627) |
+| `default_lights` | bool | `true` | `false`: a scene with no light entities is lit by its ambient (and emission) alone, not the built-in key and fill (#627) |
 
 Fog is **not** here; it lives in `[post_process]`.
+
+### Unlit and ambient-only scenes
+
+A scene lit by its ambient alone, or by nothing but what glows, needs no dummy light and no script (#627):
+
+```toml
+[environment]
+shadows = false
+default_lights = false
+ambient_sky = [0.95, 0.9, 0.82]
+ambient_ground = [0.32, 0.28, 0.3]
+
+[entities.neon.material]
+color = [1.0, 0.18, 0.55, 1.0]
+unlit = true
+emissive_scale = 3.0
+```
+
+**`material.unlit = true`** draws a mesh's base colour (texture and vertex colour included) times its `emissive_scale`, plus its emission, straight into the HDR target: no lights, ambient or shadows reach it, so unlit neon can stand among lit props, and above 1 it blooms. It is read every frame and inherited from the parent, on imported, skinned and procedural (`bounds`) meshes. It still casts a shadow unless `cast_shadows = false`, and post-processing (SSAO, fog, the grade) still applies, as it does to emission.
+
+![An ambient-only scene with unlit bars](../images/unlit-ambient.png)
+
+*`demo/unlit_ambient.scene.toml`: props lit by the ambient alone, no shadow pass, and three unlit bars, two of them blooming.*
 
 How they combine in the shader: hemisphere ambient interpolates between the two colors by the surface normal's Y. Diffuse wrap replaces the raw `n·l` term; Oren-Nayar scales the diffuse magnitude; the Charlie sheen adds a rim lobe on top. The three are orthogonal, and when all are zero the shader takes the original code path. The wrap and Oren-Nayar values ride the `w` components of the ambient uniforms encoded as `1 + value`, which is why a stale or default uniform (w = 0) still means "off".
 

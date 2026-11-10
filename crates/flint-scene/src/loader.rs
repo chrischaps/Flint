@@ -439,6 +439,27 @@ skybox = "sky_sunset.hdr"
             .environment
             .expect("environment should be present");
         assert_eq!(env.skybox, Some("sky_sunset.hdr".into()));
+        assert!(
+            env.casts_shadows() && env.uses_default_lights(),
+            "absent = true"
+        );
+    }
+
+    #[test]
+    fn test_environment_no_shadows_no_default_lights() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "Unlit"
+
+[environment]
+shadows = false
+default_lights = false
+"#;
+        let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
+        let env = scene_file.environment.unwrap();
+        assert!(!env.casts_shadows());
+        assert!(!env.uses_default_lights());
     }
 
     #[test]

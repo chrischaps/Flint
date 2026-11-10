@@ -317,6 +317,10 @@ pub struct PlayerApp {
     pub hold_at: Option<f64>,
     /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
     pub scene_diffuse_wrap: Option<f32>,
+    /// The scene's `[environment] shadows` and `default_lights` (#627),
+    /// true when it doesn't say.
+    pub scene_shadows: bool,
+    pub scene_default_lights: bool,
     pub scene_oren_nayar: Option<f32>,
     pub scene_sheen: Option<([f32; 3], f32)>,
 

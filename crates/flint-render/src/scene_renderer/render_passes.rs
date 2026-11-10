@@ -50,12 +50,15 @@ impl SceneRenderer {
         camera: &Camera,
         camera_pos: [f32; 3],
     ) {
+        // Off, forbidden by the scene, or no sun that gives any light (#627):
+        // nothing to draw
+        let drawn = self.shadows_drawn();
         let shadow_pass = match &mut self.shadow_pass {
             Some(sp) => sp,
             None => return,
         };
 
-        if !shadow_pass.enabled || self.light_uniforms.directional_count == 0 {
+        if !drawn {
             // The shaders sample the maps whatever this pass does, so a pass
             // turned off at runtime would leave the last frame's shadows
             // standing (FlintKart#55). Zero splits read as "no shadows".
@@ -1526,7 +1529,7 @@ impl SceneRenderer {
         // Run volumetric (god rays) if enabled and shadows are available
         if config.enabled && config.volumetric_enabled {
             if let Some(shadow_pass) = &self.shadow_pass {
-                if shadow_pass.enabled {
+                if self.shadows_drawn() {
                     scoped("Volumetric", encoder, &mut |encoder| {
                         pp.run_volumetric(
                             queue,
@@ -1744,7 +1747,8 @@ impl SceneRenderer {
         // Only the blades in view are drawn. The planes are pushed out by the
         // tallest blade, and with shadows on by how far its shadow reaches,
         // so nothing that leans or casts into the view is lost at its edges.
-        let sun = (self.shadows_enabled() && self.light_uniforms.directional_count > 0)
+        let sun = self
+            .shadows_drawn()
             .then(|| self.light_uniforms.directional_lights[0].direction);
         let tallest = config.blade_height * (1.0 + config.height_variation.max(0.0));
         let frustum_planes = grass_cull_planes(

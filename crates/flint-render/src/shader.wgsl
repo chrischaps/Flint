@@ -39,6 +39,9 @@ struct MaterialUniforms {
     // Multiplies the vertex colour, as surface and as per-vertex light
     // (ADR 0102: the entity's `material.vertex_tint_*`). w is unused.
     vertex_tint: vec4<f32>,
+    // Unlit (#627, `material.unlit`): x = 1 skips lighting, drawing the
+    // base colour times y (its `emissive_scale`) plus emission; 0 is lit.
+    unlit: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -657,6 +660,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Emission goes on after lighting and before tonemapping, so it reads the
     // same under any light and bloom picks it up.
     var color = ambient + Lo + emission;
+    // Unlit (#627): the base colour as it is, times `emissive_scale`, with
+    // its emission; no lights, ambient or shadows reach it.
+    if (material.unlit.x > 0.5) {
+        color = albedo * material.unlit.y + emission;
+    }
 
     let final_alpha = alpha * material.opacity;
 

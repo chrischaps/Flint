@@ -107,6 +107,8 @@ impl PlayerApp {
             frame_pacer: None,
             hold_at: None,
             scene_diffuse_wrap: None,
+            scene_shadows: true,
+            scene_default_lights: true,
             scene_oren_nayar: None,
             scene_sheen: None,
             scene_camera: None,
@@ -224,6 +226,11 @@ impl PlayerApp {
     /// (`main.rs` and the web's `flint_web.rs`) call it after `new`.
     pub fn apply_scene_settings(&mut self, scene_file: &flint_scene::SceneFile) {
         self.scene_preload_audio = scene_file.scene.preload_audio;
+
+        // No shadows, no built-in lights (#627)
+        let env = scene_file.environment.as_ref();
+        self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
+        self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
 
         // Skybox path + ambient from scene environment settings
         if let Some(env) = &scene_file.environment {
@@ -615,6 +622,8 @@ impl PlayerApp {
         // Refresh renderer with any new procedural meshes
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
+        scene_renderer.set_scene_shadows(self.scene_shadows);
+        scene_renderer.set_default_lights(self.scene_default_lights);
         // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
         if let Some((sky, ground)) = self.scene_ambient {
             scene_renderer.set_ambient(sky, ground);
