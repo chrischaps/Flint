@@ -34,8 +34,8 @@ pub use hash::ContentHash;
 pub use id::EntityId;
 pub use ik::{solve_two_bone, TwoBoneSolution};
 pub use quat::{
-    euler_deg_to_quat, mat4_scale, mat4_to_quat, mat4_to_rigid, quat_conjugate,
+    euler_deg_to_quat, mat4_scale, mat4_skew, mat4_to_quat, mat4_to_rigid, quat_conjugate,
     quat_from_axis_angle, quat_from_two_vectors, quat_mul, quat_nlerp, quat_normalize,
     quat_rotate_vec3, rigid_inverse_apply,
 };
-pub use types::{mat4_mul, Color, Transform, Vec3};
+pub use types::{mat4_mul, Color, Shear, Transform, Vec3};

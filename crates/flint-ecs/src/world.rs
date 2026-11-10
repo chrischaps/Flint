@@ -355,12 +355,16 @@ impl FlintWorld {
             .and_then(toml_to_vec3)
             .unwrap_or(Vec3::ONE);
         let rotation_quat = transform_data.get("rotation_quat").and_then(toml_vec4);
+        let shear = transform_data
+            .get("shear")
+            .and_then(flint_core::Shear::from_toml);
 
         Some(Transform {
             position: pos,
             rotation: rot,
             scale,
             rotation_quat,
+            shear,
         })
     }
 

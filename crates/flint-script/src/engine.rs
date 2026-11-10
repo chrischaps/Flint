@@ -2162,6 +2162,49 @@ mod tests {
         );
     }
 
+    /// #625: a script shears one entity, reads it back, and clears it.
+    #[test]
+    fn set_get_and_clear_shear() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "tile", None);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_shear(me, #{ xz: 0.25, yz: 1 });
+                let s = get_shear(me);
+                set_field(me, "probe", "xz", s.xz);
+                set_field(me, "probe", "xy", s.xy);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        assert_eq!(t.shear, Some([0.0, 0.25, 0.0, 1.0, 0.0, 0.0]));
+        let m = t.to_matrix();
+        assert_eq!([m[2][0], m[2][1], m[2][2]], [0.25, 1.0, 1.0]);
+        let comps = world.get_components(id).unwrap();
+        let probe = |k| comps.get_field("probe", k).and_then(|v| v.as_float());
+        assert_eq!(probe("xz"), Some(0.25));
+        assert_eq!(probe("xy"), Some(0.0));
+        let stored = comps.get_field("transform", "shear").unwrap();
+        assert_eq!(stored.as_table().unwrap().len(), 2, "only non-zero terms");
+
+        let clear = engine
+            .compile("fn on_update() { clear_shear(self_entity()); }")
+            .unwrap();
+        engine.add_script(id, clear, "clear.rhai".into());
+        engine.call_updates(&mut world);
+        let comps = world.get_components(id).unwrap();
+        assert!(comps.get_field("transform", "shear").is_none());
+        assert_eq!(world.get_transform(id).unwrap().shear, None);
+    }
+
     #[test]
     fn set_and_get_rotation_quat_round_trip() {
         let mut engine = ScriptEngine::new();

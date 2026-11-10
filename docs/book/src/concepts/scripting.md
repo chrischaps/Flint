@@ -83,6 +83,9 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `set_visible(id, visible)` | --- | Show or hide an entity and everything under it (writes `visibility.visible`; see [Hiding entities](#hiding-entities)) |
 | `is_visible(id)` | `bool` | The entity's own visibility switch (`true` when unset; a hidden ancestor isn't counted) |
 | `rotate_local(id, x, y, z)` | --- | Compose a rotation (euler degrees) about the entity's own axes onto its current orientation, rest quaternion included (ADR 0069) |
+| `set_shear(id, map)` | --- | Set `transform.shear` from any of `#{xy, xz, yx, yz, zx, zy}` (`ab` = how far `a` moves per unit of `b`, between rotation and scale); missing terms are 0, all zeros removes it (#625; [Transforms](scenes.md#transforms)) |
+| `get_shear(id)` | `Map` | All six shear terms, zeros when the entity has none |
+| `clear_shear(id)` | --- | Remove the shear |
 | `distance(a, b)` | `f64` | Euclidean distance between two entities |
 | `set_parent(child_id, parent_id)` | --- | Set an entity's parent in the hierarchy |
 | `get_parent(id)` | `i64` | Get the parent entity ID (`-1` if none) |
