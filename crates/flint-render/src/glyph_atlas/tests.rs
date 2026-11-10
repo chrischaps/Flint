@@ -761,3 +761,71 @@ fn the_cache_reloads_what_changes_on_disk() {
     assert_eq!(grid.atlas().sample('-', 3, 2), Some(255));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Counts WARN events on this thread, so a test can hold "said once".
+struct WarnCount(Arc<std::sync::atomic::AtomicUsize>);
+
+impl tracing::Subscriber for WarnCount {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() == tracing::Level::WARN {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// #286: a broken edit to a set that loaded keeps its last good glyphs (the
+/// same `Arc`, so the atlas isn't re-uploaded) and warns once however many
+/// frames ask; fixing the file loads the new glyphs.
+#[test]
+fn a_broken_edit_keeps_the_last_good_glyphs() {
+    let dir = std::env::temp_dir().join(format!("flint-glyphs-broken-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    let plain = dir.join("fonts/plain.glyphs.toml");
+    std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
+    let warns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = || warns.load(std::sync::atomic::Ordering::SeqCst);
+    tracing::subscriber::with_default(WarnCount(warns.clone()), || {
+        let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+        let good = cache.get("plain").unwrap();
+        assert_eq!(count(), 0);
+
+        // Half-typed: not TOML
+        std::fs::write(&plain, "[ramps.dots\nglyphs = \" .:#\"\n").unwrap();
+        assert!(cache.poll());
+        for _ in 0..30 {
+            let kept = cache.get("plain").expect("the last good set");
+            assert!(Arc::ptr_eq(&good, &kept), "no re-upload");
+            assert!(!cache.poll(), "settled on the broken file");
+        }
+        assert_eq!(count(), 1, "one warning for the broken edit");
+
+        // Fixed
+        std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:#\"\n").unwrap();
+        assert!(cache.poll());
+        let fixed = cache.get("plain").unwrap();
+        assert!(!Arc::ptr_eq(&good, &fixed));
+        assert_eq!(fixed.default_ramp().glyphs(), &[' ', '.', ':', '#']);
+        assert_eq!(count(), 1);
+
+        // Deleted: still the last good set, and one more warning
+        std::fs::remove_file(&plain).unwrap();
+        assert!(cache.poll());
+        assert!(Arc::ptr_eq(&fixed, &cache.get("plain").unwrap()));
+        assert!(Arc::ptr_eq(&fixed, &cache.get("plain").unwrap()));
+        assert_eq!(count(), 2);
+
+        // A name that never loaded still fails, as before
+        assert!(cache.get("nowhere").is_err());
+    });
+    std::fs::remove_dir_all(&dir).ok();
+}
