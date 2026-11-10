@@ -480,6 +480,23 @@ pub fn load_models_from_world(
                     },
                     bounds_info,
                 );
+                if let Some(chain) =
+                    flint_import::lod_chain(&import_result.nodes, &import_result.root_nodes)
+                {
+                    // The importer banded it (#193), unless the file did.
+                    let switches: Vec<String> = chain
+                        .iter()
+                        .skip(1)
+                        .filter_map(|&n| import_result.nodes[n].mesh_primitive_indices.first())
+                        .filter_map(|&p| import_result.meshes[p].lod)
+                        .map(|band| format!("{:.1}", band.near))
+                        .collect();
+                    eprintln!(
+                        "  LOD chain: {} levels, switching at {} m",
+                        chain.len(),
+                        switches.join(", ")
+                    );
+                }
 
                 let was_expanded;
                 let kept_result;
