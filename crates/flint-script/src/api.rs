@@ -553,16 +553,16 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn(
             "set_field",
             move |id: i64, comp: &str, field: &str, val: Dynamic| {
-                if id < 0 {
+                let mut c = crate::lock_or_recover(&ctx);
+                let Some(eid) = c.setter_target("set_field", id) else {
                     return;
-                }
-                let c = crate::lock_or_recover(&ctx);
+                };
                 let world = unsafe { c.world_mut() };
                 if let Some(tv) = dynamic_to_toml(&val) {
                     // World-level set_field maintains the component index, so a
                     // component created here (rigidbody, collider, joint, ...)
                     // is visible to systems that scan by component.
-                    let _ = world.set_field(EntityId::from_raw(id as u64), comp, field, tv);
+                    let _ = world.set_field(eid, comp, field, tv);
                 }
             },
         );
@@ -591,12 +591,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_position", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_position", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
                     comp::TRANSFORM,
@@ -634,12 +633,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_rotation", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_rotation", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
                     comp::TRANSFORM,
@@ -683,12 +681,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_scale", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_scale", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
                     comp::TRANSFORM,
@@ -709,12 +706,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_visible", move |id: i64, visible: bool| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_visible", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             // Unchanged: no write, so a pool that re-asserts every frame
             // doesn't touch the component, and showing an entity that was
             // never hidden doesn't give it one
@@ -777,12 +773,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn(
             "set_rotation_quat",
             move |id: i64, x: f64, y: f64, z: f64, w: f64| {
-                if id < 0 {
+                let mut c = crate::lock_or_recover(&ctx);
+                let Some(eid) = c.setter_target("set_rotation_quat", id) else {
                     return;
-                }
-                let c = crate::lock_or_recover(&ctx);
+                };
                 let world = unsafe { c.world_mut() };
-                let eid = EntityId::from_raw(id as u64);
                 if let Some(comps) = world.get_components_mut(eid) {
                     let q = quat_normalize(&[x as f32, y as f32, z as f32, w as f32]);
                     write_rotation_quat(comps, q);
@@ -799,13 +794,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_shear", move |id: i64, shear: Map| {
-            if id < 0 {
-                return;
-            }
             let terms = shear_terms(&shear);
-            let c = crate::lock_or_recover(&ctx);
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_shear", id) else {
+                return;
+            };
             let world = unsafe { c.world_mut() };
-            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+            if let Some(comps) = world.get_components_mut(eid) {
                 write_shear(comps, terms);
             }
         });
@@ -838,12 +833,12 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("clear_shear", move |id: i64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("clear_shear", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+            if let Some(comps) = world.get_components_mut(eid) {
                 write_shear(comps, [0.0; 6]);
             }
         });
@@ -856,12 +851,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("rotate_local", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("rotate_local", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             let Some(current) = world.get_transform(eid).map(|t| t.effective_quat()) else {
                 return;
             };
@@ -879,12 +873,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_joint_target", move |id: i64, value: f64| {
-            if id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let Some(eid) = c.setter_target("set_joint_target", id) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 if comps.has(comp::JOINT) {
                     comps.set_field(comp::JOINT, "motor_target", toml::Value::Float(value));
@@ -978,15 +971,15 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_parent", move |child_id: i64, parent_id: i64| {
-            if child_id < 0 || parent_id < 0 {
+            let mut c = crate::lock_or_recover(&ctx);
+            let (Some(child), Some(parent)) = (
+                c.setter_target("set_parent", child_id),
+                c.setter_target("set_parent", parent_id),
+            ) else {
                 return;
-            }
-            let c = crate::lock_or_recover(&ctx);
+            };
             let world = unsafe { c.world_mut() };
-            let _ = world.set_parent(
-                EntityId::from_raw(child_id as u64),
-                EntityId::from_raw(parent_id as u64),
-            );
+            let _ = world.set_parent(child, parent);
         });
     }
 
@@ -1048,12 +1041,11 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn(
             "set_material_color",
             move |id: i64, r: f64, g: f64, b: f64, a: f64| {
-                if id < 0 {
+                let mut c = crate::lock_or_recover(&ctx);
+                let Some(eid) = c.setter_target("set_material_color", id) else {
                     return;
-                }
-                let c = crate::lock_or_recover(&ctx);
+                };
                 let world = unsafe { c.world_mut() };
-                let eid = EntityId::from_raw(id as u64);
                 if let Some(comps) = world.get_components_mut(eid) {
                     comps.set_field(comp::MATERIAL, "base_color_r", toml::Value::Float(r));
                     comps.set_field(comp::MATERIAL, "base_color_g", toml::Value::Float(g));
@@ -1072,12 +1064,14 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn(
             "set_material_override",
             move |id: i64, material: &str, r: f64, g: f64, b: f64, a: f64| {
-                if id < 0 || material.is_empty() {
+                if material.is_empty() {
                     return;
                 }
-                let c = crate::lock_or_recover(&ctx);
+                let mut c = crate::lock_or_recover(&ctx);
+                let Some(eid) = c.setter_target("set_material_override", id) else {
+                    return;
+                };
                 let world = unsafe { c.world_mut() };
-                let eid = EntityId::from_raw(id as u64);
                 let value = toml::Value::Array(vec![
                     toml::Value::Float(r),
                     toml::Value::Float(g),

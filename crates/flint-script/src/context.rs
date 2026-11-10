@@ -729,6 +729,9 @@ pub struct ScriptCallContext {
     /// the first one arrives. `expression()` reads it; it outlives scene
     /// changes, since it describes the world outside the game, not the scene.
     pub expression: rhai::Map,
+    /// The (script, function) pairs that have already warned about a setter
+    /// given an entity that isn't there (#635), so each warns once.
+    pub bad_target_warned: HashSet<(String, &'static str)>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -817,7 +820,46 @@ impl ScriptCallContext {
             loaded_chunk_ids: HashSet::new(),
             conducted: ConductedSnapshot::default(),
             expression: rhai::Map::new(),
+            bad_target_warned: HashSet::new(),
         }
+    }
+
+    /// The entity a setter named in a script was given, or `None` when there
+    /// is no such entity: `-1` from a `get_entity` that found nothing, or an
+    /// id that was despawned (#635). The first time each script gives `func`
+    /// such an id it warns, naming the script and the function, so a setter
+    /// that would do nothing says so once instead of failing in silence.
+    pub fn setter_target(&mut self, func: &'static str, id: i64) -> Option<EntityId> {
+        if self.world.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, so set by the host for this call's scope
+        let world = unsafe { &*self.world };
+        let eid = EntityId::from_raw(id.max(0) as u64);
+        if id >= 0 && world.contains(eid) {
+            return Some(eid);
+        }
+        let caller = self.current_entity;
+        let script = world
+            .get_components(caller)
+            .and_then(|c| c.get_field("script", "source"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| world.get_name(caller).map(|n| format!("entity '{n}'")))
+            .unwrap_or_else(|| "a script".to_string());
+        if self.bad_target_warned.insert((script.clone(), func)) {
+            let why = if id < 0 {
+                "(-1 is what get_entity returns for a name it can't find)"
+            } else {
+                "(no entity has that id; was it despawned?)"
+            };
+            tracing::warn!(
+                "{script}: {func}({id}, ...) did nothing: there is no entity {id} {why}. \
+                 Warned once for this script and function"
+            );
+        }
+        None
     }
 
     /// Record a draw command, stamping the clip rect currently on the stack
