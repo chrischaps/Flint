@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use flint_render::glyph_atlas::specimen::{
     draw_specimen, is_rising, ramp_coverage, specimen_text, SPECIMEN_COLS,
 };
-use flint_render::{GlyphAtlas, GlyphRamp, GlyphSet};
+use flint_render::{GlyphAtlas, GlyphRamp, GlyphSet, RampMap};
 use image::{Rgba, RgbaImage};
 use std::path::{Path, PathBuf};
 
@@ -138,7 +138,7 @@ pub fn summary(set: &GlyphSet) -> Vec<String> {
             "  {:width$}  \"{glyphs}\"  ink {}  {}{default}",
             ramp.name(),
             ink.join(" "),
-            rise_note(ramp, &cov),
+            rise_note(ramp),
         ));
     }
     lines
@@ -146,7 +146,8 @@ pub fn summary(set: &GlyphSet) -> Vec<String> {
 
 /// Every glyph's measured ink and each ramp's glyphs with theirs, as JSON:
 /// `{set, cell, size, glyphs: [{glyph, coverage}], ramps: [{name, glyphs,
-/// coverage, rising}]}`. `rising` says whether the ramp's ink never falls
+/// coverage, rising, map, bounds, inversions, calibrated}]}` (#281's fields as
+/// the glyph_atlas example writes them). `rising` says whether the ramp's ink never falls
 /// from one step to the next (#281).
 pub fn coverage_report(set: &GlyphSet) -> serde_json::Value {
     let atlas = set.atlas();
@@ -165,11 +166,26 @@ pub fn coverage_report(set: &GlyphSet) -> serde_json::Value {
         .ramps()
         .map(|r| {
             let cov = ramp_coverage(set, r);
+            let calibrated = r.calibrated();
             serde_json::json!({
                 "name": r.name(),
                 "glyphs": r.glyphs().iter().collect::<String>(),
                 "coverage": cov.iter().map(|v| round(*v)).collect::<Vec<_>>(),
                 "rising": is_rising(&cov),
+                "map": match r.map() {
+                    RampMap::Index => "index",
+                    RampMap::Coverage => "coverage",
+                },
+                "bounds": r.bounds().iter().map(|v| round(*v)).collect::<Vec<_>>(),
+                "inversions": r
+                    .inversions()
+                    .iter()
+                    .map(|(a, b)| [a.to_string(), b.to_string()])
+                    .collect::<Vec<_>>(),
+                "calibrated": {
+                    "glyphs": calibrated.glyphs().iter().collect::<String>(),
+                    "bounds": calibrated.bounds().iter().map(|v| round(*v)).collect::<Vec<_>>(),
+                },
             })
         })
         .collect();
@@ -183,19 +199,19 @@ pub fn coverage_report(set: &GlyphSet) -> serde_json::Value {
     })
 }
 
-/// "rises", or where the ink first falls.
-fn rise_note(ramp: &GlyphRamp, cov: &[f32]) -> String {
-    if is_rising(cov) {
+/// "rises" (or "calibrated" for a `map = "coverage"` ramp, #281), or the
+/// neighbours where a brighter input gets less ink, from
+/// [`GlyphRamp::inversions`].
+fn rise_note(ramp: &GlyphRamp) -> String {
+    if ramp.map() == RampMap::Coverage {
+        return "calibrated (map = coverage)".into();
+    }
+    let inversions = ramp.inversions();
+    if inversions.is_empty() {
         return "rises".into();
     }
-    let g = ramp.glyphs();
-    let falls: Vec<String> = cov
-        .windows(2)
-        .enumerate()
-        .filter(|(_, w)| w[1] < w[0])
-        .map(|(i, _)| format!("{}>{}", g[i], g[i + 1]))
-        .collect();
-    format!("falls at {}", falls.join(" "))
+    let falls: Vec<String> = inversions.iter().map(|(a, b)| format!("{a}>{b}")).collect();
+    format!("falls at {}; map = \"coverage\" fixes it", falls.join(" "))
 }
 
 enum Target {
@@ -346,9 +362,13 @@ pub fn compose_sheet(set: &GlyphSet, source: &str) -> RgbaImage {
         };
         let label = format!("ramp {}{default}", ramp.name());
         draw_text(&mut sheet, &font, MARGIN, y, 2, LABEL, &label);
-        let note = rise_note(ramp, &cov);
+        let note = rise_note(ramp);
         let chart_x = MARGIN + sw + GAP;
-        let ink = if is_rising(&cov) { DIM } else { FALL };
+        let ink = if ramp.inversions().is_empty() {
+            DIM
+        } else {
+            FALL
+        };
         draw_text(
             &mut sheet,
             &font,

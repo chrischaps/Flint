@@ -20,3 +20,4 @@ in the repository.
 |---|---|
 | [0111](0111-stylized-rendering.md) | Stylized rendering: per-entity selection on one screen grid, two stages, the descriptor-driven style framework and the id-only style mask (#260, #261) |
 | [0112](0112-user-authored-styles.md) | User-authored styles: `styles/<name>.shader.toml` + one WGSL `fn style`, a generated prelude, naga check with file:line errors, passthrough fallback, append-only registry (#274, #275) |
+| [0113](0113-one-glyph-atlas-for-text.md) | One glyph atlas for text: `ui_text` sprite fonts are layout over a `GlyphAtlas` (`builtin`, a `.glyphs.toml` set, or a `.font.toml` PNG grid kept for compatibility), uploaded once as white RGBA with coverage alpha (#283) |

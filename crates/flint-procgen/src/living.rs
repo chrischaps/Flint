@@ -56,6 +56,19 @@ pub struct SegmentPose {
     pub length_scale: f32,
     /// The pose's mean radius over the rest mean radius.
     pub radius_scale: f32,
+    /// How far the pose moves the segment, in metres in the prop's space,
+    /// after it's turned and stretched. Like `rotation` it's absolute: it
+    /// doesn't carry to the segment's children, which start where the unmoved
+    /// chain puts them and take a slide of their own. So slides that change
+    /// smoothly along a tube shear it without parting it, and a pose can move
+    /// a form sideways rather than only bend it about its root. Zero for any
+    /// generator that doesn't ask for it.
+    #[serde(default, skip_serializing_if = "is_zero_slide")]
+    pub slide: [f32; 3],
+}
+
+fn is_zero_slide(slide: &[f32; 3]) -> bool {
+    *slide == [0.0; 3]
 }
 
 impl SegmentPose {
@@ -64,6 +77,7 @@ impl SegmentPose {
         rotation: [0.0, 0.0, 0.0, 1.0],
         length_scale: 1.0,
         radius_scale: 1.0,
+        slide: [0.0; 3],
     };
 
     /// `a` at `weight` 0 and `b` at 1, exactly, so a held frame is its pose to
@@ -81,6 +95,7 @@ impl SegmentPose {
             rotation: quat_nlerp(&a.rotation, &b.rotation, weight),
             length_scale: lerp(a.length_scale, b.length_scale),
             radius_scale: lerp(a.radius_scale, b.radius_scale),
+            slide: std::array::from_fn(|i| lerp(a.slide[i], b.slide[i])),
         }
     }
 
@@ -95,6 +110,7 @@ impl SegmentPose {
             rotation: quat_nlerp(&Self::IDENTITY.rotation, &self.rotation, weight),
             length_scale: scale(self.length_scale),
             radius_scale: scale(self.radius_scale),
+            slide: self.slide.map(|x| x * weight),
         }
     }
 }
@@ -467,6 +483,11 @@ pub struct LivingSkeleton {
     pub card_index_count: usize,
     /// `leaf_bindings[k]` is where card `k` rides.
     pub leaf_bindings: Vec<LeafBinding>,
+    /// The two axes, per segment and in the rest pose, that an echo's place
+    /// is measured along (`[living] echo_places`): `form_v1`'s are along its
+    /// lines of writing and up the form. Empty, as for a tree: every segment's
+    /// are the prop's X and Y.
+    pub place_axes: Vec<[[f32; 3]; 2]>,
 }
 
 impl LivingSkeleton {
@@ -477,6 +498,37 @@ impl LivingSkeleton {
         verts.sort_unstable();
         verts.dedup();
         verts
+    }
+
+    /// How far segment `i` moves for an echo at `place` (`[along, up]` in
+    /// metres along [`Self::place_axes`]), in the prop's space.
+    pub fn place_offset(&self, i: usize, place: [f32; 2]) -> [f32; 3] {
+        let [a, b] = self
+            .place_axes
+            .get(i)
+            .copied()
+            .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        std::array::from_fn(|k| a[k] * place[0] + b[k] * place[1])
+    }
+
+    /// `pose` as an echo draws it: showing `slide` of its slides (see
+    /// [`SegmentPose::slide`] and `[living] echo_slide`), and moved to
+    /// `place` (`[living] echo_places`). A slide is absolute and doesn't
+    /// carry, so a place that changes smoothly along the form shears it
+    /// without parting it. The prop itself is drawn at its own slide and
+    /// `[0, 0]`.
+    pub fn show_at(&self, pose: &mut LivingPose, slide: f32, place: [f32; 2]) {
+        if slide != 1.0 {
+            for segment in &mut pose.segments {
+                segment.slide = segment.slide.map(|x| x * slide);
+            }
+        }
+        if place != [0.0; 2] {
+            for (i, segment) in pose.segments.iter_mut().enumerate() {
+                let by = self.place_offset(i, place);
+                segment.slide = std::array::from_fn(|k| segment.slide[k] + by[k]);
+            }
+        }
     }
 
     /// The segments as `pose` holds them: each child starts at its parent's
@@ -500,14 +552,22 @@ impl LivingSkeleton {
         self.check_pose(pose)?;
         posed.clear();
         for (rest, p) in self.segments.iter().zip(&pose.segments) {
+            // A child starts at the end of its parent's unmoved chain: a slide
+            // is the segment's own and doesn't carry.
             let start = match rest.parent {
-                Some(parent) => posed[parent as usize].end,
+                Some(parent) => {
+                    let parent = parent as usize;
+                    posed[parent].end - Vec3::from_array(pose.segments[parent].slide)
+                }
                 None => rest.start,
             };
             let dir = Vec3::from_array(quat_rotate_vec3(&p.rotation, rest.direction().to_array()));
+            let end = start + dir * (rest.length() * p.length_scale);
+            let slide = Vec3::from_array(p.slide);
+            let (start, end) = (start + slide, end + slide);
             posed.push(BranchSegment {
                 start,
-                end: start + dir * (rest.length() * p.length_scale),
+                end,
                 radius_start: rest.radius_start * p.radius_scale,
                 radius_end: rest.radius_end * p.radius_scale,
                 ..*rest
@@ -644,11 +704,27 @@ impl LivingSkeleton {
 
     /// Scale `pose`'s lengths until its box's most stretched side is over the
     /// rest pose's by the same fraction its most squeezed side is under.
+    ///
+    /// A slide moves the form without changing its size, so the size is
+    /// measured with the slides left out: a shear would otherwise widen the
+    /// box and read as stretch.
     fn hold_size(&self, pose: &mut LivingPose) -> Result<()> {
         let rest = self.rest_bounds();
+        // Only a pose with a slide pays for the copy.
+        let mut unslid = pose.segments.iter().any(|s| s.slide != [0.0; 3]).then(|| {
+            let mut unslid = pose.clone();
+            for s in &mut unslid.segments {
+                s.slide = [0.0; 3];
+            }
+            unslid
+        });
         for _ in 0..KEEP_SIZE_ROUNDS {
-            let scale = balancing_scale(&rest, &self.posed_bounds(pose)?);
+            let measured = unslid.as_ref().unwrap_or(pose);
+            let scale = balancing_scale(&rest, &self.posed_bounds(measured)?);
             for s in &mut pose.segments {
+                s.length_scale *= scale;
+            }
+            for s in unslid.iter_mut().flat_map(|u| &mut u.segments) {
                 s.length_scale *= scale;
             }
         }
@@ -1070,6 +1146,7 @@ stagger = "none"
             rotation: flint_core::quat::quat_from_axis_angle([0.0, 0.0, 1.0], 1.2),
             length_scale: 1.4,
             radius_scale: 0.6,
+            slide: [0.2, 0.0, -0.4],
         };
         assert_eq!(SegmentPose::blend(&a, &b, 0.0), a);
         assert_eq!(SegmentPose::blend(&a, &b, 1.0), b);
@@ -1077,6 +1154,8 @@ stagger = "none"
         let mid = SegmentPose::blend(&a, &b, 0.5);
         assert!((mid.length_scale - 1.2).abs() < 1e-6);
         assert!((mid.radius_scale - 0.8).abs() < 1e-6);
+        assert!((mid.slide[0] - 0.1).abs() < 1e-6);
+        assert!((mid.slide[2] + 0.2).abs() < 1e-6);
         let norm: f32 = mid.rotation.iter().map(|x| x * x).sum();
         assert!((norm - 1.0).abs() < 1e-5);
     }
@@ -1089,6 +1168,7 @@ stagger = "none"
                     rotation: flint_core::quat::quat_from_axis_angle([0.0, 0.0, 1.0], turn),
                     length_scale: 1.0 + turn,
                     radius_scale: 1.0,
+                    slide: [0.0; 3],
                 };
                 count
             ],

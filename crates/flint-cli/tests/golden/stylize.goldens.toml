@@ -572,3 +572,53 @@ args = ["--no-grid"]
 name = "style-terrain-mask"
 scene = "demo/style_terrain.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
+
+# --- the editor's selection outline (#602) ---------------------------------
+#
+# Not a style, but it is drawn over the finished image, after every style,
+# so it lives with them. demo/selection_outline.scene.toml holds one of each
+# kind of thing a person picks in `flint edit`; --select draws its outline.
+# An outline is a thin line, about 0.2% of the frame here, so these hold a
+# share of 0.05%, not the suite's 2%: losing a quarter of one fails, the
+# shading noise between adapters doesn't. No shadows: their edges are the
+# part of this bench likeliest to shade differently on another GPU.
+[[case]]
+name = "selection-static"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "barrel"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+[[case]]
+name = "selection-skinned"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "ybot"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# A parent with no mesh of its own: its children are outlined as one
+[[case]]
+name = "selection-parent"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "cart"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# A sprite follows its alpha cut-out; glass is outlined, not filled
+[[case]]
+name = "selection-billboard"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "wisp"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+[[case]]
+name = "selection-transparent"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "glass"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# Selecting what draws nothing (a light) leaves the frame as it was, byte
+# for byte: the mask and outline passes do nothing without the selection's
+# draws, so an editor's frame with nothing outlined is the game's
+[[case]]
+name = "selection-nothing-drawn"
+scene = "demo/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "sun"]
+matches = ["--no-grid", "--no-shadows"]

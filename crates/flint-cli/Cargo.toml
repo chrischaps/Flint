@@ -43,11 +43,14 @@ notify-debouncer-mini = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
+glam = { workspace = true }
 image = { workspace = true, features = ["gif"] }
 # Already in the tree through `image`. Used directly so that a GIF can share one
 # palette across its frames, which `image`'s encoder doesn't do (gif_writer.rs).
 gif = "0.14"
 color_quant = "1"
+# Also in the tree through `image`: a long GIF's frames wait on disk deflated (#588).
+miniz_oxide = "0.8"
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }

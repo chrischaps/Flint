@@ -33,6 +33,22 @@ pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
     },
 };
 
+/// Lighten blending: the brighter of src and dst, channel by channel, for a
+/// fragment that has already multiplied its colour by its alpha. Nothing drawn
+/// with it can darken what's behind it.
+pub(crate) const LIGHTEN_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+};
+
 /// Multiply blending: src*DstColor + dst*OneMinusSrcAlpha.
 pub(crate) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {
@@ -388,8 +404,6 @@ pub struct RenderPipeline {
     pub line_pipeline: wgpu::RenderPipeline,
     pub overlay_line_pipeline: wgpu::RenderPipeline,
     pub skeleton_line_pipeline: wgpu::RenderPipeline,
-    pub outline_pipeline: wgpu::RenderPipeline,
-    pub depth_prepass_pipeline: wgpu::RenderPipeline,
     pub transparent_alpha_pipeline: wgpu::RenderPipeline,
     /// Back-face pass of the alpha pipeline (drawn first).
     pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
@@ -758,101 +772,6 @@ impl RenderPipeline {
                 cache: None,
             });
 
-        // Outline pipeline — inverted hull (front-face culled, solid orange)
-        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Outline Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("outline_shader.wgsl").into()),
-        });
-
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Outline Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_outline"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_outline"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Front), // Inverted hull: cull front faces
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Depth prepass pipeline — writes depth only (no color) for selected entity
-        // front faces, used in wireframe mode to mask the outline interior.
-        let depth_prepass_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Depth Prepass Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &outline_shader,
-                    entry_point: Some("vs_depth_prepass"),
-                    buffers: &[Vertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &outline_shader,
-                    entry_point: Some("fs_outline"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::empty(),
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
-
         // Alpha-blended meshes draw in two passes, back faces first (cull front) then
         // front faces (cull back). Depth write stays off, but with no sort inside one
         // mesh a single double-sided pass blends its own back faces over its front
@@ -1002,8 +921,6 @@ impl RenderPipeline {
             line_pipeline,
             overlay_line_pipeline,
             skeleton_line_pipeline,
-            outline_pipeline,
-            depth_prepass_pipeline,
             transparent_alpha_pipeline,
             transparent_alpha_back_pipeline,
             transparent_additive_pipeline,

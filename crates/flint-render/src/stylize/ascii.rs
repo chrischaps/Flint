@@ -140,7 +140,10 @@ use super::{
     choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint,
     StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
-use crate::glyph_atlas::{GlyphSet, GlyphSetCache, GpuGlyphStack, BUILTIN_SET, GLYPHS_SUFFIX};
+use crate::glyph_atlas::{
+    calibrated_bounds, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphStack, RampMap, BUILTIN_SET,
+    GLYPHS_SUFFIX,
+};
 use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
 use bytemuck::{Pod, Zeroable};
 use std::path::{Path, PathBuf};
@@ -818,6 +821,9 @@ struct AsciiUniforms {
     dissolve_meta: [u32; 4],
     /// Each one's (slot, first row, rows, columns).
     dissolve: [[u32; 4]; MAX_DISSOLVE],
+    /// Beside `ramp`, each step's least tone for a calibrated ramp (#281),
+    /// four a vec4; [`EQUAL_BANDS`] at a ramp's first step for equal bands.
+    ramp_tone: [[f32; 4]; MAX_RAMP / 4],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -1589,15 +1595,43 @@ pub fn ground_mode(name: &str) -> u32 {
     GROUND_MODES.iter().position(|m| *m == name).unwrap_or(0) as u32
 }
 
-/// Up to [`MAX_RAMP`] steps of `indices`, evenly resampled when longer.
-fn fit_ramp(indices: &[u32]) -> Vec<u32> {
-    if indices.len() <= MAX_RAMP {
-        return indices.to_vec();
-    }
-    (0..MAX_RAMP)
-        .map(|i| indices[i * (indices.len() - 1) / (MAX_RAMP - 1)])
+/// Up to [`MAX_RAMP`] steps of `ramp`, evenly resampled when longer: each
+/// step's atlas index and its `ramp_tone` entry (#281), the least tone it
+/// draws at for a calibrated ramp, [`EQUAL_BANDS`] on every step of an
+/// equal-band one.
+fn fit_ramp(ramp: &GlyphRamp) -> Vec<(u32, f32)> {
+    let indices = ramp.atlas_indices();
+    let picked = fit_positions(indices.len());
+    let tones = match ramp.map() {
+        RampMap::Index => vec![EQUAL_BANDS; picked.len()],
+        // The steps kept, banded among themselves
+        RampMap::Coverage => calibrated_bounds(
+            &picked
+                .iter()
+                .map(|i| ramp.coverage()[*i])
+                .collect::<Vec<_>>(),
+        ),
+    };
+    picked
+        .iter()
+        .zip(tones)
+        .map(|(i, t)| (indices[*i], t))
         .collect()
 }
+
+/// The steps of a `len`-step ramp kept in [`MAX_RAMP`]: all of them, or an
+/// even resampling end to end.
+fn fit_positions(len: usize) -> Vec<usize> {
+    if len <= MAX_RAMP {
+        (0..len).collect()
+    } else {
+        (0..MAX_RAMP).map(|i| i * (len - 1) / (MAX_RAMP - 1)).collect()
+    }
+}
+
+/// A `ramp_tone` entry saying the ramp it starts takes equal bands, as
+/// every ramp did before #281; `EQUAL_BANDS` in ascii_common.wgsl.
+const EQUAL_BANDS: f32 = -1.0;
 
 /// The sets in use and their atlases stacked on the GPU (#335).
 struct LoadedStack {
@@ -1942,10 +1976,12 @@ pub fn anchored_origin(anchor: [f32; 2], cell: [f32; 2]) -> [f32; 2] {
 
 /// The ramps in use, packed one after another into the uniform: each step
 /// a (font, atlas index) pair, the font an index into the frame's
-/// [`FontsInUse`] (#335), made an origin in the glyph stack at upload.
+/// [`FontsInUse`] (#335), made an origin in the glyph stack at upload, and
+/// beside it the step's `ramp_tone` entry (#281).
 #[derive(Default)]
 struct Ramps {
     steps: Vec<(u32, u32)>,
+    tones: Vec<f32>,
     placed: Vec<((u32, String), (u32, u32))>,
 }
 
@@ -1958,8 +1994,7 @@ impl Ramps {
     /// use; `None` when it doesn't fit in what's left.
     fn place(&mut self, font: u32, set: &GlyphSet, name: &str) -> Option<(u32, u32)> {
         let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
-        let fit = fit_ramp(ramp.atlas_indices());
-        self.pack(font, name, fit)
+        self.pack(font, name, fit_ramp(ramp))
     }
 
     /// Ramp `name` of font `font` and the font's edge glyphs (#335), both
@@ -1971,13 +2006,13 @@ impl Ramps {
         name: &str,
     ) -> Option<((u32, u32), u32)> {
         let ramp = set.ramp(name).unwrap_or_else(|| set.default_ramp());
-        let fit = fit_ramp(ramp.atlas_indices());
+        let fit = fit_ramp(ramp);
         let atlas = set.atlas();
-        let edges: Vec<u32> = set
+        let edges: Vec<(u32, f32)> = set
             .edges()
             .all()
             .iter()
-            .map(|c| atlas.index_of(*c).unwrap_or(0))
+            .map(|c| (atlas.index_of(*c).unwrap_or(0), EQUAL_BANDS))
             .collect();
         let need = |key: &str, len: usize| {
             if self.find(font, key).is_some() {
@@ -2001,15 +2036,18 @@ impl Ramps {
             .map(|(_, at)| *at)
     }
 
-    fn pack(&mut self, font: u32, name: &str, indices: Vec<u32>) -> Option<(u32, u32)> {
+    fn pack(&mut self, font: u32, name: &str, steps: Vec<(u32, f32)>) -> Option<(u32, u32)> {
         if let Some(at) = self.find(font, name) {
             return Some(at);
         }
-        if self.steps.len() + indices.len() > MAX_RAMP {
+        if self.steps.len() + steps.len() > MAX_RAMP {
             return None;
         }
-        let at = (self.steps.len() as u32, indices.len() as u32);
-        self.steps.extend(indices.into_iter().map(|i| (font, i)));
+        let at = (self.steps.len() as u32, steps.len() as u32);
+        // A test may pad `steps` alone; the tones line up from here
+        self.tones.resize(self.steps.len(), EQUAL_BANDS);
+        self.tones.extend(steps.iter().map(|(_, t)| *t));
+        self.steps.extend(steps.into_iter().map(|(i, _)| (font, i)));
         self.placed.push(((font, name.to_string()), at));
         Some(at)
     }
@@ -2701,7 +2739,7 @@ impl StylePass for Ascii {
         };
         let atlas = set.atlas();
         let glyph = atlas.cell_size();
-        let steps = fit_ramp(ramp.atlas_indices());
+        let steps = fit_ramp(ramp);
         // Ramps and palettes are packed, the whole frame's first so its
         // steps and inks sit where the cell state expects them
         let mut ramps = Ramps::default();
@@ -2887,6 +2925,7 @@ impl StylePass for Ascii {
             },
             dissolve_meta: [dissolving.len() as u32, 0, 0, 0],
             dissolve: [[0; 4]; MAX_DISSOLVE],
+            ramp_tone: [[EQUAL_BANDS; 4]; MAX_RAMP / 4],
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -2897,6 +2936,9 @@ impl StylePass for Ascii {
             let pair = &mut uniforms.ramp[i / 2];
             pair[(i % 2) * 2] = x;
             pair[(i % 2) * 2 + 1] = y;
+        }
+        for (i, t) in ramps.tones.iter().enumerate() {
+            uniforms.ramp_tone[i / 4][i % 4] = *t;
         }
         uniforms.palette[..palettes.inks.len()].copy_from_slice(&palettes.inks);
         uniforms.palette_lab[..palettes.lab.len()].copy_from_slice(&palettes.lab);
@@ -3251,16 +3293,17 @@ mod tests {
                 + 16
                 + 16
                 + MAX_DISSOLVE * 16
+                + MAX_RAMP * 4
         );
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, inv_view_proj) % 16,
             0,
             "a mat4x4 is 16-aligned in WGSL"
         );
-        // #351's edge colour, then #398's dissolve bands, last
+        // #351's edge colour, #398's dissolve bands, then #281's ramp tones, last
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, edge_color),
-            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16
+            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16 - MAX_RAMP * 4
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
@@ -3526,14 +3569,37 @@ mod tests {
 
     #[test]
     fn long_ramps_are_resampled_end_to_end() {
-        let short: Vec<u32> = (0..10).collect();
-        assert_eq!(fit_ramp(&short), short);
-        let long: Vec<u32> = (0..300).collect();
-        let fit = fit_ramp(&long);
+        let short: Vec<usize> = (0..10).collect();
+        assert_eq!(fit_positions(10), short);
+        let fit = fit_positions(300);
         assert_eq!(fit.len(), MAX_RAMP);
         assert_eq!(fit[0], 0);
         assert_eq!(*fit.last().unwrap(), 299);
         assert!(fit.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn a_calibrated_ramp_packs_its_bands_and_an_equal_one_the_sentinel() {
+        // #281: the shader's `ramp_tone` table
+        let set = GlyphSet::builtin();
+        let classic = set.ramp("classic").unwrap();
+        let fit = fit_ramp(classic);
+        assert_eq!(fit.len(), classic.len());
+        assert!(fit.iter().all(|(_, t)| *t == EQUAL_BANDS));
+        let calibrated = classic.calibrated();
+        let fit = fit_ramp(&calibrated);
+        let tones: Vec<f32> = fit.iter().map(|(_, t)| *t).collect();
+        assert_eq!(tones, calibrated.bounds());
+        assert_eq!(tones[0], 0.0);
+        assert!(tones.windows(2).all(|w| w[0] <= w[1]));
+        let mut ramps = Ramps::default();
+        let at = ramps.pack(0, "c", fit.clone()).unwrap();
+        ramps.pack(0, "e", vec![(0, EQUAL_BANDS); 4]).unwrap();
+        assert_eq!(ramps.tones.len(), ramps.steps.len());
+        assert_eq!(
+            &ramps.tones[at.0 as usize..(at.0 + at.1) as usize],
+            &tones[..]
+        );
     }
 
     #[test]

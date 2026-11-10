@@ -114,13 +114,10 @@ struct Args {
     #[arg(long)]
     list_gpus: bool,
 
-    /// Initial window width in pixels (ignored with --fullscreen)
-    #[arg(long, default_value_t = 1280)]
-    width: u32,
-
-    /// Initial window height in pixels (ignored with --fullscreen)
-    #[arg(long, default_value_t = 720)]
-    height: u32,
+    /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
+    /// and `--no-activate` (#611)
+    #[command(flatten)]
+    window: flint_player::WindowArgs,
 
     /// Write a PNG of the presented frame (scene + HUD) to this path.
     /// With --screenshot-every the path becomes a numbered base name
@@ -210,7 +207,11 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             println!("{a}");
         }
         return Ok(());
@@ -324,7 +325,8 @@ fn main() -> Result<()> {
     app.style_time = args.style_time;
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
-    app.window_size = (args.width, args.height);
+    app.window_size = args.window.size();
+    app.window_options = args.window.clone();
     app.capture = flint_player::CaptureConfig::new(
         args.screenshot.map(std::path::PathBuf::from),
         args.screenshot_at,
