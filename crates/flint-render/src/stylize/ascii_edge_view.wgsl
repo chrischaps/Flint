@@ -142,7 +142,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let has_line = e.x > 0.5;
     let drawn = has_line && thinned_slot(c) != NO_EDGE;
     let shape = cornered_slot(c, u.corners);
-    let corner = drawn && shape >= 4u && shape != NO_EDGE;
+    // A corner in a gap (#637) draws no line of its own, so it isn't `drawn`
+    let corner = shape >= 4u && shape != NO_EDGE;
     var decision = SHORT_COLOR;
     if corner {
         decision = CORNER_COLOR;

@@ -1026,7 +1026,6 @@ impl ViewerApp {
             return;
         };
         renderer.ensure_kuwahara_resources(&context.device, &context.queue);
-        renderer.ensure_contour_resources(&context.device);
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
@@ -1171,9 +1170,6 @@ impl ViewerApp {
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
-                }
-                if flags.contour_needs_resources {
-                    renderer.ensure_contour_resources(&context.device);
                 }
             }
             if flags.shadows_changed {

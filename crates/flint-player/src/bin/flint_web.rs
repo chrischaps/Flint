@@ -36,6 +36,8 @@
 //!                   kept through scene transitions
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
+//!   seed=<n>        seed scripts' random() (`--seed`, #635); frame_step
+//!                   seeds it too, as the player's --frame-step does
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
 //!                   exact moment (with frame_step; `PlayerApp::hold_at`)
 //!   perf=1|cpu      the perf readout in a corner (#120): frame times over
@@ -96,6 +98,7 @@ mod web {
         render_scale: flint_player::RenderScaleSetting,
         size: Option<(u32, u32)>,
         frame_step: Option<f64>,
+        seed: Option<u64>,
         hold_at: Option<f64>,
         /// `Some(gpu)`: show the perf readout, timing the GPU too when true.
         perf: Option<bool>,
@@ -137,6 +140,7 @@ mod web {
                     .unwrap_or_else(flint_player::RenderScaleSetting::web),
                 size: num("width").zip(num("height")),
                 frame_step: secs("frame_step").filter(|s| *s > 0.0),
+                seed: get("seed").and_then(|v| v.parse::<u64>().ok()),
                 hold_at: secs("hold_at"),
                 perf: get("perf").and_then(|v| match v.as_str() {
                     "cpu" => Some(false),
@@ -261,6 +265,12 @@ mod web {
         app.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
         app.clock.frame_step = args.frame_step;
+        if let Some(seed) = args
+            .seed
+            .or(args.frame_step.map(|_| flint_player::SCRIPT_SEED))
+        {
+            app.script.seed_random(seed);
+        }
         app.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {

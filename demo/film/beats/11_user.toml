@@ -20,7 +20,7 @@ glow = 0.9
 [post_process.styles.risograph]
 enabled = false
 
-[post_process.styles.contour]
+[post_process.styles.contour_map]
 enabled = false
 
 [entities.figure.style_mask]

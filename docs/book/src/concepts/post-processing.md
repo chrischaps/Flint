@@ -211,7 +211,7 @@ sharpness = 6.0
 hardness = 4.0
 ```
 
-In a scene with a `[wooze]` table its paint can also boil: `kuwahara_boil` (a plain `[post_process]` key beside `contour_boil` and `boil_on`, not one of the table's) moves the kernel and turns the strokes a little on each drawing. See [Shading boil](#shading-boil).
+In a scene with a `[wooze]` table its paint can also boil: `boil` moves the kernel and turns the strokes a little on each drawing. See [Shading boil](#shading-boil).
 
 | Key | Default | Menu range | Description |
 |-----|---------|------------|-------------|
@@ -219,29 +219,39 @@ In a scene with a `[wooze]` table its paint can also boil: `kuwahara_boil` (a pl
 | `sharpness` | `8.0` | 1--16 | How strongly the lowest-variance sector wins |
 | `hardness` | `8.0` | 1--16 | Edge hardness between sectors |
 | `anisotropy` | `1.0` | 0--2 | 0 = isotropic disc, 1 = sectors stretch fully along the local edge direction |
+| `boil` | `0.0` | 0--1 | With a `[wooze]` table, how far each drawing moves the paint, as a share of the radius |
 
-Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness` and `kuwahara_anisotropy` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
+Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness`, `kuwahara_anisotropy` and `kuwahara_boil` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
 
 The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing. Kuwahara is the first [stylize pass](stylize-passes.md): it runs through the same framework as every later style, in its HDR stage.
 
 ## Contour (Ink Lines)
 
-The contour pass draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It runs after the Kuwahara filter, so paint sits under the ink and never smears it.
+The contour style draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It's an HDR-stage [style](stylize-passes.md) registered after every other built-in, so it runs after the Kuwahara filter: paint sits under the ink and never smears it. A table's `order` can move it, and a [user style](stylize-passes.md#user-authored-styles) at the HDR stage comes after it unless its `order` says otherwise.
 
 Depth is read as the second difference of 1 / distance, which is zero on any flat surface however steep the view, so a floor seen at a grazing angle draws no lines.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `contour_enabled` | bool | `false` | Enable the pass |
-| `contour_width` | f32 | `1.25` | Half a line's width, in pixels at 1080p. Scaled with the frame, and never under a pixel's reach |
-| `contour_threshold` | f32 | `0.08` | How strong an edge must be before it starts to ink. Lower draws more |
-| `contour_strength` | f32 | `0.9` | How dark the ink goes, 0--1 |
-| `contour_luma` | f32 | `0.5` | How much edges in luminance count against edges in depth. 0 is silhouettes only |
-| `contour_color` | \[f32; 3\] | `[0.015, 0.012, 0.02]` | The ink's colour, linear |
-| `contour_fade` | f32 | `30.0` | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
-| `contour_boil` | f32 | `0.0` | How far each drawing moves the lines, and how much it changes their width and pressure |
+```toml
+[post_process.styles.contour]
+width = 1.5
+fade = 26.0
+```
 
-Its texture and pipeline are allocated the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
+| Key | Default | Menu range | Description |
+|-----|---------|------------|-------------|
+| `width` | `1.25` | 0.25--5 | Half a line's width, in pixels at 1080p. Scaled with the frame, and never under a pixel's reach |
+| `threshold` | `0.08` | 0.01--0.5 | How strong an edge must be before it starts to ink. Lower draws more |
+| `strength` | `0.9` | 0--1 | How dark the ink goes |
+| `luma` | `0.5` | 0--2 | How much edges in luminance count against edges in depth. 0 is silhouettes only |
+| `color` | `[0.015, 0.012, 0.02]` | | The ink's colour as the HDR scene holds it (linear); `"#rrggbb"` works too |
+| `fade` | `30.0` | 0--200 | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
+| `boil` | `0.0` | 0--2 | With a `[wooze]` table, how far each drawing moves the lines, and how much it changes their width and pressure |
+
+Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `flint render --contour` and the `--contour-*` flags still work, as shorthands for its keys.
+
+Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `demo/shading_boil.scene.toml` renders the same bytes in either spelling.
+
+Its pipeline is built the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
 
 ## Shading Boil
 
@@ -260,12 +270,16 @@ In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink c
 preset = "linklater"
 
 [post_process]
-kuwahara_enabled = true
-kuwahara_boil = 0.5
-contour_enabled = true
-contour_boil = 1.0
 boil_on = 1
+
+[post_process.styles.kuwahara]
+boil = 0.5
+
+[post_process.styles.contour]
+boil = 1.0
 ```
+
+Each style's `boil` is its own amount; how long each drawing is held is one `[post_process]` key the two share:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -273,9 +287,9 @@ boil_on = 1
 
 A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `demo/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
-The field's `jitter` sets how hard it boils: both `_boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
+The field's `jitter` sets how hard it boils: both styles' `boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
 
-With either `_boil` at 0, or no `[wooze]` table, that pass renders byte for byte as if boil didn't exist. The contour still draws in a scene with no field; its lines just hold still.
+With either `boil` at 0, or no `[wooze]` table, that pass renders byte for byte as if boil didn't exist. The contour still draws in a scene with no field; its lines just hold still.
 
 To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
 
@@ -357,7 +371,6 @@ volumetric_enabled = false
 dof_strength = 0.4
 dof_focus_distance = 8.0
 dof_focus_range = 4.0
-contour_enabled = false
 grade_lift = [0.03, 0.02, 0.015]
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.04, 1.0, 0.94]

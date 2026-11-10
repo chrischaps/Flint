@@ -41,6 +41,17 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 impl PlayerApp {
+    /// Why the run failed, once `run_app` has returned: the player didn't
+    /// start, or a run that asked for a screenshot doesn't have it (#639).
+    /// A binary exits non-zero on `Some`, so a capture that left no file
+    /// can't pass for one that did.
+    pub fn run_failure(&self) -> Option<String> {
+        if let Some(e) = &self.init_error {
+            return Some(format!("the player failed to start: {e}"));
+        }
+        self.capture.missing()
+    }
+
     pub fn new(
         world: FlintWorld,
         scene_path: String,
@@ -108,6 +119,8 @@ impl PlayerApp {
             frame_pacer: None,
             hold_at: None,
             scene_diffuse_wrap: None,
+            scene_shadows: true,
+            scene_default_lights: true,
             scene_oren_nayar: None,
             scene_sheen: None,
             scene_camera: None,
@@ -151,6 +164,7 @@ impl PlayerApp {
             capture: CaptureConfig::default(),
             expression_feed: None,
             exit_requested: false,
+            init_error: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -225,6 +239,11 @@ impl PlayerApp {
     /// (`main.rs` and the web's `flint_web.rs`) call it after `new`.
     pub fn apply_scene_settings(&mut self, scene_file: &flint_scene::SceneFile) {
         self.scene_preload_audio = scene_file.scene.preload_audio;
+
+        // No shadows, no built-in lights (#627)
+        let env = scene_file.environment.as_ref();
+        self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
+        self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
 
         // Skybox path + ambient from scene environment settings
         if let Some(env) = &scene_file.environment {
@@ -616,6 +635,8 @@ impl PlayerApp {
         // Refresh renderer with any new procedural meshes
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
+        scene_renderer.set_scene_shadows(self.scene_shadows);
+        scene_renderer.set_default_lights(self.scene_default_lights);
         // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
         if let Some((sky, ground)) = self.scene_ambient {
             scene_renderer.set_ambient(sky, ground);
@@ -680,7 +701,6 @@ impl PlayerApp {
             scene_renderer.set_post_process_config(config);
             scene_renderer.ensure_style_resources(&render_context.device);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
-            scene_renderer.ensure_contour_resources(&render_context.device);
         }
     }
 

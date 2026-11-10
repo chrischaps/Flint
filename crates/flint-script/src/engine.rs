@@ -273,6 +273,54 @@ impl ScriptEngine {
         self.scripts.insert(entity, instance);
     }
 
+    /// Hot-reload an entity's script with a new AST (#634). The entity's scope
+    /// is kept, so every variable it already has keeps its value; a top-level
+    /// `let` or `const` the new source adds gets its initial value. Returns the
+    /// names it added (empty when there is no script on `entity`).
+    ///
+    /// The new source's top-level statements run once, into a scope of their
+    /// own, and only names the kept scope lacks are copied over. Running them
+    /// again has no cost a script doesn't already pay: `call_fn` evaluates a
+    /// script's top-level statements before every callback (that is how a
+    /// global `import` reaches `on_update`), rewinding the `let`s it pushes.
+    pub fn reload_script(&mut self, entity: EntityId, ast: AST) -> Vec<String> {
+        let Some(script) = self.scripts.get_mut(&entity) else {
+            return Vec::new();
+        };
+        script.hot_reload(ast);
+
+        let mut fresh = Scope::new();
+        if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
+            tracing::warn!(
+                "module init error on reload ({}): {}",
+                script.source_path,
+                e
+            );
+        }
+        // A name the source declares twice appears twice, oldest first; the
+        // last declaration is the one the callbacks would see.
+        let mut new_vars: Vec<(String, bool, rhai::Dynamic)> = Vec::new();
+        for (name, is_constant, value) in fresh.iter() {
+            if script.scope.contains(name) {
+                continue;
+            }
+            match new_vars.iter_mut().find(|(n, ..)| n == name) {
+                Some(entry) => *entry = (name.to_string(), is_constant, value),
+                None => new_vars.push((name.to_string(), is_constant, value)),
+            }
+        }
+        for (name, is_constant, value) in &new_vars {
+            if *is_constant {
+                script
+                    .scope
+                    .push_constant_dynamic(name.clone(), value.clone());
+            } else {
+                script.scope.push_dynamic(name.clone(), value.clone());
+            }
+        }
+        new_vars.into_iter().map(|(name, ..)| name).collect()
+    }
+
     /// Say which entity a script is on, by name, so it runs in its place in
     /// [`Self::in_order`].
     pub fn name_script(&mut self, entity: EntityId, name: &str) {
@@ -2003,6 +2051,87 @@ mod tests {
         assert!(script.init_called);
         assert!(script.has_on_update);
         assert!(!script.has_on_init);
+    }
+
+    #[test]
+    fn test_hot_reload_initialises_new_top_level_lets() {
+        // #634: a reload that adds `let boost_s` (read by on_update) used to
+        // fail every frame with `Variable not found`. Now the new variable gets
+        // its initial value and the old one keeps the value it had reached.
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("reload_lets").unwrap();
+        let mut state = toml::map::Map::new();
+        state.insert("ticks".into(), toml::Value::Float(-1.0));
+        state.insert("boost".into(), toml::Value::Float(-1.0));
+        state.insert("limit".into(), toml::Value::Float(-1.0));
+        world
+            .set_component(id, "state", toml::Value::Table(state))
+            .unwrap();
+
+        let v1 = engine
+            .compile(
+                r#"
+            let ticks = 0.0;
+            fn on_update() {
+                ticks += 1.0;
+                set_field(self_entity(), "state", "ticks", ticks);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, v1, "audio.rhai".into());
+        engine.call_inits(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+
+        let v2 = engine
+            .compile(
+                r#"
+            let ticks = 0.0;
+            let boost_s = 0.5;
+            let boost_s = 0.25;
+            const LIMIT = 3.0;
+            fn on_update() {
+                ticks += 1.0;
+                boost_s += 1.0;
+                let me = self_entity();
+                set_field(me, "state", "ticks", ticks);
+                set_field(me, "state", "boost", boost_s);
+                set_field(me, "state", "limit", LIMIT);
+            }
+        "#,
+            )
+            .unwrap();
+        let added = engine.reload_script(id, v2);
+        assert_eq!(added, vec!["boost_s".to_string(), "LIMIT".to_string()]);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+
+        let field = |name: &str| {
+            world
+                .get_components(id)
+                .unwrap()
+                .get_field("state", name)
+                .and_then(|v| v.as_float())
+                .unwrap()
+        };
+        assert_eq!(field("ticks"), 5.0, "kept state carries on counting");
+        assert_eq!(
+            field("boost"),
+            2.25,
+            "new let starts at its last declaration"
+        );
+        assert_eq!(field("limit"), 3.0, "new const is there");
+
+        // A second reload of the same source adds nothing and resets nothing.
+        let v3 = engine
+            .compile("let boost_s = 0.25; fn on_update() {}")
+            .unwrap();
+        assert!(engine.reload_script(id, v3).is_empty());
+        let script = engine.scripts.get(&id).unwrap();
+        assert_eq!(script.scope.get_value::<f64>("boost_s"), Some(2.25));
     }
 
     #[test]

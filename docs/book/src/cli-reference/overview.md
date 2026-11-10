@@ -59,7 +59,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--fullscreen` | Launch in fullscreen mode |
 | `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`). A narrow or square window keeps the camera's aspect: it shows less to the sides, never a stretched scene |
 | `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one; write them with `=` (`--position=-1920,0`). Default: wherever the system puts it |
-| `--borderless` | No title bar or frame. Esc still exits and Alt+F4 still closes it |
+| `--borderless` | No title bar or frame. Esc still exits (unless the game binds it) and Alt+F4 still closes it |
 | `--always-on-top` | Keep the window above other windows |
 | `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
@@ -98,19 +98,38 @@ and ignores the real keyboard, mouse and pads, so a stray scroll over its
 window can't change the shot. Only the input script drives it (see
 [input gates](../concepts/input-gates.md#during-a-capture)).
 
+A run that asks for a screenshot either writes it or fails (#639). A read-back
+or save that fails is warned about and tried again on the next frames (up to
+30), and `--exit-after` waits for those retries. If the file still isn't on
+disk when the run ends, the player prints `Error: --screenshot <path> was
+never written: <why>` and exits with status 1. The reason can be the failure,
+or that the run ended before `--screenshot-at`. With `--screenshot-every`, a
+lost frame fails the run the same way. A player that fails to start (no GPU
+adapter, no window) also exits 1 now, from `flint play` too.
+
 | Flag | Description |
 |------|-------------|
 | `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
 | `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
-| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time. With `--screenshot-every` the same build on the same machine writes byte-identical frames run after run (grass included since #341). egui's clock steps with it, so a menu opening animates the same on every run |
+| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time. With `--screenshot-every` the same build on the same machine writes byte-identical frames run after run (grass included since #341). egui's clock steps with it, so a menu opening animates the same on every run. It seeds scripts' `random()` too (below) |
+| `--seed <n>` | Seed scripts' `random()` and `random_range()`: one sequence, shared by every script in the order they run, the same every run. `--frame-step` seeds it on its own with the seed `flint render --scripts` uses, so a stepped player run and a scripted render draw the same numbers; `--seed` names another. Without either they draw from the wall clock. The web page takes `?seed=` |
 | `--pixels-per-point <f32>` | Draw point-sized things (ASCII cells, egui panels, the HUD) at this scale instead of the window's, so a capture is the same on any display. `2` at 3840x2160 lays the frame out as 1920x1080 points |
 | `--look <name\|path>` | Play every scene under a look, merged over its `[post_process]` (and over the look the scene names) as `flint render --look` merges it: a built-in (`flint render --look help` lists them) or a `styles/<name>.look.toml` |
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
+
+A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `demo/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
+
+```bash
+flint-player demo/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 \
+  --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
+flint-player demo/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 --seed 2 \
+  --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
+```
 
 An input script plays its events at set game times. `#` starts a comment:
 
@@ -198,7 +217,7 @@ These are the built-in defaults. Games can override any binding via input config
 | E | Interact with nearby object |
 | R | Reload |
 | 1 / 2 | Select weapon slot |
-| Escape | Release cursor / Exit |
+| Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](../concepts/physics-and-runtime.md#escape)) |
 | F2 | Toggle the render stats overlay (FPS, frame time, draw stats) |
 | F3 | Toggle the scene debug panels (see below); leaves the Rendering & Effects panel alone |
 | F4 | Toggle the **Rendering & Effects** menu: every render and post-processing control, including debug shading mode, shadows, and the lighting levers |

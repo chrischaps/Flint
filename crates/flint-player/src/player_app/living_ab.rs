@@ -186,7 +186,8 @@ impl PlayerApp {
     fn side_boil(&self) -> SideBoil {
         let (paint, ink, on) = self.scene_renderer.as_ref().map_or((0.0, 0.0, 2), |r| {
             let config = r.post_process_config();
-            (config.kuwahara_boil, config.contour_boil, config.boil_on)
+            let (paint, ink) = config.boil_amounts();
+            (paint, ink, config.boil_on)
         });
         SideBoil {
             paint,
@@ -200,8 +201,7 @@ impl PlayerApp {
         self.living_tune.boil_off = boil.off;
         if let Some(renderer) = &mut self.scene_renderer {
             let mut config = renderer.post_process_config().clone();
-            config.kuwahara_boil = boil.paint;
-            config.contour_boil = boil.ink;
+            config.set_boil_amounts(boil.paint, boil.ink);
             config.boil_on = boil.on;
             renderer.set_post_process_config(config);
         }
@@ -496,8 +496,7 @@ pub fn draw_other_side(
     // Its boil and shallow wooze, then the scene as it now stands.
     let own_config = renderer.post_process_config().clone();
     let mut config = own_config.clone();
-    config.kuwahara_boil = side.boil.paint;
-    config.contour_boil = side.boil.ink;
+    config.set_boil_amounts(side.boil.paint, side.boil.ink);
     config.boil_on = side.boil.on;
     let boil = side
         .wooze

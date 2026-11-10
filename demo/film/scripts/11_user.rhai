@@ -14,7 +14,7 @@ fn on_update() {
     let step = if t < 3.6 { 0 } else if t < 6.8 { 1 } else { 2 };
     if step != get_field(self_entity(), "film", "step") {
         set_post_style("risograph", step == 1);
-        set_post_style("contour", step == 2);
+        set_post_style("contour_map", step == 2);
         set_field(self_entity(), "film", "step", step);
     }
 }

@@ -99,18 +99,20 @@ fog_color = [0.90, 0.70, 0.56]
 fog_density = 0.012
 fog_start = 14.0
 fog_end = 150.0
-kuwahara_enabled = true
-kuwahara_radius = 3                     # 4 looks the same here and costs 4 to 6 ms more at 1080p
-kuwahara_sharpness = 8.0
-kuwahara_hardness = 6.0
-kuwahara_boil = 0.5
-contour_enabled = true
-contour_width = 1.25
-contour_boil = 1.0
-contour_fade = 26.0
 boil_on = 1                             # at linklater's half second, 12 drawings a second
 grade_lift = [0.012, 0.018, 0.03]
 grade_gain = [1.05, 1.0, 0.95]
+
+[post_process.styles.kuwahara]
+radius = 3                     # 4 looks the same here and costs 4 to 6 ms more at 1080p
+sharpness = 8.0
+hardness = 6.0
+boil = 0.5
+
+[post_process.styles.contour]
+width = 1.25
+boil = 1.0
+fade = 26.0
 
 # --- Light: the last hour, low across the clearing from the north-east, over your shoulder ---
 

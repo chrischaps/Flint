@@ -261,9 +261,13 @@ impl ScriptSync {
     ) {
         match ast {
             Ok(ast) => {
-                if let Some(script) = engine.scripts.get_mut(&entity_id) {
+                if let Some(script) = engine.scripts.get(&entity_id) {
                     println!("[script] Hot-reloaded: {}", script.source_path);
-                    script.hot_reload(ast);
+                }
+                // New top-level lets get their initial values (#634)
+                let added = engine.reload_script(entity_id, ast);
+                if !added.is_empty() {
+                    println!("[script]   new top-level variables: {}", added.join(", "));
                 }
             }
             Err(e) => {

@@ -47,15 +47,17 @@ ssao_radius = 0.5
 ssao_intensity = 0.8
 vignette_enabled = true
 vignette_intensity = 0.3
-kuwahara_enabled = true
-kuwahara_radius = 4
-kuwahara_sharpness = 8.0
-kuwahara_hardness = 6.0
-kuwahara_boil = 0.5
-contour_enabled = true
-contour_width = 1.5
-contour_boil = 1.0
 boil_on = 2
+
+[post_process.styles.kuwahara]
+radius = 4
+sharpness = 8.0
+hardness = 6.0
+boil = 0.5
+
+[post_process.styles.contour]
+width = 1.5
+boil = 1.0
 
 # --- Light: late afternoon through a window ---
 
