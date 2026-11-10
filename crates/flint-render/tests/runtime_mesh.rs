@@ -1531,3 +1531,42 @@ fn thousands_of_distinct_looks_draw() {
     assert_eq!(stats.entity_draws as usize, LOOKS);
     assert!(gpu.centre_pixel()[1] > 0, "the tiles drew");
 }
+
+/// Several entities sharing one skinned GLB all draw it skinned (#624).
+/// The second used to be re-imported and expanded into glTF nodes, which
+/// took its model away: of five figures in a row, one drew.
+#[test]
+fn every_instance_of_a_skinned_model_stays_skinned() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    let ids: Vec<_> = (0..3)
+        .map(|i| {
+            let id = world.spawn(format!("figure_{i}")).unwrap();
+            let mut model = toml::Table::new();
+            model.insert("asset".into(), "YBotWithIdle".into());
+            world.set_component(id, "model", model.into()).unwrap();
+            id
+        })
+        .collect();
+    let demo = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demo/x.scene.toml");
+    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(demo);
+    let loaded = flint_render::model_loader::load_models_from_world(
+        &mut world,
+        &mut renderer,
+        &gpu.device,
+        &gpu.queue,
+        &config,
+    );
+    for id in ids {
+        assert!(
+            loaded.skinned_entities.contains_key(&id),
+            "{id:?} is skinned"
+        );
+        assert!(
+            world.get_component(id, "model").is_some(),
+            "{id:?} kept its model"
+        );
+    }
+    assert!(loaded.models.iter().all(|m| !m.was_expanded));
+}

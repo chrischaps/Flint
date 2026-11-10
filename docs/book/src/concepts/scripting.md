@@ -93,6 +93,8 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
 | `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
 | `set_material_override(id, material, r, g, b, a)` | --- | Replace one named glTF material's base colour on this entity and all its expanded child nodes (writes `material_overrides.<material>`; colours above 1 are allowed, see [Colours above 1](#colours-above-1)) |
+| `set_material_emissive(id, material, r, g, b[, strength])` | --- | Recolour one named glTF material's glow (linear RGB; `strength` replaces its `emissive_strength`) on this entity and its expanded child nodes; works on a material with no emission of its own. See [Recolouring an imported model's glow](rendering.md#recolouring-an-imported-models-glow) |
+| `clear_material_override(id, material)` | --- | Drop this entity's own override of one material, colour and glow, so the material or an ancestor's override shows again |
 | `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
 | `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |

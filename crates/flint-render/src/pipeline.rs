@@ -206,8 +206,21 @@ impl MaterialUniforms {
 
     /// Sets the emission from an imported material.
     pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
-        let [r, g, b] = material.emissive;
-        let s = material.emissive_strength;
+        self.set_emission_overridden(material, None, None);
+    }
+
+    /// [`set_emission`](Self::set_emission) with the material's `emissive`
+    /// colour and `emissive_strength` replaced where given (#624: a
+    /// `material_overrides` entry recolouring an imported model's glow). The
+    /// strength reaches per-vertex light too, as the material's own does.
+    pub fn set_emission_overridden(
+        &mut self,
+        material: &flint_import::ImportedMaterial,
+        emissive: Option<[f32; 3]>,
+        strength: Option<f32>,
+    ) {
+        let [r, g, b] = emissive.unwrap_or(material.emissive);
+        let s = strength.unwrap_or(material.emissive_strength);
         let per_vertex = material.vertex_emission && material.use_vertex_color;
         self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
         self.vertex_emission = per_vertex as u32;
@@ -837,10 +850,14 @@ impl RenderPipeline {
                 cache: None,
             })
         };
-        let transparent_alpha_back_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
-        let transparent_alpha_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
+        let transparent_alpha_back_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (back faces)",
+            Some(wgpu::Face::Front),
+        );
+        let transparent_alpha_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (front faces)",
+            Some(wgpu::Face::Back),
+        );
 
         // Transparent additive pipeline: src*SrcAlpha + dst*One
         let transparent_additive_pipeline =
