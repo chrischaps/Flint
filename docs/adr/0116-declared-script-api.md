@@ -1,8 +1,6 @@
 # ADR 0116: A declared script API: one registration layer that lists, checks and coerces
 
-Status: proposed, 2026-11-10 (#695, with #694, #696, #697, #698, #701, #702;
-audit epic #671). Not accepted: the "Decisions needed" at the end are Chris's
-to make before work starts.
+Status: accepted, 2026-11-10 (#695, with #694, #696, #697, #698, #701, #702; audit epic #671)
 
 ## Context
 
@@ -143,16 +141,13 @@ found about scripting follows from that:
 - `flint script api` on the plain CLI lists the engine's functions. A game
   binary with extensions lists its own by exposing the same command.
 
-## Decisions needed
+## Decisions
 
-1. **Builder with argument kinds (recommended), or Rhai plugin modules?**
-   The builder is more code of ours and solves coercion, entity handling and
-   listing together. Plugin modules are less code and solve listing only.
-2. **The overhead gate.** What per-call cost is acceptable on the phone
-   before step 2 goes ahead? Proposed: no more than 5% on the heaviest
-   script-drawn demo's frame time; hot draw functions keep typed
-   registrations if it is exceeded.
-3. **Deprecated names** (`this_entity`, `log_info`, `draw_line_3d`, the
-   twelve single-purpose post setters): how long do they stay? Proposed: one
-   release marked deprecated in the listing and flagged by the checker, then
-   removed, with a changelog entry (#765).
+Chris accepted the recommendations on 2026-11-10:
+
+1. **The builder with argument kinds**, not Rhai plugin modules.
+2. **The overhead gate** is 5% of frame time on the heaviest script-drawn
+   demo, measured on desktop and on the phone in step 1. If it is exceeded,
+   hot draw functions keep typed registrations.
+3. **Deprecated names** stay for one release, marked in the listing and
+   flagged by the checker, then go, with a changelog entry (#765).

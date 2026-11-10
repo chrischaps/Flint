@@ -1,8 +1,6 @@
 # ADR 0117: Player subsystems, named stages, and one game step shared with headless runs
 
-Status: proposed, 2026-11-10 (#724, with #723, #725, #727, #745, #753, #754;
-audit epics #673 and #675). Not accepted: the "Decisions needed" at the end are
-Chris's to make before work starts.
+Status: accepted, 2026-11-10 (#724, with #723, #725, #727, #745, #753, #754; audit epics #673 and #675)
 
 ## Context
 
@@ -138,15 +136,12 @@ problems are around it:
 - Byte-identical frames are the gate at every step: the goldens, the
   `--frame-step` captures and `render_time_cli`.
 
-## Decisions needed
+## Decisions
 
-1. **Internal trait first, public hooks second (recommended)**, or go
-   straight to widening `PlayerExtension`?
-2. **Does the rhythm layer stay in this repo** behind a feature, or move to
-   the game's repo as an extension once the hooks exist? The ADR assumes it
-   stays, behind a feature; moving it is cleaner for the engine and means the
-   game carries about 8k lines.
-3. **Is A/B compare (F5/F6/F7) worth keeping general?** It could become a
-   general "two configurations, split screen" reviewer tool for looks and
-   quality tiers, or stay a living-props tool behind its subsystem. The
-   second is assumed.
+Chris accepted the recommendations on 2026-11-10:
+
+1. **An internal `Subsystem` trait first**; the same hooks on
+   `PlayerExtension` second.
+2. **The rhythm layer stays in this repo**, behind a Cargo feature.
+3. **A/B compare stays a living-props tool** behind its subsystem. A general
+   split-screen comparison would be a separate proposal.

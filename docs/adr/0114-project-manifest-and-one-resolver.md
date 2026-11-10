@@ -1,7 +1,6 @@
 # ADR 0114: A project manifest and one resolver for schemas, roots and assets
 
-Status: proposed, 2026-11-10 (#706; audit epic #672). Not accepted: the "Decisions
-needed" at the end are Chris's to make before work starts.
+Status: accepted, 2026-11-10 (#706; audit epic #672)
 
 ## Context
 
@@ -119,14 +118,14 @@ current scene (#726).
 - A scene nested two folders deep finds project assets. Today it doesn't.
 - The CLI gains one concept to document and loses a flag from every example.
 
-## Decisions needed
+## Decisions
 
-1. **One file or two?** Fold `bundle.toml`'s `[web]` and `[mount]` into
-   `flint.toml` (one file, a migration for the shipped games), or keep both
-   (no migration, `id` and `scene` stated twice)? Recommended: keep both for
-   now, and let `flint bundle` read `id` and `scene` from `flint.toml` when
-   `bundle.toml` omits them.
-2. **The precedence rule** in point 4: scene directory first, then upward to
-   the root, then the engine. Agreed?
-3. **How loud is the change of order?** A one-release "would have picked"
-   log (recommended), or a hard switch noted in the changelog (#765)?
+Chris accepted the recommendations on 2026-11-10:
+
+1. **Two files.** `bundle.toml` stays as the packing rules. `flint bundle` reads
+   `id` and `scene` from `flint.toml` when `bundle.toml` omits them.
+2. **Precedence** is the scene's directory first, then upward to the project
+   root, then the mounted engine directories, for every kind.
+3. **The change of order is logged for one release**: where the old per-kind
+   rule would have picked a different file, the resolver says so. Then the
+   log goes, with a changelog entry (#765).

@@ -1,8 +1,6 @@
 # ADR 0115: One list of scene diagnostics, complete schemas, and typed component reads
 
-Status: proposed, 2026-11-10 (#683, with #681, #684, #685, #686, #687; audit
-epic #670). Not accepted: the "Decisions needed" at the end are Chris's to make
-before work starts.
+Status: accepted, 2026-11-10 (#683, with #681, #684, #685, #686, #687; audit epic #670)
 
 ## Context
 
@@ -124,15 +122,13 @@ Open issues #339, #282 and #556 each cover a corner of this.
 - A game can still add fields to an engine component; it gets a warning it
   can silence by declaring the field in its own schema layer.
 
-## Decisions needed
+## Decisions
 
-1. **Unknown fields: warning or error?** Recommended: warning with a
-   suggestion, and an `--strict` flag (and a `[project] strict = true` key)
-   that makes them errors. The alternative, error by default, will break
-   game repos on their next engine update.
-2. **Does the player print diagnostics every run**, or only under a flag?
-   Recommended: every run, summarized to one line plus the first few, with
-   the full list from `flint validate`.
-3. **Old type spellings** (`float`, `boolean`): accept forever, or rewrite
-   the engine's schema files once and warn on the old ones in game schemas?
-   Recommended: rewrite and warn.
+Chris accepted the recommendations on 2026-11-10:
+
+1. **An unknown field is a warning with a suggestion.** `--strict`, and
+   `[project] strict = true` in the manifest, make it an error.
+2. **The player prints diagnostics on every run**, summarized to one line
+   plus the first few. `flint validate` prints the full list.
+3. **Old type spellings** (`float`, `boolean`) are rewritten in the engine's
+   schema files and warned about in a game's.
