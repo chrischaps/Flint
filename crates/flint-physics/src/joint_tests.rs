@@ -403,7 +403,10 @@ fn jointed_child_follows_kinematic_parent_after_resting() {
         sys.fixed_update(&mut world, DT).unwrap();
     }
     let before = world_pos(&world, arm);
-    assert!((before[2] - 0.5).abs() < 0.05, "arm at rest behind base: {before:?}");
+    assert!(
+        (before[2] - 0.5).abs() < 0.05,
+        "arm at rest behind base: {before:?}"
+    );
 
     // Script drives the base 3 m along +X.
     world
@@ -463,7 +466,12 @@ fn hinged_child_turns_with_yawing_kinematic_parent() {
     // Yaw the base 90 degrees over a second, 1.5 deg per step.
     for i in 1..=60 {
         world
-            .set_field(base, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .set_field(
+                base,
+                "transform",
+                "rotation",
+                floats(&[0.0, 1.5 * i as f64, 0.0]),
+            )
             .unwrap();
         sys.fixed_update(&mut world, DT).unwrap();
     }
@@ -486,11 +494,31 @@ fn hinged_child_turns_when_the_kinematic_parents_own_parent_yaws() {
     // root (no body, script-yawed) -> base (kinematic) -> arm (hinge)
     let root = world.spawn("root").unwrap();
     world
-        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 2.0, 0.0]))]))
+        .set_component(
+            root,
+            "transform",
+            table(vec![("position", floats(&[0.0, 2.0, 0.0]))]),
+        )
         .unwrap();
-    let base = body(&mut world, "base", [0.0, 0.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 0.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
     world.set_parent(base, root).unwrap();
-    let arm = body(&mut world, "arm", [0.0, 0.0, 1.0], "dynamic", "box", [0.1, 0.1, 0.1], 0.0);
+    let arm = body(
+        &mut world,
+        "arm",
+        [0.0, 0.0, 1.0],
+        "dynamic",
+        "box",
+        [0.1, 0.1, 0.1],
+        0.0,
+    );
     world.set_parent(arm, base).unwrap();
     joint(
         &mut world,
@@ -510,7 +538,12 @@ fn hinged_child_turns_when_the_kinematic_parents_own_parent_yaws() {
     }
     for i in 1..=60 {
         world
-            .set_field(root, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .set_field(
+                root,
+                "transform",
+                "rotation",
+                floats(&[0.0, 1.5 * i as f64, 0.0]),
+            )
             .unwrap();
         sys.fixed_update(&mut world, DT).unwrap();
     }
@@ -539,11 +572,23 @@ fn collider_less_hinged_body_rotates_with_parent_and_motor() {
     // A game may give a jointed node a rigidbody for mass alone (a collider on
     // the chain would be hit by the vehicle's own ground ray). Without angular
     // inertia such a body could never turn.
-    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 2.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
     // Hinge anchored at the arm's own origin, as a vehicle articulation is.
     let arm = world.spawn("arm").unwrap();
     world
-        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.3]))]))
+        .set_component(
+            arm,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.3]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -568,7 +613,12 @@ fn collider_less_hinged_body_rotates_with_parent_and_motor() {
     sys.initialize(&mut world).unwrap();
     for i in 1..=60 {
         world
-            .set_field(base, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .set_field(
+                base,
+                "transform",
+                "rotation",
+                floats(&[0.0, 1.5 * i as f64, 0.0]),
+            )
             .unwrap();
         sys.fixed_update(&mut world, DT).unwrap();
     }
@@ -605,10 +655,22 @@ fn jointed_child_keeps_up_with_a_fast_kinematic_parent() {
     // against the kinematic body's start-of-step pose, so with n substeps a
     // jointed child trails a scripted parent by (n-1)/n of the parent's step
     // travel: 0.22 m at 18 m/s. Flint runs one substep so the child keeps up.
-    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 2.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
     let arm = world.spawn("arm").unwrap();
     world
-        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.3]))]))
+        .set_component(
+            arm,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.3]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -635,7 +697,12 @@ fn jointed_child_keeps_up_with_a_fast_kinematic_parent() {
     for i in 1..=12 {
         // 0.3 m per step along +Z: 18 m/s, a vehicle at speed.
         world
-            .set_field(base, "transform", "position", floats(&[0.0, 2.0, 0.3 * i as f64]))
+            .set_field(
+                base,
+                "transform",
+                "position",
+                floats(&[0.0, 2.0, 0.3 * i as f64]),
+            )
             .unwrap();
         sys.fixed_update(&mut world, DT).unwrap();
         let lz = world.get_transform(arm).unwrap().position.z;
@@ -658,13 +725,29 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
     // post-step projection keeps the pod on the base.
     let root = world.spawn("root").unwrap();
     world
-        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 2.0, 0.0]))]))
+        .set_component(
+            root,
+            "transform",
+            table(vec![("position", floats(&[0.0, 2.0, 0.0]))]),
+        )
         .unwrap();
-    let base = body(&mut world, "base", [0.0, 0.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 0.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
     world.set_parent(base, root).unwrap();
     let pod = world.spawn("pod").unwrap();
     world
-        .set_component(pod, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .set_component(
+            pod,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.0]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -687,11 +770,23 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
     );
     // A steering head (kinematic, yawed under the child) with a sprung
     // prismatic piston hanging forward and down, like the trike's front wheel.
-    let head = body(&mut world, "head", [0.0, 0.4, -1.0], "kinematic", "box", [0.1, 0.1, 0.1], 0.0);
+    let head = body(
+        &mut world,
+        "head",
+        [0.0, 0.4, -1.0],
+        "kinematic",
+        "box",
+        [0.1, 0.1, 0.1],
+        0.0,
+    );
     world.set_parent(head, base).unwrap();
     let piston = world.spawn("piston").unwrap();
     world
-        .set_component(piston, "transform", table(vec![("position", floats(&[0.0, -0.12, -0.45]))]))
+        .set_component(
+            piston,
+            "transform",
+            table(vec![("position", floats(&[0.0, -0.12, -0.45]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -724,7 +819,11 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
             yaw -= ((i as f64 - 59.0) / 10.0).min(1.0);
         }
         // Steering head swings 20 deg each way while turning, from zero.
-        let steer = if i >= 60 { 20.0 * ((i as f64 - 60.0) * 0.1).sin() } else { 0.0 };
+        let steer = if i >= 60 {
+            20.0 * ((i as f64 - 60.0) * 0.1).sin()
+        } else {
+            0.0
+        };
         world
             .set_field(head, "transform", "rotation", floats(&[0.0, steer, 0.0]))
             .unwrap();
@@ -749,7 +848,8 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
         let pt = world.get_transform(piston).unwrap();
         let d = [pt.position.x, pt.position.y + 0.12, pt.position.z + 0.45];
         let along = d[1] * -0.26 + d[2] * -0.97;
-        let perp = (d[0].powi(2) + (d[1] - along * -0.26).powi(2) + (d[2] - along * -0.97).powi(2)).sqrt();
+        let perp =
+            (d[0].powi(2) + (d[1] - along * -0.26).powi(2) + (d[2] - along * -0.97).powi(2)).sqrt();
         // The spring holds the piston near rest; the turn must not pump it
         // along its axis (the drift used to walk it to the stroke limit).
         // Within the stroke always; once accelerating stops (step 60) the
@@ -868,16 +968,36 @@ fn prismatic_child_stays_put_under_ragged_frame_times() {
     for &(hz_a, hz_b) in &[(60.0f64, 60.0f64), (45.0, 75.0), (40.0, 90.0), (55.0, 65.0)] {
         let mut world = FlintWorld::new();
         let mut sys = PhysicsSystem::new();
-        let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
-        let piston = body(&mut world, "piston", [0.0, 0.0, -0.5], "dynamic", "box", [0.1, 0.1, 0.1], 0.0);
+        let base = body(
+            &mut world,
+            "base",
+            [0.0, 2.0, 0.0],
+            "kinematic",
+            "box",
+            [0.2, 0.2, 0.2],
+            0.0,
+        );
+        let piston = body(
+            &mut world,
+            "piston",
+            [0.0, 0.0, -0.5],
+            "dynamic",
+            "box",
+            [0.1, 0.1, 0.1],
+            0.0,
+        );
         world.set_parent(piston, base).unwrap();
-        joint(&mut world, piston, vec![
-            ("type", s("prismatic")),
-            ("axis", floats(&[0.0, 0.0, -1.0])),
-            ("limits", floats(&[-0.15, 0.15])),
-            ("motor_stiffness", f(200.0)),
-            ("motor_damping", f(10.0)),
-        ]);
+        joint(
+            &mut world,
+            piston,
+            vec![
+                ("type", s("prismatic")),
+                ("axis", floats(&[0.0, 0.0, -1.0])),
+                ("limits", floats(&[-0.15, 0.15])),
+                ("motor_stiffness", f(200.0)),
+                ("motor_damping", f(10.0)),
+            ],
+        );
         sys.initialize(&mut world).unwrap();
         for _ in 0..60 {
             sys.fixed_update(&mut world, DT).unwrap();
@@ -888,10 +1008,16 @@ fn prismatic_child_stays_put_under_ragged_frame_times() {
         let mut worst_stroke: f32 = 0.0;
         let frames = 240;
         for frame in 0..frames {
-            let frame_dt = if frame % 2 == 0 { 1.0 / hz_a } else { 1.0 / hz_b };
+            let frame_dt = if frame % 2 == 0 {
+                1.0 / hz_a
+            } else {
+                1.0 / hz_b
+            };
             // scripts-first order: clock tick, scripts, then physics
             z -= speed * frame_dt;
-            world.set_field(base, "transform", "position", floats(&[0.0, 2.0, z])).unwrap();
+            world
+                .set_field(base, "transform", "position", floats(&[0.0, 2.0, z]))
+                .unwrap();
             acc += frame_dt;
             sys.begin_frame(acc / DT);
             while acc >= DT {
@@ -928,24 +1054,44 @@ fn pod_hinge_stays_finite_under_turning_pitching_kinematic_parent() {
 
     let root = world.spawn("root").unwrap();
     world
-        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .set_component(
+            root,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.0]))]),
+        )
         .unwrap();
     let body_id = world.spawn("TrikeBody").unwrap();
     world
-        .set_component(body_id, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .set_component(
+            body_id,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.0]))]),
+        )
         .unwrap();
     world
-        .set_component(body_id, "rigidbody", table(vec![("body_type", s("kinematic"))]))
+        .set_component(
+            body_id,
+            "rigidbody",
+            table(vec![("body_type", s("kinematic"))]),
+        )
         .unwrap();
     world.set_parent(body_id, root).unwrap();
     let yaw = world.spawn("GimbalYaw").unwrap();
     world
-        .set_component(yaw, "transform", table(vec![("position", floats(&[0.0, 0.6, -0.3]))]))
+        .set_component(
+            yaw,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.6, -0.3]))]),
+        )
         .unwrap();
     world.set_parent(yaw, body_id).unwrap();
     let pod = world.spawn("GimbalPitch").unwrap();
     world
-        .set_component(pod, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .set_component(
+            pod,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.0]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -983,9 +1129,18 @@ fn pod_hinge_stays_finite_under_turning_pitching_kinematic_parent() {
             // Root drives a 6 m circle at 12 m/s and bobs; the body pitches
             // +-20 deg on top of a slow sweep up through 180 deg.
             let w = 12.0 / 6.0;
-            let (px, pz, yaw_deg) = (6.0 * (w * t).cos(), 6.0 * (w * t).sin(), -(w * t).to_degrees());
+            let (px, pz, yaw_deg) = (
+                6.0 * (w * t).cos(),
+                6.0 * (w * t).sin(),
+                -(w * t).to_degrees(),
+            );
             world
-                .set_field(root, "transform", "position", floats(&[px, 0.3 * (3.0 * t).sin(), pz]))
+                .set_field(
+                    root,
+                    "transform",
+                    "position",
+                    floats(&[px, 0.3 * (3.0 * t).sin(), pz]),
+                )
                 .unwrap();
             world
                 .set_field(root, "transform", "rotation", floats(&[0.0, yaw_deg, 0.0]))
@@ -1014,12 +1169,18 @@ fn pod_hinge_stays_finite_under_turning_pitching_kinematic_parent() {
                 .rotation_quat
                 .unwrap_or([0.0, 0.0, 0.0, 1.0]);
             assert!(
-                p.x.is_finite() && p.y.is_finite() && p.z.is_finite() && q.iter().all(|c| c.is_finite()),
+                p.x.is_finite()
+                    && p.y.is_finite()
+                    && p.z.is_finite()
+                    && q.iter().all(|c| c.is_finite()),
                 "pod pose went non-finite at t={t:.3}: pos={p:?} quat={q:?}"
             );
             let b = world.get_world_position(body_id).unwrap();
             let d = ((p.x - b.x).powi(2) + (p.y - b.y).powi(2) + (p.z - b.z).powi(2)).sqrt();
-            assert!(d < 2.0, "pod left the body at t={t:.3}: d={d} pod={p:?} body={b:?}");
+            assert!(
+                d < 2.0,
+                "pod left the body at t={t:.3}: d={d} pod={p:?} body={b:?}"
+            );
         }
     }
 }
@@ -1032,10 +1193,22 @@ fn non_finite_jointed_child_is_reseated_at_motor_target() {
     let mut world = FlintWorld::new();
     let mut sys = PhysicsSystem::new();
 
-    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 2.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
     let arm = world.spawn("arm").unwrap();
     world
-        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.5]))]))
+        .set_component(
+            arm,
+            "transform",
+            table(vec![("position", floats(&[0.0, 0.0, 0.5]))]),
+        )
         .unwrap();
     world
         .set_component(
@@ -1065,19 +1238,25 @@ fn non_finite_jointed_child_is_reseated_at_motor_target() {
     let h = sys.sync.body_map[&arm];
     let nan = f32::NAN;
     let b = sys.physics_world.get_rigid_body_mut(h).unwrap();
-    b.set_position(
-        rapier3d::na::Isometry3::translation(nan, nan, nan),
-        true,
-    );
+    b.set_position(rapier3d::na::Isometry3::translation(nan, nan, nan), true);
     b.set_linvel(rapier3d::na::Vector3::new(nan, nan, nan), true);
     sys.fixed_update(&mut world, DT).unwrap();
 
     let p = world.get_world_position(arm).unwrap();
-    assert!(p.x.is_finite() && p.y.is_finite() && p.z.is_finite(), "arm still non-finite: {p:?}");
+    assert!(
+        p.x.is_finite() && p.y.is_finite() && p.z.is_finite(),
+        "arm still non-finite: {p:?}"
+    );
     let b = sys.physics_world.get_rigid_body(h).unwrap();
     assert!(b.linvel().iter().all(|c| c.is_finite()) && b.angvel().iter().all(|c| c.is_finite()));
     // Seated at the anchor and near the 30 deg motor target.
     let angle = sys.sync.joint_position(arm, &sys.physics_world).unwrap();
-    assert!((angle - 30.0).abs() < 5.0, "re-seated angle {angle} should be near the target");
-    assert!((p.y - 2.0).abs() < 0.6 && (p.x).abs() < 0.05, "arm should hang off the base: {p:?}");
+    assert!(
+        (angle - 30.0).abs() < 5.0,
+        "re-seated angle {angle} should be near the target"
+    );
+    assert!(
+        (p.y - 2.0).abs() < 0.6 && (p.x).abs() < 0.05,
+        "arm should hang off the base: {p:?}"
+    );
 }

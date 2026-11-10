@@ -296,10 +296,8 @@ impl<'a> GradientEditor<'a> {
 
         let width = ui.available_width().max(120.0);
         let handle_h = 14.0;
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(width, height + handle_h),
-            Sense::click_and_drag(),
-        );
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, height + handle_h), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let bar = Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         let margin = 6.0;
@@ -350,7 +348,11 @@ impl<'a> GradientEditor<'a> {
             );
             painter.rect_filled(r, 0.0, col);
         }
-        painter.rect_stroke(bar, 3.0, Stroke::new(1.0f32, ui.visuals().weak_text_color()));
+        painter.rect_stroke(
+            bar,
+            3.0,
+            Stroke::new(1.0f32, ui.visuals().weak_text_color()),
+        );
 
         // Handles
         let pointer = response.hover_pos();

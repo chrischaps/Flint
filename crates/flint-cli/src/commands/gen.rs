@@ -297,7 +297,11 @@ pub fn run(args: GenArgs) -> Result<()> {
             args.since.as_deref(),
         );
     }
-    if args.spec.as_deref().is_some_and(super::glyph_preview::is_glyph_set) {
+    if args
+        .spec
+        .as_deref()
+        .is_some_and(super::glyph_preview::is_glyph_set)
+    {
         return super::glyph_preview::run(&args);
     }
     let json = args.report == Some(ReportFormat::Json);

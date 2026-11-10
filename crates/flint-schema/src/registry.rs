@@ -2,9 +2,9 @@
 
 use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
 use crate::component::{ComponentSchema, ComponentSchemaFile};
+use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
-use flint_core::vfs;
 use std::path::{Path, PathBuf};
 
 /// Auto-discover `schemas/` directories by walking up from a scene file path.

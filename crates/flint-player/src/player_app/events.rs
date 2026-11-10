@@ -5,20 +5,24 @@
 //! that exists only to serve these handlers.
 
 use super::egui_input::{Held, Routed};
-use super::input_script::{PointerEvent, ScriptEvent};
-use super::PlayerApp;
-#[cfg(feature = "debug-hud")]
-use super::music_guide_panel;
-#[cfg(feature = "debug-hud")]
-use super::timeline_panel;
 use super::input_config::{
     fallback_user_override_path, gamepad_id_to_u32, user_override_save_path,
     write_user_override_file, PendingRebind,
 };
+use super::input_script::{PointerEvent, ScriptEvent};
+#[cfg(feature = "debug-hud")]
+use super::music_guide_panel;
+#[cfg(feature = "debug-hud")]
+use super::timeline_panel;
+use super::PlayerApp;
 use anyhow::Result;
 use flint_input_capture::pad::{Axis, EventType};
 use flint_runtime::{Binding, RebindMode};
+#[cfg(target_os = "android")]
+use std::collections::HashMap;
 use std::path::Path;
+#[cfg(target_os = "android")]
+use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -27,13 +31,9 @@ use winit::keyboard::NativeKeyCode;
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 use winit::window::CursorGrabMode;
-use winit::window::WindowId;
-#[cfg(target_os = "android")]
-use std::collections::HashMap;
-#[cfg(target_os = "android")]
-use std::sync::Arc;
 #[cfg(target_os = "android")]
 use winit::window::Window;
+use winit::window::WindowId;
 
 /// Tracks Android device IDs that produce gamepad button keycodes,
 /// assigning each a stable u32 slot for InputState's gamepad API.
@@ -307,7 +307,10 @@ impl PlayerApp {
         // egui stops hearing the pointer, so it mustn't think it's still
         // hovering whatever it was over.
         if let Some(egui_winit) = &mut self.egui_winit {
-            egui_winit.egui_input_mut().events.push(egui::Event::PointerGone);
+            egui_winit
+                .egui_input_mut()
+                .events
+                .push(egui::Event::PointerGone);
         }
     }
 
@@ -327,10 +330,8 @@ impl PlayerApp {
                 // The cursor comes back where it read while captured, so
                 // nothing jumps under it.
                 let (w, h) = self.input.screen_size();
-                let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(
-                    w / 2.0,
-                    h / 2.0,
-                ));
+                let _ =
+                    window.set_cursor_position(winit::dpi::PhysicalPosition::new(w / 2.0, h / 2.0));
             }
         }
         self.cursor_captured = false;
@@ -630,32 +631,27 @@ impl ApplicationHandler for PlayerApp {
     }
 }
 
-
 // window_event's per-arm handlers (Stage 2 of the player_app decomposition):
 // each is the former match-arm body, extracted verbatim. A `return` in a
 // handler ends that event's handling exactly as it did in the arm — nothing
 // follows the match in window_event.
 impl PlayerApp {
     pub(super) fn handle_resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-            if let Some(context) = &mut self.render_context {
-                context.resize(new_size);
-                self.camera.aspect = context.aspect_ratio();
-                // Resize post-processing HDR buffer and bloom chain
-                if let Some(renderer) = &mut self.scene_renderer {
-                    renderer.resize_postprocess(
-                        &context.device,
-                        new_size.width,
-                        new_size.height,
-                    );
-                }
+        if let Some(context) = &mut self.render_context {
+            context.resize(new_size);
+            self.camera.aspect = context.aspect_ratio();
+            // Resize post-processing HDR buffer and bloom chain
+            if let Some(renderer) = &mut self.scene_renderer {
+                renderer.resize_postprocess(&context.device, new_size.width, new_size.height);
             }
-            self.input
-                .set_screen_size(new_size.width as f64, new_size.height as f64);
-            #[cfg(target_arch = "wasm32")]
-            self.measure_touch_scale(new_size);
-            if self.cursor_captured {
-                self.centre_the_cursor();
-            }
+        }
+        self.input
+            .set_screen_size(new_size.width as f64, new_size.height as f64);
+        #[cfg(target_arch = "wasm32")]
+        self.measure_touch_scale(new_size);
+        if self.cursor_captured {
+            self.centre_the_cursor();
+        }
     }
 
     /// Pace the clock to the window's monitor when frames wait for vblank
@@ -672,7 +668,12 @@ impl PlayerApp {
             .is_some_and(|c| c.presents_on_vblank());
         let disabled = std::env::var("FLINT_PACING").is_ok_and(|v| v == "0");
         let period = (on_vblank && !disabled)
-            .then(|| self.window.as_ref()?.current_monitor()?.refresh_rate_millihertz())
+            .then(|| {
+                self.window
+                    .as_ref()?
+                    .current_monitor()?
+                    .refresh_rate_millihertz()
+            })
             .flatten()
             .filter(|&mhz| mhz > 0)
             .map(|mhz| 1000.0 / mhz as f64);
@@ -691,101 +692,99 @@ impl PlayerApp {
         device_id: winit::event::DeviceId,
         event: winit::event::KeyEvent,
     ) {
-            // Suppress unused variable warning on non-Android platforms
-            let _ = &device_id;
-            #[cfg(target_arch = "wasm32")]
-            let _ = &event_loop;
+        // Suppress unused variable warning on non-Android platforms
+        let _ = &device_id;
+        #[cfg(target_arch = "wasm32")]
+        let _ = &event_loop;
 
-            if let PhysicalKey::Code(key_code) = event.physical_key {
+        if let PhysicalKey::Code(key_code) = event.physical_key {
+            match event.state {
+                ElementState::Pressed => {
+                    // Handle escape to toggle cursor capture, once it
+                    // has let go of any tree picked in the world (#248).
+                    // A game that binds Escape gets it (#639): the
+                    // cursor still lets go, but the window stays open
+                    // (Alt+F4 and the close button still close it).
+                    if key_code == KeyCode::Escape {
+                        if self.living_let_go() {
+                            return;
+                        }
+                        let escape = Escape::decide(
+                            self.cursor_captured,
+                            self.input.config().binds_key(KeyCode::Escape),
+                        );
+                        if escape.release_cursor {
+                            self.release_cursor();
+                        }
+                        if escape.exit {
+                            // A page has nowhere to exit to.
+                            #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+                            event_loop.exit();
+                        }
+                        if !escape.to_game {
+                            return;
+                        }
+                    }
+
+                    // Debug keys, shared with `--input-script` (H9)
+                    self.handle_debug_key(key_code);
+
+                    self.input.process_key_down(key_code);
+
+                    // On Android, DPad maps to ArrowKeys — also fire gamepad
+                    // button events so configs with gamepad DPad bindings work.
+                    #[cfg(target_os = "android")]
+                    {
+                        let dpad_button = match key_code {
+                            KeyCode::ArrowUp => Some("DPadUp"),
+                            KeyCode::ArrowDown => Some("DPadDown"),
+                            KeyCode::ArrowLeft => Some("DPadLeft"),
+                            KeyCode::ArrowRight => Some("DPadRight"),
+                            _ => None,
+                        };
+                        if let Some(btn) = dpad_button {
+                            let slot = self.android_gamepad.register_device(device_id);
+                            self.input.process_gamepad_button_down(slot, btn);
+                        }
+                    }
+                }
+                ElementState::Released => {
+                    self.input.process_key_up(key_code);
+
+                    #[cfg(target_os = "android")]
+                    {
+                        let dpad_button = match key_code {
+                            KeyCode::ArrowUp => Some("DPadUp"),
+                            KeyCode::ArrowDown => Some("DPadDown"),
+                            KeyCode::ArrowLeft => Some("DPadLeft"),
+                            KeyCode::ArrowRight => Some("DPadRight"),
+                            _ => None,
+                        };
+                        if let Some(btn) = dpad_button {
+                            if let Some(slot) = self.android_gamepad.slot_for(device_id) {
+                                self.input.process_gamepad_button_up(slot, btn);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Android: intercept gamepad buttons delivered as unidentified native keycodes
+        #[cfg(target_os = "android")]
+        if let PhysicalKey::Unidentified(NativeKeyCode::Android(keycode)) = event.physical_key {
+            if let Some(button_name) = Self::android_keycode_to_gamepad_button(keycode) {
+                let slot = self.android_gamepad.register_device(device_id);
                 match event.state {
                     ElementState::Pressed => {
-                        // Handle escape to toggle cursor capture, once it
-                        // has let go of any tree picked in the world (#248).
-                        // A game that binds Escape gets it (#639): the
-                        // cursor still lets go, but the window stays open
-                        // (Alt+F4 and the close button still close it).
-                        if key_code == KeyCode::Escape {
-                            if self.living_let_go() {
-                                return;
-                            }
-                            let escape = Escape::decide(
-                                self.cursor_captured,
-                                self.input.config().binds_key(KeyCode::Escape),
-                            );
-                            if escape.release_cursor {
-                                self.release_cursor();
-                            }
-                            if escape.exit {
-                                // A page has nowhere to exit to.
-                                #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-                                event_loop.exit();
-                            }
-                            if !escape.to_game {
-                                return;
-                            }
-                        }
-
-                        // Debug keys, shared with `--input-script` (H9)
-                        self.handle_debug_key(key_code);
-
-                        self.input.process_key_down(key_code);
-
-                        // On Android, DPad maps to ArrowKeys — also fire gamepad
-                        // button events so configs with gamepad DPad bindings work.
-                        #[cfg(target_os = "android")]
-                        {
-                            let dpad_button = match key_code {
-                                KeyCode::ArrowUp => Some("DPadUp"),
-                                KeyCode::ArrowDown => Some("DPadDown"),
-                                KeyCode::ArrowLeft => Some("DPadLeft"),
-                                KeyCode::ArrowRight => Some("DPadRight"),
-                                _ => None,
-                            };
-                            if let Some(btn) = dpad_button {
-                                let slot = self.android_gamepad.register_device(device_id);
-                                self.input.process_gamepad_button_down(slot, btn);
-                            }
-                        }
+                        self.input.process_gamepad_button_down(slot, button_name);
                     }
                     ElementState::Released => {
-                        self.input.process_key_up(key_code);
-
-                        #[cfg(target_os = "android")]
-                        {
-                            let dpad_button = match key_code {
-                                KeyCode::ArrowUp => Some("DPadUp"),
-                                KeyCode::ArrowDown => Some("DPadDown"),
-                                KeyCode::ArrowLeft => Some("DPadLeft"),
-                                KeyCode::ArrowRight => Some("DPadRight"),
-                                _ => None,
-                            };
-                            if let Some(btn) = dpad_button {
-                                if let Some(slot) = self.android_gamepad.slot_for(device_id) {
-                                    self.input.process_gamepad_button_up(slot, btn);
-                                }
-                            }
-                        }
+                        self.input.process_gamepad_button_up(slot, button_name);
                     }
                 }
             }
-
-            // Android: intercept gamepad buttons delivered as unidentified native keycodes
-            #[cfg(target_os = "android")]
-            if let PhysicalKey::Unidentified(NativeKeyCode::Android(keycode)) =
-                event.physical_key
-            {
-                if let Some(button_name) = Self::android_keycode_to_gamepad_button(keycode) {
-                    let slot = self.android_gamepad.register_device(device_id);
-                    match event.state {
-                        ElementState::Pressed => {
-                            self.input.process_gamepad_button_down(slot, button_name);
-                        }
-                        ElementState::Released => {
-                            self.input.process_gamepad_button_up(slot, button_name);
-                        }
-                    }
-                }
-            }
+        }
     }
 
     /// The player's debug keys: F2 stats overlay, F3/F4 panels, the music
@@ -809,9 +808,7 @@ impl PlayerApp {
                     .debug_panels
                     .iter()
                     .enumerate()
-                    .filter(|(_, p)| {
-                        p.name() != flint_debug_ui::RENDER_DEBUG_PANEL
-                    })
+                    .filter(|(_, p)| p.name() != flint_debug_ui::RENDER_DEBUG_PANEL)
                     .map(|(i, _)| i)
                     .collect();
                 if scene_panels.is_empty() {
@@ -823,8 +820,7 @@ impl PlayerApp {
                     }
                     // Cursor follows ALL panels (incl. the
                     // render panel, which F3 leaves alone).
-                    let any_open =
-                        self.debug_panels.iter().any(|p| p.is_open());
+                    let any_open = self.debug_panels.iter().any(|p| p.is_open());
                     if any_open {
                         self.release_cursor();
                     } else if self.physics.has_player_entity() {
@@ -859,13 +855,9 @@ impl PlayerApp {
             KeyCode::F9 => {
                 if let Some(ms) = self.music_session.as_mut() {
                     ms.debug_force_fail();
-                    println!(
-                        "[music] DEBUG: full-fail forced — rewind incoming"
-                    );
+                    println!("[music] DEBUG: full-fail forced — rewind incoming");
                 } else {
-                    println!(
-                        "[music] no music session running — nothing to fail"
-                    );
+                    println!("[music] no music session running — nothing to fail");
                 }
             }
             // Rendering & Effects menu (ADR 0053): the
@@ -905,9 +897,7 @@ impl PlayerApp {
                     if window.fullscreen().is_some() {
                         window.set_fullscreen(None);
                     } else {
-                        window.set_fullscreen(Some(
-                            winit::window::Fullscreen::Borderless(None),
-                        ));
+                        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                     }
                 }
             }
@@ -1129,64 +1119,50 @@ impl PlayerApp {
     }
 
     fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
-            // Mouse button state always reaches InputState so scripts can
-            // read it (`is_mouse_pressed`, menus, screen-space UI) and the
-            // mouse-as-touch emulation keeps working. FPS scenes (a player
-            // entity exists) additionally treat the first left click as
-            // click-to-capture, which hides the cursor for mouse-look.
-            if let Some(btn) = match button {
-                MouseButton::Left => Some(0),
-                MouseButton::Right => Some(1),
-                MouseButton::Middle => Some(2),
-                _ => None,
-            } {
-                match state {
-                    ElementState::Pressed => self.input.process_mouse_button_down(btn),
-                    ElementState::Released => self.input.process_mouse_button_up(btn),
-                }
+        // Mouse button state always reaches InputState so scripts can
+        // read it (`is_mouse_pressed`, menus, screen-space UI) and the
+        // mouse-as-touch emulation keeps working. FPS scenes (a player
+        // entity exists) additionally treat the first left click as
+        // click-to-capture, which hides the cursor for mouse-look.
+        if let Some(btn) = match button {
+            MouseButton::Left => Some(0),
+            MouseButton::Right => Some(1),
+            MouseButton::Middle => Some(2),
+            _ => None,
+        } {
+            match state {
+                ElementState::Pressed => self.input.process_mouse_button_down(btn),
+                ElementState::Released => self.input.process_mouse_button_up(btn),
             }
+        }
 
-            if !self.cursor_captured
-                && self.physics.has_player_entity()
-                && state == ElementState::Pressed
-                && button == MouseButton::Left
-            {
-                #[cfg(feature = "debug-hud")]
-                let panel_open = self.debug_panels.iter().any(|p| p.is_open());
-                #[cfg(not(feature = "debug-hud"))]
-                let panel_open = false;
-                if !panel_open {
-                    self.capture_cursor();
-                }
+        if !self.cursor_captured
+            && self.physics.has_player_entity()
+            && state == ElementState::Pressed
+            && button == MouseButton::Left
+        {
+            #[cfg(feature = "debug-hud")]
+            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+            #[cfg(not(feature = "debug-hud"))]
+            let panel_open = false;
+            if !panel_open {
+                self.capture_cursor();
             }
+        }
     }
 
     fn handle_touch(&mut self, touch: winit::event::Touch) {
-            // Android: joystick MotionEvents arrive as Touch with axis values
-            // in [-1, 1]. Route these to gamepad axis input instead of touch.
-            #[cfg(target_os = "android")]
-            {
-                let x = touch.location.x;
-                let y = touch.location.y;
+        // Android: joystick MotionEvents arrive as Touch with axis values
+        // in [-1, 1]. Route these to gamepad axis input instead of touch.
+        #[cfg(target_os = "android")]
+        {
+            let x = touch.location.x;
+            let y = touch.location.y;
 
-                // If this device was already identified as a gamepad via button
-                // presses, treat its touch events as stick axis data.
-                if self.android_gamepad.is_gamepad(touch.device_id) {
-                    if let Some(slot) = self.android_gamepad.slot_for(touch.device_id) {
-                        self.input
-                            .process_gamepad_axis(slot, "LeftStickX", x as f32);
-                        self.input
-                            .process_gamepad_axis(slot, "LeftStickY", y as f32);
-                        return;
-                    }
-                }
-
-                // Heuristic: if coordinates are in joystick range [-1.5, 1.5]
-                // and this touch id has no prior Started event (process_touch_move
-                // would silently drop it anyway), treat it as a joystick from an
-                // unregistered gamepad device.
-                if x.abs() <= 1.5 && y.abs() <= 1.5 && !self.input.has_active_touch(touch.id) {
-                    let slot = self.android_gamepad.register_device(touch.device_id);
+            // If this device was already identified as a gamepad via button
+            // presses, treat its touch events as stick axis data.
+            if self.android_gamepad.is_gamepad(touch.device_id) {
+                if let Some(slot) = self.android_gamepad.slot_for(touch.device_id) {
                     self.input
                         .process_gamepad_axis(slot, "LeftStickX", x as f32);
                     self.input
@@ -1195,12 +1171,26 @@ impl PlayerApp {
                 }
             }
 
-            // Normal touch processing
-            let x = touch.location.x;
-            let y = touch.location.y;
-            #[cfg(target_arch = "wasm32")]
-            let (x, y) = self.touch_to_surface(x, y);
-            self.touch_on_surface(touch.id, touch.phase, x, y);
+            // Heuristic: if coordinates are in joystick range [-1.5, 1.5]
+            // and this touch id has no prior Started event (process_touch_move
+            // would silently drop it anyway), treat it as a joystick from an
+            // unregistered gamepad device.
+            if x.abs() <= 1.5 && y.abs() <= 1.5 && !self.input.has_active_touch(touch.id) {
+                let slot = self.android_gamepad.register_device(touch.device_id);
+                self.input
+                    .process_gamepad_axis(slot, "LeftStickX", x as f32);
+                self.input
+                    .process_gamepad_axis(slot, "LeftStickY", y as f32);
+                return;
+            }
+        }
+
+        // Normal touch processing
+        let x = touch.location.x;
+        let y = touch.location.y;
+        #[cfg(target_arch = "wasm32")]
+        let (x, y) = self.touch_to_surface(x, y);
+        self.touch_on_surface(touch.id, touch.phase, x, y);
     }
 
     /// A finger at (x, y) in surface pixels, real or scripted.
@@ -1211,24 +1201,24 @@ impl PlayerApp {
         x: f64,
         y: f64,
     ) {
-            self.input.disable_touch_emulation();
-            match phase {
-                winit::event::TouchPhase::Started => {
-                    self.input.process_touch_start(id, x, y);
-                }
-                winit::event::TouchPhase::Moved => {
-                    self.input.process_touch_move(id, x, y);
-                }
-                winit::event::TouchPhase::Ended => {
-                    // Update position from the End event before gesture detection —
-                    // fast swipes may have few/no Move events between Start and End
-                    self.input.process_touch_move(id, x, y);
-                    self.input.process_touch_end(id);
-                }
-                winit::event::TouchPhase::Cancelled => {
-                    self.input.process_touch_cancel(id);
-                }
+        self.input.disable_touch_emulation();
+        match phase {
+            winit::event::TouchPhase::Started => {
+                self.input.process_touch_start(id, x, y);
             }
+            winit::event::TouchPhase::Moved => {
+                self.input.process_touch_move(id, x, y);
+            }
+            winit::event::TouchPhase::Ended => {
+                // Update position from the End event before gesture detection —
+                // fast swipes may have few/no Move events between Start and End
+                self.input.process_touch_move(id, x, y);
+                self.input.process_touch_end(id);
+            }
+            winit::event::TouchPhase::Cancelled => {
+                self.input.process_touch_cancel(id);
+            }
+        }
     }
 }
 
@@ -1240,8 +1230,14 @@ mod wheel_tests {
 
     #[test]
     fn a_notch_is_a_line_and_fifty_pixels_are_another() {
-        assert_eq!(wheel_lines(MouseScrollDelta::LineDelta(0.0, 1.0)), (0.0, 1.0));
-        assert_eq!(wheel_lines(MouseScrollDelta::LineDelta(-2.0, 0.0)), (-2.0, 0.0));
+        assert_eq!(
+            wheel_lines(MouseScrollDelta::LineDelta(0.0, 1.0)),
+            (0.0, 1.0)
+        );
+        assert_eq!(
+            wheel_lines(MouseScrollDelta::LineDelta(-2.0, 0.0)),
+            (-2.0, 0.0)
+        );
         let px = MouseScrollDelta::PixelDelta(PhysicalPosition::new(25.0, -100.0));
         assert_eq!(wheel_lines(px), (0.5, -2.0));
     }
