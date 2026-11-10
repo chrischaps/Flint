@@ -420,6 +420,10 @@ impl ApplicationHandler for PlayerApp {
         // No window yet means first launch. (On the web the window exists
         // while the device is still on its way; don't start twice.)
         if self.window.is_none() && self.render_context.is_none() {
+            // Hot reload's polls are answered by a watcher thread from here
+            // on, so none of them waits on the disk in a frame (#633); a
+            // no-op after `--no-hot-reload` (`file_watch::disable`)
+            flint_core::file_watch::start();
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize player: {e:#}");

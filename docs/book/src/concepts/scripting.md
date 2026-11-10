@@ -1476,6 +1476,10 @@ This enables a fast iteration workflow: edit a script in your text editor, save,
 
 Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
 
+In the player none of this waits on the disk in a frame (#633). A watcher thread (`flint_core::file_watch`) stats the files every quarter second and passes a change on only once the file has held still for two of its looks, so a change lands a quarter to half a second after the last write. A second thread reads and compiles the changed script, checking that the file didn't move while it read it, and compiles a changed `scripts/lib` module by module; the frame only swaps finished ASTs in. Before this, a frame could wait seconds on a file another process was writing, and a script half-written when it was read could be compiled as a shorter one. UI documents, user styles, glyph sets, palettes and style images ask the same watcher. Tools such as `flint render --scripts` poll the disk directly, as they always did.
+
+`flint-player --no-hot-reload` (and `flint play --no-hot-reload`) turns all of it off: everything loads once and nothing polls the disk, which is what a capture or a shipped build wants. A game that embeds `PlayerApp` calls `flint_core::file_watch::disable()` before its event loop starts.
+
 ## Interactable System
 
 The `interactable` component marks entities that the player can interact with at close range. It works together with scripting to create interactive objects:
