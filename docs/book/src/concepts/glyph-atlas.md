@@ -92,9 +92,25 @@ Every read goes through `flint_core::vfs`: the TOML through `vfs::read_to_string
 
 ## Looking at a set
 
+`flint gen` takes a glyph set as well as a procgen spec (#284). Nothing is drawn on the GPU and no cargo is involved, so it works in a game repo with the engine as a subtree:
+
 ```bash
-cargo run -p flint-render --example glyph_atlas -- out/                                # the built-in set
-cargo run -p flint-render --example glyph_atlas -- out/ fonts/terminal.glyphs.toml
+flint gen fonts/terminal.glyphs.toml -o terminal.png    # one labelled sheet
+flint gen fonts/terminal.glyphs.toml -o out/            # the sheet and every piece
+flint gen fonts/terminal.glyphs.toml --dry-run          # the summary alone
 ```
 
-This writes `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each glyph's ink and each ramp's coverage curve) and `<set>_<ramp>.png` (the sphere specimen above).
+![flint gen on demo/fonts/halftone.glyphs.toml](../images/glyph-set-sheet-halftone.png)
+
+*`flint gen demo/fonts/halftone.glyphs.toml -o halftone.png`: the atlas as packed, the edge glyphs, then a row for each ramp with the sphere specimen next to the ramp's measured ink, one bar per step with its glyph underneath. The dotted line runs evenly from the first step's ink to the last. A step whose ink falls below the step before it is drawn in red, and so is the note above the chart.*
+
+Every run prints a summary with a line for each ramp: its glyphs, each step's ink, and either `rises` or the steps where the ink falls:
+
+```text
+tidepool: 103 glyphs in 8x8 cells, atlas 145x64, edges -|/  still  " .~*@"  ink 0.00 0.06 0.08 0.17 0.28  rises
+  swell  " .,~=*#%@"  ink 0.00 0.06 0.06 0.08 0.16 0.17 0.31 0.20 0.28  falls at #>% (default)
+```
+
+When `-o` ends in a separator or names a folder that exists, the command writes `<set>_sheet.png`, `<set>_atlas.png` (4x, nearest), `<set>_coverage.json` (each glyph's ink, plus each ramp's coverage curve with `rising`), and for each ramp `<set>_<ramp>.png` (the specimen) and `<set>_<ramp>.txt` (the same specimen as text, one line per cell row, which an agent can read without opening the picture). Without `-o` it writes `<set>_sheet.png` in the current folder. Flags that only apply to procgen specs, such as `--seed`, `--batch`, `--validate` or the AI steps, are refused by name.
+
+Inside the engine, `cargo run -p flint-render --example glyph_atlas -- out/ [fonts/x.glyphs.toml]` still writes the atlas, the coverage JSON and the specimens. Both share `flint_render::glyph_atlas::specimen`.

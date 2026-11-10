@@ -586,6 +586,8 @@ flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
 flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 ```
 
+`flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-o, --output <path>` | (derived from spec) | Output file or directory |
