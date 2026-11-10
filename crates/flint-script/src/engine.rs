@@ -2316,6 +2316,95 @@ mod tests {
     }
 
     #[test]
+    fn test_scale_and_visibility_from_script() {
+        // #628: set_scale/get_scale, set_visible/is_visible
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("tile").unwrap();
+        let shown = world.spawn("never_hidden").unwrap();
+        world
+            .set_component(id, "transform", toml::Value::Table(toml::map::Map::new()))
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let before = get_scale(me);
+                set_scale(me, before.x * 2.0, 0.5, 3.0);
+                set_visible(me, false);
+                if is_visible(me) { throw "still visible"; }
+                let s = get_scale(me);
+                if s.x != 2.0 || s.y != 0.5 || s.z != 3.0 { throw "scale " + s; }
+                set_visible(get_entity("never_hidden"), true);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        assert!((t.scale.x - 2.0).abs() < 1e-6 && (t.scale.z - 3.0).abs() < 1e-6);
+        assert!(!world.is_visible(id));
+        assert!(world.hidden_entities().contains(&id));
+        // Showing what was never hidden adds nothing
+        assert!(world.get_component(shown, "visibility").is_none());
+    }
+
+    #[test]
+    fn test_top_level_state_reaches_callbacks_not_helpers() {
+        // #628: what the book's "Script state" section says, held here.
+        // Top-level `let`s live in the entity's scope: callbacks read and
+        // write them and the writes last; a helper `fn` sees none of them; a
+        // helper called as a method gets the caller's value as `this` by
+        // reference, so it can grow an array without copying it.
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("pool").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            let frames = 0;
+            let tiles = [];
+            let helper_saw = "unset";
+
+            fn peek() { frames }            // no `frames` in here
+            fn add_tile(x) { this.push(x); } // `this` is the caller's array
+            fn copy_add(arr, x) { arr.push(x); }  // `arr` is a copy
+
+            fn on_update() {
+                frames += 1;
+                tiles.add_tile(frames);
+                copy_add(tiles, 99);
+                try { peek(); helper_saw = "saw it"; } catch { helper_saw = "error"; }
+                set_field(self_entity(), "probe", "frames", frames);
+                set_field(self_entity(), "probe", "tiles", tiles.len());
+                set_field(self_entity(), "probe", "helper", helper_saw);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+
+        let probe = world.get_component(id, "probe").unwrap();
+        assert_eq!(probe.get("frames").unwrap().as_integer(), Some(2));
+        assert_eq!(
+            probe.get("tiles").unwrap().as_integer(),
+            Some(2),
+            "copy_add added nothing"
+        );
+        assert_eq!(probe.get("helper").unwrap().as_str(), Some("error"));
+    }
+
+    #[test]
     fn test_find_entities_with_from_script() {
         let mut engine = ScriptEngine::new();
         let mut world = FlintWorld::new();
