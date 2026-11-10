@@ -660,6 +660,92 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         });
     }
 
+    // get_scale(id: i64) -> Map #{x, y, z}   (#628; 1,1,1 when unset)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_scale", move |id: i64| -> Map {
+            let mut map = Map::new();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
+                map.insert("x".into(), Dynamic::from(transform.scale.x as f64));
+                map.insert("y".into(), Dynamic::from(transform.scale.y as f64));
+                map.insert("z".into(), Dynamic::from(transform.scale.z as f64));
+            }
+            map
+        });
+    }
+
+    // set_scale(id: i64, x: f64, y: f64, z: f64)   (#628)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_scale", move |id: i64, x: f64, y: f64, z: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field(
+                    comp::TRANSFORM,
+                    "scale",
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
+            }
+        });
+    }
+
+    // set_visible(id: i64, visible: bool)   (#628)
+    // Writes `visibility.visible`: false keeps the entity and its descendants
+    // out of every draw; it goes on simulating and running scripts.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_visible", move |id: i64, visible: bool| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            // Unchanged: no write, so a pool that re-asserts every frame
+            // doesn't touch the component, and showing an entity that was
+            // never hidden doesn't give it one
+            if world.is_visible(eid) == visible {
+                return;
+            }
+            // World-level set_field keeps the component index, which is
+            // how the renderer finds hidden entities without a scan
+            let _ = world.set_field(
+                eid,
+                comp::VISIBILITY,
+                "visible",
+                toml::Value::Boolean(visible),
+            );
+        });
+    }
+
+    // is_visible(id: i64) -> bool: the entity's own switch (true when unset;
+    // a hidden ancestor isn't counted)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_visible", move |id: i64| -> bool {
+            if id < 0 {
+                return false;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            world.is_visible(EntityId::from_raw(id as u64))
+        });
+    }
+
     // get_rotation_quat(id: i64) -> Map #{x, y, z, w}
     // The rotation the entity renders with: `rotation_quat` when present,
     // otherwise the Euler angles converted (ADR 0069).

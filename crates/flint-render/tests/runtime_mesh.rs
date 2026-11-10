@@ -243,6 +243,49 @@ fn replacing_a_mesh_1000_times_does_not_grow_gpu_memory() {
 }
 
 #[test]
+fn hidden_entities_and_their_children_are_not_drawn() {
+    // #628: `visibility { visible = false }` skips the draw outright (not
+    // culled: never extracted), and a hidden parent takes its children.
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    let (vertices, indices) = square(1.0, [1.0; 4]);
+    renderer.load_procedural_mesh(
+        &gpu.device,
+        "tile",
+        &vertices,
+        &indices,
+        ImportedMaterial::vertex_colored("tile"),
+    );
+    spawn(&mut world, "a", "tile", [0.0; 3]);
+    spawn(&mut world, "b", "tile", [0.5, 0.0, 0.0]);
+    spawn(&mut world, "b_child", "tile", [0.0, 0.2, 0.0]);
+    let b = world.get_id("b").unwrap();
+    world
+        .set_parent(world.get_id("b_child").unwrap(), b)
+        .unwrap();
+    let camera = Camera::default();
+
+    gpu.frame(&mut renderer, &world, &camera);
+    assert_eq!(renderer.collect_stats().entity_draws, 3);
+
+    let hide = |world: &mut FlintWorld, visible: bool| {
+        world
+            .set_field(b, "visibility", "visible", toml::Value::Boolean(visible))
+            .unwrap();
+    };
+    hide(&mut world, false);
+    gpu.frame(&mut renderer, &world, &camera);
+    let stats = renderer.collect_stats();
+    assert_eq!(stats.entity_draws, 1, "b and its child are hidden");
+    assert_eq!(stats.culled_draws, 0, "hidden is skipped, not culled");
+
+    hide(&mut world, true);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert_eq!(renderer.collect_stats().entity_draws, 3);
+}
+
+#[test]
 fn meshes_outside_the_view_are_culled() {
     let gpu = gpu_or_skip!();
     let mut renderer = gpu.renderer();

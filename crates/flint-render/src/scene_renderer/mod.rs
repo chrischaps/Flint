@@ -3816,7 +3816,14 @@ impl SceneRenderer {
         // The ray targets, placed afresh (ADR 0105).
         let mut ray_scene = flint_core::ray_mesh::RayScene::new();
 
+        // What `visibility { visible = false }` hides, descendants included
+        // (#628): empty and unwalked in a scene that never hides anything.
+        let hidden = world.hidden_entities();
+
         for entity in world.all_entities() {
+            if hidden.contains(&entity.id) {
+                continue;
+            }
             let archetype = entity.archetype.as_deref().unwrap_or("unknown");
             let visual =
                 self.archetype_visuals
@@ -4864,6 +4871,11 @@ impl SceneRenderer {
             .iter()
             .copied()
             .collect();
+        // A hidden entity's light goes out with it (#628)
+        let hidden = world.hidden_entities();
+        if !hidden.is_empty() {
+            light_entities.retain(|id| !hidden.contains(id));
+        }
         light_entities.sort_by(|a, b| {
             world
                 .get_name(*a)

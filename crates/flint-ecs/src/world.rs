@@ -396,6 +396,50 @@ impl FlintWorld {
         Some(Vec3::new(mat[3][0], mat[3][1], mat[3][2]))
     }
 
+    /// The entity's own `visibility.visible`: false only when it says so,
+    /// true with no `visibility` component (#628). An ancestor's switch isn't
+    /// counted here; [`Self::hidden_entities`] is what the renderer skips.
+    pub fn is_visible(&self, id: EntityId) -> bool {
+        self.components
+            .get(&id)
+            .and_then(|c| c.get(flint_core::components::VISIBILITY))
+            .and_then(|v| v.get("visible"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// Every entity a `visibility { visible = false }` hides: those that say
+    /// so and all their descendants, so hiding a model's root hides its
+    /// expanded nodes too (#628). Empty, with nothing walked, while no entity
+    /// is hidden, which is what keeps a scene without the switch at no cost.
+    pub fn hidden_entities(&self) -> HashSet<EntityId> {
+        let roots: HashSet<EntityId> = self
+            .entities_with_component(flint_core::components::VISIBILITY)
+            .iter()
+            .copied()
+            .filter(|id| !self.is_visible(*id))
+            .collect();
+        if roots.is_empty() {
+            return roots;
+        }
+        let mut hidden = roots.clone();
+        for &child in self.parents.keys() {
+            let mut at = child;
+            // Depth-capped: a parent chain never loops, but a cap costs nothing
+            for _ in 0..256 {
+                match self.parents.get(&at) {
+                    Some(parent) if roots.contains(parent) => {
+                        hidden.insert(child);
+                        break;
+                    }
+                    Some(parent) => at = *parent,
+                    None => break,
+                }
+            }
+        }
+        hidden
+    }
+
     /// Get all entity IDs that have a given component. O(1) lookup.
     ///
     /// Returns a reference to the internal `HashSet`; returns an empty set
@@ -490,6 +534,39 @@ impl FlintWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_entities_take_descendants() {
+        // #628: a hidden root hides its subtree; nothing hidden is empty
+        let mut world = FlintWorld::new();
+        let root = world.spawn("car").unwrap();
+        let wheel = world.spawn("wheel").unwrap();
+        let hub = world.spawn("hub").unwrap();
+        let other = world.spawn("tree").unwrap();
+        world.set_parent(wheel, root).unwrap();
+        world.set_parent(hub, wheel).unwrap();
+        assert!(world.hidden_entities().is_empty());
+
+        world
+            .set_field(other, "visibility", "visible", toml::Value::Boolean(true))
+            .unwrap();
+        assert!(
+            world.hidden_entities().is_empty(),
+            "visible = true hides nothing"
+        );
+
+        world
+            .set_field(root, "visibility", "visible", toml::Value::Boolean(false))
+            .unwrap();
+        let hidden = world.hidden_entities();
+        assert_eq!(hidden.len(), 3);
+        assert!(hidden.contains(&root) && hidden.contains(&wheel) && hidden.contains(&hub));
+        assert!(!world.is_visible(root));
+        assert!(
+            world.is_visible(wheel),
+            "is_visible is the entity's own switch"
+        );
+    }
 
     #[test]
     fn test_spawn_and_get() {
