@@ -167,7 +167,7 @@ flint render demo/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tin
 | `edge_max` | `3` | More edge than this is texture-like geometry (grass, foliage) and keeps its tone glyph. A styled entity's outline ignores it |
 | `edge_depth` | `0.6` | The relative view-distance step that counts as a silhouette (lower finds more) |
 | `edge_normal` | `2.5` | The normal change, as a Sobel over normals rebuilt from depth, that counts as a crease (lower finds more) |
-| `edge_corner` | `0.9` | A cell whose edge has no one direction (its tensor's coherence under this) draws the [corner or tee](#corners) its neighbours' lines meet in; 0 turns corners off (#348) |
+| `edge_corner` | `0.9` | A cell whose edge has no one direction (its tensor's coherence under this) draws the [corner or tee](#corners) its neighbours' lines meet in, as do line ends and gaps (#637); 0 turns every corner off (#348) |
 | `edge_ink` | `cell` | What inks the line glyphs ([Edge ink](#edge-ink), #351): `cell` (as the cell's tone glyph), `color` (`edge_color`) or `hue` (the near side's own colour) |
 | `edge_color` | `[0.85, 0.82, 0.74]` | The line glyphs' ink for `edge_ink = "color"`, a warm off-white; `[r, g, b]` or `"#rrggbb"` |
 | `edge_tint` | `0` | For `edge_ink = "color"`: mix the colour toward the near side's hue (0--1) |
@@ -357,7 +357,25 @@ edge_corner = 0                       edge_corner = 0.9 (the default)
 
 *`demo/ascii_edges.scene.toml` at 1280x720, columns 72 to 105 of `--ascii-text`. These five cells are all that changed in the frame. At the horizon's right the pillar's edge steps a column left below it, so the cell sees no `│` beneath and draws `└`.*
 
-The glyphs come from the set's `[edges] corners` ([glyph sets](glyph-atlas.md#a-glyph-set-file)); the built-in set has all nine. A set without them, like `demo/fonts/halftone.glyphs.toml`, draws the line glyphs it always did (the golden `ascii-edges-no-corner-glyphs` holds that to the pixel against `edge_corner = 0`), and a set with only the four corners keeps its lines at tees. A per-entity variant in a font of its own uses that font's corners. The edge view below draws a cell's corner in yellow, its arms from the cell's centre. Corners don't reach a gap: a corner cell that holds too little edge to draw a line is still empty.
+The glyphs come from the set's `[edges] corners` ([glyph sets](glyph-atlas.md#a-glyph-set-file)); the built-in set has all nine. A set without them, like `demo/fonts/halftone.glyphs.toml`, draws the line glyphs it always did (the golden `ascii-edges-no-corner-glyphs` holds that to the pixel against `edge_corner = 0`), and a set with only the four corners keeps its lines at tees. A per-entity variant in a font of its own uses that font's corners. The edge view below draws a cell's corner in yellow, its arms from the cell's centre.
+
+Two corners the coherence test can't see turn too (#637):
+
+- **A line that ends beside a perpendicular one.** When the turn's two arms fall in neighbouring cells, each cell's pixels run one way and neither is marked: a `─` that runs on past the outline sits above the `│` that starts below it. A `─` (or `│`) with its own line on only one side ends in its cell; a `│` above or below it (a `─` beside it) is the turn's other arm, and the cell draws the corner, or the tee with an arm on both sides. Past the end, a perpendicular line that ends there itself counts as an arm, which is how the `│` under a `─` that turned down becomes `┤` when a crease runs into it from the side. A line that runs on through the cell never turns, so lines crossing never become `┼`.
+- **A gap.** A cell holding a sliver of edge, under `edge_threshold`, draws no line. Where a `─` runs into it from the side and a `│` from above or below, it draws their corner, or a tee with a `─` on both sides: the hole an outline leaves where it clips the cell's corner, or where a `─` ends in one cell and the `│` starts diagonally past it. Arms count only the way they run into the cell, so the cell diagonally inside a box's corner (a `─` above, a `│` beside) never draws one.
+
+Neither turns a staircase: a line that carries on past its end as a diagonal, or the same line a cell across (a near-vertical edge stepping a column), doesn't end, and a gap with a `│` beside it or a `─` above or below it is left empty. A marked corner whose own arms make no corner draws its line and lends it as an arm. `edge_corner = 0` turns all of it off.
+
+```text
+before #637                               after
+##########################────────****    ##########################───────┐****   the box's top-right
+───####################──────────│****    ───####################──────────┤****   (a crease meets it)
+:::───────###──────────**********│****    :::───────###──────────**********│****
+::::::::::─*─********************│****    ::::::::::─┬─********************│****   its front corner, a gap
+:::::::::::│*********************│****    :::::::::::│*********************│****
+```
+
+*`demo/ascii_edges.scene.toml` at 1920x1080, columns 138 to 175 of `--ascii-text`. These three cells are all that changed in the frame.*
 
 Under a render scale the edge pixels are the scene's, so a line is still one cell wide. The editor grid of `flint render` (on unless `--no-grid`) is an overlay drawn after the opaque geometry that writes no depth (#346), so the edges never trace it; its lines still lift the tone glyphs they cross, which is why renders of the look pass `--no-grid`.
 

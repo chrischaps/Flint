@@ -17,7 +17,7 @@
 //! edge_max = 3.0        # more than this is texture (grass), not a line
 //! edge_depth = 0.6      # relative view-distance step that is an edge
 //! edge_normal = 2.5     # normal change (Sobel) that is a crease
-//! edge_corner = 0.9     # #348: coherence under which a cell can draw ┌ ├ ┼ (0 off)
+//! edge_corner = 0.9     # #348: coherence under which a cell can draw ┌ ├ ┼ (0: no corners, #637's line ends and gaps too)
 //! edge_ink = "cell"     # cell | color | hue: the line glyphs' ink (#351)
 //! edge_color = [0.85, 0.82, 0.74]  # for edge_ink = "color"; or "#d9d1bd"
 //! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
@@ -367,7 +367,7 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new(
         "edge_corner",
         "Edge corners",
-        "Where a cell's edge turns (its direction this uncertain or less, 0..1), it draws the corner or tee its neighbours' lines meet in: ┌ ├ ┼; 0 = off",
+        "Where a cell's edge turns (its direction this uncertain or less, 0..1), it draws the corner or tee its neighbours' lines meet in: ┌ ├ ┼; so do a line ending beside a perpendicular one and a gap between two (#637); 0 = every corner off",
     ),
     StyleHint::new(
         "edge_ink",
@@ -1939,6 +1939,16 @@ fn variant_uniform(
     }
 }
 
+/// How many corner glyphs the edge cells may draw in `set`'s font (#348):
+/// its own count, or none with `edge_corner = 0`, which turns every corner
+/// off, the coherence test's and the line ends' and gaps' too (#637).
+fn corner_glyphs(frame: &StyleFrame<'_>, set: &GlyphSet) -> u32 {
+    if frame.param("edge_corner") <= 0.0 {
+        return 0;
+    }
+    set.edges().corner_count() as u32
+}
+
 /// The silhouette outline (#288), `points` wide, in output pixels: at
 /// least one whole pixel when on, so a 1 pt line never vanishes between
 /// samples on a fractional display.
@@ -2421,7 +2431,7 @@ impl Ascii {
             row.glyph = [glyph[0] as f32, glyph[1] as f32];
             row.edge_start = edge_start;
             // Its own font's corners (#348); one in the frame's font reads the frame's
-            row.corners = set.edges().corner_count() as u32;
+            row.corners = corner_glyphs(frame, &set);
             // The row holds the outline in points; the shader wants pixels
             row.outline = outline_pixels(row.outline, frame.pixels_per_point);
             rows.push(row);
@@ -2868,7 +2878,7 @@ impl StylePass for Ascii {
             );
         }
         if edge_view {
-            let corners = set.edges().corner_count() as u32;
+            let corners = corner_glyphs(frame, &set);
             self.encode_edge_view(
                 frame, encoder, input, output, edge_cells, cell, origin, corners,
             );
@@ -2943,7 +2953,7 @@ impl StylePass for Ascii {
             chroma: frame.param("chroma").clamp(0.0, 8.0),
             palette_dither: frame.param("palette_dither").clamp(0.0, 1.0),
             edge_tint: frame.param("edge_tint").clamp(0.0, 1.0),
-            corners: set.edges().corner_count() as u32,
+            corners: corner_glyphs(frame, &set),
             edge_glyphs,
             ramp: [[0; 4]; MAX_RAMP / 2],
             palette: [[0.0; 4]; MAX_COLORS],

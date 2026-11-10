@@ -95,7 +95,10 @@ Flint uses an **edit -> validate -> play** loop:
    #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
    #                          (#348 corners: a drawn cell whose tensor coherence is under
    #                           ascii:edge_corner=0.9 takes ┌ ├ ┼... from its neighbours' ─ │
-   #                           (ARM_GLYPHS, ascii_edge_thin.wgsl); a set's [edges] corners, else lines)
+   #                           (ARM_GLYPHS, ascii_edge_thin.wgsl); a set's [edges] corners, else lines;
+   #                           #637: an unmarked ─/│ that ends beside a perpendicular one turns too,
+   #                           and a sub-threshold gap cell between a ─ and a │ ending at it draws
+   #                           their corner; staircases refused; edge_corner=0 turns all of it off)
    #                          (#351 their ink: --style ascii:edge_ink=cell|color|hue,
    #                           edge_color=#rrggbb,edge_tint=0..1; hue = the near side's own colour)
    #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
