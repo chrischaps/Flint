@@ -1,6 +1,6 @@
 # ADR 0118: The renderer gets one owner each for pipelines, draw kinds and frame inputs
 
-Status: accepted, 2026-11-10 ()
+Status: accepted, 2026-11-10 (#736, with #735, #737, #739; audit epic #674)
 
 ## Context
 
