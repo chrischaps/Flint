@@ -104,7 +104,7 @@ In the other direction, scripts call the native functions the extension register
 
 ### Saved data
 
-`ctx.persist` is the same `PersistentStore` that scripts reach with `persist_get` and `persist_set`, the one the player keeps in `save/persist.toml` (see [Scripting: Persistence](../concepts/scripting.md#persistence)). It's loaded before any script's `on_init`, so the first `pre_update` already sees last session's values.
+`ctx.persist` is the same `PersistentStore` that scripts reach with `persist_get` and `persist_set`, the one the player keeps in the game's save file (see [Scripting: Persistence](../concepts/scripting.md#persistence) and [Where saves live](../concepts/scripting.md#where-saves-live)). It's loaded before any script's `on_init`, so the first `pre_update` already sees last session's values.
 
 ```rust
 let volume = ctx.persist.get("music_volume").and_then(|v| v.as_float()).unwrap_or(0.8);

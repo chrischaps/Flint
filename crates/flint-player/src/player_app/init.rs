@@ -185,6 +185,9 @@ impl PlayerApp {
             state_machine: GameStateMachine::new(),
             persistent_store: PersistentStore::new(),
             persist_debounce: flint_runtime::SaveDebounce::default(),
+            persist_save_error: None,
+            save_dir: None,
+            user_config_dir: crate::user_files::config_dir(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
             project,
@@ -463,8 +466,10 @@ impl PlayerApp {
         // get_quality() and gpu_info() answer from the first frame.
         self.init_quality();
 
-        // Saved persistent store (save/persist.toml) before any script's
-        // on_init runs, so persist_get sees last session's values.
+        // Saved persistent store (where: persist.rs) before any script's
+        // on_init runs, so persist_get sees last session's values. After
+        // the input config, whose game_id names the save folder of a game
+        // with no `[project] id`.
         self.load_persistent_store();
 
         // Physics → audio → music session → animation → particles → scripts

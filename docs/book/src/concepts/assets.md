@@ -107,16 +107,16 @@ A few things are one path under the root and no search:
 | `load_ui("ui/hud.ui.toml")`, a style sheet's `tokens = "ui/theme.toml"` | `<root>/ui/hud.ui.toml` |
 | `load_data("data/karts.toml")` | `<root>/data/karts.toml` |
 | a `music_session`'s `manifest`, `chart` and configs | `<root>/<path>` |
-| the save file | `<root>/save/persist.toml` |
+| the save file of a game with no `id` | `<root>/save/persist.toml` (a game with an id saves under the OS user directory: [Where saves live](scripting.md#where-saves-live)) |
 | the procgen disk cache | `<root>/.flint/procgen-cache/` |
 | the project-local input override | `<root>/.flint/input.user.toml` |
 | `flint.toml`'s `scene`, `input` and `schemas` | `<root>/<path>` |
 
-The root is the same for every scene of the project, so a scene two folders deep reads the same `ui/` and saves to the same file as one in `scenes/`.
+The root is the same for every scene of the project, so a scene two folders deep reads the same `ui/` as one in `scenes/`. The save file is settled once, when the game starts, and no transition moves it.
 
 **No project marker.** A scene with no `flint.toml`, no `.flint/` and no `schemas/` + `scenes/` layout above it takes its folder's parent for these paths (`loose/levels/a.scene.toml` reads `loose/ui/`), which is what the engine did for every scene before there were projects.
 
-**For one release.** Before the project was asked, the root for these paths was guessed as the scene folder's parent, for every scene. The two are the same folder for a scene directly in `scenes/` or `levels/`. Where they differ (a scene two folders deep, or a `.flint/` folder beside the scenes) a file that exists only at the old place is still read from there, with a warning that says where it belongs: UI documents, data files, a music session's manifest, and the save file, which is written at the root from then on. The project-local input override is likewise still read from a `.flint/` beside the scene.
+**For one release.** Before the project was asked, the root for these paths was guessed as the scene folder's parent, for every scene. The two are the same folder for a scene directly in `scenes/` or `levels/`. Where they differ (a scene two folders deep, or a `.flint/` folder beside the scenes) a file that exists only at the old place is still read from there, with a warning that says where it belongs: UI documents, data files, a music session's manifest, and the save file, which is written where saves live now from then on. The project-local input override is likewise still read from a `.flint/` beside the scene.
 
 **Names.** A name that already ends in one of the kind's extensions is taken as written (`campfire.particles.toml`, `barrel.gltf`), and a name may carry a subfolder (`fx/campfire` is `particles/fx/campfire.particles.toml`). Textures, sprites and sounds are named by **file name**: a name with a dot in its last part is that file, whatever follows the dot (`sky.hdr`, `wall.jpg`). Extensions are matched as they are spelled, for every kind: `hit.OGG` is not found by the preload, and `barrel.GLB` in `model.asset` becomes `barrel.GLB.glb`.
 

@@ -32,6 +32,85 @@ to do.
 
 ---
 
+## 2026-11-11
+
+### Save data moves to the OS user directory for a game with an id; saves are atomic, a corrupt file is kept as `.bak`, and there are slots and a version (#726)
+**What changed.** Where the `persist_*` store is saved, how it is written, and
+what a script can ask of it.
+
+**Where saves live.** Decided once at startup; no scene transition moves it.
+
+| The game | Was | Now |
+|---|---|---|
+| `flint.toml` has `[project] id = "kart"` | `<project>/save/persist.toml` | `<config>/kart/saves/default.toml` |
+| no manifest id, but the input config sets `game_id = "kart"` | `<project>/save/persist.toml` | `<config>/kart/saves/default.toml` |
+| no id at all, or an id that can't be a folder name | `<project>/save/persist.toml` | the same file |
+| the web | `localStorage`, `flint:/config/flint/save_<game_id>.toml` | the same entry, keyed on `[project] id` when the manifest has one, else on `game_id` as before |
+| Android | the app's files directory, `files/save/persist.toml` | the same file |
+
+`<config>` is `%APPDATA%` on Windows, `~/.config` on Linux and
+`~/Library/Application Support` on macOS, where input rebinds already go.
+Nothing is written into the game's folder any more, so a game installed
+read-only can save.
+
+**The old file is read once and left in place.** When a game with an id starts
+and has no `default.toml` under the user directory, the player reads
+`<project>/save/persist.toml` (then, for a scene two folders deep, the older
+guessed place #706 already read), logs one warning saying where the save now
+lives, and writes it there within a second. The file in the project is not
+changed, moved or deleted, and is not read again once the new one exists. On
+the web, when the manifest's `id` differs from the input config's `game_id`,
+the entry keyed on `game_id` is read once the same way. These reads last one
+release.
+
+**Writes are atomic.** Every save is a temp file (`<file>.tmp`) flushed and
+renamed over the save, so a crash or power cut mid-save leaves the old file
+whole. Input rebinds are written the same way. A save now costs a disk flush
+(about 4 ms measured, against 0.2 ms), at most once a second.
+
+**A save file that doesn't parse is kept.** It used to be logged, ignored and
+then overwritten by the next save. Now it is renamed `<file>.bak`
+(`.bak.1`, `.bak.2`, ... if that name is taken), an error names both paths,
+the game starts with an empty store, and `persist_corrupt()` returns
+`#{ slot, file, backup, error }` so a menu can tell the player.
+
+**New in the script API.**
+
+| Function / callback | What it does |
+|---|---|
+| `persist_slot()` | the slot held, `"default"` at startup |
+| `persist_slot(name)` -> `bool` | saves the slot held if it changed, then loads `name` (empty if new). Names: 1-32 of `a-z 0-9 _ -` |
+| `persist_slots()` | the slots that have a save, in name order |
+| `persist_version()` | the version of the save loaded; 0 for a file with no `[meta]` |
+| `persist_set_version(n)` | stamp it by hand (a game with no manifest) |
+| `persist_corrupt()` | `()` or the report above |
+| `fn on_persist_migrate(from)` | called before `on_init` when the save loaded is older than `[project] save_version`; the store is stamped with the game's version afterwards |
+
+**New manifest key**: `[project] save_version = <whole number>` (0 when left
+out). **New flag**: `--save-dir <dir>` on `flint play` and `flint-player`
+keeps a run's saves in `<dir>/<slot>.toml` and reads no other save.
+
+**The file format** is unchanged for existing saves: a file with no `[meta]`
+table is version 0 with every top-level key the game's, and a store at
+version 0 is still written without one. The engine keeps the one top-level
+name `meta` (`[meta] version = 2`). A game key called `meta` keeps working
+(it is saved as `meta.key_meta`), with one exception: an old save whose
+`meta` key was exactly a table holding only an integer `version` is read as
+the engine's table.
+
+**What to do.**
+- A game with an `id`: nothing, the save follows on first launch. Tell
+  players (and your own tooling) that saves are under `<config>/<id>/saves/`
+  now; anything that read or deleted `save/persist.toml` in the project to
+  reset progress should look there, or pass `--save-dir`. Once every player
+  has launched the new build, the old `save/` folder can go.
+- A game with no `id`: nothing changes. To move its saves out of the project,
+  add `id = "..."` under `[project]` in `flint.toml`.
+- A `log`/CI check that greps for `persist: failed to load`: the message is
+  now an `error` that names the `.bak`.
+- A script that stores a key named `meta` holding only `#{ version: <int> }`:
+  rename the key before upgrading.
+
 ## 2026-11-10
 
 ### `flint play` and `flint bundle` read `flint.toml`; saves, `load_ui`, `load_data` and the procgen cache use the project root (#706)
