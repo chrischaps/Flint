@@ -16,7 +16,9 @@ use kira::Frame;
 #[path = "../../flint-audio-worklet/src/protocol.rs"]
 pub mod protocol;
 
-pub use protocol::{Command, Target};
+pub use protocol::{Command, Target, VoiceReport};
+
+use std::collections::HashMap;
 
 /// A sound on its way to the mixer: one channel when both sides are equal
 /// (every Float sound is mono), else two interleaved.
@@ -63,10 +65,20 @@ impl Outbox {
 /// Called when an empty outbox gets its first write.
 pub type Kick = Box<dyn FnMut() + Send>;
 
+/// The remote mixer's clock, read when asked (#658): its audio time now and
+/// its output latency, both seconds. In the browser, the audio time the
+/// worklet's reports are stamped in, carried forward on `performance.now()`
+/// (`worklet.js`), and the context's `baseLatency + outputLatency`.
+pub type AudioClock = Box<dyn Fn() -> [f64; 2] + Send>;
+
 struct Shared {
     outbox: Outbox,
     kick: Option<Kick>,
     next_id: u32,
+    /// What the mixer last said about each watched voice, and the audio
+    /// time it said it for (#658).
+    reports: HashMap<u32, (VoiceReport, f64)>,
+    clock: Option<AudioClock>,
 }
 
 /// The engine's line to a remote mixer. Clones share one outbox.
@@ -87,7 +99,44 @@ impl Link {
             outbox: Outbox::default(),
             kick,
             next_id: 1,
+            reports: HashMap::new(),
+            clock: None,
         })))
+    }
+
+    /// Read the mixer's clock with `clock` from now on.
+    pub fn set_clock(&self, clock: AudioClock) {
+        if let Ok(mut s) = self.0.lock() {
+            s.clock = Some(clock);
+        }
+    }
+
+    /// The mixer's audio time and output latency now, seconds; `None`
+    /// until a clock is set.
+    pub fn clock(&self) -> Option<[f64; 2]> {
+        self.0.lock().ok()?.clock.as_ref().map(|c| c())
+    }
+
+    /// Take a report from the mixer: `values` as
+    /// [`protocol::read_report`] reads them, describing the mixer at audio
+    /// time `at`. A later report replaces an earlier one per voice.
+    pub fn receive_report(&self, at: f64, values: &[f64]) {
+        let Ok(mut s) = self.0.lock() else { return };
+        for r in protocol::read_report(values) {
+            s.reports.insert(r.voice, (r, at));
+        }
+    }
+
+    /// What the mixer last said about `voice`, and when; `None` before it
+    /// has said anything, which is before the voice has been mixed.
+    pub fn voice_report(&self, voice: u32) -> Option<(VoiceReport, f64)> {
+        self.0.lock().ok()?.reports.get(&voice).copied()
+    }
+
+    fn forget_voice(&self, voice: u32) {
+        if let Ok(mut s) = self.0.lock() {
+            s.reports.remove(&voice);
+        }
     }
 
     fn write(&self, f: impl FnOnce(&mut Outbox)) {
@@ -139,6 +188,7 @@ pub struct RemoteVoice {
 impl Drop for RemoteVoice {
     fn drop(&mut self) {
         self.link.send(Command::VoiceDrop { voice: self.id });
+        self.link.forget_voice(self.id);
     }
 }
 
@@ -189,5 +239,24 @@ mod tests {
         link.send(Command::ClearOneShots);
         assert_eq!(*kicks.lock().unwrap(), 2);
         assert_ne!(link.id(), link.id());
+    }
+
+    #[test]
+    fn reports_land_per_voice_and_a_dropped_voice_forgets_its_own() {
+        let link = Link::default();
+        assert_eq!(link.voice_report(3), None);
+        link.receive_report(1.0, &[3.0, 0.5, 0.0, 4.0, 1.25, 2.0]);
+        link.receive_report(1.1, &[3.0, 0.6, 0.0]);
+        let (r, at) = link.voice_report(3).unwrap();
+        assert_eq!((r.position, r.state, at), (0.6, 0, 1.1));
+        assert_eq!(link.voice_report(4).unwrap().0.state, 2);
+        drop(RemoteVoice {
+            id: 4,
+            link: link.clone(),
+        });
+        assert_eq!(link.voice_report(4), None);
+        assert_eq!(link.clock(), None);
+        link.set_clock(Box::new(|| [12.5, 0.04]));
+        assert_eq!(link.clock(), Some([12.5, 0.04]));
     }
 }

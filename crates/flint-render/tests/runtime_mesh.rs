@@ -164,7 +164,9 @@ impl Gpu {
             },
         );
         self.queue.submit([encoder.finish()]);
-        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |r| r.unwrap());
         self.device.poll(wgpu::Maintain::Wait);
         let data = buffer.slice(..).get_mapped_range();
         let at = (row * (SIZE / 2) + (SIZE / 2) * 4) as usize;
@@ -180,7 +182,12 @@ fn square(half: f32, color: [f32; 4]) -> (Vec<Vertex>, Vec<u32>) {
         color,
         uv: [0.0, 0.0],
     };
-    let vertices = vec![v(-half, -half), v(-half, half), v(half, half), v(half, -half)];
+    let vertices = vec![
+        v(-half, -half),
+        v(-half, half),
+        v(half, half),
+        v(half, -half),
+    ];
     let indices = vec![0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2];
     (vertices, indices)
 }
@@ -192,7 +199,9 @@ fn spawn(world: &mut FlintWorld, name: &str, mesh: &str, position: [f32; 3]) {
         "position".into(),
         toml::Value::Array(position.iter().map(|&p| (p as f64).into()).collect()),
     );
-    world.set_component(id, "transform", transform.into()).unwrap();
+    world
+        .set_component(id, "transform", transform.into())
+        .unwrap();
     let mut model = toml::Table::new();
     model.insert("asset".into(), mesh.into());
     model.insert("runtime".into(), true.into());
@@ -363,7 +372,10 @@ fn vertex_colours_render() {
     renderer.load_procedural_mesh(gpu.device, "ground", &vertices, &indices, material.clone());
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
-    assert!(g > 150 && r < 60 && b < 60, "expected green, got {r} {g} {b}");
+    assert!(
+        g > 150 && r < 60 && b < 60,
+        "expected green, got {r} {g} {b}"
+    );
 
     // The same mesh with vertex colour off shows the material's red.
     let material = ImportedMaterial {
@@ -389,13 +401,16 @@ fn emission_ignores_facing_and_light() {
     // The test's own sun, overhead, so the default scene lights stay out.
     let sun = world.spawn("sun").unwrap();
     let camera = Camera::default();
-    for (name, texel) in [("lamp_green", [0, 255, 0, 255]), ("lamp_black", [0, 0, 0, 255])] {
+    for (name, texel) in [
+        ("lamp_green", [0, 255, 0, 255]),
+        ("lamp_black", [0, 0, 0, 255]),
+    ] {
         renderer
             .load_texture_rgba(gpu.device, gpu.queue, name, 1, 1, &texel, false)
             .unwrap();
     }
 
-    let mut shoot =|vertices: &[Vertex], material: ImportedMaterial, ambient: f32, sun_on: f32| {
+    let mut shoot = |vertices: &[Vertex], material: ImportedMaterial, ambient: f32, sun_on: f32| {
         let (_, indices) = square(20.0, [0.0; 4]);
         let mut light = toml::Table::new();
         light.insert("type".into(), "directional".into());
@@ -429,7 +444,10 @@ fn emission_ignores_facing_and_light() {
     let (up, _) = square(20.0, [1.0; 4]);
     let lit = shoot(&up, lamp.clone(), 0.0, 0.0);
     let [r, g, b, _] = lit;
-    assert!(g > 150 && r < 30 && b < 30, "expected green, got {r} {g} {b}");
+    assert!(
+        g > 150 && r < 30 && b < 30,
+        "expected green, got {r} {g} {b}"
+    );
     for (vertices, ambient, sun_on, what) in [
         (&up, 1.0, 0.0, "the ambient"),
         (&up, 0.0, 1.0, "the sun"),
@@ -447,9 +465,15 @@ fn emission_ignores_facing_and_light() {
         ..lamp.clone()
     };
     let seen = shoot(&up, painted("lamp_green"), 1.0, 1.0);
-    assert!(close(lit, seen), "a green emissive map: {lit:?} vs {seen:?}");
+    assert!(
+        close(lit, seen),
+        "a green emissive map: {lit:?} vs {seen:?}"
+    );
     let [r, g, b, _] = shoot(&up, painted("lamp_black"), 0.0, 0.0);
-    assert!(r < 10 && g < 10 && b < 10, "a black emissive map glows: {r} {g} {b}");
+    assert!(
+        r < 10 && g < 10 && b < 10,
+        "a black emissive map glows: {r} {g} {b}"
+    );
 
     // Per vertex: alpha 0 is light, alpha 1 an ordinary lit surface.
     let glowing = ImportedMaterial {
@@ -463,7 +487,12 @@ fn emission_ignores_facing_and_light() {
     for (vertices, ambient, sun_on, what) in [
         (&light, 0.0, 0.0, "per-vertex light"),
         (&light, 1.0, 1.0, "light on a per-vertex lamp"),
-        (&face_down(light.clone()), 1.0, 1.0, "facing away from a per-vertex lamp"),
+        (
+            &face_down(light.clone()),
+            1.0,
+            1.0,
+            "facing away from a per-vertex lamp",
+        ),
     ] {
         let seen = shoot(vertices, glowing.clone(), ambient, sun_on);
         assert!(close(lit, seen), "{what}: {lit:?} vs {seen:?}");
@@ -471,7 +500,10 @@ fn emission_ignores_facing_and_light() {
     let (surface, _) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
     let dark = shoot(&surface, glowing.clone(), 0.0, 0.0);
     let bright = shoot(&surface, glowing, 1.0, 0.0);
-    assert!(bright[1] > dark[1] + 20, "a surface vertex takes the ambient: {dark:?} {bright:?}");
+    assert!(
+        bright[1] > dark[1] + 20,
+        "a surface vertex takes the ambient: {dark:?} {bright:?}"
+    );
 }
 
 /// `material.emissive_scale` (ADR 0090) changes a mesh's glow every frame
@@ -493,7 +525,9 @@ fn emissive_scale_changes_glow_after_upload() {
         if let Some(s) = scale {
             material.insert("emissive_scale".into(), s.into());
         }
-        world.set_component(id, "material", material.into()).unwrap();
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
     };
 
     // Per vertex, uploaded once: green light at radiance 0.25.
@@ -517,16 +551,25 @@ fn emissive_scale_changes_glow_after_upload() {
     set_scale(&mut world, "windows", Some(2.0));
     gpu.frame(&mut renderer, &world, &camera);
     let two = gpu.centre_pixel();
-    assert!(two[1] > one[1] + 30, "a scale of 2 is brighter: {one:?} vs {two:?}");
+    assert!(
+        two[1] > one[1] + 30,
+        "a scale of 2 is brighter: {one:?} vs {two:?}"
+    );
 
     set_scale(&mut world, "windows", Some(0.0));
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
-    assert!(r < 10 && g < 10 && b < 10, "a scale of 0 is dark glass: {r} {g} {b}");
+    assert!(
+        r < 10 && g < 10 && b < 10,
+        "a scale of 0 is dark glass: {r} {g} {b}"
+    );
 
     set_scale(&mut world, "windows", None);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(one, gpu.centre_pixel()), "no scale is the upload again");
+    assert!(
+        close(one, gpu.centre_pixel()),
+        "no scale is the upload again"
+    );
 
     // A lit surface vertex keeps its light at a scale of 0.
     renderer.set_ambient([1.0; 3], [1.0; 3]);
@@ -542,7 +585,10 @@ fn emissive_scale_changes_glow_after_upload() {
     let lit = gpu.centre_pixel();
     set_scale(&mut world, "windows", Some(0.0));
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(lit, gpu.centre_pixel()), "surface at scale 0: {lit:?}");
+    assert!(
+        close(lit, gpu.centre_pixel()),
+        "surface at scale 0: {lit:?}"
+    );
     assert!(lit[1] > 20, "the surface vertex takes the ambient: {lit:?}");
     renderer.set_ambient([0.0; 3], [0.0; 3]);
     world.despawn(world.get_id("windows").unwrap()).unwrap();
@@ -562,14 +608,23 @@ fn emissive_scale_changes_glow_after_upload() {
     world.set_parent(child, parent).unwrap();
     gpu.frame(&mut renderer, &world, &camera);
     let own = gpu.centre_pixel();
-    assert!(close(one, own), "material emission matches per vertex: {own:?}");
+    assert!(
+        close(one, own),
+        "material emission matches per vertex: {own:?}"
+    );
     set_scale(&mut world, "lamp_post", Some(2.0));
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(two, gpu.centre_pixel()), "the parent's scale reaches the child");
+    assert!(
+        close(two, gpu.centre_pixel()),
+        "the parent's scale reaches the child"
+    );
     set_scale(&mut world, "lamp", Some(0.0));
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
-    assert!(r < 10 && g < 10 && b < 10, "the child's own scale wins: {r} {g} {b}");
+    assert!(
+        r < 10 && g < 10 && b < 10,
+        "the child's own scale wins: {r} {g} {b}"
+    );
 }
 
 /// `material.glow_surface` (ADR 0096) lights a per-vertex light part as
@@ -591,7 +646,9 @@ fn glow_surface_slides_light_to_surface_after_upload() {
         for (k, v) in fields {
             material.insert((*k).into(), (*v).into());
         }
-        world.set_component(id, "material", material.into()).unwrap();
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
     };
     let material = |name: &str| ImportedMaterial {
         roughness: 1.0,
@@ -614,7 +671,9 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     world.set_component(sun, "light", off.into()).unwrap();
     let parent = world.spawn("plot").unwrap();
     spawn(&mut world, "gold", "gold", [0.0; 3]);
-    world.set_parent(world.get_id("gold").unwrap(), parent).unwrap();
+    world
+        .set_parent(world.get_id("gold").unwrap(), parent)
+        .unwrap();
 
     // In the dark it's its light, whatever its surface share.
     gpu.frame(&mut renderer, &world, &camera);
@@ -622,18 +681,32 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     assert!(glow[1] > 100 && glow[0] < 30, "light: {glow:?}");
     set(&mut world, "gold", &[("glow_surface", 1.0)]);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(glow, gpu.centre_pixel()), "glow_surface takes no light away");
+    assert!(
+        close(glow, gpu.centre_pixel()),
+        "glow_surface takes no light away"
+    );
 
     // Under the sky: none of it is paint at 0, all of it at 1.
     renderer.set_ambient([1.0; 3], [1.0; 3]);
     set(&mut world, "gold", &[("emissive_scale", 0.0)]);
     gpu.frame(&mut renderer, &world, &camera);
     let [r, g, b, _] = gpu.centre_pixel();
-    assert!(r < 10 && g < 10 && b < 10, "light at scale 0 is dark: {r} {g} {b}");
-    set(&mut world, "gold", &[("emissive_scale", 0.0), ("glow_surface", 1.0)]);
+    assert!(
+        r < 10 && g < 10 && b < 10,
+        "light at scale 0 is dark: {r} {g} {b}"
+    );
+    set(
+        &mut world,
+        "gold",
+        &[("emissive_scale", 0.0), ("glow_surface", 1.0)],
+    );
     gpu.frame(&mut renderer, &world, &camera);
     let lit = gpu.centre_pixel();
-    set(&mut world, "gold", &[("emissive_scale", 0.0), ("glow_surface", 0.5)]);
+    set(
+        &mut world,
+        "gold",
+        &[("emissive_scale", 0.0), ("glow_surface", 0.5)],
+    );
     gpu.frame(&mut renderer, &world, &camera);
     let half = gpu.centre_pixel();
     set(&mut world, "gold", &[("glow_surface", 1.0)]);
@@ -648,7 +721,10 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     set(&mut world, "gold", &[]);
     set(&mut world, "plot", &[("glow_surface", 1.0)]);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(both, gpu.centre_pixel()), "the parent's glow_surface reaches the child");
+    assert!(
+        close(both, gpu.centre_pixel()),
+        "the parent's glow_surface reaches the child"
+    );
 
     // Paint at 1 is exactly a surface vertex of the same colour.
     world.despawn(world.get_id("gold").unwrap()).unwrap();
@@ -656,7 +732,10 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     gpu.frame(&mut renderer, &world, &camera);
     let painted = gpu.centre_pixel();
     assert!(painted[1] > 20, "the paint takes the ambient: {painted:?}");
-    assert!(close(lit, painted), "glow_surface 1 is paint: {lit:?} vs {painted:?}");
+    assert!(
+        close(lit, painted),
+        "glow_surface 1 is paint: {lit:?} vs {painted:?}"
+    );
     assert!(
         half[1] > 5 && half[1] + 5 < painted[1],
         "0.5 is between: {half:?} vs {painted:?}"
@@ -664,7 +743,10 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     // A surface vertex is surface already: glow_surface leaves it alone.
     set(&mut world, "paint", &[("glow_surface", 1.0)]);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(painted, gpu.centre_pixel()), "surface vertices don't change");
+    assert!(
+        close(painted, gpu.centre_pixel()),
+        "surface vertices don't change"
+    );
 }
 
 /// `material.vertex_tint_*` (ADR 0102) multiplies a mesh's vertex colours
@@ -687,9 +769,15 @@ fn vertex_tint_colours_light_and_surface_after_upload() {
         for (k, v) in fields {
             material.insert((*k).into(), (*v).into());
         }
-        world.set_component(id, "material", material.into()).unwrap();
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
     };
-    let green = [("vertex_tint_r", 0.0), ("vertex_tint_g", 1.0), ("vertex_tint_b", 0.0)];
+    let green = [
+        ("vertex_tint_r", 0.0),
+        ("vertex_tint_g", 1.0),
+        ("vertex_tint_b", 0.0),
+    ];
     let material = |name: &str| ImportedMaterial {
         roughness: 1.0,
         metallic: 0.0,
@@ -717,47 +805,82 @@ fn vertex_tint_colours_light_and_surface_after_upload() {
 
     // The references: green light, and green paint under the sky.
     let green_light = shoot(&mut renderer, &mut world, "light");
-    assert!(green_light[1] > 100 && green_light[0] < 30, "light: {green_light:?}");
+    assert!(
+        green_light[1] > 100 && green_light[0] < 30,
+        "light: {green_light:?}"
+    );
     renderer.set_ambient([1.0; 3], [1.0; 3]);
     let green_paint = shoot(&mut renderer, &mut world, "paint");
-    assert!(green_paint[1] > 20 && green_paint[0] < 10, "paint: {green_paint:?}");
+    assert!(
+        green_paint[1] > 20 && green_paint[0] < 10,
+        "paint: {green_paint:?}"
+    );
     renderer.set_ambient([0.0; 3], [0.0; 3]);
 
     let parent = world.spawn("window").unwrap();
     spawn(&mut world, "lamp", "lamp", [0.0; 3]);
-    world.set_parent(world.get_id("lamp").unwrap(), parent).unwrap();
+    world
+        .set_parent(world.get_id("lamp").unwrap(), parent)
+        .unwrap();
     gpu.frame(&mut renderer, &world, &camera);
     let grey = gpu.centre_pixel();
-    assert!(grey[0] > 100 && grey[1] > 100, "untinted, it's white light: {grey:?}");
+    assert!(
+        grey[0] > 100 && grey[1] > 100,
+        "untinted, it's white light: {grey:?}"
+    );
 
     // Tinted, the white light is the green light.
     set(&mut world, "lamp", &green);
     gpu.frame(&mut renderer, &world, &camera);
     let tinted = gpu.centre_pixel();
-    assert!(close(green_light, tinted), "tinted light: {tinted:?} vs {green_light:?}");
+    assert!(
+        close(green_light, tinted),
+        "tinted light: {tinted:?} vs {green_light:?}"
+    );
 
     // And as paint, the green paint.
     renderer.set_ambient([1.0; 3], [1.0; 3]);
-    let painted = [green.as_slice(), &[("glow_surface", 1.0), ("emissive_scale", 0.0)]].concat();
+    let painted = [
+        green.as_slice(),
+        &[("glow_surface", 1.0), ("emissive_scale", 0.0)],
+    ]
+    .concat();
     set(&mut world, "lamp", &painted);
     gpu.frame(&mut renderer, &world, &camera);
     let seen = gpu.centre_pixel();
-    assert!(close(green_paint, seen), "tinted paint: {seen:?} vs {green_paint:?}");
+    assert!(
+        close(green_paint, seen),
+        "tinted paint: {seen:?} vs {green_paint:?}"
+    );
     renderer.set_ambient([0.0; 3], [0.0; 3]);
 
     // From the parent; the child's own tint wins.
     set(&mut world, "lamp", &[]);
     set(&mut world, "window", &green);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(green_light, gpu.centre_pixel()), "the parent's tint reaches the child");
-    set(&mut world, "lamp", &[("vertex_tint_r", 1.0), ("vertex_tint_g", 1.0), ("vertex_tint_b", 1.0)]);
+    assert!(
+        close(green_light, gpu.centre_pixel()),
+        "the parent's tint reaches the child"
+    );
+    set(
+        &mut world,
+        "lamp",
+        &[
+            ("vertex_tint_r", 1.0),
+            ("vertex_tint_g", 1.0),
+            ("vertex_tint_b", 1.0),
+        ],
+    );
     gpu.frame(&mut renderer, &world, &camera);
     assert!(close(grey, gpu.centre_pixel()), "the child's own tint wins");
 
     // A tint missing a channel is none: the parent's, then white.
     set(&mut world, "lamp", &[("vertex_tint_r", 0.0)]);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(green_light, gpu.centre_pixel()), "half a tint falls to the parent's");
+    assert!(
+        close(green_light, gpu.centre_pixel()),
+        "half a tint falls to the parent's"
+    );
     set(&mut world, "window", &[]);
     gpu.frame(&mut renderer, &world, &camera);
     assert!(close(grey, gpu.centre_pixel()), "and with none, white");
@@ -862,8 +985,16 @@ fn model_data_maps_are_linear() {
     );
     assert_eq!(format("plate::texture_0"), srgb, "the base-colour map");
     assert_eq!(format("plate::texture_1"), linear, "the normal map");
-    assert_eq!(format("plate::texture_2"), linear, "the metallic-roughness map");
-    assert_eq!(format("plate::texture_0#linear"), linear, "a colour map read as data");
+    assert_eq!(
+        format("plate::texture_2"),
+        linear,
+        "the metallic-roughness map"
+    );
+    assert_eq!(
+        format("plate::texture_0#linear"),
+        linear,
+        "a colour map read as data"
+    );
 
     gpu.frame(&mut renderer, &world, &camera);
     let seen = gpu.centre_pixel();
@@ -879,10 +1010,16 @@ fn model_data_maps_are_linear() {
     };
     let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
     let want = shoot(0.5, 0.5);
-    assert!(close(seen, want), "the map shades unlike factors of 0.5: {seen:?} vs {want:?}");
+    assert!(
+        close(seen, want),
+        "the map shades unlike factors of 0.5: {seen:?} vs {want:?}"
+    );
     // And the test can tell: an sRGB decode would shade like 0.21.
     let srgb_read = shoot(0.216, 0.216);
-    assert!(!close(want, srgb_read), "0.5 and 0.21 look alike: {want:?} vs {srgb_read:?}");
+    assert!(
+        !close(want, srgb_read),
+        "0.5 and 0.21 look alike: {want:?} vs {srgb_read:?}"
+    );
 }
 
 #[test]
@@ -1022,9 +1159,17 @@ fn grass_blades_come_out_in_grid_order_every_run() {
     let bytes = |blades: &[flint_render::GrassInstanceGpu]| -> Vec<u8> {
         bytemuck::cast_slice(blades).to_vec()
     };
-    assert_eq!(bytes(&first), bytes(&again), "the next frame reorders the blades");
+    assert_eq!(
+        bytes(&first),
+        bytes(&again),
+        "the next frame reorders the blades"
+    );
     let (other, _) = grow().unwrap();
-    assert_eq!(bytes(&first), bytes(&other), "another renderer orders them differently");
+    assert_eq!(
+        bytes(&first),
+        bytes(&other),
+        "another renderer orders them differently"
+    );
 
     // In grid order: workgroup by workgroup (8x8 cells, x first), then cell
     // by cell inside it. The whole square is in the camera's window, so the
@@ -1043,7 +1188,10 @@ fn grass_blades_come_out_in_grid_order_every_run() {
         };
         let key = (cz / 8, cx / 8, cz % 8, cx % 8);
         if let Some(last) = last {
-            assert!(key > last, "a blade in cell ({cx}, {cz}) comes after {last:?}");
+            assert!(
+                key > last,
+                "a blade in cell ({cx}, {cz}) comes after {last:?}"
+            );
         }
         last = Some(key);
     }
@@ -1158,7 +1306,9 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
         for (k, v) in fields {
             material.insert((*k).into(), v.clone());
         }
-        world.set_component(id, "material", material.into()).unwrap();
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
     };
     let material = |name: &str| ImportedMaterial {
         roughness: 1.0,
@@ -1191,16 +1341,28 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     // bare group, with no transform, there only to carry `cast_shadows`.
     let parent = world.spawn("mist").unwrap();
     spawn(&mut world, "sheet", "sheet", [1.0, 2.0, 0.0]);
-    world.set_parent(world.get_id("sheet").unwrap(), parent).unwrap();
+    world
+        .set_parent(world.get_id("sheet").unwrap(), parent)
+        .unwrap();
     set(&mut world, "sheet", &[("opacity", 0.02.into())]);
     gpu.frame(&mut renderer, &world, &camera);
     let shaded = gpu.centre_pixel();
-    assert!(shaded[0] + 30 < lit[0], "a clear sheet casts: {shaded:?} vs {lit:?}");
+    assert!(
+        shaded[0] + 30 < lit[0],
+        "a clear sheet casts: {shaded:?} vs {lit:?}"
+    );
 
-    set(&mut world, "sheet", &[("opacity", 0.02.into()), ("cast_shadows", false.into())]);
+    set(
+        &mut world,
+        "sheet",
+        &[("opacity", 0.02.into()), ("cast_shadows", false.into())],
+    );
     gpu.frame(&mut renderer, &world, &camera);
     let seen = gpu.centre_pixel();
-    assert!(close(lit, seen), "cast_shadows = false: {seen:?} vs {lit:?}");
+    assert!(
+        close(lit, seen),
+        "cast_shadows = false: {seen:?} vs {lit:?}"
+    );
 
     // Opaque too, and from the parent.
     set(&mut world, "sheet", &[]);
@@ -1209,10 +1371,16 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     set(&mut world, "mist", &[("cast_shadows", false.into())]);
     gpu.frame(&mut renderer, &world, &camera);
     let seen = gpu.centre_pixel();
-    assert!(seen[0] > solid[0] + 30, "the parent's cast_shadows: {seen:?} vs {solid:?}");
+    assert!(
+        seen[0] > solid[0] + 30,
+        "the parent's cast_shadows: {seen:?} vs {solid:?}"
+    );
     set(&mut world, "sheet", &[("cast_shadows", true.into())]);
     gpu.frame(&mut renderer, &world, &camera);
-    assert!(close(solid, gpu.centre_pixel()), "the child's own value wins");
+    assert!(
+        close(solid, gpu.centre_pixel()),
+        "the child's own value wins"
+    );
 }
 
 /// A flat square of half-width `half` at the origin wound once, so it has
@@ -1221,7 +1389,11 @@ fn card(half: f32, color: [f32; 4], up: bool) -> (Vec<Vertex>, Vec<u32>) {
     let (mut vertices, _) = square(half, color);
     let ny = if up { 1.0 } else { -1.0 };
     vertices.iter_mut().for_each(|v| v.normal = [0.0, ny, 0.0]);
-    let indices = if up { vec![0, 1, 2, 0, 2, 3] } else { vec![0, 2, 1, 0, 3, 2] };
+    let indices = if up {
+        vec![0, 1, 2, 0, 2, 3]
+    } else {
+        vec![0, 2, 1, 0, 3, 2]
+    };
     (vertices, indices)
 }
 
@@ -1236,7 +1408,9 @@ fn looking_at(target: [f32; 3], above: bool) -> Camera {
 }
 
 fn set_sun(world: &mut FlintWorld, direction: [f64; 3], intensity: f64) {
-    let sun = world.get_id("sun").unwrap_or_else(|| world.spawn("sun").unwrap());
+    let sun = world
+        .get_id("sun")
+        .unwrap_or_else(|| world.spawn("sun").unwrap());
     let mut light = toml::Table::new();
     light.insert("type".into(), "directional".into());
     light.insert("intensity".into(), intensity.into());
@@ -1256,7 +1430,10 @@ fn a_double_sided_glb_card_draws_from_behind() {
     let gpu = gpu_or_skip!();
     let mut renderer = gpu.renderer();
     renderer.set_debug_mode(DebugMode::Unlit);
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testModels/DoubleSidedCard.glb");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../testModels/DoubleSidedCard.glb"
+    );
     let model = flint_import::import_gltf(path).unwrap();
     renderer.load_model(gpu.device, gpu.queue, "cards", &model);
     let mut world = FlintWorld::new();
@@ -1273,9 +1450,18 @@ fn a_double_sided_glb_card_draws_from_behind() {
     let one_above = seen(1.25, true);
     let two_below = seen(-1.25, false);
     let one_below = seen(1.25, false);
-    assert!(orange(two_above), "the two-sided card from above: {two_above:?}");
-    assert!(blue(one_above), "the one-sided card from above: {one_above:?}");
-    assert!(orange(two_below), "the two-sided card from below: {two_below:?}");
+    assert!(
+        orange(two_above),
+        "the two-sided card from above: {two_above:?}"
+    );
+    assert!(
+        blue(one_above),
+        "the one-sided card from above: {one_above:?}"
+    );
+    assert!(
+        orange(two_below),
+        "the two-sided card from below: {two_below:?}"
+    );
     assert!(
         !blue(one_below) && !orange(one_below),
         "the one-sided card from below is culled: {one_below:?}"
@@ -1311,7 +1497,10 @@ fn a_double_sided_back_face_is_lit_as_the_side_it_shows() {
     let back_in_the_dark = shoot(true, false);
     assert!(front[0] > 60, "the front is lit: {front:?}");
     let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
-    assert!(close(front, back), "the back lit as a front: {back:?} vs {front:?}");
+    assert!(
+        close(front, back),
+        "the back lit as a front: {back:?} vs {front:?}"
+    );
     assert!(
         back_in_the_dark[0] + 50 < front[0],
         "the back faces away from a sun above: {back_in_the_dark:?} vs {front:?}"
@@ -1361,8 +1550,14 @@ fn a_double_sided_sheet_casts_from_either_side() {
     let one_sided = shadow_with(false);
     let two_sided = shadow_with(true);
     let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
-    assert!(close(lit, one_sided), "a one-sided sheet facing away casts: {one_sided:?}");
-    assert!(two_sided[0] + 30 < lit[0], "a two-sided one casts: {two_sided:?} vs {lit:?}");
+    assert!(
+        close(lit, one_sided),
+        "a one-sided sheet facing away casts: {one_sided:?}"
+    );
+    assert!(
+        two_sided[0] + 30 < lit[0],
+        "a two-sided one casts: {two_sided:?} vs {lit:?}"
+    );
 }
 
 #[test]
@@ -1391,7 +1586,10 @@ fn a_ray_target_is_met_where_each_entity_draws_it() {
     upload(&mut renderer, "floor");
     upload(&mut renderer, "plain");
     renderer.set_ray_mesh("floor", Some(Arc::new(RayMesh::new(&positions, &indices))));
-    assert!(renderer.ray_scene().is_empty(), "nothing placed before an update");
+    assert!(
+        renderer.ray_scene().is_empty(),
+        "nothing placed before an update"
+    );
     gpu.frame(&mut renderer, &world, &camera);
 
     // Straight up from below: the floor at y = 1, not "plain" at 3.
@@ -1401,7 +1599,9 @@ fn a_ray_target_is_met_where_each_entity_draws_it() {
     assert_eq!(hit.entity, world.get_id("near").unwrap());
     assert!((hit.distance - 1.0).abs() < 1e-5, "{hit:?}");
     // From above, the higher one.
-    let hit = scene.cast([0.0, 9.0, 0.0], [0.0, -1.0, 0.0], 100.0).unwrap();
+    let hit = scene
+        .cast([0.0, 9.0, 0.0], [0.0, -1.0, 0.0], 100.0)
+        .unwrap();
     assert_eq!(hit.entity, world.get_id("far").unwrap());
 
     // An upload without the flag, or a remove, ends it from the next update;
@@ -1532,7 +1732,9 @@ fn thousands_of_distinct_looks_draw() {
         material.insert("vertex_tint_g".into(), 0.5.into());
         material.insert("vertex_tint_b".into(), 0.5.into());
         let id = world.get_id(&name).unwrap();
-        world.set_component(id, "material", material.into()).unwrap();
+        world
+            .set_component(id, "material", material.into())
+            .unwrap();
     }
 
     gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
@@ -1706,22 +1908,19 @@ fn unlit_draws_its_colour_whatever_the_light() {
     let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 2);
     // `albedo`: draw in the albedo debug view, which returns the surface
     // colour with no light at all, through the same composite
-    let mut shoot = |world: &mut FlintWorld,
-                     vertices: &[Vertex],
-                     ambient: f32,
-                     sun_on: f64,
-                     albedo: bool| {
-        sun(world, "sun", 4.0 * sun_on, [0.0, 1.0, 0.0]);
-        renderer.set_ambient([ambient; 3], [ambient; 3]);
-        renderer.set_debug_mode(if albedo {
-            DebugMode::Unlit
-        } else {
-            DebugMode::Pbr
-        });
-        renderer.load_procedural_mesh(gpu.device, "card", vertices, &indices, material.clone());
-        gpu.frame(&mut renderer, world, &camera);
-        gpu.centre_pixel()
-    };
+    let mut shoot =
+        |world: &mut FlintWorld, vertices: &[Vertex], ambient: f32, sun_on: f64, albedo: bool| {
+            sun(world, "sun", 4.0 * sun_on, [0.0, 1.0, 0.0]);
+            renderer.set_ambient([ambient; 3], [ambient; 3]);
+            renderer.set_debug_mode(if albedo {
+                DebugMode::Unlit
+            } else {
+                DebugMode::Pbr
+            });
+            renderer.load_procedural_mesh(gpu.device, "card", vertices, &indices, material.clone());
+            gpu.frame(&mut renderer, world, &camera);
+            gpu.centre_pixel()
+        };
 
     // Lit, the sun and the ambient move it
     let lit_dark = shoot(&mut world, &up, 0.0, 0.0, false);

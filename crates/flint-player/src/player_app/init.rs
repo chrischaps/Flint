@@ -22,6 +22,7 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
+use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader;
@@ -31,7 +32,6 @@ use flint_runtime::{
 };
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
-use flint_input_capture::pad::Gilrs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;

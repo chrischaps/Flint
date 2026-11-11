@@ -830,8 +830,8 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if sequence && grid.is_some() {
         anyhow::bail!("--frames and --mesh draw one sequence: drop --sweep");
     }
-    if let Some(sweep) = grid.as_ref().filter(|g| g.wooze_knob().is_some()) {
-        check_wooze_sweep(&args, &sweep.columns)?;
+    if let Some(grid) = grid.as_ref().filter(|g| g.wooze_knob().is_some()) {
+        check_wooze_sweep(&args, grid)?;
     }
     if let Some(dt) = args.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
@@ -988,6 +988,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 grid: grid.as_ref(),
                 configs,
                 report_json,
+                view,
+                scene_pp,
+                look,
+                reference,
+                camera_path: camera_path.as_ref(),
             },
         );
     }
@@ -1247,66 +1252,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // GPU timing: the same frame many times, each pass's time smoothed
     if let Some(frames) = args.gpu_time {
-        if !renderer.set_gpu_timing(&ctx.device, &ctx.queue, true) {
-            anyhow::bail!("--gpu-time: this adapter has no TIMESTAMP_QUERY");
-        }
-        for _ in 0..frames.max(1) {
-            let mut encoder = ctx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            renderer.encode_to(
-                &ctx.device,
-                &ctx.queue,
-                &mut encoder,
-                ctx.depth_target(),
-                &camera,
-                &ctx.color_view,
-            );
-            renderer.encode_gpu_timings(&ctx.device, &mut encoder);
-            ctx.queue.submit(std::iter::once(encoder.finish()));
-            renderer.frame_submitted();
-            ctx.device.poll(wgpu::Maintain::Wait);
-        }
-        let stats = renderer.collect_stats();
-        let (sw, sh) = renderer.scene_size();
-        say!(
-            "GPU time over {} frames at {}x{} (scene {}x{}):",
-            frames, width, height, sw, sh
-        );
-        // As wide as the longest label (a style's, such as "Display bloom")
-        let w = stats
-            .gpu_passes
-            .iter()
-            .map(|p| p.label.len())
-            .max()
-            .unwrap_or(0)
-            .max(12);
-        for pass in &stats.gpu_passes {
-            say!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
-        }
-        say!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
-        // What each of the style chain's textures costs (#412): the
-        // built-ins' and every user style's targets
-        let targets = renderer.style_target_entries();
-        if !targets.is_empty() {
-            let total: u64 = targets.iter().map(|t| t.bytes).sum();
-            say!(
-                "Style targets: {} ({:.2} MB)",
-                targets.len(),
-                total as f64 / (1024.0 * 1024.0)
-            );
-            let w = targets.iter().map(|t| t.name.len()).max().unwrap_or(0);
-            for t in &targets {
-                say!(
-                    "  {:<w$} {:>5}x{:<5} {:<15} {:>7.2} MB",
-                    t.name,
-                    t.width,
-                    t.height,
-                    format!("{:?}", t.format),
-                    t.bytes as f64 / (1024.0 * 1024.0)
-                );
-            }
-        }
+        time_gpu(ctx, &mut renderer, &camera, frames)?;
     }
 
     let frames = match meshes.first() {
@@ -1420,33 +1366,15 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // whole drawn frame's grid, which a crop shows only part of.
     let mut columns = Vec::new();
     if args.report.is_some() || reference.is_some() {
-        use super::look_measure as lm;
-        for (i, img) in pictures.iter().enumerate() {
-            let image = lm::measure(img);
-            let ascii = texts.get(i).cloned().flatten().map(|t| {
-                lm::measure_ascii(&t, lm::ascii_ramp(&configs[i], Path::new(&args.scene)))
-            });
-            let distance = reference.as_ref().map(|r| lm::distance_to(r, img));
-            let value = grid.as_ref().map(|g| {
-                let (c, r) = cells[i];
-                g.describe(c, r)
-            });
-            say!(
-                "  [{}] {}{}",
-                value.as_deref().unwrap_or("frame"),
-                lm::summary(&image, ascii.as_ref()),
-                distance
-                    .map(|d| format!("  distance {:.2}", d.score))
-                    .unwrap_or_default()
-            );
-            columns.push(lm::ColumnReport {
-                index: i,
-                value,
-                image,
-                ascii,
-                distance: distance.map(Into::into),
-            });
-        }
+        columns = measure_cells(
+            &args,
+            &pictures,
+            &texts,
+            &configs,
+            reference.as_ref(),
+            grid.as_ref(),
+            &cells,
+        );
     }
     let nearest = super::look_measure::RenderReport::nearest_column(&columns);
 
@@ -1473,18 +1401,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 None => {
                     // With a reference, each label carries its distance and
                     // the nearest is starred (#357)
-                    let labels: Vec<String> = label(&grid.columns);
-                    let labels = labels
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, l)| match columns.get(i).and_then(|c| c.distance) {
-                            Some(d) => {
-                                let star = if nearest == Some(i) { " *" } else { "" };
-                                format!("{l}  d {:.1}{star}", d.score)
-                            }
-                            None => l,
-                        })
-                        .collect();
+                    let labels = distance_labels(label(&grid.columns), &columns, nearest);
                     super::style_sheet::compose(
                         &pictures,
                         &super::style_sheet::SheetText::new(
@@ -1502,26 +1419,22 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                         row_key: rows.name(),
                         column_labels: label(&grid.columns),
                         row_labels: label(rows),
+                        time: String::new(),
                     },
                 ),
             }
         }
     };
     if let Some(path) = &args.report {
-        let report = super::look_measure::RenderReport {
-            scene: args.scene.clone(),
-            look: look.as_ref().map(|l| l.name.clone()),
-            sweep: grid.as_ref().map(|g| g.name()),
-            reference: args.reference.clone(),
-            width,
-            height,
-            thresholds: super::look_measure::Thresholds::USED,
+        write_measures(
+            &args,
+            path,
+            look.as_ref(),
+            grid.as_ref(),
+            (width, height),
             columns,
             nearest,
-        };
-        std::fs::write(path, serde_json::to_string_pretty(&report)?)
-            .context(format!("Failed to write {path}"))?;
-        say!("Wrote measures to {path}");
+        )?;
     }
     img.save(&args.output)
         .context(format!("Failed to save image to {}", args.output))?;
@@ -1533,6 +1446,82 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         args.output
     );
 
+    Ok(())
+}
+
+/// `--gpu-time N`: the frame `renderer` holds drawn N times with GPU timing,
+/// each pass's time smoothed over them, printed with the style chain's targets.
+fn time_gpu(
+    ctx: &HeadlessContext,
+    renderer: &mut SceneRenderer,
+    camera: &Camera,
+    frames: u32,
+) -> Result<()> {
+    let (width, height) = (ctx.width, ctx.height);
+    if !renderer.set_gpu_timing(&ctx.device, &ctx.queue, true) {
+        anyhow::bail!("--gpu-time: this adapter has no TIMESTAMP_QUERY");
+    }
+    for _ in 0..frames.max(1) {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        renderer.encode_to(
+            &ctx.device,
+            &ctx.queue,
+            &mut encoder,
+            ctx.depth_target(),
+            camera,
+            &ctx.color_view,
+        );
+        renderer.encode_gpu_timings(&ctx.device, &mut encoder);
+        ctx.queue.submit(std::iter::once(encoder.finish()));
+        renderer.frame_submitted();
+        ctx.device.poll(wgpu::Maintain::Wait);
+    }
+    let stats = renderer.collect_stats();
+    let (sw, sh) = renderer.scene_size();
+    say!(
+        "GPU time over {} frames at {}x{} (scene {}x{}):",
+        frames,
+        width,
+        height,
+        sw,
+        sh
+    );
+    // As wide as the longest label (a style's, such as "Display bloom")
+    let w = stats
+        .gpu_passes
+        .iter()
+        .map(|p| p.label.len())
+        .max()
+        .unwrap_or(0)
+        .max(12);
+    for pass in &stats.gpu_passes {
+        say!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
+    }
+    say!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
+    // What each of the style chain's textures costs (#412): the
+    // built-ins' and every user style's targets
+    let targets = renderer.style_target_entries();
+    if !targets.is_empty() {
+        let total: u64 = targets.iter().map(|t| t.bytes).sum();
+        say!(
+            "Style targets: {} ({:.2} MB)",
+            targets.len(),
+            total as f64 / (1024.0 * 1024.0)
+        );
+        let w = targets.iter().map(|t| t.name.len()).max().unwrap_or(0);
+        for t in &targets {
+            say!(
+                "  {:<w$} {:>5}x{:<5} {:<15} {:>7.2} MB",
+                t.name,
+                t.width,
+                t.height,
+                format!("{:?}", t.format),
+                t.bytes as f64 / (1024.0 * 1024.0)
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1629,7 +1618,12 @@ fn refine_look(
         .context(format!("Failed to save image to {}", args.output))?;
     say!(
         "Refined {}: distance {:.2} -> {:.2} ({}), {} call(s), ${:.4}",
-        look.name, log.start.score, log.end.score, log.stopped, log.calls, log.cost_usd
+        look.name,
+        log.start.score,
+        log.end.score,
+        log.stopped,
+        log.calls,
+        log.cost_usd
     );
     say!(
         "Wrote {} (load it with --look {})",
@@ -2020,7 +2014,8 @@ fn write_ascii_text(
         std::fs::write(path, text.to_ansi()).context(format!("Failed to write {path}"))?;
         say!(
             "Wrote {}x{} ANSI ASCII grid to {path}",
-            text.cols, text.rows
+            text.cols,
+            text.rows
         );
     }
     Ok(())
@@ -2306,77 +2301,93 @@ fn apply_ascii_style_flags(
 }
 
 /// What `run_in` hands the stage path, worked out already: the schemas, the
-/// scene as it loaded it (the first column's world), the sweep and every
-/// column's post-processing.
+/// scene as it loaded it (the first cell's world), the sweep and every cell's
+/// post-processing, and what the one-renderer path would have drawn with.
 struct StagedRender<'a> {
     registry: &'a SchemaRegistry,
     first: (flint_ecs::FlintWorld, flint_scene::SceneFile),
     grid: Option<&'a super::sweep::SweepGrid>,
+    /// A cell's each, a row at a time, as [`super::sweep::SweepGrid::cells`].
     configs: Vec<flint_render::PostProcessConfig>,
     report_json: bool,
+    /// What a sweep's cell is of its frame (#358).
+    view: super::sweep::CellView,
+    /// The scene's `[post_process]`, under its own look, for `--ai-refine`.
+    scene_pp: Option<&'a flint_scene::PostProcessDef>,
+    look: Option<super::look::Look>,
+    reference: Option<image::RgbImage>,
+    camera_path: Option<&'a super::frame_seq::CameraPath>,
 }
 
-/// A render with clocks (#216): a [`Stage`] a sweep column, each captured at
-/// every moment asked for, the columns composed into one sheet a moment, and a
-/// span written as a GIF.
+/// Whether game time runs through the captures: a `--time`, or `--frames`
+/// `--frame-dt` apart (#596).
+fn on_clock(args: &RenderArgs) -> bool {
+    args.time.is_some() || args.frames.is_some()
+}
+
+/// A render with clocks (#216): a [`Stage`] a sweep cell, each captured at
+/// every moment asked for, the cells composed into one sheet a moment (a row,
+/// or a grid for two sweeps), and a span written as a GIF or a PNG a frame.
 fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) -> Result<()> {
+    use std::hash::{Hash, Hasher};
     let StagedRender {
         registry,
         first,
         grid,
         configs,
         report_json,
+        view,
+        scene_pp,
+        look,
+        reference,
+        camera_path,
     } = staged;
 
-    // What only the one-renderer path draws so far
-    let not_yet = |flag: &str| {
-        anyhow!(
-            "{flag} isn't drawn with clocks yet: this render runs them (--time, a wooze.* \
-             sweep, --scripts, --report json, or a scene with living props or a [wooze] table)"
-        )
-    };
-    if grid.is_some_and(|g| g.rows.is_some()) {
-        return Err(not_yet("a second --sweep (a grid)"));
+    let animated = matches!(args.time, Some(TimeSpec::Range(..)));
+    // A still a moment (#614), numbered in the order the moments were given.
+    let moments = matches!(args.time, Some(TimeSpec::List(_)));
+    let report_file = args.report.as_deref().filter(|_| !report_json);
+    let measured = reference.is_some() || report_file.is_some();
+    // What a clocked render can't mean (#596), each refused with why
+    if measured && (animated || moments) {
+        anyhow::bail!(
+            "--report FILE / --reference measure one moment, and this --time captures \
+             several: give --time T (--report json reports every capture's props)"
+        );
     }
-    if args.sweep_crop.is_some() || args.sweep_scale.is_some() {
-        return Err(not_yet("--sweep-crop / --sweep-scale"));
+    if args.ai_refine && (animated || moments) {
+        anyhow::bail!("--ai-refine refines a look at one moment: give --time T");
     }
-    if args.frames.is_some() {
-        return Err(not_yet("--frames (use --time 0..N -o x.gif)"));
+    if args.ai_refine && report_json {
+        anyhow::bail!("--ai-refine writes its own log beside the refined look: drop --report json");
     }
-    if args.ai_refine {
-        return Err(not_yet("--ai-refine"));
-    }
-    if args.reference.is_some() {
-        return Err(not_yet("--reference"));
-    }
-    if args.report.is_some() && !report_json {
-        return Err(not_yet("--report FILE.json (--report json is)"));
-    }
-    if args.ascii_text.is_some() || args.ascii_text_ansi.is_some() {
-        return Err(not_yet("--ascii-text"));
-    }
-    if args.gpu_time.is_some() {
-        return Err(not_yet("--gpu-time"));
-    }
+    let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
+    let wants_flips = args.flip_stats || args.flip_json.is_some();
 
-    let sweep = grid.map(|g| &g.columns);
-    let columns = sweep.map_or(1, |s| s.values.len());
+    let cells = grid.map_or(vec![(0, 0)], |g| g.cells());
+    let count = cells.len();
 
-    // The scene, once for each column: a world is changed by loading it
-    let mut scenes = Vec::with_capacity(columns);
+    // The scene, once for each cell: a world is changed by loading it
+    let mut scenes = Vec::with_capacity(count);
     scenes.push(first);
-    for _ in 1..columns {
+    for _ in 1..count {
         scenes.push(load_scene(&args.scene, registry).context("Failed to load scene")?);
     }
     let scene_name = scenes[0].1.scene.name.clone();
 
-    let animated = matches!(args.time, Some(TimeSpec::Range(..)));
-    let (default_width, default_height) = render_plan::default_size(sweep.is_some(), animated);
-    let (width, height) = (
-        args.width.unwrap_or(default_width),
-        args.height.unwrap_or(default_height),
-    );
+    let (width, height) = match grid {
+        // Cells drawn small, or at the full size to be cropped or shrunk
+        Some(_) => view.render_size(args.width, args.height),
+        // A refine's rounds are sheet cells
+        None if args.ai_refine => {
+            let (w, h) = super::sweep::CELL_SIZE;
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
+        None => {
+            let (w, h) = render_plan::default_size(false, animated);
+            (args.width.unwrap_or(w), args.height.unwrap_or(h))
+        }
+    };
     let frame_step = args.frame_step.unwrap_or(render_plan::DEFAULT_FRAME_STEP);
 
     let ctx = host.context(width, height, &args.gpu)?;
@@ -2389,24 +2400,59 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         say!("Expression timeline: {} states", timeline.len());
     }
 
-    let mut stages = Vec::with_capacity(columns);
-    for (column, ((world, scene_file), config)) in scenes.into_iter().zip(configs).enumerate() {
+    let mut stages = Vec::with_capacity(count);
+    for (index, (((world, scene_file), config), &(column, row))) in
+        scenes.into_iter().zip(configs).zip(&cells).enumerate()
+    {
         stages.push(Stage::load(
             args,
             ctx,
             StageScene {
                 world,
                 scene_file,
-                column,
-                sweep,
+                index,
+                cell: (column, row),
+                grid,
                 config,
                 timeline: timeline.clone(),
             },
         )?);
     }
 
-    let times = render_plan::capture_times(args.time.as_ref(), args.fps);
-    let mut warnings = stage_warnings(args, sweep, &stages[0]);
+    // --ai-refine (#357) at a moment: each candidate is the one stage redrawn
+    // at that moment under the candidate's look, its clocks never rewound
+    if args.ai_refine {
+        let look = look.expect("clap requires --look with --ai-refine");
+        let reference = reference.expect("clap requires --reference with --ai-refine");
+        let t = match args.time {
+            Some(TimeSpec::At(t)) => t,
+            _ => 0.0,
+        };
+        let stage = &mut stages[0];
+        return refine_look(args, look, reference, &mut |table| {
+            let def = super::look::overlay(scene_pp, table)?;
+            let config = post_process_config(args, Some(&def))?;
+            stage.redraw(args, ctx, t, frame_step, config)
+        });
+    }
+
+    // --frames (#345) on the clock: a frame every --frame-dt of game time
+    let frame_dt = args.frame_dt.map_or(1.0 / 60.0, f64::from);
+    let times = match args.frames {
+        Some(frames) => (0..frames).map(|i| f64::from(i) * frame_dt).collect(),
+        None => render_plan::capture_times(args.time.as_ref(), args.fps),
+    };
+    if let Some(frames) = args.frames {
+        let motion = match (args.orbit, camera_path) {
+            (Some(rate), _) => format!(", orbiting {rate} deg/s"),
+            (None, Some(path)) => format!(", on a {}-key camera path", path.key.len()),
+            _ => String::new(),
+        };
+        say!("Sequence: {frames} frames, {frame_dt:.6} s apart{motion}");
+    }
+    let yaw0: Vec<f32> = stages.iter().map(|stage| stage.camera.yaw).collect();
+
+    let mut warnings = stage_warnings(args, grid, &stages[0]);
     for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
@@ -2415,50 +2461,156 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     // Where each frame goes as it's captured, so a span costs memory for one
     // frame however long it runs (#588).
     let sequence = animated && render_plan::is_sequence(&args.output);
-    // A still a moment (#614), numbered in the order the moments were given.
-    let moments = matches!(args.time, Some(TimeSpec::List(_)));
     let mut gif = None;
     let mut still = None;
     let mut written_bytes = 0u64;
     let (mut frame_width, mut frame_height) = (width, height);
     let mut captures = Vec::new();
-    // Whether each pair of neighbouring columns has differed in any frame yet.
-    let mut columns_differ = vec![false; columns.saturating_sub(1)];
+    let mut flips = super::frame_seq::FlipCounter::default();
+    // Each cell's frames so far, hashed: neighbours that drew the same at every
+    // moment showed nothing
+    let mut drawn: Vec<std::collections::hash_map::DefaultHasher> =
+        (0..count).map(|_| Default::default()).collect();
+    // A moment's measures; there is one moment when there are any (#357)
+    let mut columns = Vec::new();
+    // A grid's text, a frame's each when there are several (#317)
+    let text_path = |path: &Option<String>, index: usize| {
+        path.as_ref().map(|p| match times.len() {
+            1 => p.clone(),
+            n => super::frame_seq::numbered(p, index as u32, n as u32)
+                .to_string_lossy()
+                .into_owned(),
+        })
+    };
     for (index, &t) in times.iter().enumerate() {
-        let mut cells = Vec::with_capacity(columns);
-        for (column, stage) in stages.iter_mut().enumerate() {
-            cells.push(stage.capture(args, ctx, t, frame_step)?);
+        let mut pictures = Vec::with_capacity(count);
+        let mut texts = Vec::with_capacity(count);
+        for (i, stage) in stages.iter_mut().enumerate() {
+            stage.advance(t, frame_step);
+            // The camera's move, over where the scripts left it
+            if args.frames.is_some() {
+                if let Some(rate) = args.orbit {
+                    stage.camera.yaw = yaw0[i] + (rate * t as f32).to_radians();
+                    stage.camera.update_orbit();
+                } else if let Some(path) = camera_path {
+                    let (position, target) = path.at(t as f32);
+                    stage.camera.position = position;
+                    stage.camera.target = target;
+                }
+            }
+            pictures.push(stage.capture(args, ctx, t, frame_step)?);
+            if wants_text || wants_flips || report_file.is_some() {
+                texts.push(stage.renderer.style_text(&ctx.device, "ascii"));
+            }
             if report_json {
+                let (column, row) = cells[i];
                 captures.push(CaptureReport {
                     time: t,
-                    column: sweep.map(|s| s.values[column].clone()),
+                    column: grid.map(|g| g.columns.values[column].clone()),
+                    row: grid
+                        .and_then(|g| g.rows.as_ref())
+                        .map(|rows| rows.values[row].clone()),
+                    distance: None,
                     expression: stage.scripts.as_ref().and_then(|scripts| {
                         let state = scripts.expression().get("state")?.clone();
                         state.into_string().ok()
                     }),
-                    props: stage
-                        .living
-                        .as_ref()
-                        .map_or_else(Vec::new, |run| {
-                            render_report::props_report(
-                                run,
-                                stage.wooze.as_ref().map(|clocks| clocks.reading()),
-                            )
-                        }),
+                    props: stage.living.as_ref().map_or_else(Vec::new, |run| {
+                        render_report::props_report(
+                            run,
+                            stage.wooze.as_ref().map(|clocks| clocks.reading()),
+                        )
+                    }),
                 });
             }
         }
-        for (differ, pair) in columns_differ.iter_mut().zip(cells.windows(2)) {
-            *differ |= pair[0] != pair[1];
+        for (hasher, picture) in drawn.iter_mut().zip(&pictures) {
+            picture.as_raw().hash(hasher);
         }
-        let frame = match sweep {
-            Some(sweep) => {
-                super::style_sheet::compose(&cells, &sheet_text(sweep, &scene_name, t, &stages))
+
+        // The ASCII grid as text, and its flips frame to frame. A sweep is
+        // refused text before anything loads, so this is the one stage's
+        if wants_flips {
+            let Some(text) = &texts[0] else {
+                anyhow::bail!(
+                    "--flip-stats: the ASCII style didn't draw frame {index}; turn it on with \
+                     --ascii, a look, or the scene's [post_process.styles.ascii]"
+                );
+            };
+            let f = flips.push(text);
+            if args.flip_stats {
+                match (f.flips, f.reversals) {
+                    (Some(n), Some(r)) => say!("  frame {index:>4}: {n:>6} flips {r:>6} reversals"),
+                    (Some(n), None) => say!("  frame {index:>4}: {n:>6} flips"),
+                    _ => {}
+                }
             }
-            None => cells.remove(0),
+        }
+        if wants_text {
+            write_ascii_text(
+                text_path(&args.ascii_text, index).as_deref(),
+                text_path(&args.ascii_text_ansi, index).as_deref(),
+                texts[0].clone(),
+            )?;
+        }
+
+        // Each cell as the sheet shows it (cropped or shrunk, #358), and measured
+        // from those pixels as the one-renderer path measures
+        if grid.is_some() {
+            pictures = pictures.into_iter().map(|p| view.cell(p)).collect();
+        }
+        if measured {
+            let used: Vec<_> = stages
+                .iter()
+                .map(|stage| stage.renderer.post_process_config().clone())
+                .collect();
+            columns = measure_cells(
+                args,
+                &pictures,
+                &texts,
+                &used,
+                reference.as_ref(),
+                grid,
+                &cells,
+            );
+            let first = captures.len().saturating_sub(count);
+            for (capture, column) in captures[first..].iter_mut().zip(&columns) {
+                capture.distance = column.distance.map(|d| d.score);
+            }
+        }
+        let nearest = super::look_measure::RenderReport::nearest_column(&columns);
+
+        let frame = match grid {
+            Some(grid) => stage_sheet(
+                grid,
+                StageSheet {
+                    view,
+                    width,
+                    height,
+                    scene_name: &scene_name,
+                    t,
+                    reference: args.reference.as_deref(),
+                    columns: &columns,
+                    nearest,
+                },
+                &stages,
+                &pictures,
+            ),
+            None => pictures.remove(0),
         };
         (frame_width, frame_height) = frame.dimensions();
-        if sequence {
+        if let Some(frames) = args.frames {
+            if !args.no_images {
+                let path = super::frame_seq::numbered(&args.output, index as u32, frames);
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("failed to create {}", parent.display()))?;
+                }
+                frame
+                    .save(&path)
+                    .with_context(|| format!("Failed to save image to {}", path.display()))?;
+            }
+        } else if sequence {
             let path = render_plan::sequence_path(&args.output, index);
             if let Some(parent) = Path::new(&path)
                 .parent()
@@ -2507,18 +2659,24 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         warnings.extend(scripts.notes());
     }
 
-    if let Some(sweep) = sweep {
-        for (i, differ) in columns_differ.iter().enumerate() {
-            if !differ {
-                let warning = sweep.identical_warning(i);
-                eprintln!("Warning: {warning}");
-                warnings.push(warning);
-            }
+    if let Some(grid) = grid {
+        let drawn: Vec<u64> = drawn.iter().map(Hasher::finish).collect();
+        for warning in grid.identical_warnings(&drawn) {
+            eprintln!("Warning: {warning}");
+            warnings.push(warning);
         }
     }
 
     // Write the file
-    if sequence {
+    if let Some(frames) = args.frames {
+        if !args.no_images {
+            say!(
+                "Rendered {frames} {frame_width}x{frame_height} frames to {} .. {}",
+                super::frame_seq::numbered(&args.output, 0, frames).display(),
+                super::frame_seq::numbered(&args.output, frames - 1, frames).display()
+            );
+        }
+    } else if sequence {
         say!(
             "Rendered {} frames of {frame_width}x{frame_height} at {} fps to {} ({:.1} MB)",
             times.len(),
@@ -2555,16 +2713,53 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         still
             .save(&args.output)
             .context(format!("Failed to save image to {}", args.output))?;
-        match sweep {
-            Some(_) => say!(
-                "Rendered {} columns of {width}x{height} as {}x{} to {}",
-                columns,
-                frame_width,
-                frame_height,
-                args.output
-            ),
+        match grid {
+            Some(grid) => {
+                let (across, down) = grid.shape();
+                let shape = match grid.rows {
+                    Some(_) => format!("{across}x{down} cells"),
+                    None => format!("{across} columns"),
+                };
+                say!(
+                    "Rendered {shape} of {width}x{height} as {frame_width}x{frame_height} to {}",
+                    args.output
+                )
+            }
             None => say!("Rendered {width}x{height} image to {}", args.output),
         }
+    }
+
+    if wants_flips {
+        let stats = flips.stats();
+        say!("Flips: {}", stats.summary());
+        if let Some(path) = &args.flip_json {
+            std::fs::write(path, serde_json::to_string_pretty(&stats)?)
+                .context(format!("Failed to write {path}"))?;
+            say!("Wrote flip counts to {path}");
+        }
+    }
+
+    if let Some(path) = report_file {
+        let nearest = super::look_measure::RenderReport::nearest_column(&columns);
+        write_measures(
+            args,
+            path,
+            look.as_ref(),
+            grid,
+            (width, height),
+            columns,
+            nearest,
+        )?;
+    }
+
+    // GPU timing (#596): the first cell's last capture, drawn again and again
+    if let Some(frames) = args.gpu_time {
+        let stage = &mut stages[0];
+        say!(
+            "GPU time is of the first cell's capture at t = {:.3} s",
+            stage.captured.unwrap_or(0.0)
+        );
+        time_gpu(ctx, &mut stage.renderer, &stage.camera, frames)?;
     }
 
     if report_json {
@@ -2577,7 +2772,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             frame_step,
             wooze_field: field.is_some(),
             wooze_zones: field.map_or(0, |f| f.zones().len()),
-            sweep: sweep.map(super::sweep::Sweep::name),
+            sweep: grid.map(super::sweep::SweepGrid::name),
             captures,
             still_props: still_props(&stages[0]),
             warnings,
@@ -2588,39 +2783,183 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     Ok(())
 }
 
-/// Try every column of a wooze sweep on a field of its own, before anything is
-/// loaded. A preset column may be a file beside the scene (#249), which has to
-/// read.
-fn check_wooze_sweep(args: &RenderArgs, sweep: &super::sweep::Sweep) -> Result<()> {
-    for index in 0..sweep.values.len() {
-        if preset_file_of(args, Some(sweep), index)?.is_some() {
-            continue;
+/// Measures (#357) of each cell as the sheet shows it, a line each in the
+/// terminal. The ASCII section counts the whole drawn frame's grid, which a
+/// crop shows only part of.
+fn measure_cells(
+    args: &RenderArgs,
+    pictures: &[image::RgbaImage],
+    texts: &[Option<flint_render::stylize::GlyphText>],
+    configs: &[flint_render::PostProcessConfig],
+    reference: Option<&image::RgbImage>,
+    grid: Option<&super::sweep::SweepGrid>,
+    cells: &[(usize, usize)],
+) -> Vec<super::look_measure::ColumnReport> {
+    use super::look_measure as lm;
+    let mut columns = Vec::with_capacity(pictures.len());
+    for (i, img) in pictures.iter().enumerate() {
+        let image = lm::measure(img);
+        let ascii =
+            texts.get(i).cloned().flatten().map(|t| {
+                lm::measure_ascii(&t, lm::ascii_ramp(&configs[i], Path::new(&args.scene)))
+            });
+        let distance = reference.map(|r| lm::distance_to(r, img));
+        let value = grid.map(|g| {
+            let (c, r) = cells[i];
+            g.describe(c, r)
+        });
+        say!(
+            "  [{}] {}{}",
+            value.as_deref().unwrap_or("frame"),
+            lm::summary(&image, ascii.as_ref()),
+            distance
+                .map(|d| format!("  distance {:.2}", d.score))
+                .unwrap_or_default()
+        );
+        columns.push(lm::ColumnReport {
+            index: i,
+            value,
+            image,
+            ascii,
+            distance: distance.map(Into::into),
+        });
+    }
+    columns
+}
+
+/// A sweep's labels with each column's distance to the reference, the nearest
+/// starred (#357); as they were without a reference.
+fn distance_labels(
+    labels: Vec<String>,
+    columns: &[super::look_measure::ColumnReport],
+    nearest: Option<usize>,
+) -> Vec<String> {
+    labels
+        .into_iter()
+        .enumerate()
+        .map(|(i, l)| match columns.get(i).and_then(|c| c.distance) {
+            Some(d) => {
+                let star = if nearest == Some(i) { " *" } else { "" };
+                format!("{l}  d {:.1}{star}", d.score)
+            }
+            None => l,
+        })
+        .collect()
+}
+
+/// `--report FILE` (#357): the measures as JSON.
+fn write_measures(
+    args: &RenderArgs,
+    path: &str,
+    look: Option<&super::look::Look>,
+    grid: Option<&super::sweep::SweepGrid>,
+    (width, height): (u32, u32),
+    columns: Vec<super::look_measure::ColumnReport>,
+    nearest: Option<usize>,
+) -> Result<()> {
+    let report = super::look_measure::RenderReport {
+        scene: args.scene.clone(),
+        look: look.map(|l| l.name.clone()),
+        sweep: grid.map(|g| g.name()),
+        reference: args.reference.clone(),
+        width,
+        height,
+        thresholds: super::look_measure::Thresholds::USED,
+        columns,
+        nearest,
+    };
+    std::fs::write(path, serde_json::to_string_pretty(&report)?)
+        .context(format!("Failed to write {path}"))?;
+    say!("Wrote measures to {path}");
+    Ok(())
+}
+
+/// What a stage sheet says beside its cells.
+struct StageSheet<'a> {
+    view: super::sweep::CellView,
+    width: u32,
+    height: u32,
+    scene_name: &'a str,
+    t: f64,
+    reference: Option<&'a str>,
+    columns: &'a [super::look_measure::ColumnReport],
+    nearest: Option<usize>,
+}
+
+/// One moment's sheet of a clocked sweep: a row of columns, or a grid for two
+/// sweeps (#596), with the moment top right.
+fn stage_sheet(
+    grid: &super::sweep::SweepGrid,
+    sheet: StageSheet,
+    stages: &[Stage],
+    pictures: &[image::RgbaImage],
+) -> image::RgbaImage {
+    // Only a sheet that isn't of small frames says how big they were, and only
+    // one with a reference what its labels' d is
+    let scale = match sheet.view {
+        super::sweep::CellView::Small => String::new(),
+        view => format!("  {}", view.describe(sheet.width, sheet.height)),
+    };
+    let reference = sheet
+        .reference
+        .map_or_else(String::new, |r| format!("  d = distance to {r}"));
+    let label = |s: &super::sweep::Sweep| (0..s.values.len()).map(|i| s.label(i)).collect();
+    match &grid.rows {
+        None => {
+            let mut text = sheet_text(&grid.columns, sheet.scene_name, sheet.t, stages);
+            text.subtitle.push_str(&scale);
+            text.subtitle.push_str(&reference);
+            text.labels = distance_labels(text.labels, sheet.columns, sheet.nearest);
+            super::style_sheet::compose(pictures, &text)
         }
-        let Some(table) = sweep.wooze_table(index) else {
+        Some(rows) => super::style_sheet::compose_grid(
+            pictures,
+            &super::style_sheet::GridText {
+                title: sheet.scene_name.to_string(),
+                subtitle: format!(
+                    "sweep {}{}{scale}{reference}",
+                    grid.name(),
+                    living_note(stages)
+                ),
+                row_key: rows.name(),
+                column_labels: label(&grid.columns),
+                row_labels: label(rows),
+                time: format!("T {:.2}S", sheet.t),
+            },
+        ),
+    }
+}
+
+/// Try every cell of a sweep that turns a wooze knob on a field of its own,
+/// before anything is loaded. A preset may be a file beside the scene (#249),
+/// which has to read.
+fn check_wooze_sweep(args: &RenderArgs, grid: &super::sweep::SweepGrid) -> Result<()> {
+    for (column, row) in grid.cells() {
+        let (_, Some(table)) = cell_knobs(args, Some(grid), (column, row))? else {
             continue;
         };
         let mut field = flint_core::wooze::WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL);
         field
             .set_global(&table, 0.0, 0.0)
-            .map_err(|reason| anyhow!("--sweep {}: {reason}", sweep.name()))?;
+            .map_err(|reason| anyhow!("--sweep {}: {reason}", grid.name()))?;
     }
     Ok(())
 }
 
-/// Whether a render is of a moment of the game (#216): a time, or a sweep of the
-/// field. It hides the editor's grid and draws shallow wooze.
-fn is_moment(args: &RenderArgs, sweep: Option<&super::sweep::Sweep>) -> bool {
-    args.time.is_some() || sweep.is_some_and(|s| s.wooze_knob().is_some())
+/// Whether a render is of a moment of the game (#216): a time, frames of it, or
+/// a sweep of the field. It hides the editor's grid and draws shallow wooze.
+fn is_moment(args: &RenderArgs, grid: Option<&super::sweep::SweepGrid>) -> bool {
+    on_clock(args) || grid.is_some_and(|g| g.wooze_knob().is_some())
 }
 
 /// What a reader of this capture has to be told about what it isn't showing.
 fn stage_warnings(
     args: &RenderArgs,
-    sweep: Option<&super::sweep::Sweep>,
+    grid: Option<&super::sweep::SweepGrid>,
     stage: &Stage,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
-    if !is_moment(args, sweep) {
+    if !is_moment(args, grid) {
         return warnings;
     }
     if stage.living.is_none() {
@@ -2678,22 +3017,53 @@ fn still_props(stage: &Stage) -> Vec<String> {
         .collect()
 }
 
-/// The preset file a `--sweep wooze.preset=...` column names, if it's a file the
+/// The preset file a `--sweep wooze.preset=...` value names, if it's a file the
 /// scene can see rather than a built-in (#249).
 fn preset_file_of(
     args: &RenderArgs,
-    sweep: Option<&super::sweep::Sweep>,
-    column: usize,
+    sweep: &super::sweep::Sweep,
+    index: usize,
 ) -> Result<Option<flint_scene::WoozePreset>> {
-    let Some(sweep) = sweep.filter(|sweep| sweep.wooze_knob() == Some("preset")) else {
+    if sweep.wooze_knob() != Some("preset") {
         return Ok(None);
-    };
-    let name = &sweep.values[column];
+    }
+    let name = &sweep.values[index];
     match flint_scene::read_preset(Path::new(&args.scene), name) {
         None => Ok(None),
         Some(Ok(preset)) => Ok(Some(preset)),
         Some(Err(reason)) => Err(anyhow!("--sweep: preset '{name}': {reason}")),
     }
+}
+
+/// What a sweep cell lays over the scene's `[wooze]` table: a preset file one
+/// of its axes names (its knobs first), then every other wooze value it takes,
+/// so a `wooze.glide` row turns the glide a preset column set (#596). `None`
+/// for a cell no axis of which is a wooze knob.
+fn cell_knobs(
+    args: &RenderArgs,
+    grid: Option<&super::sweep::SweepGrid>,
+    (column, row): (usize, usize),
+) -> Result<(Option<flint_scene::WoozePreset>, Option<toml::Table>)> {
+    let Some(grid) = grid else {
+        return Ok((None, None));
+    };
+    let axes = grid.axes(column, row);
+    let mut preset = None;
+    for &(sweep, i) in &axes {
+        if let Some(file) = preset_file_of(args, sweep, i)? {
+            preset = Some(file);
+        }
+    }
+    let mut table = preset.as_ref().map(|p| preset_wooze_table(&p.wooze));
+    for &(sweep, i) in &axes {
+        if preset.is_some() && sweep.wooze_knob() == Some("preset") {
+            continue;
+        }
+        if let Some(knobs) = sweep.wooze_table(i) {
+            table.get_or_insert_with(toml::Table::new).extend(knobs);
+        }
+    }
+    Ok((preset, table))
 }
 
 /// A preset's `[wooze]` knobs as the table the field takes.
@@ -2712,6 +3082,19 @@ fn preset_wooze_table(knobs: &flint_scene::WoozeKnobs) -> toml::Table {
     table
 }
 
+/// `   N living props` for a sheet's subtitle, or nothing in a scene without.
+fn living_note(stages: &[Stage]) -> String {
+    let props = stages[0]
+        .living
+        .as_ref()
+        .map_or(0, |run| run.props().props().len());
+    if props > 0 {
+        format!("   {props} living props")
+    } else {
+        String::new()
+    }
+}
+
 /// What a sweep's sheet says, as of the moment each stage last captured: the
 /// moment top right, and under a wooze column's label what the props read.
 fn sheet_text(
@@ -2720,18 +3103,9 @@ fn sheet_text(
     t: f64,
     stages: &[Stage],
 ) -> super::style_sheet::SheetText {
-    let props = stages[0]
-        .living
-        .as_ref()
-        .map_or(0, |run| run.props().props().len());
-    let living = if props > 0 {
-        format!("   {props} living props")
-    } else {
-        String::new()
-    };
     let mut text = super::style_sheet::SheetText::new(
         scene_name,
-        format!("sweep {}{living}", sweep.name()),
+        format!("sweep {}{}", sweep.name(), living_note(stages)),
         (0..sweep.values.len()).map(|i| sweep.label(i)).collect(),
     );
     text.time = format!("T {t:.2}S");
@@ -2750,15 +3124,17 @@ fn sheet_text(
     text
 }
 
-/// One column's scene, as [`Stage::load`] takes it.
+/// One cell's scene, as [`Stage::load`] takes it.
 struct StageScene<'a> {
     world: flint_ecs::FlintWorld,
     scene_file: flint_scene::SceneFile,
-    /// Which of the sweep's values this stage takes.
-    column: usize,
-    sweep: Option<&'a super::sweep::Sweep>,
-    /// The column's post-processing: the scene's, under any look and the
-    /// column's value, with the CLI's flags over it.
+    /// Which cell this is, a row at a time; the first says what all share.
+    index: usize,
+    /// Which of the sweep's values this stage takes: (column, row).
+    cell: (usize, usize),
+    grid: Option<&'a super::sweep::SweepGrid>,
+    /// The cell's post-processing: the scene's, under any look and the
+    /// cell's values, with the CLI's flags over it.
     config: flint_render::PostProcessConfig,
     timeline: Option<ExpressionTimeline>,
 }
@@ -2794,12 +3170,13 @@ impl Stage {
         let StageScene {
             mut world,
             scene_file,
-            column,
-            sweep,
+            index,
+            cell,
+            grid,
             config: mut pp_config,
             timeline,
         } = scene;
-        let moment = is_moment(args, sweep);
+        let moment = is_moment(args, grid);
 
         // Configure camera — scene-level first, then CLI overrides take precedence
         let mut camera = Camera::new();
@@ -2867,9 +3244,8 @@ impl Stage {
             || args.yaw.is_some()
             || args.pitch.is_some()
             || args.target.is_some();
-        let as_authored = scene_set_position
-            && !orbit_asked
-            && (args.time.is_some() || LivingRun::wanted_by(&world));
+        let as_authored =
+            scene_set_position && !orbit_asked && (on_clock(args) || LivingRun::wanted_by(&world));
         if !as_authored {
             camera.update_orbit();
         }
@@ -2940,11 +3316,7 @@ impl Stage {
         // A preset column names a preset file beside the scene before a built-in,
         // as the player's Load does (#249), and the file's [living] tables, species
         // and all, go over the scene's as they do there.
-        let column_preset = preset_file_of(args, sweep, column)?;
-        let column_knobs = match &column_preset {
-            Some(preset) => Some(preset_wooze_table(&preset.wooze)),
-            None => sweep.and_then(|sweep| sweep.wooze_table(column)),
-        };
+        let (column_preset, column_knobs) = cell_knobs(args, grid, cell)?;
         if let (Some(run), Some(preset)) = (&mut living, &column_preset) {
             for problem in run.apply_preset(&preset.living) {
                 eprintln!("Warning: --sweep preset: {problem}");
@@ -3035,12 +3407,24 @@ impl Stage {
                 pp_config.boil =
                     clocks.boil_at(camera.position_array(), time.max(0.0), pp_config.boil_on);
             }
-            (None, _) if boil_wanted && column == 0 => {
+            (None, _) if boil_wanted && index == 0 => {
                 say!("This scene has no [wooze] table, so nothing boils.");
             }
             _ => {}
         }
         renderer.set_post_process_config(pp_config);
+        // The ASCII grid read back, for text, flips and measures (#596)
+        let report_file = args
+            .report
+            .as_deref()
+            .is_some_and(|r| r != REPORT_TO_STDOUT);
+        renderer.set_style_text_capture(
+            args.ascii_text.is_some()
+                || args.ascii_text_ansi.is_some()
+                || args.flip_stats
+                || args.flip_json.is_some()
+                || report_file,
+        );
         renderer.ensure_style_resources(&ctx.device);
         renderer.ensure_fxaa_resources(&ctx.device);
 
@@ -3060,7 +3444,7 @@ impl Stage {
                 anyhow::bail!("--quality: {e}");
             }
             let applied = renderer.set_quality(&ctx.device, &q);
-            if column == 0 {
+            if index == 0 {
                 say!("Quality: {}", applied.to_query());
             }
         }
@@ -3163,7 +3547,7 @@ impl Stage {
             self.renderer
                 .set_boil(clocks.boil(self.camera.position_array(), on));
         }
-        if args.time.is_some() {
+        if on_clock(args) {
             // The rest of what the player keeps on this clock. Grain has its own flag.
             // Woozy grass (#252) is on the field's clock instead.
             match &self.wooze {
@@ -3188,7 +3572,7 @@ impl Stage {
         // at a given time is reproducible run to run.
         let particle_time = args
             .particle_time
-            .or_else(|| args.time.is_some().then_some(t as f32));
+            .or_else(|| on_clock(args).then_some(t as f32));
         if let Some(seconds) = particle_time {
             self.step_particles(args, ctx, seconds)?;
         }
@@ -3207,6 +3591,29 @@ impl Stage {
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
             .context("Failed to create image from pixel data")
+    }
+
+    /// Draw the moment `t` again under `config` (an `--ai-refine` candidate,
+    /// #596): the clocks stay where they are, and the style history starts
+    /// over, as the one-renderer path draws each candidate as a first frame.
+    fn redraw(
+        &mut self,
+        args: &RenderArgs,
+        ctx: &HeadlessContext,
+        t: f64,
+        frame_step: f64,
+        mut config: flint_render::PostProcessConfig,
+    ) -> Result<image::RgbaImage> {
+        // The shading boil's drawing is the clock's, not the look's
+        config.boil = self.renderer.post_process_config().boil;
+        self.renderer.set_post_process_config(config);
+        self.renderer.ensure_style_resources(&ctx.device);
+        self.renderer.ensure_fxaa_resources(&ctx.device);
+        self.renderer.reset_style_history();
+        // The scripts' look goes over the candidate's, as over the scene's
+        self.look_applied = ScriptLook::default();
+        self.captured = None;
+        self.capture(args, ctx, t, frame_step)
     }
 
     /// Move the clocks on to `t` a `frame_step` at a time, landing on `t` exactly,
@@ -3493,7 +3900,8 @@ fn load_terrain_for_render(
 
                 say!(
                     "[grass] Enabled: density={}, max_dist={}",
-                    grass_config.density, grass_config.max_distance
+                    grass_config.density,
+                    grass_config.max_distance
                 );
             } else {
                 say!("[grass] Warning: splat map not found at {:?}", splat_path);

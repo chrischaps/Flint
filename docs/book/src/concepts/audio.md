@@ -192,6 +192,8 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, opts)` | Play a spatial sound with options: `volume`, `pitch`, `min_distance`, `max_distance`, `rolloff`, each optional |
 | `stop_sound(name)` | Stop a playing sound |
+| `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
+| `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
 ```rust
 // In a Rhai script:
@@ -218,6 +220,38 @@ Extensions' `ctx.audio.play` resolves names the same way.
 A placed sound is at full volume within `min_distance` and silent past `max_distance`. Between them it is `-60·r^rolloff` dB, where `r` is how far the listener is along the way from one to the other. The default `rolloff` of 2 holds a sound up most of the way and drops it near `max_distance`, which suits a small room. A sound heard across open ground wants a rolloff below 1: it falls away soon after `min_distance` and then tails off slowly, close to a real sound's inverse-distance fade. For example, `rolloff: 0.6` between 32 m and 1250 m stays within 1.5 dB of `(32/d)^1.2` out to 300 m.
 
 Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files are automatically loaded at startup.
+
+## Keeping time with the music
+
+A picture that moves with its music needs the music's own clock. Adding up `delta_time()` is not it: the sum is clamped at 250 ms a frame and paced to the display while the sound runs on the device's clock, so a hitch separates them for good, and on the web an `audio_source` whose sound is in the late bundle starts at a moment no script can see. `audio_position(entity)` asks the mixer instead: seconds into the sound that entity's `audio_source` is playing, wrapped for a loop.
+
+```rust
+let music = -1;
+
+fn on_init() {
+    music = get_entity("music");
+}
+
+fn on_draw_ui() {                      // runs paused or not
+    let at = audio_position(music);    // -1.0 until the sound has started
+    if at < 0.0 { return; }
+    let latency = audio_output_latency();
+    let heard = if latency > 0.0 { at - latency } else { at };
+    let sixteenth = ((heard / 0.125).floor().to_int() + 16) % 16;  // 120 bpm
+    // ... light what this sixteenth holds
+}
+```
+
+It is `-1.0` until the sound has been mixed: on the web, that is once the late bundle's sound is in and the worklet has played it, so a game needs no platform check. It holds still while the sound is paused, comes back to `-1.0` when a one-shot source ends, and is read every frame whether or not the game is paused (a loop plays on under a pause menu), so `on_draw_ui` sees it move.
+
+Where the number comes from:
+
+- **Desktop:** kira's handle, which moves once per device callback (its position is where the callback's last 128-frame chunk began). A small clock in `flint-audio` (`clock::PlayClock`) runs it on at the sound's pitch between callbacks and eases toward each new value, so it moves every frame and never steps backwards by a jitter. After a stall it snaps back to the sound. In a simulated ten minutes it stays within one callback plus 20 ms of the sound.
+- **Web:** the worklet's mixer reports each watched voice every 1024 frames (about 21 ms), stamped with the `AudioContext`'s `currentTime` at the start of the quantum it describes. The page's own `currentTime` trails those stamps, so it keeps the audio clock itself: the offset from `performance.now()` to the report that crossed fastest, following the clocks' slow drift and taken afresh only when several reports in a row say it jumped (the context slept). A busy main thread delays reports but doesn't move that clock. A report arrives only for a voice that has been mixed.
+
+`audio_output_latency()` is the time from mixing to hearing: the browser's `baseLatency + outputLatency`. Show `audio_position(e) - audio_output_latency()` to light what is heard rather than what is being mixed. kira's desktop stream doesn't say what its device adds, so there it is `-1.0` and a game keeps its own estimate.
+
+`demo/audio_clock.scene.toml` lights four pads from a looping click track: Space stalls the frame for 500 ms and E pauses, and the pads stay on the clicks while the summed `delta_time()` shown above them falls behind.
 
 ## From Rust: Player Extensions
 

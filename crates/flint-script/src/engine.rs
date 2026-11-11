@@ -182,6 +182,8 @@ pub struct ScriptEngine {
     /// [`set_update_timing`](Self::set_update_timing) is on (the perf
     /// readout, Flint#120). Scripts sharing a file add up.
     update_times: Option<Vec<(String, f32)>>,
+    /// Scripts' `random()` sequence, seeded once from the clock (#580)
+    pub(crate) random: crate::random::ScriptRandom,
 }
 
 impl ScriptEngine {
@@ -191,6 +193,8 @@ impl ScriptEngine {
 
         // Register all API functions
         api::register_all(&mut engine, ctx.clone());
+        let random = crate::random::ScriptRandom::from_clock();
+        random.register(&mut engine);
 
         Self {
             engine,
@@ -198,6 +202,7 @@ impl ScriptEngine {
             scripts: HashMap::new(),
             module_base: None,
             update_times: None,
+            random,
         }
     }
 

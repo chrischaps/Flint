@@ -741,6 +741,13 @@ pub struct ScriptCallContext {
     /// The (script, function) pairs that have already warned about a setter
     /// given an entity that isn't there (#635), so each warns once.
     pub bad_target_warned: HashSet<(String, &'static str)>,
+    /// Seconds into each playing `audio_source`'s sound, wrapped for a loop,
+    /// for `audio_position` (#658). The host sets it each frame, paused or
+    /// not; a source missing from it hasn't started.
+    pub audio_positions: std::collections::HashMap<EntityId, f64>,
+    /// How long after it is mixed a sound is heard, seconds, where the
+    /// platform says (the browser), for `audio_output_latency`.
+    pub audio_output_latency: Option<f64>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -830,6 +837,8 @@ impl ScriptCallContext {
             conducted: ConductedSnapshot::default(),
             expression: rhai::Map::new(),
             bad_target_warned: HashSet::new(),
+            audio_positions: std::collections::HashMap::new(),
+            audio_output_latency: None,
         }
     }
 

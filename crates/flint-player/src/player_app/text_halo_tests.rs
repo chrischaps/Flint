@@ -18,6 +18,17 @@ fn halo(
     size: f32,
     spec: HaloSpec,
 ) -> (Arc<egui::Galley>, HaloImage) {
+    halo_within(ctx, text, size, spec, 8192)
+}
+
+/// [`halo`] on a device whose textures are at most `max_side` a side.
+fn halo_within(
+    ctx: &egui::Context,
+    text: &str,
+    size: f32,
+    spec: HaloSpec,
+    max_side: usize,
+) -> (Arc<egui::Galley>, HaloImage) {
     let mut out = None;
     let _ = ctx.run(Default::default(), |ctx| {
         let galley = ctx.fonts(|f| {
@@ -30,7 +41,7 @@ fn halo(
         let image = ctx.fonts(|f| {
             let atlas = f.texture_atlas();
             let atlas = atlas.lock();
-            rasterise(&galley, atlas.image(), spec)
+            rasterise(&galley, atlas.image(), spec, max_side)
         });
         out = Some((galley, image.expect("a halo")));
     });
@@ -271,6 +282,79 @@ fn a_still_label_makes_one_texture_and_a_dropped_one_frees_it() {
     frame(&mut halos, None);
     frame(&mut halos, None);
     assert_eq!(halos.len(), 0);
+}
+
+/// #657: a glow round lettering too wide for the device's textures is drawn
+/// smaller, over the same place, instead of asking for a texture the GPU
+/// refuses (which ended the run).
+#[test]
+fn a_halo_past_the_texture_limit_is_drawn_smaller_in_the_same_place() {
+    let ctx = context(1.0);
+    let spec = HaloSpec {
+        stroke: Some(([0.2, 0.85, 1.0, 0.6], 4.0)),
+        glow: Some(([0.2, 0.85, 1.0, 0.45], 10.0)),
+    };
+    let (_, full) = halo_within(&ctx, "AFTERGLOW", 300.0, spec, 8192);
+    assert_eq!(full.scale, 1);
+    let [fw, fh] = full.image.size;
+    assert!(fw > 1500, "the label is wider than the limit: {fw}");
+
+    let limit = 1024;
+    let (_, small) = halo_within(&ctx, "AFTERGLOW", 300.0, spec, limit);
+    let [sw, sh] = small.image.size;
+    let k = small.scale as i32;
+    assert!(sw <= limit && sh <= limit, "{sw}x{sh} fits {limit}");
+    assert!(k as usize >= fw.div_ceil(limit), "scale {k}");
+    // Its footprint covers the full picture's, give or take a block.
+    let (f0, f1) = (
+        full.origin_px,
+        [full.origin_px[0] + fw as i32, full.origin_px[1] + fh as i32],
+    );
+    let (s0, s1) = (
+        small.origin_px,
+        [
+            small.origin_px[0] + sw as i32 * k,
+            small.origin_px[1] + sh as i32 * k,
+        ],
+    );
+    for i in 0..2 {
+        assert!(
+            s0[i] <= f0[i] + k && s1[i] >= f1[i] - k,
+            "{s0:?}..{s1:?} over {f0:?}..{f1:?}"
+        );
+    }
+    // And it still glows.
+    let peak = small.image.pixels.iter().map(|p| p.a()).max().unwrap();
+    assert!(peak > 100, "peak alpha {peak}");
+
+    // Through the cache on such a device: one texture within the limit,
+    // painted over the full size.
+    let mut halos = TextHalos::default();
+    let input = egui::RawInput {
+        max_texture_side: Some(limit),
+        ..Default::default()
+    };
+    let _ = ctx.run(input, |ctx| {
+        halos.begin_frame();
+        let font = egui::FontId::proportional(300.0);
+        let galley =
+            ctx.fonts(|f| f.layout_no_wrap("AFTERGLOW".into(), font.clone(), egui::Color32::WHITE));
+        let Some(egui::Shape::Mesh(m)) = halos.shape(
+            ctx,
+            &galley,
+            ("AFTERGLOW", &font),
+            egui::pos2(0.0, 0.0),
+            spec,
+        ) else {
+            panic!("an image mesh")
+        };
+        let width = m.vertices.iter().map(|v| v.pos.x).fold(f32::MIN, f32::max)
+            - m.vertices.iter().map(|v| v.pos.x).fold(f32::MAX, f32::min);
+        assert!(
+            (width - fw as f32).abs() <= 2.0 * k as f32,
+            "{width} vs {fw}"
+        );
+    });
 }
 
 fn to_premul(c: &[f32; 4]) -> [u8; 4] {

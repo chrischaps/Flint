@@ -18,14 +18,12 @@ pub mod touch_controls;
 pub use clock::GameClock;
 pub use event::GameEvent;
 pub use event_bus::EventBus;
+pub use input::parse_key_code;
 pub use input::{
     ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputDevice,
     InputState, RebindMode, DEVICE_AXIS_DEADZONE,
 };
-pub use input::parse_key_code;
 pub use persist::{PersistentStore, SaveDebounce};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;
-pub use touch_controls::{
-    TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget,
-};
+pub use touch_controls::{TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget};

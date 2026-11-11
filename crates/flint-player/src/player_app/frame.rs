@@ -32,6 +32,35 @@ use std::collections::HashSet;
 const AUDIO_DECODE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl PlayerApp {
+    /// The screen in points as scripts see it (`screen_width()` and
+    /// `screen_height()`, and the UI documents' layout): egui's screen, once
+    /// it agrees with the window. For egui's first passes its `screen_rect()`
+    /// is a 10,000-point placeholder (15,000 once a `--pixels-per-point`
+    /// zoom lands on a 1.5x display), and a script sizing its HUD by the
+    /// screen asked for lettering 14 to 21 times too big, whose glow wanted
+    /// a texture past the GPU's limit (#657). Until egui agrees, it's the
+    /// window's size at the scale egui is about to use.
+    pub(super) fn script_screen_size(&self) -> (f32, f32) {
+        let rect = self.egui_ctx.screen_rect();
+        let egui_size = (rect.width(), rect.height());
+        let Some(window) = &self.window else {
+            return egui_size;
+        };
+        let size = window.inner_size();
+        let ppp = self
+            .pixels_per_point
+            .unwrap_or(window.scale_factor() as f32)
+            .max(0.01);
+        let window_size = (size.width as f32 / ppp, size.height as f32 / ppp);
+        let agrees = (egui_size.0 - window_size.0).abs() <= 1.0
+            && (egui_size.1 - window_size.1).abs() <= 1.0;
+        if agrees || size.width == 0 || size.height == 0 {
+            egui_size
+        } else {
+            window_size
+        }
+    }
+
     #[profiling::function]
     pub(super) fn render(&mut self) {
         // On Android, window may be None between suspended() and resumed()
@@ -673,7 +702,12 @@ impl PlayerApp {
         );
         // A split A/B (#238): this drawing is the side being shown, so it goes
         // to the GPU now, and the other side draws over its half after it.
-        if let Some(ab) = self.living_tune.ab.as_deref_mut().filter(|ab| ab.is_split()) {
+        if let Some(ab) = self
+            .living_tune
+            .ab
+            .as_deref_mut()
+            .filter(|ab| ab.is_split())
+        {
             let first = std::mem::replace(
                 &mut encoder,
                 context
@@ -1382,9 +1416,8 @@ impl PlayerApp {
             self.clock.total_time,
             self.clock.delta_time,
         );
-        let screen_rect = self.egui_ctx.screen_rect();
-        self.script
-            .set_screen_size(screen_rect.width(), screen_rect.height());
+        let (screen_w, screen_h) = self.script_screen_size();
+        self.script.set_screen_size(screen_w, screen_h);
         // Cursor in the same logical-point space as screen_width()/draw_*:
         // InputState holds physical pixels, egui's ppp is the window scale.
         {
@@ -1398,6 +1431,12 @@ impl PlayerApp {
         // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
         self.script.set_loaded_chunk_ids(chunk_ids);
+
+        // Where each audio_source is in its sound (#658), read every frame,
+        // paused or not: loops play on under a pause menu.
+        self.audio.sample_positions();
+        self.script
+            .set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
 
         // Conducted parameters (F4, ADR 0020): the music session's per-frame
         // state for scene bindings; neutral defaults when no session (also
@@ -1511,10 +1550,8 @@ impl PlayerApp {
 
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.script.drain_draw_commands();
-        let screen_rect = self.egui_ctx.screen_rect();
-        let ui_commands = self
-            .script
-            .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
+        let (screen_w, screen_h) = self.script_screen_size();
+        let ui_commands = self.script.generate_ui_draw_commands(screen_w, screen_h);
         commands.extend(ui_commands);
         self.draw_commands = commands;
 
@@ -1659,10 +1696,9 @@ impl PlayerApp {
                 {
                     // Catalog names never reach the queue, so the file
                     // fallback needs only the scene's own search paths.
-                    let config =
-                        flint_render::model_loader::ModelLoadConfig::from_scene_path(
-                            &self.scene_path,
-                        );
+                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                        &self.scene_path,
+                    );
                     let mut sink = super::procgen_assets::GpuSink {
                         renderer,
                         device: &ctx.device,
@@ -1889,11 +1925,7 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn render_hud(
-        &mut self,
-        target_view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
+    fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -1995,15 +2027,14 @@ impl PlayerApp {
             // World text is laid out here, so the glyphs it needs go up
             // with this pass's font atlas.
             if let Some(view) = &text_view {
-                laid_text =
-                    super::world_text::lay_out(
-                        ctx,
-                        &world_texts,
-                        view,
-                        ui_fonts,
-                        ui_fonts_warned,
-                        text_halos,
-                    );
+                laid_text = super::world_text::lay_out(
+                    ctx,
+                    &world_texts,
+                    view,
+                    ui_fonts,
+                    ui_fonts_warned,
+                    text_halos,
+                );
             }
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on
@@ -2051,7 +2082,11 @@ impl PlayerApp {
             flint_debug_ui::paint_style_errors(
                 ctx,
                 &style_errors,
-                if cfg!(target_arch = "wasm32") { 52.0 } else { 0.0 },
+                if cfg!(target_arch = "wasm32") {
+                    52.0
+                } else {
+                    0.0
+                },
             );
         });
 

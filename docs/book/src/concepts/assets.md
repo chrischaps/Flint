@@ -19,11 +19,11 @@ This means:
 
 The content store (`.flint/assets`), the procgen provenance index (`.flint/procgen`), the job store (`.flint/jobs`), the project config (`.flint/config.toml`) and the sidecar catalog (`assets/`) all live at the **project root**, whichever folder of the project a command runs from. Flint finds the root the way cargo finds a workspace: it walks up from the working directory to the nearest directory holding
 
-1. a `flint.toml` file,
+1. a `flint.toml` file (the [project manifest](../guides/building-a-game-project.md#the-project-manifest)),
 2. a `.flint/` directory (not the one in your home directory, which holds the global config), or
 3. `schemas/` beside `scenes/` or `levels/` --- the layout `flint init` makes and the game repos keep.
 
-A Flint engine checkout is passed through when a project sits above it, so `flint gen ... --register` run inside a game's `engine/` subtree registers into the game's store. With no marker anywhere, the working directory is the root. `--project <dir>` (a global flag on every command) names the root outright, and `flint gen --register` prints the store it uses:
+A Flint engine checkout is passed through when a project sits above it, so `flint gen ... --register` run inside a game's `engine/` subtree registers into the game's store. With no marker anywhere, the working directory is the root. `--project <dir>` (a global flag on every command) names the root outright (reading that folder's `flint.toml` if it has one), and `flint gen --register` prints the store it uses:
 
 ```
 Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)

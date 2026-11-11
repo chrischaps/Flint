@@ -302,7 +302,7 @@ impl SweepGrid {
             .collect()
     }
 
-    fn axes(&self, column: usize, row: usize) -> Vec<(&Sweep, usize)> {
+    pub fn axes(&self, column: usize, row: usize) -> Vec<(&Sweep, usize)> {
         let mut axes = vec![(&self.columns, column)];
         if let Some(rows) = &self.rows {
             axes.push((rows, row));

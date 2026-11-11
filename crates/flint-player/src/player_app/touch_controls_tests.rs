@@ -68,7 +68,10 @@ fn scripted_thumbs_walk_and_jump_past_a_greedy_extension() {
     app.add_extension(Box::new(Greedy));
     frame(&mut app); // t = 0: both thumbs land
     assert!(app.input.touch_controls_visible());
-    assert!(app.input.is_action_pressed("jump"), "the button kept its finger");
+    assert!(
+        app.input.is_action_pressed("jump"),
+        "the button kept its finger"
+    );
     frame(&mut app); // 0.25: the stick pushes up
     assert!(app.input.is_action_pressed("move_forward"));
     frame(&mut app); // 0.5

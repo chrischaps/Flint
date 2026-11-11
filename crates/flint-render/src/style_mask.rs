@@ -1340,28 +1340,23 @@ impl StyleMaskPass {
         veil: &wgpu::TextureView,
         depth_key: crate::bind_cache::DepthKey,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_over(
-            depth_key,
-            "Style Mask Draw BG",
-            self.draw_buffer_id,
-            || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Style Mask Draw BG"),
-                    layout: &self.draw_bgl,
-                    entries: &[
-                        self.uniform_entry(),
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(scene_depth),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(veil),
-                        },
-                    ],
-                })
-            },
-        )
+        binds.get_over(depth_key, "Style Mask Draw BG", self.draw_buffer_id, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Style Mask Draw BG"),
+                layout: &self.draw_bgl,
+                entries: &[
+                    self.uniform_entry(),
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(scene_depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(veil),
+                    },
+                ],
+            })
+        })
     }
 
     /// Clear `veil_view` and draw what's in front into it (#290): each
@@ -2060,12 +2055,18 @@ mod tests {
         config.styles.set_enabled("ascii", true);
         let empty = FlintWorld::new();
         let (none, _) = resolved(&empty, &config);
-        assert!(!crate::stylize::any_uses_mask(&config, &none), "nothing styled");
+        assert!(
+            !crate::stylize::any_uses_mask(&config, &none),
+            "nothing styled"
+        );
 
         let mut world = FlintWorld::new();
         with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
         let (other, _) = resolved(&world, &config);
-        assert!(crate::stylize::any_uses_mask(&config, &other), "edges outline it");
+        assert!(
+            crate::stylize::any_uses_mask(&config, &other),
+            "edges outline it"
+        );
         config.styles.set_param("ascii", "edges", 0.0);
         assert!(
             crate::stylize::any_uses_mask(&config, &other),

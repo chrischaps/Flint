@@ -35,7 +35,9 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    eprintln!("flint-web-shims is a browser page; run `trunk serve shims.html` in crates/flint-player");
+    eprintln!(
+        "flint-web-shims is a browser page; run `trunk serve shims.html` in crates/flint-player"
+    );
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -45,11 +47,11 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
+    use flint_input_capture::pad::{Axis, EventType, Gilrs};
     use flint_player::user_files;
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
     };
-    use flint_input_capture::pad::{Axis, EventType, Gilrs};
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
@@ -756,7 +758,9 @@ mod sound {
         // A heavy frame, on purpose: hold the main thread this long every
         // 2 s, to see where buffers start arriving late.
         if let Some(stall) = param("stall").and_then(|s| s.parse::<f64>().ok()) {
-            log(&format!("[flint-web] stalling the main thread {stall:.0} ms every 2 s"));
+            log(&format!(
+                "[flint-web] stalling the main thread {stall:.0} ms every 2 s"
+            ));
             let hold = Closure::<dyn FnMut()>::new(move || {
                 let until = now_ms() + stall;
                 while now_ms() < until {}

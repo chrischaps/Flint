@@ -63,6 +63,9 @@ pub(super) struct HaloImage {
     pub image: egui::ColorImage,
     /// The image's top-left corner from the galley's origin, in pixels.
     pub origin_px: [i32; 2],
+    /// Galley pixels to an image pixel: 1, unless the picture at full size
+    /// would pass the device's texture limit and was drawn smaller (#657).
+    pub scale: u32,
 }
 
 /// The cache of halo pictures, one per distinct label.
@@ -75,6 +78,7 @@ pub(super) struct TextHalos {
 struct Entry {
     texture: egui::TextureHandle,
     origin_px: [i32; 2],
+    /// The picture's size on screen, in galley pixels.
     size_px: [usize; 2],
     used: u64,
 }
@@ -112,15 +116,17 @@ impl TextHalos {
         let id = h.finish();
 
         if !self.entries.contains_key(&id) {
+            let max_side = ctx.input(|i| i.max_texture_side);
             let halo = ctx.fonts(|f| {
                 let atlas = f.texture_atlas();
                 let atlas = atlas.lock();
-                rasterise(galley, atlas.image(), spec)
+                rasterise(galley, atlas.image(), spec, max_side)
             })?;
             if self.entries.len() >= MAX_ENTRIES {
                 self.entries.clear();
             }
-            let size_px = halo.image.size;
+            let k = halo.scale as usize;
+            let size_px = [halo.image.size[0] * k, halo.image.size[1] * k];
             let texture = ctx.load_texture(
                 format!("flint_text_halo_{id:016x}"),
                 halo.image,
@@ -176,10 +182,17 @@ fn hash_spec(spec: &HaloSpec, h: &mut impl Hasher) {
 /// Rasterise `spec` round `galley`, reading glyph coverage from `atlas`
 /// (egui's font atlas, which holds every glyph the galley was laid out
 /// with). `None` for a galley with no glyphs or a spec that draws nothing.
+///
+/// No side of the image passes `max_side` (the device's texture limit): a
+/// halo that would is drawn at a fraction of the galley's pixel size, a
+/// whole number `scale` of galley pixels to one of its own, and stretched
+/// back when painted. A glow is soft enough not to show it, and a label
+/// that size is mostly off the screen anyway (#657).
 pub(super) fn rasterise(
     galley: &egui::Galley,
     atlas: &egui::FontImage,
     spec: HaloSpec,
+    max_side: usize,
 ) -> Option<HaloImage> {
     let ppp = galley.pixels_per_point;
     let stroke = spec.stroke.filter(|(c, w)| *w > 0.0 && c[3] > 0.0);
@@ -187,8 +200,8 @@ pub(super) fn rasterise(
     if stroke.is_none() && glow.is_none() {
         return None;
     }
-    let stroke_px = stroke.map_or(0.0, |(_, w)| w * ppp);
-    let glow_px = glow.map_or(0.0, |(_, r)| r * ppp);
+    let full_stroke_px = stroke.map_or(0.0, |(_, w)| w * ppp);
+    let full_glow_px = glow.map_or(0.0, |(_, r)| r * ppp);
 
     // The glyphs' bounds in galley pixels.
     let quads = glyph_quads(galley, ppp);
@@ -202,31 +215,62 @@ pub(super) fn rasterise(
             hi[i] = hi[i].max(q.dst[i] + q.size[i] as i32);
         }
     }
-    let pad = (stroke_px + glow_px).ceil() as i32 + 2;
-    // The image's origin, in galley pixels, and its size.
-    let origin = [lo[0] - pad, lo[1] - pad];
-    let w = (hi[0] - lo[0] + 2 * pad) as usize;
-    let h = (hi[1] - lo[1] + 2 * pad) as usize;
+    // The image in its own pixels, `scale` galley pixels each: 1 unless
+    // that would pass the texture limit, then the least that doesn't.
+    let max_side = max_side.max(64);
+    let mut scale = 1i32;
+    let (origin, w, h, stroke_px, glow_px, pad) = loop {
+        let k = scale as f32;
+        let (stroke_px, glow_px) = (full_stroke_px / k, full_glow_px / k);
+        let pad = (stroke_px + glow_px).ceil() as i32 + 2;
+        let lo_s = [lo[0].div_euclid(scale), lo[1].div_euclid(scale)];
+        let hi_s = [
+            (hi[0] + scale - 1).div_euclid(scale),
+            (hi[1] + scale - 1).div_euclid(scale),
+        ];
+        // The image's origin, in its own pixels, and its size.
+        let origin = [lo_s[0] - pad, lo_s[1] - pad];
+        let w = (hi_s[0] - lo_s[0] + 2 * pad) as usize;
+        let h = (hi_s[1] - lo_s[1] + 2 * pad) as usize;
+        if w.max(h) <= max_side {
+            break (origin, w, h, stroke_px, glow_px, pad);
+        }
+        if scale >= MAX_SCALE {
+            warn_too_big(galley, w * scale as usize, h * scale as usize, max_side);
+            return None;
+        }
+        let need = (w.max(h) * scale as usize).div_ceil(max_side) as i32;
+        scale = need.max(scale + 1).min(MAX_SCALE);
+    };
+    if scale > 1 {
+        warn_scaled(galley, scale, max_side);
+    }
 
     // Coverage: each glyph's atlas texels copied 1:1 (a galley's glyphs are
-    // laid out at the atlas's own pixel size), overlaps by their max.
+    // laid out at the atlas's own pixel size), overlaps by their max. At a
+    // reduced scale each image pixel sums its block's share of them.
     let mut cov = vec![0.0f32; w * h];
+    let block = 1.0 / (scale * scale) as f32;
     for q in &quads {
         for y in 0..q.size[1] {
             let ty = q.uv[1] + y;
-            let dy = (q.dst[1] - origin[1]) as usize + y;
+            let dy = ((q.dst[1] + y as i32).div_euclid(scale) - origin[1]) as usize;
             if ty >= atlas.size[1] || dy >= h {
                 continue;
             }
             for x in 0..q.size[0] {
                 let tx = q.uv[0] + x;
-                let dx = (q.dst[0] - origin[0]) as usize + x;
+                let dx = ((q.dst[0] + x as i32).div_euclid(scale) - origin[0]) as usize;
                 if tx >= atlas.size[0] || dx >= w {
                     continue;
                 }
                 let c = atlas.pixels[ty * atlas.size[0] + tx];
                 let d = &mut cov[dy * w + dx];
-                *d = d.max(c);
+                *d = if scale == 1 {
+                    d.max(c)
+                } else {
+                    (*d + c * block).min(1.0)
+                };
             }
         }
     }
@@ -324,8 +368,48 @@ pub(super) fn rasterise(
             size: [w, h],
             pixels,
         },
-        origin_px: origin,
+        origin_px: [origin[0] * scale, origin[1] * scale],
+        scale: scale as u32,
     })
+}
+
+/// The most galley pixels an image pixel may stand for; a halo that still
+/// won't fit is skipped.
+const MAX_SCALE: i32 = 64;
+
+/// Once a run: a halo drawn smaller than its label to fit the GPU.
+fn warn_scaled(galley: &egui::Galley, scale: i32, max_side: usize) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "text halo for {:?} at {} pt is past the GPU's {max_side} px texture limit; \
+             drawn at 1/{scale} size and stretched (further ones not reported)",
+            galley.job.text,
+            label_size(galley),
+        );
+    });
+}
+
+/// Once a run: a halo too big to draw even at 1/[`MAX_SCALE`], skipped.
+fn warn_too_big(galley: &egui::Galley, w: usize, h: usize, max_side: usize) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "text halo for {:?} at {} pt would be {w}x{h} px, past the GPU's {max_side} px \
+             texture limit even at 1/{MAX_SCALE} size; not drawn (further ones not reported)",
+            galley.job.text,
+            label_size(galley),
+        );
+    });
+}
+
+/// The label's font size in points, for the warnings.
+fn label_size(galley: &egui::Galley) -> f32 {
+    galley
+        .job
+        .sections
+        .first()
+        .map_or(0.0, |s| s.format.font_id.size)
 }
 
 /// One glyph's texels: where they go in galley pixels, where they come from

@@ -17,9 +17,22 @@
 // come back. Each buffer's numbers are posted to the page, whose
 // BufferMeter (meter.rs) counts and logs them, as it did for the
 // main-thread stream.
+//
+// It also says where the voices the page watches are (#658): every
+// REPORT_FRAMES frames, each one's place in its sound and its state, stamped
+// with `currentTime` at the start of the quantum just mixed (kira's position
+// is where its last 128-frame chunk began). The page's own `currentTime`
+// trails those stamps (it moves when the audio thread lets it, a device
+// buffer at a time), so the page keeps the audio clock itself: the offset
+// from `performance.now()` to each report's audio time, at its smallest
+// (the report that crossed fastest), creeping after the clocks' drift, and
+// taken afresh only when it has jumped for several reports running (the
+// context slept): a report that was merely delivered late, behind a long
+// frame, says nothing about the clock.
 
 const PROCESSOR = `
 const CREEP = 0.002; // how fast the steadiest lag follows the clocks' drift
+const REPORT_FRAMES = 1024; // about 21 ms at 48 kHz
 class FlintMixer extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -45,6 +58,7 @@ class FlintMixer extends AudioWorkletProcessor {
     this.peak = 0;
     this.stallMs = stallMs;
     this.rendered = 0;
+    this.sinceReport = 0;
     this.port.postMessage({ t: 'ready', rate: sampleRate });
   }
   copyIn(bytes) {
@@ -97,6 +111,16 @@ class FlintMixer extends AudioWorkletProcessor {
     this.peak = peak;
     this.mix += Date.now() - t0;
     this.frames += n;
+    this.sinceReport += n;
+    if (this.sinceReport >= REPORT_FRAMES) {
+      this.sinceReport = 0;
+      const at = this.x.flint_report();
+      const len = this.x.flint_report_len();
+      if (len) {
+        const v = new Float64Array(this.x.memory.buffer, at, len).slice();
+        this.port.postMessage({ t: 'pos', at: currentTime, v }, [v.buffer]);
+      }
+    }
     // ?audiostall=N: miss the deadline on purpose every 2 s, to see the
     // meter catch it.
     this.rendered += n;
@@ -126,6 +150,14 @@ class FlintMixer extends AudioWorkletProcessor {
 }
 registerProcessor('flint-mixer', FlintMixer);
 `;
+
+/** How far the audio clock's offset follows each report that crossed slower
+ *  than the fastest one (the clocks drift a few ppm); a step past which a
+ *  report counts as late; and how many late ones in a row mean the clock
+ *  itself moved (the context slept), whose smallest offset is then taken. */
+const CLOCK_CREEP = 0.002;
+const CLOCK_JUMP = 0.1;
+const CLOCK_JUMP_REPORTS = 4;
 
 /** How long the processor may take to say it is ready. */
 const READY_MS = 4000;
@@ -285,15 +317,18 @@ function watch(ctx) {
 export class FlintWorklet {
   /** Take the AudioContext Begin's gesture opened (or open one now) and
    *  start the processor as soon as the wasm is in and the context runs. */
-  constructor(url, meterFrames, latency, onStats) {
+  constructor(url, meterFrames, latency, onStats, onReport) {
     this.state = 0; // 0 starting, 1 running, 2 failed
     this.queue = [];
     this.node = null;
     this.ctx = takeContext(latency);
+    this.offset = null; // performance.now() / 1000 minus the audio time, #658
+    this.late = 0;
+    this.lateMin = 0;
     this.ctx.resume().catch(() => {});
     worklets.add(this);
     flint_worklet_preload(url);
-    this.open(meterFrames, onStats).catch((e) => {
+    this.open(meterFrames, onStats, onReport).catch((e) => {
       this.state = 2;
       this.queue = [];
       console.warn(`[flint-audio] AudioWorklet failed (${e}); mixing on the main thread instead`);
@@ -301,7 +336,7 @@ export class FlintWorklet {
     });
   }
 
-  async open(meterFrames, onStats) {
+  async open(meterFrames, onStats, onReport) {
     const wasm = await wasmBytes;
     const src = URL.createObjectURL(new Blob([PROCESSOR], { type: 'text/javascript' }));
     try {
@@ -334,6 +369,10 @@ export class FlintWorklet {
     });
     node.port.onmessage = (e) => {
       if (e.data.t === 'stats') onStats(e.data.v);
+      else if (e.data.t === 'pos') {
+        this.follow(e.data.at);
+        onReport(e.data.at, e.data.v);
+      }
     };
     node.onprocessorerror = () =>
       console.warn('[flint-audio] the AudioWorklet processor threw; sound has stopped');
@@ -360,6 +399,33 @@ export class FlintWorklet {
 
   batch(bytes) {
     this.post({ t: 'batch', bytes }, [bytes.buffer]);
+  }
+
+  /** Keep the audio clock against `performance.now()` from a report
+   *  stamped with audio time `at` (#658). */
+  follow(at) {
+    const d = performance.now() / 1000 - at;
+    if (this.offset === null || d < this.offset) {
+      this.offset = d;
+      this.late = 0;
+    } else if (d > this.offset + CLOCK_JUMP) {
+      this.lateMin = this.late === 0 ? d : Math.min(this.lateMin, d);
+      if (++this.late >= CLOCK_JUMP_REPORTS) {
+        this.offset = this.lateMin;
+        this.late = 0;
+      }
+    } else {
+      this.offset += (d - this.offset) * CLOCK_CREEP;
+      this.late = 0;
+    }
+  }
+
+  /** The audio time now and the output latency, seconds (#658). Before
+   *  the first report, the context's own (trailing) `currentTime`. */
+  clock() {
+    const c = this.ctx;
+    const now = this.offset === null ? c.currentTime : performance.now() / 1000 - this.offset;
+    return new Float64Array([now, (c.baseLatency || 0) + (c.outputLatency || 0)]);
   }
 
   /** Run `f` once the current task (the frame) is done. */
