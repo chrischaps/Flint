@@ -206,11 +206,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    # refused before sending if its worst case could pass --max-cost.
    ```
 
-## Goldens and `flint render-suite`
+## Goldens and `flint goldens`
 
    **Goldens (#271):** every case loads a frozen scene under `tests/fixtures/scenes/` (#763; its README),
    never `examples/` (test `no_golden_case_loads_an_example`): copy a scene there, with its assets, to pin it.
-   `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
+   `flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact
    sheet of golden | render | diff, failures first, #329; `--case` with an exact name picks that case
@@ -236,7 +236,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    a per-adapter variant `<stem>.<warp|lavapipe|vulkan|dx12>.<ext>` (`--bless-variant`); wgpu
    hides WARP on a machine with a GPU, so WARP variants come from the job's `stylize-goldens-warp`
    artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and
-   `fract(theta - base)` on a ±ε knife edge. A `.suite.toml` there is still music to WAV.
+   `fract(theta - base)` on a ±ε knife edge. **Its own command since #327** (`Commands::Goldens(render_goldens::GoldensArgs)`, the manifest plus the flattened `GoldenArgs`): `flint render-suite` is music to WAV only, with `--output` required by clap, and each command's `--help` lists only its flags (`tests/render_goldens.rs::goldens_and_music_each_list_only_their_own_flags`). The old spelling `render-suite <x>.goldens.toml ...` still works: `main` passes argv through `render_goldens::route_render_suite_goldens` before clap, which renames the subcommand word to `goldens` when any later word ends in `.goldens.toml`. Keep it on the words, not a flattened `GoldenArgs` in `RenderSuiteArgs`, or the music help grows the golden flags again.
 
 ## `flint init`
 
@@ -265,7 +265,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
 ## Linux
 
-- Linux (#220, checked on a GPU-less Ubuntu 24.04): building flint-cli needs `build-essential pkg-config libasound2-dev libudev-dev` (alsa-sys via kira/cpal, libudev-sys via gilrs; each build script fails without its package). Rendering with no GPU needs `mesa-vulkan-drivers` (lavapipe; `flint render --list-gpus` then shows `llvmpipe ... [Cpu, Vulkan]`). With no adapter, `RenderError::AdapterNotFound` and an empty `--list-gpus` print `gpu_select::no_adapter_hint()`; render-suite matches the message's leading "Failed to get adapter", so keep those words first. Book: getting-started/installation.md
+- Linux (#220, checked on a GPU-less Ubuntu 24.04): building flint-cli needs `build-essential pkg-config libasound2-dev libudev-dev` (alsa-sys via kira/cpal, libudev-sys via gilrs; each build script fails without its package). Rendering with no GPU needs `mesa-vulkan-drivers` (lavapipe; `flint render --list-gpus` then shows `llvmpipe ... [Cpu, Vulkan]`). With no adapter, `RenderError::AdapterNotFound` and an empty `--list-gpus` print `gpu_select::no_adapter_hint()`; `flint goldens` matches the message's leading "Failed to get adapter", so keep those words first. Book: getting-started/installation.md
 - **`flint validate` and scene diagnostics** (ADR 0115 step 2, #683; `commands/validate.rs`) -- `run` asks `flint_scene::diagnose` first (`scene_diagnostics`; `--strict` -> `diagnostic::promote_strict`, the manifest's `strict` is applied inside `diagnose`). A scene that can't load (`toml-parse`, `file-unreadable`, `bad-prefab`) prints its diagnostics and exits 1 there. Otherwise the scene is loaded with `load_scene_diagnosed` (quiet: the list is already in hand) **even when no schema directory has constraints**, which used to return early with "No constraints found" and exit 0. Text: `diagnostics_text` (count line, each diagnostic errors first, `hint:` on the line below), then the constraint report; JSON: one document, `diagnostics` beside `violations`, with `valid` / `errors` / `warnings` counting both. Exit 1 when either list has an error; `--fix` / `--dry-run` print the diagnostics after the fix report and fail the same way. `check()` (what `flint examples --check` calls) returns the diagnostics as a third value, and `examples.rs` fails an example on any **error** diagnostic (a warning, such as an undeclared field, passes): `examples/` is kept free of them, with the components only its scripts read (`film`, `story`, `tour`, `orbit`) and the user style's `hologram_style` declared as open schemas in `schemas/examples/components/`. The frozen `tests/fixtures/scenes/` still carry stale `directional_light` / `point_light` tables and are not checked by it. Test: `tests/validate_diagnostics_cli.rs` (its own schemas and scenes in a temp project, so the engine's schema files can change under it). `flint check` and the checks the three commands share are the next section
 
 ## `flint check` and the shared check module

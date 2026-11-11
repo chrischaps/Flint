@@ -16,7 +16,7 @@ static MEMO: std::sync::Mutex<Option<HashMap<PathBuf, ImportResult>>> = std::syn
 /// Keep every import in memory, by path, and hand out copies (#329), or
 /// (`false`) drop them and decode each time again. For a process that
 /// loads the same files over and over and knows they won't change under
-/// it: `flint render-suite` renders dozens of cases that share a few
+/// it: `flint goldens` renders dozens of cases that share a few
 /// models, and decoding a model's textures is most of a debug build's
 /// time a case. Off by default; a watcher reloading a file must not get
 /// its old copy.

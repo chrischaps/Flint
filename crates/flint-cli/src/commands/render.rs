@@ -803,7 +803,7 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
 }
 
 /// A GPU kept between renders in one process (#329). `flint render` makes
-/// its own; `render-suite` hands every case the same one, so a suite pays
+/// its own; `flint goldens` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
 /// `SceneRenderer`, so nothing but the device and its two targets carries
 /// over.

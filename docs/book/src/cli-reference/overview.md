@@ -32,6 +32,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
+| `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
 | `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first |
@@ -41,7 +42,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
 | `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
 | `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
-| `flint render-suite <manifest>` | Render a suite offline and deterministically: a music `.suite.toml` to WAV, or a `.goldens.toml` of scenes gated against golden PNGs ([Headless Rendering](../guides/headless-rendering.md#golden-suites)) |
+| `flint render-suite <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
 | `flint spike-rumble` | Time the gamepad rumble command paths |
 
 The seven music commands are documented on their own page: [Music Commands](music.md).

@@ -19,7 +19,7 @@
 //! `--sweep`) adds to the base's.
 //!
 //! Every variant renders in this process on one GPU device (the
-//! [`RenderHost`] `render-suite` shares between cases), with glTF decodes and
+//! [`RenderHost`] `flint goldens` shares between cases), with glTF decodes and
 //! mip chains memoized, so a sheet of N is one process start and one device,
 //! not N. Each still builds its own `SceneRenderer`, since a variant may change
 //! anything a renderer is built with (MSAA, shadows, the scene's styles).

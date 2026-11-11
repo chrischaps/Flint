@@ -8,7 +8,7 @@ use winit::window::Window;
 pub enum RenderError {
     #[error("Failed to create surface: {0}")]
     SurfaceCreation(String),
-    // `render-suite` and its test read "Failed to get adapter" as no GPU:
+    // `flint goldens` and its test read "Failed to get adapter" as no GPU:
     // keep those words first (#220 added the hint after them)
     #[error("Failed to get adapter: {}", crate::gpu_select::no_adapter_hint())]
     AdapterNotFound,

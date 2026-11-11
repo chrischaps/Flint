@@ -80,7 +80,7 @@ Flint uses an **edit -> validate -> play** loop:
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, check, validate, asset, render, gen, prefab,
-  │                 validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite, spike-rumble, bundle
+  │                 validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite, goldens, spike-rumble, bundle
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
