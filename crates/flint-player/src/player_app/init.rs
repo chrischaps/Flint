@@ -223,6 +223,7 @@ impl PlayerApp {
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.script.rhai_engine_mut());
         extension.declare_script_api(&mut self.script.script_api());
+        extension.register_generators(self.procgen_resolver.registry_mut());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
         if self.ui_fonts_installed {
@@ -232,6 +233,20 @@ impl PlayerApp {
         // And its debug panels, before the next scene load builds them again.
         #[cfg(feature = "debug-hud")]
         self.create_extension_debug_panels();
+    }
+
+    /// Give the procgen resolver a disk tier (#181). The resolver is
+    /// rebuilt around it, and its generators move across, built-ins and the
+    /// ones extensions registered alike (#195).
+    pub(super) fn use_procgen_disk(&mut self, disk: flint_procgen::DiskCacheConfig) {
+        let registry = std::mem::take(self.procgen_resolver.registry_mut());
+        self.procgen_resolver = flint_procgen::ProcGenResolver::with_registry(
+            flint_procgen::ProcGenCacheConfig {
+                disk: Some(disk),
+                ..Default::default()
+            },
+            registry,
+        );
     }
 
     /// A handle on the camera scripts' `world_to_screen` uses, for native
@@ -551,11 +566,7 @@ impl PlayerApp {
             .flatten()
         {
             println!("[procgen] disk cache: {}", disk.dir.display());
-            self.procgen_resolver =
-                flint_procgen::ProcGenResolver::with_config(flint_procgen::ProcGenCacheConfig {
-                    disk: Some(disk),
-                    ..Default::default()
-                });
+            self.use_procgen_disk(disk);
         }
     }
 

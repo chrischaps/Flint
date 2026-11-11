@@ -1,0 +1,22 @@
+# A flat slab, the kind a lantern gets set on. Low `squash`, many shallow
+# cuts: the top stays nearly level and the edges break up.
+
+generator = "rock_v1"
+
+[meta]
+name = "cave_slab"
+description = "A flat slab with broken edges"
+version = "1.0.0"
+tags = ["rock", "cave"]
+
+[seed]
+mode = "fixed"
+value = 7
+
+[params]
+radius = 0.7
+cuts = 14
+depth = 0.18
+squash = 0.32
+color = "#5E5A55"
+roughness = 0.95
