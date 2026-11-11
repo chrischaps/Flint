@@ -1,11 +1,13 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
 mod extract;
+mod grass_ground;
 mod helpers;
 mod particles;
 mod render_passes;
 mod selection;
 
+pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
 use render_passes::RenderPhase;
 

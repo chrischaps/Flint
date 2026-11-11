@@ -1999,3 +1999,86 @@ fn every_instance_of_a_skinned_model_stays_skinned() {
     }
     assert!(loaded.models.iter().all(|m| !m.was_expanded));
 }
+
+/// A scene's `grass_ground` loads through `flint_render::load_scene_grass_ground`,
+/// the one loader the player, `flint render` and the scene viewer share
+/// (#332: the viewer had none, so `flint edit` showed a meadow bare). Its
+/// mask is found beside the scene, and the blades grow inside its square.
+#[test]
+fn a_scenes_grass_ground_loads_from_beside_the_scene() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    if !renderer.has_grass_pipeline() {
+        eprintln!("no compute grass on this adapter; skipping");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flint-332-grass-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    image::GrayImage::from_pixel(4, 4, image::Luma([255]))
+        .save(dir.join("mask.png"))
+        .unwrap();
+    let scene = dir.join("meadow.scene.toml");
+    std::fs::write(&scene, "[scene]\nname = \"meadow\"\n").unwrap();
+    let scene = scene.to_string_lossy().into_owned();
+
+    let world_with = |ground: toml::Table| {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("meadow").unwrap();
+        let transform: toml::Value = toml::toml! { position = [-10.0, 0.0, -10.0] }.into();
+        world.set_component(id, "transform", transform).unwrap();
+        world
+            .set_component(id, "grass_ground", ground.into())
+            .unwrap();
+        world
+    };
+    let ground = toml::toml! {
+        mask = "mask.png"
+        width = 20.0
+        depth = 20.0
+        scale_by_mask = false
+        "grass.density" = 20.0
+        "grass.max_distance" = 60.0
+    };
+
+    let loaded = flint_render::load_scene_grass_ground(
+        &world_with(ground.clone()),
+        &scene,
+        gpu.device,
+        gpu.queue,
+        &mut renderer,
+    )
+    .expect("the grass_ground loads");
+    assert_eq!(loaded.entity_name, "meadow");
+    assert_eq!(loaded.config.density, 20.0);
+    let blades = grown_blades(&gpu, &mut renderer);
+    let edge = 10.0 + 1.0 / loaded.config.density.sqrt();
+    for blade in &blades {
+        let [x, _, z] = blade.position;
+        assert!(
+            x.abs() <= edge && z.abs() <= edge,
+            "a blade at ({x}, {z}) grew off the ground"
+        );
+    }
+
+    // Switched off, or with a mask that isn't there: nothing is set.
+    let mut off = ground.clone();
+    off.insert("grass.enabled".into(), false.into());
+    let mut missing = ground;
+    missing.insert("mask".into(), "not_drawn_yet.png".into());
+    for (what, ground) in [("switched off", off), ("a missing mask", missing)] {
+        let mut renderer = gpu.renderer();
+        let loaded = flint_render::load_scene_grass_ground(
+            &world_with(ground),
+            &scene,
+            gpu.device,
+            gpu.queue,
+            &mut renderer,
+        );
+        assert!(loaded.is_none(), "{what} still loaded grass");
+        assert!(
+            renderer.grass_config().is_none(),
+            "{what} set a grass config"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

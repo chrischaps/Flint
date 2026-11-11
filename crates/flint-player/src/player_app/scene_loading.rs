@@ -295,7 +295,9 @@ pub(super) fn load_terrain_from_world_inner(
 }
 
 /// Load a scene's `grass_ground` into `scene_renderer`, as the player does
-/// (ADR 0089). Returns whether grass was set. Public for `flint render`.
+/// (ADR 0089). Returns whether grass was set. Kept for games and
+/// `flint render`; the loader is `flint_render::load_scene_grass_ground`,
+/// which the scene viewer shares (#332).
 pub fn load_scene_grass_ground(
     world: &FlintWorld,
     scene_path: &str,
@@ -303,16 +305,12 @@ pub fn load_scene_grass_ground(
     queue: &wgpu::Queue,
     scene_renderer: &mut SceneRenderer,
 ) -> bool {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let project = Project::for_scene(Path::new(scene_path));
-    load_grass_ground(world, &project, scene_dir, device, queue, scene_renderer).is_some()
+    flint_render::load_scene_grass_ground(world, scene_path, device, queue, scene_renderer)
+        .is_some()
 }
 
-/// Load the first `grass_ground` entity's mask and hand it to the renderer
-/// (ADR 0089). The ground is level at the entity's `y`, from its `x`, `z`
-/// across `width` × `depth`.
+/// The player's grass ground: `flint_render::load_grass_ground_in`, with
+/// what the grass debug panel needs.
 fn load_grass_ground(
     world: &FlintWorld,
     project: &Project,
@@ -321,76 +319,19 @@ fn load_grass_ground(
     queue: &wgpu::Queue,
     scene_renderer: &mut SceneRenderer,
 ) -> Option<LoadedGrassInfo> {
-    for entity in world.all_entities() {
-        let Some(ground) = world.get_component(entity.id, comp::GRASS_GROUND) else {
-            continue;
-        };
-        let config = flint_terrain::GrassConfig::from_component(ground, true);
-        if !config.enabled {
-            return None;
-        }
-        let mask_rel = ground.get("mask").and_then(|v| v.as_str()).unwrap_or("");
-        if mask_rel.is_empty() {
-            tracing::warn!("grass_ground '{}': missing mask path", entity.name);
-            return None;
-        }
-        let mask_path = project.file_or_beside("grass_ground mask", mask_rel, scene_dir);
-        let mask = match flint_render::open_image(&mask_path) {
-            Ok(img) => img.to_luma8(),
-            Err(e) => {
-                tracing::warn!(
-                    "grass_ground '{}': mask {:?}: {}",
-                    entity.name,
-                    mask_path,
-                    e
-                );
-                return None;
-            }
-        };
-        let get_f32 = |key: &str, default: f32| -> f32 {
-            ground.get(key).and_then(toml_f32).unwrap_or(default)
-        };
-        let pos = world
-            .get_component(entity.id, comp::TRANSFORM)
-            .and_then(|t| t.get("position").and_then(toml_vec3))
-            .unwrap_or([0.0; 3]);
-        let (mask_width, mask_height) = mask.dimensions();
-        let result = scene_renderer.set_grass_ground(
-            device,
-            queue,
-            &config,
-            &flint_render::GrassGround {
-                origin: [pos[0], pos[2]],
-                size: [get_f32("width", 64.0), get_f32("depth", 64.0)],
-                mask: mask.as_raw(),
-                mask_width,
-                mask_height,
-                scale_by_mask: ground
-                    .get("scale_by_mask")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
-                height: flint_render::GrassHeight::Flat(pos[1]),
-            },
-        );
-        if let Err(e) = result {
-            tracing::warn!("grass_ground '{}': {}", entity.name, e);
-            return None;
-        }
-        tracing::info!(
-            "Grass ground '{}': {}x{} mask, density={}, max_dist={}",
-            entity.name,
-            mask_width,
-            mask_height,
-            config.density,
-            config.max_distance
-        );
-        return Some(LoadedGrassInfo {
-            config,
-            terrain_entity_name: entity.name.clone(),
-            component: comp::GRASS_GROUND,
-        });
-    }
-    None
+    let loaded = flint_render::load_grass_ground_in(
+        world,
+        project,
+        scene_dir,
+        device,
+        queue,
+        scene_renderer,
+    )?;
+    Some(LoadedGrassInfo {
+        config: loaded.config,
+        terrain_entity_name: loaded.entity_name,
+        component: comp::GRASS_GROUND,
+    })
 }
 
 /// Build a ModelLoadConfig with catalog-resolved path overrides.
