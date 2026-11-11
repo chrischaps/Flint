@@ -48,7 +48,7 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 required_key = { type = "entity_ref", optional = true }
 ```
 
-- `default` --- value used when not explicitly set. Defaults are consumed in two places: `flint entity create` writes them into the new entity, and the scene loader fills them into any component the entity lists but leaves partially specified (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
+- `default` --- value used when not explicitly set. The scene loader fills them into any component the entity lists but leaves partially specified (`flint entity create` writes only the fields you give it, and leaves the rest to the loader) (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
 - `min` / `max` --- numeric range bounds
 - `optional` --- whether the field can be omitted (defaults to false)
 - `values` --- valid options for enum types

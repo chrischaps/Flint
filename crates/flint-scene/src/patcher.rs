@@ -115,7 +115,8 @@ impl SceneDocument {
     }
 
     /// Write a new entity at the end of the file: `[entities.<name>]` with its
-    /// archetype and parent, then a table per component, in name order.
+    /// archetype and parent, then a table per component, in name order
+    /// ([`insert_entity`](Self::insert_entity) with the components sorted).
     pub fn add_entity(
         &mut self,
         name: &str,
@@ -123,44 +124,12 @@ impl SceneDocument {
         parent: Option<&str>,
         components: &std::collections::HashMap<String, toml::Value>,
     ) -> Result<(), String> {
-        let root = self.doc.as_table_mut();
-        if root.get("entities").is_none() {
-            let mut table = toml_edit::Table::new();
-            table.set_implicit(true);
-            root.insert("entities", toml_edit::Item::Table(table));
-        }
-        let entities = root
-            .get_mut("entities")
-            .and_then(|v| v.as_table_like_mut())
-            .ok_or_else(|| "entities in the scene is not a table".to_string())?;
-        if entities.get(name).is_some() {
-            return Err(format!("Entity '{name}' is already in the scene file"));
-        }
-        let mut entity = toml_edit::Table::new();
-        entity.decor_mut().set_prefix("\n");
-        if let Some(archetype) = archetype {
-            entity.insert("archetype", toml_edit::value(archetype));
-        }
-        if let Some(parent) = parent {
-            entity.insert("parent", toml_edit::value(parent));
-        }
-        let mut names: Vec<&String> = components.keys().collect();
-        names.sort();
-        for component in names {
-            let item = match &components[component] {
-                toml::Value::Table(fields) => {
-                    let mut table = toml_edit::Table::new();
-                    for (key, value) in fields {
-                        table.insert(key, toml_edit::Item::Value(toml_to_edit_value(value)));
-                    }
-                    toml_edit::Item::Table(table)
-                }
-                other => toml_edit::Item::Value(toml_to_edit_value(other)),
-            };
-            entity.insert(component, item);
-        }
-        entities.insert(name, toml_edit::Item::Table(entity));
-        Ok(())
+        let mut sorted: Vec<(String, toml::Value)> = components
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        self.insert_entity(name, archetype, parent, &sorted)
     }
 
     /// Write into the file what changed between two worlds loaded from it
@@ -408,6 +377,123 @@ impl SceneDocument {
             }
         }
         true
+    }
+
+    /// The entities the file itself declares under `[entities]`, in file order.
+    /// A prefab instance's entities aren't here: they're made at load.
+    pub fn entity_names(&self) -> Vec<String> {
+        self.entities()
+            .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The entities in the file whose `parent` is `name`, in file order.
+    pub fn children_of(&self, name: &str) -> Vec<String> {
+        let Some(entities) = self.entities() else {
+            return Vec::new();
+        };
+        entities
+            .iter()
+            .filter(|(_, item)| {
+                item.as_table_like()
+                    .and_then(|t| t.get("parent"))
+                    .and_then(|p| p.as_str())
+                    == Some(name)
+            })
+            .map(|(k, _)| k.to_string())
+            .collect()
+    }
+
+    /// `name` and everything under it in the file, children before their
+    /// parents, so removing them in order never orphans one.
+    pub fn descendants_of(&self, name: &str) -> Vec<String> {
+        let mut order = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_descendants(name, &mut seen, &mut order);
+        order
+    }
+
+    fn collect_descendants(&self, name: &str, seen: &mut HashSet<String>, order: &mut Vec<String>) {
+        if !seen.insert(name.to_string()) {
+            return; // a parent cycle: the loader refuses it, don't loop on it
+        }
+        for child in self.children_of(name) {
+            self.collect_descendants(&child, seen, order);
+        }
+        order.push(name.to_string());
+    }
+
+    fn entities(&self) -> Option<&dyn toml_edit::TableLike> {
+        self.doc.get("entities").and_then(|e| e.as_table_like())
+    }
+
+    /// Add `[entities.<name>]` after the last entity in the file (#678), and
+    /// change nothing else: the rest of the file keeps its bytes, comments and
+    /// order. `archetype` and `parent` go first, then one
+    /// `[entities.<name>.<component>]` table per component in `components`'
+    /// order; a table inside a component is written inline. Fails if the file
+    /// already has the entity.
+    pub fn insert_entity(
+        &mut self,
+        name: &str,
+        archetype: Option<&str>,
+        parent: Option<&str>,
+        components: &[(String, toml::Value)],
+    ) -> Result<(), String> {
+        if self.has_entity(name) {
+            return Err(format!("Entity '{name}' is already in the scene file"));
+        }
+        let root = self.doc.as_table_mut();
+        if root.get("entities").is_none() {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            root.insert("entities", toml_edit::Item::Table(table));
+        }
+        let entities = root
+            .get_mut("entities")
+            .and_then(|e| e.as_table_mut())
+            .ok_or_else(|| "entities in the scene is not a table".to_string())?;
+
+        let mut entity = toml_edit::Table::new();
+        entity.decor_mut().set_prefix("\n");
+        if let Some(archetype) = archetype {
+            entity.insert("archetype", toml_edit::value(archetype));
+        }
+        if let Some(parent) = parent {
+            entity.insert("parent", toml_edit::value(parent));
+        }
+        for (component, data) in components {
+            let item = match data {
+                toml::Value::Table(fields) => {
+                    let mut table = toml_edit::Table::new();
+                    table.decor_mut().set_prefix("\n");
+                    for (field, value) in fields {
+                        table.insert(field, toml_edit::Item::Value(toml_to_edit_value(value)));
+                    }
+                    toml_edit::Item::Table(table)
+                }
+                // Not a component the loader can use, but written as it was given
+                other => toml_edit::Item::Value(toml_to_edit_value(other)),
+            };
+            entity.insert(component, item);
+        }
+        // No archetype, parent or component: still a table the loader sees
+        entity.set_implicit(false);
+        entities.insert(name, toml_edit::Item::Table(entity));
+        Ok(())
+    }
+
+    /// Take `[entities.<name>]` and its component tables out of the file, with
+    /// the comment lines above its header (#678). Nothing else changes, so a
+    /// child that names it as `parent` is the caller's to deal with first
+    /// ([`children_of`](Self::children_of)).
+    pub fn remove_entity(&mut self, name: &str) -> Result<(), String> {
+        self.doc
+            .get_mut("entities")
+            .and_then(|e| e.as_table_like_mut())
+            .and_then(|t| t.remove(name))
+            .map(|_| ())
+            .ok_or_else(|| format!("Entity '{name}' is not in the scene file"))
     }
 
     /// Set one scene-level value, or take it out (#249): `edit.table` is a header

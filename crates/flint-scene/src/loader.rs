@@ -15,8 +15,20 @@ pub fn load_scene<P: AsRef<Path>>(
 ) -> Result<(FlintWorld, SceneFile)> {
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
-    let mut scene_file: SceneFile = toml::from_str(&content)?;
-    note_post_process(&mut scene_file, &content, Some(path));
+    load_scene_text(&content, path, registry)
+}
+
+/// Load scene text as though it were the file at `path`: prefabs and a wooze
+/// preset resolve from there. What `flint entity create/delete` (#678) runs on
+/// the text it is about to write, so an edit that would leave the scene
+/// unloadable is refused before the file changes.
+pub fn load_scene_text(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile)> {
+    let mut scene_file: SceneFile = toml::from_str(content)?;
+    note_post_process(&mut scene_file, content, Some(path));
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
