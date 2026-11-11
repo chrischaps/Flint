@@ -1,9 +1,9 @@
 //! Prefab expansion — loads .prefab.toml templates and expands instances into scene entities
 
 use crate::format::{PrefabFile, SceneFile};
+use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
-use flint_core::vfs;
 use std::path::Path;
 
 /// Expand all prefab instances in a scene file, inserting their entities into `scene.entities`.

@@ -1083,24 +1083,38 @@ intensity = 1.0
             let mut m = toml::map::Map::new();
             m.insert(
                 "position".into(),
-                toml::Value::Array(vec![(x as f64).into(), (y as f64).into(), (z as f64).into()]),
+                toml::Value::Array(vec![
+                    (x as f64).into(),
+                    (y as f64).into(),
+                    (z as f64).into(),
+                ]),
             );
             toml::Value::Table(m)
         };
         let group = world.spawn("group").unwrap();
         let child = world.spawn("child").unwrap();
-        world.set_component(child, "transform", make_pos(1.0, 2.0, 0.0)).unwrap();
+        world
+            .set_component(child, "transform", make_pos(1.0, 2.0, 0.0))
+            .unwrap();
         world.set_parent(child, group).unwrap();
 
         let pos = world.get_world_position(child).unwrap();
-        assert!((pos - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5, "under a bare parent: {pos:?}");
+        assert!(
+            (pos - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5,
+            "under a bare parent: {pos:?}"
+        );
 
         // The chain goes on through the bare parent to a placed grandparent.
         let root = world.spawn("root").unwrap();
-        world.set_component(root, "transform", make_pos(10.0, 0.0, 0.0)).unwrap();
+        world
+            .set_component(root, "transform", make_pos(10.0, 0.0, 0.0))
+            .unwrap();
         world.set_parent(group, root).unwrap();
         let pos = world.get_world_position(child).unwrap();
-        assert!((pos - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5, "through it: {pos:?}");
+        assert!(
+            (pos - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5,
+            "through it: {pos:?}"
+        );
 
         // The bare parent itself still has no world matrix, but it has a frame.
         assert!(world.get_world_matrix(group).is_none());

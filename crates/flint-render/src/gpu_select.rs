@@ -39,7 +39,11 @@ fn gpu_override() -> Option<String> {
 }
 
 fn name_filter() -> Option<String> {
-    gpu_override().or_else(|| std::env::var("WGPU_ADAPTER_NAME").ok().filter(|s| !s.is_empty()))
+    gpu_override().or_else(|| {
+        std::env::var("WGPU_ADAPTER_NAME")
+            .ok()
+            .filter(|s| !s.is_empty())
+    })
 }
 
 /// Backends to enumerate: `WGPU_BACKEND` env var, else all.

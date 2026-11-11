@@ -12,10 +12,10 @@ use super::scene_loading::{
 };
 use super::PlayerApp;
 use flint_core::components as comp;
+use flint_core::vfs;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader;
 use flint_runtime::RuntimeSystem;
-use flint_core::vfs;
 use std::path::Path;
 
 /// Scene transition lifecycle phase

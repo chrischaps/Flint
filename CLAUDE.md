@@ -23,7 +23,9 @@ cargo run --bin flint -- export web demo/  # any game as a folder a static serve
 cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
-cargo fmt --check              # Check formatting
+cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
+bash scripts/ci.sh             # What a PR must pass: formatting, in seconds. `issue.sh land` runs it.
+bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 
 ## Development Workflow
@@ -146,11 +148,14 @@ A bullet below that names a feature in a line or two has its full text in one of
 - Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes
 - Per-frame GPU allocations are the renderer's CPU cliff: never `create_buffer`/`create_bind_group` inside a per-entity loop; what a draw needs per entity comes from a cache (`crates/flint-render/CLAUDE.md`)
 - One submission a frame (#139): `SceneRenderer::encode_to` records the whole frame (grass, shadows, scene, post-process, depth upscale, world lines) into the caller's encoder, the player adds its HUD and the GPU timer's resolve (`encode_gpu_timings`), submits once, then calls `frame_submitted` (grass and timer read-backs). `render_to` is that with its own submit.
+- CI (`.github/workflows/ci.yml`, #757) runs `rustfmt` (the tree is formatted; an unformatted file fails the PR and `issue.sh land`), `clippy (native)` (`cargo clippy --all-targets`: warnings pass, a deny-level lint or code that doesn't compile fails), the wasm and headless checks, and the GPU tests on WARP, which don't block while they fail on main (`continue-on-error`). No unit tests run in CI yet
 - CI's `wasm32 check` (`.github/workflows/ci.yml`) builds `flint-player` and every crate it links for `wasm32-unknown-unknown` on each PR. Run it locally with `bash scripts/wasm-check.sh` before pushing runtime-crate changes. It also denies `Instant::now`/`SystemTime::now` and their `elapsed()`, which compile on wasm but panic there: runtime code uses the `web-time` crate (a workspace dep: `web-time = { workspace = true }`), which #100 moved every older site to. Desktop-only deps in a runtime crate go under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`, as in flint-player's Cargo.toml (docs/design/web.md)
 - `FlintWorld::spawn` ids come from a process-wide counter and scenes load from a `HashMap`, so entity ids differ run to run -- derive anything reproducible (seeds) from entity **names**, never ids
 - Lights are `[entities.x.light]` with a `type`, and a directional `direction` points *toward* the light. No system reads a `directional_light` table and `flint validate` passes it, so a scene with only that gets `default_scene_lights` and no warning (several benches do).
 
 ## Documentation Pipeline
+
+`CHANGELOG.md` is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no entry; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
 
 The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 

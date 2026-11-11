@@ -381,7 +381,10 @@ mod tests {
         let true_near = ndc(project(&p, [0.0, -5.0, -10.0]))[2];
         let true_far = ndc(project(&p, [0.0, 5.0, -50.0]))[2];
         let (zn, zf) = (out[0].position[2], out[1].position[2]);
-        assert!(zn < true_near && true_near - zn < 1e-3, "{zn} vs {true_near}");
+        assert!(
+            zn < true_near && true_near - zn < 1e-3,
+            "{zn} vs {true_near}"
+        );
         assert!(zf < true_far && true_far - zf < 1e-3, "{zf} vs {true_far}");
     }
 

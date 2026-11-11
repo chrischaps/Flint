@@ -6613,8 +6613,8 @@ mod tests {
 
     #[test]
     fn test_toml_to_dynamic_float() {
-        let d = toml_to_dynamic(toml::Value::Float(3.14));
-        assert!((d.as_float().unwrap() - 3.14).abs() < 1e-10);
+        let d = toml_to_dynamic(toml::Value::Float(3.25));
+        assert!((d.as_float().unwrap() - 3.25).abs() < 1e-10);
     }
 
     #[test]
@@ -6638,7 +6638,7 @@ mod tests {
 
     #[test]
     fn test_dynamic_to_toml_roundtrip() {
-        let original = toml::Value::Float(2.718);
+        let original = toml::Value::Float(2.75);
         let dynamic = toml_to_dynamic(original.clone());
         let back = dynamic_to_toml(&dynamic).unwrap();
         assert_eq!(original, back);
