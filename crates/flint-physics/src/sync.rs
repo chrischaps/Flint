@@ -9,15 +9,31 @@
 
 use crate::world::PhysicsWorld;
 use flint_core::components as comp;
+use flint_core::diagnostic::{codes, Diagnostic};
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::{
     euler_deg_to_quat, mat4_scale, mat4_to_rigid, quat_rotate_vec3, rigid_inverse_apply, EntityId,
     Transform, Vec3,
 };
-use flint_ecs::{DynamicComponents, FlintWorld};
+use flint_ecs::{ComponentView, DynamicComponents, FlintWorld};
 use rapier3d::na;
 use rapier3d::prelude::*;
 use std::collections::{HashMap, HashSet};
+
+/// What `rigidbody.body_type` may be. `kinematic` is position-based.
+pub const BODY_TYPES: &[&str] = &[
+    "static",
+    "dynamic",
+    "kinematic",
+    "kinematic_position",
+    "kinematic_velocity",
+];
+
+/// What `collider.shape` may be.
+pub const COLLIDER_SHAPES: &[&str] = &["box", "sphere", "capsule", "cylinder", "sprite"];
+
+/// What `joint.type` may be (`slider` is prismatic, `ball` spherical).
+pub const JOINT_TYPES: &[&str] = &["hinge", "prismatic", "slider", "spherical", "ball", "fixed"];
 
 /// Bridges Flint's dynamic components with Rapier's rigid body and collider sets
 #[derive(Default)]
@@ -36,6 +52,11 @@ pub struct PhysicsSync {
     warned: HashSet<EntityId>,
     /// Jointed bodies already reported for a non-finite pose (one warning each).
     nan_warned: HashSet<RigidBodyHandle>,
+    /// Entities seen with a `collider` and no `rigidbody` on the last pass.
+    /// One still alone on the next pass is reported (`lone_reported`): a
+    /// script that adds the two a step apart is not told off in between.
+    lone_colliders: HashSet<EntityId>,
+    lone_reported: HashSet<EntityId>,
     /// Start-of-step pose of every kinematic body, recorded when its next
     /// pose is set; gives the parent's exact step velocity for the projection
     kin_start: HashMap<RigidBodyHandle, Isometry<f32>>,
@@ -59,6 +80,8 @@ impl PhysicsSync {
         self.joint_cache.clear();
         self.warned.clear();
         self.nan_warned.clear();
+        self.lone_colliders.clear();
+        self.lone_reported.clear();
         self.kin_start.clear();
         self.kin_frame_start.clear();
     }
@@ -77,16 +100,14 @@ impl PhysicsSync {
             };
 
             // Need at least a rigidbody component to create a physics body
-            let rb_data = match components.get(comp::RIGIDBODY) {
-                Some(v) => v,
-                None => continue,
-            };
+            let rb = world.view(entity_id, comp::RIGIDBODY);
+            if !rb.exists() {
+                continue;
+            }
 
-            // Build rigid body
-            let body_type = rb_data
-                .get("body_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("static");
+            // Build rigid body. An unknown `body_type` is reported and the
+            // body is static, the default: it used to be static in silence.
+            let body_type = rb.choice("body_type", BODY_TYPES, "static");
 
             let builder = match body_type {
                 "dynamic" => RigidBodyBuilder::dynamic(),
@@ -95,20 +116,11 @@ impl PhysicsSync {
                 _ => RigidBodyBuilder::fixed(),
             };
 
-            let mass = rb_data.get("mass").and_then(toml_f32).unwrap_or(1.0);
-            let linear_damping = rb_data
-                .get("linear_damping")
-                .and_then(toml_f32)
-                .unwrap_or(0.0);
-            let angular_damping = rb_data
-                .get("angular_damping")
-                .and_then(toml_f32)
-                .unwrap_or(0.0);
-            let gravity_scale = rb_data
-                .get("gravity_scale")
-                .and_then(toml_f32)
-                .unwrap_or(1.0);
-            let mode_2d = read_mode_2d(components);
+            let mass = rb.f32("mass", 1.0);
+            let linear_damping = rb.f32("linear_damping", 0.0);
+            let angular_damping = rb.f32("angular_damping", 0.0);
+            let gravity_scale = rb.f32("gravity_scale", 1.0);
+            let mode_2d = rb.bool("mode_2d", false);
 
             // World rigid pose (parent chain applied), sprite lift, 2D clamp
             let iso = self.body_world_pose(world, entity_id, components, mode_2d);
@@ -143,13 +155,12 @@ impl PhysicsSync {
             self.body_map.insert(entity_id, body_handle);
 
             // Build collider if present
-            if let Some(col_data) = components.get(comp::COLLIDER) {
-                let shape_str = col_data
-                    .get("shape")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("box");
+            let col = world.view(entity_id, comp::COLLIDER);
+            if col.exists() {
+                let shape_str = col.choice("shape", COLLIDER_SHAPES, "box");
 
-                let size = read_vec3_from_value(col_data.get("size"), Vec3::new(1.0, 1.0, 1.0));
+                let [sx, sy, sz] = col.vec3("size", [1.0, 1.0, 1.0]);
+                let size = Vec3::new(sx, sy, sz);
 
                 let collider_shape: SharedShape = match shape_str {
                     "sphere" => SharedShape::ball(size.x * 0.5),
@@ -163,14 +174,9 @@ impl PhysicsSync {
                     "cylinder" => SharedShape::cylinder((size.y * 0.5).max(0.01), size.x * 0.5),
                     "sprite" => {
                         // Auto-size from sprite component dimensions
-                        let (sw, sh) = components
-                            .get(comp::SPRITE)
-                            .map(|s| {
-                                let w = s.get("width").and_then(toml_f32).unwrap_or(1.0);
-                                let h = s.get("height").and_then(toml_f32).unwrap_or(1.0);
-                                (w, h)
-                            })
-                            .unwrap_or((1.0, 1.0));
+                        let sprite = world.view(entity_id, comp::SPRITE);
+                        let sw = sprite.f32("width", 1.0);
+                        let sh = sprite.f32("height", 1.0);
                         SharedShape::cuboid(sw * 0.5, sh * 0.5, 0.1)
                     }
                     _ => {
@@ -180,16 +186,9 @@ impl PhysicsSync {
                     }
                 };
 
-                let is_sensor = col_data
-                    .get("is_sensor")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                let friction = col_data.get("friction").and_then(toml_f32).unwrap_or(0.5);
-                let restitution = col_data
-                    .get("restitution")
-                    .and_then(toml_f32)
-                    .unwrap_or(0.0);
+                let is_sensor = col.bool("is_sensor", false);
+                let friction = col.f32("friction", 0.5);
+                let restitution = col.f32("restitution", 0.0);
 
                 let mut builder = ColliderBuilder::new(collider_shape)
                     .sensor(is_sensor)
@@ -197,7 +196,7 @@ impl PhysicsSync {
                     .restitution(restitution)
                     .active_events(ActiveEvents::COLLISION_EVENTS);
 
-                if let Some(local) = collider_local_isometry(components, col_data) {
+                if let Some(local) = collider_local_isometry(components, &col) {
                     builder = builder.position(local);
                 }
 
@@ -208,6 +207,36 @@ impl PhysicsSync {
             }
 
             self.synced_entities.insert(entity_id);
+        }
+
+        self.report_lone_colliders(world);
+    }
+
+    /// A `collider` is only ever given to Rapier as part of its entity's
+    /// `rigidbody` (the loop above), so one without a rigidbody collides
+    /// with nothing. Say so, once per entity, the second pass it is seen
+    /// that way. Terrain and spline meshes register their own trimesh and
+    /// are in `synced_entities`, so they are not this.
+    fn report_lone_colliders(&mut self, world: &FlintWorld) {
+        for &entity_id in world.entities_with_component(comp::COLLIDER) {
+            if self.synced_entities.contains(&entity_id) || self.lone_reported.contains(&entity_id)
+            {
+                continue;
+            }
+            if self.lone_colliders.insert(entity_id) {
+                continue;
+            }
+            self.lone_reported.insert(entity_id);
+            world.view(entity_id, comp::COLLIDER).report("", || {
+                Diagnostic::warning(
+                    codes::NEEDS_COMPONENT,
+                    "a collider with no rigidbody collides with nothing",
+                )
+                .hint(
+                    "add a `rigidbody` to the entity, `body_type = \"static\"` for scenery, \
+                     or remove the collider",
+                )
+            });
         }
     }
 
@@ -332,7 +361,10 @@ impl PhysicsSync {
                 None => (world_pos, world_quat),
             };
 
-            if read_mode_2d(components) {
+            if world
+                .view(*entity_id, comp::RIGIDBODY)
+                .bool("mode_2d", false)
+            {
                 local_pos.z = 0.0;
             }
 
@@ -419,7 +451,9 @@ impl PhysicsSync {
                 continue;
             }
 
-            let mode_2d = read_mode_2d(components);
+            let mode_2d = world
+                .view(entity_id, comp::RIGIDBODY)
+                .bool("mode_2d", false);
             let iso = self.body_world_pose(world, entity_id, components, mode_2d);
 
             if let Some(body_mut) = physics.rigid_body_set.get_mut(body_handle) {
@@ -447,20 +481,11 @@ impl PhysicsSync {
     /// This allows scripts to make colliders non-solid at runtime (e.g., dead enemies).
     pub fn update_sensor_flags(&self, world: &FlintWorld, physics: &mut PhysicsWorld) {
         for (entity_id, col_handle) in &self.collider_map {
-            let components = match world.get_components(*entity_id) {
-                Some(c) => c,
-                None => continue,
-            };
-
-            let col_data = match components.get(comp::COLLIDER) {
-                Some(v) => v,
-                None => continue,
-            };
-
-            let wants_sensor = col_data
-                .get("is_sensor")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let col = world.view(*entity_id, comp::COLLIDER);
+            if !col.exists() {
+                continue;
+            }
+            let wants_sensor = col.bool("is_sensor", false);
 
             if let Some(collider) = physics.collider_set.get_mut(*col_handle) {
                 if collider.is_sensor() != wants_sensor {
@@ -486,16 +511,14 @@ impl PhysicsSync {
             if self.joint_map.contains_key(&entity_id) {
                 continue;
             }
-            let Some(components) = world.get_components(entity_id) else {
+            let jd = world.view(entity_id, comp::JOINT);
+            if !jd.exists() {
                 continue;
-            };
-            let Some(jd) = components.get(comp::JOINT) else {
-                continue;
-            };
+            }
 
-            let kind = JointKind::parse(jd.get("type").and_then(|v| v.as_str()).unwrap_or("hinge"));
+            let kind = JointKind::read(&jd);
 
-            let parent_name = jd.get("parent").and_then(|v| v.as_str()).unwrap_or("");
+            let parent_name = jd.str("parent", "");
             let parent_id = if parent_name.is_empty() {
                 world.get_parent(entity_id)
             } else {
@@ -526,11 +549,8 @@ impl PhysicsSync {
                 .unwrap_or_else(|| flint_core::Transform::IDENTITY.to_matrix());
             let (child_pos, child_quat) = mat4_to_rigid(&child_world);
 
-            let anchor = jd.get("anchor").and_then(toml_vec3).unwrap_or([0.0; 3]);
-            let axis = jd
-                .get("axis")
-                .and_then(toml_vec3)
-                .unwrap_or([1.0, 0.0, 0.0]);
+            let anchor = jd.vec3("anchor", [0.0; 3]);
+            let axis = jd.vec3("axis", [1.0, 0.0, 0.0]);
 
             // Child frame == child body frame (unit scale). Parent anchor/axis
             // come from the world-space anchor expressed in the parent's frame.
@@ -580,13 +600,9 @@ impl PhysicsSync {
                     .into(),
             };
 
-            let contacts = jd
-                .get("contacts_enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            joint.set_contacts_enabled(contacts);
+            joint.set_contacts_enabled(jd.bool("contacts_enabled", false));
 
-            let params = read_joint_params(jd, kind);
+            let params = read_joint_params(&jd, kind);
             if kind != JointKind::Fixed {
                 apply_joint_params(&mut joint, &params);
             }
@@ -609,17 +625,15 @@ impl PhysicsSync {
     /// and Rapier is only touched when something differs from the last push.
     pub fn update_joint_targets(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
         for (entity_id, handle) in &self.joint_map {
-            let Some(jd) = world
-                .get_components(*entity_id)
-                .and_then(|c| c.get(comp::JOINT))
-            else {
+            let jd = world.view(*entity_id, comp::JOINT);
+            if !jd.exists() {
                 continue;
-            };
-            let kind = JointKind::parse(jd.get("type").and_then(|v| v.as_str()).unwrap_or("hinge"));
+            }
+            let kind = JointKind::read(&jd);
             if kind == JointKind::Fixed {
                 continue;
             }
-            let params = read_joint_params(jd, kind);
+            let params = read_joint_params(&jd, kind);
             if self.joint_cache.get(entity_id) == Some(&params) {
                 continue;
             }
@@ -952,8 +966,9 @@ enum JointKind {
 }
 
 impl JointKind {
-    fn parse(s: &str) -> Self {
-        match s {
+    /// `joint.type`; an unknown one is reported and is a hinge, the default.
+    fn read(jd: &ComponentView) -> Self {
+        match jd.choice("type", JOINT_TYPES, "hinge") {
             "prismatic" | "slider" => JointKind::Prismatic,
             "spherical" | "ball" => JointKind::Spherical,
             "fixed" => JointKind::Fixed,
@@ -979,12 +994,12 @@ pub(crate) struct JointParams {
     limits: Option<[f32; 2]>,
 }
 
-fn read_joint_params(jd: &toml::Value, kind: JointKind) -> JointParams {
+fn read_joint_params(jd: &ComponentView, kind: JointKind) -> JointParams {
     let axis = match kind {
         JointKind::Prismatic => JointAxis::LinX,
-        JointKind::Spherical => match jd.get("motor_axis").and_then(|v| v.as_str()) {
-            Some("y") => JointAxis::AngY,
-            Some("z") => JointAxis::AngZ,
+        JointKind::Spherical => match jd.choice("motor_axis", &["x", "y", "z"], "x") {
+            "y" => JointAxis::AngY,
+            "z" => JointAxis::AngZ,
             _ => JointAxis::AngX,
         },
         _ => JointAxis::AngX,
@@ -994,31 +1009,34 @@ fn read_joint_params(jd: &toml::Value, kind: JointKind) -> JointParams {
     } else {
         1.0
     };
-    let target = jd.get("motor_target").and_then(toml_f32).unwrap_or(0.0) * unit;
-    let stiffness = jd
-        .get("motor_stiffness")
-        .and_then(toml_f32)
-        .unwrap_or(0.0)
-        .max(0.0);
-    let damping = jd
-        .get("motor_damping")
-        .and_then(toml_f32)
-        .unwrap_or(0.0)
-        .max(0.0);
-    let max_force = jd
-        .get("motor_max_force")
-        .and_then(toml_f32)
-        .unwrap_or(0.0)
-        .max(0.0);
-    let model = match jd.get("motor_model").and_then(|v| v.as_str()) {
-        Some("force") => MotorModel::ForceBased,
+    let target = jd.f32("motor_target", 0.0) * unit;
+    let stiffness = jd.f32("motor_stiffness", 0.0).max(0.0);
+    let damping = jd.f32("motor_damping", 0.0).max(0.0);
+    let max_force = jd.f32("motor_max_force", 0.0).max(0.0);
+    let model = match jd.choice("motor_model", &["acceleration", "force"], "acceleration") {
+        "force" => MotorModel::ForceBased,
         _ => MotorModel::AccelerationBased,
     };
+    // `[min, max]`; min >= max means free, so only the shape is reported
     let limits = jd
-        .get("limits")
-        .and_then(|v| v.as_array())
-        .filter(|a| a.len() >= 2)
-        .and_then(|a| Some([toml_f32(&a[0])? * unit, toml_f32(&a[1])? * unit]))
+        .raw("limits")
+        .and_then(|v| {
+            let pair = v
+                .as_array()
+                .filter(|a| a.len() >= 2)
+                .and_then(|a| Some([toml_f32(&a[0])?, toml_f32(&a[1])?]));
+            if pair.is_none() {
+                jd.report("limits", || {
+                    Diagnostic::error(
+                        codes::BAD_TYPE,
+                        format!("expected 2 numbers, [min, max], got {v}"),
+                    )
+                    .hint("the joint is left free")
+                });
+            }
+            pair
+        })
+        .map(|l| [l[0] * unit, l[1] * unit])
         .filter(|l| l[0] < l[1]);
     JointParams {
         axis,
@@ -1089,14 +1107,6 @@ fn normalize_or_x(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-fn read_mode_2d(components: &DynamicComponents) -> bool {
-    components
-        .get(comp::RIGIDBODY)
-        .and_then(|rb| rb.get("mode_2d"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
 /// Lift so the body centre sits at the sprite's visual centre: with
 /// `anchor_y = 0` (bottom-anchored) the centre is `height / 2` above the
 /// entity position. `sync_from_rapier` reverses it.
@@ -1115,20 +1125,14 @@ fn sprite_anchor_offset_y(components: &DynamicComponents) -> f32 {
 /// rotated by `collider.rotation` (Euler degrees). `None` when identity.
 fn collider_local_isometry(
     components: &DynamicComponents,
-    col_data: &toml::Value,
+    col: &ComponentView,
 ) -> Option<Isometry<f32>> {
     let bounds_center = components
         .get(comp::BOUNDS)
         .and_then(compute_bounds_center)
         .unwrap_or([0.0, 0.0, 0.0]);
-    let offset = col_data
-        .get("offset")
-        .and_then(toml_vec3)
-        .unwrap_or([0.0; 3]);
-    let rotation = col_data
-        .get("rotation")
-        .and_then(toml_vec3)
-        .unwrap_or([0.0; 3]);
+    let offset = col.vec3("offset", [0.0; 3]);
+    let rotation = col.vec3("rotation", [0.0; 3]);
 
     let t = [
         bounds_center[0] + offset[0],
@@ -1156,27 +1160,6 @@ fn compute_bounds_center(bounds: &toml::Value) -> Option<[f32; 3]> {
         (min[1] + max[1]) / 2.0,
         (min[2] + max[2]) / 2.0,
     ])
-}
-
-/// Helper to read a Vec3 from a TOML value (array or table)
-fn read_vec3_from_value(value: Option<&toml::Value>, default: Vec3) -> Vec3 {
-    let value = match value {
-        Some(v) => v,
-        None => return default,
-    };
-
-    if let Some(arr) = toml_vec3(value) {
-        return Vec3::new(arr[0], arr[1], arr[2]);
-    }
-
-    if let Some(table) = value.as_table() {
-        let x = table.get("x").and_then(toml_f32).unwrap_or(default.x);
-        let y = table.get("y").and_then(toml_f32).unwrap_or(default.y);
-        let z = table.get("z").and_then(toml_f32).unwrap_or(default.z);
-        return Vec3::new(x, y, z);
-    }
-
-    default
 }
 
 #[cfg(test)]

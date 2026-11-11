@@ -103,7 +103,7 @@ pub fn set_style_param(
     })?;
     let d = stylize::find(style).expect("entity_style found it registered");
     let component = d.component.expect("entity_style found its component");
-    let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+    let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v);
     let wrong = |want: &str| {
         Err(format!(
             "`{style}` setting `{param}` takes {want}, not {}",
@@ -177,7 +177,7 @@ pub fn tween_endpoints(
     })?;
     let d = stylize::find(style).expect("entity_style found it registered");
     let component = d.component.expect("entity_style found its component");
-    let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+    let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v);
     let own = world
         .get_component(id, component)
         .and_then(|c| c.get(param).cloned());

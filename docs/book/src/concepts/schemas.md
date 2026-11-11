@@ -102,6 +102,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `file-unreadable` | error | the scene file could not be read |
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
+| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody`. Raised [while the game runs](#diagnostics-while-the-game-runs), by the system that reads it |
 | `dangling-entity` | error | an entity names another the scene does not have: its `parent` (the scene then does not load), `joint.parent`, or `ik_two_bone.target` / `pole` / `tip` (a `tip` must also be a child of the entity that names it). An empty string is "none" |
 
 `flint check` adds the codes of the project around the scene:
@@ -126,6 +127,20 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 Entity references are found by component name for now (`joint`, `ik_two_bone`); a schema field type that says "this names an entity" will check a game's own components the same way.
 
 A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
+
+### Diagnostics while the game runs
+
+The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics and audio read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
+
+```
+WARN error[bad-enum-value] entity 'crate' rigidbody.body_type: "dynamc" is not a value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, kinematic, kinematic_position, kinematic_velocity; the default "static" is used)
+WARN error[bad-type] entity 'player' character_controller.jump_force: expected a number, got string "high" (the default 6 is used)
+WARN warning[needs-component] entity 'wall' component 'collider': a collider with no rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = "static"` for scenery, or remove the collider)
+```
+
+Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them.
+
+The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source` and `audio_trigger`, and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
 
 ### Unknown fields and `strict`
 

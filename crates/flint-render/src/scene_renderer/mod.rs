@@ -5164,21 +5164,7 @@ impl SceneRenderer {
     }
 
     fn extract_light_vec3(table: &toml::Value, key: &str) -> Option<[f32; 3]> {
-        let arr = table.get(key)?.as_array()?;
-        if arr.len() >= 3 {
-            let x = arr[0]
-                .as_float()
-                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-            let y = arr[1]
-                .as_float()
-                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-            let z = arr[2]
-                .as_float()
-                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-            Some([x, y, z])
-        } else {
-            None
-        }
+        flint_core::toml_util::toml_vec3(table.get(key)?)
     }
 
     // ── Render entry points ──
