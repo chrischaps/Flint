@@ -131,12 +131,12 @@ flint scene info levels/tavern.scene.toml
 The `flint-scene` crate handles serialization. Scenes are loaded into the ECS world as entities with dynamic components, and saved back to TOML with stable ordering.
 
 When a scene is loaded:
-1. The TOML is parsed into a scene structure
+1. The TOML is parsed into a scene structure. A file that is not TOML is an error that names the file as well as the line
 2. Each entity definition creates an ECS entity with a stable `EntityId`
 3. If the entity names an archetype, the archetype's `defaults` are written in first for every component the entity did not author itself
-4. Each authored component is validated against its component schema. Failures are **warnings, not errors**: the loader logs `[scene] entity '<name>' component '<comp>': <reason>` through `tracing` and keeps going. Without a tracing subscriber you will not see them, so a scene that loads is not necessarily a scene that validates. Run `flint validate` for an authoritative answer.
+4. Every entity is checked against the schemas in one pass: its archetype, each component and each field (see [Scene Diagnostics](schemas.md#scene-diagnostics)). Nothing found here stops the load: the loader logs one summary line and the first five problems through `tracing`, as warnings, and keeps going. An unknown archetype gives the entity no defaults. A scene that loads is not necessarily a scene that validates: `flint validate` prints the whole list and fails on an error.
 5. The authored data is merged field-by-field into whatever the archetype put there (see [Schemas](schemas.md))
-6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely, and validation in step 4 ran on the authored data *before* defaults landed, so a missing required field still warns even though a default will fill it.
+6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely. Step 4 knows about them: a `required` field that an archetype default or the field's own `default` will fill is not reported as missing.
 7. Parent-child relationships are established
 8. The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)
 

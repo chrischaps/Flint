@@ -1,0 +1,4 @@
+# Declared by name only: an open schema (ADR 0115). The component is known
+# and its table is not checked.
+[component.film]
+description = "The film rig's director table (tools/showcase): which beat file a shot plays. Read by examples/film/scripts/*.rhai; no fields declared, so nothing in it is checked"

@@ -38,6 +38,7 @@ pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
 pub(crate) mod scene_loading;
+mod schemas;
 mod script_commands;
 mod shallow_wooze;
 pub mod style_commands;
@@ -520,8 +521,17 @@ pub struct PlayerApp {
     // State machine + persistence (survive scene transitions)
     state_machine: GameStateMachine,
     persistent_store: PersistentStore,
-    /// When to write `save/persist.toml` after a change (see `persist.rs`).
+    /// When to write the save file after a change (see `persist.rs`).
     persist_debounce: SaveDebounce,
+    /// The last save failure logged, so one that lasts is said once.
+    persist_save_error: Option<String>,
+    /// `--save-dir`: keep this run's saves in this folder
+    /// (`<dir>/<slot>.toml`) and read no other (#726). Set before the
+    /// event loop starts.
+    pub save_dir: Option<std::path::PathBuf>,
+    /// The OS user directory saves and input rebinds go under
+    /// (`user_files::config_dir`), a field so a test can name another.
+    pub(crate) user_config_dir: Option<std::path::PathBuf>,
 
     // Scene transition lifecycle
     transition_phase: TransitionPhase,
@@ -529,6 +539,10 @@ pub struct PlayerApp {
     // Schema directories and where the list came from (ADR 0114), kept for
     // transitions and chunks
     schema_dirs: flint_core::project::SchemaDirs,
+    // The registry itself, read once and kept (ADR 0115, #683): a chunk
+    // uses it as it is, a transition re-reads only for other directories,
+    // and a failed read keeps it
+    schemas: schemas::HeldSchemas,
 
     // The project the current scene belongs to (ADR 0114): what every asset
     // search starts from. Found when the first scene loads and again at each

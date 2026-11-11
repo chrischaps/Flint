@@ -231,9 +231,16 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
         let scene = path.to_string_lossy().replace('\\', "/");
         match super::validate::check(&scene, schemas) {
             Err(err) => failures.push(format!("{scene}: {err:#}")),
-            Ok((warnings, report)) => {
+            Ok((warnings, report, diagnostics)) => {
                 for warning in warnings {
                     failures.push(format!("{scene}: warning: {warning}"));
+                }
+                // An error diagnostic fails the example (ADR 0115): an
+                // unknown archetype or component, a value of the wrong
+                // type. A warning (a field no schema declares) does not.
+                for d in diagnostics.iter().filter(|d| d.is_error()) {
+                    let hint = d.hint.as_deref().map(|h| format!(" ({h})"));
+                    failures.push(format!("{scene}: {d}{}", hint.unwrap_or_default()));
                 }
                 for v in report.violations {
                     if v.severity == Severity::Error {

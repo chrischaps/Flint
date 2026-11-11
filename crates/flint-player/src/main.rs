@@ -223,6 +223,13 @@ struct Args {
     /// reload, and nothing polls the disk. For captures and shipped builds
     #[arg(long)]
     no_hot_reload: bool,
+
+    /// Keep this run's save data in DIR, as DIR/<slot>.toml, and read no
+    /// other save (#726). Without it: the OS user directory,
+    /// <config>/<game id>/saves/, or the project's save/ for a game with
+    /// no id
+    #[arg(long, value_name = "DIR")]
+    save_dir: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -335,6 +342,7 @@ fn main() -> Result<()> {
     );
 
     app.msaa_sample_count = args.msaa;
+    app.save_dir = args.save_dir.clone();
     // A bundle's files aren't on the disk: nothing to key a disk cache by.
     app.procgen_disk_cache = args.bundle.is_none();
     app.scene_file_writable = args.bundle.is_none();
@@ -429,8 +437,8 @@ fn main() -> Result<()> {
     app.audio
         .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
-    // Preserve schema paths for scene transitions (includes auto-discovered)
-    app.set_schema_dirs(schema_dirs);
+    // The registry and its directories, kept for transitions and chunks
+    app.set_schemas(registry, schema_dirs);
 
     event_loop.run_app(&mut app)?;
     // A failed start or a screenshot that never reached the disk exits

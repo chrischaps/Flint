@@ -14,7 +14,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
+| `flint validate <scene>` | Check a scene against its schemas (every unknown archetype, component and field and every value of the wrong type, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format json` |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
@@ -88,6 +88,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--always-on-top` | Keep the window above other windows |
 | `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
+| `--save-dir <dir>` | Keep this run's save data in `<dir>`, as `<dir>/<slot>.toml`, and read no other save. Without it: `<config>/<game id>/saves/` under the OS user directory, or the project's `save/` for a game with no id (see [Where saves live](../concepts/scripting.md#where-saves-live)). Also on `flint-player` |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
@@ -713,6 +714,7 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | `--project <dir>` | The project root, instead of the one found by walking up; its `flint.toml` is the manifest read |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
 | `--fix` | Apply auto-fixes (with `validate`) |
+| `--strict` | With `validate`: a field no schema declares is an error, not a warning (`[project] strict = true` in `flint.toml` does it for every run) |
 | `--dry-run` | Preview changes without applying |
 
 ## Usage

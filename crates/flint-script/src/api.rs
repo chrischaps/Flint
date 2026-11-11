@@ -5138,6 +5138,117 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
         });
     }
 
+    // persist_slot() -> String: the slot held ("default" to begin with)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_slot", move || -> String {
+            let c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return flint_runtime::DEFAULT_SLOT.to_string();
+            }
+            let store = unsafe { &*c.persistent_store };
+            store.slot().to_string()
+        });
+    }
+
+    // persist_slot(name) -> bool: hold another slot. The one held is saved
+    // first if it changed; `name` is then loaded, or begun empty. False
+    // (and a warning) for a bad name, a save that failed, or a run with no
+    // save location; the slot held is then unchanged.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_slot", move |name: &str| -> bool {
+            let mut c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return false;
+            }
+            let store = unsafe { &mut *c.persistent_store };
+            match store.open_slot(name) {
+                Ok(loaded) if loaded.is_error() => {
+                    tracing::error!("persist: {loaded}");
+                    true
+                }
+                Ok(loaded) => {
+                    tracing::info!("persist: slot '{name}': {loaded}");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("persist_slot: {e}");
+                    false
+                }
+            }
+        });
+    }
+
+    // persist_slots() -> Array of the slots that have a save, in name order
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_slots", move || -> rhai::Array {
+            let c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return vec![];
+            }
+            let store = unsafe { &*c.persistent_store };
+            store.slots().into_iter().map(Dynamic::from).collect()
+        });
+    }
+
+    // persist_version() -> int: the version of the data held (0 for a file
+    // from before versions)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_version", move || -> i64 {
+            let c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return 0;
+            }
+            let store = unsafe { &*c.persistent_store };
+            store.version()
+        });
+    }
+
+    // persist_set_version(n): stamp the data held, for a game with no
+    // `[project] save_version` that migrates by hand
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_set_version", move |version: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return;
+            }
+            if version < 0 {
+                tracing::warn!("persist_set_version({version}): a version is 0 or more");
+                return;
+            }
+            let store = unsafe { &mut *c.persistent_store };
+            store.set_version(version);
+        });
+    }
+
+    // persist_corrupt() -> () when the slot held loaded cleanly (or had no
+    // file), else #{ slot, file, backup, error }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_corrupt", move || -> Dynamic {
+            let c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return Dynamic::UNIT;
+            }
+            let store = unsafe { &*c.persistent_store };
+            match store.corrupt() {
+                None => Dynamic::UNIT,
+                Some(corrupt) => {
+                    let mut map = rhai::Map::new();
+                    map.insert("slot".into(), corrupt.slot.clone().into());
+                    map.insert("file".into(), corrupt.file.clone().into());
+                    map.insert("backup".into(), corrupt.backup.clone().into());
+                    map.insert("error".into(), corrupt.error.clone().into());
+                    Dynamic::from(map)
+                }
+            }
+        });
+    }
+
     // persist_load(path)
     {
         let ctx = ctx.clone();

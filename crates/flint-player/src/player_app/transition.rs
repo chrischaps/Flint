@@ -98,9 +98,14 @@ impl PlayerApp {
             }
         };
 
-        // Load schema registry for archetype defaults
-        let scene_path = self.scene_path.clone();
-        let registry = self.schemas_for_scene(&scene_path);
+        // The registry the scene was loaded with, for archetype defaults:
+        // kept on the app, never re-read for a chunk (#683)
+        let registry = self.schemas.held_or_read(&self.schema_dirs.dirs);
+        // What is wrong with the chunk's entities, said once (ADR 0115)
+        flint_core::diagnostic::log_summary(
+            &flint_core::project::shown(&chunk_path),
+            &flint_scene::diagnose_scene(&scene_file, Some(&chunk_path), &registry),
+        );
 
         let mut spawned_ids = Vec::new();
 
@@ -324,17 +329,16 @@ impl PlayerApp {
     /// host list gains what lies beside the scene. A list that can't be
     /// named (a manifest naming a missing directory) is logged, and the
     /// directories already held are kept.
-    fn schemas_for_scene(&mut self, scene: &str) -> flint_schema::SchemaRegistry {
+    ///
+    /// The registry is the one the app holds (#683): the same directories
+    /// are not read again, and directories that fail to read leave it as it
+    /// was, so the scene never loads with an empty registry.
+    fn schemas_for_scene(&mut self, scene: &str) -> std::sync::Arc<flint_schema::SchemaRegistry> {
         match self.schema_dirs.for_scene(Path::new(scene)) {
             Ok(dirs) => self.schema_dirs = dirs,
             Err(e) => tracing::error!("{e}; keeping the schema directories already loaded"),
         }
-        flint_schema::SchemaRegistry::load_from_directories(&self.schema_dirs.dirs).unwrap_or_else(
-            |e| {
-                tracing::error!("Failed to load schemas: {e}");
-                flint_schema::SchemaRegistry::new()
-            },
-        )
+        self.schemas.for_dirs(&self.schema_dirs.dirs)
     }
 
     fn load_target_scene(&mut self, target_scene: &str) -> bool {

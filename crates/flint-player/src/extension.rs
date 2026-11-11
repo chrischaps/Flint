@@ -148,7 +148,7 @@ pub struct ExtensionCtx<'a> {
     /// `None` until the window and renderer exist.
     pub gpu: Option<ExtensionGpu<'a>>,
     /// The store scripts read and write with `persist_get` / `persist_set`
-    /// (`save/persist.toml`; ADR 0080). Writes here are visible to scripts
+    /// (the game's save file; ADR 0080). Writes here are visible to scripts
     /// this frame, and join the player's save: one second after a burst of
     /// changes, on scene transitions and on exit. Call
     /// [`PersistentStore::request_flush`] to save at the end of this frame

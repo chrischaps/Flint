@@ -3,6 +3,7 @@
 //! This crate handles loading and saving scenes in TOML format.
 
 mod commit;
+mod diagnose;
 mod format;
 mod loader;
 pub mod patcher;
@@ -11,13 +12,16 @@ mod saver;
 mod wooze;
 
 pub use commit::{commit_look, look_edits, CommitReport, SceneEdit, SceneScalar};
+pub use diagnose::{diagnose, diagnose_scene};
+pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use format::{
     fold_legacy_style_keys, BoilDef, CameraDef, EntityDef, LivingDef, LivingEchoesDef,
     LivingSpeciesDef, LivingVarianceDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile,
     SceneMetadata, WoozeDef, WoozeKnobs, WoozePreset, LEGACY_STYLE_KEYS,
 };
 pub use loader::{
-    load_scene, load_scene_string, load_scene_text, reload_scene, reload_scene_string,
+    load_scene, load_scene_diagnosed, load_scene_string, load_scene_text, reload_scene,
+    reload_scene_string,
 };
 pub use patcher::SceneDocument;
 pub use saver::{save_scene, save_scene_string, update_scene_file};
