@@ -204,10 +204,10 @@ asset = "Mug"
 archetype = "character"
 [entities.figure.transform]
 position = [-1.25, 0, 0.55]
-# The idle clip is in centimetres and Z-up: this turns and scales it to a
-# 1.8 m figure standing on the ground, as phase3_showcase's priest is
-rotation = [90, 70, 0]
-scale = [0.0125, 0.0125, 0.0125]
+# The model is metre-scale and Y-up (1.8 m); the film was framed with it
+# at 1.25 times that, so it stays there (#294)
+rotation = [0, 70, 0]
+scale = [1.25, 1.25, 1.25]
 [entities.figure.model]
 asset = "YBotWithIdle"
 [entities.figure.skeleton]

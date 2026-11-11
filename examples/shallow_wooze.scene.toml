@@ -216,8 +216,7 @@ wavelength = 0.8
 [entities.figure]
 [entities.figure.transform]
 position = [-0.55, 0, 1.6]
-rotation = [90, 0, 0]
-scale = [0.01, 0.01, 0.01]
+scale = [1.0, 1.0, 1.0]
 [entities.figure.model]
 asset = "YBotWithIdle"
 [entities.figure.skeleton]

@@ -575,8 +575,7 @@ archetype = "character"
 parent = "main_hall"
 [entities.bartender.transform]
 position = [6.2, 0, 0]
-rotation = [90, -90, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, -90, 0]
 [entities.bartender.model]
 asset = "YBotWithIdle"
 [entities.bartender.skeleton]
@@ -600,8 +599,7 @@ archetype = "character"
 parent = "main_hall"
 [entities.patron_1.transform]
 position = [-1.2, 0, 4.0]
-rotation = [90, 200, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 200, 0]
 [entities.patron_1.model]
 asset = "YBotWithIdle"
 [entities.patron_1.skeleton]
@@ -625,8 +623,7 @@ archetype = "character"
 parent = "main_hall"
 [entities.patron_2.transform]
 position = [-2.8, 0, 5.0]
-rotation = [90, 20, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 20, 0]
 [entities.patron_2.model]
 asset = "YBotWithIdle"
 [entities.patron_2.skeleton]

@@ -112,9 +112,8 @@ asset = "wooden_bench"
 [entities.bench.style_mask]
 style = "ascii"
 
-# No animator: YBotWithIdle's idle clip scales its armature by 100, so a
-# scale that's right while it plays is 1 cm tall in `flint render`'s rest
-# pose (the tavern NPCs' problem, #294). At rest it agrees in both.
+# No animator: `flint render` draws a skinned figure in its rest pose
+# (#307), so this one holds it in the player too, and the two agree.
 [entities.ybot]
 archetype = "character"
 [entities.ybot.transform]
