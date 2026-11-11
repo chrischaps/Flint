@@ -854,6 +854,18 @@ Two additional callbacks fire during transitions:
 | `on_scene_enter` | `fn on_scene_enter()` | After a new scene is loaded and ready |
 | `on_scene_exit` | `fn on_scene_exit()` | Before the current scene is unloaded |
 
+A scene reached by `load_scene()` is brought up exactly as the first scene is at startup: the same code, in the same order. Everything the scene file says is taken from it, and anything it doesn't say is the default, never what the last scene had:
+
+- its `[scene] input_config`, or with none the project's input config (`[project] input` or `config/input.toml`);
+- its `[post_process]`, or with none the default post-processing, which also clears whatever a script set on the last scene;
+- its `[environment] skybox`, or no skybox; its ambient light, shadows and shading levers, or the defaults;
+- its `[camera]` over a fresh camera, so a scene with no `[camera]` doesn't inherit an orthographic projection or a field of view;
+- `on_init`, then `on_scene_enter`, with the state machine and the persistent store in reach.
+
+The persistent store, the game state stack, the window and the quality settings carry over.
+
+The target is read before the current scene is touched. If it can't be loaded (a missing file, a scene that doesn't parse), the current scene keeps playing, the error names the path it was read from, and the transition goes on to its Entering phase so a fade can come back in. The run then ends with a non-zero exit code, so a capture under `--exit-after` fails instead of passing on the wrong picture.
+
 ### Game State Machine API
 
 A pushdown automaton for managing game states (playing, paused, custom):
