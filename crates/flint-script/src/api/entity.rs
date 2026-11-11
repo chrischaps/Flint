@@ -607,6 +607,35 @@ pub(crate) fn register(api: &mut ScriptApi) {
             None => Dynamic::UNIT,
         },
     );
+
+    // ── Interactables ──
+    m.func(
+        "find_nearest_interactable",
+        "The enabled interactable nearest the player within its own range, as the HUD's prompt shows it.",
+    )
+    .returns(
+        Map,
+        "#{entity, prompt_text, interaction_type, distance}, or () when none is in range",
+    )
+    .run(|call, ()| {
+        Ok(match crate::engine::find_nearest_interactable(call.world()?) {
+            Some(nearest) => {
+                let mut map = rhai::Map::new();
+                map.insert(
+                    "entity".into(),
+                    Dynamic::from(nearest.entity_id.raw() as i64),
+                );
+                map.insert("prompt_text".into(), Dynamic::from(nearest.prompt_text));
+                map.insert(
+                    "interaction_type".into(),
+                    Dynamic::from(nearest.interaction_type),
+                );
+                map.insert("distance".into(), Dynamic::from(nearest.distance));
+                Dynamic::from(map)
+            }
+            None => Dynamic::UNIT,
+        })
+    });
 }
 
 // ─── Helpers ─────────────────────────────────────────────
