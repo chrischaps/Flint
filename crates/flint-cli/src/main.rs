@@ -1,14 +1,16 @@
 //! Flint CLI - Command-line interface for the Flint engine
 
+mod check;
 mod commands;
 mod file_dialog;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, entity, examples, export, gen, gen_preview, init, play,
-    play_chart, play_suite, prefab, preview, query, render, render_suite, replay_chart, scene,
-    schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
+    asset, bundle, calibrate, check as check_cmd, edit_router, entity, examples, export, gen,
+    gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render, render_suite,
+    replay_chart, scene, schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit,
+    validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -92,8 +94,13 @@ enum Commands {
     #[command(hide = true)]
     SplineEdit(spline_edit::EditArgs),
 
-    /// Validate a scene against constraints
+    /// Validate a scene against its schemas and constraints (and fix what
+    /// a constraint can fix)
     Validate(validate::ValidateArgs),
+
+    /// The pre-flight: everything wrong with a project or a scene in one
+    /// run (schemas, entity references, assets, files, styles, constraints)
+    Check(Box<check_cmd::CheckArgs>),
 
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
@@ -203,6 +210,7 @@ fn main() -> Result<()> {
         } => query::run(&query, scene.as_deref(), &format, &schemas),
         Commands::Schema(args) => schema::run(args),
         Commands::Validate(args) => validate::run(args),
+        Commands::Check(args) => check_cmd::run(*args),
         Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),

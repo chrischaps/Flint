@@ -61,7 +61,13 @@ pub fn diagnose(
                 .hint("the entities of the prefabs that did expand are checked below"),
         );
     }
+    let expanded = found.is_empty();
     found.extend(diagnose_scene_in(&scene, scene_file, registry, project));
+    // With a prefab missing, an entity that names one of its entities
+    // would be called unknown: the prefab is the one thing wrong there
+    if !expanded {
+        found.retain(|d| d.code != codes::UNKNOWN_ENTITY);
+    }
     if project.strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -157,6 +163,18 @@ fn diagnose_entities(
         }
     }
     found
+}
+
+/// What to do about a table named after a kind of light: nothing reads it,
+/// and until #681 nothing said so.
+fn light_table_hint(component: &str) -> Option<String> {
+    let kind = component.strip_suffix("_light")?;
+    ["directional", "point", "spot"].contains(&kind).then(|| {
+        format!(
+            "no system reads a `{component}` table: a light is a `light` component with \
+             type = \"{kind}\" (`flint schema light` lists its fields)"
+        )
+    })
 }
 
 /// What a reference is looked up in: the scene's entities, and the project's
@@ -289,14 +307,14 @@ fn diagnose_entity(
                 .entity(name)
                 .component(component.clone())
                 .hint(
-                    diagnostic::did_you_mean(component, registry.component_names()).unwrap_or_else(
-                        || {
+                    light_table_hint(component)
+                        .or_else(|| diagnostic::did_you_mean(component, registry.component_names()))
+                        .unwrap_or_else(|| {
                             format!(
                                 "a component a game adds is declared in its schema layer, \
                                  as components/{component}.toml"
                             )
-                        },
-                    ),
+                        }),
                 ),
             );
             continue;
@@ -344,6 +362,30 @@ fn diagnose_entity(
                     .component(component.clone())
                     .field(reference.field),
             );
+        }
+        // The tip is found among this entity's children: one that is
+        // somewhere else in the scene is never reached
+        if component == flint_core::components::IK_TWO_BONE {
+            let tip = data.get("tip").and_then(|v| v.as_str()).unwrap_or("");
+            let elsewhere = lookup
+                .scene
+                .entities
+                .get(tip)
+                .is_some_and(|t| t.parent.as_deref() != Some(name));
+            if elsewhere {
+                found.push(
+                    Diagnostic::error(
+                        codes::NOT_A_CHILD,
+                        format!(
+                            "`{tip}` is not a child of this entity, so the chain is never solved"
+                        ),
+                    )
+                    .entity(name)
+                    .component(component.clone())
+                    .field("tip")
+                    .hint(format!("give `{tip}` parent = \"{name}\"")),
+                );
+            }
         }
     }
 }
@@ -670,6 +712,63 @@ intensity = 1.0
         );
         let codes_found: Vec<&str> = missing.iter().map(|d| d.code).collect();
         assert_eq!(codes_found, [codes::BAD_PREFAB, codes::UNKNOWN_COMPONENT]);
+    }
+
+    /// #687: an `ik_two_bone.tip` must be a child of the entity naming it,
+    /// or the chain is never solved.
+    #[test]
+    fn an_ik_tip_that_is_not_a_child_is_an_error() {
+        let ik = (
+            "schemas/components/ik_two_bone.toml",
+            "[component.ik_two_bone]\n[component.ik_two_bone.fields]\n\
+             target = { type = \"entity\", default = \"\" }\n\
+             tip = { type = \"entity\", default = \"\" }\n",
+        );
+        let scene = "[scene]\nname = \"s\"\n[entities.goal]\n[entities.hand]\n\
+                     [entities.foot]\nparent = \"knee\"\n\
+                     [entities.elbow.ik_two_bone]\ntarget = \"goal\"\ntip = \"hand\"\n\
+                     [entities.knee.ik_two_bone]\ntarget = \"goal\"\ntip = \"foot\"\n";
+        let found = with_scene(
+            &[ik, ("scenes/a.scene.toml", scene)],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[not-a-child] entity 'elbow' ik_two_bone.tip: `hand` is not a child of this \
+              entity, so the chain is never solved"
+            ]
+        );
+        assert_eq!(
+            found[0].hint.as_deref(),
+            Some("give `hand` parent = \"elbow\"")
+        );
+    }
+
+    /// With a prefab that doesn't expand, a reference to one of its
+    /// entities is not called unknown: the prefab is what is wrong.
+    #[test]
+    fn a_missing_prefab_is_the_one_thing_said_about_its_entities() {
+        let scene = "[scene]\nname = \"s\"\n[prefabs.one]\ntemplate = \"nope\"\nprefix = \"n\"\n\
+                     [entities.lid]\nparent = \"n_box\"\n";
+        let found = with_scene(&[("scenes/a.scene.toml", scene)], |registry, project| {
+            diagnose(Path::new("scenes/a.scene.toml"), registry, project)
+        });
+        let codes_found: Vec<&str> = found.iter().map(|d| d.code).collect();
+        assert_eq!(codes_found, [codes::BAD_PREFAB]);
+    }
+
+    /// A table named after a kind of light is an unknown component whose
+    /// hint says what a light is.
+    #[test]
+    fn a_stale_light_table_says_what_a_light_is() {
+        let found =
+            found_in("[scene]\nname = \"s\"\n[entities.sun.directional_light]\nintensity = 2.0\n");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
+        let hint = found[0].hint.as_deref().unwrap();
+        assert!(hint.contains("type = \"directional\""), "{hint}");
     }
 
     #[test]

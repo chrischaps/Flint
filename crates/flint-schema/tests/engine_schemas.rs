@@ -695,6 +695,7 @@ fn engine_schemas_type_their_references() {
         assert_eq!(field("ik_two_bone", name), "entity");
     }
     assert_eq!(field("spline_mesh", "spline"), "entity");
+    assert_eq!(field("joint", "parent"), "entity");
     assert_eq!(field("model", "asset"), "asset<models|specs>");
     assert_eq!(field("script", "source"), "asset<scripts>");
     assert_eq!(field("material", "texture"), "asset<textures|specs>");

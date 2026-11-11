@@ -4,6 +4,7 @@ pub mod asset;
 pub mod asset_where;
 pub mod bundle;
 pub mod calibrate;
+pub mod check;
 pub mod common_args;
 pub mod edit_router;
 pub mod entity;

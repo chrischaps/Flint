@@ -11,9 +11,9 @@ mod report;
 mod types;
 
 pub use diff::compute_scene_diff;
-pub use evaluator::ConstraintEvaluator;
+pub use evaluator::{ConstraintEvaluator, BAD_CONSTRAINT};
 pub use fixer::{ConstraintFixer, FixAction, FixReport};
-pub use registry::ConstraintRegistry;
+pub use registry::{BadConstraint, ConstraintRegistry};
 pub use report::{ValidationReport, Violation};
 pub use types::{
     AutoFix, AutoFixStrategy, ConstraintDef, ConstraintFile, ConstraintKind, Severity,

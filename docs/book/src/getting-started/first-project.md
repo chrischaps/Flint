@@ -27,7 +27,7 @@ Created Flint project `my-tavern` (walk template) in my-tavern
 
 Next steps:
   cd my-tavern
-  flint validate scenes/main.scene.toml
+  flint check
   flint render scenes/main.scene.toml --output renders/main.png
   flint play
 ```

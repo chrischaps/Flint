@@ -9,12 +9,13 @@ Flint is driven from the command line: you edit text files, render a picture to 
 Run these from the project root. `flint.toml` there names the schemas, the start scene and the input config, so no command needs a `--schemas` flag, and they work from any folder of the project.
 
 ```bash
-flint validate scenes/main.scene.toml
+flint check
 flint render scenes/main.scene.toml --output renders/main.png
 flint play
 ```
 
-- `flint validate` loads the scene against the schemas and checks the constraints.
+- `flint check` is the pre-flight: everything wrong with the project in one run, with the file, the entity and the field of each problem and a hint. It loads every scene against the schemas, follows each entity reference, looks for every model, texture, sound, script and file a scene names where the engine will look (and lists the paths it tried), loads the styles and checks the constraints. It exits non-zero on an error. `flint check scenes/main.scene.toml` checks one scene and `--json` prints one JSON document.
+- `flint validate scenes/main.scene.toml` checks one scene against the schemas and the constraints, and `--fix` applies the fixes a constraint offers.
 - `flint render` draws the scene to a PNG with no window, through the scene's `[camera]`. Look at the picture after every visual change. `--no-grid` leaves the editor grid out and `--width` / `--height` set the size; `flint render --help` lists the rest. `--scripts --time 0.5` runs the scripts for half a second first. A script's HUD is not drawn in a render, only in play.
 - `flint play` opens the scene `flint.toml` names under `[project]`, or the scene you pass. Esc quits.
 - `flint edit scenes/main.scene.toml` opens the scene in a viewer that reloads when the file changes.

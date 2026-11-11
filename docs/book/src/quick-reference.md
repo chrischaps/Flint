@@ -14,7 +14,8 @@ A scannable cheat sheet for daily Flint development.
 | `flint entity delete` | Delete an entity from a scene |
 | `flint query "<expr>"` | Query entities (e.g., `"entities where archetype == 'door'"`) |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate scene against constraints (`--fix` to auto-fix) |
+| `flint check [dir\|scene]` | The pre-flight: every problem of a project or a scene in one run (`--json`) |
+| `flint validate <scene>` | Validate one scene against its schemas and constraints (`--fix` to auto-fix) |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play <scene>` | First-person gameplay with physics + scripting |
 | `flint render <scene> -o out.png` | Headless render to PNG |
