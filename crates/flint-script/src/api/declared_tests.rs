@@ -104,6 +104,14 @@ fn integers_work_where_numbers_are_wanted() {
         .unwrap()
         .position;
     assert_eq!((p.x, p.y, p.z), (1.0, 2.5, -3.0));
+    // The first-draft call #696 names, all ints
+    let y: f64 = eval(
+        &engine,
+        &mut world,
+        &format!("set_position({id}, 0, 1, 0); get_position({id}).y"),
+    )
+    .unwrap();
+    assert_eq!(y, 1.0);
     // And floats, through the exact-typed twin, as before
     let x: f64 = eval(
         &engine,
@@ -134,10 +142,10 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     assert!(!pressed);
     {
         let c = crate::lock_or_recover(&engine.ctx);
-        assert_eq!(c.postprocess_render_mode_override, Some((1, 1.0)));
-        assert_eq!(c.camera_fov_override, Some(60.0));
-        assert_eq!(c.time_scale_request, Some(2.0));
-        assert_eq!(c.postprocess_fog_color_override, Some([1.0, 0.0, 0.0]));
+        assert_eq!(c.requests.render_mode, Some((1, 1.0)));
+        assert_eq!(c.requests.camera.fov, Some(60.0));
+        assert_eq!(c.requests.time_scale, Some(2.0));
+        assert_eq!(c.requests.fog_color, Some([1.0, 0.0, 0.0]));
         assert_eq!(c.commands.len(), 2, "the sound and the velocity");
     }
     let eid = flint_core::EntityId::from_raw(id as u64);

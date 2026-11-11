@@ -33,7 +33,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("y", Num)
     .arg("z", Num)
     .run(|call, (x, y, z)| {
-        call.ctx().camera_position_override = Some([x as f32, y as f32, z as f32]);
+        call.ctx().requests.camera.position = Some([x as f32, y as f32, z as f32]);
     });
 
     m.func(
@@ -44,7 +44,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("y", Num)
     .arg("z", Num)
     .run(|call, (x, y, z)| {
-        call.ctx().camera_target_override = Some([x as f32, y as f32, z as f32]);
+        call.ctx().requests.camera.target = Some([x as f32, y as f32, z as f32]);
     });
 
     m.func(
@@ -53,7 +53,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("fov", Num)
     .run(|call, (fov,)| {
-        call.ctx().camera_fov_override = Some(fov as f32);
+        call.ctx().requests.camera.fov = Some(fov as f32);
     });
 
     m.func(
@@ -62,7 +62,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("enabled", Bool)
     .run(|call, (enabled,)| {
-        call.ctx().camera_orthographic_override = Some(enabled);
+        call.ctx().requests.camera.orthographic = Some(enabled);
     });
 
     m.func(
@@ -71,7 +71,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("height", Num)
     .run(|call, (height,)| {
-        call.ctx().camera_ortho_height_override = Some(height as f32);
+        call.ctx().requests.camera.ortho_height = Some(height as f32);
     });
 
     m.func(
@@ -80,6 +80,6 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("radians", Num)
     .run(|call, (radians,)| {
-        call.ctx().camera_roll_override = Some(radians as f32);
+        call.ctx().requests.camera.roll = Some(radians as f32);
     });
 }

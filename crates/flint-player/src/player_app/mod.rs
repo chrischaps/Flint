@@ -43,7 +43,7 @@ mod scene_entry;
 mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
-mod script_commands;
+pub mod script_commands;
 mod shallow_wooze;
 pub mod style_commands;
 mod text_halo;
@@ -451,6 +451,14 @@ pub struct PlayerApp {
     grass_wooze: shallow_wooze::GrassWooze,
     // What's been done to a running grove by hand (#218).
     pub(crate) living_tune: living_tuning::LivingTune,
+
+    /// What scripts asked of the frame (#697): the camera, post-processing,
+    /// distance levers, cursor and touch, held from the command that asked
+    /// to the step of the frame that applies each.
+    script_requests: flint_script::FrameRequests,
+    /// A script's `set_quality`, applied between the frame's scripts and
+    /// its draw (FlintKart#55).
+    script_quality: Option<flint_core::quality::QualitySettings>,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,

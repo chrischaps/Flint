@@ -121,7 +121,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("cutoff_hz", Num)
     .run(|call, (cutoff_hz,)| {
-        call.ctx().audio_lowpass_cutoff_override = Some(cutoff_hz as f32);
+        call.ctx().requests.audio_lowpass = Some(cutoff_hz as f32);
     });
 }
 

@@ -447,7 +447,52 @@ fn the_report_says_what_each_capture_heard_and_what_didnt_run() {
         .collect();
     assert_eq!(heard, ["listening", "thinking", "speaking"]);
     let warnings = report["warnings"].to_string();
-    assert!(warnings.contains("LoadScene"), "{warnings}");
+    assert!(warnings.contains("load_scene"), "{warnings}");
+    assert!(warnings.contains("one scene"), "says why: {warnings}");
+}
+
+// #697: a capture is a script host like the player, so the style commands
+// the old headless dispatcher dropped land in the picture.
+
+/// The floor drawn in ASCII from `on_init`, its cells easing from 4 to 16
+/// points over two seconds.
+const STYLER: &str = r#"
+fn on_init() {
+    let floor = get_entity("floor");
+    set_entity_style(floor, "ascii");
+    set_style_param(floor, "cell", 4);
+    tween_style_param(floor, "cell", 16, 2.0, "linear");
+}
+"#;
+
+#[test]
+fn entity_styles_and_their_tweens_reach_the_capture() {
+    let dir = project("styles");
+    std::fs::write(dir.join("scripts/tint.rhai"), STYLER).unwrap();
+    let o = render(&dir, "plain.png", &["--time", "0"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let o = render(&dir, "styled0.png", &["--scripts", "--time", "0"]);
+    ok(&o);
+    let said = stderr(&o);
+    assert!(!said.contains("doesn't do it"), "{said}");
+    ok(&render(&dir, "styled2.png", &["--scripts", "--time", "2"]));
+    ok(&render(&dir, "again2.png", &["--scripts", "--time", "2"]));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert!(
+        read("styled0.png") != read("plain.png"),
+        "set_entity_style changed nothing"
+    );
+    assert!(
+        read("styled2.png") != read("styled0.png"),
+        "the tween didn't move the cells"
+    );
+    assert!(
+        read("styled2.png") == read("again2.png"),
+        "two runs differed"
+    );
 }
 
 // #579: the boil, step_living and particles from scripts.

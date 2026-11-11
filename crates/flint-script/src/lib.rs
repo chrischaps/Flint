@@ -12,6 +12,9 @@ pub mod api;
 pub mod context;
 pub mod draw2d;
 pub mod engine;
+pub mod host;
+#[cfg(test)]
+mod layout_tests;
 pub mod module_resolver;
 pub mod projector;
 pub mod random;
@@ -22,6 +25,7 @@ pub mod sync;
 pub mod ui;
 
 pub use context::StateScope;
+pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
@@ -29,40 +33,10 @@ use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
+pub use host::ScriptHost;
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
-
-/// Post-processing overrides set by scripts this frame; each field is `Some`
-/// only if the corresponding `set_*` API was called since the last drain.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct PostProcessOverrides {
-    pub vignette: Option<f32>,
-    pub bloom: Option<f32>,
-    pub exposure: Option<f32>,
-    pub chromatic_aberration: Option<f32>,
-    pub radial_blur: Option<f32>,
-    pub ssao_intensity: Option<f32>,
-    pub fog_density: Option<f32>,
-    pub desaturation: Option<f32>,
-    pub dof_strength: Option<f32>,
-    pub dof_focus_distance: Option<f32>,
-    pub dof_focus_range: Option<f32>,
-}
-
-/// Camera overrides set by scripts this frame; each field is `Some` only if
-/// the corresponding `set_camera_*` API was called since the last drain.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct CameraOverrides {
-    pub position: Option<[f32; 3]>,
-    pub target: Option<[f32; 3]>,
-    pub fov: Option<f32>,
-    pub orthographic: Option<bool>,
-    pub ortho_height: Option<f32>,
-    /// Roll about the view axis, radians. `None` means "no roll this frame" —
-    /// the host resets the camera up vector to world up.
-    pub roll: Option<f32>,
-}
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
@@ -293,18 +267,15 @@ impl ScriptSystem {
         self.engine.set_style_reader(reader);
     }
 
-    /// Drain commands produced by scripts this frame
+    /// Everything scripts asked of the host since the last drain, for
+    /// [`host::apply_all`]: the commands they queued, in order, then this
+    /// frame's requests (`SetCamera`, `SetPostProcess`, `SetTimeScale`,
+    /// `SetQuality`...), one each, for what was asked (#697). The host
+    /// carries out a `SetQuality` between frames and hands back what it
+    /// applied with [`set_quality_state`](Self::set_quality_state), and a
+    /// `SetLodScales` with [`set_lod_state`](Self::set_lod_state).
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()
-    }
-
-    /// Take the quality settings a script asked for with `set_quality`
-    /// since the last call, if any (FlintKart#55). The host applies them
-    /// between frames and hands back what it applied with
-    /// [`set_quality_state`](Self::set_quality_state).
-    pub fn take_quality_request(&mut self) -> Option<flint_core::quality::QualitySettings> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        std::mem::take(&mut c.quality_requested).then_some(c.quality)
     }
 
     /// The quality settings in force, for `get_quality()`.
@@ -489,96 +460,12 @@ impl ScriptSystem {
         self.engine.call_scene_enters(world);
     }
 
-    /// Take camera overrides set by scripts this frame (clears them)
-    pub fn take_camera_overrides(&mut self) -> CameraOverrides {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        CameraOverrides {
-            position: c.camera_position_override.take(),
-            target: c.camera_target_override.take(),
-            fov: c.camera_fov_override.take(),
-            orthographic: c.camera_orthographic_override.take(),
-            ortho_height: c.camera_ortho_height_override.take(),
-            roll: c.camera_roll_override.take(),
-        }
-    }
-
-    /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(&mut self) -> PostProcessOverrides {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        PostProcessOverrides {
-            vignette: c.postprocess_vignette_override.take(),
-            bloom: c.postprocess_bloom_override.take(),
-            exposure: c.postprocess_exposure_override.take(),
-            chromatic_aberration: c.postprocess_chromatic_aberration_override.take(),
-            radial_blur: c.postprocess_radial_blur_override.take(),
-            ssao_intensity: c.postprocess_ssao_intensity_override.take(),
-            fog_density: c.postprocess_fog_density_override.take(),
-            desaturation: c.postprocess_desaturation_override.take(),
-            dof_strength: c.postprocess_dof_strength_override.take(),
-            dof_focus_distance: c.postprocess_dof_focus_distance_override.take(),
-            dof_focus_range: c.postprocess_dof_focus_range_override.take(),
-        }
-    }
-
-    /// Take the time scale a script asked for this frame, if any (clears it)
-    pub fn take_time_scale_request(&mut self) -> Option<f64> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.time_scale_request.take()
-    }
-
-    /// Take audio low-pass filter override set by scripts this frame (clears it)
-    pub fn take_audio_overrides(&mut self) -> Option<f32> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.audio_lowpass_cutoff_override.take()
-    }
-
-    /// Take the `set_touch_controls` request set by scripts this frame
-    /// (clears it)
-    pub fn take_touch_controls_override(&mut self) -> Option<bool> {
-        crate::lock_or_recover(&self.engine.ctx)
-            .touch_controls_override
-            .take()
-    }
-
-    /// Take the `set_lod_scale` / `set_draw_distance_scale` requests made by
-    /// scripts this frame (clears them), as (lod scale, draw-distance scale).
-    pub fn take_lod_requests(&mut self) -> (Option<f32>, Option<f32>) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        (
-            c.lod_scale_request.take(),
-            c.draw_distance_scale_request.take(),
-        )
-    }
-
     /// Tell scripts the renderer's distance scales in force (#56), for
     /// `lod_scale()` and `draw_distance_scale()`.
     pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.lod_scale = lod_scale;
         c.draw_distance_scale = draw_distance_scale;
-    }
-
-    /// Take the cursor capture request set by scripts this frame (clears it)
-    pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.cursor_captured_override.take()
-    }
-
-    /// Take the fog color override set by scripts this frame (clears it)
-    pub fn take_fog_color_override(&mut self) -> Option<[f32; 3]> {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.postprocess_fog_color_override.take()
-    }
-
-    /// Take the reality-tear render mode overrides set by scripts this
-    /// frame (clears them): ((mode, mix), mode_params).
-    #[allow(clippy::type_complexity)]
-    pub fn take_render_mode_overrides(&mut self) -> (Option<(u32, f32)>, Option<[f32; 4]>) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        (
-            c.postprocess_render_mode_override.take(),
-            c.postprocess_mode_params_override.take(),
-        )
     }
 
     /// Point the script system at the scripts the scene at `scene_path` can
@@ -1160,13 +1047,18 @@ mod tests {
         let mut system = ScriptSystem::new();
         {
             let mut c = crate::lock_or_recover(&system.engine.ctx);
-            c.postprocess_desaturation_override = Some(0.85);
+            c.requests.post.desaturation = Some(0.85);
         }
-        let overrides = system.take_postprocess_overrides();
-        assert_eq!(overrides.desaturation, Some(0.85));
-        // Drain clears: a second take returns all-None
-        let overrides = system.take_postprocess_overrides();
-        assert_eq!(overrides, PostProcessOverrides::default());
+        let commands = system.drain_commands();
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [ScriptCommand::SetPostProcess { post }] if post.desaturation == Some(0.85)
+            ),
+            "{commands:?}"
+        );
+        // Drain clears: a second drain asks for nothing
+        assert!(system.drain_commands().is_empty());
     }
 }
 

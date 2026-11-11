@@ -95,7 +95,7 @@ Scripts are [Rhai](https://rhai.rs) files in `scripts`, attached with a `script`
 
 What trips people up:
 
-- **Numbers do not convert.** `0.0` is not `0`. Positions, sizes and colours are floats; the `layer` argument of `draw_rect_ex` and `draw_text_ex` is an integer.
+- **Two ints divide as ints.** An engine function takes `0` or `0.0` where it wants a number, and a whole float where it wants an int (`draw_rect_ex(.., 0.0)`), and Rhai mixes ints and floats in arithmetic, but `3 / 4` is `0`: write `3 / 4.0`.
 - **Top-level variables.** A `let` at the top of a script is visible in the callbacks the engine calls, but not inside a helper function those callbacks call. Pass values in.
 - **All UI is drawn by scripts**, each frame, from `on_draw_ui` (`draw_text`, `draw_rect`, `draw_circle`, `draw_line`, `draw_sprite`). The engine has no HUD of its own.
 - **Input.** Read actions, not keys: `is_action_pressed("jump")`. The built-in actions are listed at the top of `config/input.toml`; add your own there.

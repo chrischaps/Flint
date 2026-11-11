@@ -116,7 +116,7 @@ pub(crate) fn request_quality(c: &mut ScriptCallContext, settings: &Map) -> bool
     }
     if quality != c.quality {
         c.quality = quality;
-        c.quality_requested = true;
+        c.requests.quality = true;
     }
     all_taken
 }
@@ -138,7 +138,7 @@ mod tests {
         assert!(ok);
         {
             let c = engine.ctx.lock().unwrap();
-            assert!(c.quality_requested);
+            assert!(c.requests.quality);
             assert_eq!(c.quality.msaa, 4);
             assert_eq!(c.quality.shadow_cascades, 2);
             assert!(!c.quality.ssao);
@@ -179,9 +179,9 @@ mod tests {
         let rhai = engine.rhai_engine();
         let ok: bool = rhai.eval("set_quality(\"msaa\", 1)").unwrap();
         assert!(ok);
-        assert!(!engine.ctx.lock().unwrap().quality_requested);
+        assert!(!engine.ctx.lock().unwrap().requests.quality);
         let _: bool = rhai.eval("set_quality(\"shadows\", false)").unwrap();
-        assert!(engine.ctx.lock().unwrap().quality_requested);
+        assert!(engine.ctx.lock().unwrap().requests.quality);
     }
 
     #[test]

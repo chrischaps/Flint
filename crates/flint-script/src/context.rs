@@ -1,7 +1,8 @@
 //! Script execution context and command types
 //!
 //! ScriptCallContext is the shared state accessed by Rhai API functions during script execution.
-//! ScriptCommand represents deferred actions (audio, events, logging) collected during a script call.
+//! ScriptCommand represents deferred actions (audio, events, logging) collected during a script call,
+//! which a [`crate::host::ScriptHost`] carries out.
 
 use crate::ui::UiSystem;
 use flint_core::EntityId;
@@ -414,6 +415,145 @@ pub enum ScriptCommand {
     UnloadChunk {
         chunk_id: String,
     },
+    // What a frame keeps one value of (#697): made from `FrameRequests` when
+    // the host drains, after the commands above, one each for those asked.
+    /// `set_camera_position`, `_target`, `_fov`, `_orthographic`,
+    /// `_ortho_height`, `_roll` and `camera_follow`: the camera this frame.
+    /// A field left `None` is the rig's; no roll is level.
+    SetCamera {
+        camera: CameraOverrides,
+    },
+    /// `set_vignette`, `set_bloom_intensity`, `set_exposure` and the other
+    /// post-processing overrides: each held, once set, until set again.
+    SetPostProcess {
+        post: PostProcessOverrides,
+    },
+    /// `set_fog_color`, linear 0..1, held until set again.
+    SetFogColor {
+        color: [f32; 3],
+    },
+    /// `set_render_mode` (mode, mix: shown only the frames it is called)
+    /// and `set_render_mode_params` (held).
+    SetRenderMode {
+        mode: Option<(u32, f32)>,
+        params: Option<[f32; 4]>,
+    },
+    /// `set_time_scale`, clamped to 0.05..4, from the next frame.
+    SetTimeScale {
+        scale: f64,
+    },
+    /// `set_audio_lowpass`: the master bus low-pass cutoff.
+    SetAudioLowpass {
+        cutoff_hz: f32,
+    },
+    /// `set_touch_controls` (#134).
+    SetTouchControls {
+        enabled: bool,
+    },
+    /// `set_lod_scale` / `set_draw_distance_scale` (#56).
+    SetLodScales {
+        lod_scale: Option<f32>,
+        draw_distance_scale: Option<f32>,
+    },
+    /// `set_cursor_captured`.
+    SetCursorCaptured {
+        captured: bool,
+    },
+    /// `set_quality`: the whole settings, the call's keys merged in
+    /// (FlintKart#55).
+    SetQuality {
+        settings: flint_core::quality::QualitySettings,
+    },
+}
+
+/// The post-processing overrides scripts set: each `Some` only if its
+/// `set_*` was called since the last drain.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PostProcessOverrides {
+    pub vignette: Option<f32>,
+    pub bloom: Option<f32>,
+    pub exposure: Option<f32>,
+    pub chromatic_aberration: Option<f32>,
+    pub radial_blur: Option<f32>,
+    pub ssao_intensity: Option<f32>,
+    pub fog_density: Option<f32>,
+    pub desaturation: Option<f32>,
+    pub dof_strength: Option<f32>,
+    pub dof_focus_distance: Option<f32>,
+    pub dof_focus_range: Option<f32>,
+}
+
+impl PostProcessOverrides {
+    /// Lay `later` over these: what it sets wins, what it leaves stays.
+    pub fn merge(&mut self, later: PostProcessOverrides) {
+        macro_rules! keep {
+            ($($field:ident),*) => {
+                $(if later.$field.is_some() { self.$field = later.$field; })*
+            };
+        }
+        keep!(
+            vignette,
+            bloom,
+            exposure,
+            chromatic_aberration,
+            radial_blur,
+            ssao_intensity,
+            fog_density,
+            desaturation,
+            dof_strength,
+            dof_focus_distance,
+            dof_focus_range
+        );
+    }
+}
+
+/// The camera overrides scripts set: each `Some` only if its
+/// `set_camera_*` was called since the last drain.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CameraOverrides {
+    pub position: Option<[f32; 3]>,
+    pub target: Option<[f32; 3]>,
+    pub fov: Option<f32>,
+    pub orthographic: Option<bool>,
+    pub ortho_height: Option<f32>,
+    /// Roll about the view axis, radians. `None` means "no roll this frame" —
+    /// the host resets the camera up vector to world up.
+    pub roll: Option<f32>,
+}
+
+impl CameraOverrides {
+    /// Lay `later` over these: what it sets wins, what it leaves stays.
+    pub fn merge(&mut self, later: CameraOverrides) {
+        self.position = later.position.or(self.position);
+        self.target = later.target.or(self.target);
+        self.fov = later.fov.or(self.fov);
+        self.orthographic = later.orthographic.or(self.orthographic);
+        self.ortho_height = later.ortho_height.or(self.ortho_height);
+        self.roll = later.roll.or(self.roll);
+    }
+}
+
+/// What scripts asked of this frame that the frame keeps one value of: the
+/// last call wins, and some are read back before the host has them
+/// (`camera_apply_shake` shakes the camera asked for, `lod_scale()` says
+/// the scale asked for). [`ScriptCallContext::take_commands`] turns them
+/// into commands.
+#[derive(Debug, Clone, Default)]
+pub struct FrameRequests {
+    pub camera: CameraOverrides,
+    pub post: PostProcessOverrides,
+    pub fog_color: Option<[f32; 3]>,
+    /// Shown only the frames a script asks for it (a reality tear).
+    pub render_mode: Option<(u32, f32)>,
+    pub mode_params: Option<[f32; 4]>,
+    pub time_scale: Option<f64>,
+    pub audio_lowpass: Option<f32>,
+    pub cursor_captured: Option<bool>,
+    pub touch_controls: Option<bool>,
+    pub lod_scale: Option<f32>,
+    pub draw_distance_scale: Option<f32>,
+    /// A `set_quality` call changed `ScriptCallContext::quality`.
+    pub quality: bool,
 }
 
 /// Host-installed text measurement: `(text, size, font family, letter spacing)`
@@ -640,48 +780,11 @@ pub struct ScriptCallContext {
     /// Screen dimensions in pixels (set before scripts run)
     pub screen_width: f32,
     pub screen_height: f32,
-    /// Script-driven camera overrides (set by set_camera_position/set_camera_target/set_camera_fov)
-    pub camera_position_override: Option<[f32; 3]>,
-    pub camera_target_override: Option<[f32; 3]>,
-    pub camera_fov_override: Option<f32>,
-    /// Script-driven camera orthographic override
-    pub camera_orthographic_override: Option<bool>,
-    /// Script-driven camera ortho_height override
-    pub camera_ortho_height_override: Option<f32>,
-    /// Script-driven camera roll override, radians about the view axis.
-    /// One-frame like the others; the host resets the camera up vector when absent.
-    pub camera_roll_override: Option<f32>,
-    /// Script-driven post-processing overrides
-    pub postprocess_vignette_override: Option<f32>,
-    pub postprocess_bloom_override: Option<f32>,
-    pub postprocess_exposure_override: Option<f32>,
-    pub postprocess_chromatic_aberration_override: Option<f32>,
-    pub postprocess_radial_blur_override: Option<f32>,
-    pub postprocess_ssao_intensity_override: Option<f32>,
-    pub postprocess_fog_density_override: Option<f32>,
-    pub postprocess_desaturation_override: Option<f32>,
-    pub postprocess_dof_strength_override: Option<f32>,
-    pub postprocess_dof_focus_distance_override: Option<f32>,
-    pub postprocess_dof_focus_range_override: Option<f32>,
-    pub postprocess_fog_color_override: Option<[f32; 3]>,
-    /// Reality-tear render mode override: (mode, mix). Set by set_render_mode.
-    pub postprocess_render_mode_override: Option<(u32, f32)>,
-    /// Per-mode tuning params. Set by set_render_mode_params.
-    pub postprocess_mode_params_override: Option<[f32; 4]>,
-    /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
-    pub audio_lowpass_cutoff_override: Option<f32>,
-    /// Time scale asked for by `set_time_scale`, applied to the game clock
-    /// from the next frame and held until changed or a scene loads.
-    pub time_scale_request: Option<f64>,
-    /// Script-driven cursor capture request. Games without a character
-    /// controller (which normally gates capture) use this for mouse look.
-    pub cursor_captured_override: Option<bool>,
-    /// `set_touch_controls(enabled)` this frame (#134).
-    pub touch_controls_override: Option<bool>,
-    /// `set_lod_scale(scale)` / `set_draw_distance_scale(scale)` this frame
-    /// (#56); the host hands them to the renderer.
-    pub lod_scale_request: Option<f32>,
-    pub draw_distance_scale_request: Option<f32>,
+    /// What scripts asked of the frame since the host last drained: the
+    /// camera, post-processing and the other one-value-a-frame settings
+    /// (#697). The host gets them as commands, from the same drain as the
+    /// rest ([`Self::take_commands`]).
+    pub requests: FrameRequests,
     /// The renderer's scales now, for `lod_scale()` and
     /// `draw_distance_scale()`. The host sets them each frame.
     pub lod_scale: f32,
@@ -689,8 +792,6 @@ pub struct ScriptCallContext {
     /// The quality settings as scripts see them (FlintKart#55): what the
     /// host applied, with any `set_quality` this frame merged in.
     pub quality: flint_core::quality::QualitySettings,
-    /// A `set_quality` call wants `quality` applied at the next frame.
-    pub quality_requested: bool,
     /// What the GPU is, for `gpu_info()`. The host sets it once.
     pub gpu_info: flint_core::quality::GpuInfo,
     /// Whether the cursor is captured now, for `is_cursor_captured()`
@@ -818,36 +919,10 @@ impl ScriptCallContext {
             total_time: 0.0,
             screen_width: 1280.0,
             screen_height: 720.0,
-            camera_position_override: None,
-            camera_target_override: None,
-            camera_fov_override: None,
-            camera_orthographic_override: None,
-            camera_ortho_height_override: None,
-            camera_roll_override: None,
-            postprocess_vignette_override: None,
-            postprocess_bloom_override: None,
-            postprocess_exposure_override: None,
-            postprocess_chromatic_aberration_override: None,
-            postprocess_radial_blur_override: None,
-            postprocess_ssao_intensity_override: None,
-            postprocess_fog_density_override: None,
-            postprocess_desaturation_override: None,
-            postprocess_dof_strength_override: None,
-            postprocess_dof_focus_distance_override: None,
-            postprocess_dof_focus_range_override: None,
-            postprocess_fog_color_override: None,
-            postprocess_render_mode_override: None,
-            postprocess_mode_params_override: None,
-            audio_lowpass_cutoff_override: None,
-            time_scale_request: None,
-            cursor_captured_override: None,
-            touch_controls_override: None,
-            lod_scale_request: None,
-            draw_distance_scale_request: None,
+            requests: FrameRequests::default(),
             lod_scale: 1.0,
             draw_distance_scale: 1.0,
             quality: Default::default(),
-            quality_requested: false,
             gpu_info: Default::default(),
             cursor_captured: false,
             state_machine: std::ptr::null_mut(),
@@ -984,6 +1059,57 @@ impl ScriptCallContext {
         self.clip_stack.clear();
         self.over_ui_depth = 0;
         std::mem::take(&mut self.draw_commands)
+    }
+
+    /// Take what scripts asked of the host since the last call: the queued
+    /// commands in the order they were made, then this frame's requests
+    /// (camera, post-processing, time scale...), one command each, for
+    /// those asked for. A distance scale asked for reads back from here on
+    /// (`lod_scale()`) until the host says what it applied.
+    pub fn take_commands(&mut self) -> Vec<ScriptCommand> {
+        let mut out = std::mem::take(&mut self.commands);
+        let r = std::mem::take(&mut self.requests);
+        if r.camera != CameraOverrides::default() {
+            out.push(ScriptCommand::SetCamera { camera: r.camera });
+        }
+        if r.post != PostProcessOverrides::default() {
+            out.push(ScriptCommand::SetPostProcess { post: r.post });
+        }
+        if let Some(color) = r.fog_color {
+            out.push(ScriptCommand::SetFogColor { color });
+        }
+        if r.render_mode.is_some() || r.mode_params.is_some() {
+            out.push(ScriptCommand::SetRenderMode {
+                mode: r.render_mode,
+                params: r.mode_params,
+            });
+        }
+        if let Some(scale) = r.time_scale {
+            out.push(ScriptCommand::SetTimeScale { scale });
+        }
+        if let Some(cutoff_hz) = r.audio_lowpass {
+            out.push(ScriptCommand::SetAudioLowpass { cutoff_hz });
+        }
+        if let Some(enabled) = r.touch_controls {
+            out.push(ScriptCommand::SetTouchControls { enabled });
+        }
+        if r.lod_scale.is_some() || r.draw_distance_scale.is_some() {
+            self.lod_scale = r.lod_scale.unwrap_or(self.lod_scale);
+            self.draw_distance_scale = r.draw_distance_scale.unwrap_or(self.draw_distance_scale);
+            out.push(ScriptCommand::SetLodScales {
+                lod_scale: r.lod_scale,
+                draw_distance_scale: r.draw_distance_scale,
+            });
+        }
+        if let Some(captured) = r.cursor_captured {
+            out.push(ScriptCommand::SetCursorCaptured { captured });
+        }
+        if r.quality {
+            out.push(ScriptCommand::SetQuality {
+                settings: self.quality,
+            });
+        }
+        out
     }
 
     /// The game state machine, when the host has lent one for this scope
