@@ -1,8 +1,8 @@
 //! Embeds the engine's schema TOML for the web entry (`src/bin/flint_web.rs`).
 //!
 //! A browser can't list a directory over HTTP, so the web player carries
-//! `schemas/components` and `schemas/archetypes` in the binary (about 130 KB
-//! of text). A game bundle's own schemas (#98) load over them. Writes
+//! `schemas/components`, `schemas/archetypes` and `schemas/scene` (the
+//! scene-level tables, #686) in the binary (about 140 KB of text). A game bundle's own schemas (#98) load over them. Writes
 //! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
 
 use std::fmt::Write as _;
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
     let mut out = String::new();
-    for kind in ["components", "archetypes"] {
+    for kind in ["components", "archetypes", "scene"] {
         let dir = root.join(kind);
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)

@@ -1201,6 +1201,7 @@ impl PlayerApp {
                 persist: &mut self.persistent_store,
                 audio: crate::extension::ExtensionAudio::new(&mut self.audio),
                 rays: rays.clone(),
+                scene_tables: &self.scene_tables,
                 fired_events: &mut fired_events,
                 cursor_captured: self.cursor_captured,
             };

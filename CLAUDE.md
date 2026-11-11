@@ -133,7 +133,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - **Dynamic components** stored as `toml::Value` -- archetypes defined at runtime in schema TOML files, not Rust types
 - **Stable EntityIds** via atomic counter (never recycled), persisted across save/load
 - **Scene format is TOML** -- `[scene]` metadata + `[entities.<name>]` sections; reload is full re-parse
-- **Schemas in `schemas/`** -- `components/*.toml` for field types, `archetypes/*.toml` for bundles. Several directories load in order, later overriding earlier (game overrides engine). One resolver names them for every command, the viewer and the player (ADR 0114; `crates/flint-core/CLAUDE.md`): repeatable `--schemas` flags if given (the whole list), else `[project] schemas` in the project's `flint.toml`, else `schemas/` in the working directory, beside the scene and one level up
+- **Schemas in `schemas/`** -- `components/*.toml` for field types, `archetypes/*.toml` for bundles, `scene/*.toml` for scene-level tables (`[table.<name>]`: `[post_process]`, a game's own `[weather]`; #686, `crates/flint-core/CLAUDE.md`). Several directories load in order, later overriding earlier (game overrides engine). One resolver names them for every command, the viewer and the player (ADR 0114; `crates/flint-core/CLAUDE.md`): repeatable `--schemas` flags if given (the whole list), else `[project] schemas` in the project's `flint.toml`, else `schemas/` in the working directory, beside the scene and one level up
 - **Scripting via Rhai** -- `script` component with `.rhai` files in `scripts/`; callbacks: `on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`, `on_draw_ui`, `on_scene_exit/enter`, `on_animation_end`, `on_sequence_cue`, `on_event`, `on_expression(state)`, `on_persist_migrate(from)`; `ScriptCommand` for deferred effects; `DrawCommand` for immediate-mode 2D UI
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `schemas = ["engine/schemas", "schemas"]` under `[project]` in the game's `flint.toml` layers the game's schemas over the engine's with no flags, and `--schemas engine/schemas --schemas schemas` overrides it for a run
@@ -174,7 +174,7 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 ## Project Structure
 
 - `crates/` -- All workspace crates
-- `schemas/` -- Engine component and archetype TOML definitions; `schemas/examples/` -- the room-builder layer the examples are written in, not part of the engine's set
+- `schemas/` -- Engine component, archetype and scene-table TOML definitions; `schemas/examples/` -- the room-builder layer the examples are written in, not part of the engine's set
 - `flint.toml` -- the checkout as a project: `schemas = ["schemas", "schemas/examples"]`, read by everything run from this tree (a game with the engine as a subtree never reads it)
 - `styles/` -- Style guide TOML definitions for AI generation
 - `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels

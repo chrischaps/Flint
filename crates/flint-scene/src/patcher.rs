@@ -502,7 +502,7 @@ impl SceneDocument {
     /// `echoes.count`. Only that value's text changes: a value that already says
     /// the same is left as written, and one that's replaced keeps its comment.
     /// A species table left with nothing in it goes.
-    pub fn apply_edit(&mut self, edit: &crate::commit::SceneEdit) -> Result<(), String> {
+    pub fn apply_edit(&mut self, edit: &crate::edit::SceneEdit) -> Result<(), String> {
         let (leaf, inside) = edit
             .key
             .split_last()
@@ -1095,6 +1095,11 @@ center = [0, 0, 12]
 radius = 6
 falloff = 4
 
+# A table of the game's own, which no field of SceneFile holds (#686)
+[weather]
+rain = 0.7 # heavy
+wind = [3.0, 0.0, -1.0]
+
 [prefabs.porch]
 template = "lamp"
 prefix = "porch"
@@ -1117,13 +1122,14 @@ parent = "door"
 intensity = 2.0
 "#;
 
-    const TOP_LEVEL: [&str; 8] = [
+    const TOP_LEVEL: [&str; 9] = [
         "scene",
         "camera",
         "environment",
         "post_process",
         "living",
         "wooze",
+        "weather",
         "prefabs",
         "entities",
     ];
@@ -1228,6 +1234,11 @@ intensity = 2.0
             );
             assert!(!file.scene.preload_audio, "{writer}");
             assert!(file.prefabs.contains_key("porch"), "{writer}");
+            assert_eq!(
+                file.tables["weather"]["rain"].as_float(),
+                Some(0.7),
+                "{writer}: the game's own table is read back"
+            );
         }
     }
 
@@ -1265,7 +1276,8 @@ intensity = 2.0
         assert_eq!(handle.parent.as_deref(), Some("door"));
         assert!(handle.components.contains_key("transform"));
         assert!(out.starts_with("# The grove at dusk. Keep this comment.\n"));
-        assert!(file.wooze.is_some() && file.camera.is_some() && file.living.is_some());
+        assert!(file.camera.is_some());
+        assert!(file.tables.contains_key("wooze") && file.tables.contains_key("living"));
     }
 
     #[test]

@@ -371,7 +371,13 @@ impl PlayerApp {
         let schema_dirs = self.schema_dirs.clone();
         let registry = self.schemas_for_scene(&path);
 
-        match flint_scene::load_scene(&path, &registry) {
+        // Living props' tables are checked and their preset filled in, as at
+        // the first load (#686): a scene that won't settle doesn't load
+        let loaded = flint_scene::load_scene(&path, &registry).and_then(|(world, mut file)| {
+            flint_procgen::settle_scene(&mut file, Path::new(&path))?;
+            Ok((world, file))
+        });
+        match loaded {
             Ok((world, file)) => Ok(NextScene { path, world, file }),
             Err(e) => {
                 self.schema_dirs = schema_dirs;

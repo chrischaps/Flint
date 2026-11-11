@@ -11,7 +11,7 @@ mod validation;
 
 pub use archetype::ArchetypeSchema;
 pub use component::{
-    type_name_of, ComponentSchema, FieldSchema, FieldType, OLD_TYPE_NAMES, TYPE_NAMES,
+    type_name_of, ComponentSchema, FieldSchema, FieldType, TableSchema, OLD_TYPE_NAMES, TYPE_NAMES,
 };
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
@@ -19,5 +19,6 @@ pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
 pub use registry::discover_schema_dirs;
 pub use registry::SchemaRegistry;
 pub use validation::{
-    references, validate_component, validate_component_data, Reference, ReferenceKind,
+    references, validate_component, validate_component_data, validate_table, Reference,
+    ReferenceKind,
 };

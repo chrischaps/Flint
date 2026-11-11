@@ -737,6 +737,19 @@ pub struct RenderArgs {
     pub json: bool,
 }
 
+/// A scene loaded for drawing: `flint_scene::load_scene`, then living props'
+/// tables checked and the preset `[wooze] preset` names filled in
+/// (`flint_procgen::settle_scene`), as the player loads one.
+fn load_settled(
+    scene: &str,
+    registry: &flint_schema::SchemaRegistry,
+) -> Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
+    let (world, mut scene_file) = load_scene(scene, registry).context("Failed to load scene")?;
+    flint_procgen::settle_scene(&mut scene_file, Path::new(scene))
+        .context("Failed to load scene")?;
+    Ok((world, scene_file))
+}
+
 fn parse_frame_step(text: &str) -> Result<f64, String> {
     match text.parse::<f64>() {
         Ok(step) if step.is_finite() && step > 0.0 => Ok(step),
@@ -951,8 +964,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
 
     // Load scene
-    let (mut world, scene_file) =
-        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (mut world, scene_file) = load_settled(&args.scene, &registry)?;
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
     for binding in &meshes {
@@ -997,7 +1009,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         || args.expression_timeline.is_some()
         || report_json
         || LivingRun::wanted_by(&world)
-        || scene_file.wooze.is_some();
+        || scene_file.tables.contains_key("wooze");
     if timed && !meshes.is_empty() {
         anyhow::bail!(
             "--mesh draws its files on one still renderer, and this render has clocks \
@@ -2400,7 +2412,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     let mut scenes = Vec::with_capacity(count);
     scenes.push(first);
     for _ in 1..count {
-        scenes.push(load_scene(&args.scene, registry).context("Failed to load scene")?);
+        scenes.push(load_settled(&args.scene, registry)?);
     }
     let scene_name = scenes[0].1.scene.name.clone();
 
@@ -3052,12 +3064,12 @@ fn preset_file_of(
     args: &RenderArgs,
     sweep: &super::sweep::Sweep,
     index: usize,
-) -> Result<Option<flint_scene::WoozePreset>> {
+) -> Result<Option<flint_procgen::WoozePreset>> {
     if sweep.wooze_knob() != Some("preset") {
         return Ok(None);
     }
     let name = &sweep.values[index];
-    match flint_scene::read_preset(Path::new(&args.scene), name) {
+    match flint_procgen::read_preset(Path::new(&args.scene), name) {
         None => Ok(None),
         Some(Ok(preset)) => Ok(Some(preset)),
         Some(Err(reason)) => Err(anyhow!("--sweep: preset '{name}': {reason}")),
@@ -3072,7 +3084,7 @@ fn cell_knobs(
     args: &RenderArgs,
     grid: Option<&super::sweep::SweepGrid>,
     (column, row): (usize, usize),
-) -> Result<(Option<flint_scene::WoozePreset>, Option<toml::Table>)> {
+) -> Result<(Option<flint_procgen::WoozePreset>, Option<toml::Table>)> {
     let Some(grid) = grid else {
         return Ok((None, None));
     };
@@ -3096,7 +3108,7 @@ fn cell_knobs(
 }
 
 /// A preset's `[wooze]` knobs as the table the field takes.
-fn preset_wooze_table(knobs: &flint_scene::WoozeKnobs) -> toml::Table {
+fn preset_wooze_table(knobs: &flint_procgen::WoozeKnobs) -> toml::Table {
     let mut table = toml::Table::new();
     for (key, value) in [
         ("amplitude", knobs.amplitude),
@@ -3340,7 +3352,9 @@ impl Stage {
         let mut living = LivingRun::wanted_by(&world).then(|| {
             LivingRun::load(
                 &args.scene,
-                scene_file.living.as_ref(),
+                flint_procgen::LivingTables::or_warn(&scene_file)
+                    .living
+                    .as_ref(),
                 &mut world,
                 GpuSink {
                     renderer: &mut renderer,
@@ -3362,9 +3376,14 @@ impl Stage {
         // The stage's one wooze field (#581), with the column's knobs over the scene's:
         // the living props read it, the shading boil always, and shallow wooze in a
         // capture of a moment. A plain render shows those meshes at rest (#215).
-        let mut wooze =
-            WoozeClocks::of_scene(scene_file.wooze.as_ref(), column_knobs.as_ref(), moment)
-                .map_err(|reason| anyhow!("--sweep: {reason}"))?;
+        let mut wooze = WoozeClocks::of_scene(
+            flint_procgen::LivingTables::or_warn(&scene_file)
+                .wooze
+                .as_ref(),
+            column_knobs.as_ref(),
+            moment,
+        )
+        .map_err(|reason| anyhow!("--sweep: {reason}"))?;
         // As the player's first frame: no time passes, and the field is read.
         if let Some(run) = &mut living {
             run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));

@@ -128,6 +128,7 @@ impl PlayerApp {
             scene_post_process: None,
             style_specs: Vec::new(),
             style_time: None,
+            scene_tables: toml::Table::new(),
             scene_living: None,
             living_blend: Default::default(),
             scene_wooze: None,
@@ -283,9 +284,24 @@ impl PlayerApp {
         // registry, and a table for an unloaded style is dropped
         let scope = self.asset_scope();
         super::scene_loading::load_user_styles_in(&scope);
-        self.set_scene_post_process(scene_file.post_process.clone());
-        self.scene_living = scene_file.living.clone();
-        self.scene_wooze = scene_file.wooze.clone();
+        // Living props' tables, with the preset `[wooze] preset` names
+        // filled in (it can set the shading boil in `[post_process]` too).
+        // `flint_scene::load_scene` did this until #686; a host that has
+        // already run `flint_procgen::settle_scene` loses nothing by it,
+        // since a preset that has been filled in is no longer named. On a
+        // copy of the tables: this takes the scene by reference.
+        let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
+        settled.tables = scene_file.tables.clone();
+        settled.post_process = scene_file.post_process.clone();
+        let scene_path = std::path::PathBuf::from(&self.scene_path);
+        if let Err(problem) = flint_procgen::settle_scene(&mut settled, &scene_path) {
+            tracing::warn!("{problem}");
+        }
+        self.set_scene_post_process(settled.post_process.clone());
+        let living_tables = flint_procgen::LivingTables::or_warn(&settled);
+        self.scene_living = living_tables.living;
+        self.scene_wooze = living_tables.wooze;
+        self.scene_tables = scene_file.scene_tables();
     }
 
     /// Take a scene's `[post_process]` block, with the look it names

@@ -1,7 +1,9 @@
 //! Schema registry for loading and managing schemas
 
 use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
-use crate::component::{ComponentSchema, ComponentSchemaFile};
+use crate::component::{
+    ComponentSchema, ComponentSchemaDefinition, ComponentSchemaFile, TableSchema, TableSchemaFile,
+};
 use flint_core::diagnostic::Diagnostic;
 use flint_core::project::SchemaDirs;
 use flint_core::vfs;
@@ -22,8 +24,11 @@ pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
 pub struct SchemaRegistry {
     components: HashMap<String, ComponentSchema>,
     archetypes: HashMap<String, ArchetypeSchema>,
-    /// What [`crate::lint`] found in each component file loaded, in load
-    /// order.
+    /// Scene-level tables (`[post_process]`, a game's `[weather]`), from
+    /// `scene/*.toml` (#686).
+    tables: HashMap<String, TableSchema>,
+    /// What [`crate::lint`] found in each component and scene-table file
+    /// loaded, in load order.
     lints: Vec<Diagnostic>,
 }
 
@@ -62,9 +67,11 @@ impl SchemaRegistry {
     /// Expects:
     /// - `path/components/*.toml` for component schemas
     /// - `path/archetypes/*.toml` for archetype schemas
+    /// - `path/scene/*.toml` for scene-table schemas
     pub fn load_from_directory<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut registry = Self::new();
         let path = path.as_ref();
+        registry.load_table_directory(path)?;
 
         // Load components
         let components_path = path.join("components");
@@ -92,6 +99,7 @@ impl SchemaRegistry {
     /// Load schemas from a single directory into this registry (additive/override)
     pub fn load_directory<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
+        self.load_table_directory(path)?;
 
         // Load components
         let components_path = path.join("components");
@@ -114,6 +122,72 @@ impl SchemaRegistry {
         }
 
         Ok(())
+    }
+
+    /// The `[table.<name>]` files of schema directory `path`: its
+    /// `scene/*.toml` (#686). A directory without a `scene/` has none.
+    fn load_table_directory(&mut self, path: &Path) -> Result<()> {
+        let tables_path = path.join(crate::lint::SchemaKind::Table.dir());
+        if vfs::exists(&tables_path) {
+            for file_path in vfs::read_dir(&tables_path)? {
+                if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
+                    self.load_table_file(&file_path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Load the scene-table schemas of a TOML file (`[table.<name>]`).
+    pub fn load_table_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        let content = vfs::read_to_string(path)?;
+        let file: TableSchemaFile = toml::from_str(&content).map_err(|e| {
+            FlintError::TomlParseError(format!(
+                "{}: {}",
+                flint_core::project::shown(path),
+                e.to_string().trim_end()
+            ))
+        })?;
+        self.lints
+            .extend(crate::lint::lint_table_file(&content, Some(path)));
+        self.insert_tables(file, &path.display().to_string());
+        Ok(())
+    }
+
+    /// Load scene-table schemas from a TOML string.
+    pub fn load_table_string(&mut self, content: &str) -> Result<()> {
+        let file: TableSchemaFile = toml::from_str(content)?;
+        self.lints
+            .extend(crate::lint::lint_table_file(content, None));
+        self.insert_tables(file, "<string>");
+        Ok(())
+    }
+
+    fn insert_tables(&mut self, file: TableSchemaFile, source: &str) {
+        for (name, def) in file.table {
+            let schema = Self::table_schema_of(&name, def, source);
+            self.tables.insert(name, schema);
+        }
+    }
+
+    /// A `[table.<name>]` definition as its schema.
+    fn table_schema_of(name: &str, def: ComponentSchemaDefinition, source: &str) -> TableSchema {
+        let mut fields = HashMap::new();
+        for (field_name, field_def) in def.fields {
+            if let Some(type_name) = field_def.unknown_type_name() {
+                tracing::warn!(
+                    "{source}: table '{name}' field '{field_name}' has unknown type \
+                     \"{type_name}\"; validating it as a string"
+                );
+            }
+            fields.insert(field_name, field_def.to_field_schema());
+        }
+        ComponentSchema {
+            name: name.to_string(),
+            description: def.description,
+            fields,
+        }
     }
 
     /// Load a component schema from a TOML file
@@ -227,7 +301,30 @@ impl SchemaRegistry {
         self.archetypes.get(name)
     }
 
-    /// What is wrong with the component schema files themselves
+    /// Register a scene-table schema directly.
+    pub fn register_table(&mut self, schema: TableSchema) {
+        self.tables.insert(schema.name.clone(), schema);
+    }
+
+    /// The schema of the scene-level table `name` (`post_process`, a game's
+    /// `weather`), if a loaded directory declares it as `[table.<name>]`.
+    pub fn get_table(&self, name: &str) -> Option<&TableSchema> {
+        self.tables.get(name)
+    }
+
+    /// Every scene-table schema, by name.
+    pub fn tables(&self) -> Vec<&TableSchema> {
+        let mut all: Vec<&TableSchema> = self.tables.values().collect();
+        all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        all
+    }
+
+    /// List all scene-table names.
+    pub fn table_names(&self) -> Vec<&str> {
+        self.tables.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// What is wrong with the component and scene-table schema files themselves
     /// ([`crate::lint`]): an old type spelling, an unknown type, a key the
     /// loader ignores. Every file loaded, the engine's included, in load
     /// order; each names its file.

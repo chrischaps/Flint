@@ -335,8 +335,10 @@ mod web {
         }
 
         status(&format!("loading {scene_path}"));
-        let (world, scene_file) = flint_scene::load_scene(&scene_path, &registry)
+        let (world, mut scene_file) = flint_scene::load_scene(&scene_path, &registry)
             .map_err(|e| format!("{scene_path}: {e}"))?;
+        flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&scene_path))
+            .map_err(|e| e.to_string())?;
         Ok((
             Loaded {
                 world,
@@ -422,6 +424,11 @@ mod web {
             registry
                 .load_archetype_string(toml)
                 .map_err(|e| format!("engine archetype schema: {e}"))?;
+        }
+        for toml in engine_schemas::SCENE {
+            registry
+                .load_table_string(toml)
+                .map_err(|e| format!("engine scene-table schema: {e}"))?;
         }
         Ok(registry)
     }

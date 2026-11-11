@@ -10,6 +10,7 @@ flint-core = { workspace = true }
 flint-render = { workspace = true }
 flint-terrain = { workspace = true }
 flint-scene = { workspace = true }
+flint-procgen = { workspace = true }
 egui = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

@@ -1,0 +1,37 @@
+# A scene's `[living]` table: what it says about all its living props, ahead
+# of any one spec. How woozy they are is `[wooze]`'s to say.
+#
+#   [living]
+#   shadows = "drift"
+#   stagger = "per_branch"
+#   echoes = { count = 2, spread = 0.5, alpha = 0.25 }
+#
+#   [living.species.grove_oak]      # one species' own values, over the above
+#   glide = 0.8
+
+[table.living]
+description = "A scene's [living] table: what it says about all its living props, ahead of any one spec."
+
+[table.living.fields]
+shadows = { type = "enum", values = ["blended", "drift"], description = "What the shadows follow: blended (what's drawn; the default) or drift (a slower pose with no stagger or jitter)" }
+stagger = { type = "enum", values = ["none", "per_level", "per_branch"], description = "How parts fall out of phase, over each spec's and each prop's own" }
+softness = { type = "f32", min = 0.0, max = 1.0, description = "How soft every prop's silhouette is, over each spec's: the body fades where it turns away from the eye. 0 is a hard edge" }
+species = { type = "table", description = "[living.species.<spec>]: one species' own values (amplitude, step, glide, jitter, stagger, softness, echoes, variance), over everything above a field at a time. Keyed by the spec's meta.name, which is what a living prop's model.asset names. flint validate checks each" }
+
+[table.living.fields.echoes]
+type = "table"
+description = "Faint time-offset copies of every prop. Fields left unset are each spec's"
+
+[table.living.fields.echoes.fields]
+count = { type = "i32", min = 0.0, description = "How many copies; 0 turns them off" }
+spread = { type = "f32", description = "How far the farthest copy is from now, in steps of the clock" }
+alpha = { type = "f32", description = "The opacity of a copy at now, which falls off with distance from it" }
+
+[table.living.fields.variance]
+type = "table"
+description = "How much of the difference between poses is left. Fields left unset are each spec's"
+
+[table.living.fields.variance.fields]
+amount = { type = "f32", description = "How much of each pose's difference from the base is left, 0 to 1" }
+steady = { type = "f32", description = "How much of that is held back from the trunk side: 0 even, 1 all at the tips" }
+keep_size = { type = "bool", description = "Scale each pose so its box matches the base's, as near as one scale can" }

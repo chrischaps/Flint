@@ -151,7 +151,9 @@ fn an_unknown_name_exits_non_zero_and_suggests() {
         assert_eq!(stdout(&out), "", "{args:?}");
         let said = stderr(&out);
         assert!(
-            said.contains("no component or archetype named `lihgt`: did you mean `light`?"),
+            said.contains(
+                "no component, scene table or archetype named `lihgt`: did you mean `light`?"
+            ),
             "{said}"
         );
         assert!(said.contains("flint schema --list"), "{said}");

@@ -1,0 +1,19 @@
+# A scene's `[camera]` table: where `flint render` and the player's first
+# frame look from, before any script or camera controller moves it.
+#
+#   [camera]
+#   position = [0, 4, 10]
+#   target = [0, 1, 0]
+#   fov = 50
+
+[table.camera]
+description = "A scene's [camera] table: the starting view."
+
+[table.camera.fields]
+projection = { type = "enum", values = ["perspective", "orthographic"], default = "perspective", description = "How the view is projected. Anything but orthographic is drawn in perspective" }
+ortho_height = { type = "f32", default = 0.0, description = "Orthographic half-height in world units; read only when projection is orthographic" }
+position = { type = "vec3", description = "Where the camera is, [x, y, z]" }
+target = { type = "vec3", description = "The point it looks at, [x, y, z]" }
+fov = { type = "f32", description = "Field of view in degrees (perspective only)" }
+near = { type = "f32", description = "Near clipping plane" }
+far = { type = "f32", description = "Far clipping plane" }

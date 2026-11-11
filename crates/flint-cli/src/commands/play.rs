@@ -128,7 +128,11 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     )?;
 
     // Load scene
-    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, mut scene_file) =
+        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&args.scene))
+        .context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -171,8 +175,9 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.style_time = args.style.style_time;
 
     // Everything the scene file says (skybox, ambient and shading levers,
-    // camera, post-processing with its look, living props, wooze), taken as
-    // flint-player and every transition take it (#723)
+    // camera, post-processing with its look, living props, wooze and the
+    // scene tables extensions read), taken as flint-player and every
+    // transition take it (#723, #686)
     app.apply_scene_settings(&scene_file);
 
     // The registry and its directories, kept for transitions and chunks
