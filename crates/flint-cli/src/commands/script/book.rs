@@ -375,7 +375,7 @@ pub fn splice_regions(page: &str, listing: &ApiListing) -> Result<String, String
             .ok_or_else(|| format!("line {line}: script-api:begin with no {END}"))?;
         let body = region(selector, listing).map_err(|e| format!("line {line}: {e}"))?;
         out.push_str(&rest[..open_end]);
-        out.push_str("\n");
+        out.push('\n');
         out.push_str(&body);
         out.push('\n');
         rest = &rest[close..];
@@ -904,7 +904,10 @@ pub fn run(
 mod tests {
     use super::*;
 
-    fn names(code: &str) -> Vec<(String, Option<(usize, usize)>, bool)> {
+    /// A call's name, the arities it claims, and whether it's a `fn`.
+    type Found = (String, Option<(usize, usize)>, bool);
+
+    fn names(code: &str) -> Vec<Found> {
         calls(code)
             .into_iter()
             .map(|c| (c.name, c.arity, c.definition))

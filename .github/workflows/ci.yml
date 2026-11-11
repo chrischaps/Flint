@@ -123,6 +123,15 @@ jobs:
       - name: flint examples --check
         run: cargo run -p flint-cli --no-default-features --bin flint -- examples --check
 
+      # The book against the script API (#695): the generated reference
+      # (docs/book/src/reference/script-api.md) and the scripting chapter's
+      # script-api tables match the engine's declarations, and no chapter
+      # calls a function the engine doesn't have (docs/book/script-api-allow.txt
+      # lists the Rust and shader names that aren't script calls). Same binary
+      # as the step above. Fix a stale page with `flint script api --book`.
+      - name: flint script api --check-book
+        run: cargo run -p flint-cli --no-default-features --bin flint -- script api --check-book
+
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip
   # without an adapter, so before this job they passed on every PR without
