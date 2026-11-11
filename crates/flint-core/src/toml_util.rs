@@ -7,6 +7,11 @@
 use crate::Vec3;
 
 /// Coerce a TOML integer or float to `f64`.
+///
+/// The one place runtime code may call `toml::Value::as_float`, which reads
+/// an integer as nothing: the wasm check denies it everywhere else
+/// (`scripts/wasm-clippy/clippy.toml`, #685).
+#[allow(clippy::disallowed_methods)]
 pub fn toml_f64(v: &toml::Value) -> Option<f64> {
     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
 }

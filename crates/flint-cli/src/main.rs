@@ -60,17 +60,9 @@ enum Commands {
         schemas: Vec<String>,
     },
 
-    /// Show schema information
-    Schema {
-        /// Component or archetype name
-        name: String,
-
-        /// Schema directories, later ones overriding earlier (repeatable).
-        /// Without it: the project's flint.toml `schemas`, else schemas/ in
-        /// the working directory
-        #[arg(long, action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
-    },
+    /// Show schema information: one component or archetype, --list for
+    /// all of them, --format json / json-schema for the schemas as data
+    Schema(schema::SchemaArgs),
 
     /// Open a file in the appropriate interactive editor
     Edit(edit_router::EditArgs),
@@ -209,7 +201,7 @@ fn main() -> Result<()> {
             format,
             schemas,
         } => query::run(&query, scene.as_deref(), &format, &schemas),
-        Commands::Schema { name, schemas } => schema::run(&name, &schemas),
+        Commands::Schema(args) => schema::run(args),
         Commands::Validate(args) => validate::run(args),
         Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),

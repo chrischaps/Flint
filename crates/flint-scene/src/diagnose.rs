@@ -3,27 +3,39 @@
 //! [`diagnose`] reads a scene file and returns a [`Diagnostic`] for each
 //! problem it has, never stopping at the first: a file that is not TOML, a
 //! prefab that doesn't expand, an archetype or a component no loaded schema
-//! declares, and what [`flint_schema::validate_component`] finds in each
-//! component table. Every one names its file, entity, component and field.
+//! declares, what [`flint_schema::validate_component`] finds in each
+//! component table, and each reference that leads nowhere: an `entity` field
+//! (or an entity's `parent`) naming no entity of the scene, an `asset` field
+//! naming no file the project's asset search finds (#684). Every one names
+//! its file, entity, component and field.
 //!
-//! The loaders run the same pass ([`diagnose_scene`]) over what they parsed
-//! and log a summary, so a scene that plays has still said what is wrong with
-//! it; `flint validate` prints the whole list and fails on an error.
+//! The loaders run the same pass ([`diagnose_scene_in`]) over what they
+//! parsed and log a summary, so a scene that plays has still said what is
+//! wrong with it; `flint validate` prints the whole list and fails on an
+//! error. [`diagnose_scene`] is the pass without the references, for entities
+//! that are not a whole scene (a chunk names entities of the scene it joins).
 
 use crate::format::{EntityDef, SceneFile};
 use crate::prefab;
 use flint_core::diagnostic::{self, codes, Diagnostic};
-use flint_core::project::Project;
+use flint_core::project::{self, AssetKind, Project};
 use flint_core::vfs;
-use flint_schema::{validate_component, SchemaRegistry};
+use flint_schema::{references, validate_component, ReferenceKind, SchemaRegistry};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+/// The component that declares an asset to be made (`flint asset resolve`
+/// reads it): its `name` is an asset the scene may name before any file is
+/// there.
+const ASSET_DEF: &str = "asset_def";
 
 /// Every problem in the scene at `scene_file`, prefab instances expanded as
 /// the loader expands them (their entities are named `<prefix>_<name>`).
 /// `registry` is the schemas of every loaded directory: a component or
-/// archetype declared in any of them is known. `project` finds the prefabs,
-/// and its `[project] strict = true` makes an unknown field an error, as
-/// [`diagnostic::promote_strict`] does for `flint validate --strict`.
+/// archetype declared in any of them is known. `project` finds the prefabs
+/// and the assets, and its `[project] strict = true` makes an unknown field
+/// an error, as [`diagnostic::promote_strict`] does for
+/// `flint validate --strict`.
 ///
 /// Entities are reported in name order, so two runs print the same list.
 pub fn diagnose(
@@ -49,7 +61,7 @@ pub fn diagnose(
                 .hint("the entities of the prefabs that did expand are checked below"),
         );
     }
-    found.extend(diagnose_scene(&scene, Some(scene_file), registry));
+    found.extend(diagnose_scene_in(&scene, scene_file, registry, project));
     if project.strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -61,14 +73,53 @@ pub(crate) fn parse_diagnostic(file: &Path, error: &toml::de::Error) -> Diagnost
     Diagnostic::error(codes::TOML_PARSE, error.to_string().trim_end()).file(file)
 }
 
-/// [`diagnose`] for a scene already parsed (and prefab-expanded): the
-/// entities' archetypes and components against `registry`. `file` is what
-/// each diagnostic names. What the loaders run on every load, and the player
-/// on a chunk.
+/// [`diagnose`] for a whole scene already parsed (and prefab-expanded): the
+/// entities' archetypes and components against `registry`, and their
+/// references: every `entity` field and `parent` against the scene's own
+/// entities, every `asset` field through `project`'s search from the
+/// directory of `file`. What the loaders run on every load.
+pub fn diagnose_scene_in(
+    scene: &SceneFile,
+    file: &Path,
+    registry: &SchemaRegistry,
+    project: &Project,
+) -> Vec<Diagnostic> {
+    let scene_dir = file
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut lookup = Lookup {
+        scene,
+        project,
+        scene_dir,
+        to_be_made: scene
+            .entities
+            .values()
+            .filter_map(|entity| entity.components.get(ASSET_DEF)?.get("name")?.as_str())
+            .collect(),
+        assets: HashMap::new(),
+    };
+    diagnose_entities(scene, Some(file), registry, Some(&mut lookup))
+}
+
+/// [`diagnose_scene_in`] without the references: the entities' archetypes
+/// and components against `registry`, and nothing about whether an `entity`
+/// or `asset` field leads anywhere. For entities that are not a whole scene
+/// (the player's chunk, whose entities name the main scene's) and for text
+/// with no file to search from. `file` is what each diagnostic names.
 pub fn diagnose_scene(
     scene: &SceneFile,
     file: Option<&Path>,
     registry: &SchemaRegistry,
+) -> Vec<Diagnostic> {
+    diagnose_entities(scene, file, registry, None)
+}
+
+fn diagnose_entities(
+    scene: &SceneFile,
+    file: Option<&Path>,
+    registry: &SchemaRegistry,
+    mut lookup: Option<&mut Lookup>,
 ) -> Vec<Diagnostic> {
     let mut found = Vec::new();
     if scene.entities.is_empty() {
@@ -91,7 +142,13 @@ pub fn diagnose_scene(
         let mut names: Vec<&String> = scene.entities.keys().collect();
         names.sort_unstable();
         for name in names {
-            diagnose_entity(name, &scene.entities[name], registry, &mut found);
+            diagnose_entity(
+                name,
+                &scene.entities[name],
+                registry,
+                lookup.as_deref_mut(),
+                &mut found,
+            );
         }
     }
     if let Some(file) = file {
@@ -102,10 +159,84 @@ pub fn diagnose_scene(
     found
 }
 
+/// What a reference is looked up in: the scene's entities, and the project's
+/// asset search from the scene's directory. One search a (kinds, name), so
+/// a thousand trees are one look for `oak`.
+struct Lookup<'a> {
+    scene: &'a SceneFile,
+    project: &'a Project,
+    scene_dir: &'a Path,
+    /// The `name` of every `asset_def` in the scene: assets it declares
+    /// and `flint asset resolve` makes, so no file need be there yet.
+    to_be_made: HashSet<&'a str>,
+    assets: HashMap<(Vec<AssetKind>, String), Option<String>>,
+}
+
+impl Lookup<'_> {
+    /// The hint for an entity name that is no entity of the scene.
+    fn unknown_entity_hint(&self, name: &str) -> String {
+        // A prefab's entity under the name its template gave it
+        let suffix = format!("_{name}");
+        let mut expanded: Vec<&String> = self
+            .scene
+            .entities
+            .keys()
+            .filter(|entity| entity.ends_with(&suffix))
+            .collect();
+        expanded.sort_unstable();
+        diagnostic::did_you_mean(name, self.scene.entities.keys().map(String::as_str))
+            .or_else(|| {
+                expanded.first().map(|entity| {
+                    format!(
+                        "did you mean `{entity}`? A prefab's entities are named \
+                         `<prefix>_<name>`: `${{PREFIX}}_{name}` inside the prefab"
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                "it names an entity of this scene (a prefab's are `<prefix>_<name>`); leave it \
+                 \"\" when a script fills it at run time"
+                    .to_string()
+            })
+    }
+
+    /// `None` when a file of one of `kinds` is found for `name`, or an
+    /// `asset_def` of the scene declares it; otherwise every path tried, as
+    /// the hint.
+    fn missing_asset(&mut self, kinds: &[AssetKind], name: &str) -> Option<String> {
+        if self.to_be_made.contains(name) {
+            return None;
+        }
+        let (project, scene_dir) = (self.project, self.scene_dir);
+        self.assets
+            .entry((kinds.to_vec(), name.to_string()))
+            .or_insert_with(|| {
+                let mut tried = Vec::new();
+                for kind in kinds {
+                    let resolution = project.explain(*kind, name, scene_dir);
+                    if resolution.found.is_some() {
+                        return None;
+                    }
+                    tried.extend(resolution.tried.iter().map(|path| project::shown(path)));
+                }
+                Some(format!("tried {}", tried.join(", ")))
+            })
+            .clone()
+    }
+}
+
+/// `model 'barrel'`, or `texture or procgen spec 'wall'` for a field that
+/// takes either.
+fn asset_noun(kinds: &[AssetKind]) -> String {
+    let nouns: Vec<&str> = kinds.iter().map(|kind| kind.info().noun).collect();
+    nouns.join(" or ")
+}
+
 fn diagnose_entity(
     name: &str,
     entity: &EntityDef,
     registry: &SchemaRegistry,
+    mut lookup: Option<&mut Lookup>,
     found: &mut Vec<Diagnostic>,
 ) {
     let archetype = entity.archetype.as_deref().and_then(|archetype| {
@@ -131,6 +262,20 @@ fn diagnose_entity(
         }
         schema
     });
+
+    if let (Some(lookup), Some(parent)) = (lookup.as_deref(), entity.parent.as_deref()) {
+        if !lookup.scene.entities.contains_key(parent) {
+            found.push(
+                Diagnostic::error(
+                    codes::UNKNOWN_ENTITY,
+                    format!("no entity named `{parent}`, so the scene does not load"),
+                )
+                .entity(name)
+                .field("parent")
+                .hint(lookup.unknown_entity_hint(parent)),
+            );
+        }
+    }
 
     let mut components: Vec<(&String, &toml::Value)> = entity.components.iter().collect();
     components.sort_unstable_by_key(|(component, _)| *component);
@@ -167,6 +312,38 @@ fn diagnose_entity(
             if !supplied {
                 found.push(d.entity(name));
             }
+        }
+        let Some(lookup) = lookup.as_deref_mut() else {
+            continue;
+        };
+        for reference in references(schema, data) {
+            let d = match &reference.kind {
+                ReferenceKind::Entity => {
+                    if lookup.scene.entities.contains_key(&reference.name) {
+                        continue;
+                    }
+                    Diagnostic::error(
+                        codes::UNKNOWN_ENTITY,
+                        format!("no entity named `{}`", reference.name),
+                    )
+                    .hint(lookup.unknown_entity_hint(&reference.name))
+                }
+                ReferenceKind::Asset(kinds) => {
+                    let Some(tried) = lookup.missing_asset(kinds, &reference.name) else {
+                        continue;
+                    };
+                    Diagnostic::error(
+                        codes::MISSING_ASSET,
+                        format!("{} '{}' not found", asset_noun(kinds), reference.name),
+                    )
+                    .hint(tried)
+                }
+            };
+            found.push(
+                d.entity(name)
+                    .component(component.clone())
+                    .field(reference.field),
+            );
         }
     }
 }
@@ -513,6 +690,204 @@ intensity = 1.0
         assert_eq!(strict.len(), 1);
         assert_eq!(strict[0].code, codes::UNKNOWN_FIELD);
         assert_eq!(strict[0].severity, Severity::Error);
+    }
+
+    const RIG: (&str, &str) = (
+        "schemas/components/rig.toml",
+        r#"
+[component.rig.fields]
+target = { type = "entity", default = "" }
+mesh = { type = "asset", kind = ["models", "specs"], unless = "runtime" }
+runtime = "bool"
+sound = { type = "asset", kind = "audio" }
+"#,
+    );
+
+    /// The ticket's first box: an entity reference to nothing fails
+    /// validation, naming the field; so does a `parent`.
+    #[test]
+    fn an_entity_reference_to_nothing_is_an_error_naming_the_field() {
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.hand]
+
+[entities.elbow]
+parent = "sholder"
+[entities.elbow.rig]
+target = "hnad"
+
+[entities.wrist.rig]
+target = "hand"
+
+[entities.knee.rig]
+target = ""
+
+[entities.ankle.rig]
+target = "nope"
+"#;
+        let found = with_scene(
+            &[RIG, ("scenes/a.scene.toml", scene)],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[unknown-entity] entity 'ankle' rig.target: no entity named `nope`",
+                "error[unknown-entity] entity 'elbow' field 'parent': no entity named \
+                 `sholder`, so the scene does not load",
+                "error[unknown-entity] entity 'elbow' rig.target: no entity named `hnad`",
+            ],
+            "an empty reference is one a script fills, and passes"
+        );
+        assert!(
+            found[0].hint.as_deref().unwrap().contains("leave it \"\""),
+            "{:?}",
+            found[0].hint
+        );
+        assert_eq!(found[2].hint.as_deref(), Some("did you mean `hand`?"));
+        assert!(found.iter().all(Diagnostic::is_error));
+    }
+
+    /// A prefab's references are written `${PREFIX}_<name>` and checked
+    /// after expansion, against the names the loader gives its entities.
+    #[test]
+    fn a_reference_inside_a_prefab_is_checked_by_its_expanded_name() {
+        let found = with_scene(
+            &[
+                RIG,
+                (
+                    "scenes/a.scene.toml",
+                    "[scene]\nname = \"s\"\n[prefabs.one]\ntemplate = \"arm\"\nprefix = \"left\"\n",
+                ),
+                (
+                    "prefabs/arm.prefab.toml",
+                    "[prefab]\nname = \"arm\"\n\n[entities.hand]\n\n\
+                     [entities.elbow.rig]\ntarget = \"${PREFIX}_hand\"\n\n\
+                     [entities.wrist.rig]\ntarget = \"hand\"\n",
+                ),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            ["error[unknown-entity] entity 'left_wrist' rig.target: no entity named `hand`"]
+        );
+        assert_eq!(
+            found[0].hint.as_deref(),
+            Some(
+                "did you mean `left_hand`? A prefab's entities are named `<prefix>_<name>`: \
+                 `${PREFIX}_hand` inside the prefab"
+            )
+        );
+    }
+
+    /// A missing asset is an error that lists every path the project's one
+    /// search tried; a file anywhere on that walk, a procgen spec of the
+    /// name, or `runtime = true` passes.
+    #[test]
+    fn a_missing_asset_is_an_error_listing_the_paths_tried() {
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.a.rig]
+mesh = "barrel"
+sound = "hit.ogg"
+
+[entities.b.rig]
+mesh = "oak"
+
+[entities.c.rig]
+mesh = "blob"
+runtime = true
+
+[entities.d.rig]
+mesh = "nope"
+sound = "gone.ogg"
+
+[entities.e.rig]
+mesh = "nope"
+"#;
+        let found = with_scene(
+            &[
+                RIG,
+                ("flint.toml", "[project]\n"),
+                ("scenes/a.scene.toml", scene),
+                ("models/barrel.glb", ""),
+                ("scenes/audio/hit.ogg", ""),
+                (
+                    "specs/tree.procgen.toml",
+                    "[meta]\nname = \"oak\"\ngenerator = \"tree\"\n",
+                ),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[missing-asset] entity 'd' rig.mesh: model or procgen spec 'nope' not found",
+                "error[missing-asset] entity 'd' rig.sound: sound 'gone.ogg' not found",
+                "error[missing-asset] entity 'e' rig.mesh: model or procgen spec 'nope' not found",
+            ]
+        );
+        assert_eq!(
+            found[0].hint.as_deref(),
+            Some(
+                "tried scenes/models/nope.glb, scenes/models/nope.gltf, models/nope.glb, \
+                 models/nope.gltf, scenes/specs, scenes/models, specs, models"
+            )
+        );
+        assert_eq!(
+            found[1].hint.as_deref(),
+            Some("tried scenes/gone.ogg, scenes/audio/gone.ogg, gone.ogg, audio/gone.ogg")
+        );
+    }
+
+    /// An asset an `asset_def` declares is one `flint asset resolve` makes:
+    /// naming it before its file exists is the point, not a mistake.
+    #[test]
+    fn an_asset_the_scene_declares_with_asset_def_is_not_missing() {
+        let scene = "[scene]\nname = \"s\"\n\
+                     [entities.a.rig]\nmesh = \"oak_table\"\n\
+                     [entities.a.asset_def]\nname = \"oak_table\"\n\
+                     [entities.b.rig]\nmesh = \"oak_chair\"\n";
+        let found = with_scene(
+            &[
+                RIG,
+                (
+                    "schemas/components/asset_def.toml",
+                    "[component.asset_def]\n",
+                ),
+                ("scenes/a.scene.toml", scene),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            ["error[missing-asset] entity 'b' rig.mesh: model or procgen spec 'oak_chair' not found"]
+        );
+    }
+
+    /// The loaders say the same things: a reference to nothing doesn't stop
+    /// a load, and the list a host asks for holds it.
+    #[test]
+    fn a_load_reports_references_and_a_chunk_pass_does_not() {
+        let scene = "[scene]\nname = \"s\"\n[entities.a.rig]\ntarget = \"nope\"\nmesh = \"nope\"\n";
+        with_scene(&[RIG, ("scenes/a.scene.toml", scene)], |registry, _| {
+            let (world, parsed, found) =
+                crate::load_scene_diagnosed("scenes/a.scene.toml", registry).expect("loads");
+            assert!(world.contains_name("a"));
+            let codes_found: Vec<&str> = found.iter().map(|d| d.code).collect();
+            assert_eq!(codes_found, [codes::MISSING_ASSET, codes::UNKNOWN_ENTITY]);
+            // Entities that are not a whole scene: nothing about references
+            assert_eq!(diagnose_scene(&parsed, None, registry), []);
+        });
     }
 
     /// With no schema loaded, one warning says so; every table is not

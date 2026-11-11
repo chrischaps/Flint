@@ -19,25 +19,46 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 
 ### Field Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `bool` (or `boolean`) | Boolean | `true` / `false` |
-| `i32` (or `int`, `integer`) | 32-bit integer | `42` |
-| `i64` | 64-bit integer | `1700000000` |
-| `f32` (or `float`) | 32-bit float | `3.14` |
-| `f64` | 64-bit float | `3.14159265` |
-| `string` | Text string | `"hello"` |
-| `vec2` | 2D vector, validated as an array of floats | `[0.5, 1.0]` |
-| `vec3` | 3D vector (array of 3 floats) | `[1.0, 2.0, 3.0]` |
-| `vec4` | 4D vector, validated as an array of floats | `[1.0, 0.5, 0.2, 1.0]` |
-| `color` | RGB or RGBA color | `[1.0, 0.8, 0.6]` |
-| `transform` | Nested position / rotation / scale table | see [Transform](#transform) |
-| `enum` | One of a set of string values | `"hinged"` |
-| `table` | A table of any shape, checked only as a table | `{ clip = "walk", weight = 0.5 }` |
-| `array` | List of a given `element` type (`string` if none is given) | `["a", "b"]` |
-| `entity_ref` | Reference to another entity by name, validated as a string | `"main_hall"` |
+| Type | A value is | Example |
+|------|------------|---------|
+| `bool` | true or false | `true` |
+| `i32`, `i64` | an integer | `42` |
+| `f32`, `f64` | a number; an integer is taken | `3.14` |
+| `string` | text | `"hello"` |
+| `entity` | the name of another entity in the scene, **checked to exist**; `""` means "not set" | `"left_hand"` |
+| `asset` | the name of a file of a `kind`, **checked through the project's asset search**; `""` means "not set" | `"barrel"` |
+| `vec2`, `vec3`, `vec4` | exactly that many numbers (`vec3` also takes `{ x, y, z }`) | `[1.0, 2.0, 3.0]` |
+| `color` | `[r, g, b]` or `[r, g, b, a]` | `[1.0, 0.8, 0.6]` |
+| `transform` | a table of `position`, `rotation` and `scale` | see [Transform](#transform) |
+| `enum` | one of `values` | `"hinged"` |
+| `array` | a list of `element`, of any length (`string` if none is given) | `["a", "b"]` |
+| `table` | a table of any shape; with `fields`, a table of those fields | `{ xz = 0.25 }` |
 
-`vec2` and `vec4` have no dedicated variant; the parser maps them to a float array so validation reports a bad value as "expected float array" rather than misreporting the field as a string. A type name the parser does not recognise still loads, validated as a `string`, but the registry logs a warning naming the file, component and field, so a typo such as `"integr"` is caught where it was written. The engine's own schemas are checked for unknown names by a test in `flint-schema`.
+**One spelling per type.** These are the names to write. Four older spellings still load, so no schema file breaks, and each gets an `old-type-name` warning from `flint validate` that names the file and the field: `float` (write `f32`), `boolean` (`bool`), `int` and `integer` (`i32`), `entity_ref` (`entity`). The engine's own schema files use the one spelling throughout, and a test holds them to it. A name that is no type at all (`"integr"`) still loads, checked as a `string`, with an `unknown-type` warning.
+
+**References.** An `entity` field and an `asset` field are strings, and `flint validate` follows them:
+
+```toml
+[component.turret.fields]
+target = { type = "entity", default = "" }
+mesh   = { type = "asset", kind = ["models", "specs"], unless = "runtime" }
+shot   = { type = "asset", kind = "audio" }
+```
+
+- `entity`: the name must be an entity of the scene, after prefabs are expanded (a prefab writes `"${PREFIX}_hand"`). An empty string is "not set", for a reference a script fills while the game runs. An entity's own `parent = "..."` is checked the same way.
+- `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it.
+
+Both are errors ([`unknown-entity`, `missing-asset`](#diagnostic-codes)), and the player says them at load as it says the rest.
+
+**Tables and arrays.** A `table` with `fields` is checked like a component: each value against its field, a key it doesn't declare a warning. An array's `element` is a type name or a whole field definition, so an array can hold references or tables:
+
+```toml
+shear  = { type = "table", fields = { xy = "f32", xz = "f32" } }
+points = { type = "array", element = "vec2" }
+links  = { type = "array", element = { type = "table", fields = { to = "entity", weight = "f32" } } }
+```
+
+A problem inside one is named by its path: `transform.shear.xzz`, `links[1].to`.
 
 ### Field Constraints
 
@@ -101,8 +122,30 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `file-unreadable` | error | the scene file could not be read |
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
+| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody`. Raised [while the game runs](#diagnostics-while-the-game-runs), by the system that reads it |
+| `unknown-entity` | error | an `entity` field, or an entity's `parent`, names no entity of the scene; the hint is the nearest name. An empty string is "not set" and passes |
+| `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
+| `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
+| `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
+| `ignored-schema-key` | warning | a schema file of the game's holds a key the loader ignores: a field written under `[component.x]` instead of `[component.x.fields]`, or a misspelled key of a field |
+
+The last three are about a schema file, not the scene: `flint validate` prints them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
+
+### Diagnostics while the game runs
+
+The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics and audio read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
+
+```
+WARN error[bad-enum-value] entity 'crate' rigidbody.body_type: "dynamc" is not a value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, kinematic, kinematic_position, kinematic_velocity; the default "static" is used)
+WARN error[bad-type] entity 'player' character_controller.jump_force: expected a number, got string "high" (the default 6 is used)
+WARN warning[needs-component] entity 'wall' component 'collider': a collider with no rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = "static"` for scenery, or remove the collider)
+```
+
+Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them.
+
+The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source` and `audio_trigger`, and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
 
 ### Unknown fields and `strict`
 
@@ -327,10 +370,11 @@ Most games are better served by archetypes of their own. Every archetype with `b
 Use the CLI to inspect schema definitions:
 
 ```bash
-# Show a component schema
-flint schema light
+# Every component and archetype that is loaded
+flint schema --list
 
-# Show an archetype schema
+# One component, or one archetype
+flint schema light
 flint schema player
 
 # From somewhere else, or to pick the directories yourself
@@ -339,7 +383,52 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-This outputs the component fields, types, defaults, and constraints --- useful for both humans exploring the schema and AI agents discovering what fields are available.
+`flint schema <name>` prints the fields, types, defaults and ranges. A name that is neither a component nor an archetype is an error (exit code 1) with the nearest name as a suggestion.
+
+### Schemas as data
+
+```bash
+flint schema --list --json           # names, descriptions, each component's fields
+flint schema light --format json     # one component or archetype
+flint schema --format json           # everything: every field's type, default, range, values
+```
+
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components` and `archetypes`. A component has `description`, `open` (true when it declares no fields) and `fields`; a field has `type`, `required`, and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
+
+### Editor completion: a JSON Schema for scenes
+
+```bash
+flint schema --format json-schema --output scene.schema.json
+```
+
+writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) and the Even Better TOML extension for VS Code read it, and give completion and inline errors while you type. Point a scene at it with a first line:
+
+```toml
+#:schema ../scene.schema.json
+
+[scene]
+name = "Hall"
+```
+
+or for every scene at once, in a `.taplo.toml` at the project root:
+
+```toml
+[[rule]]
+include = ["**/*.scene.toml"]
+
+[rule.schema]
+path = "./scene.schema.json"
+enabled = true
+```
+
+What it holds to, and what it leaves to `flint validate`:
+
+- A table under an entity that is no loaded component is refused, as `flint validate` refuses it. A key a component doesn't declare is allowed, as the engine allows it (a warning).
+- A field is `required` only when nothing else can supply it: it has no default and no archetype gives it one.
+- Whether an `entity` or an `asset` leads anywhere is not something a JSON Schema can say: run `flint validate`.
+- `[scene]` and `[prefabs.<name>]` are described. The other top-level tables (`[camera]`, `[post_process]`, ...) are allowed and not described yet.
+
+The file is generated from the schema directories, so write it again when a schema changes. `--output` writes plain UTF-8; a shell redirect on Windows may add a byte-order mark that JSON readers refuse. `flint schema light --format json-schema` is one component's table alone.
 
 ## Creating Custom Schemas
 

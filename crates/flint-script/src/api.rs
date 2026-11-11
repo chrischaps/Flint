@@ -7,6 +7,7 @@ use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
 use crate::projector::{clip_to_screen, project_clip, View};
 use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
+use flint_core::toml_util::toml_f64;
 use flint_core::vfs;
 use flint_core::EntityId;
 use flint_core::{euler_deg_to_quat, quat_mul, quat_normalize};
@@ -1276,9 +1277,9 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let mut best_idx = 0usize;
 
                 for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
-                    let sx = px_arr[i].as_float().unwrap_or(0.0);
-                    let sy = py_arr[i].as_float().unwrap_or(0.0);
-                    let sz = pz_arr[i].as_float().unwrap_or(0.0);
+                    let sx = toml_f64(&px_arr[i]).unwrap_or(0.0);
+                    let sy = toml_f64(&py_arr[i]).unwrap_or(0.0);
+                    let sz = toml_f64(&pz_arr[i]).unwrap_or(0.0);
                     let dx = qx - sx;
                     let dy = qy - sy;
                     let dz = qz - sz;
@@ -1292,19 +1293,19 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let mut map = Map::new();
                 map.insert(
                     "t".into(),
-                    Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)),
+                    Dynamic::from(toml_f64(&t_arr[best_idx]).unwrap_or(0.0)),
                 );
                 map.insert(
                     "x".into(),
-                    Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)),
+                    Dynamic::from(toml_f64(&px_arr[best_idx]).unwrap_or(0.0)),
                 );
                 map.insert(
                     "y".into(),
-                    Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)),
+                    Dynamic::from(toml_f64(&py_arr[best_idx]).unwrap_or(0.0)),
                 );
                 map.insert(
                     "z".into(),
-                    Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)),
+                    Dynamic::from(toml_f64(&pz_arr[best_idx]).unwrap_or(0.0)),
                 );
                 map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
                 Dynamic::from(map)
@@ -1357,8 +1358,8 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 .min(gap_starts.len())
                 .min(gap_ends.len())
             {
-                let start = gap_starts[i].as_float().unwrap_or(0.0);
-                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                let start = toml_f64(&gap_starts[i]).unwrap_or(0.0);
+                let end = toml_f64(&gap_ends[i]).unwrap_or(0.0);
                 if start <= end {
                     if t_wrapped >= start && t_wrapped < end {
                         return true;
@@ -1419,8 +1420,8 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 .min(gap_starts.len())
                 .min(gap_ends.len())
             {
-                let start = gap_starts[i].as_float().unwrap_or(0.0);
-                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                let start = toml_f64(&gap_starts[i]).unwrap_or(0.0);
+                let end = toml_f64(&gap_ends[i]).unwrap_or(0.0);
                 let in_gap = if start <= end {
                     t_wrapped >= start && t_wrapped < end
                 } else {
@@ -1501,15 +1502,15 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let mut hi = len - 1;
                 while lo + 1 < hi {
                     let mid = (lo + hi) / 2;
-                    if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
+                    if toml_f64(&t_arr[mid]).unwrap_or(0.0) <= t_wrapped {
                         lo = mid;
                     } else {
                         hi = mid;
                     }
                 }
 
-                let t0 = t_arr[lo].as_float().unwrap_or(0.0);
-                let t1 = t_arr[hi].as_float().unwrap_or(0.0);
+                let t0 = toml_f64(&t_arr[lo]).unwrap_or(0.0);
+                let t1 = toml_f64(&t_arr[hi]).unwrap_or(0.0);
                 let seg_len = t1 - t0;
                 let frac = if seg_len.abs() > 1e-9 {
                     (t_wrapped - t0) / seg_len
@@ -1517,12 +1518,12 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     0.0
                 };
 
-                let x0 = px_arr[lo].as_float().unwrap_or(0.0);
-                let y0 = py_arr[lo].as_float().unwrap_or(0.0);
-                let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
-                let x1 = px_arr[hi].as_float().unwrap_or(0.0);
-                let y1 = py_arr[hi].as_float().unwrap_or(0.0);
-                let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+                let x0 = toml_f64(&px_arr[lo]).unwrap_or(0.0);
+                let y0 = toml_f64(&py_arr[lo]).unwrap_or(0.0);
+                let z0 = toml_f64(&pz_arr[lo]).unwrap_or(0.0);
+                let x1 = toml_f64(&px_arr[hi]).unwrap_or(0.0);
+                let y1 = toml_f64(&py_arr[hi]).unwrap_or(0.0);
+                let z1 = toml_f64(&pz_arr[hi]).unwrap_or(0.0);
 
                 let px = x0 + (x1 - x0) * frac;
                 let py = y0 + (y1 - y0) * frac;

@@ -2,21 +2,21 @@
 description = "PBR material properties with optional texture reference"
 
 [component.material.fields]
-texture = { type = "string", description = "Path to base color texture (relative to scene file)" }
-metallic = { type = "float", description = "Metallic factor 0.0-1.0", default = 0.0 }
-roughness = { type = "float", description = "Roughness factor 0.0-1.0", default = 0.7 }
-opacity = { type = "float", description = "Opacity 0.0-1.0", default = 1.0 }
-blend_mode = { type = "string", description = "Blend mode: alpha, additive, multiply", default = "alpha" }
-emissive_scale = { type = "float", description = "Multiplies the mesh's emission (its own and per-vertex), read every frame. 1 = as uploaded, 0 = no light. Imported and runtime meshes; inherited from the parent.", default = 1.0 }
-glow_surface = { type = "float", description = "How much of each per-vertex light part is also lit surface, 0.0-1.0, read every frame. Its light is unchanged (emissive_scale sets that). 0 = as uploaded. Inherited from the parent.", default = 0.0 }
-vertex_tint_r = { type = "float", description = "Red of the tint a vertex-coloured mesh's colours are multiplied by, surface and per-vertex light alike, read every frame. Set all three or none; none = white, the mesh as uploaded. Imported and runtime meshes; inherited from the parent." }
-vertex_tint_g = { type = "float", description = "Green of the vertex tint (see vertex_tint_r)." }
-vertex_tint_b = { type = "float", description = "Blue of the vertex tint (see vertex_tint_r)." }
+texture = { type = "asset", kind = ["textures", "specs"], description = "Path to base color texture (relative to scene file)" }
+metallic = { type = "f32", description = "Metallic factor 0.0-1.0", default = 0.0 }
+roughness = { type = "f32", description = "Roughness factor 0.0-1.0", default = 0.7 }
+opacity = { type = "f32", description = "Opacity 0.0-1.0", default = 1.0 }
+blend_mode = { type = "enum", values = ["alpha", "additive", "multiply"], description = "Blend mode: alpha, additive, multiply", default = "alpha" }
+emissive_scale = { type = "f32", description = "Multiplies the mesh's emission (its own and per-vertex), read every frame. 1 = as uploaded, 0 = no light. Imported and runtime meshes; inherited from the parent.", default = 1.0 }
+glow_surface = { type = "f32", description = "How much of each per-vertex light part is also lit surface, 0.0-1.0, read every frame. Its light is unchanged (emissive_scale sets that). 0 = as uploaded. Inherited from the parent.", default = 0.0 }
+vertex_tint_r = { type = "f32", description = "Red of the tint a vertex-coloured mesh's colours are multiplied by, surface and per-vertex light alike, read every frame. Set all three or none; none = white, the mesh as uploaded. Imported and runtime meshes; inherited from the parent." }
+vertex_tint_g = { type = "f32", description = "Green of the vertex tint (see vertex_tint_r)." }
+vertex_tint_b = { type = "f32", description = "Blue of the vertex tint (see vertex_tint_r)." }
 cast_shadows = { type = "bool", description = "Whether the mesh casts shadows, read every frame. false keeps it out of the shadow map, opaque or transparent. Imported, runtime, skinned and procedural meshes; inherited from the parent.", default = true }
 unlit = { type = "bool", description = "Draw without lighting: base colour (texture and vertex colour included) times emissive_scale, plus emission, straight to the HDR target. No lights, ambient or shadows reach it; it still casts unless cast_shadows = false. Read every frame; inherited from the parent.", default = false }
-texture_scale = { type = "float", description = "UV multiplier for texture tiling. Default 1.0. Values < 1 make textures appear larger.", default = 1.0 }
-color = { type = "array", element = "float", description = "Base colour of an entity drawn from its bounds (no model): [r, g, b] or [r, g, b, a], 0.0-1.0. Unset: the archetype's colour." }
-base_color_r = { type = "float", description = "Red of a tint that replaces a model's base colour; needs _g and _b too. Scripts set it (set_field) to recolour a model; child nodes inherit their parent's." }
-base_color_g = { type = "float", description = "Green of the base colour tint (see base_color_r)." }
-base_color_b = { type = "float", description = "Blue of the base colour tint (see base_color_r)." }
-base_color_a = { type = "float", description = "Alpha of the base colour tint (see base_color_r). Unset: 1.0." }
+texture_scale = { type = "f32", description = "UV multiplier for texture tiling. Default 1.0. Values < 1 make textures appear larger.", default = 1.0 }
+color = { type = "color", description = "Base colour of an entity drawn from its bounds (no model): [r, g, b] or [r, g, b, a], 0.0-1.0. Unset: the archetype's colour." }
+base_color_r = { type = "f32", description = "Red of a tint that replaces a model's base colour; needs _g and _b too. Scripts set it (set_field) to recolour a model; child nodes inherit their parent's." }
+base_color_g = { type = "f32", description = "Green of the base colour tint (see base_color_r)." }
+base_color_b = { type = "f32", description = "Blue of the base colour tint (see base_color_r)." }
+base_color_a = { type = "f32", description = "Alpha of the base colour tint (see base_color_r). Unset: 1.0." }

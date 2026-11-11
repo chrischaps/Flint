@@ -127,7 +127,12 @@ pub enum Bus {
 }
 
 impl Bus {
-    /// Parse an `audio_source.bus` field value ("music"/"sfx"); unknown → Sfx
+    /// What `audio_source.bus` may be.
+    pub const NAMES: &'static [&'static str] = &["sfx", "music"];
+
+    /// Parse an `audio_source.bus` field value ("music"/"sfx"); unknown → Sfx.
+    /// The component reader reports an unknown name before it gets here
+    /// (`AudioSync::sync_new_sources`, through `ComponentView::choice`).
     pub fn from_name(s: &str) -> Self {
         match s {
             "music" => Bus::Music,
