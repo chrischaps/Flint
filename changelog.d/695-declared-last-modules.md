@@ -6,7 +6,9 @@ Living Props A/B calls and `commit_living`). A number takes an int
 float (`emit_burst(id, 3.0)`), where both were "Function not found". The
 particle emitter calls, the Style API's entity functions and `spline_*`
 given `-1` or a despawned id do nothing, queue nothing and warn once.
-`tween_style_param` with non-number seconds is a script error. For Rust: the
+`tween_style_param` with non-number seconds is a script error. A variable passed first to a function that takes a string, map or
+array (`get_entity(name)`, `log(msg)`, `set_quality(settings)`) is left as
+it was: since the declared API began it came back `()`. For Rust: the
 `EmitBurst`, `SetEntityStyle`, `SetStyleParam`, `TweenStyleParam` and
 `ClearEntityStyle` commands carry `entity: EntityId` for `entity_id: i64`,
 and `ScriptCallContext`'s `unsafe` `world_ref`/`world_mut`/`physics_ref` are

@@ -495,6 +495,12 @@ pub trait Kind: Copy + Send + Sync + 'static {
     const WANTS: &'static str;
     /// Whether it is [`Num`]: an int in the all-int copy (see [`Func::run`]).
     const NUM: bool = false;
+    /// Whether [`Kind::convert`] takes the value out of the argument (a
+    /// string, map, array, any, fn), leaving `()`. Rhai hands a raw
+    /// function its first argument by reference when the script passed a
+    /// variable there, so that one is converted from a copy instead:
+    /// taking it would empty the script's variable.
+    const TAKES: bool = false;
     /// Convert a script value; it may be taken (left as `()`).
     fn convert(call: &mut Call<'_>, v: &mut Dynamic) -> Result<Self::Out, Conv>;
     /// The value from the typed path.
@@ -676,6 +682,7 @@ impl Kind for Str {
     const NAME: &'static str = "str";
     const TYPED_NAME: &'static str = "str";
     const WANTS: &'static str = "a string";
+    const TAKES: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<ImmutableString, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -704,6 +711,7 @@ impl Kind for MapKind {
     const NAME: &'static str = "map";
     const TYPED_NAME: &'static str = "map";
     const WANTS: &'static str = "a map (#{ ... })";
+    const TAKES: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Map, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -730,6 +738,7 @@ impl Kind for ArrayKind {
     const NAME: &'static str = "array";
     const TYPED_NAME: &'static str = "array";
     const WANTS: &'static str = "an array ([ ... ])";
+    const TAKES: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Array, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -812,6 +821,7 @@ impl Kind for Any {
     const NAME: &'static str = "any";
     const TYPED_NAME: &'static str = "any";
     const WANTS: &'static str = "any value";
+    const TAKES: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Dynamic, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -835,6 +845,7 @@ impl Kind for FnKind {
     const NAME: &'static str = "fn";
     const TYPED_NAME: &'static str = "fn";
     const WANTS: &'static str = "a function pointer (Fn(\"name\") or a closure)";
+    const TAKES: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<FnPtr, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -1026,7 +1037,14 @@ macro_rules! kinds_tuple {
                 args: &mut [&mut Dynamic],
                 params: &[&'static str],
             ) -> Result<Self::Out, ArgFail> {
-                Ok(($(convert_one::<$K>(call, &mut *args[$i], params[$i])?,)*))
+                Ok(($(
+                    if $i == 0 && $K::TAKES {
+                        // Maybe the script's own variable: convert a copy
+                        convert_one::<$K>(call, &mut (*args[0]).clone(), params[0])?
+                    } else {
+                        convert_one::<$K>(call, &mut *args[$i], params[$i])?
+                    },
+                )*))
             }
         }
 
@@ -1077,7 +1095,14 @@ macro_rules! kinds_tuple {
                 func: &'static str,
                 pos: Position,
             ) -> Result<Self::Out, CallError> {
-                Ok(($(pure_one::<$K>(&mut *args[$i], params[$i], func, pos)?,)*))
+                Ok(($(
+                    if $i == 0 && $K::TAKES {
+                        // Maybe the script's own variable: convert a copy
+                        pure_one::<$K>(&mut (*args[0]).clone(), params[0], func, pos)?
+                    } else {
+                        pure_one::<$K>(&mut *args[$i], params[$i], func, pos)?
+                    },
+                )*))
             }
         }
 

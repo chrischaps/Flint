@@ -518,6 +518,35 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     assert!(err.contains("`seconds`"), "{err}");
 }
 
+/// Rhai hands a raw function its first argument by reference when the
+/// script passed a variable there, so a kind that takes its value (a
+/// string, map, array, any or fn) must leave that one in place: the
+/// script's variable is still there after the call. `showcase_hud.rhai`
+/// drew `()` for a string it had measured the line before.
+#[test]
+fn a_variable_passed_first_is_left_as_it_was() {
+    let (engine, mut world, _) = engine_and_world();
+    let kept: rhai::Map = eval(
+        &engine,
+        &mut world,
+        "let s = \"SPARKS: 3\"; let w = measure_text(s, 16.0); \
+         let n = \"cube\"; get_entity(n); \
+         let k = #{ msaa: 1 }; set_quality(k); \
+         let f = \"x.toml\"; load_data(f); \
+         let m = \"hello\"; log(m); \
+         let a = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]; draw_polygon(a, 1, 1, 1, 1, 0); \
+         #{ s: s, w: w, n: n, k: k, f: f, m: m, a: a }",
+    )
+    .unwrap();
+    assert_eq!(kept["s"].clone().into_string().unwrap(), "SPARKS: 3");
+    assert!(kept["w"].is_map());
+    assert_eq!(kept["n"].clone().into_string().unwrap(), "cube");
+    assert_eq!(kept["k"].clone().cast::<rhai::Map>().len(), 1);
+    assert_eq!(kept["f"].clone().into_string().unwrap(), "x.toml");
+    assert_eq!(kept["m"].clone().into_string().unwrap(), "hello");
+    assert_eq!(kept["a"].clone().into_array().unwrap().len(), 3);
+}
+
 #[test]
 fn the_last_modules_are_declared_under_their_subsystems() {
     let engine = ScriptEngine::new();
