@@ -799,13 +799,12 @@ impl ScriptEngine {
     /// data stays pending, at its old version, for a later scene's. Does
     /// nothing outside a state scope.
     pub fn migrate_persistent_store(&mut self, world: &mut FlintWorld) {
-        let store = crate::lock_or_recover(&self.ctx).persistent_store;
-        if store.is_null() {
-            return;
-        }
-        // SAFETY: the pointer is the state scope's, valid until it drops,
-        // and the context lock is not held across the script calls below.
-        let Some(from) = (unsafe { &*store }).pending_migration() else {
+        // The context lock is taken for each read of the store, never held
+        // across the script calls below
+        let pending = crate::lock_or_recover(&self.ctx)
+            .try_persistent_store()
+            .and_then(|s| s.pending_migration());
+        let Some(from) = pending else {
             return;
         };
         let entity_ids = self.in_order(|s| s.has_on_persist_migrate);
@@ -828,7 +827,10 @@ impl ScriptEngine {
                 tracing::warn!("on_persist_migrate error ({}): {}", script.source_path, e);
             }
         }
-        let store = unsafe { &mut *store };
+        let mut c = crate::lock_or_recover(&self.ctx);
+        let Some(store) = c.try_persistent_store_mut() else {
+            return;
+        };
         // A script that switched slots mid-migration left another slot's
         // data pending; that one gets its own call
         if store.pending_migration() == Some(from) {

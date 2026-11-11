@@ -263,10 +263,9 @@ impl HeadlessScripts {
                 }
                 ScriptCommand::FreezeLiving { frozen } => self.frozen = frozen,
                 ScriptCommand::StepLiving => self.steps += 1,
-                ScriptCommand::EmitBurst { entity_id, count } => {
+                ScriptCommand::EmitBurst { entity, count } => {
                     if let Some(particles) = self.particles(particles.as_deref_mut()) {
-                        let id = flint_core::EntityId(entity_id as u64);
-                        particles.sync.queue_burst(id, count.max(0) as u32);
+                        particles.sync.queue_burst(entity, count.max(0) as u32);
                     }
                 }
                 ScriptCommand::PlayEffect {

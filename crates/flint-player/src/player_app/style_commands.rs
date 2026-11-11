@@ -36,9 +36,14 @@ pub enum StyleApplied {
     Failed(String),
 }
 
-fn changed(entity_id: i64, style: &str) -> GameEvent {
+/// An entity as an event's data gives it to scripts: its id, an int.
+fn entity_value(entity: EntityId) -> toml::Value {
+    toml::Value::Integer(entity.raw() as i64)
+}
+
+fn changed(entity: EntityId, style: &str) -> GameEvent {
     let mut data = toml::Table::new();
-    data.insert("entity".into(), toml::Value::Integer(entity_id));
+    data.insert("entity".into(), entity_value(entity));
     data.insert("style".into(), style.into());
     GameEvent::Custom {
         name: STYLE_CHANGED.into(),
@@ -78,25 +83,24 @@ impl StyleReader for SceneStyles {
 
 /// Apply `cmd` to `world` if it's a style command.
 pub fn apply_style_command(world: &mut FlintWorld, cmd: &ScriptCommand) -> StyleApplied {
-    let id = |e: i64| EntityId(e.max(0) as u64);
     match cmd {
-        ScriptCommand::SetEntityStyle { entity_id, style } => {
-            match entity_style::set_entity_style(world, id(*entity_id), style) {
-                Ok(()) => StyleApplied::Done(Some(changed(*entity_id, style))),
+        ScriptCommand::SetEntityStyle { entity, style } => {
+            match entity_style::set_entity_style(world, *entity, style) {
+                Ok(()) => StyleApplied::Done(Some(changed(*entity, style))),
                 Err(e) => StyleApplied::Failed(format!("set_entity_style: {e}")),
             }
         }
         ScriptCommand::SetStyleParam {
-            entity_id,
+            entity,
             param,
             value,
-        } => match entity_style::set_style_param(world, id(*entity_id), param, value.clone()) {
+        } => match entity_style::set_style_param(world, *entity, param, value.clone()) {
             Ok(_) => StyleApplied::Done(None),
             Err(e) => StyleApplied::Failed(format!("set_style_param: {e}")),
         },
-        ScriptCommand::ClearEntityStyle { entity_id } => {
-            let had = entity_style::clear_entity_style(world, id(*entity_id));
-            StyleApplied::Done(had.then(|| changed(*entity_id, "")))
+        ScriptCommand::ClearEntityStyle { entity } => {
+            let had = entity_style::clear_entity_style(world, *entity);
+            StyleApplied::Done(had.then(|| changed(*entity, "")))
         }
         _ => StyleApplied::NotAStyleCommand,
     }
@@ -156,7 +160,7 @@ impl Easing {
 
 #[derive(Debug)]
 struct StyleTween {
-    entity_id: i64,
+    entity: EntityId,
     /// The style it was started on: a tween ends quietly once the entity
     /// is given another
     style: &'static str,
@@ -185,9 +189,9 @@ impl StyleTween {
     }
 }
 
-fn tween_done(entity_id: i64, param: &str) -> GameEvent {
+fn tween_done(entity: EntityId, param: &str) -> GameEvent {
     let mut data = toml::Table::new();
-    data.insert("entity".into(), toml::Value::Integer(entity_id));
+    data.insert("entity".into(), entity_value(entity));
     data.insert("param".into(), param.into());
     GameEvent::Custom {
         name: STYLE_TWEEN_DONE.into(),
@@ -230,11 +234,11 @@ impl StyleTweens {
         self.tweens.is_empty()
     }
 
-    /// Whether `entity_id`'s `param` is easing.
-    pub fn is_tweening(&self, entity_id: i64, param: &str) -> bool {
+    /// Whether `entity`'s `param` is easing.
+    pub fn is_tweening(&self, entity: EntityId, param: &str) -> bool {
         self.tweens
             .iter()
-            .any(|t| t.entity_id == entity_id && t.param == param)
+            .any(|t| t.entity == entity && t.param == param)
     }
 
     /// Drop every tween (a new scene).
@@ -254,7 +258,7 @@ impl StyleTweens {
     ) -> StyleApplied {
         match cmd {
             ScriptCommand::TweenStyleParam {
-                entity_id,
+                entity,
                 param,
                 target,
                 seconds,
@@ -266,15 +270,15 @@ impl StyleTweens {
                         Easing::NAMES.join(", ")
                     ));
                 };
-                let id = EntityId((*entity_id).max(0) as u64);
+                let id = *entity;
                 let (style, from, to) =
                     match entity_style::tween_endpoints(world, id, param, target, config) {
                         Ok(ends) => ends,
                         Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
                     };
-                self.stop(*entity_id, Some(param));
+                self.stop(id, Some(param));
                 let tween = StyleTween {
-                    entity_id: *entity_id,
+                    entity: id,
                     style,
                     param: param.clone(),
                     from,
@@ -286,30 +290,28 @@ impl StyleTweens {
                 if !(*seconds > 0.0) {
                     // No time to ease over: there now, done now
                     return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
-                        Ok(_) => StyleApplied::Done(Some(tween_done(*entity_id, param))),
+                        Ok(_) => StyleApplied::Done(Some(tween_done(id, param))),
                         Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
                     };
                 }
                 self.tweens.push(tween);
                 StyleApplied::Done(None)
             }
-            ScriptCommand::SetStyleParam {
-                entity_id, param, ..
-            } => {
-                self.stop(*entity_id, Some(param));
+            ScriptCommand::SetStyleParam { entity, param, .. } => {
+                self.stop(*entity, Some(param));
                 apply_style_command(world, cmd)
             }
-            ScriptCommand::ClearEntityStyle { entity_id } => {
-                self.stop(*entity_id, None);
+            ScriptCommand::ClearEntityStyle { entity } => {
+                self.stop(*entity, None);
                 apply_style_command(world, cmd)
             }
             _ => apply_style_command(world, cmd),
         }
     }
 
-    fn stop(&mut self, entity_id: i64, param: Option<&str>) {
+    fn stop(&mut self, entity: EntityId, param: Option<&str>) {
         self.tweens
-            .retain(|t| !(t.entity_id == entity_id && param.is_none_or(|p| t.param == p)));
+            .retain(|t| !(t.entity == entity && param.is_none_or(|p| t.param == p)));
     }
 
     /// Move every tween on by `dt` seconds of game time and write its
@@ -318,7 +320,7 @@ impl StyleTweens {
     pub fn step(&mut self, world: &mut FlintWorld, dt: f64) -> TweenStep {
         let mut out = TweenStep::default();
         self.tweens.retain_mut(|t| {
-            let id = EntityId(t.entity_id.max(0) as u64);
+            let id = t.entity;
             if entity_style::entity_style(world, id) != Some(t.style) {
                 // Given another style (or none) since: nothing left to ease
                 return false;
@@ -336,7 +338,7 @@ impl StyleTweens {
                 return false;
             }
             if done {
-                out.events.push(tween_done(t.entity_id, &t.param));
+                out.events.push(tween_done(t.entity, &t.param));
             }
             !done
         });

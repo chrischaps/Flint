@@ -194,9 +194,9 @@ mod native {
         CallbackDoc { name, params, doc }
     }
 
-    /// A function Rhai has registered that the builder didn't declare: a
-    /// module not yet ported, or an extension's raw registration. From
-    /// Rhai's metadata, so types but no parameter names or docs.
+    /// A function Rhai has registered that the builder didn't declare: an
+    /// extension's raw registration (every engine function is declared).
+    /// From Rhai's metadata, so types but no parameter names or docs.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct UndeclaredFn {
         pub name: String,
