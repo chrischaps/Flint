@@ -33,7 +33,7 @@ bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (t
 Every agent worktree builds its own `target/`, and parallel worktrees are how this repo is worked, so disk is what runs out (#762):
 
 - **Keep `target/` per worktree; never point several at one `CARGO_TARGET_DIR`.** Cargo names a workspace crate's output by its path inside the workspace, so two worktrees' `flint-render` share one output and a branch can build against the other's (2026-10-30: a branch failed on a method its own source defines). One target dir also has one build lock, so parallel agents queue, and tests that write into it collide (#421). An A/B against another revision gets its own dir.
-- **The dev profile is lean** (`Cargo.toml`): line tables for workspace crates, no debug info for dependencies. A cold `cargo build` plus `cargo test --no-run` measured 6.6 GB and 150 s, down from 17.1 GB and 229 s. Locals in a debugger: `CARGO_PROFILE_DEV_DEBUG=full`.
+- **The dev profile is lean** (`Cargo.toml`): line tables for workspace crates, no debug info for dependencies. A cold `cargo build` plus `cargo test --no-run` measured 6.6 GB and 150 s, down from 17.1 GB and 229 s. Locals in a debugger: `CARGO_PROFILE_DEV_DEBUG=full`. What loads a texture is built at `opt-level = 3` even in debug (#326): the image decoders, glTF, SHA-256 and `flint-pixels`, where the texel loops live so `flint-render` stays unoptimized. A debug render of a scene with a 32 MB model went from 19 s to 2.6 s; a new per-texel loop on load goes in `flint-pixels`.
 - **sccache is optional, per machine, not in `.cargo/config.toml`** (a wrapper that isn't installed fails every build). With `RUSTC_WRAPPER=sccache` a cold-cache build measured no slower (96 s); what a warm cache saves the next worktree is unmeasured (the run was stopped for low memory). It can cache only dependencies, since the workspace crates build incrementally.
 - **Disk is guarded** by `scripts/build-space.sh`. A hook refuses `issue.sh claim` under 30 GB free (`FLINT_DISK_FLOOR_GB`), and the SessionStart hook deletes the `target/` of worktrees whose issue is closed (not the worktree, not one built in the last hour). `report` lists every worktree's `target/` by size. A release build adds several GB: before one, check `df -h .`, and delete your own worktree's `target/release` when you're done with it.
 
@@ -76,7 +76,7 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-26-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
+28-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, check, validate, asset, render, gen, prefab,
@@ -103,6 +103,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-query    PEG query language (pest parser)
   ├── flint-scene    TOML scene serialization/deserialization
   ├── flint-render   wgpu PBR renderer (winit 0.30, wgpu 23, HDR post-processing, bloom, SSAO, fog)
+  ├── flint-pixels   Texel loops on load (RGBA widening, mip chains); no deps, optimized in debug builds
   ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap)
   ├── flint-schema   Component/archetype schema system
   └── flint-core     EntityId, ContentHash, Transform, Vec3, Color, FlintError, vfs (read-only file layer)

@@ -54,13 +54,14 @@ The long arrow into `render` comes from the player (top right) and from `viewer`
 <!-- Written by tools/arch-analyzer from each Cargo.toml; don't edit by hand.
      Rewrite: cargo run -p flint-arch-analyzer -- --book. CI's crate-table job runs --check-book. -->
 
-The workspace has 27 crates under `crates/`, plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
+The workspace has 28 crates under `crates/`, plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
 
 | Tier | Crate | Depends On | Depended On By |
 |-----:|-------|-----------|----------------|
 | 0 | `flint-arch-analyzer` (`tools/arch-analyzer`) | *(none)* | *(none)* |
 | 0 | `flint-audio-worklet` | *(none)* | *(none)* |
 | 0 | `flint-core` | *(none)* | animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, import, input-capture, music, particles, physics, player, procgen, query, render, runtime, scene, schema, script, terrain, viewer |
+| 0 | `flint-pixels` | *(none)* | render |
 | 1 | `flint-asset` | core | asset-gen, cli, import, player |
 | 1 | `flint-music` | core | cli, input-capture, player |
 | 1 | `flint-schema` | core | android, cli, constraint, ecs, player, procgen, scene, viewer |
@@ -79,7 +80,7 @@ The workspace has 27 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 4 | `flint-procgen` | core, import, scene, schema | asset-gen, cli, debug-ui, player, procgen-ai, viewer |
 | 5 | `flint-asset-gen` | asset, core, import, procgen | cli |
 | 5 | `flint-procgen-ai` | procgen | cli |
-| 5 | `flint-render` | core, ecs, import, particles, scene, terrain | cli, debug-ui, player, viewer |
+| 5 | `flint-render` | core, ecs, import, particles, pixels, scene, terrain | cli, debug-ui, player, viewer |
 | 5 | `flint-script` | animation, core, ecs, physics, runtime, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, procgen, render, scene, terrain | cli, player (optional), viewer |
 | 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, import, input-capture, music, particles, physics, procgen, render, runtime, scene, schema, script, terrain | android, cli |
