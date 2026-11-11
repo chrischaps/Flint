@@ -192,7 +192,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 
 - **Time is pinned.** Film grain, render-mode animation and animated styles read a post time that headless render fixes at 0. Pass `--style-time` (or `--grain-time`) to pick a different but equally repeatable frame; two renders at the same value match, different values differ.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
-- **Animation does not run.** Skinned meshes render at bind pose. For a posed headless frame use the model previewer's render mode instead: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
+- **Animation runs only when asked.** Without a flag skinned meshes render at bind pose. `--anim-time <s>` runs the scene's animation to that time first, as the player has it there ([Posed Characters](#posed-characters)). For one model on its own, the model previewer's render mode does the same: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
 - **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes (ADR 0052), which matters when a CI job renders dozens of frames.
 
@@ -210,7 +210,7 @@ flint render examples/ascii_motion.scene.toml --no-grid \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--frames <n>` | (none) | Frames to draw, written as `<stem>_0000.png`... beside `--output` (with `--ascii-text`, numbered grids too) |
-| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles and the ASCII history's smoothing (#342) advance by it |
+| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles, `--anim-time` animation and the ASCII history's smoothing (#342) advance by it |
 | `--orbit <deg/s>` | (still camera) | Turn the camera about its target, from the scene's `[camera]` or the orbit flags |
 | `--camera-path <file>` | (still camera) | Follow keys instead, position and target interpolated linearly |
 | `--flip-stats` | `false` | Count the ASCII style's glyph flips and reversals, per frame and in sum |
@@ -298,7 +298,22 @@ flint render examples/living_props.scene.toml --time 2,5,9.5 -o at.png
 
 That writes a still a moment beside `--output`, numbered as a [`--frames`](#frame-sequences) sequence is (`at_0000.png`, `at_0001.png`, `at_0002.png`). It's one run: the scene loads once and the clocks step through the moments in order, so it simulates to the last moment once, where three renders would simulate to each. A moment that falls on the step (1/60 s, or `--frame-step`) gets the same bytes it gets rendered alone. Between moments off the step, the clocks take one short step to land on each, as a span's frames do. `--report json` has a capture a moment, and a `--sweep` writes a sheet a moment.
 
-Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `examples/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `examples/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+Physics doesn't run, and nor do animation clips or scripts unless you ask (`--anim-time`, [below](#posed-characters), and `--scripts`, next section). That's where the match ends. `examples/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components and no `--anim-time`, the render names those entities in a warning. In `examples/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches without `--anim-time`.
+
+## Posed Characters
+
+`flint render` draws a skinned character in its bind pose unless it is told a time to pose it at. `--anim-time <s>` loads the scene's animation as the player does when the scene comes up (each skinned model's skeleton and clips, `.anim.toml` property tweens, sprite clips and sequences, found by the project's asset search) and steps it to `s` before the capture, in fixed 1/60 s steps that land on `s` exactly: every tier (skeletal clips with their crossfades and layers, sequences, property tweens, node and sprite clips), each `bone_probe` written, then [two-bone IK](../concepts/animation.md) over the posed world, as the player's frame runs them (#307).
+
+```bash
+flint render examples/skeletal_test.scene.toml --anim-time 1.5 -o idle.png
+#   Animation: ybot at t = 1.500s (1 skinned, 90 step(s) of 0.016667s)
+```
+
+The same value gives a byte-identical PNG. With `--time` the animation starts at `s` and runs on with the clock, `--frame-step` a step, so `--anim-time 0 --time 0..4 -o walk.gif` is four seconds of a walk cycle, and `--anim-time 0 --time 1` is the same picture as `--anim-time 1 --time 0`. With `--frames` each frame steps it `--frame-dt` on, and frame 0 is `--anim-time` itself.
+
+Measured against the player on a copy of `examples/skeletal_test.scene.toml` with a fixed `[camera]`, at 960x540 (`flint-player --frame-step 0.0166667 --screenshot-at T` against `flint render --anim-time T --time 0 --frame-step 0.0166667`): at T = 0 not one pixel differed; at 0.5, 1.0 and 1.5 s, 235 to 296 pixels on the figure differed by 1 of 255 and none by more. The frames either side of 1.5 s differ by about 3,500 pixels each, so it is the same frame of the clip. The same scene with no animator matched to the pixel, so the last bit is in the animation path, and its cause wasn't found.
+
+What doesn't run: physics, so a ragdoll or a character pushed by its controller stands where the scene put it; and scripts' `on_sequence_cue` and `on_animation_end`, since nothing hears a cue headless (scripts run with `--scripts`, but cues and sprite ends are counted and dropped). A skinned entity needs a `skeleton` component beside its `animator` for its clip to play, in the player too: `--anim-time` names one that has none. A scene with nothing animated says so, and draws as it would without the flag.
 
 ## Scripts and an Expression Timeline
 

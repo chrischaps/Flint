@@ -39,6 +39,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #   --film-grain 0.03         --grain-time 0  --fxaa
    #   --particle-time 2.0    (step emitters/effects deterministically before
    #                           capture; default none = no particles. ADR 0068)
+   #   --anim-time 1.5        (#307: the scene's animation stepped to 1.5 s at 1/60 (or --frame-step)
+   #                           before capture, IK after each step; runs on with --time / --frames;
+   #                           default none = bind pose. flint_player::HeadlessAnimation; warns on a
+   #                           skinned animator with no `skeleton`. tests/render_anim_cli.rs)
    #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
    #                           Also on flint-player. ADR 0058)
    #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
