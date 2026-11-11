@@ -149,14 +149,21 @@ const PARAMS: &[StyleParam] = &[
 /// The value of `paper_image` / `stroke_image` that names no image.
 pub const NO_IMAGE: &str = "none";
 
-/// The papers to offer: none, then every `papers/*.png` beside the scene.
+/// The papers to offer: none, then every paper the scene can see
+/// (`papers/`, by the project's search).
 pub(super) fn paper_choices(scope: &super::ChoiceScope<'_>) -> Vec<String> {
-    super::choices_with(&[NO_IMAGE], scope.files(super::images::PAPERS, ".png"))
+    super::choices_with(
+        &[NO_IMAGE],
+        scope.files(flint_core::project::AssetKind::Papers),
+    )
 }
 
-/// The stroke strips to offer: none, then every `strokes/*.png`.
+/// The stroke strips to offer: none, then every one in a `strokes/`.
 fn stroke_choices(scope: &super::ChoiceScope<'_>) -> Vec<String> {
-    super::choices_with(&[NO_IMAGE], scope.files(super::images::STROKES, ".png"))
+    super::choices_with(
+        &[NO_IMAGE],
+        scope.files(flint_core::project::AssetKind::Strokes),
+    )
 }
 
 /// Whether an image option's value names an image.
@@ -686,7 +693,7 @@ impl Pencil {
         let strokes: Vec<String> = names.iter().map(|n| n[1].clone()).collect();
         let (paper_name, refused_paper) = choose_image(&papers, rows, 2);
         let (stroke_name, refused_stroke) = choose_image(&strokes, rows, 3);
-        let search = super::ChoiceScope::defaults(frame.scene_dir).search();
+        let search = frame.assets;
         let poll = frame.frame.is_multiple_of(15);
         let mut images = self.images.lock().unwrap_or_else(|e| e.into_inner());
         if (refused_paper || refused_stroke) && !images.warned {
@@ -698,10 +705,10 @@ impl Pencil {
         }
         let paper = images
             .paper
-            .get(frame.device, frame.queue, &search, &paper_name, poll);
+            .get(frame.device, frame.queue, search, &paper_name, poll);
         let stroke = images
             .stroke
-            .get(frame.device, frame.queue, &search, &stroke_name, poll);
+            .get(frame.device, frame.queue, search, &stroke_name, poll);
         for row in rows.iter_mut() {
             if !paper.found {
                 row.v[7][2] = 0.0;

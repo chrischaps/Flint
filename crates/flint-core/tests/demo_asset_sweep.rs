@@ -2,8 +2,11 @@
 //! it imports), procgen spec, prefab, wooze preset, input config, particle
 //! texture and path-named file (heightmap, splat map, grass mask, spline,
 //! skybox) the engine's own scenes name, through the one resolver (ADR 0114,
-//! #706): none of them may resolve to another file than its kind's old
-//! search picked. The old
+//! #706), and with them the look and style assets: the looks, palettes,
+//! glyph sets, bitmap fonts (and their images), paper and stroke images
+//! scenes, their looks and the stylize goldens' cases name, and every user
+//! style and font file a scene can see. None of them may resolve to
+//! another file than its kind's old search picked. The old
 //! searches are the resolver's `old_rule`s, so an `order_change` here is a
 //! demo that would load a different file than before.
 //!
@@ -90,6 +93,176 @@ fn named_by(scene: &toml::Table) -> Vec<(AssetKind, String)> {
     out
 }
 
+/// A style setting that names a file: `palette`, `font`, `paper_image`,
+/// `stroke_image`, in a style's table, a per-entity style component or a
+/// `--style` word. `None` for a value that names no file.
+fn style_setting(key: &str, value: &str) -> Option<(AssetKind, String)> {
+    let kind = match key {
+        "palette" => AssetKind::Palettes,
+        "font" => AssetKind::GlyphSets,
+        "paper_image" => AssetKind::Papers,
+        "stroke_image" => AssetKind::Strokes,
+        _ => return None,
+    };
+    (!value.is_empty() && value != "none" && value != "builtin").then(|| (kind, value.to_string()))
+}
+
+/// The style assets one table of settings names.
+fn style_settings(table: &toml::Table) -> Vec<(AssetKind, String)> {
+    table
+        .iter()
+        .filter_map(|(key, value)| style_setting(key, value.as_str()?))
+        .collect()
+}
+
+/// The style assets a `[post_process]` block names: its look, and what its
+/// style tables name.
+fn post_process_assets(post: &toml::Table) -> Vec<(AssetKind, String)> {
+    let mut out = Vec::new();
+    if let Some(look) = post.get("look").and_then(|l| l.as_str()) {
+        out.push((AssetKind::Looks, look.to_string()));
+    }
+    for style in post
+        .get("styles")
+        .and_then(|s| s.as_table())
+        .into_iter()
+        .flat_map(|s| s.values())
+        .filter_map(|s| s.as_table())
+    {
+        out.extend(style_settings(style));
+    }
+    out
+}
+
+/// The look and style assets a scene names: its `[post_process]`, its
+/// entities' style components, and the fonts its `ui_text` draws with.
+fn styled_by(scene: &toml::Table) -> Vec<(AssetKind, String)> {
+    let mut out = Vec::new();
+    if let Some(post) = scene.get("post_process").and_then(|p| p.as_table()) {
+        out.extend(post_process_assets(post));
+    }
+    for entity in scene
+        .get("entities")
+        .and_then(|e| e.as_table())
+        .into_iter()
+        .flat_map(|e| e.values())
+        .filter_map(|e| e.as_table())
+    {
+        for (component, fields) in entity {
+            let Some(fields) = fields.as_table() else {
+                continue;
+            };
+            if component.ends_with("_style") || component == "style_mask" {
+                out.extend(style_settings(fields));
+            }
+        }
+        let font = entity
+            .get("ui_text")
+            .and_then(|t| t.get("font"))
+            .and_then(|f| f.as_str())
+            .filter(|f| !f.is_empty() && *f != "builtin");
+        if let Some(font) = font {
+            let kind = match font.ends_with(".font.toml") {
+                true => AssetKind::Fonts,
+                false => AssetKind::GlyphSets,
+            };
+            out.push((kind, font.to_string()));
+        }
+    }
+    out
+}
+
+/// What a stylize golden's flags name, by scene: `--look`, `--ascii-font`,
+/// `--ascii-palette`, the `--style` words and the `--sweep` keys.
+fn named_by_goldens(repo: &Path) -> Vec<(PathBuf, AssetKind, String)> {
+    let manifest = repo.join("crates/flint-cli/tests/golden/stylize.goldens.toml");
+    let doc: toml::Table = std::fs::read_to_string(manifest).unwrap().parse().unwrap();
+    let mut out = Vec::new();
+    for case in doc["case"].as_array().unwrap() {
+        let scene = repo.join(case["scene"].as_str().unwrap());
+        let args: Vec<&str> = case
+            .get("args")
+            .and_then(|a| a.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a.as_str())
+            .collect();
+        let mut named = Vec::new();
+        for pair in args.windows(2) {
+            let (flag, value) = (pair[0], pair[1]);
+            match flag {
+                "--look" => named.push((AssetKind::Looks, value.to_string())),
+                "--ascii-font" => named.extend(style_setting("font", value)),
+                "--ascii-palette" => named.extend(style_setting("palette", value)),
+                "--style" => {
+                    let settings = value.split_once(':').map(|(_, s)| s).unwrap_or("");
+                    for (key, value) in settings.split(',').filter_map(|s| s.split_once('=')) {
+                        named.extend(style_setting(key, value));
+                    }
+                }
+                "--sweep" => {
+                    let Some((key, values)) = value.split_once('=') else {
+                        continue;
+                    };
+                    for value in values.split(',') {
+                        match key {
+                            "look" => named.push((AssetKind::Looks, value.to_string())),
+                            _ => {
+                                let key = key.rsplit('.').next().unwrap_or(key);
+                                named.extend(style_setting(key, value));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.extend(named.into_iter().map(|(k, n)| (scene.clone(), k, n)));
+    }
+    out
+}
+
+/// What the look or font description at `file` names in turn: a look's
+/// style tables, a `.font.toml`'s image.
+fn named_inside(kind: AssetKind, file: &Path) -> Vec<(AssetKind, String)> {
+    let Ok(doc) = std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .parse::<toml::Table>()
+    else {
+        return Vec::new();
+    };
+    match kind {
+        AssetKind::Looks => doc
+            .get("post_process")
+            .and_then(|p| p.as_table())
+            .map(post_process_assets)
+            .unwrap_or_default(),
+        AssetKind::Fonts => {
+            let font = doc.get("font");
+            let texture = font.and_then(|f| f.get("texture")).and_then(|t| t.as_str());
+            let set = font.and_then(|f| f.get("glyphs")).and_then(|t| t.as_str());
+            texture
+                .map(|t| (AssetKind::Textures, t.to_string()))
+                .into_iter()
+                .chain(set.and_then(|s| style_setting("font", s)))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The kinds a style or a host loads by listing: every file a scene sees.
+const STYLE_KINDS: &[AssetKind] = &[
+    AssetKind::Palettes,
+    AssetKind::GlyphSets,
+    AssetKind::Fonts,
+    AssetKind::FontFaces,
+    AssetKind::Looks,
+    AssetKind::Papers,
+    AssetKind::Strokes,
+    AssetKind::Styles,
+];
+
 /// The modules a script imports: `import "name"`.
 fn imports(script: &str) -> Vec<String> {
     script
@@ -135,10 +308,21 @@ struct Tally {
 #[test]
 fn the_engines_own_scenes_load_the_files_they_loaded_before() {
     let repo = repo();
+    // The looks' and styles' old searches also looked in the working
+    // directory. The engine's scenes are rendered from its root, so that is
+    // where this test stands (it is the only test in this binary).
+    std::env::set_current_dir(&repo).unwrap();
     let mut scenes = Vec::new();
     scenes_under(&repo.join("demo"), &mut scenes);
     scenes_under(&repo.join("testGame"), &mut scenes);
+    scenes_under(&repo.join("crates/flint-cli/tests/golden"), &mut scenes);
     scenes.sort();
+    let golden_flags = named_by_goldens(&repo);
+    assert!(
+        golden_flags.len() > 10,
+        "{} golden flags",
+        golden_flags.len()
+    );
     assert!(scenes.len() > 50, "found only {} scenes", scenes.len());
 
     let mut tally: BTreeMap<&'static str, Tally> = BTreeMap::new();
@@ -162,6 +346,35 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
         };
         // What entities name, one at a time.
         let mut named = named_by(&doc);
+        // The looks and style assets the scene and its goldens' flags name.
+        named.extend(styled_by(&doc));
+        named.extend(
+            golden_flags
+                .iter()
+                .filter(|(golden, _, _)| golden == scene)
+                .map(|(_, kind, name)| (*kind, name.clone())),
+        );
+        named.sort_by(|a, b| (a.0.label(), &a.1).cmp(&(b.0.label(), &b.1)));
+        named.dedup();
+        // A look names palettes and papers of its own, a font its image.
+        let mut at = 0;
+        while at < named.len() {
+            let (kind, name) = named[at].clone();
+            at += 1;
+            if !matches!(kind, AssetKind::Looks | AssetKind::Fonts) {
+                continue;
+            }
+            // A built-in look is the file of its name in the repo's styles/
+            let file = project
+                .explain(kind, &name, scene_dir)
+                .found
+                .unwrap_or_else(|| repo.join(format!("styles/{name}.look.toml")));
+            for inner in named_inside(kind, &file) {
+                if !named.contains(&inner) {
+                    named.push(inner);
+                }
+            }
+        }
         // A model or texture name may be a procgen spec's.
         let specs: Vec<String> = project
             .list(AssetKind::Specs, scene_dir)
@@ -250,6 +463,30 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
         for change in project.list_order_changes(AssetKind::Specs, scene_dir) {
             changes.push((scene.clone(), change));
         }
+        // The style kinds: every palette, glyph set, font, look, paper,
+        // stroke and user style the scene can see, which is what the
+        // menus offer and the user-style and HUD font loaders take whole.
+        for &kind in STYLE_KINDS {
+            let listed = project.list(kind, scene_dir);
+            let label: &'static str = match kind {
+                AssetKind::Palettes => "palettes (visible)",
+                AssetKind::GlyphSets => "glyph-sets (visible)",
+                AssetKind::Fonts => "fonts (visible)",
+                AssetKind::FontFaces => "font-faces (visible)",
+                AssetKind::Looks => "looks (visible)",
+                AssetKind::Papers => "papers (visible)",
+                AssetKind::Strokes => "strokes (visible)",
+                _ => "styles (visible)",
+            };
+            tally.entry(label).or_default().found += listed.len();
+            for change in project.list_order_changes(kind, scene_dir) {
+                changes.push((scene.clone(), change));
+            }
+            for file in listed {
+                let answer = project.explain(kind, &file.name, scene_dir);
+                assert_eq!(answer.found.as_deref(), Some(file.path.as_path()));
+            }
+        }
         // What is loaded as a whole folder, and the UI sprites (which only
         // scripts name): every file the scene can see.
         for kind in [
@@ -280,7 +517,7 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
     }
 
     println!(
-        "{} scenes under demo/ and testGame/ ({unread} not plain TOML tables)",
+        "{} scenes under demo/, testGame/ and the goldens' fixtures ({unread} not plain TOML tables)",
         scenes.len()
     );
     println!(
@@ -310,8 +547,23 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
         "{} asset(s) would load another file than before",
         changes.len()
     );
-    // The sweep saw real assets of the kinds entities name.
-    for label in ["models", "textures", "audio", "scripts", "specs", "prefabs"] {
+    // The sweep saw real assets of the kinds entities name, and of the
+    // style kinds scenes and goldens name.
+    for label in [
+        "models",
+        "textures",
+        "audio",
+        "scripts",
+        "specs",
+        "prefabs",
+        "looks",
+        "palettes",
+        "glyph-sets",
+        "fonts",
+        "papers",
+        "strokes",
+        "styles (visible)",
+    ] {
         assert!(tally.get(label).is_some_and(|t| t.found > 0), "{label}");
     }
 }

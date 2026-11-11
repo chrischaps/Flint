@@ -33,10 +33,16 @@ pub use flint_render::post_process_config_from_def;
 /// warning. Styles already registered are kept, so a scene change only
 /// adds (#275).
 pub fn load_user_styles(scene_path: &str) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    for message in flint_render::stylize::custom::load_dir(scene_dir) {
+    load_user_styles_in(&flint_core::project::AssetScope::for_scene(Path::new(
+        scene_path,
+    )));
+}
+
+/// [`load_user_styles`] for a host that holds the scene's project: every
+/// `styles/*.shader.toml` the project's one asset search lists from
+/// `scope`, the nearest of a name winning (ADR 0114, #426).
+pub fn load_user_styles_in(scope: &flint_core::project::AssetScope) {
+    for message in flint_render::stylize::custom::load_for(scope) {
         tracing::warn!("{message}");
     }
 }
@@ -52,11 +58,23 @@ pub fn scene_post_process(
     scene_path: &str,
     pp: Option<flint_scene::PostProcessDef>,
 ) -> Option<flint_scene::PostProcessDef> {
-    let pp = pp.map(|d| flint_render::look::resolve_scene(&d, scene_path));
+    let scope = flint_core::project::AssetScope::for_scene(Path::new(scene_path));
+    scene_post_process_in(look, scene_path, &scope, pp)
+}
+
+/// [`scene_post_process`] for a host that holds the scene's project: looks
+/// are searched for from `scope`.
+pub fn scene_post_process_in(
+    look: Option<&str>,
+    scene_path: &str,
+    scope: &flint_core::project::AssetScope,
+    pp: Option<flint_scene::PostProcessDef>,
+) -> Option<flint_scene::PostProcessDef> {
+    let pp = pp.map(|d| flint_render::look::resolve_scene_in(&d, Path::new(scene_path), scope));
     let Some(name) = look else {
         return pp;
     };
-    match flint_render::look::find(name, scene_path).and_then(|l| l.apply(pp.as_ref())) {
+    match flint_render::look::find_in(name, scope).and_then(|l| l.apply(pp.as_ref())) {
         Ok(mut def) => {
             def.look = Some(name.to_string());
             def.authored = pp.and_then(|p| p.authored);

@@ -70,6 +70,41 @@ const NAMED: &[(AssetKind, &str, &str)] = &[
         "levels/two.scene.toml",
         "levels/two.scene.toml",
     ),
+    (
+        AssetKind::Palettes,
+        "sunset",
+        "palettes/sunset.palette.toml",
+    ),
+    (
+        AssetKind::Palettes,
+        "palettes/sunset.palette.toml",
+        "palettes/sunset.palette.toml",
+    ),
+    (
+        AssetKind::GlyphSets,
+        "terminal",
+        "fonts/terminal.glyphs.toml",
+    ),
+    (
+        AssetKind::GlyphSets,
+        "fonts/terminal.glyphs.toml",
+        "fonts/terminal.glyphs.toml",
+    ),
+    (AssetKind::Fonts, "fonts/ui.font.toml", "fonts/ui.font.toml"),
+    (AssetKind::Fonts, "ui", "fonts/ui.font.toml"),
+    (AssetKind::FontFaces, "Barlow.ttf", "fonts/Barlow.ttf"),
+    (AssetKind::FontFaces, "Mono.otf", "fonts/Mono.otf"),
+    (AssetKind::Looks, "noir", "styles/noir.look.toml"),
+    (
+        AssetKind::Looks,
+        "out/tuned.look.toml",
+        "out/tuned.look.toml",
+    ),
+    (AssetKind::Papers, "cotton", "papers/cotton.png"),
+    (AssetKind::Papers, "papers/cotton.png", "papers/cotton.png"),
+    (AssetKind::Papers, "scans/linen.jpg", "scans/linen.jpg"),
+    (AssetKind::Strokes, "hb", "strokes/hb.png"),
+    (AssetKind::Styles, "glow", "styles/glow.shader.toml"),
 ];
 
 #[test]
@@ -414,10 +449,15 @@ fn every_kinds_order_change_fires_when_its_old_search_reached_outside_the_projec
     for &(kind, name, file) in NAMED {
         // `hit.ogg` was only ever found as a path from the scene, never
         // in `audio/`: the one name here the old searches could not find.
-        // And a script was only ever found by its whole file name.
+        // And a script was only ever found by its whole file name. A
+        // `.font.toml` was only ever read beside the scene, and a look
+        // named by a path was a path from the working directory.
         let old_found_it = !matches!(
             (kind, name),
-            (AssetKind::Audio, "hit.ogg") | (AssetKind::Scripts, "hud")
+            (AssetKind::Audio, "hit.ogg")
+                | (AssetKind::Scripts, "hud")
+                | (AssetKind::Fonts, _)
+                | (AssetKind::Looks, "out/tuned.look.toml")
         );
         let r = above_the_root(kind, name, file);
         assert_eq!(r.found, None, "{kind} {name}");

@@ -33,7 +33,7 @@ Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)
 
 ## Where the Engine Looks for a File
 
-A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; fonts, glyph sets, palettes, looks, paper and stroke images and user styles still have searches of their own and move over next, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
+A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** ([ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md); the table below is every kind). It looks, in this order, and takes the first file it finds:
 
 1. **beside the scene**: the kind's folder in the scene's own directory;
 2. **beside each directory above the scene**, one at a time, up to and including the [project root](#the-project-root);
@@ -71,6 +71,14 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 | `files` | `D` itself | a path as written | `terrain.heightmap`, `terrain.splat_map`, `grass_ground.mask`, `spline.file`, `[environment] skybox`, `[scene] input_config` (and `config/input.toml` when a scene names none) |
 | `particle-textures` | `particles/`, then `D` itself | a file name as written | an effect's or a `particle_emitter`'s `texture = "spark.png"` |
 | `scenes` | `D` itself | a path as written | `load_scene("levels/two.scene.toml")`: the target of a transition, from the current scene |
+| `palettes` | `palettes/`, then `D` itself | `.palette.toml` | `[post_process.styles.ascii] palette = "dusk"` (or a path, `"art/dusk.palette.toml"`), `--ascii-palette`, a per-entity style's `palette` |
+| `glyph-sets` | `fonts/`, then `D` itself | `.glyphs.toml` | a style's `font = "terminal"`, `--ascii-font`, `ui_text.font = "terminal"`, a `.font.toml`'s `glyphs` |
+| `fonts` | `D` itself, then `fonts/` | `.font.toml` | `ui_text.font = "fonts/ui.font.toml"` |
+| `font-faces` | `fonts/` | a file name as written (`.ttf`, `.otf`) | every one is loaded for the script HUD, under its file stem; a `fonts/fonts.toml` alias names one by `file` |
+| `looks` | `styles/`, then `D` itself | `.look.toml` | `[post_process] look = "dusk"`, `--look dusk`, `set_look("dusk")`, or a path, `--look out/tuned.look.toml` |
+| `papers` | `papers/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `paper_image = "cold_press"` or `"scans/linen.jpg"` (pencil, watercolor) |
+| `strokes` | `strokes/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `stroke_image = "graphite"` (pencil) |
+| `styles` | `styles/` | `.shader.toml` | every user style the scene can see is registered; `[post_process.styles.glow]` names one |
 
 `flint asset where --help` prints this table from the engine's own.
 
@@ -85,7 +93,7 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 
 No path is tried twice, and the list a miss prints is in the order tried, the as-written paths first.
 
-**Kinds loaded as a whole.** Animation clips, sequences, sprite animations, the `audio/` preload and procgen specs load every file the scene can see, from every one of those folders, a nearer file hiding a farther one of the same name. Only a kind's named folders are listed, never the scene's own directory, and not their subfolders, except for scripts and specs, whose folders are listed with their subfolders (a folder's own files before its subfolders').
+**Kinds loaded as a whole.** Animation clips, sequences, sprite animations, the `audio/` preload, procgen specs, user styles and the HUD's font files load every file the scene can see, from every one of those folders, a nearer file hiding a farther one of the same name. Only a kind's named folders are listed, never the scene's own directory, and not their subfolders, except for scripts and specs, whose folders are listed with their subfolders (a folder's own files before its subfolders').
 
 **Named inside the file.** A procgen spec is asked for by the `[meta] name` it states, whatever its file is called: `specs/trees/big_oak.procgen.toml` with `name = "oak_tree"` is the spec `oak_tree`. The places and their order are the same as for every kind; the nearest file that states a name is that name's spec, a file that states none is not a spec, and of two in one folder stating the same name the first by file name wins. A miss lists the folders read, not files. `flint asset where specs oak_tree` answers by that name.
 
@@ -94,6 +102,14 @@ No path is tried twice, and the list a miss prints is in the order tried, the as
 **Files named by a path.** A heightmap, a splat map, a grass mask, a spline file, a skybox, a scene's `input_config` and a transition's target are written as paths (`terrain/height.png`), and the path is tried from the scene's directory, then from each directory above it. A transition's target that isn't found that way is still opened as written, which is a path from the working directory.
 
 **Saving a wooze preset.** The Living Props panel and `save_living_preset(name)` write `<name>.wooze.toml` into the nearest `wooze/` folder that exists between the scene and the project root (never the mounted engine's), and into a new `wooze/` beside the scene when there is none. A preset saved there is one the scene finds.
+
+**Built in, after the search.** Three kinds have names the engine carries itself: the palettes `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` and `paper`; the looks `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint` and `charcoal`; and the glyph set `builtin`. For palettes and looks the search runs first and **a file it finds wins over a built-in of the same name**, so a game's `palettes/amber.palette.toml` replaces the built-in amber for every scene that can see it; the built-in is what is used when no file is found. The glyph set `builtin` is never searched for: it always means the engine's own, and a file named `builtin.glyphs.toml` is not reachable by that name. Paper and stroke images have no built-ins (a style with no image draws its procedural paper and strokes). `flint asset where palettes amber` says when the answer is a built-in. The lists the F4 style editor and `flint render --list-styles` offer for a `palette`, `font`, `paper_image` or `stroke_image` are the built-ins and then exactly the files this search sees from the scene.
+
+**Looks, palettes, glyph sets and images named by a path.** Each of these may be written as a path ending in the kind's extension (`--look out/tuned.look.toml`, `palette = "art/dusk.palette.toml"`, `paper_image = "scans/linen.jpg"`). The path is tried from the scene's directory and then from each directory above it, like any name, which is why "`D` itself" is one of their folders. It is **not** tried from the working directory: a path typed after `--look` or `--ascii-palette` is found when it leads from the scene's folder or from a folder above it (the project root among them, which is where commands are usually run from), and not otherwise. A look path ending `.toml` but not `.look.toml` is searched the same way, as a file named by its path.
+
+**Files a description names beside itself.** A glyph set's `[font] file`, a user style's WGSL and its `[images]`, and (after the texture search misses) a `.font.toml`'s `texture` are read from the folder of the file that names them. That is not a search: wherever the description was found, its own files are beside it.
+
+**User styles of one name.** Two `styles/` folders may each hold a `glow.shader.toml`. A scene gets the one nearest to it, as with every asset; inside one folder a style is its file's name, so there is only one. The registry of styles is one for the whole run, so when the next scene's nearest `glow` is another file, that file takes the name over (as an edit to the file would), and a style that only an earlier scene's folders had stays registered.
 
 **Models and textures have two sources ahead of the files.** A name in the [asset catalog](#asset-catalog) resolves to its stored file first, and the player then asks for a [procgen spec](procgen.md) of the same name; the search above is for the file, and is what runs when neither has it. A miss says so under the paths: `and before the files: the asset catalog, a procgen spec of the same name`.
 
@@ -133,6 +149,24 @@ particle effect 'campfire'
     scenes/particles/campfire.particles.toml
 ```
 
+A palette, look or glyph set the engine has built in is not a failure: with no file of the name, the answer is the built-in, with the places a file would have been found first.
+
+```
+$ flint asset where palettes amber --scene scenes/act1/cave/deep.scene.toml
+palette 'amber'
+  project  . (flint.toml)
+  scene    scenes/act1/cave
+  loads    the built-in palette 'amber': no file shadows it. Tried:
+    scenes/act1/cave/palettes/amber.palette.toml
+    scenes/act1/cave/amber.palette.toml
+    scenes/act1/palettes/amber.palette.toml
+    scenes/act1/amber.palette.toml
+    scenes/palettes/amber.palette.toml
+    scenes/amber.palette.toml
+    palettes/amber.palette.toml
+    amber.palette.toml
+```
+
 When there is no such file it lists every path it tried and exits with status 1. A loader that can't find an asset prints the same list in its warning:
 
 ```
@@ -154,7 +188,7 @@ Error: particle effect 'ice' not found (5 places tried)
 | `<kind>` | A kind from the table above. `flint asset where --help` lists them |
 | `<name>` | The name a scene would use |
 | `--scene <file>` | The scene that names it. Without one, a scene in the working directory is assumed |
-| `--json` | One JSON document on stdout: `kind`, `name`, `scene_dir`, `project { root, found }`, `found` (a path or `null`), `tried` (the paths missed, in order) and `order_change`. Paths use forward slashes on every platform. The exit status is still 1 when nothing was found |
+| `--json` | One JSON document on stdout: `kind`, `name`, `scene_dir`, `project { root, found }`, `found` (a path or `null`), `tried` (the paths missed, in order), `order_change` and `built_in` (no file, and the engine has one of that name built in). Paths use forward slashes on every platform. The exit status is still 1 when nothing was found and nothing is built in |
 
 For one release, where a kind's old search would have picked a **different file** than the one rule does, the engine says so: a `note` line here (and `order_change` in the JSON), and a warning on stderr when a scene loads, once for each such file.
 

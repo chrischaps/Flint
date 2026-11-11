@@ -229,18 +229,21 @@ fn list(args: ListArgs) -> Result<()> {
                 .unwrap_or(Path::new("."))
         }
     });
-    if let Some(dir) = scene_dir {
-        for message in custom::load_dir(dir) {
+    // The styles and choices a scene there sees, by its project's one
+    // asset search (ADR 0114); with no scene, the working directory's
+    let assets = flint_core::project::AssetScope::for_dir(scene_dir.unwrap_or(Path::new(".")));
+    if scene_dir.is_some() {
+        for message in custom::load_for(&assets) {
             eprintln!("warning: {message}");
         }
     }
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&catalog::catalog_for(scene_dir))?
+            serde_json::to_string_pretty(&catalog::catalog_in(&assets))?
         );
     } else {
-        print!("{}", catalog::catalog_text_for(scene_dir));
+        print!("{}", catalog::catalog_text_in(&assets));
     }
     Ok(())
 }

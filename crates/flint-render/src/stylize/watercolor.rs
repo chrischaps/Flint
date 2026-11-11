@@ -396,7 +396,7 @@ impl StylePass for Watercolor {
         let paper = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
             frame.device,
             frame.queue,
-            &super::ChoiceScope::defaults(frame.scene_dir).search(),
+            frame.assets,
             &chosen,
             frame.frame.is_multiple_of(15),
         );

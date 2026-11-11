@@ -18,12 +18,16 @@
 //! tube). Colours are
 //! display (sRGB) values, `#rrggbb` or `#rgb`, at most [`MAX_COLORS`].
 //!
-//! A style names a palette as `builtin` names ([`BUILTIN_PALETTES`]), a
-//! bare name looked up as `<dir>/palettes/<name>.palette.toml` in the
-//! scene's folder then its parent, or a `.palette.toml` path. Every read
-//! goes through the vfs.
+//! A style names a palette by a bare name or a `.palette.toml` path, found
+//! by the project's one asset search ([`AssetKind::Palettes`]:
+//! `palettes/<name>.palette.toml` in the scene's directory, each directory
+//! above it up to the project root, then the mounted engine), or failing
+//! that as one of the built-ins ([`BUILTIN_PALETTES`]): a file the search
+//! finds wins over a built-in of the same name. Every read goes through the
+//! vfs.
 
 use crate::file_watch::FileStamps;
+use flint_core::project::{shown, AssetKind, AssetScope};
 use flint_core::vfs;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -452,24 +456,25 @@ background = "#f3ecdc""##
 /// forgets them all when a file one depended on changes on disk (#323).
 #[derive(Default)]
 pub struct PaletteCache {
-    search: Vec<PathBuf>,
+    /// Where names are searched from; `None` knows the built-ins alone.
+    scope: Option<AssetScope>,
     palettes: HashMap<String, Result<Arc<Palette>, PaletteError>>,
     stamps: FileStamps,
 }
 
 impl PaletteCache {
-    /// A cache that resolves names against `search`, in order.
-    pub fn new(search: Vec<PathBuf>) -> Self {
+    /// A cache that finds names by the project's search, from `scope`.
+    pub fn new(scope: AssetScope) -> Self {
         Self {
-            search,
+            scope: Some(scope),
             palettes: HashMap::new(),
             stamps: FileStamps::default(),
         }
     }
 
-    /// The directories names resolve against.
-    pub fn search(&self) -> &[PathBuf] {
-        &self.search
+    /// The project and scene directory names are searched from.
+    pub fn scope(&self) -> Option<&AssetScope> {
+        self.scope.as_ref()
     }
 
     /// The palette `name` names, loading it the first time.
@@ -477,14 +482,24 @@ impl PaletteCache {
         if let Some(found) = self.palettes.get(name) {
             return found.clone();
         }
-        let candidates = self.candidates(name);
-        // Watch the candidates up to the one that loads: an edit to it, or a
-        // file appearing ahead of it (or at all, after a failure), reloads
-        let found = candidates.iter().position(vfs::is_file);
-        for path in &candidates[..found.map_or(candidates.len(), |i| i + 1)] {
-            self.stamps.watch(path);
+        let answer = self
+            .scope
+            .as_ref()
+            .map(|scope| scope.explain(AssetKind::Palettes, name));
+        let mut tried: &[PathBuf] = &[];
+        let mut found = None;
+        if let Some(answer) = &answer {
+            if let Some(change) = &answer.order_change {
+                change.log();
+            }
+            // Watch the places up to the one that loads: an edit to it, or
+            // a file appearing ahead of it (or at all, after a failure),
+            // reloads
+            self.stamps.watch_all(answer.watched());
+            tried = &answer.tried;
+            found = answer.found.as_deref();
         }
-        let loaded = self.resolve(name, &candidates, found);
+        let loaded = Self::load(name, tried, found);
         if let Err(e) = &loaded {
             tracing::warn!("palette `{name}`: {e}");
         }
@@ -511,41 +526,30 @@ impl PaletteCache {
         changed
     }
 
-    fn candidates(&self, name: &str) -> Vec<PathBuf> {
-        if name.ends_with(PALETTE_SUFFIX) {
-            let mut c: Vec<PathBuf> = self.search.iter().map(|d| d.join(name)).collect();
-            c.push(PathBuf::from(name));
-            c
-        } else {
-            self.search
-                .iter()
-                .map(|d| d.join("palettes").join(format!("{name}{PALETTE_SUFFIX}")))
-                .collect()
-        }
-    }
-
-    fn resolve(
-        &self,
+    fn load(
         name: &str,
-        candidates: &[PathBuf],
-        found: Option<usize>,
+        tried: &[PathBuf],
+        found: Option<&Path>,
     ) -> Result<Arc<Palette>, PaletteError> {
-        // A file beside the scene wins over a built-in of the same name
-        if let Some(i) = found {
-            return Palette::load(&candidates[i]).map(Arc::new);
+        // A file the search finds wins over a built-in of the same name
+        if let Some(path) = found {
+            return Palette::load(path).map(Arc::new);
         }
         if let Some(p) = Palette::builtin(name) {
             return Ok(p);
         }
-        Err(PaletteError::Read(format!(
-            "no palette `{name}` (built-in: {}; looked for {})",
+        let mut text = format!(
+            "no palette `{name}`: not one of the built-ins ({}), and no file. Tried:",
             BUILTIN_PALETTES.join(", "),
-            candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )))
+        );
+        if tried.is_empty() {
+            text.push_str(" nowhere (no scene to search from)");
+        }
+        for path in tried {
+            text.push_str("\n  ");
+            text.push_str(&shown(path));
+        }
+        Err(PaletteError::Read(text))
     }
 }
 
@@ -684,13 +688,26 @@ mod tests {
             r##"colors = ["#123456"]"##,
         )
         .unwrap();
-        let mut cache = PaletteCache::new(vec![dir.clone()]);
+        std::fs::write(dir.join("flint.toml"), "").unwrap();
+        let mut cache = PaletteCache::new(AssetScope::for_dir(&dir));
         assert_eq!(cache.get("cga").unwrap().colors().len(), 1);
         assert_eq!(
             cache.get("amber").unwrap().matching(),
             PaletteMatch::Luminance
         );
-        assert!(cache.get("nope").is_err());
+        // A miss says the built-ins and every place it looked
+        let err = cache.get("nope").unwrap_err().to_string();
+        assert!(err.contains("built-ins (cga,"), "{err}");
+        let listed: Vec<&str> = err.lines().skip(1).map(str::trim).collect();
+        let at = |rel: &str| shown(&dir.join(rel));
+        assert_eq!(
+            listed,
+            [at("palettes/nope.palette.toml"), at("nope.palette.toml")]
+        );
+        // With nothing to search from, the built-ins are all there is
+        let mut bare = PaletteCache::default();
+        assert!(bare.get("amber").is_ok());
+        assert!(bare.get("nope").is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -702,7 +719,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("palettes")).unwrap();
         let file = dir.join("palettes/tide.palette.toml");
         std::fs::write(&file, r##"colors = ["#ff0000"]"##).unwrap();
-        let mut cache = PaletteCache::new(vec![dir.clone()]);
+        std::fs::write(dir.join("flint.toml"), "").unwrap();
+        let mut cache = PaletteCache::new(AssetScope::for_dir(&dir));
         let before = cache.get("tide").unwrap();
         assert!(!cache.poll(), "nothing changed yet");
         assert!(Arc::ptr_eq(&before, &cache.get("tide").unwrap()));
@@ -743,5 +761,52 @@ colors = ["#ffaa00"]"##,
             PaletteMatch::Nearest
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ADR 0114: a scene two folders down finds the project's palette, and
+    /// one that appears nearer later (beside the scene, or a folder between)
+    /// takes over at the next poll, since every nearer place is watched.
+    #[test]
+    fn a_nested_scene_finds_the_projects_palette_and_a_nearer_one_takes_over() {
+        let root = std::env::temp_dir().join(format!("flint-palette-near-{}", std::process::id()));
+        let scene_dir = root.join("scenes/act1/cave");
+        std::fs::create_dir_all(&scene_dir).unwrap();
+        std::fs::create_dir_all(root.join("palettes")).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        std::fs::write(
+            root.join("palettes/tide.palette.toml"),
+            r##"colors = ["#ff0000"]"##,
+        )
+        .unwrap();
+        let mut cache = PaletteCache::new(AssetScope::for_dir(&scene_dir));
+        assert_eq!(cache.get("tide").unwrap().colors().len(), 1);
+        assert!(!cache.poll());
+
+        // A folder between the scene and the root gets its own
+        std::fs::create_dir_all(root.join("scenes/palettes")).unwrap();
+        std::fs::write(
+            root.join("scenes/palettes/tide.palette.toml"),
+            r##"colors = ["#00ff00", "#0000ff"]"##,
+        )
+        .unwrap();
+        assert!(cache.poll(), "a nearer file appeared");
+        assert_eq!(cache.get("tide").unwrap().colors().len(), 2);
+        assert!(!cache.poll());
+
+        // Then the scene's own folder does
+        std::fs::create_dir_all(scene_dir.join("palettes")).unwrap();
+        std::fs::write(
+            scene_dir.join("palettes/tide.palette.toml"),
+            r##"colors = ["#111111", "#222222", "#333333"]"##,
+        )
+        .unwrap();
+        assert!(cache.poll());
+        assert_eq!(cache.get("tide").unwrap().colors().len(), 3);
+
+        // Taken away again, the next one out is back
+        std::fs::remove_file(scene_dir.join("palettes/tide.palette.toml")).unwrap();
+        assert!(cache.poll());
+        assert_eq!(cache.get("tide").unwrap().colors().len(), 2);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

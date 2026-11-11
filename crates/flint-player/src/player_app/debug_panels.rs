@@ -45,13 +45,11 @@ impl PlayerApp {
             .unwrap_or_default()
     }
 
-    /// The scene's folder, where the style editor finds its own palettes
-    /// and glyph sets to offer (#322).
+    /// The scene's project and folder, where the style editor finds the
+    /// palettes and glyph sets to offer (#322), by the one asset search.
     #[cfg(feature = "debug-hud")]
-    fn styles_scene_dir(&self) -> Option<std::path::PathBuf> {
-        std::path::Path::new(&self.scene_path)
-            .parent()
-            .map(std::path::Path::to_path_buf)
+    fn styles_scene_dir(&self) -> Option<flint_core::project::AssetScope> {
+        Some(self.kept_asset_scope())
     }
 
     /// The scene file the style editors' Commit to scene writes (#364):
@@ -72,7 +70,9 @@ impl PlayerApp {
     pub(super) fn create_render_debug_panel(&mut self) {
         let authored = self.authored_styles();
         let scene_dir = self.styles_scene_dir();
-        let looks = flint_render::look::list(&self.scene_path);
+        let looks = flint_render::look::list_in(&scene_dir.clone().unwrap_or_else(|| {
+            flint_core::project::AssetScope::new(self.project.clone(), self.scene_dir())
+        }));
         let current = self.current_look().map(str::to_string);
         let scene_file = self.styles_scene_file();
         let existing = self
@@ -86,14 +86,14 @@ impl PlayerApp {
         match existing {
             Some(panel) => {
                 panel.set_authored_styles(Some(authored));
-                panel.set_scene_dir(scene_dir);
+                panel.set_asset_scope(scene_dir);
                 panel.set_looks(&looks, current.as_deref());
                 panel.set_scene_file(scene_file);
             }
             None => {
                 let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
                 panel.set_authored_styles(Some(authored));
-                panel.set_scene_dir(scene_dir);
+                panel.set_asset_scope(scene_dir);
                 panel.set_looks(&looks, current.as_deref());
                 panel.set_scene_file(scene_file);
                 self.debug_panels.push(Box::new(panel));
@@ -144,7 +144,7 @@ impl PlayerApp {
             return;
         }
         let panel = flint_debug_ui::StylesDebugPanel::new(Some(authored))
-            .with_scene_dir(self.styles_scene_dir())
+            .with_asset_scope(self.styles_scene_dir())
             .with_scene_file(self.styles_scene_file());
         self.debug_panels.push(Box::new(panel));
     }

@@ -143,11 +143,10 @@ use super::{
 };
 use crate::glyph_atlas::{
     calibrated_bounds, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphStack, RampMap, BUILTIN_SET,
-    GLYPHS_SUFFIX,
 };
-use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS, PALETTE_SUFFIX};
+use crate::palette::{Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
-use std::path::{Path, PathBuf};
+use flint_core::project::AssetKind;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -182,16 +181,16 @@ pub const RAMPS: &[&str] = &[
     "braille",
 ];
 
-/// The fonts to offer (#322): the built-in set, then every
-/// `fonts/*.glyphs.toml` beside the scene or in its parent.
+/// The fonts to offer (#322): the built-in set, then every glyph set the
+/// scene can see (`fonts/*.glyphs.toml`, by the project's search).
 fn font_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
-    choices_with(&[BUILTIN_SET], scope.files("fonts", GLYPHS_SUFFIX))
+    choices_with(&[BUILTIN_SET], scope.files(AssetKind::GlyphSets))
 }
 
-/// The palettes to offer (#322): the built-ins, then every
-/// `palettes/*.palette.toml` beside the scene or in its parent.
+/// The palettes to offer (#322): the built-ins, then every palette the
+/// scene can see (`palettes/*.palette.toml`, by the project's search).
 pub(super) fn palette_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
-    choices_with(BUILTIN_PALETTES, scope.files("palettes", PALETTE_SUFFIX))
+    choices_with(BUILTIN_PALETTES, scope.files(AssetKind::Palettes))
 }
 
 /// The ramps the chosen font has (#322): a project's set names its own,
@@ -204,7 +203,10 @@ fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
     if font.is_empty() || font == BUILTIN_SET {
         return builtin();
     }
-    match GlyphSetCache::new(scope.search()).get(&font) {
+    let Some(assets) = scope.assets else {
+        return builtin();
+    };
+    match GlyphSetCache::new(assets.clone()).get(&font) {
         Ok(set) => set.ramps().map(|r| r.name().to_string()).collect(),
         Err(_) => builtin(),
     }
@@ -1684,7 +1686,6 @@ impl LoadedStack {
 
 #[derive(Default)]
 struct Fonts {
-    search: Vec<PathBuf>,
     cache: GlyphSetCache,
     palettes: PaletteCache,
     stack: Option<LoadedStack>,
@@ -1700,22 +1701,6 @@ struct Fonts {
 /// The ASCII style asks its caches whether a palette or glyph set file
 /// changed every this many frames: a quarter second at 60 fps.
 const POLL_FRAMES: u32 = 15;
-
-impl Fonts {
-    /// Look in the scene's folder and its parent, as the player finds
-    /// `fonts/`, then the working directory.
-    fn search_for(scene_dir: Option<&Path>) -> Vec<PathBuf> {
-        let mut search = Vec::new();
-        if let Some(dir) = scene_dir {
-            search.push(dir.to_path_buf());
-            if let Some(parent) = dir.parent() {
-                search.push(parent.to_path_buf());
-            }
-        }
-        search.push(PathBuf::from("."));
-        search
-    }
-}
 
 struct Ascii {
     cells_pipeline: wgpu::RenderPipeline,
@@ -2685,11 +2670,9 @@ impl Ascii {
     /// (#323). A reloaded set is a new Arc, so the stack re-uploads, and
     /// palettes are packed afresh every frame.
     fn refresh_fonts(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
-        let search = Fonts::search_for(frame.scene_dir);
-        if fonts.search != search {
-            fonts.cache = GlyphSetCache::new(search.clone());
-            fonts.palettes = PaletteCache::new(search.clone());
-            fonts.search = search;
+        if fonts.cache.scope() != Some(frame.assets) {
+            fonts.cache = GlyphSetCache::new(frame.assets.clone());
+            fonts.palettes = PaletteCache::new(frame.assets.clone());
             fonts.stack = None;
         }
         fonts.since_poll += 1;
@@ -3270,6 +3253,8 @@ fn text_first(origin: [f32; 2]) -> [u32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::project::AssetScope;
+    use std::path::Path;
 
     #[test]
     fn edge_regions_hold_the_cells_under_a_rect_their_neighbours_and_their_pixels() {
@@ -3561,8 +3546,8 @@ mod tests {
     #[test]
     fn palettes_and_fonts_beside_the_scene_are_offered() {
         flint_core::vfs::scoped(Arc::new(game_files()), || {
-            let dir = Path::new("game/levels");
-            let scope = ChoiceScope::defaults(Some(dir));
+            let assets = AssetScope::for_dir(Path::new("game/levels"));
+            let scope = ChoiceScope::defaults(Some(&assets));
             let palettes = option("palette").choices_in(&scope);
             let mut want: Vec<String> = BUILTIN_PALETTES.iter().map(|s| s.to_string()).collect();
             want.extend(["dusk".to_string(), "tidepool".to_string()]);
@@ -3578,10 +3563,50 @@ mod tests {
         });
     }
 
+    /// ADR 0114: the lists are the resolver's. A scene two folders down is
+    /// offered the project's palettes and fonts, a nearer file of a name
+    /// hides the project's, and every name offered is one the caches find.
+    #[test]
+    fn the_lists_are_what_the_search_finds_from_a_nested_scene() {
+        let mut files = game_files();
+        files.insert("game/flint.toml", "");
+        files.insert("game/levels/act1/cave/a.scene.toml", "");
+        files.insert(
+            "game/levels/act1/palettes/dusk.palette.toml",
+            "colors = [\"#101010\", \"#202020\", \"#303030\"]\n",
+        );
+        files.insert(
+            "game/engine/palettes/stock.palette.toml",
+            "colors = [\"#ffffff\"]\n",
+        );
+        flint_core::vfs::scoped(Arc::new(files), || {
+            let assets = AssetScope::for_dir(Path::new("game/levels/act1/cave"));
+            let scope = ChoiceScope::defaults(Some(&assets));
+            let palettes = option("palette").choices_in(&scope);
+            let mut want: Vec<String> = BUILTIN_PALETTES.iter().map(|s| s.to_string()).collect();
+            want.extend(["dusk", "stock", "tidepool"].map(String::from));
+            assert_eq!(palettes, want);
+            assert_eq!(
+                option("font").choices_in(&scope),
+                ["builtin", "plain", "terminal"]
+            );
+            let mut cache = PaletteCache::new(assets.clone());
+            for name in &palettes {
+                assert!(cache.get(name).is_ok(), "{name} is offered and found");
+            }
+            // The nearer dusk, three inks, not the project's
+            assert_eq!(cache.get("dusk").unwrap().colors().len(), 3);
+            let mut fonts = GlyphSetCache::new(assets.clone());
+            for name in option("font").choices_in(&scope) {
+                assert!(fonts.get(&name).is_ok(), "{name} is offered and found");
+            }
+        });
+    }
+
     #[test]
     fn the_ramp_list_follows_the_chosen_font() {
         flint_core::vfs::scoped(Arc::new(game_files()), || {
-            let dir = Path::new("game/levels");
+            let assets = AssetScope::for_dir(Path::new("game/levels"));
             let font = |name: &'static str| {
                 move |o: &str| match o {
                     "font" => name.to_string(),
@@ -3590,7 +3615,7 @@ mod tests {
             };
             let plain = font("plain");
             let scope = ChoiceScope {
-                scene_dir: Some(dir),
+                assets: Some(&assets),
                 option: &plain,
             };
             let mut ramps = option("ramp").choices_in(&scope);
@@ -3600,7 +3625,7 @@ mod tests {
             let missing = font("nonesuch");
             for f in [&font("builtin") as &dyn Fn(&str) -> String, &missing] {
                 let scope = ChoiceScope {
-                    scene_dir: Some(dir),
+                    assets: Some(&assets),
                     option: f,
                 };
                 let ramps = option("ramp").choices_in(&scope);

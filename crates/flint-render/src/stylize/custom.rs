@@ -61,6 +61,7 @@ use super::{
     StyleOption, StyleParam, StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
+use flint_core::project::{shown, AssetKind, AssetScope};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -2087,59 +2088,75 @@ fn loaded(name: &str) -> Option<Arc<Loaded>> {
         .cloned()
 }
 
-/// The folders a scene in `scene_dir` finds styles in: its own `styles/`,
-/// then its parent's (a game's `levels/` beside `styles/`), as models are.
-pub fn style_dirs(scene_dir: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![scene_dir.join("styles")];
-    if let Some(parent) = scene_dir.parent() {
-        dirs.push(parent.join("styles"));
-    }
-    dirs
+/// The folders a scene finds styles in, nearest first: `styles/` in the
+/// scene's directory, in each directory above it up to the project root,
+/// then in the mounted engine (ADR 0114; [`AssetKind::Styles`]).
+pub fn style_dirs(scope: &AssetScope) -> Vec<PathBuf> {
+    scope.search_dirs(AssetKind::Styles)
 }
 
-/// Register every `*.shader.toml` in `scene_dir`'s style folders that
-/// isn't registered yet. Call it before the scene's `[post_process]` is
-/// read, or its tables name an unknown style. Returns one message for each
-/// file that couldn't be loaded (and each warning a check raised); a
-/// style whose shader fails still registers, drawing a passthrough.
+/// [`load_for`] for a host that kept only the scene's directory: the
+/// project is found from it.
 pub fn load_dir(scene_dir: &Path) -> Vec<String> {
+    load_for(&AssetScope::for_dir(scene_dir))
+}
+
+/// Register every user style a scene can see: each `*.shader.toml` the
+/// project's one search lists from `scope`
+/// ([`Project::list`](flint_core::project::Project::list)). Call it before
+/// the scene's `[post_process]` is read, or its tables name an unknown
+/// style. Returns one message for each file that couldn't be loaded (and
+/// each warning a check raised); a style whose shader fails still
+/// registers, drawing a passthrough.
+///
+/// Which of two styles of one name wins (#426): the nearest to the scene,
+/// as for every asset. In one `styles/` folder a style is its file's name,
+/// so there is one of a name. The registry is one for the process, so a
+/// style this scene sees in a nearer file than the one loaded (for an
+/// earlier scene, from another folder) takes its place at the same
+/// registry index, as a hot reload does. Styles only an earlier scene's
+/// folders had stay registered.
+pub fn load_for(scope: &AssetScope) -> Vec<String> {
     let mut messages = Vec::new();
-    for dir in style_dirs(scene_dir) {
-        let Ok(mut entries) = flint_core::vfs::read_dir(&dir) else {
-            continue;
-        };
-        entries.sort();
-        for path in entries {
-            let is_style = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .is_some_and(|f| f.ends_with(SUFFIX));
-            if is_style {
-                if let Err(e) = load_file(&path, &mut messages) {
-                    messages.push(e);
-                }
-            }
+    for listed in scope.list(AssetKind::Styles) {
+        if let Err(e) = load_file(&listed.path, &mut messages) {
+            messages.push(e);
         }
     }
     messages
 }
 
-/// Register the style `path` describes (see [`load_dir`]).
+/// Register the style `path` describes (see [`load_for`]): new, or in
+/// place of the style of its name loaded from another file.
 pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> {
-    let source = read_source(path)?;
-    if let Some(existing) = loaded(&source.name) {
-        if existing.source.toml_path != source.toml_path {
-            messages.push(format!(
-                "{}: style \"{}\" is already loaded from {}; this one is skipped",
-                path.display(),
-                source.name,
-                existing.source.toml_path.display()
-            ));
-        }
+    // Loaded from this very file: a changed one is the reload's to read
+    if loaded_from(path).is_some() {
         return Ok(());
     }
-    install(source, messages, false);
+    let source = read_source(path)?;
+    match loaded(&source.name) {
+        Some(existing) => {
+            tracing::info!(
+                "style '{}': {} takes over from {} (the nearest styles/ to the scene wins)",
+                source.name,
+                shown(path),
+                shown(&existing.source.toml_path)
+            );
+            install(source, messages, true);
+        }
+        None => install(source, messages, false),
+    }
     Ok(())
+}
+
+/// The loaded style whose description is the file at `path`.
+fn loaded_from(path: &Path) -> Option<Arc<Loaded>> {
+    LOADED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|l| flint_core::project::same_path(&l.source.toml_path, path))
+        .cloned()
 }
 
 /// Read and check the description at `path` (not its shader).
@@ -2450,9 +2467,25 @@ impl Reload {
     }
 }
 
+/// [`reload_changed_for`] for a host that kept only the scene's directory.
+/// The project is found from it each call: a host that polls holds an
+/// [`AssetScope`] and calls [`reload_changed_for`].
+pub fn reload_changed(scene_dir: &Path) -> Reload {
+    #[cfg(not(target_arch = "wasm32"))]
+    return reload_changed_for(&AssetScope::for_dir(scene_dir));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = scene_dir;
+        Reload::default()
+    }
+}
+
 /// Hot reload of the descriptions (#275), natively: read again every
 /// loaded `.shader.toml` whose modified time moved, and load any new one
-/// in `scene_dir`'s style folders. A description that no longer reads
+/// in the style folders `scope` searches ([`style_dirs`]), by the same
+/// rule a load follows: a file that appears nearer to the scene than the
+/// style of its name that is loaded takes over, and when it goes the next
+/// one out is loaded again. A description that no longer reads
 /// keeps the style as it was and shows the error ([`errors`]); one that
 /// does replaces the style at its registry index, so the renderer builds
 /// it again on the next frame. The WGSL itself is polled by the pass, so
@@ -2461,7 +2494,7 @@ impl Reload {
 /// Costs one `stat` a loaded style and one directory listing a style
 /// folder: call it a few times a second, not every frame. On the web it
 /// does nothing.
-pub fn reload_changed(scene_dir: &Path) -> Reload {
+pub fn reload_changed_for(scope: &AssetScope) -> Reload {
     let mut reload = Reload::default();
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -2487,26 +2520,30 @@ pub fn reload_changed(scene_dir: &Path) -> Reload {
                 }
             }
         }
-        let (before, known): (Vec<String>, Vec<PathBuf>) = LOADED
+        let before: Vec<(String, PathBuf)> = LOADED
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|l| (l.source.name.clone(), l.source.toml_path.clone()))
-            .unzip();
+            .collect();
         // New files; one that failed is tried again only once it changes,
         // so a broken new file reports once, not four times a second
         static REFUSED: Mutex<BTreeMap<PathBuf, Option<std::time::SystemTime>>> =
             Mutex::new(BTreeMap::new());
-        for dir in style_dirs(scene_dir) {
-            let Some(entries) = flint_core::file_watch::list(&dir) else {
+        // The folders in the search's order, the nearest file of a name the
+        // one that counts: `Project::list`'s rule, read through
+        // `file_watch` so the poll never waits on the disk (#633)
+        let mut seen = std::collections::HashSet::new();
+        for dir in style_dirs(scope) {
+            let Some(mut entries) = flint_core::file_watch::list(&dir) else {
                 continue;
             };
+            entries.sort();
             for (path, _) in entries {
-                let is_style = path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .is_some_and(|f| f.ends_with(SUFFIX));
-                if !is_style || known.contains(&path) {
+                let Some(name) = AssetKind::Styles.info().name_of(&path) else {
+                    continue;
+                };
+                if !seen.insert(name) || loaded_from(&path).is_some() {
                     continue;
                 }
                 let now = modified(&path);
@@ -2516,18 +2553,7 @@ pub fn reload_changed(scene_dir: &Path) -> Reload {
                 }
                 match load_file(&path, &mut reload.messages) {
                     Ok(()) => {
-                        // Skipped (its name is loaded from another folder):
-                        // said once, like a failure
-                        let took = LOADED
-                            .read()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .iter()
-                            .any(|l| l.source.toml_path == path);
-                        if took {
-                            refused.remove(&path);
-                        } else {
-                            refused.insert(path, now);
-                        }
+                        refused.remove(&path);
                     }
                     Err(e) => {
                         reload.messages.push(e);
@@ -2536,16 +2562,22 @@ pub fn reload_changed(scene_dir: &Path) -> Reload {
                 }
             }
         }
-        reload.added = LOADED
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .map(|l| l.source.name.clone())
-            .filter(|n| !before.contains(n))
-            .collect();
+        for l in LOADED.read().unwrap_or_else(|e| e.into_inner()).iter() {
+            let name = &l.source.name;
+            match before.iter().find(|(n, _)| n == name) {
+                None => reload.added.push(name.clone()),
+                // Another file took the name over: its parameters may differ
+                Some((_, path)) if *path != l.source.toml_path => {
+                    if !reload.replaced.contains(name) {
+                        reload.replaced.push(name.clone());
+                    }
+                }
+                Some(_) => {}
+            }
+        }
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = scene_dir;
+    let _ = scope;
     reload
 }
 
@@ -4690,6 +4722,82 @@ fn style(p: StylePixel) -> vec4<f32> {
             .iter()
             .position(|d| d.name == name)
             .unwrap()
+    }
+
+    /// #426, by ADR 0114's one rule: of two user styles of one name, the
+    /// one in the `styles/` nearest the scene wins. A scene two folders
+    /// down finds a style where the scene-then-parent search found none;
+    /// the next scene, in another folder, gets its own nearest, in the same
+    /// registry slot; and a nearer file that appears later takes over at
+    /// the next reload poll, and gives the name back when it goes.
+    #[test]
+    fn the_nearest_styles_folder_wins_a_name() {
+        let root = std::env::temp_dir().join(format!("flint-user-426-{}", std::process::id()));
+        let cave = root.join("levels/act/cave");
+        let other = root.join("other");
+        std::fs::create_dir_all(&cave).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        let write = |folder: &str, k: f32| {
+            let styles = root.join(folder).join("styles");
+            std::fs::create_dir_all(&styles).unwrap();
+            std::fs::write(
+                styles.join("utest_near.shader.toml"),
+                format!(
+                    "version = 1\nname = \"utest_near\"\nshader = \"near.wgsl\"\n\
+                     [params.k]\ndefault = {k}\nmin = 0\nmax = 9\n"
+                ),
+            )
+            .unwrap();
+            std::fs::write(styles.join("near.wgsl"), PASSTHROUGH).unwrap();
+            styles.join("utest_near.shader.toml")
+        };
+        let at_root = write("", 1.5);
+        let in_levels = write("levels", 2.5);
+        let k = || {
+            super::super::find("utest_near")
+                .unwrap()
+                .param(&Default::default(), "k")
+        };
+        let from = || loaded("utest_near").unwrap().source.toml_path.clone();
+        let cave_scope = AssetScope::for_dir(&cave);
+        let other_scope = AssetScope::for_dir(&other);
+        // What the loader takes is what the resolver lists
+        let listed = cave_scope.list(AssetKind::Styles);
+        assert_eq!(listed.len(), 1);
+        assert!(flint_core::project::same_path(&listed[0].path, &in_levels));
+
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5, "levels/styles is nearer the cave than the root's");
+        assert!(flint_core::project::same_path(&from(), &in_levels));
+        let index = index_of("utest_near");
+
+        // Another scene, whose nearest is the root's
+        assert!(load_for(&other_scope).is_empty());
+        assert_eq!(k(), 1.5);
+        assert!(flint_core::project::same_path(&from(), &at_root));
+        assert_eq!(index_of("utest_near"), index, "one slot for the name");
+        // ... and back, every time, in whichever order scenes load
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5);
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5);
+
+        // A nearer one appears while the scene is open
+        assert!(!reload_changed_for(&cave_scope).changed());
+        let in_act = write("levels/act", 3.5);
+        let reload = reload_changed_for(&cave_scope);
+        assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
+        assert!(reload.added.is_empty());
+        assert_eq!(k(), 3.5);
+        assert_eq!(index_of("utest_near"), index);
+        assert!(!reload_changed_for(&cave_scope).changed(), "settled");
+        // It goes: the next one out has the name again
+        std::fs::remove_file(&in_act).unwrap();
+        let reload = reload_changed_for(&cave_scope);
+        assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
+        assert_eq!(k(), 2.5);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// #275: an edited `.shader.toml` replaces its style at the same

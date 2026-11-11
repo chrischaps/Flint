@@ -98,7 +98,7 @@ impl PlayerApp {
             ui_fonts_warned: HashSet::new(),
             ui_sprites_warned: HashSet::new(),
             text_halos: Default::default(),
-            ui_fonts_root: None,
+            ui_fonts_root: Default::default(),
             ui_fonts_installed: false,
             egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             catalog: AssetCatalog::load_from_directory("assets").ok(),
@@ -273,7 +273,8 @@ impl PlayerApp {
         self.scene_camera = scene_file.camera.clone();
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
-        super::scene_loading::load_user_styles(&self.scene_path);
+        let scope = self.asset_scope();
+        super::scene_loading::load_user_styles_in(&scope);
         self.set_scene_post_process(scene_file.post_process.clone());
         self.scene_living = scene_file.living.clone();
         self.scene_wooze = scene_file.wooze.clone();
@@ -285,8 +286,13 @@ impl PlayerApp {
     /// block drawn without it. Call after the scene's user styles are
     /// loaded (a look may name one).
     pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
-        self.scene_post_process =
-            super::scene_loading::scene_post_process(self.look.as_deref(), &self.scene_path, def);
+        let scope = self.asset_scope();
+        self.scene_post_process = super::scene_loading::scene_post_process_in(
+            self.look.as_deref(),
+            &self.scene_path,
+            &scope,
+            def,
+        );
     }
 
     /// The look the scene draws with now: the one it names, or the one a
@@ -306,7 +312,7 @@ impl PlayerApp {
             None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
                 .map_err(|e| e.to_string())?,
         };
-        let def = flint_render::look::resolve(&base, look, &self.scene_path)?;
+        let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
         self.scene_post_process = Some(def);
         let config = self.scene_post_config();
         if let (Some(renderer), Some(context), Some(config)) = (
@@ -530,14 +536,13 @@ impl PlayerApp {
         // Rebuild component index as a safety net after scene loading
         self.world.rebuild_component_index();
 
-        // Set scene_dir for font/texture resolution
-        scene_renderer.scene_dir = Path::new(&self.scene_path)
-            .parent()
-            .map(|p| p.to_path_buf());
-
-        // Load models from world (including skeletal data)
         // Which project the scene is in, before anything is searched for
         self.refresh_project();
+        // The renderer's styles find their palettes, glyph sets and papers
+        // from the scene's project and folder (ADR 0114)
+        scene_renderer.set_asset_scope(self.kept_asset_scope());
+
+        // Load models from world (including skeletal data)
         let config = build_model_load_config(
             &self.project,
             &self.scene_path,
@@ -949,6 +954,30 @@ impl PlayerApp {
         &self.project
     }
 
+    /// The current scene's directory: where every asset search starts.
+    pub(super) fn scene_dir(&self) -> std::path::PathBuf {
+        Path::new(&self.scene_path)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    }
+
+    /// The current scene's project and directory, for the loaders that
+    /// search from them (looks, user styles, fonts, the renderer's styles).
+    /// The project is asked for again first, so this is right before the
+    /// renderer exists and straight after a transition.
+    pub(super) fn asset_scope(&mut self) -> flint_core::project::AssetScope {
+        self.refresh_project();
+        self.kept_asset_scope()
+    }
+
+    /// [`asset_scope`](Self::asset_scope) with the project as last found,
+    /// for a poll.
+    pub(super) fn kept_asset_scope(&self) -> flint_core::project::AssetScope {
+        flint_core::project::AssetScope::new(self.project.clone(), self.scene_dir())
+    }
+
     /// Ask again which project the current scene belongs to, and take the
     /// answer when it differs: at the first load, and after a transition,
     /// which may cross into another project's root (or a `flint.toml` may
@@ -983,15 +1012,17 @@ impl PlayerApp {
         );
     }
 
-    /// (Re)load `<project>/fonts/` into egui when the project root changed
-    /// since the last scan (initial load and scene transitions). Extensions'
-    /// `fonts` hooks edit the definitions before they're installed.
+    /// (Re)load the fonts the scene sees (`fonts/`, by the project's one
+    /// asset search) into egui when they are other files than the last
+    /// scan's (initial load and scene transitions). Extensions' `fonts`
+    /// hooks edit the definitions before they're installed.
     pub(super) fn refresh_project_fonts(&mut self) {
-        let root = super::fonts::find_fonts_dir(&self.scene_path);
+        let scope = self.asset_scope();
+        let root = super::fonts::ProjectFonts::find(&scope.project, &scope.scene_dir);
         if self.ui_fonts_installed && self.ui_fonts_root == root {
-            return; // same project root as the last scan
+            return; // the same files as the last scan
         }
-        let mut defs = super::fonts::project_font_definitions(&self.scene_path);
+        let mut defs = super::fonts::font_definitions(&root);
         for ext in self.extensions.iter_mut() {
             ext.fonts(&mut defs);
         }

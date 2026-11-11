@@ -34,6 +34,106 @@ to do.
 
 ## 2026-11-10
 
+### Looks, palettes, glyph sets, fonts, paper and stroke images and user styles are found by the one search rule; the working directory is no longer searched (#706)
+**What changed.** The last kinds join the engine's one asset search: beside
+the scene, then beside each directory above it up to the project root, then
+under `engine/` at the root. With them every kind of asset a scene names is
+found the same way. What each looks for at a directory `D` of that walk:
+
+| Kind (`flint asset where <kind>`) | Named by | Tried at each `D` |
+|---|---|---|
+| `looks` | `[post_process] look = "dusk"`, `--look dusk`, `set_look("dusk")` | `D/styles/dusk.look.toml`, then `D/dusk.look.toml` |
+| `palettes` | a style's `palette = "dusk"`, `--ascii-palette` | `D/palettes/dusk.palette.toml`, then `D/dusk.palette.toml` |
+| `glyph-sets` | a style's `font = "terminal"`, `--ascii-font`, `ui_text.font = "terminal"` | `D/fonts/terminal.glyphs.toml`, then `D/terminal.glyphs.toml` |
+| `fonts` | `ui_text.font = "fonts/ui.font.toml"` | `D/fonts/ui.font.toml` (the path from `D`), then `D/fonts/<path>` |
+| `font-faces` | the script HUD's fonts; a `fonts/fonts.toml` alias's `file` | every `.ttf` / `.otf` in `D/fonts/` |
+| `papers` | `paper_image = "cold_press"` (pencil, watercolor) | `D/papers/cold_press.png`, `.jpg`, `.jpeg`, then the same in `D` |
+| `strokes` | `stroke_image = "graphite"` (pencil) | `D/strokes/graphite.png`, `.jpg`, `.jpeg`, then the same in `D` |
+| `styles` | user styles: `[post_process.styles.glow]` | every `D/styles/*.shader.toml` |
+
+A name written as a path (`--look out/tuned.look.toml`, `palette =
+"art/dusk.palette.toml"`, `paper_image = "scans/linen.jpg"`) is that path from
+each `D`.
+
+**Built-ins come after the search**, as before: the built-in palettes
+(`cga`, `phosphor`, `amber`, ...) and looks (`graphite`, `matrix`, ...) are
+used when the search finds no file of the name, and a file it finds wins. The
+glyph set `builtin` is never searched for. `flint asset where palettes amber`
+says when the answer is the built-in, and exits 0.
+
+**Found now where nothing was found before** (no warning: nothing loads
+differently, something loads that did not):
+
+- **A scene more than one folder below the project root** finds the project's
+  `styles/`, `palettes/`, `fonts/`, `papers/` and `strokes/`. Each of these
+  searches stopped one level above the scene before, so a look or palette
+  named from `scenes/act1/cave/` fell back to a built-in or a warning.
+- **The engine subtree's files.** `engine/styles/*.look.toml`,
+  `engine/palettes/`, `engine/fonts/` and `engine/styles/*.shader.toml` are
+  searched last. The eight shipped looks are files in `engine/styles/`, so a
+  game with an engine subtree now reads them from the subtree instead of the
+  copies compiled into the binary. They are the same looks unless the subtree
+  and the binary are different engine versions.
+- **The script HUD's fonts are every `fonts/` the scene can see**, not the
+  first one that exists. A `fonts/` beside a scene used to hide the project's
+  `fonts/` whole; now it adds to it, hiding only files of the same name. The
+  `fonts/fonts.toml` read is the nearest one. A `ui_text.font` naming a
+  `.font.toml` was read from the scene's own folder only; now from each folder
+  above it too.
+- **A user style in a `styles/` two or more folders up**, and one in
+  `engine/styles/`.
+
+**The working directory is no longer searched.** Before, a look was also
+looked for in `styles/` of the directory the command was run from, a palette
+in its `palettes/`, a glyph set in its `fonts/` (in the ASCII style), a paper
+or stroke image in it and its `papers/` / `strokes/`; and `--look
+some/file.toml`, or a `.palette.toml` / `.glyphs.toml` path, was read as a
+path from the working directory. Now the only places are the ones in the rule.
+Run from the project root this changes nothing: the root is the last
+directory of the walk, so `flint render levels/a.scene.toml --look
+out/tuned.look.toml` from the root still finds `out/tuned.look.toml`. It
+changes when a command is run from somewhere else, or the file is outside the
+scene's project. With no scene at all (`flint edit model.glb --style ...`,
+`--list-styles` with no scene), the working directory stands in for the
+scene's folder, as before.
+
+**User styles of one name.** With a `glow.shader.toml` in two `styles/`
+folders, a scene gets the one nearest to it. Before, the first scene loaded in
+a run decided `glow` for every later scene and the other file was skipped
+with a warning (and `flint bundle` refused the game). Now each scene's
+nearest takes the name when that scene loads, and a nearer file dropped in
+while the scene is open takes over at the next reload poll.
+
+**What to do.** Usually nothing. Where a pick changed, the engine says so for
+one release, once per file, on stderr when the scene loads and as a `note` in
+`flint asset where`:
+
+```
+look 'dusk': the search order changed (ADR 0114). Before, the engine loaded styles/dusk.look.toml; now it loads none: that file is outside the project. Move it into the project, or put a flint.toml at the folder that holds both
+```
+
+If you see it, move the file into the project (or run from, or put a
+`flint.toml` at, the folder that holds both). A missing look, palette, glyph
+set, font or image now lists every path tried in its warning. A font named
+`Body.TTF` is still loaded; other extensions are matched as spelled
+(`cotton.PNG` is not found by `paper_image = "cotton"`; name it `cotton.PNG`
+in full).
+
+**For a game that embeds the engine** (`PlayerApp`, `flint_render`): the
+lookups take the scene's project now. `GlyphSetCache::new` and
+`PaletteCache::new` take a `flint_core::project::AssetScope` (a project and a
+scene directory; `AssetScope::for_scene(path)` finds one) in place of a list
+of directories; `BitmapFont::resolve`, `SceneRenderer::load_ui_font` and
+`stylize::images::ImageSlot::get` take one in place of a directory;
+`ChoiceScope` has `assets: Option<&AssetScope>` in place of `scene_dir`, and
+`ChoiceScope::files` takes an `AssetKind`; `stylize::custom::style_dirs` takes
+a scope. `SceneRenderer::set_asset_scope` gives the renderer the project (a
+host that only sets `scene_dir` gets the project found from it). The
+path-taking `look::find` / `resolve` / `list`, `custom::load_dir` /
+`reload_changed`, `load_user_styles` and `project_font_definitions` keep
+their signatures and find the project themselves; each has an `_in` / `_for`
+twin that takes the scope.
+
 ### Scripts, procgen specs, prefabs, wooze presets, the input config and path-named scene files are found by the one search rule (#706)
 **What changed.** These kinds join models, textures, sounds and particle
 effects (the entries below) on the engine's one asset search: beside the

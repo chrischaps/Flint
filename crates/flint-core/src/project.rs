@@ -67,7 +67,9 @@ use std::sync::OnceLock;
 use thiserror::Error;
 
 mod assets;
-pub use assets::{shown, AssetKind, KindInfo, Listed, NotFound, OrderChange, Resolution};
+pub use assets::{
+    shown, AssetKind, AssetScope, KindInfo, Listed, NotFound, OrderChange, Resolution,
+};
 
 /// The manifest's file name, at the project root.
 pub const MANIFEST_FILE: &str = "flint.toml";
@@ -593,6 +595,13 @@ fn named(dirs: Vec<PathBuf>, source: SchemaSource) -> Result<SchemaDirs, SchemaD
 /// One spelling for a directory, so `schemas`, `./schemas` and an absolute
 /// path to the same folder compare equal: taken from the working directory
 /// as [`anchor`] does, `.` and `..` folded, and without case on Windows.
+/// Whether two paths name one file or folder, however each is spelled
+/// (relative or absolute, `.` and `..`, and without case on Windows).
+/// Nothing is read: a link is not followed.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    a == b || same_dir_key(a) == same_dir_key(b)
+}
+
 fn same_dir_key(dir: &Path) -> String {
     let key = vfs::normalize(&anchor(dir));
     if cfg!(windows) {

@@ -317,9 +317,9 @@ pub struct PlayerApp {
     ui_sprites_warned: HashSet<String>,
     /// Wide-stroke and glow pictures for HUD and world text (#626).
     text_halos: text_halo::TextHalos,
-    /// The `fonts/` root the current font set was scanned from; rescan on
-    /// scene change only when this differs.
-    ui_fonts_root: Option<std::path::PathBuf>,
+    /// The font files and manifest the current font set was read from;
+    /// read again on a scene change only when the new scene sees others.
+    ui_fonts_root: fonts::ProjectFonts,
     /// Whether egui has been given the fonts at least once. Until then
     /// `refresh_project_fonts` always installs them.
     ui_fonts_installed: bool,

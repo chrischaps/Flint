@@ -65,9 +65,25 @@ pub fn kinds_help() -> String {
         "\nSearched in order: beside the scene, beside each directory above it up to the \
          project root, then in the mounted engine (<root>/engine/). A name that is a path \
          of its own (absolute, or starting ./ or ../) is tried as written first, from the \
-         scene's directory. Extensions are matched as spelled.",
+         scene's directory. Extensions are matched as spelled.\n\
+         \nBuilt in, used when the search finds no file of the name (a file found wins): \
+         the palettes cga, cga-warm, cga16, phosphor, amber, mono and paper; the looks \
+         `flint render --look help` lists; and the glyph set `builtin`, which is never \
+         searched for.",
     );
     text
+}
+
+/// Whether the engine has `name` built in for `kind`: what a loader uses
+/// when the search finds no file (palettes and looks), or without looking
+/// (the `builtin` glyph set).
+fn built_in(kind: AssetKind, name: &str) -> bool {
+    match kind {
+        AssetKind::Palettes => flint_render::palette::Palette::builtin(name).is_some(),
+        AssetKind::Looks => flint_render::look::builtin_names().any(|n| n == name),
+        AssetKind::GlyphSets => name == flint_render::glyph_atlas::BUILTIN_SET,
+        _ => false,
+    }
 }
 
 /// clap's parser for the kind argument: an unknown one lists the kinds.
@@ -86,13 +102,14 @@ pub fn run(kind: AssetKind, name: &str, scene: Option<&str>, json: bool) -> Resu
         None => (Project::current()?, PathBuf::from(".")),
     };
     let answer = project.explain(kind, name, &scene_dir);
+    // No file, but the engine has one of that name built in
+    let built_in = answer.found.is_none() && built_in(kind, name);
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&to_json(&project, &scene_dir, &answer))?
-        );
-        if answer.found.is_none() {
+        let mut document = to_json(&project, &scene_dir, &answer);
+        document["built_in"] = built_in.into();
+        println!("{}", serde_json::to_string_pretty(&document)?);
+        if answer.found.is_none() && !built_in {
             // The document is the answer; the exit code says there was none.
             std::process::exit(1);
         }
@@ -113,6 +130,10 @@ pub fn run(kind: AssetKind, name: &str, scene: Option<&str>, json: bool) -> Resu
                 println!("  tried before it:");
             }
         }
+        None if built_in => println!(
+            "  loads    the built-in {} '{name}': no file shadows it. Tried:",
+            kind.info().noun
+        ),
         None => println!("  loads    nothing: no such file. Tried:"),
     }
     for path in &answer.tried {
@@ -121,7 +142,7 @@ pub fn run(kind: AssetKind, name: &str, scene: Option<&str>, json: bool) -> Resu
     if let Some(change) = &answer.order_change {
         println!("  note     {change}");
     }
-    if answer.found.is_none() {
+    if answer.found.is_none() && !built_in {
         bail!(
             "{} '{}' not found ({} place{} tried)",
             kind.info().noun,
