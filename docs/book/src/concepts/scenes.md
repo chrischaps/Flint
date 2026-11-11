@@ -26,7 +26,7 @@ archetype = "room"
 | `name` | yes | Human-readable scene name |
 | `version` | yes | Format version (currently "1.0") |
 | `description` | no | Optional description |
-| `input_config` | no | Path or name of an input config file for this scene (see [Input System](physics-and-runtime.md#input-system)) |
+| `input_config` | no | Path of an input config file for this scene, from the scene's directory or any directory above it up to the project root (see [Input System](physics-and-runtime.md#input-system)) |
 | `preload_audio` | no | Default `true`. When `false`, the player skips the blanket preload of every file under `audio/` at scene load, so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; only the convenience preload for script-triggered sounds is skipped (ADR 0066, scene audio preload opt-out). See [Audio](audio.md#preloading). |
 
 ### The `[entities.*]` Tables
@@ -231,7 +231,7 @@ Prefabs are reusable entity group templates that reduce scene file duplication. 
 
 ### Defining a Prefab
 
-Prefab files live in the `prefabs/` directory and follow the same entity format as scenes, with a `[prefab]` metadata header:
+Prefab files live in a `prefabs/` folder, beside the scene or beside any directory above it up to the project root (the nearest of a name wins; [where the engine looks](assets.md#where-the-engine-looks-for-a-file)), and follow the same entity format as scenes, with a `[prefab]` metadata header. A template that isn't found fails the load with every path tried.
 
 ```toml
 [prefab]

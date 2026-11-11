@@ -6,7 +6,7 @@ mod particles;
 mod render_passes;
 mod selection;
 
-pub use particles::load_particle_textures;
+pub use particles::{load_particle_textures, load_scene_particle_textures};
 use render_passes::RenderPhase;
 
 use helpers::{identity_matrix, mat4_inv_transpose};

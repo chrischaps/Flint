@@ -225,7 +225,9 @@ impl SceneRenderer {
 
 /// Load every texture referenced by the live particle instances and
 /// registered effects into the renderer's texture cache. Names are cache
-/// keys verbatim; files are searched in `search_dirs` in order.
+/// keys verbatim; files are searched in `search_dirs` in order. For a tool
+/// with a layout of its own (the effect editor); a scene's textures go
+/// through [`load_scene_particle_textures`].
 pub fn load_particle_textures(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
@@ -233,28 +235,58 @@ pub fn load_particle_textures(
     sync: &ParticleSync,
     search_dirs: &[PathBuf],
 ) {
+    load_textures_found(renderer, device, queue, sync, |name| {
+        search_dirs
+            .iter()
+            .map(|dir| dir.join(name))
+            .find(|path| flint_core::vfs::exists(path))
+            .ok_or_else(|| format!("Particle texture not found: {name}"))
+    });
+}
+
+/// [`load_particle_textures`] for a scene: each texture is found by the
+/// project's one asset search (`AssetKind::ParticleTextures`, ADR 0114):
+/// `particles/<name>`, then `<name>` beside the scene, the same at each
+/// directory above it up to the project root, then in the engine. A miss
+/// is warned about with every path tried.
+pub fn load_scene_particle_textures(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sync: &ParticleSync,
+    project: &flint_core::project::Project,
+    scene_dir: &std::path::Path,
+) {
+    use flint_core::project::AssetKind;
+    load_textures_found(renderer, device, queue, sync, |name| {
+        project
+            .resolve(AssetKind::ParticleTextures, name, scene_dir)
+            .map_err(|not_found| not_found.to_string())
+    });
+}
+
+fn load_textures_found(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sync: &ParticleSync,
+    find: impl Fn(&str) -> Result<PathBuf, String>,
+) {
     let mut any_new = false;
     for tex_name in sync.texture_names() {
-        let mut found = false;
-        for dir in search_dirs {
-            let path = dir.join(&tex_name);
-            if flint_core::vfs::exists(&path) {
-                match renderer.load_texture_file(device, queue, &tex_name, &path) {
-                    Ok(true) => {
-                        eprintln!("Loaded particle texture: {tex_name}");
-                        any_new = true;
-                    }
-                    Ok(false) => {} // already cached
-                    Err(e) => {
-                        tracing::warn!("Failed to load particle texture '{}': {}", tex_name, e)
-                    }
+        // Loaded already: nothing to look for (and nothing to warn about twice)
+        match find(&tex_name) {
+            Ok(path) => match renderer.load_texture_file(device, queue, &tex_name, &path) {
+                Ok(true) => {
+                    eprintln!("Loaded particle texture: {tex_name}");
+                    any_new = true;
                 }
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            tracing::warn!("Particle texture not found: {}", tex_name);
+                Ok(false) => {} // already cached
+                Err(e) => {
+                    tracing::warn!("Failed to load particle texture '{}': {}", tex_name, e)
+                }
+            },
+            Err(not_found) => tracing::warn!("{not_found}"),
         }
     }
     if any_new {

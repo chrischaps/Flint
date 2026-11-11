@@ -33,7 +33,7 @@ Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)
 
 ## Where the Engine Looks for a File
 
-A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; scripts, procgen specs, prefabs, fonts and the style assets still have searches of their own and move over kind by kind, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
+A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; fonts, glyph sets, palettes, looks, paper and stroke images and user styles still have searches of their own and move over next, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
 
 1. **beside the scene**: the kind's folder in the scene's own directory;
 2. **beside each directory above the scene**, one at a time, up to and including the [project root](#the-project-root);
@@ -64,6 +64,13 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 | `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one |
 | `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` |
 | `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound` |
+| `scripts` | `scripts/` | a file name as written (`.rhai`) | `script.source = "hud.rhai"` or `"ui/menu.rhai"`; `import "ui_kit"` is the script `lib/ui_kit.rhai` |
+| `specs` | `specs/`, then `models/`, each with its subfolders | `.procgen.toml`; found by the `[meta] name` inside, not the file's name | every spec the scene can see is indexed; `model.asset = "oak_tree"`, `material.texture = "stone_wall"` ask for one |
+| `prefabs` | `prefabs/` | `.prefab.toml` | `[prefabs.player] template = "kart"` |
+| `wooze` | `wooze/` | `.wooze.toml` | `[wooze] preset = "misty"`, `load_living_preset("misty")`, the Living Props panel |
+| `files` | `D` itself | a path as written | `terrain.heightmap`, `terrain.splat_map`, `grass_ground.mask`, `spline.file`, `[environment] skybox`, `[scene] input_config` (and `config/input.toml` when a scene names none) |
+| `particle-textures` | `particles/`, then `D` itself | a file name as written | an effect's or a `particle_emitter`'s `texture = "spark.png"` |
+| `scenes` | `D` itself | a path as written | `load_scene("levels/two.scene.toml")`: the target of a transition, from the current scene |
 
 `flint asset where --help` prints this table from the engine's own.
 
@@ -78,7 +85,15 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 
 No path is tried twice, and the list a miss prints is in the order tried, the as-written paths first.
 
-**Kinds loaded as a whole.** Animation clips, sequences, sprite animations and the `audio/` preload load every file the scene can see, from every one of those folders, a nearer file hiding a farther one of the same file name. Only a kind's named folders are listed, never the scene's own directory, and not their subfolders.
+**Kinds loaded as a whole.** Animation clips, sequences, sprite animations, the `audio/` preload and procgen specs load every file the scene can see, from every one of those folders, a nearer file hiding a farther one of the same name. Only a kind's named folders are listed, never the scene's own directory, and not their subfolders, except for scripts and specs, whose folders are listed with their subfolders (a folder's own files before its subfolders').
+
+**Named inside the file.** A procgen spec is asked for by the `[meta] name` it states, whatever its file is called: `specs/trees/big_oak.procgen.toml` with `name = "oak_tree"` is the spec `oak_tree`. The places and their order are the same as for every kind; the nearest file that states a name is that name's spec, a file that states none is not a spec, and of two in one folder stating the same name the first by file name wins. A miss lists the folders read, not files. `flint asset where specs oak_tree` answers by that name.
+
+**Scripts.** Each script is found on its own, so a scene with a `scripts/` folder beside it still finds every script and every `import` in the project's `scripts/`. A script a chunk brings in is searched for from the chunk's folder first, then from the scene's.
+
+**Files named by a path.** A heightmap, a splat map, a grass mask, a spline file, a skybox, a scene's `input_config` and a transition's target are written as paths (`terrain/height.png`), and the path is tried from the scene's directory, then from each directory above it. A transition's target that isn't found that way is still opened as written, which is a path from the working directory.
+
+**Saving a wooze preset.** The Living Props panel and `save_living_preset(name)` write `<name>.wooze.toml` into the nearest `wooze/` folder that exists between the scene and the project root (never the mounted engine's), and into a new `wooze/` beside the scene when there is none. A preset saved there is one the scene finds.
 
 **Models and textures have two sources ahead of the files.** A name in the [asset catalog](#asset-catalog) resolves to its stored file first, and the player then asks for a [procgen spec](procgen.md) of the same name; the search above is for the file, and is what runs when neither has it. A miss says so under the paths: `and before the files: the asset catalog, a procgen spec of the same name`.
 

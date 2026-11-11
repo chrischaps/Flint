@@ -34,6 +34,116 @@ to do.
 
 ## 2026-11-10
 
+### Scripts, procgen specs, prefabs, wooze presets, the input config and path-named scene files are found by the one search rule (#706)
+**What changed.** These kinds join models, textures, sounds and particle
+effects (the entries below) on the engine's one asset search: beside the
+scene, then beside each directory above it up to the project root (the folder
+with `flint.toml`, `.flint/`, or `schemas/` + `scenes/`), then under `engine/`
+at the root. What each looks for at a directory `D` of that walk:
+
+| Kind | Named by | Tried at each `D` |
+|---|---|---|
+| scripts | `script.source = "hud.rhai"`; `import "ui_kit"` | `D/scripts/hud.rhai`; `D/scripts/lib/ui_kit.rhai` |
+| procgen specs | `model.asset`, `material.texture`, `sprite.texture`, `living_prop` | every `*.procgen.toml` under `D/specs/`, then `D/models/`, subfolders included, by the `[meta] name` inside |
+| prefabs | `[prefabs.x] template = "kart"` | `D/prefabs/kart.prefab.toml` |
+| wooze presets | `[wooze] preset = "misty"`, `load_living_preset` | `D/wooze/misty.wooze.toml` |
+| the input config's game layer | `[scene] input_config`, else `config/input.toml` | the path from `D` |
+| path-named files | `terrain.heightmap`, `terrain.splat_map`, `grass_ground.mask`, `spline.file`, `[environment] skybox` | the path from `D` |
+| particle textures | an effect's or emitter's `texture` | `D/particles/<file>`, then `D/<file>` |
+| a transition's target | `load_scene("levels/two.scene.toml")` | the path from `D`, starting at the current scene |
+
+**Found now where nothing was found before.** No warning is printed for
+these: nothing loads differently, something loads that did not.
+
+- **A `scripts/` folder beside a scene no longer hides the project's.** Before,
+  the engine read one `scripts/` folder, the first that existed of "beside the
+  scene" and "one level up". With one beside the scene, a `script.source` or an
+  `import` that lived only in the project's `scripts/` logged `File not found`
+  (or a module error) and did not run. Each script and each module is now found
+  on its own, nearest first. **A script that was silently missing will start
+  running.** To see whether you have one: before pulling, run a scene that has a
+  `scripts/` beside it and look for `File not found:` lines.
+- **A scene two or more folders deep** (`scenes/act1/cave/x.scene.toml`) finds
+  the project's scripts, specs, prefabs, presets, `config/input.toml` and
+  path-named files. Before it saw nothing above `scenes/act1/`; a prefab there
+  failed the load.
+- **Specs are read from more folders**: `specs/` and `models/` at every level up
+  to the root (before: `models/` and `specs/` beside the scene and `specs/` one
+  level up), and under `engine/`. A model or texture name that now has a spec
+  is generated from it instead of loaded from its file, since procgen comes
+  before files. To see which specs a scene sees: `flint asset where specs <name>
+  --scene <scene>`.
+- **`engine/` is a last resort** for every kind here: `engine/scripts/`,
+  `engine/prefabs/`, `engine/config/input.toml` and so on, when the game has
+  none of that name.
+
+**Arrangements that now resolve to a different file.** Each prints the warning
+below, once, on stderr, when the scene loads.
+
+- **Specs:** two specs stating the same `[meta] name`, one under `models/` and
+  one under `specs/`, both beside the scene: `models/` used to win, `specs/`
+  wins now. Two files in one folder stating the same name: the one read later
+  used to win, the first by file name wins now. (A spec beside the scene still
+  beats the game's of the same name; that did not change.)
+- **Particle textures:** a file in `particles/` one level above the scene and a
+  file of the same name loose beside the scene: `particles/` used to win, the
+  file beside the scene wins now.
+- **Transition targets:** a target that exists as a path from the working
+  directory *and* as a path from the current scene's directory or one above it,
+  as two different files: the working directory's used to win, the scene's
+  wins now. A target found nowhere by the search is still opened as written.
+- **A chunk's scripts:** `scripts/<file>` beside the chunk, else beside the
+  scene, was the old rule; the chunk's script is now searched for from the
+  chunk's folder upward first, then from the scene's.
+- **Anything outside the project:** a scene at the project root whose scripts,
+  specs, prefabs or presets sat one level above it, outside the root. That
+  folder is no longer read; the warning says the file is outside the project.
+
+The warning names both files:
+
+```
+WARN procgen spec 'oak_tree': the search order changed (ADR 0114). Before, the engine loaded levels/models/oak.procgen.toml; now it loads levels/specs/oak.procgen.toml. Move or rename one of them if that is the wrong file
+```
+
+`flint asset where <kind> <name> --scene <scene>` prints the same as a `note`
+line (and `order_change` in `--json`). **The warning and the note are there for
+one release (#765) and then go**; after that the new file simply loads.
+
+**Also changed.**
+
+- A missing script, prefab, preset-named file, heightmap, splat map, grass
+  mask, spline file, skybox or particle texture now lists every path tried
+  (`script 'hud.rhai' not found. Tried:` and a line a path). A missing prefab
+  still fails the load, with that list in the error.
+- **The input config's game layer** is, in order: the scene's `input_config`
+  (found by the search; not found is a warning and no game layer, where before
+  it was skipped in silence), else the file `flint.toml`'s `[project] input`
+  names from the project root (new: nothing read that key before), else
+  `config/input.toml` found by the search.
+- **Hot reload follows the search**: a script or `scripts/lib` module written
+  nearer to the scene than the one running takes over without a restart, and
+  every visible `scripts/lib/` is watched.
+- **Saving a wooze preset** (the Living Props panel, `save_living_preset`)
+  writes into the nearest `wooze/` folder that exists between the scene and the
+  project root, or a new `wooze/` beside the scene. Before: `wooze/` beside the
+  scene or one level up, whichever existed.
+- `flint asset where --help` lists the new kinds: `scripts`, `specs`,
+  `prefabs`, `wooze`, `files`, `particle-textures`, `scenes`.
+- For a game binary that embeds the player:
+  `ScriptSystem::load_scripts_from_scene(scene_path, &project)` and
+  `HeadlessScripts::load(scene_path, &project, ..)` take the scene's
+  `flint_core::project::Project` (`PlayerApp::project()`, or
+  `Project::for_scene(path)`); `ScriptSystem::load_script_named(id, source,
+  from_dir)` loads a script by name; `flint_particles::texture_search_dirs` and
+  `resolve_particles_dir` are gone (`flint_render::load_scene_particle_textures`
+  takes the project); `ScriptEngine::module_base()` returns a `ModuleBase`.
+
+**What to do.** Run your scenes once and read stderr for `the search order
+changed` lines; each names the two files, so move or rename the one you don't
+want. If a script that used to be missing now runs and shouldn't, remove its
+`script` component or the file. Nothing to do for a game whose scenes sit one
+folder below the root with one `scripts/`, `specs/`, `prefabs/` at the root.
+
 ### Models, textures, UI sprites, animations and sounds are found by the one search rule (#706)
 **What changed.** These kinds join particle effects (the next entry) on the
 engine's one asset search: beside the scene, then beside each directory above

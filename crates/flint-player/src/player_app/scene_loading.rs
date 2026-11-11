@@ -96,6 +96,7 @@ pub(super) fn load_terrain_from_world_inner(
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
+    let project = &Project::for_scene(Path::new(scene_path));
 
     for entity in world.all_entities() {
         let terrain_comp = match world.get_component(entity.id, comp::TERRAIN) {
@@ -111,22 +112,8 @@ pub(super) fn load_terrain_from_world_inner(
             }
         };
 
-        // Resolve heightmap path (scene dir, then parent)
-        let hm_path = {
-            let p = scene_dir.join(&heightmap_rel);
-            if vfs::exists(&p) {
-                p
-            } else if let Some(parent) = scene_dir.parent() {
-                let pp = parent.join(&heightmap_rel);
-                if vfs::exists(&pp) {
-                    pp
-                } else {
-                    p
-                }
-            } else {
-                p
-            }
-        };
+        // A path found by the project's one search (`AssetKind::Files`)
+        let hm_path = project.file_or_beside("terrain heightmap", &heightmap_rel, scene_dir);
 
         let heightmap = match Heightmap::from_png(&hm_path) {
             Ok(hm) => hm,
@@ -232,18 +219,8 @@ pub(super) fn load_terrain_from_world_inner(
             let hm_d = heightmap.depth;
 
             // Load splat map pixels for grass compute shader
-            let splat_path = {
-                let p = scene_dir.join(&config.splat_map_path);
-                if vfs::exists(&p) {
-                    p
-                } else {
-                    scene_dir
-                        .parent()
-                        .map(|pp| pp.join(&config.splat_map_path))
-                        .filter(|pp| vfs::exists(pp))
-                        .unwrap_or(p)
-                }
-            };
+            let splat_path =
+                project.file_or_beside("terrain splat map", &config.splat_map_path, scene_dir);
 
             if let Ok(splat_img) = flint_render::open_image(&splat_path) {
                 let splat_rgba = splat_img.to_rgba8();
@@ -297,7 +274,8 @@ pub(super) fn load_terrain_from_world_inner(
 
     // Grass on a scene-authored mesh ground (ADR 0089). One grass field per
     // scene: a grass_ground replaces a terrain's grass.
-    if let Some(info) = load_grass_ground(world, scene_dir, device, queue, scene_renderer) {
+    if let Some(info) = load_grass_ground(world, project, scene_dir, device, queue, scene_renderer)
+    {
         if grass_info_out.is_some() {
             tracing::warn!(
                 "grass_ground '{}' replaces the terrain's grass",
@@ -320,7 +298,8 @@ pub fn load_scene_grass_ground(
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    load_grass_ground(world, scene_dir, device, queue, scene_renderer).is_some()
+    let project = Project::for_scene(Path::new(scene_path));
+    load_grass_ground(world, &project, scene_dir, device, queue, scene_renderer).is_some()
 }
 
 /// Load the first `grass_ground` entity's mask and hand it to the renderer
@@ -328,6 +307,7 @@ pub fn load_scene_grass_ground(
 /// across `width` × `depth`.
 fn load_grass_ground(
     world: &FlintWorld,
+    project: &Project,
     scene_dir: &Path,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -346,13 +326,7 @@ fn load_grass_ground(
             tracing::warn!("grass_ground '{}': missing mask path", entity.name);
             return None;
         }
-        let mask_path = {
-            let p = scene_dir.join(mask_rel);
-            match scene_dir.parent().map(|pp| pp.join(mask_rel)) {
-                Some(pp) if !vfs::exists(&p) && vfs::exists(&pp) => pp,
-                _ => p,
-            }
-        };
+        let mask_path = project.file_or_beside("grass_ground mask", mask_rel, scene_dir);
         let mask = match flint_render::open_image(&mask_path) {
             Ok(img) => img.to_luma8(),
             Err(e) => {
@@ -656,9 +630,9 @@ pub(super) fn visible_files(project: &Project, kind: AssetKind, scene_path: &str
 }
 
 /// Load every texture referenced by live particle instances and registered
-/// effects into the renderer's texture cache. Searched in `particles/`, the
-/// scene dir, its parent (game root), then the other `particles/` folders the
-/// project's resolver searches — see `flint_particles::texture_search_dirs`.
+/// effects into the renderer's texture cache, each found by the project's
+/// one search (`AssetKind::ParticleTextures`: `particles/`, then beside the
+/// scene, at each directory up to the root, then in the engine).
 pub(super) fn load_particle_textures_from_world(
     particles: &flint_particles::ParticleSystem,
     renderer: &mut SceneRenderer,
@@ -667,8 +641,14 @@ pub(super) fn load_particle_textures_from_world(
     project: &flint_core::project::Project,
     scene_path: &str,
 ) {
-    let dirs = flint_particles::texture_search_dirs(project, scene_path);
-    flint_render::load_particle_textures(renderer, device, queue, &particles.sync, &dirs);
+    flint_render::load_scene_particle_textures(
+        renderer,
+        device,
+        queue,
+        &particles.sync,
+        project,
+        scene_dir_of(scene_path),
+    );
 }
 
 /// Load every `.anim.toml` clip the scene can see: `animations/` beside the
@@ -754,37 +734,40 @@ pub(super) fn load_sprite_animations_from_world(
     }
 }
 
-/// Resolve a scene path relative to the current scene.
-/// If target is already an absolute path or starts from a known root, use it directly.
-/// Otherwise resolve relative to the current scene's directory.
-pub(super) fn resolve_scene_path(current_scene: &str, target: &str) -> String {
-    let target_path = Path::new(target);
-    if target_path.is_absolute() || vfs::exists(&target_path) {
-        return target.to_string();
-    }
-
-    let current_dir = Path::new(current_scene)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let resolved = current_dir.join(target);
-    if vfs::exists(&resolved) {
-        return resolved.to_string_lossy().to_string();
-    }
-
-    // Try parent directory (game root)
-    if let Some(parent) = current_dir.parent() {
-        let parent_resolved = parent.join(target);
-        if vfs::exists(&parent_resolved) {
-            return parent_resolved.to_string_lossy().to_string();
+/// The scene a transition names, from the current scene: a path found by
+/// the project's one search (`AssetKind::Scenes`, ADR 0114), which tries it
+/// from the current scene's directory, then from each directory above it up
+/// to the project root, then in the engine. One that isn't found there is
+/// returned as written (a path from the working directory, as it was
+/// before), for the scene loader to open or report.
+pub(super) fn resolve_scene_path(project: &Project, current_scene: &str, target: &str) -> String {
+    let answer = project.explain(AssetKind::Scenes, target, scene_dir_of(current_scene));
+    match answer.found {
+        Some(found) => {
+            if let Some(change) = &answer.order_change {
+                change.log();
+            }
+            found.to_string_lossy().to_string()
+        }
+        None => {
+            if !vfs::exists(target) {
+                let not_found = flint_core::project::NotFound {
+                    kind: AssetKind::Scenes,
+                    name: answer.name,
+                    tried: answer.tried,
+                };
+                tracing::warn!("{not_found}");
+            }
+            target.to_string()
         }
     }
-
-    // Return as-is, let scene loader report the error
-    target.to_string()
 }
 
-/// Set up the script system's scripts directory from the scene path
-pub(super) fn load_scripts_from_world(scene_path: &str, script: &mut ScriptSystem) {
-    script.load_scripts_from_scene(scene_path);
+/// Point the script system at the scripts the scene can see in `project`
+pub(super) fn load_scripts_from_world(
+    project: &Project,
+    scene_path: &str,
+    script: &mut ScriptSystem,
+) {
+    script.load_scripts_from_scene(scene_path, project);
 }

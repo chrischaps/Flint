@@ -2,6 +2,7 @@
 
 use crate::user_files;
 use anyhow::Result;
+use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::FlintError;
 use flint_runtime::InputConfig;
@@ -20,36 +21,42 @@ pub(super) struct InputConfigPaths {
     pub cli_override: Option<PathBuf>,
 }
 
+/// The game layer's file when nothing names one.
+const DEFAULT_GAME_CONFIG: &str = "config/input.toml";
+
+/// The game layer of the input config (built-in -> **game** -> user -> CLI),
+/// by the first of these that says:
+///
+/// 1. the scene's `[scene] input_config`, a path found by the project's one
+///    search (`AssetKind::Files`, ADR 0114): from the scene's directory,
+///    then from each directory above it up to the project root, then the
+///    engine. Not found is a warning with every path tried, and no game
+///    layer;
+/// 2. the manifest's `[project] input`, which names the one file, from the
+///    project root, with no search;
+/// 3. `config/input.toml`, found by the same search; none is no game layer.
 pub(super) fn resolve_input_paths(
+    project: &Project,
     scene_path: &Path,
     scene_input_config: Option<&str>,
     cli_override: Option<&str>,
 ) -> InputConfigPaths {
-    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
+    let scene_dir = scene_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
 
-    // Game default: look next to the scene, then parent (game root)
-    let game_default = scene_input_config
-        .map(|name| {
-            let p = scene_dir.join(name);
-            if vfs::exists(&p) {
-                p
-            } else if let Some(parent) = scene_dir.parent() {
-                parent.join(name)
-            } else {
-                p
-            }
-        })
-        .or_else(|| {
-            let candidate = scene_dir.join("config").join("input.toml");
-            if vfs::exists(&candidate) {
-                Some(candidate)
-            } else {
-                scene_dir
-                    .parent()
-                    .map(|p| p.join("config").join("input.toml"))
-                    .filter(|p| vfs::exists(p))
-            }
-        });
+    let game_default = match scene_input_config {
+        Some(name) => project
+            .resolve(AssetKind::Files, name, scene_dir)
+            .map_err(|not_found| tracing::warn!("input config: {not_found}"))
+            .ok(),
+        None => project.input_path().or_else(|| {
+            project
+                .resolve(AssetKind::Files, DEFAULT_GAME_CONFIG, scene_dir)
+                .ok()
+        }),
+    };
 
     // The user override needs the game id, which the game default sets, so
     // it's resolved once that's merged (`resolve_user_override`).
@@ -220,6 +227,75 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// The game layer's file for a scene, over a memory source of `files`.
+    fn game_layer(files: &[(&str, &str)], scene: &str, named: Option<&str>) -> Option<PathBuf> {
+        let mut source = flint_core::vfs::MemorySource::new();
+        for (path, text) in files {
+            source.insert(path, *text);
+        }
+        flint_core::vfs::scoped(std::sync::Arc::new(source), || {
+            let project = Project::for_scene(Path::new(scene));
+            resolve_input_paths(&project, Path::new(scene), named, None).game_default
+        })
+    }
+
+    #[test]
+    fn the_game_layer_is_found_from_a_scene_two_folders_deep() {
+        // ADR 0114: before, `config/input.toml` was looked for beside the
+        // scene and one level up, so a scene under scenes/act1/ had no game
+        // layer at all.
+        let scene = "game/scenes/act1/cave/a.scene.toml";
+        let files = [
+            ("game/flint.toml", ""),
+            ("game/config/input.toml", ""),
+            ("game/config/kart.toml", ""),
+            (scene, ""),
+        ];
+        assert_eq!(
+            game_layer(&files, scene, None),
+            Some(PathBuf::from("game/config/input.toml"))
+        );
+        // A scene's own `input_config` is a path found the same way.
+        assert_eq!(
+            game_layer(&files, scene, Some("config/kart.toml")),
+            Some(PathBuf::from("game/config/kart.toml"))
+        );
+        // One that is nowhere: no game layer (and a warning with the paths).
+        assert_eq!(game_layer(&files, scene, Some("config/nope.toml")), None);
+        // Nearer wins.
+        let mut nearer = files.to_vec();
+        nearer.push(("game/scenes/act1/config/input.toml", ""));
+        assert_eq!(
+            game_layer(&nearer, scene, None),
+            Some(PathBuf::from("game/scenes/act1/config/input.toml"))
+        );
+    }
+
+    #[test]
+    fn the_manifest_names_the_game_layer_unless_the_scene_does() {
+        let scene = "game/scenes/a.scene.toml";
+        let files = [
+            (
+                "game/flint.toml",
+                "[project]\ninput = \"settings/keys.toml\"\n",
+            ),
+            ("game/settings/keys.toml", ""),
+            ("game/config/input.toml", ""),
+            ("game/scenes/pad.toml", ""),
+            (scene, ""),
+        ];
+        assert_eq!(
+            game_layer(&files, scene, None),
+            Some(PathBuf::from("game/settings/keys.toml"))
+        );
+        assert_eq!(
+            game_layer(&files, scene, Some("pad.toml")),
+            Some(PathBuf::from("game/scenes/pad.toml"))
+        );
+        // No manifest key, no config/input.toml: no game layer.
+        assert_eq!(game_layer(&[(scene, "")], scene, None), None);
     }
 
     fn game_config(game_id: &str) -> InputConfig {

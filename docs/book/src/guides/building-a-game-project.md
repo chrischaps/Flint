@@ -292,7 +292,7 @@ Scripts, audio, and sprite paths are resolved relative to the game project root.
 - Audio in `audio/`
 - Sprites in `sprites/`
 
-Particle effects are the first kind on the engine's one search rule: `particles/` beside the scene, then beside each directory above it up to the project root, then `engine/particles/`. A scene any number of folders below `scenes/` finds the project's effects, and `flint asset where particles <name> --scene <scene>` prints the file chosen and every path tried. See [Assets: Where the Engine Looks for a File](../concepts/assets.md#where-the-engine-looks-for-a-file).
+Everything in those folders (models, textures, sounds, scripts, specs, prefabs, particle effects, wooze presets, the input config) is found by the engine's one search rule: the kind's folder beside the scene, then beside each directory above it up to the project root, then under `engine/`. A scene any number of folders below `scenes/` finds the project's assets, and `flint asset where <kind> <name> --scene <scene>` prints the file chosen and every path tried. See [Assets: Where the Engine Looks for a File](../concepts/assets.md#where-the-engine-looks-for-a-file).
 
 ## Engine Subtree Workflow
 

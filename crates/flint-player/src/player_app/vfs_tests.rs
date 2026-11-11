@@ -83,7 +83,9 @@ fn a_scene_its_schemas_and_a_script_load_from_memory() {
                 .rhai_engine_mut()
                 .register_fn("record", move |s: String| seen.lock().unwrap().push(s));
         }
-        app.script.load_scripts_from_scene(scene_path);
+        app.refresh_project();
+        let project = app.project().clone();
+        app.script.load_scripts_from_scene(scene_path, &project);
         app.tick();
         app.tick();
     });

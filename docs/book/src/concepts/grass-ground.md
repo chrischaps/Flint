@@ -32,7 +32,7 @@ scale_by_mask = true
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mask` | string | | Grayscale PNG, relative to the scene file. It stretches over the whole rectangle, whatever its resolution |
+| `mask` | string | | Grayscale PNG, a path from the scene's directory or any directory above it up to the project root. It stretches over the whole rectangle, whatever its resolution |
 | `width` | f32 | 64.0 | World X extent the mask covers |
 | `depth` | f32 | 64.0 | World Z extent the mask covers |
 | `scale_by_mask` | bool | true | Grey thins the field in proportion. When `false`, anything over `grass.density_threshold` grows at full density, as a terrain's splat layer does |

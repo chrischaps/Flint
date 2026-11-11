@@ -1255,13 +1255,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         particles
             .initialize(&mut world)
             .context("Failed to initialize particles")?;
-        let dirs = flint_particles::texture_search_dirs(project, &args.scene);
-        flint_render::load_particle_textures(
+        flint_render::load_scene_particle_textures(
             &mut renderer,
             &ctx.device,
             &ctx.queue,
             &particles.sync,
-            &dirs,
+            project,
+            Path::new(&args.scene).parent().unwrap_or(Path::new(".")),
         );
         particles.simulate_to(&world, seconds.max(0.0), 1.0 / 60.0);
         particles.pack(Some(camera.position_array()));
@@ -3506,6 +3506,7 @@ impl Stage {
         let mut scripts = (args.scripts || timeline.is_some()).then(|| {
             HeadlessScripts::load(
                 &args.scene,
+                &config.project,
                 &mut world,
                 timeline,
                 (ctx.width as f32, ctx.height as f32),
@@ -3819,8 +3820,14 @@ fn new_particles(
     particles
         .initialize(world)
         .context("Failed to initialize particles")?;
-    let dirs = flint_particles::texture_search_dirs(project, scene);
-    flint_render::load_particle_textures(renderer, &ctx.device, &ctx.queue, &particles.sync, &dirs);
+    flint_render::load_scene_particle_textures(
+        renderer,
+        &ctx.device,
+        &ctx.queue,
+        &particles.sync,
+        project,
+        Path::new(scene).parent().unwrap_or(Path::new(".")),
+    );
     Ok(particles)
 }
 
@@ -3868,6 +3875,8 @@ fn load_terrain_for_render(
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
+    // Each file found by the project's one search (`AssetKind::Files`)
+    let project = &flint_core::project::Project::for_scene(Path::new(scene_path));
 
     for entity in world.all_entities() {
         let terrain_comp = match world.get_component(entity.id, comp::TERRAIN) {
@@ -3880,21 +3889,7 @@ fn load_terrain_for_render(
             _ => continue,
         };
 
-        let hm_path = {
-            let p = scene_dir.join(&heightmap_rel);
-            if p.exists() {
-                p
-            } else if let Some(parent) = scene_dir.parent() {
-                let pp = parent.join(&heightmap_rel);
-                if pp.exists() {
-                    pp
-                } else {
-                    p
-                }
-            } else {
-                p
-            }
-        };
+        let hm_path = project.file_or_beside("terrain heightmap", &heightmap_rel, scene_dir);
 
         let heightmap = match Heightmap::from_png(&hm_path) {
             Ok(hm) => hm,
@@ -3979,18 +3974,8 @@ fn load_terrain_for_render(
             let hm_w = heightmap.width;
             let hm_d = heightmap.depth;
 
-            let splat_path = {
-                let p = scene_dir.join(&config.splat_map_path);
-                if p.exists() {
-                    p
-                } else {
-                    scene_dir
-                        .parent()
-                        .map(|pp| pp.join(&config.splat_map_path))
-                        .filter(|pp| pp.exists())
-                        .unwrap_or(p)
-                }
-            };
+            let splat_path =
+                project.file_or_beside("terrain splat map", &config.splat_map_path, scene_dir);
 
             let offset = [
                 transform.position.x,

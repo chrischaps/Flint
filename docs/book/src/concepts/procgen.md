@@ -488,7 +488,7 @@ Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and 
 
 ### Saved presets
 
-The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3) saves a look as a file that a `[wooze]` table can name. `preset = "misty"` looks for `wooze/misty.wooze.toml` beside the scene, then one level up for a scene in `levels/`, and then for a built-in, so a file can stand in for a built-in of its name.
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3) saves a look as a file that a `[wooze]` table can name. `preset = "misty"` looks for `wooze/misty.wooze.toml` beside the scene, then beside each directory above it up to the project root, then in the engine's ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)), and then for a built-in, so a file can stand in for a built-in of its name. The panel saves into the nearest `wooze/` that exists between the scene and the project root, or a new one beside the scene.
 
 ```toml
 # wooze/misty.wooze.toml
@@ -840,7 +840,7 @@ flint edit specs/alien_organic.procgen.toml     # pipeline pattern, opens the no
 
 ## Specs in Scenes
 
-The player indexes every `*.procgen.toml` by `meta.name`, from `../specs/` (the game root when scenes live in `levels/`), then `specs/` beside the scene, then `models/`; a later directory's spec overrides an earlier one of the same name, so a scene's own spec beats the game's. Each name an entity's `model.asset`, `material.texture` or `sprite.texture` asks for resolves in one order: **catalog > procgen > file**. An asset catalog entry wins outright. A name with an indexed spec is generated and uploaded straight to the GPU under that name before any file is looked at, so a baked `models/<name>.glb` beside the spec is not drawn while the spec works. Anything else loads from its file, as before:
+The player indexes every `*.procgen.toml` the scene can see by `meta.name`: those in `specs/` and `models/` (with their subfolders) beside the scene, beside each directory above it up to the project root, and in the engine's ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)). The nearest spec of a name wins, so a scene's own spec beats the game's, and `flint asset where specs <name> --scene <scene>` prints which file that is. Each name an entity's `model.asset`, `material.texture` or `sprite.texture` asks for resolves in one order: **catalog > procgen > file**. An asset catalog entry wins outright. A name with an indexed spec is generated and uploaded straight to the GPU under that name before any file is looked at, so a baked `models/<name>.glb` beside the spec is not drawn while the spec works. Anything else loads from its file, as before:
 
 ```toml
 [entities.old_oak.model]

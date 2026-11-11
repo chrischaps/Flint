@@ -27,6 +27,20 @@ pub fn kinds_help() -> String {
             .copied()
             .filter(|e| !e.is_empty())
             .collect();
+        if info.named_inside.is_some() {
+            // Found by the name the file states, wherever it sits in the folder
+            let places: Vec<String> = info
+                .folders
+                .iter()
+                .map(|f| format!("{f}/**/*{}", endings.join("|")))
+                .collect();
+            text.push_str(&format!(
+                "  {:<19}{}   (<name> is the name the file states inside)\n",
+                info.label,
+                places.join(" | ")
+            ));
+            continue;
+        }
         let names = match (info.named_by_file, endings.is_empty()) {
             (false, _) => endings.join(" | "),
             (true, true) => "   (<name> is a file name, as written)".to_string(),

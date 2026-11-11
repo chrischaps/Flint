@@ -80,47 +80,6 @@ fn scene_dir_of(scene_path: &str) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// The search effects had before the one resolver, kept only for
-/// [`texture_search_dirs`]: `<scene_dir>/particles/` if it exists, else
-/// `<scene_dir>/../particles/`. An effect's `texture` is a path-named file
-/// and is not yet one of the resolver's kinds (materials' textures are).
-pub fn resolve_particles_dir(scene_path: &str) -> Option<PathBuf> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let local = scene_dir.join("particles");
-    if vfs::is_dir(&local) {
-        return Some(local);
-    }
-    let up = scene_dir.parent()?.join("particles");
-    vfs::is_dir(&up).then_some(up)
-}
-
-/// Directories in which particle textures are searched, most specific
-/// first: `particles/`, the scene dir, then its parent (game root), as they
-/// always were; then every other `particles/` the resolver searches, so an
-/// effect found further up (or in the engine) finds the texture beside it.
-pub fn texture_search_dirs(project: &Project, scene_path: &str) -> Vec<PathBuf> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let mut dirs = Vec::new();
-    if let Some(p) = resolve_particles_dir(scene_path) {
-        dirs.push(p);
-    }
-    dirs.push(scene_dir.clone());
-    if let Some(parent) = scene_dir.parent() {
-        dirs.push(parent.to_path_buf());
-    }
-    for dir in project.search_dirs(AssetKind::Particles, scene_dir_of(scene_path)) {
-        if !dirs.contains(&dir) && vfs::is_dir(&dir) {
-            dirs.push(dir);
-        }
-    }
-    dirs
-}
-
 /// Every effect file a scene can see, nearest first, each with what loading
 /// it gave: `project.list(AssetKind::Particles, ..)`, loaded.
 pub fn load_visible_effects(
@@ -196,17 +155,6 @@ mod tests {
             Some("fire".into())
         );
         assert_eq!(effect_stem(Path::new("fire.toml")), None);
-    }
-
-    #[test]
-    fn resolves_particles_dir_next_to_demo_scene() {
-        let scene = demo_dir().join("particles_demo.scene.toml");
-        let dir = resolve_particles_dir(scene.to_str().unwrap()).expect("demo/particles exists");
-        assert!(dir.ends_with("particles"));
-        let project = Project::for_scene(&scene);
-        let dirs = texture_search_dirs(&project, scene.to_str().unwrap());
-        assert_eq!(dirs[0], dir);
-        assert_eq!(dirs.len(), 3, "nothing new beside a demo scene: {dirs:?}");
     }
 
     #[test]

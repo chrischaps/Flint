@@ -367,7 +367,24 @@ impl ScriptSystem {
         c.audio_output_latency = output_latency;
     }
 
-    /// Load a script file for a specific entity (for chunk loading).
+    /// Load the script a `script.source` names for a specific entity (for
+    /// chunk loading), searched for from `from_dir`, the chunk's own
+    /// directory, by the project's one rule (`AssetKind::Scripts`), and
+    /// followed by hot reload. The entity must already have a `script`
+    /// component in the ECS. `Err` is the not-found text, every path tried;
+    /// nothing is loaded then.
+    pub fn load_script_named(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        source: &str,
+        from_dir: &std::path::Path,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let script_path = self.sync.locate_for(entity_id, source, from_dir)?;
+        self.load_script_for_entity(entity_id, &script_path);
+        Ok(script_path)
+    }
+
+    /// Load a script file for a specific entity, from the path given.
     /// The entity must already have a `script` component in the ECS.
     pub fn load_script_for_entity(
         &mut self,
@@ -559,12 +576,19 @@ impl ScriptSystem {
         )
     }
 
-    /// Set up the script system's scripts directory from the scene path.
-    /// Also points `import` at `<scripts>/lib` and starts watching it.
-    pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
-        sync::load_scripts_from_scene(scene_path, &mut self.sync);
-        if let Some(lib) = self.sync.lib_dir() {
-            self.engine.set_module_base(lib);
+    /// Point the script system at the scripts the scene at `scene_path` can
+    /// see in `project` (`AssetKind::Scripts`: `scripts/` beside the scene,
+    /// in each directory above it up to the project root, then in the
+    /// engine). Also points `import` at `scripts/lib/` in the same places
+    /// and starts watching them.
+    pub fn load_scripts_from_scene(
+        &mut self,
+        scene_path: &str,
+        project: &flint_core::project::Project,
+    ) {
+        sync::load_scripts_from_scene(scene_path, project, &mut self.sync);
+        if let Some(base) = self.sync.module_base() {
+            self.engine.set_module_search(base);
         }
     }
 

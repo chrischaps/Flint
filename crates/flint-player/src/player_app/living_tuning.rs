@@ -17,8 +17,8 @@ use flint_procgen::{
     ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
 use flint_scene::{
-    commit_look, list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef,
-    LivingSpeciesDef, LivingVarianceDef, WoozeKnobs, WoozePreset,
+    commit_look, read_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
+    LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -610,7 +610,7 @@ impl PlayerApp {
     pub(super) fn save_living_preset(&mut self, name: &str) -> Result<PathBuf, String> {
         let (mut knobs, _) = self.living_shared_knobs();
         knobs.living.species = self.living_species_tables();
-        write_preset(Path::new(&self.scene_path), name, &knobs)
+        flint_scene::write_preset_in(&self.project, Path::new(&self.scene_path), name, &knobs)
     }
 
     /// Each species' own values as a preset holds them: every one that has some,
@@ -821,7 +821,7 @@ impl PlayerApp {
     /// The names a preset can go by here: this scene's files, then the built-ins
     /// that no file has taken.
     pub(super) fn living_preset_names(&self) -> Vec<String> {
-        let mut names = list_presets(Path::new(&self.scene_path));
+        let mut names = flint_scene::list_presets_in(&self.project, Path::new(&self.scene_path));
         for (name, _) in PRESETS {
             if !names.iter().any(|taken| taken == name) {
                 names.push((*name).to_string());
