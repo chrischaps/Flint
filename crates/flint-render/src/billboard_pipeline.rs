@@ -169,7 +169,6 @@ impl BillboardPipeline {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-
         Self {
             pipeline,
             billboard_bind_group_layout,

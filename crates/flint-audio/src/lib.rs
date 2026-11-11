@@ -11,6 +11,7 @@
 //! and `web` is the main-thread stream it falls back to. `page` suspends
 //! both while the page is hidden (#162).
 
+pub mod clock;
 pub mod decode;
 pub mod engine;
 pub mod handle;
@@ -86,6 +87,24 @@ impl AudioSystem {
     /// Update the listener position (called from PlayerApp after camera update)
     pub fn update_listener(&mut self, position: Vec3, yaw: f32, pitch: f32) {
         self.engine.update_listener(position, yaw, pitch);
+    }
+
+    /// Read where each `audio_source`'s sound is, once a frame before
+    /// scripts run, paused or not (#658). See [`AudioSync::sample_positions`].
+    pub fn sample_positions(&mut self) {
+        self.sync.sample_positions(&self.engine);
+    }
+
+    /// Seconds into `entity`'s playing sound, wrapped for a loop; `None`
+    /// before it has started. See [`AudioSync::position`].
+    pub fn source_position(&self, entity: flint_core::EntityId) -> Option<f64> {
+        self.sync.position(entity)
+    }
+
+    /// How long after it is mixed a sound is heard, seconds, where that is
+    /// known (the browser). See [`AudioEngine::output_latency`].
+    pub fn output_latency(&self) -> Option<f64> {
+        self.engine.output_latency()
     }
 
     /// Set the low-pass filter cutoff frequency on the master bus (Hz)

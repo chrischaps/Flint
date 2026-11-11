@@ -181,7 +181,7 @@ impl Local {
 struct Remote {
     link: Link,
     /// Every sound sent, by name, and how long each plays, seconds: the
-    /// mixer says nothing back, so a one-shot's end is worked out here.
+    /// mixer reports only watched voices (#658), so a one-shot's end is worked out here.
     sounds: HashMap<String, u32>,
     lengths: HashMap<u32, f64>,
     listener: bool,
@@ -244,7 +244,7 @@ struct OneShot {
     position: Vec3,
     falloff: Falloff,
     volume: f64,
-    /// When a remote one has played out: the worklet says nothing back
+    /// When a remote one has played out: the worklet reports no one-shots
     ends_at: Option<Instant>,
     /// Stopped to make room. A local handle says `Playing` until the audio
     /// thread reads the stop, which may be a buffer away.
@@ -308,6 +308,8 @@ pub struct AudioEngine {
     /// Mix as before #138 (the web's `?mix=old`): placed one-shots on kira
     /// spatial tracks, none skipped or stolen
     old_mix: bool,
+    /// Where [`clock_now`](Self::clock_now) counts from, mixing here.
+    epoch: Instant,
 }
 
 impl Default for AudioEngine {
@@ -367,6 +369,7 @@ impl AudioEngine {
             skipped_oneshots: 0,
             stolen_oneshots: 0,
             old_mix: false,
+            epoch: Instant::now(),
         }
     }
 
@@ -1347,6 +1350,40 @@ impl AudioEngine {
         if let Mixer::Remote(r) = &self.mixer {
             r.link.send(Command::ClearOneShots);
         }
+    }
+
+    /// Now, on the clock sounds' positions are stamped with (#658): the
+    /// remote mixer's audio time (the browser's `AudioContext` time),
+    /// or seconds since this engine was made when mixing here. `None` for a
+    /// remote mixer whose clock can't be read (a test's bare link).
+    pub fn clock_now(&self) -> Option<f64> {
+        match &self.mixer {
+            Mixer::Remote(r) => r.link.clock().map(|[now, _]| now),
+            _ => Some(self.epoch.elapsed().as_secs_f64()),
+        }
+    }
+
+    /// How long after it is mixed a sound is heard, seconds (#658): the
+    /// browser's `baseLatency + outputLatency`. `None` where it isn't known:
+    /// kira's desktop stream doesn't say what its device adds.
+    pub fn output_latency(&self) -> Option<f64> {
+        match &self.mixer {
+            Mixer::Remote(r) => r.link.clock().map(|[_, latency]| latency),
+            _ => None,
+        }
+    }
+
+    /// How long a loaded sound plays at its own rate, seconds.
+    pub fn sound_length(&self, name: &str) -> Option<f64> {
+        let name = &*self.resolve_sound(name);
+        if let Mixer::Remote(r) = &self.mixer {
+            if let Some(id) = r.sounds.get(name) {
+                return r.lengths.get(id).copied();
+            }
+        }
+        self.sound_cache
+            .get(name)
+            .map(|d| d.frames.len() as f64 / d.sample_rate.max(1) as f64)
     }
 
     /// Check if a sound is already loaded

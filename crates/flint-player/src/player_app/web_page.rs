@@ -62,7 +62,9 @@ pub(super) fn safe_area_insets() -> [f32; 4] {
 
 /// Read the probe's padding into [`safe_area_insets`].
 fn measure_safe_area() {
-    let Some(window) = web_sys::window() else { return };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let style = document()
         .and_then(|d| d.get_element_by_id(SAFE_AREA_PROBE_ID))
         .and_then(|probe| window.get_computed_style(&probe).ok().flatten());

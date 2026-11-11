@@ -7,6 +7,7 @@
 //! - Error types and Result alias
 //! - `vfs` - The read-only file layer every runtime read goes through
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
+//! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
 
 pub mod bundle;
 pub mod callbacks;
@@ -18,6 +19,7 @@ mod hash;
 mod id;
 pub mod ik;
 pub mod ocean;
+pub mod project;
 pub mod projection;
 pub mod quality;
 pub mod quat;

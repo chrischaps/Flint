@@ -6,9 +6,9 @@ mod file_dialog;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, export, entity, gen, gen_preview, init, play, play_chart,
-    play_suite, prefab, preview, query, render, render_suite, replay_chart, scene, schema,
-    spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
+    asset, bundle, calibrate, edit_router, entity, export, gen, gen_preview, init, play,
+    play_chart, play_suite, prefab, preview, query, render, render_suite, replay_chart, scene,
+    schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -16,8 +16,9 @@ use commands::{
 #[command(about = "CLI-first game engine for AI-assisted development", long_about = None)]
 #[command(version)]
 struct Cli {
-    /// Project root holding the content store (.flint/) and asset catalog
-    /// (assets/). Found by walking up from the working directory if omitted
+    /// Project root: the folder holding flint.toml, the content store
+    /// (.flint/) and the asset catalog (assets/). Found by walking up from
+    /// the working directory if omitted
     #[arg(long, global = true, value_name = "DIR")]
     project: Option<std::path::PathBuf>,
 
@@ -180,7 +181,10 @@ fn main() -> Result<()> {
             anyhow::bail!("--project {}: not a directory", dir.display());
         }
         let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.clone());
-        flint_asset::project::set_override(dir);
+        // Reads the directory's flint.toml: a bad manifest stops here.
+        let project =
+            flint_core::project::Project::at(dir).map_err(|e| anyhow::anyhow!("--project {e}"))?;
+        flint_core::project::set_override(project);
     }
 
     match cli.command {

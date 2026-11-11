@@ -65,9 +65,45 @@ my_game/                         (your git repo)
 │   └── level_1.scene.toml
 ├── sprites/                     # Billboard sprite textures
 ├── audio/                       # Sound effects and music
+├── flint.toml                   # Project manifest (marks the root)
 ├── play.bat                     # Convenience launcher
 └── build.bat                    # Engine build script
 ```
+
+## The Project Manifest
+
+A `flint.toml` at the top of the repo marks it as the **project root** and says what the project is:
+
+```toml
+[project]
+id = "my_game"                            # saves, web bundle id, user files
+schemas = ["engine/schemas", "schemas"]   # in override order: a later one wins
+scene = "scenes/level_1.scene.toml"       # the scene to open by default
+input = "config/input.toml"               # the game's input config
+```
+
+Every key is optional, and so is the `[project]` table: an empty `flint.toml` is still a root marker. Paths are relative to the folder the file is in. Other tables in the file are left alone.
+
+Flint finds the manifest by walking up from a scene or from the working directory, so it is found from any folder of the project, and from inside `engine/` too (an engine checkout is passed through to the game above it). Without a `flint.toml`, a `.flint/` directory or `schemas/` beside `scenes/` or `levels/` marks the root, as before. `--project <dir>` on any `flint` command names the root outright and reads that folder's `flint.toml`.
+
+The file is checked when it is read. A value of the wrong type, or a key in `[project]` that Flint doesn't know, is an error that names the file and the key, so a typo doesn't pass silently:
+
+```
+flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input)
+flint.toml: `project.schemas` must be a list of strings, found a string
+```
+
+**What reads it today.** The manifest is new, and its keys are arriving ahead of the code that will use them:
+
+| Key | Today | Planned |
+|-----|-------|---------|
+| the file itself | Marks the project root for the content store and catalog (`flint asset`, `flint gen --register`); see [Assets: The Project Root](../concepts/assets.md#the-project-root) | The root every command, the player and the web build agree on |
+| `id` | Parsed and checked | Keys saves and user files; the web bundle's id |
+| `schemas` | Parsed and checked | Replaces `--schemas engine/schemas --schemas schemas` on every command |
+| `scene` | Parsed and checked | What `flint play` opens with no argument |
+| `input` | Parsed and checked | The input config the player loads |
+
+"Parsed and checked" means the commands that look for a project root (`flint asset ...`, `flint gen --register`, anything given `--project`) refuse a bad manifest, and nothing acts on the value yet. So for now you still pass `--schemas`, as below. `flint init` does not write a `flint.toml` yet. The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
 
 ## Multi-Schema Layering
 
@@ -237,6 +273,10 @@ git subtree push --prefix=engine flint-engine main
 ```
 
 Engine edits are normal commits in your game repo. The subtree commands handle splitting and merging the `engine/` prefix.
+
+### After a pull: read the changelog
+
+`--squash` folds the engine's commits into one, so their subjects are gone from your history. `engine/CHANGELOG.md` is where to read what changed: it lists, newest first, every change a game can notice (scene and schema keys, script functions, CLI flags, formats, Cargo features, and changes in how something looks, sounds or behaves), each with what to do about it. Read from the top down to the date of your last pull. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 
 ## Further Reading
 

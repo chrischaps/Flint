@@ -86,6 +86,9 @@ pub struct Mixer {
     tracks: HashMap<u32, SpatialTrackHandle>,
     voices: HashMap<u32, StaticSoundHandle>,
     one_shots: Vec<(SpatialTrackHandle, StaticSoundHandle)>,
+    /// Voices whose places are reported (#658), in the order asked for.
+    watched: Vec<u32>,
+    report: Vec<f64>,
     renders: u32,
     /// Commands that failed (an unknown id, a full track, an unreadable
     /// batch). The processor reports the count with its buffer stats.
@@ -120,6 +123,8 @@ impl Mixer {
             tracks: HashMap::new(),
             voices: HashMap::new(),
             one_shots: Vec::new(),
+            watched: Vec::new(),
+            report: Vec::new(),
             renders: 0,
             errors: 0,
             interleaved: Vec::new(),
@@ -296,7 +301,14 @@ impl Mixer {
                 self.voices.get_mut(&voice)?.stop(tween(t));
             }
             Command::VoiceDrop { voice } => {
+                self.watched.retain(|&v| v != voice);
                 self.voices.remove(&voice)?;
+            }
+            Command::VoiceWatch { voice } => {
+                self.voices.get(&voice)?;
+                if !self.watched.contains(&voice) {
+                    self.watched.push(voice);
+                }
             }
             Command::VoicePanning {
                 voice,
@@ -335,6 +347,30 @@ impl Mixer {
             right[i] = r;
         }
         &self.planar
+    }
+
+    /// Where each watched voice is now, [`protocol::REPORT_STRIDE`] `f64`s
+    /// a voice (#658): its id, seconds into its sound and its playback
+    /// state. Read after a [`render`](Self::render), it is where the next
+    /// render starts. Empty when nothing is watched.
+    pub fn report(&mut self) -> &[f64] {
+        self.report.clear();
+        for &voice in &self.watched {
+            let Some(handle) = self.voices.get(&voice) else {
+                continue;
+            };
+            self.report.extend_from_slice(&[
+                voice as f64,
+                handle.position(),
+                handle.state() as u8 as f64,
+            ]);
+        }
+        &self.report
+    }
+
+    /// How many `f64`s the last [`report`](Self::report) wrote.
+    pub fn report_len(&self) -> usize {
+        self.report.len()
     }
 
     /// Voices the page still holds handles to, and placed one-shots playing.
@@ -502,6 +538,62 @@ mod tests {
         loudness(&mut m, 200);
         assert_eq!(m.counts().2, 0);
         assert_eq!(m.errors, 0);
+    }
+
+    #[test]
+    fn a_watched_voice_reports_where_it_is_wrapping_at_its_loop() {
+        let mut m = mixer_with_tone();
+        let play = |voice| Command::Play {
+            voice,
+            sound: 1,
+            target: Target::Bus(BUS_MUSIC),
+            db: 0.0,
+            rate: 1.0,
+            pan: 0.0,
+            looping: true,
+        };
+        m.apply(&batch(&[
+            play(1),
+            play(2),
+            Command::VoiceWatch { voice: 2 },
+        ]));
+        assert_eq!(m.report()[..2], [2.0, 0.0], "not yet mixed");
+        // 375 renders of 128 frames at 48 kHz: one second, the tone's
+        // length; 75 more is 0.2 s into its second time round.
+        for _ in 0..450 {
+            m.render(QUANTUM);
+        }
+        let report: Vec<VoiceReport> = read_report(m.report()).collect();
+        assert_eq!(report.len(), 1, "only the watched voice");
+        assert_eq!(report[0].voice, 2);
+        assert!(
+            (report[0].position - 0.2).abs() < 0.01,
+            "wrapped: {}",
+            report[0].position
+        );
+        assert!(state::moving(report[0].state));
+
+        m.apply(&batch(&[Command::VoicePause {
+            voice: 2,
+            tween: 0.0,
+        }]));
+        for _ in 0..10 {
+            m.render(QUANTUM);
+        }
+        let held = m.report()[1];
+        for _ in 0..40 {
+            m.render(QUANTUM);
+        }
+        assert_eq!(m.report()[1], held, "a paused voice stays put");
+        assert!(!state::moving(m.report()[2] as u8));
+
+        // A dropped voice leaves the report, and an unknown one can't join.
+        m.apply(&batch(&[
+            Command::VoiceDrop { voice: 2 },
+            Command::VoiceWatch { voice: 7 },
+        ]));
+        assert!(m.report().is_empty());
+        assert_eq!(m.errors, 1);
     }
 
     #[test]

@@ -98,7 +98,10 @@ mod tests {
     fn a_wall_facing_south_reads_east_and_up() {
         // Facing +z, a reader stands at +z looking toward -z: their right
         // is +x.
-        let plane = TextPlane { normal: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0] };
+        let plane = TextPlane {
+            normal: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+        };
         let (right, up) = plane.basis().unwrap();
         assert!(close(right, [1.0, 0.0, 0.0]), "{right:?}");
         assert!(close(up, [0.0, 1.0, 0.0]), "{up:?}");
@@ -106,7 +109,10 @@ mod tests {
 
     #[test]
     fn up_is_squared_to_a_leaning_plane() {
-        let plane = TextPlane { normal: [0.0, 1.0, 1.0], up: [0.0, 1.0, 0.0] };
+        let plane = TextPlane {
+            normal: [0.0, 1.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+        };
         let (right, up) = plane.basis().unwrap();
         assert!(close(right, [1.0, 0.0, 0.0]), "{right:?}");
         let h = std::f32::consts::FRAC_1_SQRT_2;
@@ -115,9 +121,15 @@ mod tests {
 
     #[test]
     fn up_along_the_normal_has_no_basis() {
-        let flat = TextPlane { normal: [0.0, 1.0, 0.0], up: [0.0, 1.0, 0.0] };
+        let flat = TextPlane {
+            normal: [0.0, 1.0, 0.0],
+            up: [0.0, 1.0, 0.0],
+        };
         assert!(flat.basis().is_none());
-        let floor = TextPlane { normal: [0.0, 1.0, 0.0], up: [0.0, 0.0, -1.0] };
+        let floor = TextPlane {
+            normal: [0.0, 1.0, 0.0],
+            up: [0.0, 0.0, -1.0],
+        };
         let (right, up) = floor.basis().unwrap();
         assert!(close(right, [1.0, 0.0, 0.0]), "{right:?}");
         assert!(close(up, [0.0, 0.0, -1.0]), "{up:?}");
@@ -125,7 +137,10 @@ mod tests {
 
     #[test]
     fn it_faces_only_the_side_its_normal_points_to() {
-        let plane = TextPlane { normal: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0] };
+        let plane = TextPlane {
+            normal: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+        };
         assert!(plane.faces([0.0, 0.0, 0.0], [3.0, 1.0, 5.0]));
         assert!(!plane.faces([0.0, 0.0, 0.0], [3.0, 1.0, -5.0]));
         assert!(!plane.faces([0.0, 0.0, 0.0], [3.0, 1.0, 0.0]));

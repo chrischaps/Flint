@@ -353,6 +353,20 @@ impl ScriptSystem {
         c.conducted = conducted;
     }
 
+    /// Where each playing `audio_source` is in its sound, and the output
+    /// latency where known, for `audio_position` / `audio_output_latency`
+    /// (#658). The host sets them every frame before scripts run, paused or
+    /// not.
+    pub fn set_audio_clock(
+        &mut self,
+        positions: &std::collections::HashMap<flint_core::EntityId, f64>,
+        output_latency: Option<f64>,
+    ) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.audio_positions.clone_from(positions);
+        c.audio_output_latency = output_latency;
+    }
+
     /// Load a script file for a specific entity (for chunk loading).
     /// The entity must already have a `script` component in the ECS.
     pub fn load_script_for_entity(

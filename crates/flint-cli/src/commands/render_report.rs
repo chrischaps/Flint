@@ -37,6 +37,12 @@ pub struct CaptureReport {
     /// The value this column gave the swept knob.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<String>,
+    /// The value this row gave the second swept key, in a grid (#596).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row: Option<String>,
+    /// With `--reference`: the cell's distance to it, out of 100 (#596).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
     /// With `--scripts`: the `state` of the expression scripts saw then (#8).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expression: Option<String>,
@@ -269,6 +275,8 @@ mod tests {
             captures: vec![CaptureReport {
                 time: 3.5,
                 column: None,
+                row: None,
+                distance: None,
                 expression: None,
                 props: vec![],
             }],

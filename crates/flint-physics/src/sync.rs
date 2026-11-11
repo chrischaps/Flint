@@ -265,7 +265,11 @@ impl PhysicsSync {
         let mut locals: Vec<[[f32; 4]; 4]> = Vec::new();
         let mut cur = parent;
         loop {
-            if let Some(body) = self.body_map.get(&cur).and_then(|h| physics.get_rigid_body(*h)) {
+            if let Some(body) = self
+                .body_map
+                .get(&cur)
+                .and_then(|h| physics.get_rigid_body(*h))
+            {
                 let lift = world
                     .get_components(cur)
                     .map(sprite_anchor_offset_y)
@@ -382,7 +386,11 @@ impl PhysicsSync {
         // the scripted pose, so every step covers the same share of the
         // scripted motion; the remainder (under one step) is left for the
         // next frame, where it is part of that frame's span.
-        let span = if frame_span.is_finite() { frame_span.max(1.0) } else { 1.0 };
+        let span = if frame_span.is_finite() {
+            frame_span.max(1.0)
+        } else {
+            1.0
+        };
         let first_step = step_idx == 0;
         let frac = ((step_idx + 1) as f32 / span).min(1.0);
         let handles: Vec<(EntityId, RigidBodyHandle)> =
@@ -671,7 +679,8 @@ impl PhysicsSync {
     /// is inelastic instead of trading impulses with Rapier's own limit
     /// constraint step after step.
     pub fn project_kinematic_joints(&mut self, physics: &mut PhysicsWorld, dt: f32) {
-        let mut updates: Vec<(RigidBodyHandle, Isometry<f32>, Option<na::Vector3<f32>>)> = Vec::new();
+        let mut updates: Vec<(RigidBodyHandle, Isometry<f32>, Option<na::Vector3<f32>>)> =
+            Vec::new();
         for &handle in self.joint_map.values() {
             let Some(joint) = physics.impulse_joint_set.get(handle) else {
                 continue;
@@ -695,14 +704,21 @@ impl PhysicsSync {
             // and the solver writes it into the child's pose and velocity for
             // good (the pod vanished from the trick bench). Rebuild such a
             // child from the parent frame at the motor's target angle, at rest.
-            let pose_finite = b2.position().translation.vector.iter().all(|c| c.is_finite())
+            let pose_finite = b2
+                .position()
+                .translation
+                .vector
+                .iter()
+                .all(|c| c.is_finite())
                 && b2.position().rotation.coords.iter().all(|c| c.is_finite());
             let vel_finite = b2.linvel().iter().all(|c| c.is_finite())
                 && b2.angvel().iter().all(|c| c.is_finite());
             if !pose_finite || !vel_finite {
                 let axis_i = [JointAxis::AngX, JointAxis::AngY, JointAxis::AngZ]
                     .into_iter()
-                    .find(|a| !locked.contains((*a).into()) && data.motor_axes.contains((*a).into()));
+                    .find(|a| {
+                        !locked.contains((*a).into()) && data.motor_axes.contains((*a).into())
+                    });
                 let rel = match axis_i {
                     Some(a) => {
                         let mut v = na::Vector3::zeros();
@@ -748,7 +764,11 @@ impl PhysicsSync {
             let mut vel_fix = na::Vector3::zeros();
             let mut fix_vel = false;
             let lin = [JointAxis::LinX, JointAxis::LinY, JointAxis::LinZ];
-            let lin_mask = [JointAxesMask::LIN_X, JointAxesMask::LIN_Y, JointAxesMask::LIN_Z];
+            let lin_mask = [
+                JointAxesMask::LIN_X,
+                JointAxesMask::LIN_Y,
+                JointAxesMask::LIN_Z,
+            ];
             for i in 0..3 {
                 if locked.contains(lin_mask[i]) {
                     continue;
@@ -1294,8 +1314,14 @@ mod tests {
         let mut physics = PhysicsWorld::new();
         let mut sync = PhysicsSync::new();
         sync.sync_to_rapier(&world, &mut physics);
-        let t = *physics.get_rigid_body(sync.body_map[&child]).unwrap().translation();
-        assert!((t.x - 10.0).abs() < 1e-5 && (t.y - 5.0).abs() < 1e-5, "{t:?}");
+        let t = *physics
+            .get_rigid_body(sync.body_map[&child])
+            .unwrap()
+            .translation();
+        assert!(
+            (t.x - 10.0).abs() < 1e-5 && (t.y - 5.0).abs() < 1e-5,
+            "{t:?}"
+        );
 
         for _ in 0..30 {
             physics.step(1.0 / 60.0);
