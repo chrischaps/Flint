@@ -27,6 +27,7 @@ pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
 pub use player_app::fonts::project_font_definitions;
 pub use player_app::frame_rate::FrameRateSetting;
+pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_scripts::{
     apply_look, CameraView, HeadlessScripts, ScriptLook, SCRIPT_SEED,
 };

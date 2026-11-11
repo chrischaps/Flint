@@ -24,8 +24,8 @@ use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3;
 use flint_player::{
-    spline_gen, CameraView, ExpressionTimeline, GpuSink, HeadlessScripts, LivingRun, ScriptLook,
-    WoozeClocks,
+    spline_gen, CameraView, ExpressionTimeline, GpuSink, HeadlessAnimation, HeadlessScripts,
+    LivingRun, ScriptLook, WoozeClocks,
 };
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
@@ -668,6 +668,15 @@ pub struct RenderArgs {
     #[arg(long)]
     pub particle_time: Option<f32>,
 
+    /// Run the scene's animation for N seconds before capturing, as flint-player
+    /// has it at that time: skeletal clips, blend layers, sequences, property
+    /// tweens, node and sprite clips, then two-bone IK. Fixed 1/60 s steps (or
+    /// --frame-step's): same value, same pixels. With --time or --frames it runs
+    /// on with the clock from there. Default: none, so skinned characters draw
+    /// in their bind pose and existing snapshots are unchanged
+    #[arg(long, value_name = "SECONDS")]
+    pub anim_time: Option<f64>,
+
     /// The game time to capture: living props, the wooze field and everything else
     /// a clock drives, as the player has them at that time. Seconds (3.5), a span
     /// (0..4) for an animated --output x.gif or a PNG a frame to --output
@@ -1150,7 +1159,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Load models and textures from the scene
     let config = ModelLoadConfig::in_project(assets.project.clone(), &args.scene);
-    model_loader::load_models_from_world(
+    let models = model_loader::load_models_from_world(
         &mut world,
         &mut renderer,
         &ctx.device,
@@ -1255,8 +1264,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     renderer.ortho_height = camera.ortho_height;
     renderer.aspect_ratio = camera.aspect;
 
-    // Two-bone IK (ADR 0070): pose authored chains before the single frame.
-    flint_animation::IkPass::new().run(&mut world);
+    // Animation (#307), which runs IK after each step; without it, two-bone IK
+    // (ADR 0070) poses authored chains before the single frame.
+    let mut animation = pose_animation(&args, &models, &config.project, &mut world, ANIM_DT, true);
+    match &animation {
+        Some(posed) => posed.upload(&mut renderer, &ctx.device, &ctx.queue),
+        None => flint_animation::IkPass::new().run(&mut world),
+    }
 
     if let Some(name) = &args.select {
         let id = world
@@ -1318,10 +1332,11 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
             SequenceRig {
                 ctx,
                 renderer: &mut renderer,
-                world: &world,
+                world: &mut world,
                 camera,
                 camera_path: camera_path.as_ref(),
                 particles: particle_sim.as_mut(),
+                animation: animation.as_mut(),
                 meshes: &meshes,
                 scene_name: &scene_file.scene.name,
             },
@@ -1784,10 +1799,12 @@ fn refine_look(
 struct SequenceRig<'a> {
     ctx: &'a HeadlessContext,
     renderer: &'a mut SceneRenderer,
-    world: &'a flint_ecs::FlintWorld,
+    world: &'a mut flint_ecs::FlintWorld,
     camera: Camera,
     camera_path: Option<&'a super::frame_seq::CameraPath>,
     particles: Option<&'a mut flint_particles::ParticleSystem>,
+    /// `--anim-time` (#307): steps on a frame at a time from there
+    animation: Option<&'a mut HeadlessAnimation>,
     /// `--mesh` (#222): each frame shows the next file on each binding
     meshes: &'a [super::mesh_seq::MeshBinding],
     scene_name: &'a str,
@@ -1948,6 +1965,7 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         mut camera,
         camera_path,
         mut particles,
+        mut animation,
         meshes,
         scene_name,
     } = rig;
@@ -2008,6 +2026,13 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
         renderer.grass_time = t;
         // History smoothing scales by the frame's game time (#342)
         renderer.style_dt = dt;
+        if let Some(posed) = animation.as_deref_mut() {
+            if i > 0 {
+                posed.step(world, dt as f64);
+                posed.upload(renderer, &ctx.device, &ctx.queue);
+                renderer.update_from_world(world, &ctx.device);
+            }
+        }
         if let Some(p) = particles.as_deref_mut() {
             if i > 0 {
                 p.simulate_to(world, dt, dt.min(1.0 / 60.0));
@@ -3135,9 +3160,9 @@ fn stage_warnings(
         ));
     }
     let animated = with(comp::ANIMATOR);
-    if !animated.is_empty() {
+    if !animated.is_empty() && stage.animation.is_none() {
         warnings.push(format!(
-            "animation clips don't run here, so {} won't match the player",
+            "animation clips don't run without --anim-time, so {} won't match the player",
             animated.join(", ")
         ));
     }
@@ -3302,6 +3327,9 @@ struct Stage {
     /// follows on from.
     captured: Option<f64>,
     particles: Option<flint_particles::ParticleSystem>,
+    /// `--anim-time` (#307): the scene's animation, posed at that time when the
+    /// stage loads and stepped on with the clock.
+    animation: Option<HeadlessAnimation>,
     /// The project the scene is in (ADR 0114), found once when it loads:
     /// what every asset search of this stage asks.
     project: flint_core::project::Project,
@@ -3496,7 +3524,7 @@ impl Stage {
             run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));
         }
 
-        model_loader::load_models_from_world(
+        let models = model_loader::load_models_from_world(
             &mut world,
             &mut renderer,
             &ctx.device,
@@ -3679,8 +3707,15 @@ impl Stage {
             }
         }
 
-        // Two-bone IK (ADR 0070): pose authored chains before the single frame.
-        flint_animation::IkPass::new().run(&mut world);
+        // Animation (#307) after the scripts' first frame, as in the player's, and
+        // IK after it; without it, IK (ADR 0070) poses authored chains once. A
+        // sweep's later cells say nothing the first didn't.
+        let step = args.frame_step.unwrap_or(ANIM_DT);
+        let animation =
+            pose_animation(args, &models, &config.project, &mut world, step, index == 0);
+        if animation.is_none() {
+            flint_animation::IkPass::new().run(&mut world);
+        }
 
         if let Some(name) = &args.select {
             let id = world
@@ -3704,6 +3739,7 @@ impl Stage {
             clock: 0.0,
             captured: None,
             particles,
+            animation,
             project: config.project,
             particle_steps: 0,
             particles_on_clock,
@@ -3725,6 +3761,9 @@ impl Stage {
         self.advance(t, frame_step);
         if let Some(run) = &mut self.living {
             run.upload(&mut self.renderer, &ctx.device, &ctx.queue);
+        }
+        if let Some(posed) = &self.animation {
+            posed.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
         // The scripts' post-processing, as sticky as the player's: their boil
         // tunes in order (#579), then the overrides.
@@ -3853,6 +3892,10 @@ impl Stage {
                 self.step_beats(f64::from(steps));
             }
         }
+        // Then its animation and IK (#307), on the frame's clock.
+        if let Some(posed) = &mut self.animation {
+            posed.step(&mut self.world, dt);
+        }
         // The player's particles run after its scripts, on the frame's clock.
         if self.particles_on_clock {
             self.step_particles_to(self.clock as f32);
@@ -3941,6 +3984,62 @@ impl Stage {
 /// The particles' fixed step (ADR 0068), so a capture at a time is the same run
 /// to run.
 const PARTICLE_DT: f32 = 1.0 / 60.0;
+
+/// Animation's fixed step (#307) where nothing else names one: the player's
+/// frame at 60 Hz.
+const ANIM_DT: f64 = 1.0 / 60.0;
+
+/// `--anim-time` (#307): the scene's animation loaded as the player loads it and
+/// stepped to that time, `step` seconds at a time and landing on it exactly, IK
+/// after every step. `None` without the flag. With `tell`, says what it posed,
+/// or warns that nothing in the scene animates.
+fn pose_animation(
+    args: &RenderArgs,
+    models: &model_loader::ModelLoadResult,
+    project: &flint_core::project::Project,
+    world: &mut flint_ecs::FlintWorld,
+    step: f64,
+    tell: bool,
+) -> Option<HeadlessAnimation> {
+    let seconds = args.anim_time?.max(0.0);
+    let mut posed = HeadlessAnimation::load(models, project, &args.scene);
+    let (steps, rest) = render_plan::steps_within(seconds, step);
+    if steps == 0 && rest == 0.0 {
+        posed.settle(world);
+    }
+    for _ in 0..steps {
+        posed.step(world, step);
+    }
+    if rest > 0.0 {
+        posed.step(world, rest);
+    }
+    if !tell {
+        return Some(posed);
+    }
+    let animated = posed.animated(world);
+    if animated.is_empty() {
+        eprintln!(
+            "warning: --anim-time: nothing in this scene animates (no animator, no skinned model)"
+        );
+    } else {
+        say!(
+            "Animation: {} at t = {:.3}s ({} skinned, {} step(s) of {:.6}s)",
+            animated.join(", "),
+            posed.time(),
+            posed.skinned_count(),
+            steps + u64::from(rest > 0.0),
+            step
+        );
+    }
+    for name in posed.unposed(world) {
+        eprintln!(
+            "warning: --anim-time: {name} has an animator and a skinned model but no \
+             `skeleton` component, so its clip doesn't play (in the player either); \
+             add [entities.{name}.skeleton]"
+        );
+    }
+    Some(posed)
+}
 
 /// The scene's particle system: every effect beside it registered, the world's
 /// emitters found, and their textures uploaded.
