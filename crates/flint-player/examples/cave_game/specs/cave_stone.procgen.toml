@@ -1,0 +1,20 @@
+# A stone the size of a stool, rounder than the boulder and a little warmer.
+
+generator = "rock_v1"
+
+[meta]
+name = "cave_stone"
+description = "A rounded stone, lightly struck"
+version = "1.0.0"
+tags = ["rock", "cave"]
+
+[seed]
+mode = "fixed"
+value = 42
+
+[params]
+radius = 0.45
+cuts = 7
+depth = 0.25
+squash = 0.85
+color = "#7A6E60"

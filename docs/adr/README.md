@@ -26,3 +26,4 @@ in the repository.
 | [0116](0116-declared-script-api.md) | A declared script API: one registration builder that records name, argument kinds and doc, coerces numbers, resolves entities, and feeds `flint script api` and the checker (#695) |
 | [0117](0117-player-subsystems-and-one-game-step.md) | Player subsystems on named stages, one `enter_scene`, and one windowless `GameCore::step` shared with headless runs (#724) |
 | [0118](0118-renderer-owners-for-pipelines-draws-and-frame-inputs.md) | The renderer gets one owner each for sample-count pipelines, draw kinds (`DrawItem`) and per-frame inputs (`FrameInputs`, `bind_scene`) (#736) |
+| [0119](0119-game-generators-through-player-extensions.md) | A game registers its own procgen generators through `PlayerExtension::register_generators`, into the player's resolver, which keeps them across the disk-tier rebuild (#195) |

@@ -40,7 +40,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
    #                           Also on flint-player. ADR 0058)
    #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
-   #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
+   #   --gpu-time 240 [--gpu-time-json t.json]
+   #                          (#292: draw N frames with GPU timing, every frame kept raw
+   #                           (GpuTimer::record/flush), first tenth (max 30) dropped; prints
+   #                           min/p50/p90/max per pass + frame and the adapter/backend; the JSON
+   #                           adds mean and each pass's samples_ms. gpu_timer::spread)
    #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
    #                          (#222: a frame per GLB on that entity, one renderer; natural order;
    #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)

@@ -2,8 +2,8 @@
 //! `PlayerApp` (the first step toward the roadmap's plugin system; ADR 0071).
 //!
 //! A game that wraps `PlayerApp` in its own binary can add native Rhai
-//! functions, run per-frame Rust before the scripts, and see window events
-//! before the player does. Every method has a no-op default, and a player
+//! functions and procgen generators, run per-frame Rust before the scripts,
+//! and see window events before the player does. Every method has a no-op default, and a player
 //! with no extensions behaves exactly as it did before they existed.
 //!
 //! ```ignore
@@ -65,6 +65,26 @@ pub trait PlayerExtension {
     /// Functions registered there, on the raw engine, still work and are
     /// listed as undeclared.
     fn declare_script_api(&mut self, _api: &mut flint_script::api::ScriptApi) {}
+
+    /// Register the game's own procgen generators (ADR 0119, #195). Called
+    /// once, from `add_extension`, after the script API hooks, with the
+    /// registry the player resolves every scene's `*.procgen.toml` specs
+    /// through; it already holds the
+    /// built-ins. A spec whose `generator` names a type registered here
+    /// resolves like a built-in's: generated at load (or queued, under
+    /// `--procgen-defer`), cached in memory and on the disk, and uploaded
+    /// before the model loader looks for a file of that name.
+    ///
+    /// A generator with a built-in's type name replaces the built-in.
+    /// Generators are `Send + Sync` and stateless; see
+    /// `crates/flint-procgen/CONTRIBUTING.md` for writing one. Add the
+    /// extension before the event loop starts: the first scene's specs are
+    /// resolved as it loads, and a spec resolved before its generator was
+    /// registered has already fallen through to a file or a placeholder.
+    ///
+    /// Only the player sees these: `flint gen`, `flint edit` and
+    /// `flint render` build their registries from the built-ins alone.
+    fn register_generators(&mut self, _registry: &mut flint_procgen::GeneratorRegistry) {}
 
     /// Per-frame Rust, run after the clock ticks and before the scripts'
     /// `on_update`, so anything written to the world here is visible to

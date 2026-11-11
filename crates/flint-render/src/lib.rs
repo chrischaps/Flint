@@ -64,7 +64,7 @@ pub use glyph_atlas::{
 };
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
-pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
+pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
 pub use grass_pipeline::{
     check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition,
     GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex,
