@@ -64,6 +64,9 @@ impl PlayerApp {
         // harmless.
         #[cfg(feature = "profile")]
         profiling::tracy_client::Client::start();
+        // Before the file source may be final (the web installs its bundle
+        // later): `refresh_project` asks again when the scene loads.
+        let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
         Self {
             world,
             scene_path,
@@ -183,6 +186,7 @@ impl PlayerApp {
             persist_debounce: flint_runtime::SaveDebounce::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
+            project,
             terrain: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
@@ -753,7 +757,12 @@ impl PlayerApp {
 
         // Initialize particles: register `particles/*.particles.toml` first so
         // `particle_effect` components resolve on the first sync.
-        flint_particles::load_particle_effects_from_world(&self.scene_path, &mut self.particles);
+        self.refresh_project();
+        flint_particles::load_particle_effects_from_world(
+            &self.project,
+            &self.scene_path,
+            &mut self.particles,
+        );
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
@@ -933,6 +942,27 @@ impl PlayerApp {
         Ok(())
     }
 
+    /// The project the current scene belongs to (ADR 0114).
+    pub fn project(&self) -> &flint_core::project::Project {
+        &self.project
+    }
+
+    /// Ask again which project the current scene belongs to, and take the
+    /// answer when it differs: at the first load, and after a transition,
+    /// which may cross into another project's root (or a `flint.toml` may
+    /// have changed under a long session). `--project` pins one answer.
+    pub(super) fn refresh_project(&mut self) {
+        let next = flint_core::project::Project::for_scene(Path::new(&self.scene_path));
+        if next != self.project {
+            tracing::info!(
+                "project root: {} ({})",
+                next.root.display(),
+                next.found.describe()
+            );
+            self.project = next;
+        }
+    }
+
     /// Load image files referenced by particle_emitter texture fields into
     /// the renderer's texture cache (no-op until renderer/context exist).
     pub(super) fn load_particle_textures(&mut self) {
@@ -946,6 +976,7 @@ impl PlayerApp {
             renderer,
             &context.device,
             &context.queue,
+            &self.project,
             &self.scene_path,
         );
     }

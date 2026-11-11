@@ -525,6 +525,11 @@ pub struct PlayerApp {
     // transitions and chunks
     schema_dirs: flint_core::project::SchemaDirs,
 
+    // The project the current scene belongs to (ADR 0114): what every asset
+    // search starts from. Found when the first scene loads and again at each
+    // transition (`refresh_project`), replaced when the scene's root differs.
+    project: flint_core::project::Project,
+
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 

@@ -280,7 +280,7 @@ name = "done"                      # Delivered to on_sequence_cue(sequence, cue)
 
 ## Particle Effects (`particles/*.particles.toml`)
 
-A named, reusable particle effect: one or more emitters simulated together, with multi-key curves, forces, a burst timeline and sub-emitters. The player and viewer load every effect in the scene's `particles/` directory (or `../particles/`); scenes reference one with a `particle_effect` component, scripts with `play_effect(name, x, y, z)`, and `flint edit fx.particles.toml` edits it. See [Particles](../concepts/particles.md).
+A named, reusable particle effect: one or more emitters simulated together, with multi-key curves, forces, a burst timeline and sub-emitters. The player and viewer load every effect a scene can see: `particles/` beside the scene, beside each directory above it up to the project root, then in the engine subtree, a nearer file hiding a farther one of the same name ([the search rule](../concepts/assets.md#where-the-engine-looks-for-a-file)); scenes reference one with a `particle_effect` component, scripts with `play_effect(name, x, y, z)`, and `flint edit fx.particles.toml` edits it. See [Particles](../concepts/particles.md).
 
 ```toml
 name = "campfire"                  # defaults to the file stem

@@ -10,11 +10,13 @@ use crate::emitter::{EmitterConfig, EmitterState, ParticleBlendMode, SortMode};
 use crate::particle::ParticleInstance;
 use crate::sim::{apply_spawn_requests, step_emitter, EmitterFrame, SpawnRequest, IDENTITY};
 use flint_core::components as comp;
+use flint_core::project::{AssetKind, Project};
 use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Default cap on alive particles across every emitter.
@@ -308,6 +310,12 @@ pub struct ParticleDrawData<'a> {
     pub stretch: f32,
 }
 
+/// The project and scene directory effects are searched from.
+struct EffectSearch {
+    project: Project,
+    scene_dir: PathBuf,
+}
+
 struct DrawRange {
     key: InstanceKey,
     emitter: usize,
@@ -327,6 +335,9 @@ pub struct ParticleSync {
     ranges: Vec<DrawRange>,
     order_scratch: Vec<usize>,
     warned_missing: HashSet<String>,
+    /// Where effects were searched for, so a missing one can say where
+    /// (set by `load_particle_effects_from_world`; ADR 0114).
+    search: Option<EffectSearch>,
 }
 
 impl Default for ParticleSync {
@@ -347,6 +358,7 @@ impl ParticleSync {
             ranges: Vec::new(),
             order_scratch: Vec::new(),
             warned_missing: HashSet::new(),
+            search: None,
         }
     }
 
@@ -370,6 +382,33 @@ impl ParticleSync {
 
     pub fn effect(&self, name: &str) -> Option<&Arc<ParticleEffect>> {
         self.effects.get(name)
+    }
+
+    /// Remember the project and scene directory the effects were loaded
+    /// for. Kept across [`clear`](Self::clear); the next load replaces it.
+    pub fn set_search(&mut self, project: Project, scene_dir: PathBuf) {
+        self.search = Some(EffectSearch { project, scene_dir });
+    }
+
+    /// Why `name` is not a registered effect, for a warning: every path the
+    /// one resolver tried (ADR 0114), or the file it found that didn't
+    /// register under that name.
+    pub fn missing_effect_report(&self, name: &str) -> String {
+        let Some(search) = &self.search else {
+            return format!("particle effect '{name}' not found (no effects were loaded)");
+        };
+        match search
+            .project
+            .resolve(AssetKind::Particles, name, &search.scene_dir)
+        {
+            Err(not_found) => not_found.to_string(),
+            Ok(path) => format!(
+                "particle effect '{name}' is not loaded, though {} exists: either it failed to \
+                 load, or the `name` in the file is not '{name}' (an effect is known by the \
+                 `name` it gives itself)",
+                flint_core::project::shown(&path)
+            ),
+        }
     }
 
     pub fn effect_names(&self) -> Vec<&str> {
@@ -501,10 +540,7 @@ impl ParticleSync {
             if needs_create {
                 let Some(fx) = self.effects.get(&effect_name).cloned() else {
                     if self.warned_missing.insert(effect_name.clone()) {
-                        tracing::warn!(
-                            "particle_effect '{}' not found (looked in particles/ next to the scene)",
-                            effect_name
-                        );
+                        tracing::warn!("{}", self.missing_effect_report(&effect_name));
                     }
                     continue;
                 };

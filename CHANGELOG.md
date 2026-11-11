@@ -34,6 +34,57 @@ to do.
 
 ## 2026-11-10
 
+### Particle effects are found from any depth, by one search rule; `flint asset where` (#706)
+**What changed.** A `particle_effect` (and `play_effect` from a script) used
+to find its `particles/<name>.particles.toml` in one folder only: `particles/`
+beside the scene if that folder existed, else `particles/` one level up. Now
+the engine looks, in order, in `particles/`
+
+1. beside the scene;
+2. beside each directory above the scene, up to the project root (the folder
+   with `flint.toml`, `.flint/`, or `schemas/` + `scenes/`);
+3. under `engine/` at the project root, where a game keeps the engine.
+
+and loads every effect it can see, a nearer file hiding a farther one of the
+same file name. This is the engine's one search rule for assets (ADR 0114);
+particle effects are the first kind on it, and the other kinds follow in later
+releases. What a game can notice:
+
+- **A scene two or more folders deep finds the project's effects.**
+  `scenes/act1/cave/deep.scene.toml` now sees `particles/` at the root; before
+  it saw nothing above `scenes/act1/`.
+- **A `particles/` folder beside a scene no longer hides the project's.** It
+  used to be the only folder read; now its files override the project's of the
+  same name and the rest of the project's still load. An effect that was
+  silently missing may start to draw.
+- **A missing effect's warning lists every path tried**, for both
+  `particle_effect` and `play_effect`:
+  `particle effect 'ice' not found. Tried:` and a line a path.
+- **`flint asset where particles <name> [--scene <scene>] [--json]`** prints
+  the file the engine would load and the paths tried before it; with nothing
+  to find it lists them all and exits 1.
+- **Where the order differs from before.** Only when a scene sits *at* its
+  project's root and its effects are in `particles/` one level above, outside
+  the project: the search stops at the root now, so those are not loaded.
+  For this release the engine says so, once per effect, on stderr when a
+  scene names such an effect (and as a `note` in `flint asset where`):
+  `particle effect 'rain': the search order changed (ADR 0114). Before, the
+  engine loaded ../particles/rain.particles.toml; now it loads none: that file
+  is outside the project. ...`. A folder with no project marker at all keeps
+  its one level up. The warning goes away in a later release; the order stays.
+- An effect's `texture` is searched where it was, and then in the other
+  `particles/` folders of the search, so an effect found at the root finds a
+  texture beside it.
+- For a game with its own binary: `flint_particles::load_particle_effects_from_world`
+  and `texture_search_dirs` take a `&flint_core::project::Project` first
+  (`Project::for_scene(scene_path)`, or `PlayerApp::project()`).
+
+**What to do.** Nothing for a game that keeps `particles/` at its root or
+beside its scenes. If you see the order-change warning, move the effect into
+the project, or put a `flint.toml` in the folder that holds both. If an effect
+now draws where it didn't, a scene was naming one that the old rule could not
+reach: remove the entity or keep the effect.
+
 ### `flint.toml`'s `schemas` is read by every command; `--schemas` is the whole list (#706)
 **What changed.** One rule now decides which schema directories load, the same
 in `flint play`, `flint-player`, `flint render`, `flint validate`, `flint
