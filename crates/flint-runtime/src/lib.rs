@@ -6,6 +6,7 @@
 //! - `GameEvent` / `EventBus` — typed event queue for inter-system communication
 //! - `RuntimeSystem` — trait for systems ticked by the game loop
 
+pub mod atomic_file;
 mod clock;
 mod event;
 mod event_bus;
@@ -23,7 +24,10 @@ pub use input::{
     ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputDevice,
     InputState, RebindMode, DEVICE_AXIS_DEADZONE,
 };
-pub use persist::{PersistentStore, SaveDebounce};
+pub use persist::{
+    check_slot_name, CorruptSave, Loaded, PersistentStore, SaveBackend, SaveDebounce, SaveText,
+    DEFAULT_SLOT,
+};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;
 pub use touch_controls::{TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget};

@@ -635,6 +635,10 @@ impl RuntimeSystem for ScriptSystem {
         // Discover scripts from world
         self.sync.discover_and_load(world, &mut self.engine);
 
+        // Save data from an older version first (#726), so on_init reads
+        // it migrated
+        self.engine.migrate_persistent_store(world);
+
         // Call on_init() for all loaded scripts
         self.engine.call_inits(world);
 
@@ -672,6 +676,11 @@ impl RuntimeSystem for ScriptSystem {
         // Discover any new script entities
         let began = now();
         self.sync.discover_and_load(world, &mut self.engine);
+
+        // Save data at an older version (a slot a script switched to last
+        // frame, or one no earlier scene's scripts could migrate), before
+        // anything else runs this frame (#726)
+        self.engine.migrate_persistent_store(world);
 
         // Call on_init for newly added scripts
         self.engine.call_inits(world);

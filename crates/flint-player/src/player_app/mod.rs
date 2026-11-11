@@ -521,8 +521,17 @@ pub struct PlayerApp {
     // State machine + persistence (survive scene transitions)
     state_machine: GameStateMachine,
     persistent_store: PersistentStore,
-    /// When to write `save/persist.toml` after a change (see `persist.rs`).
+    /// When to write the save file after a change (see `persist.rs`).
     persist_debounce: SaveDebounce,
+    /// The last save failure logged, so one that lasts is said once.
+    persist_save_error: Option<String>,
+    /// `--save-dir`: keep this run's saves in this folder
+    /// (`<dir>/<slot>.toml`) and read no other (#726). Set before the
+    /// event loop starts.
+    pub save_dir: Option<std::path::PathBuf>,
+    /// The OS user directory saves and input rebinds go under
+    /// (`user_files::config_dir`), a field so a test can name another.
+    pub(crate) user_config_dir: Option<std::path::PathBuf>,
 
     // Scene transition lifecycle
     transition_phase: TransitionPhase,

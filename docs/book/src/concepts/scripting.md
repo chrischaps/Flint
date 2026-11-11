@@ -52,6 +52,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_animation_end` | `fn on_animation_end(clip)` | A `once` sprite clip finished (see [2D Sprites](sprites-2d.md)) |
 | `on_event` | `fn on_event(name, data)` | A custom game event fired by a script, the engine or a player extension (see [Event API](#event-api)) |
 | `on_expression` | `fn on_expression(state)` | A new state arrived from outside the process: a timeline or a localhost socket (see [Expression API](#expression-api)) |
+| `on_persist_migrate` | `fn on_persist_migrate(from)` | The save data just loaded is at version `from`, lower than the game's `save_version`; runs before `on_init` (see [Versions and migration](#versions-and-migration)) |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -886,29 +887,205 @@ Key-value store that survives scene transitions:
 | `persist_save()` | --- | Write the engine-managed save file now |
 | `persist_save(path)` | --- | Save store to an explicit TOML file |
 | `persist_load(path)` | --- | Load store from an explicit TOML file |
+| `persist_slot()` | `String` | The save slot held: `"default"` until a script switches |
+| `persist_slot(name)` | `bool` | Hold another slot: saves the one held if it changed, then loads `name` (or begins it empty). `false`, with a warning, for a name that can't be a slot or a save that failed; the slot held is then unchanged |
+| `persist_slots()` | `Array` | The slots that have a save, in name order |
+| `persist_version()` | `i64` | The version of the data held: the file's `[meta] version`, `0` for a file with none |
+| `persist_set_version(n)` | --- | Stamp the data held with version `n`. For a game with no `save_version` in its manifest; with one, the engine stamps after `on_persist_migrate` |
+| `persist_corrupt()` | `Map`/`()` | `()` when the slot held loaded cleanly. Otherwise `#{ slot, file, backup, error }`: the save file did not parse, and `backup` is where its text is kept |
 
 #### Persistence
 
 The store is also kept on disk without any script involvement. The player
-reads `<project>/save/persist.toml` at startup (under the
-[project root](assets.md#paths-from-the-project-root), the same file for every
-scene of the project; on Android it is the app's internal files directory)
-and, if the file exists, every
-`persist_get` sees last session's values from the first `on_init` onward. A
-missing file is a fresh, empty store --- nothing is created until something is
-stored.
+reads the game's save file at startup, before any script runs, and if there
+is one every `persist_get` sees last session's values from the first
+`on_init` onward. A missing file is a fresh, empty store --- nothing is
+created until something is stored.
 
 It is written back 1 s after the last `persist_set` / `persist_remove` /
 `persist_clear` (a script writing every frame still produces one write per
 second), on every scene transition (after the outgoing scene's
 `on_scene_exit`), and on exit. `persist_save()` with no arguments forces the
-write immediately --- call it after a settings screen commits, so a crash a
-moment later loses nothing. The `save/` directory is created on demand; add it
-to the game's `.gitignore`. Loads and saves log at `info`, failures at `warn`.
+write at the end of the frame --- call it after a settings screen commits, so
+a crash a moment later loses nothing. Loads and saves log at `info`; a save
+that fails or a file that can't be read logs at `error`.
 
 A game's Rust code shares the same store: a player extension reaches it as
 `ExtensionCtx::persist` (see [Player Extensions](../guides/player-extensions.md#saved-data)),
 and its writes are saved the same way.
+
+#### Where saves live
+
+The place is decided once, at startup, and no scene transition moves it.
+
+| The game | Its saves |
+|----------|-----------|
+| has `[project] id = "kart"` in its [`flint.toml`](../guides/building-a-game-project.md#the-project-manifest) | the OS user directory: `<config>/kart/saves/<slot>.toml` |
+| has no manifest id, but its input config sets `game_id = "kart"` | the same, keyed on that id |
+| has no id at all (a loose scene, the engine's own examples), or an id that can't be a folder name | its own folder, as before: `<project root>/save/persist.toml`, named slots beside it as `save/<slot>.toml` |
+| is run with `--save-dir <dir>` | `<dir>/<slot>.toml`, and no other save is read |
+
+`<config>` is `%APPDATA%` on Windows (`C:\Users\<you>\AppData\Roaming`),
+`~/.config` on Linux (or `$XDG_CONFIG_HOME`) and
+`~/Library/Application Support` on macOS: the directory input rebinds already
+go under. The default slot's file is `default.toml`. Nothing is written into
+the game's own folder, so a game installed somewhere read-only can save, and
+deleting or updating the game leaves the saves alone.
+
+A game with no id keeps saving inside its project because the engine won't
+make an id up from a folder name: two games in folders called `game` would
+share one save. Give the game an `id` to move its saves out. Add `save/` to
+the `.gitignore` of a game that has none.
+
+- **Android**: the app's internal files directory,
+  `.../<package>/files/save/persist.toml`, as before. It is private to the
+  app and writable.
+- **The web**: `localStorage`, one entry per game and slot. The default slot
+  is `flint:/config/flint/save_<id>.toml`, the entry web saves have always
+  used; a named slot is `flint:/config/flint/saves_<id>/<slot>.toml`.
+- **`--save-dir <dir>`** on `flint play` and `flint-player` is for tests,
+  captures and a second profile: the run reads and writes only that folder.
+
+**The old place is read once.** Before saves moved to the user directory
+every game kept `save/persist.toml` in its project. The first time a game
+with an id starts and has no `default.toml` yet, the player reads that file
+(or, for a scene two folders deep, the one at the root the engine guessed
+before there were projects), warns once that the save now lives under the
+user directory, and writes it there within a second. The old file is left
+exactly as it was, and is no longer read once the new one exists. This read
+lasts one release. On the web, a store keyed on the input config's `game_id`
+is read the same way when the manifest's `id` is another name.
+
+#### A save is never half-written, and a broken one is never lost
+
+Every save is written to `<file>.tmp` beside the save, flushed to the disk,
+and renamed over it. A power cut, a crash or a full disk mid-save leaves the
+file that was there, whole.
+
+A save file that doesn't parse (a hand edit with a typo, a file cut short by
+another tool) is not loaded and not written over. The player renames it
+`<file>.bak`, logs an error naming both paths, and starts with an empty
+store:
+
+```text
+ERROR persist: the save file .../kart/saves/default.toml could not be parsed (parse
+error: TOML parse error at line 5, column 1 ...). It is kept as
+.../kart/saves/default.toml.bak and the game starts with an empty store
+```
+
+If `default.toml.bak` is already there the next one is `default.toml.bak.1`,
+then `.bak.2`: an earlier backup is never replaced. Fix the typo and rename
+the file back to restore the save. Scripts see it through
+`persist_corrupt()`, so a menu can say what happened:
+
+```rust
+fn on_init() {
+    let bad = persist_corrupt();
+    if bad != () {
+        log_warn(`Your save could not be read. It is kept as ${bad.backup}.`);
+    }
+}
+```
+
+If the file can't be moved aside (a read-only folder), it stays where it is
+and nothing is saved to that slot for the rest of the run.
+
+#### Slots
+
+A slot is one save file. The store holds one slot at a time, `"default"` to
+begin with, which is the single save file games had before slots.
+
+```rust
+persist_slot("hard");            // saves "default" if it changed, loads "hard"
+let gold = persist_get("gold");  // reads the new slot at once
+persist_slots();                 // ["default", "hard"]
+persist_slot();                  // "hard"
+```
+
+Switching **saves the slot held first** when it has unsaved changes. If that
+save fails the switch is refused and `persist_slot` returns `false`, so
+nothing is lost. A slot with nothing saved begins empty, and appears in
+`persist_slots()` once it has been saved. The run always starts in
+`"default"`; a game that wants to resume the last slot played keeps its name
+in the default slot.
+
+A slot name is 1 to 32 of `a-z`, `0-9`, `_` and `-`, starting with a letter
+or digit. No dots, separators, spaces or upper case: a slot is a file name on
+every platform. `persist` and the names Windows keeps for devices (`con`,
+`nul`, `com1`...) are refused. Keep the name a player typed as a key inside
+the slot.
+
+`flint render --scripts` keeps the store in memory only: nothing is loaded or
+saved there, `persist_slot(name)` returns `false` and `persist_slots()` is
+empty.
+
+#### Versions and migration
+
+A save file can carry a version, in the one table the engine keeps for
+itself:
+
+```toml
+gold = 70
+visits = 12
+
+[meta]
+version = 2
+```
+
+A file with no `[meta]` is **version 0**, with every top-level key the
+game's: that is every save written before versions, and they load unchanged.
+A store at version 0 is still written without `[meta]`.
+
+The game says what version its saves are at in `flint.toml`:
+
+```toml
+[project]
+id = "lanterns"
+save_version = 2
+```
+
+When the save loaded is older than that, the player calls
+`on_persist_migrate(from)` on every script that defines it, then stamps the
+store with the game's version:
+
+```rust
+// Version 1 kept `coins`; version 2 keeps `gold`, ten to a coin.
+fn on_persist_migrate(from) {
+    if from < 2 {
+        let coins = persist_get("coins");
+        persist_set("gold", coins * 10);
+        persist_remove("coins");
+    }
+}
+
+fn on_init() {
+    log(`slot ${persist_slot()} at version ${persist_version()}: gold = ${persist_get("gold")}`);
+}
+```
+
+Run on a version 0 save holding `coins = 7`, that logs
+`slot default at version 2: gold = 70`, and the file is written back with
+`gold = 70` and `[meta] version = 2`.
+
+When it runs:
+
+- **At startup**: after the scene's scripts are compiled and before any
+  `on_init`, so `on_init` reads migrated data.
+- **After `persist_slot(name)`** loads an older slot: before the next frame's
+  `on_update`. The script that switched reads the slot as saved until then;
+  `persist_version()` tells it.
+- Once per load. A store that began empty is already at the game's version
+  and is not migrated; a save from a *newer* build keeps its higher version
+  and is not migrated either.
+- If no loaded script defines `on_persist_migrate`, the data keeps its old
+  version and stays pending until a scene whose scripts do is loaded, so put
+  the callback in a script every scene has, or in the first scene.
+
+`meta` is the one key name the engine keeps. A game that already stores a key
+called `meta` keeps it: `persist_get("meta")` works as before, and the value
+is saved inside the engine's table as `key_meta`. The one case that reads
+differently is an old save whose `meta` key was exactly a table holding only
+an integer `version`: it is taken for the engine's.
 
 ### Data Files API
 
