@@ -205,6 +205,21 @@ flint-debug-ui = { path = "crates/flint-debug-ui" }
 flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }
 
+# Debug builds (and tests, which inherit dev) keep only line tables for the
+# workspace crates and no debug info for dependencies (#762): a backtrace's
+# Flint frames still name file and line, a dependency's frames their function,
+# and a debugger sees no locals.
+# Measured on the 24-thread machine, a cold worktree `cargo build` plus
+# `cargo test --no-run` went from 17.1 GB and 229 s to 6.6 GB and 150 s; most
+# of the 17 GB was .pdb files. Stepping through one crate in a debugger with
+# its locals: `CARGO_PROFILE_DEV_DEBUG=full cargo build` (workspace crates),
+# or a `[profile.dev.package.<dep>] debug = "full"` you don't commit.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # The web player's build (#123): `trunk build --release --cargo-profile
 # web-release` in crates/flint-player, as .github/workflows/play.yml does.
 # Every first visit downloads the wasm before the world appears, so it
