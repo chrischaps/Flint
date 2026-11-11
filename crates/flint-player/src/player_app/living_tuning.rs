@@ -543,40 +543,7 @@ impl PlayerApp {
         name: &str,
         keys: &[String],
     ) -> Result<(), String> {
-        let props = self.procgen_resolver.living_props_mut();
-        let mut over = props.species_override(name).unwrap_or_default();
-        if keys.is_empty() {
-            over = Default::default();
-        }
-        let mut unknown = Vec::new();
-        for key in keys {
-            match key.as_str() {
-                "amplitude" => over.clock.amplitude = None,
-                "step" => over.clock.step = None,
-                "glide" => over.clock.glide = None,
-                "jitter" => over.clock.jitter = None,
-                "stagger" => over.stagger = None,
-                "echoes" => over.echoes = Default::default(),
-                "echoes.count" => over.echoes.count = None,
-                "echoes.spread" => over.echoes.spread = None,
-                "echoes.alpha" => over.echoes.alpha = None,
-                "variance" => over.variance = Default::default(),
-                "variance.amount" => over.variance.amount = None,
-                "variance.steady" => over.variance.steady = None,
-                "variance.keep_size" => over.variance.keep_size = None,
-                "softness" => over.softness = None,
-                other => unknown.push(other.to_string()),
-            }
-        }
-        let any = props.set_species(name, over);
-        if !unknown.is_empty() {
-            return Err(format!(
-                "{} isn't a species value; it takes {}",
-                unknown.join(", "),
-                SPECIES_KEYS.join(", ")
-            ));
-        }
-        if any {
+        if clear_species(self.procgen_resolver.living_props_mut(), name, keys)? {
             Ok(())
         } else {
             Err(self.no_such_species(name))
@@ -1487,6 +1454,50 @@ pub(super) mod panel {
         }
         said
     }
+}
+
+/// A script's `clear_living` on `props` (the player's, or a headless capture's,
+/// #697): clear some of a species' own values, or all of them with no keys, so
+/// the layers below decide them again. Keys are [`SPECIES_KEYS`]. Whether any
+/// prop grows from the species, or what's wrong with the keys.
+pub(super) fn clear_species(
+    props: &mut flint_procgen::LivingProps,
+    name: &str,
+    keys: &[String],
+) -> Result<bool, String> {
+    let mut over = props.species_override(name).unwrap_or_default();
+    if keys.is_empty() {
+        over = Default::default();
+    }
+    let mut unknown = Vec::new();
+    for key in keys {
+        match key.as_str() {
+            "amplitude" => over.clock.amplitude = None,
+            "step" => over.clock.step = None,
+            "glide" => over.clock.glide = None,
+            "jitter" => over.clock.jitter = None,
+            "stagger" => over.stagger = None,
+            "echoes" => over.echoes = Default::default(),
+            "echoes.count" => over.echoes.count = None,
+            "echoes.spread" => over.echoes.spread = None,
+            "echoes.alpha" => over.echoes.alpha = None,
+            "variance" => over.variance = Default::default(),
+            "variance.amount" => over.variance.amount = None,
+            "variance.steady" => over.variance.steady = None,
+            "variance.keep_size" => over.variance.keep_size = None,
+            "softness" => over.softness = None,
+            other => unknown.push(other.to_string()),
+        }
+    }
+    let any = props.set_species(name, over);
+    if !unknown.is_empty() {
+        return Err(format!(
+            "{} isn't a species value; it takes {}",
+            unknown.join(", "),
+            SPECIES_KEYS.join(", ")
+        ));
+    }
+    Ok(any)
 }
 
 #[cfg(test)]

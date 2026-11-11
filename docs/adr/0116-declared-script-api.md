@@ -111,7 +111,12 @@ the tickets' blocked-by links. The steps get no sub-issues.
 2. Port the remaining modules, a few per PR, deleting each
    `register_*_api` as it goes; the file split falls out (#697). Coercion
    (#696) and uniform entity handling (#701) arrive with each ported module.
-3. `ScriptHost` and the single dispatcher (#697).
+3. `ScriptHost` and the single dispatcher (#697). Done 2026-11-11:
+   `flint_script::host` (the trait and `apply`, the one match), the ten
+   `take_*` channels folded into `ScriptCommand` through `FrameRequests`,
+   the player and the headless runner as hosts, and
+   `flint_player::PRESENTATION_ONLY` with the test that holds every variant
+   to it or to being applied headless.
 4. `flint script check`, on the registry (#694). Naming conventions and
    opts-map forms (#702). Modules owned by subsystems (#698).
 

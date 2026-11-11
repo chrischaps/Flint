@@ -71,8 +71,8 @@ fn follow(c: &mut ScriptCallContext, target: [f32; 2], speed: f32, deadzone: [f3
     let x = c.camera_follow.current_x + shake[0];
     let y = c.camera_follow.current_y + shake[1];
     // z = 10 puts every sprite layer (z_offset = layer * 0.01) in front
-    c.camera_position_override = Some([x, y, 10.0]);
-    c.camera_target_override = Some([x, y, -1.0]);
+    c.requests.camera.position = Some([x, y, 10.0]);
+    c.requests.camera.target = Some([x, y, -1.0]);
 }
 
 /// `camera_apply_shake`: shake whatever camera the script has set.
@@ -81,17 +81,17 @@ fn apply_shake(c: &mut ScriptCallContext, dt: f32) {
         return;
     }
     let [sx, sy] = advance_shake(&mut c.shake, dt);
-    match c.camera_position_override.as_mut() {
+    match c.requests.camera.position.as_mut() {
         Some(pos) => {
             pos[0] += sx;
             pos[1] += sy;
         }
         None => {
             let base = c.camera_position;
-            c.camera_position_override = Some([base[0] + sx, base[1] + sy, base[2]]);
+            c.requests.camera.position = Some([base[0] + sx, base[1] + sy, base[2]]);
         }
     }
-    if let Some(target) = c.camera_target_override.as_mut() {
+    if let Some(target) = c.requests.camera.target.as_mut() {
         target[0] += sx;
         target[1] += sy;
     }

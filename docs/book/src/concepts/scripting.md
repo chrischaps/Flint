@@ -151,7 +151,7 @@ That is the call for a pool of reused entities: hide the ones not in use rather 
 for i in 0..TILE_POOL {
     let id = tiles[i];
     if i < tiles_in_use {
-        set_position(id, 0.0, 0.0, i.to_float() * TILE_LEN - scroll);
+        set_position(id, 0.0, 0.0, i * TILE_LEN - scroll);
         set_visible(id, true);
     } else {
         set_visible(id, false);   // unchanged calls write nothing
@@ -1021,7 +1021,7 @@ When a scene carries a [`music_session`](music-sessions.md) component, the playe
 
 - `conducted_cues()`: Chart cues fired this frame, each `#{name, age, params}` (ADR 0033). `params` is the cue's flat table as floats, strings and bools; nested tables are dropped
 
-All scalars are `f64`, so compare and multiply with float literals. A typical binding reads the snapshot in `on_update` and writes a post-process override:
+The scalars are floats (`conducted_bar()` is an int), and an int literal mixes with them in arithmetic and comparisons (`conducted_coherence() > 0`, `conducted_beat() * 2`). A typical binding reads the snapshot in `on_update` and writes a post-process override:
 
 ```rhai
 fn on_update() {
@@ -1350,9 +1350,9 @@ TOML under the project root:
 <!-- script-api:end -->
 
 Types are preserved exactly: a TOML integer arrives as `INT`, a float as
-`FLOAT` (Rhai does not coerce between them, so write `points = 500.0` or call
-`to_float()` before multiplying by a float); an engine function that wants a
-number takes either. Tables come back as maps with
+`FLOAT`. Rhai mixes them in arithmetic (`points * 1.5` is a float), and an
+engine function that wants a number takes either, but two ints divide as ints:
+`points / 3` drops the remainder, where `points / 3.0` keeps it. Tables come back as maps with
 keys in alphabetical order; use an array of tables (`[[entries]]`) when file
 order matters. A missing or malformed file returns `()` and logs a warning.
 Call it once in `on_init` and keep the map --- every call clones the tree.
@@ -2121,8 +2121,10 @@ events ────► ScriptEngine.process_events()
                                   LoadScene, LoadChunk, SetVelocity2D, ...)
                                      │
 on_draw_ui ► ScriptEngine            ▼
-                │              PlayerApp processes
-                ▼              deferred commands
+                │              host::apply (one match)
+                ▼                    │
+                               ScriptHost: the player,
+                               or a headless capture
           DrawCommands
           (Text, Rect, Circle,
            Line, Sprite)
@@ -2134,7 +2136,7 @@ on_draw_ui ► ScriptEngine            ▼
 
 Each entity gets its own Rhai `Scope`, preserving persistent variables between frames. The `Engine` is shared across all entities. World access happens through a `ScriptCallContext` that holds a raw pointer to the `FlintWorld` --- valid only during the call batch, cleared immediately after.
 
-The context also carries the per-frame inputs the host fills before each batch: the `InputState` snapshot (actions, mouse, touch, swipes), the `ConductedSnapshot` from the music session (neutral when there is none), the set of loaded chunk IDs, and the camera follow / shake state. Setters such as `set_vignette` or `set_camera_roll` write `Option` overrides on the context that the player applies after the batch; `ScriptCommand` is the deferred-effect channel for anything that needs the world mutably (spawning, scene loads, chunk loads, 2D velocity). Chart cue parameters cross the boundary as a small `CueParam` enum (`Number`, `Text`, `Flag`) so `flint-script` never depends on `flint-music`.
+The context also carries the per-frame inputs the host fills before each batch: the `InputState` snapshot (actions, mouse, touch, swipes), the `ConductedSnapshot` from the music session (neutral when there is none), the set of loaded chunk IDs, and the camera follow / shake state. `ScriptCommand` is the one channel for effects on the host (#697): a sound, a style, a scene or chunk load, a state, 2D velocity. A setter of something a frame keeps one value of (`set_vignette`, `set_camera_roll`, `set_time_scale`, `set_quality`...) writes the context's `FrameRequests`, where the last call in a frame wins, and comes out of the same drain as a command (`SetCamera`, `SetPostProcess`, `SetTimeScale`, ...). A host drains them and hands each to `flint_script::host::apply`, the one `match` over `ScriptCommand`, which calls the host's `ScriptHost` method for it; a method a host doesn't implement says once that it isn't supported there. The player and `flint render --scripts` are both hosts, so a command does the same in each, as far as each can (the capture's list of what it can't: [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline)). An id in a command is always a live entity: a function given `-1` or a despawned id queues nothing. Chart cue parameters cross the boundary as a small `CueParam` enum (`Number`, `Text`, `Flag`) so `flint-script` never depends on `flint-music`.
 
 ## Example: Combat HUD
 

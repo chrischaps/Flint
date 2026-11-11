@@ -3,7 +3,8 @@
 //!
 //! A tick is a frame of the player's, in the player's order: the expression
 //! timeline's due states are queued, scripts update (`on_expression` before
-//! `on_update`), `on_draw_ui` runs, and the commands they left are done. The
+//! `on_update`; not while a pushed state pauses scripts), `on_draw_ui` runs,
+//! the style tweens move on, and the commands the scripts left are done. The
 //! caller then steps the living props and the wooze field, which is where the
 //! player's frame goes next, so a tune lands where it would in the player.
 //!
@@ -12,37 +13,103 @@
 //! order of their entities' names, and there is no input. Same scene, same
 //! timeline, same pixels.
 //!
-//! It is not the player. What changes the picture runs: everything a script
-//! writes to the world, `tune_living` (its boil too), `freeze_living`,
-//! `step_living`, `load_living_preset`, `set_wooze`, `set_wooze_zone`,
-//! `remove_wooze_zone`, the particle commands (`play_effect`, `stop_effect`,
-//! `set_effect_param`, `emit_burst`; #579), events between scripts, and the
-//! camera and post-processing overrides. Sound has nothing to show and is
-//! dropped quietly. Anything else a script asks for (physics, a scene change,
-//! the HUD, an A/B comparison) is named once in [`HeadlessScripts::notes`], so
-//! a review of the capture knows what it isn't showing.
+//! The commands go through the same dispatcher as the player's
+//! ([`flint_script::host::apply`], #697): a capture is a [`ScriptHost`] too.
+//! Everything that changes the picture is done: what a script writes to the
+//! world, the entity styles and their tweens, the whole-frame styles, looks,
+//! the camera (its roll too), the post-processing overrides, render modes,
+//! the distance and quality levers, style-history resets, the wooze field and
+//! Living Props, particles, game states and events between scripts. What a
+//! capture can't do is [`PRESENTATION_ONLY`], and a test holds every command
+//! to being one or the other. Of those, sound and the window's pointer and
+//! touch have nothing to show and are dropped quietly; the rest is named
+//! once in [`HeadlessScripts::notes`], so a review of the capture knows what
+//! it isn't showing.
 
 use std::collections::BTreeSet;
 
+use flint_core::quality::QualitySettings;
 use flint_core::wooze::{WoozeField, WoozeSample};
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_procgen::{BoilDef, WoozePreset};
-use flint_runtime::{GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem};
-use flint_script::context::{LogLevel, ScriptCommand};
-use flint_script::{CameraOverrides, PostProcessOverrides, ScriptSystem};
+use flint_render::PostProcessConfig;
+use flint_runtime::{
+    GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem, SystemPolicy,
+};
+use flint_script::context::ScriptCommand;
+use flint_script::{CameraOverrides, PostProcessOverrides, ScriptHost, ScriptSystem};
 
 use super::expression_feed::{json_to_map, ExpressionTimeline};
 use super::living_props::{LivingRun, WoozeClocks};
 use super::living_tuning::{
-    boil_problem, find_preset, replace_species, tune_boil, tune_field, tune_global, tune_props,
-    tune_species, ScriptTune,
+    boil_problem, clear_species, find_preset, replace_species, tune_boil, tune_field, tune_global,
+    tune_props, tune_species, ScriptTune,
 };
+use super::style_commands::{self, SceneStyles, StyleApplied, StyleTweens};
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
 pub const SCRIPT_SEED: u64 = 0x5EED_0F08;
+
+/// A command a headless capture doesn't do, and why.
+#[derive(Debug, Clone, Copy)]
+pub struct Skipped {
+    /// The script function, as [`ScriptHost::unsupported`] names it.
+    pub command: &'static str,
+    /// Why a capture can't. `None`: nothing in a picture shows it, so it is
+    /// dropped without a note.
+    pub why: Option<&'static str>,
+}
+
+const fn quiet(command: &'static str) -> Skipped {
+    Skipped { command, why: None }
+}
+
+const fn noted(command: &'static str, why: &'static str) -> Skipped {
+    Skipped {
+        command,
+        why: Some(why),
+    }
+}
+
+/// The commands a headless capture leaves to the player: sound, the window's
+/// pointer and touch, the clock, files, the A/B view, other scenes, quitting
+/// and physics. Every other command is applied headless; a test
+/// (`headless_host_tests.rs`) fails on a command that is neither.
+pub const PRESENTATION_ONLY: &[Skipped] = &[
+    quiet("play_sound"),
+    quiet("play_sound_at"),
+    quiet("stop_sound"),
+    quiet("set_audio_lowpass"),
+    quiet("set_touch_controls"),
+    quiet("set_cursor_captured"),
+    noted(
+        "set_time_scale",
+        "the capture's clock is its own fixed step",
+    ),
+    noted(
+        "set_camera_cut_detection",
+        "a capture has no camera-cut detection to switch",
+    ),
+    noted("save_living_preset", "a capture writes no files"),
+    noted("commit_living", "a capture writes no files"),
+    noted("compare_living", "the A/B view is the player's window"),
+    noted("flip_living", "the A/B view is the player's window"),
+    noted("split_living", "the A/B view is the player's window"),
+    noted(
+        "stop_comparing_living",
+        "the A/B view is the player's window",
+    ),
+    noted("load_scene", "a capture draws the one scene it loaded"),
+    noted("reload_scene", "a capture draws the one scene it loaded"),
+    noted("load_chunk", "a capture draws the scene as it loaded"),
+    noted("unload_chunk", "a capture draws the scene as it loaded"),
+    noted("quit_game", "a capture ends at its last frame"),
+    noted("set_velocity_2d", "physics doesn't step in a capture"),
+];
 
 /// A scene's scripts, run on a clock someone else keeps.
 pub struct HeadlessScripts {
@@ -71,12 +138,37 @@ pub struct HeadlessScripts {
     time: f64,
     /// What the scripts asked for and didn't get, once each.
     notes: BTreeSet<String>,
+    /// The commands of [`PRESENTATION_ONLY`] the scripts asked for.
+    skipped: BTreeSet<&'static str>,
     /// Post-processing as the scripts last left it. The renderer's config is
     /// sticky in the player, so only the last write of each value matters.
     post: PostProcessOverrides,
     fog_color: Option<[f32; 3]>,
+    /// This tick's render mode (a reality tear lasts only while asked for)
+    /// and the mode's tuning, which is held.
+    render_mode: Option<(u32, f32)>,
+    mode_params: Option<[f32; 4]>,
+    /// The camera the scripts asked for in the last tick.
     camera: CameraOverrides,
     screen: (f32, f32),
+    /// The entity style tweens (#370), stepped each tick as the player's are.
+    style_tweens: StyleTweens,
+    /// The post-process config the frame is drawn with, as the stage last
+    /// handed it, with the scripts' whole-frame style edits laid on: what
+    /// style reads see and tweens start from.
+    styles: PostProcessConfig,
+    /// The scene's own config, for `reset_post_style`.
+    authored: PostProcessConfig,
+    /// A whole-frame style changed since the stage last took the styles.
+    styles_changed: bool,
+    /// `set_look` / `clear_look` since the stage last asked.
+    look: Option<Option<String>>,
+    /// `set_lod_scale` / `set_draw_distance_scale` since the stage last asked.
+    lod: (Option<f32>, Option<f32>),
+    /// `set_quality` since the stage last asked.
+    quality: Option<QualitySettings>,
+    /// `reset_style_history` since the stage last asked.
+    reset_history: bool,
 }
 
 /// What the scripts have asked of the picture so far.
@@ -84,18 +176,39 @@ pub struct HeadlessScripts {
 pub struct ScriptLook {
     pub post: PostProcessOverrides,
     pub fog_color: Option<[f32; 3]>,
+    /// The render mode of the last tick: shown only while asked for.
+    pub render_mode: Option<(u32, f32)>,
+    pub mode_params: Option<[f32; 4]>,
+}
+
+/// What a capture's renderer should take from the scripts before it draws:
+/// [`HeadlessScripts::take_renderer_requests`].
+#[derive(Debug, Clone, Default)]
+pub struct RendererRequests {
+    /// The whole-frame styles as the scripts left them, if they changed.
+    pub styles: Option<PostProcessConfig>,
+    /// A look to lay under the scene's keys (`Some(None)`: none).
+    pub look: Option<Option<String>>,
+    pub lod_scale: Option<f32>,
+    pub draw_distance_scale: Option<f32>,
+    pub quality: Option<QualitySettings>,
+    pub reset_style_history: bool,
 }
 
 impl HeadlessScripts {
     /// Load the scripts of the scene at `scene_path`, found in `project` as
-    /// the player finds them, and run their `on_init`, as the player does once its models are loaded.
-    /// `screen` is the capture's size, for `screen_width()` and the like.
+    /// the player finds them, and run their `on_init`, as the player does once
+    /// its models are loaded. `screen` is the capture's size, for
+    /// `screen_width()` and the like; `post` the post-process config the
+    /// capture draws with, for style reads and tweens (it is also the scene's
+    /// own, for `reset_post_style`).
     pub fn load(
         scene_path: &str,
         project: &flint_core::project::Project,
         world: &mut FlintWorld,
         timeline: Option<ExpressionTimeline>,
         screen: (f32, f32),
+        post: &PostProcessConfig,
     ) -> Self {
         let mut system = ScriptSystem::new();
         system.make_deterministic(SCRIPT_SEED);
@@ -117,11 +230,23 @@ impl HeadlessScripts {
             scene_path: scene_path.to_string(),
             time: 0.0,
             notes: BTreeSet::new(),
+            skipped: BTreeSet::new(),
             post: PostProcessOverrides::default(),
             fog_color: None,
+            render_mode: None,
+            mode_params: None,
             camera: CameraOverrides::default(),
             screen,
+            style_tweens: StyleTweens::default(),
+            styles: post.clone(),
+            authored: post.clone(),
+            styles_changed: false,
+            look: None,
+            lod: (None, None),
+            quality: None,
+            reset_history: false,
         };
+        run.set_post_config(post);
         {
             let _scope =
                 run.system
@@ -131,6 +256,15 @@ impl HeadlessScripts {
             }
         }
         run
+    }
+
+    /// The post-process config the capture now draws with (after a look, a
+    /// boil, the scripts' own styles): what scripts' style reads see and
+    /// their tweens start from, as the player's `SceneStyles` reader does.
+    pub fn set_post_config(&mut self, config: &PostProcessConfig) {
+        self.styles = config.clone();
+        self.system
+            .set_style_reader(std::sync::Arc::new(SceneStyles::new(config.clone())));
     }
 
     /// One frame of scripts at game time `time`, `dt` after the last. The camera
@@ -150,6 +284,7 @@ impl HeadlessScripts {
             }
         }
         let events = std::mem::take(&mut self.events);
+        let running = self.state_machine.active_config().scripts == SystemPolicy::Run;
         let _scope =
             self.system
                 .state_scope(&mut self.state_machine, &mut self.store, &self.physics);
@@ -158,12 +293,9 @@ impl HeadlessScripts {
         self.system.set_camera_view_proj(camera.view_proj);
         self.system.provide_context(&self.input, &events, time, dt);
         self.system.set_screen_size(self.screen.0, self.screen.1);
-        if let Err(e) = self.system.update(world, dt) {
-            tracing::warn!("Script error: {e:?}");
-        }
-        if let Some(scale) = self.system.take_time_scale_request() {
-            if scale != 1.0 {
-                self.note("set_time_scale: the capture's clock is its own fixed step");
+        if running {
+            if let Err(e) = self.system.update(world, dt) {
+                tracing::warn!("Script error: {e:?}");
             }
         }
         self.system.call_draw_uis(world);
@@ -176,149 +308,46 @@ impl HeadlessScripts {
         if !self.system.drain_world_texts().is_empty() {
             self.note("world text isn't drawn in a headless capture");
         }
-        let camera = self.system.take_camera_overrides();
-        self.camera = camera;
-        if camera.roll.is_some() {
-            self.note("camera roll: the capture's camera stays level");
+        // The style tweens move on before this tick's commands, as the
+        // player's do: a tween asked for now starts moving next tick.
+        if running {
+            let step = self.style_tweens.step(world, dt);
+            self.events.extend(step.events);
+            for message in step.failures {
+                tracing::warn!(target: "script", "{message}");
+            }
         }
-        let post = self.system.take_postprocess_overrides();
-        merge_post(&mut self.post, post);
-        if let Some(color) = self.system.take_fog_color_override() {
-            self.fog_color = Some(color);
-        }
-        let (mode, params) = self.system.take_render_mode_overrides();
-        if mode.is_some() || params.is_some() {
-            self.note("render modes (reality tears) don't run in a headless capture");
-        }
+        // The camera and the render mode last the tick that asks
+        self.camera = CameraOverrides::default();
+        self.render_mode = None;
         self.system.drain_commands()
     }
 
-    /// Do what `commands` ask that a capture can show, to `living`, `wooze` and
-    /// `particles` (the stage's, if it has them) at the time their clocks have
-    /// reached, before they step on: where the player does them. `shallow` is
-    /// whether a field the scripts give a scene that had none draws shallow wooze.
-    /// `particles` is `None` when the capture draws none.
+    /// Do what `commands` ask, through the player's dispatcher: to `world`,
+    /// and to `living`, `wooze` and `particles` (the stage's, if it has them)
+    /// at the time their clocks have reached, before they step on, where the
+    /// player does them. `shallow` is whether a field the scripts give a scene
+    /// that had none draws shallow wooze. `particles` is `None` when the
+    /// capture draws none. What needs the renderer waits for
+    /// [`Self::take_renderer_requests`].
     pub fn apply(
         &mut self,
         commands: Vec<ScriptCommand>,
-        mut living: Option<&mut LivingRun>,
+        world: &mut FlintWorld,
+        living: Option<&mut LivingRun>,
         wooze: &mut Option<WoozeClocks>,
-        mut particles: Option<&mut ParticleSystem>,
+        particles: Option<&mut ParticleSystem>,
         shallow: bool,
     ) {
-        for command in commands {
-            match command {
-                ScriptCommand::Log { level, message } => match level {
-                    LogLevel::Info => tracing::info!(target: "script", "{}", message),
-                    LogLevel::Warn => tracing::warn!(target: "script", "{}", message),
-                    LogLevel::Error => tracing::error!(target: "script", "{}", message),
-                },
-                ScriptCommand::FireEvent { name, data } => {
-                    if name != flint_core::events::TRANSITION_COMPLETE {
-                        self.events.push(GameEvent::Custom { name, data });
-                    }
-                }
-                ScriptCommand::SetWooze { knobs, seconds } => {
-                    self.change_wooze(wooze, &|field, time| {
-                        field.set_global(table_of(&knobs)?, time, seconds)
-                    });
-                }
-                ScriptCommand::SetWoozeZone {
-                    name,
-                    fields,
-                    seconds,
-                } => {
-                    self.change_wooze(wooze, &|field, time| {
-                        field
-                            .set_zone(&name, table_of(&fields)?, time, seconds)
-                            .map_err(|e| format!("zone '{name}': {e}"))
-                    });
-                }
-                ScriptCommand::RemoveWoozeZone { name, seconds } => {
-                    self.change_wooze(wooze, &|field, time| {
-                        if field.remove_zone(&name, time, seconds) {
-                            Ok(())
-                        } else {
-                            Err(format!("there's no zone named '{name}' to remove"))
-                        }
-                    });
-                }
-                ScriptCommand::TuneLiving { knobs } => {
-                    let tuned = ScriptTune::of(knobs).and_then(|tune| {
-                        self.tune(tune, false, living.as_deref_mut(), wooze, shallow)
-                    });
-                    if let Err(problem) = tuned {
-                        tracing::warn!(target: "script", "tune_living: {problem}");
-                    }
-                }
-                ScriptCommand::LoadLivingPreset { name } => {
-                    let loaded = find_preset(std::path::Path::new(&self.scene_path), &name)
-                        .and_then(|preset| {
-                            let tune = ScriptTune::Grove(preset);
-                            self.tune(tune, true, living.as_deref_mut(), wooze, shallow)
-                        });
-                    if let Err(problem) = loaded {
-                        tracing::warn!(target: "script", "load_living_preset: {problem}");
-                    }
-                }
-                ScriptCommand::FreezeLiving { frozen } => self.frozen = frozen,
-                ScriptCommand::StepLiving => self.steps += 1,
-                ScriptCommand::EmitBurst { entity, count } => {
-                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
-                        particles.sync.queue_burst(entity, count.max(0) as u32);
-                    }
-                }
-                ScriptCommand::PlayEffect {
-                    handle,
-                    name,
-                    position,
-                } => {
-                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
-                        let at = [position.0 as f32, position.1 as f32, position.2 as f32];
-                        if !particles.sync.spawn_effect(handle, &name, at) {
-                            tracing::warn!(
-                                target: "script",
-                                "play_effect: unknown particle effect '{name}' (expected \
-                                 particles/{name}.particles.toml)"
-                            );
-                        }
-                    }
-                }
-                ScriptCommand::StopEffect { handle } => {
-                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
-                        particles.sync.stop_effect(handle);
-                    }
-                }
-                ScriptCommand::SetEffectParam {
-                    handle,
-                    param,
-                    value,
-                } => {
-                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
-                        if !particles.sync.set_effect_param(handle, &param, value) {
-                            tracing::warn!(
-                                target: "script",
-                                "set_effect_param: unknown handle {handle} or param '{param}'"
-                            );
-                        }
-                    }
-                }
-                ScriptCommand::PlaySound { .. }
-                | ScriptCommand::PlaySoundAt { .. }
-                | ScriptCommand::StopSound { .. } => {}
-                other => {
-                    let name = format!("{other:?}");
-                    let name = name
-                        .split(|c: char| !c.is_alphanumeric())
-                        .next()
-                        .unwrap_or("a command")
-                        .to_string();
-                    self.note(&format!(
-                        "{name}: a script asked for it, and a headless capture doesn't do it"
-                    ));
-                }
-            }
-        }
+        let mut host = HeadlessHost {
+            run: self,
+            world,
+            living,
+            wooze,
+            particles,
+            shallow,
+        };
+        flint_script::host::apply_all(&mut host, commands);
     }
 
     /// A script's `tune_living` or a preset it loads, as the player's: the
@@ -439,6 +468,27 @@ impl HeadlessScripts {
         }
     }
 
+    /// A style command's outcome: its event to the next tick's scripts, its
+    /// refusal to the log.
+    fn style_applied(&mut self, applied: StyleApplied) {
+        match applied {
+            StyleApplied::Done(Some(event)) => self.events.push(event),
+            StyleApplied::Done(None) => {}
+            StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
+        }
+    }
+
+    /// A whole-frame style edit, to the styles the capture draws with.
+    fn edit_post_styles(&mut self, edit: impl FnOnce(&mut PostProcessConfig) -> StyleApplied) {
+        let mut config = self.styles.clone();
+        let applied = edit(&mut config);
+        if let StyleApplied::Done(_) = applied {
+            self.styles = config;
+            self.styles_changed = true;
+        }
+        self.style_applied(applied);
+    }
+
     fn note(&mut self, what: &str) {
         if self.notes.insert(what.to_string()) {
             tracing::warn!("{what}");
@@ -462,6 +512,33 @@ impl HeadlessScripts {
         tuned
     }
 
+    /// What the scripts have asked of the renderer since the last call: the
+    /// whole-frame styles if they changed (a config whose `styles` are what
+    /// to draw with), a look, the distance and quality levers, a
+    /// style-history reset. The stage lays them on before it draws, then
+    /// hands back the config with [`Self::set_post_config`] and what it
+    /// applied with [`Self::set_renderer_state`].
+    pub fn take_renderer_requests(&mut self) -> RendererRequests {
+        let (lod_scale, draw_distance_scale) = std::mem::take(&mut self.lod);
+        RendererRequests {
+            styles: std::mem::take(&mut self.styles_changed).then(|| self.styles.clone()),
+            look: self.look.take(),
+            lod_scale,
+            draw_distance_scale,
+            quality: self.quality.take(),
+            reset_style_history: std::mem::take(&mut self.reset_history),
+        }
+    }
+
+    /// The distance scales and quality the capture draws with, for scripts'
+    /// `lod_scale()`, `draw_distance_scale()` and `get_quality()`.
+    pub fn set_renderer_state(&mut self, lod: (f32, f32), quality: Option<QualitySettings>) {
+        self.system.set_lod_state(lod.0, lod.1);
+        if let Some(quality) = quality {
+            self.system.set_quality_state(quality);
+        }
+    }
+
     /// Whether a script has stopped the living clock (`freeze_living`).
     pub fn frozen(&self) -> bool {
         self.frozen
@@ -472,11 +549,14 @@ impl HeadlessScripts {
         self.camera
     }
 
-    /// Post-processing and fog as the scripts have left them.
+    /// Post-processing and fog as the scripts have left them, and the last
+    /// tick's render mode.
     pub fn look(&self) -> ScriptLook {
         ScriptLook {
             post: self.post,
             fog_color: self.fog_color,
+            render_mode: self.render_mode,
+            mode_params: self.mode_params,
         }
     }
 
@@ -485,9 +565,271 @@ impl HeadlessScripts {
         self.notes.iter().cloned().collect()
     }
 
+    /// The commands of [`PRESENTATION_ONLY`] the scripts asked for, by name.
+    pub fn skipped(&self) -> Vec<&'static str> {
+        self.skipped.iter().copied().collect()
+    }
+
     /// The expression state scripts see now.
     pub fn expression(&self) -> rhai::Map {
         self.system.expression()
+    }
+}
+
+/// A tick's commands meeting the capture: [`HeadlessScripts`] and the parts
+/// of the stage they reach.
+struct HeadlessHost<'a> {
+    run: &'a mut HeadlessScripts,
+    world: &'a mut FlintWorld,
+    living: Option<&'a mut LivingRun>,
+    wooze: &'a mut Option<WoozeClocks>,
+    particles: Option<&'a mut ParticleSystem>,
+    shallow: bool,
+}
+
+impl ScriptHost for HeadlessHost<'_> {
+    fn host_name(&self) -> &'static str {
+        "a headless capture"
+    }
+
+    fn unsupported(&mut self, command: &'static str) {
+        let run = &mut *self.run;
+        run.skipped.insert(command);
+        match PRESENTATION_ONLY.iter().find(|s| s.command == command) {
+            Some(Skipped { why: None, .. }) => {}
+            Some(Skipped { why: Some(why), .. }) => {
+                run.note(&format!(
+                    "{command}: a headless capture doesn't do it ({why})"
+                ));
+            }
+            None => run.note(&format!(
+                "{command}: a script asked for it, and a headless capture doesn't do it"
+            )),
+        }
+    }
+
+    fn fire_event(&mut self, name: String, data: toml::Value) {
+        if name != flint_core::events::TRANSITION_COMPLETE {
+            self.run.events.push(GameEvent::Custom { name, data });
+        }
+    }
+
+    fn emit_burst(&mut self, entity: EntityId, count: i64) {
+        if let Some(particles) = self.run.particles(self.particles.as_deref_mut()) {
+            particles.sync.queue_burst(entity, count.max(0) as u32);
+        }
+    }
+
+    fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
+        if let Some(particles) = self.run.particles(self.particles.as_deref_mut()) {
+            let at = [position.0 as f32, position.1 as f32, position.2 as f32];
+            if !particles.sync.spawn_effect(handle, &name, at) {
+                tracing::warn!(
+                    target: "script",
+                    "play_effect: unknown particle effect '{name}' (expected \
+                     particles/{name}.particles.toml)"
+                );
+            }
+        }
+    }
+
+    fn stop_effect(&mut self, handle: u64) {
+        if let Some(particles) = self.run.particles(self.particles.as_deref_mut()) {
+            particles.sync.stop_effect(handle);
+        }
+    }
+
+    fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
+        if let Some(particles) = self.run.particles(self.particles.as_deref_mut()) {
+            if !particles.sync.set_effect_param(handle, &param, value) {
+                tracing::warn!(
+                    target: "script",
+                    "set_effect_param: unknown handle {handle} or param '{param}'"
+                );
+            }
+        }
+    }
+
+    fn set_entity_style(&mut self, entity: EntityId, style: String) {
+        let applied = self
+            .run
+            .style_tweens
+            .set_entity_style(self.world, entity, &style);
+        self.run.style_applied(applied);
+    }
+
+    fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
+        let applied = self
+            .run
+            .style_tweens
+            .set_style_param(self.world, entity, &param, value);
+        self.run.style_applied(applied);
+    }
+
+    fn tween_style_param(
+        &mut self,
+        entity: EntityId,
+        param: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: String,
+    ) {
+        let run = &mut *self.run;
+        let applied = run.style_tweens.tween(
+            self.world,
+            &run.styles,
+            entity,
+            &param,
+            &target,
+            seconds,
+            &easing,
+        );
+        run.style_applied(applied);
+    }
+
+    fn clear_entity_style(&mut self, entity: EntityId) {
+        let applied = self.run.style_tweens.clear_entity_style(self.world, entity);
+        self.run.style_applied(applied);
+    }
+
+    fn set_post_style(&mut self, style: String, enabled: bool) {
+        self.run
+            .edit_post_styles(|config| style_commands::set_post_style(config, &style, enabled));
+    }
+
+    fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
+        self.run.edit_post_styles(|config| {
+            style_commands::set_post_style_param(config, &style, &param, value)
+        });
+    }
+
+    fn reset_post_style(&mut self, style: String) {
+        let authored = self.run.authored.clone();
+        self.run
+            .edit_post_styles(|config| style_commands::reset_post_style(config, &authored, &style));
+    }
+
+    fn reset_style_history(&mut self) {
+        self.run.reset_history = true;
+    }
+
+    fn set_look(&mut self, name: Option<String>) {
+        self.run.look = Some(name);
+    }
+
+    fn set_camera(&mut self, camera: CameraOverrides) {
+        self.run.camera.merge(camera);
+    }
+
+    fn set_post_process(&mut self, post: PostProcessOverrides) {
+        self.run.post.merge(post);
+    }
+
+    fn set_fog_color(&mut self, color: [f32; 3]) {
+        self.run.fog_color = Some(color);
+    }
+
+    fn set_render_mode(&mut self, mode: Option<(u32, f32)>, params: Option<[f32; 4]>) {
+        let run = &mut *self.run;
+        run.render_mode = mode.or(run.render_mode);
+        run.mode_params = params.or(run.mode_params);
+    }
+
+    fn set_lod_scales(&mut self, lod_scale: Option<f32>, draw_distance_scale: Option<f32>) {
+        let lod = &mut self.run.lod;
+        lod.0 = lod_scale.or(lod.0);
+        lod.1 = draw_distance_scale.or(lod.1);
+    }
+
+    fn set_quality(&mut self, settings: QualitySettings) {
+        self.run.quality = Some(settings);
+    }
+
+    fn set_time_scale(&mut self, scale: f64) {
+        // A scale of 1 asks for nothing a capture lacks
+        if scale != 1.0 {
+            self.unsupported("set_time_scale");
+        }
+    }
+
+    fn set_wooze(&mut self, knobs: toml::Value, seconds: f64) {
+        self.run.change_wooze(self.wooze, &|field, time| {
+            field.set_global(table_of(&knobs)?, time, seconds)
+        });
+    }
+
+    fn set_wooze_zone(&mut self, name: String, fields: toml::Value, seconds: f64) {
+        self.run.change_wooze(self.wooze, &|field, time| {
+            field
+                .set_zone(&name, table_of(&fields)?, time, seconds)
+                .map_err(|e| format!("zone '{name}': {e}"))
+        });
+    }
+
+    fn remove_wooze_zone(&mut self, name: String, seconds: f64) {
+        self.run.change_wooze(self.wooze, &|field, time| {
+            if field.remove_zone(&name, time, seconds) {
+                Ok(())
+            } else {
+                Err(format!("there's no zone named '{name}' to remove"))
+            }
+        });
+    }
+
+    fn tune_living(&mut self, knobs: toml::Value) {
+        let (living, wooze, shallow) = (self.living.as_deref_mut(), &mut *self.wooze, self.shallow);
+        let tuned = ScriptTune::of(knobs)
+            .and_then(|tune| self.run.tune(tune, false, living, wooze, shallow));
+        if let Err(problem) = tuned {
+            tracing::warn!(target: "script", "tune_living: {problem}");
+        }
+    }
+
+    fn clear_living(&mut self, species: String, keys: Vec<String>) {
+        let cleared = match self.living.as_deref_mut() {
+            Some(living) => clear_species(living.props_mut(), &species, &keys),
+            None => Ok(false),
+        };
+        let problem = match cleared {
+            Ok(true) => return,
+            Ok(false) => format!("no living prop grows from '{species}'"),
+            Err(problem) => problem,
+        };
+        tracing::warn!(target: "script", "clear_living: {problem}");
+    }
+
+    fn freeze_living(&mut self, frozen: bool) {
+        self.run.frozen = frozen;
+    }
+
+    fn step_living(&mut self) {
+        self.run.steps += 1;
+    }
+
+    fn load_living_preset(&mut self, name: String) {
+        let (living, wooze, shallow) = (self.living.as_deref_mut(), &mut *self.wooze, self.shallow);
+        let run = &mut *self.run;
+        let loaded = find_preset(std::path::Path::new(&run.scene_path), &name)
+            .and_then(|preset| run.tune(ScriptTune::Grove(preset), true, living, wooze, shallow));
+        if let Err(problem) = loaded {
+            tracing::warn!(target: "script", "load_living_preset: {problem}");
+        }
+    }
+
+    fn push_state(&mut self, name: String) {
+        if !self.run.state_machine.push_state(&name) {
+            tracing::warn!("Unknown state template: '{}'", name);
+        }
+    }
+
+    fn pop_state(&mut self) {
+        self.run.state_machine.pop_state();
+    }
+
+    fn replace_state(&mut self, name: String) {
+        if !self.run.state_machine.replace_state(&name) {
+            tracing::warn!("Unknown state template: '{}'", name);
+        }
     }
 }
 
@@ -499,31 +841,10 @@ pub struct CameraView {
     pub view_proj: [[f32; 4]; 4],
 }
 
-/// Lay this tick's overrides over the ones before: what was set stays set.
-fn merge_post(into: &mut PostProcessOverrides, from: PostProcessOverrides) {
-    macro_rules! keep {
-        ($($field:ident),*) => {
-            $(if from.$field.is_some() { into.$field = from.$field; })*
-        };
-    }
-    keep!(
-        vignette,
-        bloom,
-        exposure,
-        chromatic_aberration,
-        radial_blur,
-        ssao_intensity,
-        fog_density,
-        desaturation,
-        dof_strength,
-        dof_focus_distance,
-        dof_focus_range
-    );
-}
-
 /// Lay `look` over a post-process config, as the player's frame does with its
-/// scripts' overrides.
-pub fn apply_look(config: &mut flint_render::PostProcessConfig, look: &ScriptLook) {
+/// scripts' overrides. `before` is the look laid last time, so a render mode
+/// that has stopped being asked for is taken off, as the player's is.
+pub fn apply_look(config: &mut PostProcessConfig, look: &ScriptLook, before: &ScriptLook) {
     let post = &look.post;
     if let Some(v) = post.vignette {
         config.vignette_enabled = v > 0.001;
@@ -562,6 +883,24 @@ pub fn apply_look(config: &mut flint_render::PostProcessConfig, look: &ScriptLoo
     if let Some(fc) = look.fog_color {
         config.fog_color = fc;
     }
+    // A reality tear: transient, unlike the sticky overrides above
+    match look.render_mode {
+        Some((mode, mix)) => {
+            config.render_mode = mode;
+            config.mode_mix = mix;
+        }
+        None if before
+            .render_mode
+            .is_some_and(|(mode, mix)| mode != 0 && mix > 0.0) =>
+        {
+            config.render_mode = 0;
+            config.mode_mix = 0.0;
+        }
+        None => {}
+    }
+    if let Some(mp) = look.mode_params {
+        config.mode_params = mp;
+    }
 }
 
 fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
@@ -569,3 +908,7 @@ fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
         .as_table()
         .ok_or_else(|| format!("{value} must be a map"))
 }
+
+#[cfg(test)]
+#[path = "headless_host_tests.rs"]
+mod tests;

@@ -27,7 +27,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("scale", Num)
     .run(|call, (scale,)| {
-        call.ctx().time_scale_request = Some(scale.clamp(0.05, 4.0));
+        call.ctx().requests.time_scale = Some(scale.clamp(0.05, 4.0));
     });
 }
 
