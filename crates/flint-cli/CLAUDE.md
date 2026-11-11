@@ -6,7 +6,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
    ```bash
    # Debug/post-processing flags:
-   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough|style|edges
+   #   --debug-mode wireframe|wireframe-overlay|normals|depth|uv|unlit|metalrough|style|edges
+   #                          (#308: one name->DebugMode table, common_args::DEBUG_MODES, that the
+   #                          parser and both render paths read; a new DebugMode needs a row, its test says so)
    #                          (style = the entity style mask, #263: needs post-processing;
    #                          prints and draws a legend of each id's hue, #309; runs mask_view
    #                          alone, the scene's other styles suspended, #334)

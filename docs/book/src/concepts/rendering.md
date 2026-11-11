@@ -343,7 +343,7 @@ The renderer provides eight shading modes, selected from the **Shading** combo i
 | Mode | `--debug-mode` | Description |
 |------|----------------|-------------|
 | **PBR** | (default) | Standard Cook-Torrance shading |
-| **Wireframe overlay** | `--wireframe-overlay` | Edge lines drawn over solid PBR shading |
+| **Wireframe overlay** | `wireframe-overlay` (or `--wireframe-overlay`) | Edge lines drawn over solid PBR shading |
 | **Wireframe** | `wireframe` | Edge lines only, no fill |
 | **Normals** | `normals` | World-space surface normals mapped to RGB |
 | **Depth** | `depth` | Linearized depth as grayscale |

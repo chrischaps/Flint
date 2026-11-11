@@ -419,7 +419,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--fov <deg>` | (auto) | Field of view |
 | `--no-grid` | `false` | Disable ground grid |
 | `--select <entity>` | (none) | Outline this entity (by name) and its descendants as `flint edit` does when it is picked |
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `wireframe-overlay`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Wireframe edges on solid geometry |
 | `--show-normals` | `false` | Normal direction arrows |
 | `--no-tonemapping` | `false` | Raw linear output |

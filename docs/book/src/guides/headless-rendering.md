@@ -179,7 +179,7 @@ flint render scene.toml --no-tonemapping --output linear.png
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `wireframe-overlay`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Draw wireframe edges over solid shading |
 | `--show-normals` | `false` | Draw face-normal direction arrows |
 | `--no-tonemapping` | `false` | Disable tonemapping for raw linear output |

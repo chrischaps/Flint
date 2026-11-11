@@ -93,16 +93,46 @@ fn parse_style_spec(s: &str) -> Result<String, String> {
     }
 }
 
-pub(crate) fn parse_debug_mode(s: &str) -> Result<String, String> {
-    match s {
-        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" | "style" | "edges" => {
-            Ok(s.to_string())
-        }
-        _ => Err(format!(
-            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough, style, edges",
-            s
-        )),
-    }
+/// What `--debug-mode` accepts, and the mode each name selects: the parser
+/// and the render paths both read this one table, so a name can't be
+/// accepted and then fall through to plain PBR, or matched and never
+/// accepted (#308). Every mode but PBR, the default, has exactly one name
+/// (held by `debug_mode_names_cover_every_mode`).
+pub(crate) const DEBUG_MODES: &[(&str, flint_render::DebugMode)] = {
+    use flint_render::DebugMode::*;
+    &[
+        ("wireframe", WireframeOnly),
+        ("wireframe-overlay", WireframeOverlay),
+        ("normals", Normals),
+        ("depth", Depth),
+        ("uv", UvChecker),
+        ("unlit", Unlit),
+        ("metalrough", MetallicRoughness),
+        ("style", StyleMask),
+        ("edges", StyleEdges),
+    ]
+};
+
+pub(crate) fn parse_debug_mode(s: &str) -> Result<flint_render::DebugMode, String> {
+    DEBUG_MODES
+        .iter()
+        .find(|(name, _)| *name == s)
+        .map(|&(_, mode)| mode)
+        .ok_or_else(|| {
+            let names: Vec<&str> = DEBUG_MODES.iter().map(|(name, _)| *name).collect();
+            format!(
+                "unknown debug mode '{s}'; valid values: {}",
+                names.join(", ")
+            )
+        })
+}
+
+/// The `--debug-mode` name of `mode`, for messages that quote the flag back.
+pub(crate) fn debug_mode_name(mode: flint_render::DebugMode) -> &'static str {
+    DEBUG_MODES
+        .iter()
+        .find(|&&(_, m)| m == mode)
+        .map_or("pbr", |&(name, _)| name)
 }
 
 pub(crate) fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
@@ -172,5 +202,59 @@ pub fn load_schemas(
 pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
     for warning in dirs.dropped_warnings() {
         eprintln!("{warning}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flint_render::DebugMode;
+
+    /// #308: `wireframe-overlay` was matched in render.rs and refused here.
+    /// Now there is one table; this holds it to the renderer's modes: every
+    /// mode but the default has exactly one name, and no name is repeated.
+    #[test]
+    fn debug_mode_names_cover_every_mode() {
+        for mode in DebugMode::ALL {
+            let names: Vec<&str> = DEBUG_MODES
+                .iter()
+                .filter(|&&(_, m)| m == mode)
+                .map(|&(name, _)| name)
+                .collect();
+            let expected = usize::from(mode != DebugMode::Pbr);
+            assert_eq!(
+                names.len(),
+                expected,
+                "{mode:?} has --debug-mode names {names:?}; want {expected}"
+            );
+        }
+        let mut names: Vec<&str> = DEBUG_MODES.iter().map(|(name, _)| *name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            DEBUG_MODES.len(),
+            "a --debug-mode name repeats"
+        );
+    }
+
+    #[test]
+    fn every_listed_name_parses_to_its_mode_and_back() {
+        for &(name, mode) in DEBUG_MODES {
+            assert_eq!(parse_debug_mode(name), Ok(mode));
+            assert_eq!(debug_mode_name(mode), name);
+        }
+        assert_eq!(
+            parse_debug_mode("wireframe-overlay"),
+            Ok(DebugMode::WireframeOverlay)
+        );
+    }
+
+    #[test]
+    fn an_unknown_name_lists_every_valid_one() {
+        let err = parse_debug_mode("sparkles").unwrap_err();
+        for (name, _) in DEBUG_MODES {
+            assert!(err.contains(name), "{err:?} does not list {name}");
+        }
     }
 }
