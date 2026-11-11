@@ -1204,7 +1204,7 @@ Coordinates are in **egui logical points**, not physical pixels. On high-DPI dis
 
 #### Sprite Loading
 
-Sprite names map to image files in the `sprites/` directory (without extension). Supported formats: PNG, JPG, BMP, TGA. Textures are lazy-loaded on first use and cached for subsequent frames.
+A sprite name is an image's file name, extension included (`"heart.png"`, `"ui/coin.png"`), found in `sprites/` or loose beside the scene, then the same beside each directory above it up to the project root ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)). A name that isn't found is warned about once, with every path tried. Supported formats: PNG, JPG, BMP, TGA. Textures are lazy-loaded on first use and cached for subsequent frames.
 
 ### Sprite API
 

@@ -236,7 +236,7 @@ event_name = "door_start"
 
 ## Animation Sequences (`animations/*.sequence.toml`)
 
-An ordered list of timestamped animator events: crossfade the base clip, set a layer, change speed, or raise a named cue for the entity's script. The player loads every sequence in the scene's `animations/` directory; scripts start one with `play_sequence(entity, name)`, and the model previewer plays one with `flint edit model.glb --sequence <file>`. See [Animation: Sequences](../concepts/animation.md#sequences).
+An ordered list of timestamped animator events: crossfade the base clip, set a layer, change speed, or raise a named cue for the entity's script. The player loads every sequence in each `animations/` directory the scene can see ([the asset search](../concepts/assets.md#where-the-engine-looks-for-a-file)); scripts start one with `play_sequence(entity, name)`, and the model previewer plays one with `flint edit model.glb --sequence <file>`. See [Animation: Sequences](../concepts/animation.md#sequences).
 
 ```toml
 name = "intro_bow"

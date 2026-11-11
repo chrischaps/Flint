@@ -9,6 +9,7 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::decode::Need;
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
+use flint_core::project::{AssetKind, Project};
 use flint_core::toml_util::{toml_f32, toml_f64, toml_vec3};
 use flint_core::vfs;
 use flint_core::EntityId;
@@ -412,16 +413,23 @@ fn load_grass_ground(
 
 /// Build a ModelLoadConfig with catalog-resolved path overrides.
 pub(super) fn build_model_load_config(
+    project: &Project,
     scene_path: &str,
     world: &FlintWorld,
     catalog: Option<&AssetCatalog>,
     store: Option<&ContentStore>,
 ) -> ModelLoadConfig {
-    let mut config = ModelLoadConfig::from_scene_path(scene_path);
+    let mut config = ModelLoadConfig::in_project(project.clone(), scene_path);
+    // The player asks procgen for every name before its file (#32), and the
+    // catalog before that: a not-found warning says so beside the paths.
+    config
+        .asked_first
+        .push("a procgen spec of the same name (specs/<name>.procgen.toml)");
 
     let (Some(cat), Some(st)) = (catalog, store) else {
         return config;
     };
+    config.asked_first.insert(0, "the asset catalog");
 
     for entity in world.all_entities() {
         if let Some(comps) = world.get_components(entity.id) {
@@ -559,6 +567,7 @@ pub(super) fn register_node_animation_data(
 pub(super) fn load_audio_from_world(
     world: &FlintWorld,
     audio: &mut AudioSystem,
+    project: &Project,
     scene_path: &str,
     preload_all: bool,
     queue: bool,
@@ -578,17 +587,11 @@ pub(super) fn load_audio_from_world(
             Ok(()) => {}
         }
     };
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let scene_dir = scene_dir_of(scene_path);
 
-    // Build list of directories to search: scene dir first, then parent (game root)
-    let mut search_dirs = vec![scene_dir.to_path_buf()];
-    if let Some(parent) = scene_dir.parent() {
-        search_dirs.push(parent.to_path_buf());
-    }
-
-    // Load audio files referenced by audio_source components
+    // Load audio files referenced by audio_source components: a `file` is a
+    // path from the scene's directory or from any directory up to the
+    // project root (`audio/hit.ogg`), by the project's one search.
     for entity in world.all_entities() {
         let Some(source) = world
             .get_components(entity.id)
@@ -607,17 +610,9 @@ pub(super) fn load_audio_from_world(
             && source.get("volume").and_then(toml_f64).unwrap_or(1.0) > 0.0;
         let need = if audible { Need::Audible } else { Need::Later };
 
-        let mut found = false;
-        for dir in &search_dirs {
-            let audio_path = dir.join(file_name);
-            if vfs::exists(&audio_path) {
-                load(file_name, &audio_path, need);
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            tracing::warn!("Audio file not found: {}", file_name);
+        match project.resolve(AssetKind::Audio, file_name, scene_dir) {
+            Ok(audio_path) => load(file_name, &audio_path, need),
+            Err(missing) => tracing::warn!("{missing}"),
         }
     }
 
@@ -628,21 +623,36 @@ pub(super) fn load_audio_from_world(
         tracing::info!("Scene opts out of audio preload (preload_audio = false)");
         return;
     }
-    for dir in &search_dirs {
-        let audio_dir = dir.join("audio");
-        if vfs::is_dir(&audio_dir) {
-            if let Ok(entries) = vfs::read_dir(&audio_dir) {
-                for path in entries {
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
-                        let rel_name =
-                            format!("audio/{}", path.file_name().unwrap().to_string_lossy());
-                        load(&rel_name, &path, Need::Later);
-                    }
-                }
-            }
+    // Every `audio/` the scene can see, a nearer file hiding a farther one
+    // of the same file name. Each is kept as `audio/<file>`, whichever
+    // `audio/` it came from, which is the name a script plays it by.
+    for sound in project.list(AssetKind::Audio, scene_dir) {
+        load(&format!("audio/{}", sound.name), &sound.path, Need::Later);
+    }
+}
+
+/// The directory a scene file is in (`.` for a bare file name).
+fn scene_dir_of(scene_path: &str) -> &Path {
+    Path::new(scene_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Every file of `kind` the scene can see (`Project::list`), in the order a
+/// loader should register them when a later one of a name replaces an
+/// earlier: the farthest folder first, so that the nearest has the last
+/// word, and by file name within a folder as before.
+pub(super) fn visible_files(project: &Project, kind: AssetKind, scene_path: &str) -> Vec<PathBuf> {
+    let listed = project.list(kind, scene_dir_of(scene_path));
+    let mut folders: Vec<Vec<PathBuf>> = Vec::new();
+    for file in listed {
+        match folders.last_mut() {
+            Some(folder) if folder[0].parent() == file.path.parent() => folder.push(file.path),
+            _ => folders.push(vec![file.path]),
         }
     }
+    folders.into_iter().rev().flatten().collect()
 }
 
 /// Load every texture referenced by live particle instances and registered
@@ -661,151 +671,84 @@ pub(super) fn load_particle_textures_from_world(
     flint_render::load_particle_textures(renderer, device, queue, &particles.sync, &dirs);
 }
 
-/// Load `.anim.toml` files from the `animations/` directory next to the scene.
-/// Also checks one level up (game root) for projects that use a `scenes/` subdirectory.
-pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut anim_dir = scene_dir.join("animations");
-    if !vfs::is_dir(&anim_dir) {
-        // Check parent directory (game project structure)
-        if let Some(parent) = scene_dir.parent() {
-            let parent_anim = parent.join("animations");
-            if vfs::is_dir(&parent_anim) {
-                anim_dir = parent_anim;
-            } else {
-                return;
+/// Load every `.anim.toml` clip the scene can see: `animations/` beside the
+/// scene, beside each directory above it up to the project root, and in the
+/// mounted engine (the project's one asset search, ADR 0114). A nearer file
+/// hides a farther one of the same file name.
+pub(super) fn load_animations_from_world(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+) {
+    for path in visible_files(project, AssetKind::Animations, scene_path) {
+        match flint_animation::loader::load_clip_from_file(&path) {
+            Ok(clip) => {
+                println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
+                animation.add_property_clip(clip);
             }
-        } else {
-            return;
-        }
-    }
-
-    let entries = match vfs::read_dir(&anim_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for path in entries {
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map_or(false, |n| n.ends_with(".anim.toml"))
-        {
-            match flint_animation::loader::load_clip_from_file(&path) {
-                Ok(clip) => {
-                    println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
-                    animation.add_property_clip(clip);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
-                }
+            Err(e) => {
+                tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
             }
         }
     }
 }
 
-/// Load `.sequence.toml` files from the `animations/` directory next to the scene
-/// (or one level up). Sequences are referenced by `name` from `animator.sequence`.
-pub(super) fn load_sequences_from_world(scene_path: &str, animation: &mut AnimationSystem) {
-    let Some(anim_dir) = resolve_animations_dir(scene_path) else {
-        return;
-    };
-    let entries = match vfs::read_dir(&anim_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for path in entries {
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with(".sequence.toml"))
-        {
-            match flint_animation::load_sequence_from_file(&path) {
-                Ok(seq) => {
+/// Load every `.sequence.toml` the scene can see, from the same folders as
+/// [`load_animations_from_world`]. Sequences are referenced by `name` from
+/// `animator.sequence`; a name no file gives is warned about with the
+/// folders that were read.
+pub(super) fn load_sequences_from_world(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+) {
+    animation
+        .set_sequence_search(project.search_dirs(AssetKind::Sequences, scene_dir_of(scene_path)));
+    for path in visible_files(project, AssetKind::Sequences, scene_path) {
+        match flint_animation::load_sequence_from_file(&path) {
+            Ok(seq) => {
+                println!(
+                    "Loaded sequence: {} ({:.1}s, {} events)",
+                    seq.name,
+                    seq.resolved_duration(),
+                    seq.events.len()
+                );
+                animation.add_sequence(seq);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load sequence '{}': {:?}", path.display(), e);
+            }
+        }
+    }
+}
+
+/// Load every `.sprite.toml` the scene can see, from the same folders as
+/// [`load_animations_from_world`]. Each file can define several sprite
+/// animation clips under `[animation.NAME]` sections.
+pub(super) fn load_sprite_animations_from_world(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+) {
+    for path in visible_files(project, AssetKind::SpriteAnimations, scene_path) {
+        match flint_animation::sprite_clip::load_sprite_clips_from_file(&path) {
+            Ok(clips) => {
+                for clip in clips {
                     println!(
-                        "Loaded sequence: {} ({:.1}s, {} events)",
-                        seq.name,
-                        seq.resolved_duration(),
-                        seq.events.len()
+                        "Loaded sprite animation: {} ({}ms, {} frames)",
+                        clip.name,
+                        clip.total_duration_ms(),
+                        clip.frames.len()
                     );
-                    animation.add_sequence(seq);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load sequence '{}': {:?}", path.display(), e);
+                    animation.add_sprite_clip(clip);
                 }
             }
-        }
-    }
-}
-
-/// `<scene_dir>/animations/`, falling back to `<scene_dir>/../animations/`
-/// for projects that keep scenes in a subdirectory.
-fn resolve_animations_dir(scene_path: &str) -> Option<std::path::PathBuf> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let local = scene_dir.join("animations");
-    if vfs::is_dir(&local) {
-        return Some(local);
-    }
-    let up = scene_dir.parent()?.join("animations");
-    vfs::is_dir(&up).then_some(up)
-}
-
-/// Load `.sprite.toml` files from the `animations/` directory next to the scene.
-/// Each file can define multiple sprite animation clips under `[animation.NAME]` sections.
-pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut anim_dir = scene_dir.join("animations");
-    if !vfs::is_dir(&anim_dir) {
-        if let Some(parent) = scene_dir.parent() {
-            let parent_anim = parent.join("animations");
-            if vfs::is_dir(&parent_anim) {
-                anim_dir = parent_anim;
-            } else {
-                return;
-            }
-        } else {
-            return;
-        }
-    }
-
-    let entries = match vfs::read_dir(&anim_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for path in entries {
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map_or(false, |n| n.ends_with(".sprite.toml"))
-        {
-            match flint_animation::sprite_clip::load_sprite_clips_from_file(&path) {
-                Ok(clips) => {
-                    for clip in clips {
-                        println!(
-                            "Loaded sprite animation: {} ({}ms, {} frames)",
-                            clip.name,
-                            clip.total_duration_ms(),
-                            clip.frames.len()
-                        );
-                        animation.add_sprite_clip(clip);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load sprite animation '{}': {:?}",
-                        path.display(),
-                        e
-                    );
-                }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to load sprite animation '{}': {:?}",
+                    path.display(),
+                    e
+                );
             }
         }
     }

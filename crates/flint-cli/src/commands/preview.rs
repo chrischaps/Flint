@@ -516,8 +516,12 @@ fn model_load_config(model_path: &Path, asset_name: &str) -> ModelLoadConfig {
     let mut overrides = HashMap::new();
     overrides.insert(asset_name.to_string(), model_path.to_path_buf());
     ModelLoadConfig {
+        // The model's own folder stands in for a scene's: textures beside
+        // it, and above it up to its project's root, are found.
+        project: flint_core::project::Project::for_scene(model_path),
         scene_dir,
         overrides,
+        asked_first: Vec::new(),
     }
 }
 

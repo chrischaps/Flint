@@ -89,7 +89,7 @@ Three component schemas define audio behavior:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `file` | string | | Path to audio file (relative to scene directory) |
+| `file` | string | | The sound's file, as a path from the scene's directory or from any directory above it up to the project root (`audio/fire.ogg`); see [where the engine looks](assets.md#where-the-engine-looks-for-a-file) |
 | `volume` | f32 | 1.0 | Playback volume (0.0--2.0) |
 | `pitch` | f32 | 1.0 | Playback speed/pitch (0.1--4.0) |
 | `loop` | bool | false | Loop the sound continuously |
@@ -207,7 +207,7 @@ fn on_interact() {
 
 ### Sound names
 
-A sound is cached under its file's path from the game root, extension included: `audio/door_open.ogg`. That full name always works. A name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, in that order, so `"door_open"`, `"door_open.ogg"` and `"audio/door_open.ogg"` all play the same file. A sound cached under exactly the name given wins over the search (one an extension loaded as `"blip"` is `"blip"`), and two files that share a stem want the full path, since the search takes the first extension it finds.
+A sound is cached under its file's path from the folder that holds its `audio/`, extension included: `audio/door_open.ogg`. The preload reads every `audio/` the scene can see ([beside the scene, beside each directory above it up to the project root, then the engine's](assets.md#where-the-engine-looks-for-a-file)), and a nearer file hides a farther one of the same file name. That full name always works. A name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, in that order, so `"door_open"`, `"door_open.ogg"` and `"audio/door_open.ogg"` all play the same file. A sound cached under exactly the name given wins over the search (one an extension loaded as `"blip"` is `"blip"`), and two files that share a stem want the full path, since the search takes the first extension it finds.
 
 A name that finds nothing plays nothing. The warning names the nearest cached sound, by file stem first:
 

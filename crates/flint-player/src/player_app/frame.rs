@@ -1580,6 +1580,7 @@ impl PlayerApp {
             super::scene_loading::load_audio_from_world(
                 &self.world,
                 &mut self.audio,
+                &self.project,
                 &self.scene_path,
                 self.scene_preload_audio,
                 true,
@@ -1696,7 +1697,8 @@ impl PlayerApp {
                 {
                     // Catalog names never reach the queue, so the file
                     // fallback needs only the scene's own search paths.
-                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                    let config = flint_render::model_loader::ModelLoadConfig::in_project(
+                        self.project.clone(),
                         &self.scene_path,
                     );
                     let mut sink = super::procgen_assets::GpuSink {
@@ -1745,7 +1747,8 @@ impl PlayerApp {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)
                 {
-                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                    let config = flint_render::model_loader::ModelLoadConfig::in_project(
+                        self.project.clone(),
                         &self.scene_path,
                     );
                     let mut sink = super::procgen_assets::GpuSink {

@@ -63,7 +63,7 @@ Flint uses an **edit -> validate -> play** loop:
    ```
    More: `crates/flint-player/CLAUDE.md`.
 
-**For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (searches `scene_dir/models/` then `../models/`), generates geometry, and computes the full transform hierarchy.
+**For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (found by the project's one asset search: `models/` beside the scene, beside each directory up to the project root, then `engine/`; `flint asset where models <name> --scene <scene>` shows it), generates geometry, and computes the full transform hierarchy.
 
 ## Architecture
 
