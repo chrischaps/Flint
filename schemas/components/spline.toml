@@ -2,4 +2,4 @@
 description = "A path through the scene, read from a `.spline.toml` file (control points, Catmull-Rom). At load the path is sampled and the samples stored on the entity as `spline_data`, which the script spline functions read (`spline_closest_point` and the rest) and which a `spline_mesh` on any entity sweeps geometry along. `flint spline-edit <scene>` edits the first spline of a scene."
 
 [component.spline.fields]
-file = { type = "string", required = true, description = "The `.spline.toml` file, found by the project's asset search for a named file: beside the scene, then beside each folder up to the project root (`tracks/oval.spline.toml` names a subfolder). Whether the path is closed and how densely it is sampled are the file's `[spline] closed` and `[sampling] spacing`." }
+file = { type = "asset", kind = "files", required = true, description = "The `.spline.toml` file, found by the project's asset search for a named file: beside the scene, then beside each folder up to the project root (`tracks/oval.spline.toml` names a subfolder). Whether the path is closed and how densely it is sampled are the file's `[spline] closed` and `[sampling] spacing`." }
