@@ -83,6 +83,21 @@ directory not found`, the flag or manifest entry it names was being ignored
 before: fix the path or remove it. If you relied on a `schemas/` folder beside
 a scene being added to your flags, name it with another `--schemas`.
 
+### `random()` no longer repeats, and scripts can `seed_random(n)` (#580)
+**What changed.** `random()` and `random_range(min, max)` used to hash the
+wall clock on every call, so calls close together (two in a row in one
+`on_update`, say) often returned the same number. They now draw from one
+sequence shared by every script. It starts from the clock once, when the
+player starts, so plain runs still differ from each other, but no two calls
+repeat. The new `seed_random(n)` restarts that sequence at `n` and gives
+the numbers `--seed n` gives, every run. It reseeds every script's draws,
+not only the caller's. `--seed`, `--frame-step` and `flint render --scripts`
+are unchanged.
+**What to do.** Nothing. A script that wants a replayable run calls
+`seed_random(n)` in `on_init`, not at the top of the file: top-level
+statements run again before every callback, so a seed there restarts the
+sequence every frame.
+
 ### `flint.toml` gains a `[project]` table, and a bad one is refused (#706)
 **What changed.** The `flint.toml` at a project's root, until now only a
 marker, may hold `[project]` with `id` (a string), `schemas` (a list of

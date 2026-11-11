@@ -268,8 +268,9 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
-| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, and in a player run with `--frame-step` or `--seed N`, a seeded sequence that's the same every run |
-| `random_range(min, max)` | `f64` | Random value in `[min, max)`, seeded the same way |
+| `random()` | `f64` | Random value in `[0, 1)`, the next of one SplitMix64 sequence every script shares, so two calls never repeat. It starts from the clock once, when the player starts; under `flint render --scripts`, and in a player run with `--frame-step` or `--seed N`, from a seed, so it's the same every run |
+| `random_range(min, max)` | `f64` | Random value in `[min, max)`, from the same sequence |
+| `seed_random(n)` | — | Restart the sequence at `n` (an `i64`; a negative one is the `u64` with its bits, so `seed_random(-1)` is `--seed 18446744073709551615`). The numbers after it are the ones `--seed n` gives, every run. Call it in `on_init` or a callback, not at the top of the script: top-level statements run again before every callback, so it would restart the sequence each frame. It reseeds every script's draws, not only its own |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |
 | `abs(x)` | `f64` | Absolute value |
