@@ -165,7 +165,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 
 ## Documentation Pipeline
 
-`CHANGELOG.md` is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no entry; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
+The changelog is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. Each PR adds its own file, `bash scripts/changelog.sh new <issue> <slug>` (`changelog.d/<issue>-<slug>.md`, about 150 words), never an edit to `CHANGELOG.md` or `changelog/` (#788): after the merge the `Changelog` workflow moves it into `changelog/YYYY-MM.md` and `CHANGELOG.md` stays a short page linking the months. `changelog.sh since <date>` prints what is new. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no fragment; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
 
 The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 

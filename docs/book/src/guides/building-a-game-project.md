@@ -339,7 +339,15 @@ Engine edits are normal commits in your game repo. The subtree commands handle s
 
 ### After a pull: read the changelog
 
-`--squash` folds the engine's commits into one, so their subjects are gone from your history. `engine/CHANGELOG.md` is where to read what changed: it lists, newest first, every change a game can notice (scene and schema keys, script functions, CLI flags, formats, Cargo features, and changes in how something looks, sounds or behaves), each with what to do about it. Read from the top down to the date of your last pull. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
+`--squash` folds the engine's commits into one, so their subjects are gone from your history. The engine's changelog is where to read what changed: every change a game can notice (scene and schema keys, script functions, CLI flags, formats, Cargo features, and changes in how something looks, sounds or behaves), each with what to do about it. Before pulling, note the day of your last pull; after it, print what is new since then:
+
+```bash
+git log -1 --format=%cs -- engine                  # before the pull: e.g. 2026-11-02
+git subtree pull --prefix=engine flint-engine main --squash
+bash engine/scripts/changelog.sh since 2026-11-02   # newest first
+```
+
+The entries live one file a month in `engine/changelog/` (`engine/CHANGELOG.md` links them), and `since` also reads the ones not yet gathered into a month, in `engine/changelog.d/`. It prints every entry dated that day or later, so a pull made the same day may show an entry you already had. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 
 ## Further Reading
 

@@ -61,6 +61,24 @@ Release builds are strongly recommended for `render`, `play`, and the full test 
 - Tests live alongside the code they test (`#[cfg(test)]` modules)
 - Prefer explicit over clever; readability over brevity
 
+## The Changelog
+
+Games carry the engine as a squashed subtree, so the changelog is how they learn what an update changed. A change a game can notice (a scene or schema key, a script function, a CLI flag, a file format, a Cargo feature, a change in look or behaviour) gets an entry, and each pull request writes its own file:
+
+```bash
+bash scripts/changelog.sh new 123 look-takes-a-path   # writes changelog.d/123-look-takes-a-path.md
+```
+
+Fill it in: a `### <title> (#123)` line naming the key, function or flag as a game author types it, then **What changed.** and **What to do.**, about 150 words in all. Two PRs never write the same file, so entries never conflict. After the merge, the `Changelog` workflow moves the entry into `changelog/YYYY-MM.md` under the merge's date and deletes the fragment; `CHANGELOG.md` is a short page that links the months.
+
+CI's `changelog` job fails a PR that touches `schemas/`, the script API or the scene format with no fragment. If no game can notice the change, a commit-message line waives it:
+
+```
+Changelog: none (reason)
+```
+
+`bash scripts/changelog.sh since <YYYY-MM-DD>` prints every entry from that day on, fragments included; `bash scripts/changelog-test.sh` tests the scripts.
+
 ## Architecture
 
 The project is a 27-member Cargo workspace: 26 crates under `crates/` plus the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
