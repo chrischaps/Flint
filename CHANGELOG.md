@@ -131,6 +131,26 @@ player now survive a transition too.
 **What to do.** Nothing. One thing to know: a schema file edited while the
 game runs is no longer picked up by the next transition; restart the player.
 
+### `flint entity create/delete` edit one table and leave the rest of the file alone (#678)
+**What changed.** Both commands used to re-serialise the whole scene: a
+string with a `:` in `--props` was rewritten (`"a:b.glb"` became
+`"a=b.glb"`), every prefab instance was baked into plain entities and
+`[prefabs]` emptied, every `[post_process]` default was written out (which
+stopped a scene's `look` from applying), comments were dropped and entity
+order changed on every run. Now `create` adds only `[entities.<name>]` after
+the last entity, and `delete` removes only that entity's tables. `create`
+writes the archetype, parent and props given, not the archetype's defaults
+(they're filled in at load, as before). Deleting an entity with children is
+an error unless you pass the new `--recursive`, which deletes the subtree.
+Either command refuses, and leaves the file as it was, when the edited scene
+would not load or a prop doesn't fit its component's schema; a `null` in
+`--props` is now an error.
+**What to do.** Nothing for scenes. A script that deleted a parent and
+relied on the children staying (they then broke the next load) must delete
+the children first or pass `--recursive`. A scene that a past `entity`
+command baked or filled with defaults stays as it is; `git log -p` on it shows
+what was lost.
+
 ### The room-builder archetypes left the engine's schema set; `model`, `light`, `spline` and `spline_mesh` have schemas (#681)
 **What changed.** Three things, of which the first can stop a game from
 bundling.

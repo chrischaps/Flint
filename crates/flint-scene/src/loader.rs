@@ -35,8 +35,33 @@ pub fn load_scene_diagnosed<P: AsRef<Path>>(
 ) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
-    let mut scene_file = parse_scene(&content, Some(path))?;
-    note_post_process(&mut scene_file, &content, Some(path));
+    load_text_diagnosed(&content, path, registry)
+}
+
+/// Load scene text as though it were the file at `path`: prefabs and a wooze
+/// preset resolve from there. What `flint entity create/delete` (#678) runs on
+/// the text it is about to write, so an edit that would leave the scene
+/// unloadable is refused before the file changes. Diagnostics are logged as
+/// [`load_scene`] logs them.
+pub fn load_scene_text(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile)> {
+    let (world, scene_file, found) = load_text_diagnosed(content, path, registry)?;
+    diagnostic::log_summary(&flint_core::project::shown(path), &found);
+    Ok((world, scene_file))
+}
+
+/// What [`load_scene_diagnosed`] and [`load_scene_text`] share: parse, expand
+/// prefabs, fill in the wooze preset, diagnose, build the world.
+fn load_text_diagnosed(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
+    let mut scene_file = parse_scene(content, Some(path))?;
+    note_post_process(&mut scene_file, content, Some(path));
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
