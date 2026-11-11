@@ -1939,6 +1939,50 @@ fn on_update() {
 | **Procedural** (`draw_*` API) | Crosshairs, damage flashes, debug overlays, dynamic effects --- anything computed per-frame |
 | **Both together** | Load a HUD layout for structure, use `draw_*` for dynamic overlays on top |
 
+## Checking your scripts
+
+Rhai finds a function when the line that calls it runs, so a misspelt name in a game-over branch, a call with one argument too few or an `fn on_colision` that the engine never calls is found by playing to it, or not at all. `flint script check` finds them before the game runs:
+
+```bash
+flint script check                    # every script of the project here
+flint script check examples/          # every script under a folder
+flint script check levels/dock.scene.toml   # the scripts one scene runs
+flint script check scripts/hud.rhai   # one file
+flint script check . --json           # one JSON document, as flint check prints
+```
+
+It compiles each script, and each module it imports through `scripts/lib/` (found by the [same search](assets.md) the player uses), and holds every call to the [script API](../reference/script-api.md) at the argument counts each function is declared at, to Rhai's own functions and methods, and to the functions the file and its modules define. For this script:
+
+```text
+fn on_update() {
+    let id = get_entity("lamp");
+    set_postion(id, 0.0, 1.0, 0.0);
+    draw_line(0.0, 0.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0);
+}
+
+fn on_colision(other) {
+    log("bump");
+}
+```
+
+it prints:
+
+```text
+scripts/keeper.rhai:3:5: error[unknown-function]: no script function `set_postion`
+    hint: did you mean `set_position`?
+scripts/keeper.rhai:4:5: error[wrong-arity]: `draw_line` takes 9 arguments; this call passes 8
+    hint: declared: draw_line(x1: num, y1: num, x2: num, y2: num, r: num, g: num, b: num, a: num, thickness: num)
+scripts/keeper.rhai:7:1: error[unknown-callback]: `fn on_colision` is not a callback, and nothing in this script calls it
+    hint: did you mean `on_collision`?
+checked 1 script: 3 errors
+```
+
+and exits 1. What else it reports: a syntax error at its line, a literal no declaration accepts (`set_position("crate", ...)`, an entity id given as a string), a callback with the wrong parameters (`fn on_update(dt)`; `delta_time()` is the step), an import that finds no module, with the paths tried, a call of a deprecated function (a warning), and, as a warning, a call in `on_update` or `on_draw_ui` that mixes int and float literals in four or more number arguments (`draw_rect(10, 10, 100.0, 50, ...)`), which misses both signatures the engine registers for it and takes Rhai's slow search every frame: write its numbers all as floats or all as ints. The full list of codes is in [Scene diagnostics](schemas.md#scene-diagnostics).
+
+`flint check` and `flint validate` run the same check, so a script error fails them too.
+
+**A game's own functions.** A function the game's binary registers through a [player extension](../guides/player-extensions.md) is not in the engine's API, so the check reports a call of it as `unknown-function`. Name each one with `--allow <name>`, or give the binary's own listing, which has them with their parameters, with `--api <file>`: the game binary prints `app.script.api_listing()` in the shape `flint script api --json` prints (a `functions` list, each with a `name` and its `params`). `flint check` and `flint validate` take both flags.
+
 ## Hot-Reload
 
 The script system checks file modification timestamps each frame. When a `.rhai` file changes on disk:

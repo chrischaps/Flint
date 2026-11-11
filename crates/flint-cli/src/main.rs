@@ -101,7 +101,7 @@ enum Commands {
 
     /// Validate a scene against its schemas and constraints (and fix what
     /// a constraint can fix)
-    Validate(validate::ValidateArgs),
+    Validate(Box<validate::ValidateArgs>),
 
     /// The pre-flight: everything wrong with a project or a scene in one
     /// run (schemas, entity references, assets, files, styles, constraints)
@@ -222,7 +222,7 @@ fn main() -> Result<()> {
         } => query::run(&query, scene.as_deref(), &format, &schemas),
         Commands::Schema(args) => schema::run(args),
         Commands::Script(cmd) => script::run(cmd),
-        Commands::Validate(args) => validate::run(args),
+        Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
         Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),

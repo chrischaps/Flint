@@ -36,14 +36,16 @@
 //! | `[wooze]`, `[living.species]` | `flint validate` | `bad-wooze` `bad-species` |
 //! | constraints, and that each can be evaluated | `flint validate`; the second is new | `constraint` `bad-constraint` |
 //! | the manifest reads, its schema directories exist, its scene is there | new | `bad-manifest` `bad-schemas` `missing-asset` |
+//! | the scripts compile, and their calls, callbacks and imports fit the script API | `flint script check` (#694, [`scripts`]) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
 //!
-//! Scripts are checked only for the files their string literals name
-//! ([`references`]); `flint script check` (#694) is a further pass over the
-//! same file list.
+//! The scripts pass reads every `.rhai` a project holds (or that a scene
+//! runs) and the modules they import; their string literals are also read
+//! for the files they name ([`references`]).
 
 mod references;
 mod report;
 pub mod scene;
+pub mod scripts;
 
 pub use report::{json, text};
 
@@ -72,6 +74,8 @@ pub struct Checks {
     pub tables: bool,
     /// The constraints of the schema directories.
     pub constraints: bool,
+    /// The scripts, against the script API (#694).
+    pub scripts: bool,
 }
 
 impl Checks {
@@ -82,6 +86,7 @@ impl Checks {
         styles: true,
         tables: true,
         constraints: true,
+        scripts: true,
     };
 
     /// What makes a bundle a whole one: every scene loads from the packed
@@ -94,6 +99,7 @@ impl Checks {
         styles: true,
         tables: false,
         constraints: false,
+        scripts: false,
     };
 
     /// What `flint validate` has always asked of a scene, less the
@@ -104,7 +110,23 @@ impl Checks {
         styles: true,
         tables: true,
         constraints: false,
+        scripts: true,
     };
+
+    /// The scripts alone: `flint script check`.
+    pub const SCRIPTS: Checks = Checks {
+        schema: false,
+        files: false,
+        styles: false,
+        tables: false,
+        constraints: false,
+        scripts: true,
+    };
+
+    /// Whether anything is asked of the scenes themselves.
+    fn scene_pass(self) -> bool {
+        self.schema || self.files || self.styles || self.tables || self.constraints
+    }
 }
 
 /// Where a run's schemas come from.
@@ -221,6 +243,9 @@ pub struct Subject {
     pub follow: bool,
     /// What was wrong before a file was read: a manifest that doesn't.
     pub preliminary: Vec<Diagnostic>,
+    /// What the scripts are held to: the engine's API when `None`, else
+    /// with a game's functions added (`--allow`, `--api`).
+    pub script_api: Option<flint_script::check::Api>,
 }
 
 impl Subject {
@@ -239,6 +264,7 @@ impl Subject {
             strict: false,
             follow: false,
             preliminary: Vec::new(),
+            script_api: None,
         }
     }
 
@@ -358,6 +384,8 @@ pub struct Report {
     pub scenes: Vec<String>,
     /// How many files were read for references.
     pub files: usize,
+    /// The scripts the scripts pass read, modules included.
+    pub scripts: Vec<String>,
     /// Everything wrong, in the order found, each once, with `/` in every
     /// path on every platform.
     pub diagnostics: Vec<Diagnostic>,
@@ -382,6 +410,8 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
     let mut loaded: BTreeMap<PathBuf, Rc<SceneSchemas>> = BTreeMap::new();
     let mut files: BTreeSet<String> = subject.files.iter().cloned().collect();
     let mut scenes = Vec::new();
+    // A scene's scripts first, so each is checked with its scene's search
+    let mut script_files: Vec<flint_script::check::ScriptFile> = Vec::new();
 
     for key in &subject.scenes {
         let path = subject.path(key);
@@ -407,6 +437,15 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
                 schemas
             }
         };
+        if checks.scripts {
+            // A missing source is the asset pass's, when it runs
+            let (of_scene, missing) = scripts::of_scene(&path, &schemas.registry, !checks.files);
+            script_files.extend(of_scene);
+            found.extend(missing);
+        }
+        if !checks.scene_pass() {
+            continue;
+        }
         let scene = scene::check(&path, &schemas, checks, subject.strict, &mut memo);
         found.extend(scene.diagnostics);
         if subject.follow {
@@ -421,6 +460,25 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
     }
     if checks.files {
         found.extend(references::check(subject, &files));
+    }
+    let mut scripts_read = Vec::new();
+    if checks.scripts {
+        // A project's every script, a scene's own
+        if !subject.follow {
+            script_files.extend(
+                files
+                    .iter()
+                    .filter(|key| key.ends_with(".rhai"))
+                    .map(|key| flint_script::check::ScriptFile::found(subject.path(key))),
+            );
+        }
+        let api = match &subject.script_api {
+            Some(api) => api.clone(),
+            None => scripts::engine_api().clone(),
+        };
+        let (diagnostics, read) = scripts::check(&api, script_files);
+        found.extend(diagnostics);
+        scripts_read = read;
     }
 
     // Each problem once (scenes of a folder share their constraint files and
@@ -437,6 +495,7 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
     Report {
         scenes,
         files: files.iter().filter(|f| references::is_scanned(f)).count(),
+        scripts: scripts_read,
         diagnostics,
     }
 }
@@ -448,9 +507,15 @@ pub fn scene(
     schemas: &SceneSchemas,
     checks: Checks,
     strict: bool,
+    script_api: &flint_script::check::Api,
 ) -> Vec<Diagnostic> {
     let mut memo = scene::Memo::default();
     let mut found = scene::check(scene, schemas, checks, strict, &mut memo).diagnostics;
+    if checks.scripts {
+        let (files, missing) = scripts::of_scene(scene, &schemas.registry, !checks.files);
+        found.extend(missing);
+        found.extend(scripts::check(script_api, files).0);
+    }
     // A constraint that can't be evaluated is the schemas' problem whether
     // or not the caller evaluates the rest itself
     for problem in &schemas.problems {

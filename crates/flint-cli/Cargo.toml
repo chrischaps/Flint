@@ -39,8 +39,10 @@ flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["debug-hud"] }
 # `metadata`: `flint script api` lists the functions not yet declared
-# through the builder from Rhai's metadata (ADR 0116)
-flint-script = { workspace = true, features = ["metadata"] }
+# through the builder from Rhai's metadata (ADR 0116); `check` (which has
+# it) is `flint script check` (#694). Both stay on with
+# `--no-default-features`
+flint-script = { workspace = true, features = ["metadata", "check"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }

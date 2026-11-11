@@ -60,6 +60,10 @@ pub struct ValidateArgs {
     /// `[project] strict = true` in flint.toml makes it for every run)
     #[arg(long)]
     pub strict: bool,
+
+    /// A game's own script functions, for the script check
+    #[command(flatten)]
+    pub script: check::scripts::ScriptApiArgs,
 }
 
 /// What the shared pass found in a scene, in the three lists `flint
@@ -144,6 +148,7 @@ pub fn check(
         &schemas,
         Checks::VALIDATE,
         false,
+        check::scripts::engine_api(),
     ));
     if let Some(fatal) = found
         .diagnostics
@@ -174,6 +179,7 @@ struct Fixed {
 pub fn run(args: ValidateArgs) -> Result<()> {
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let schemas = load_schemas(&args.scene, &args.schemas)?;
+    let script_api = args.script.api()?;
     super::common_args::warn_dropped_schemas(&schemas.dirs);
     let json = args.format == Format::Json;
 
@@ -188,6 +194,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         &schemas,
         Checks::VALIDATE,
         args.strict,
+        &script_api,
     ));
     // On stderr, so `--format json` stays one document
     for warning in &warnings {

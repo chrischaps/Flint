@@ -218,6 +218,20 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-manifest` | error | `flint.toml` does not read |
 | `bad-schemas` | error | a schema directory is missing, or a schema file does not read |
 
+The scripts pass, which `flint check`, `flint validate` and [`flint script check`](scripting.md#checking-your-scripts) run, adds the codes of a script, each at a line and a column (`line` and `column` in the JSON):
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `script-syntax` | error | the script does not compile |
+| `unknown-function` | error | a call names no script function, Rhai built-in, function of the file or of an imported module; the hint is the nearest name |
+| `wrong-arity` | error | the function is there, at other argument counts; the hint lists its declared signatures |
+| `bad-argument` | error | a literal argument no declaration of the function accepts: a string where a number goes, `0.5` for an `int` |
+| `unknown-callback` | error | an `fn` one edit from a callback (`on_colision`), which nothing in the file calls: the engine never would |
+| `callback-arity` | error | a callback defined with a parameter count the engine does not call it with |
+| `missing-module` | error | `import "name"` finds no `scripts/lib/name.rhai`; `tried` lists the paths |
+| `deprecated-function` | warning | a call of a function the API marks deprecated; the hint says what to use |
+| `mixed-numbers` | warning | a call in `on_update` or `on_draw_ui` (or a function of the file they call) of a function with four or more number parameters, whose literal arguments mix ints and floats: the slow lookup |
+
 A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
 
 ### Diagnostics while the game runs

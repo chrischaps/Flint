@@ -15,7 +15,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
-| `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
+| `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
+| `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -121,8 +122,9 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
 | Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |
 | `flint.toml` reads, its schema directories exist, its start scene is there | `bad-manifest` `bad-schemas` `missing-asset` |
+| Every script compiles, and its calls, callbacks and imports fit the script API ([`flint script check`](../concepts/scripting.md#checking-your-scripts)) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
 
-A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name and no further.
+A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name, and held to the script API as `flint script check` holds it; a script problem has a line and a column (`error[wrong-arity] 82:9: ...`).
 
 For a folder, every `*.scene.toml` under it is checked, and every prefab, particle effect, glyph set, chunk, user style and script there is read for the files it names. `target/`, `dist/`, dot-folders, `docs/` and an `engine/` subtree are skipped (the folders `flint bundle` never packs); what a game's `bundle.toml` excludes from the web build is still checked, since it is still part of the game on disk. For one scene, the scene and the scripts and prefabs it names are checked.
 
@@ -131,10 +133,12 @@ For a folder, every `*.scene.toml` under it is checked, and every prefab, partic
 | `--json` | Print one JSON document on stdout and nothing else: `valid`, `summary`, `errors`, `warnings`, `scenes`, `files` and `diagnostics`, each diagnostic with `severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint` and `tried` |
 | `--strict` | A field no schema declares is an error, not a warning (as `[project] strict = true` does for every run) |
 | `--schemas <dir>` | Schema directories, repeatable; without it the project's `flint.toml` names them |
+| `--allow <name>` | A script function the game's binary registers (an extension's): calls of it pass the script check. Repeatable. `flint validate` takes it too |
+| `--api <file>` | The game binary's own script API listing, in `flint script api --json`'s shape: its functions pass at their argument counts. Repeatable. `flint validate` takes it too |
 
 The exit code is 1 when there is an error and 0 otherwise. A warning does not fail it.
 
-`flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything.
+`flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything. `flint bundle` leaves the scripts' calls alone; `flint validate` checks the scene's scripts.
 
 ## The `play` Command
 

@@ -79,17 +79,17 @@ fn on_draw_ui() {
         let cg = 0.55;
         let cb = 0.25;
         // Top-left
-        draw_line(m, m, m + cl, m, cr, cg, cb, ca);
-        draw_line(m, m, m, m + cl, cr, cg, cb, ca);
+        draw_line(m, m, m + cl, m, cr, cg, cb, ca, 2.0);
+        draw_line(m, m, m, m + cl, cr, cg, cb, ca, 2.0);
         // Top-right
-        draw_line(sw - m, m, sw - m - cl, m, cr, cg, cb, ca);
-        draw_line(sw - m, m, sw - m, m + cl, cr, cg, cb, ca);
+        draw_line(sw - m, m, sw - m - cl, m, cr, cg, cb, ca, 2.0);
+        draw_line(sw - m, m, sw - m, m + cl, cr, cg, cb, ca, 2.0);
         // Bottom-left
-        draw_line(m, sh - m, m + cl, sh - m, cr, cg, cb, ca);
-        draw_line(m, sh - m, m, sh - m - cl, cr, cg, cb, ca);
+        draw_line(m, sh - m, m + cl, sh - m, cr, cg, cb, ca, 2.0);
+        draw_line(m, sh - m, m, sh - m - cl, cr, cg, cb, ca, 2.0);
         // Bottom-right
-        draw_line(sw - m, sh - m, sw - m - cl, sh - m, cr, cg, cb, ca);
-        draw_line(sw - m, sh - m, sw - m, sh - m - cl, cr, cg, cb, ca);
+        draw_line(sw - m, sh - m, sw - m - cl, sh - m, cr, cg, cb, ca, 2.0);
+        draw_line(sw - m, sh - m, sw - m, sh - m - cl, cr, cg, cb, ca, 2.0);
     } else {
         // Reset post-process overrides when unpaused
         set_radial_blur(0.0);

@@ -38,6 +38,10 @@ pub struct CheckArgs {
     /// `[project] strict = true` in flint.toml makes it for every run)
     #[arg(long)]
     pub strict: bool,
+
+    /// A game's own script functions, for the script check
+    #[command(flatten)]
+    pub script: check::scripts::ScriptApiArgs,
 }
 
 /// The report for `args`, without printing it or exiting.
@@ -54,6 +58,7 @@ pub fn report(args: &CheckArgs) -> Result<check::Report> {
         );
     };
     subject.strict = args.strict;
+    subject.script_api = Some(args.script.api()?);
     Ok(check::run(&subject, Checks::ALL))
 }
 

@@ -48,42 +48,9 @@ pub struct Known {
     pub allow_on: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Rhai syntax that looks like a call, and functions Rhai resolves itself
-/// rather than through a package.
-const RHAI_KEYWORDS: &[&str] = &[
-    "if",
-    "else",
-    "while",
-    "for",
-    "in",
-    "loop",
-    "do",
-    "until",
-    "switch",
-    "return",
-    "fn",
-    "let",
-    "const",
-    "throw",
-    "try",
-    "catch",
-    "import",
-    "export",
-    "as",
-    "private",
-    "this",
-    "global",
-    "Fn",
-    "call",
-    "curry",
-    "is_def_fn",
-    "is_def_var",
-    "is_shared",
-    "type_of",
-    "print",
-    "debug",
-    "eval",
-];
+// Rhai syntax that looks like a call, and functions Rhai resolves itself:
+// the script checker's list (#694), one list for both.
+use flint_script::check::RHAI_KEYWORDS;
 
 impl Known {
     /// From the engine's listing, the signatures of Rhai's own packages
@@ -136,16 +103,9 @@ impl Known {
     }
 }
 
-/// The signatures Rhai's packages register: everything the engine lists
-/// with packages (`gen_fn_signatures(true)`), less what it lists without
-/// them (Flint's and a host's).
-pub fn package_signatures(with_packages: Vec<String>, own: Vec<String>) -> Vec<String> {
-    let own: BTreeSet<String> = own.into_iter().collect();
-    with_packages
-        .into_iter()
-        .filter(|s| !own.contains(s))
-        .collect()
-}
+/// The signatures Rhai's packages register, as the script checker reads
+/// them (#694).
+pub use flint_script::check::package_signatures;
 
 // ---------------------------------------------------------------- render ---
 

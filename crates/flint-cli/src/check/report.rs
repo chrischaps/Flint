@@ -86,6 +86,7 @@ pub fn json(report: &Report) -> serde_json::Value {
         "warnings": diagnostic::count(&report.diagnostics, diagnostic::Severity::Warning),
         "scenes": report.scenes,
         "files": report.files,
+        "scripts": report.scripts,
         "diagnostics": report.diagnostics,
     })
 }
