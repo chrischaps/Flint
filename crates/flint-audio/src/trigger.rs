@@ -53,29 +53,19 @@ impl AudioTrigger {
                 continue;
             }
 
-            let components = match world.get_components(entity.id) {
-                Some(c) => c,
-                None => continue,
-            };
-
-            let trigger_data = match components.get(comp::AUDIO_TRIGGER) {
-                Some(v) => v,
-                None => continue,
-            };
+            // The typed view (ADR 0115): a sound named with anything but a
+            // string is reported once, and that rule is off
+            let trigger = world.view(entity.id, comp::AUDIO_TRIGGER);
+            if !trigger.exists() {
+                continue;
+            }
+            let sound = |field: &str| trigger.opt_str(field).map(String::from);
 
             let rules = TriggerRules {
-                on_collision: trigger_data
-                    .get("on_collision")
-                    .and_then(|v| v.as_str().map(String::from)),
-                on_interact: trigger_data
-                    .get("on_interact")
-                    .and_then(|v| v.as_str().map(String::from)),
-                on_enter: trigger_data
-                    .get("on_enter")
-                    .and_then(|v| v.as_str().map(String::from)),
-                on_exit: trigger_data
-                    .get("on_exit")
-                    .and_then(|v| v.as_str().map(String::from)),
+                on_collision: sound("on_collision"),
+                on_interact: sound("on_interact"),
+                on_enter: sound("on_enter"),
+                on_exit: sound("on_exit"),
             };
 
             self.entity_rules.insert(entity.id, rules);
@@ -257,5 +247,29 @@ mod tests {
 
         let commands = trigger.process_events(&events, &world);
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn a_trigger_sound_that_is_not_a_string_is_reported_and_off() {
+        let mut world = FlintWorld::new();
+        let door = world.spawn("door").unwrap();
+        let data: toml::Value =
+            toml::from_str("on_collision = 3\non_interact = \"creak.ogg\"").unwrap();
+        world.set_component(door, "audio_trigger", data).unwrap();
+
+        let mut trigger = AudioTrigger::new();
+        trigger.load_rules(&world);
+        trigger.load_rules(&world);
+
+        let rules = &trigger.entity_rules[&door];
+        assert_eq!(rules.on_collision, None);
+        assert_eq!(rules.on_interact.as_deref(), Some("creak.ogg"));
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1);
+        assert_eq!(
+            said[0].one_line(),
+            "error[bad-type] entity 'door' audio_trigger.on_collision: expected a string, got \
+             integer 3 (read as if it were not set)"
+        );
     }
 }

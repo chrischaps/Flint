@@ -921,4 +921,194 @@ mod tests {
             vel[1]
         );
     }
+
+    // ------------------------------------------------------------------
+    // Typed reads (ADR 0115 decision 5, #685): each of the ticket's cases
+    // ------------------------------------------------------------------
+
+    fn spawn_from_toml(world: &mut FlintWorld, name: &str, text: &str) -> EntityId {
+        let id = world.spawn(name).unwrap();
+        let table: toml::Table = toml::from_str(text).unwrap();
+        for (component, data) in table {
+            world.set_component(id, &component, data).unwrap();
+        }
+        id
+    }
+
+    #[test]
+    fn an_unknown_body_type_warns_with_the_entity_and_the_allowed_values() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        let id = spawn_from_toml(
+            &mut world,
+            "crate",
+            "[transform]\nposition = [0, 5, 0]\n[rigidbody]\nbody_type = \"dynamc\"\n\
+             [collider]\nshape = \"box\"",
+        );
+        sys.initialize(&mut world).unwrap();
+        for _ in 0..30 {
+            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        }
+
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1, "once, however many steps run: {said:?}");
+        assert_eq!(
+            said[0].one_line(),
+            "error[bad-enum-value] entity 'crate' rigidbody.body_type: \"dynamc\" is not a \
+             value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, \
+             kinematic, kinematic_position, kinematic_velocity; the default \"static\" is used)"
+        );
+        // It still falls back to a static body, as it always did
+        let y = world.get_transform(id).unwrap().position.y;
+        assert_eq!(y, 5.0, "a static body does not fall");
+    }
+
+    #[test]
+    fn an_unknown_shape_and_joint_type_warn() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "anchor",
+            "[transform]\nposition = [0, 0, 0]\n[rigidbody]\nbody_type = \"static\"",
+        );
+        spawn_from_toml(
+            &mut world,
+            "arm",
+            "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"dynamic\"\n\
+             [collider]\nshape = \"spere\"\nfriction = \"slippy\"\n\
+             [joint]\ntype = \"hing\"\nparent = \"anchor\"\nlimits = [10]",
+        );
+        sys.initialize(&mut world).unwrap();
+        sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+
+        let said = world.read_reports().snapshot();
+        let lines: Vec<String> = said.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            lines,
+            [
+                "error[bad-enum-value] entity 'arm' collider.shape: \"spere\" is not a value of \
+                 `shape`",
+                "error[bad-type] entity 'arm' collider.friction: expected a number, got string \
+                 \"slippy\"",
+                "error[bad-enum-value] entity 'arm' joint.type: \"hing\" is not a value of `type`",
+                "error[bad-type] entity 'arm' joint.limits: expected 2 numbers, [min, max], got \
+                 [10]",
+            ]
+        );
+        assert_eq!(
+            said[0].hint.as_deref(),
+            Some(
+                "did you mean `sphere`? allowed values: box, sphere, capsule, cylinder, sprite; \
+                 the default \"box\" is used"
+            )
+        );
+    }
+
+    #[test]
+    fn a_collider_without_a_rigidbody_warns_once() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "wall",
+            "[transform]\nposition = [0, 0, 0]\n[collider]\nshape = \"box\"",
+        );
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[rigidbody]\nbody_type = \"static\"\n[collider]\nshape = \"box\"",
+        );
+        sys.initialize(&mut world).unwrap();
+        assert!(
+            world.read_reports().is_empty(),
+            "the first pass waits: a script may add the rigidbody a step later"
+        );
+        for _ in 0..10 {
+            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        }
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert_eq!(
+            said[0].one_line(),
+            "warning[needs-component] entity 'wall' component 'collider': a collider with no \
+             rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = \
+             \"static\"` for scenery, or remove the collider)"
+        );
+    }
+
+    #[test]
+    fn a_rigidbody_added_a_step_after_its_collider_is_not_reported() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        let id = spawn_from_toml(&mut world, "late", "[collider]\nshape = \"box\"");
+        sys.initialize(&mut world).unwrap();
+        let body: toml::Value = toml::from_str("body_type = \"static\"").unwrap();
+        world.set_component(id, "rigidbody", body).unwrap();
+        for _ in 0..5 {
+            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        }
+        assert!(world.read_reports().is_empty());
+        assert!(sys.sync.get_body_handle(id).is_some());
+    }
+
+    /// Metres walked forward in one second by a character whose
+    /// `character_controller` is `settings`.
+    fn metres_walked(settings: &str) -> (f32, usize) {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
+        );
+        let id = spawn_from_toml(
+            &mut world,
+            "player",
+            &format!(
+                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
+                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
+                 [character_controller]\n{settings}"
+            ),
+        );
+        sys.initialize(&mut world).unwrap();
+        let mut input = InputState::new();
+        let dt = 1.0 / 60.0;
+        // Settle on the floor, then hold forward for a second
+        for _ in 0..30 {
+            sys.update_character(&input, &mut world, dt);
+            sys.fixed_update(&mut world, dt).unwrap();
+        }
+        let start = world.get_transform(id).unwrap().position;
+        input.process_key_down(flint_runtime::parse_key_code("KeyW").unwrap());
+        for _ in 0..60 {
+            sys.update_character(&input, &mut world, dt);
+            sys.fixed_update(&mut world, dt).unwrap();
+        }
+        let end = world.get_transform(id).unwrap().position;
+        let walked = ((end.x - start.x).powi(2) + (end.z - start.z).powi(2)).sqrt();
+        (walked, world.read_reports().len())
+    }
+
+    #[test]
+    fn an_integer_move_speed_moves_at_that_speed() {
+        let (as_float, _) = metres_walked("move_speed = 8.0");
+        let (as_integer, reports) = metres_walked("move_speed = 8");
+        let (unset, _) = metres_walked("");
+        assert_eq!(reports, 0, "an integer is a number, not a mistake");
+        assert_eq!(
+            as_integer, as_float,
+            "`move_speed = 8` walks as far as `move_speed = 8.0`"
+        );
+        // 60 steps of 1/60 s at 8 m/s, less the step the kinematic body lags
+        assert!((7.5..=8.01).contains(&as_integer), "walked {as_integer}");
+        assert!((4.6..=5.01).contains(&unset), "the default is 5: {unset}");
+
+        // A string is a mistake: the default, and one report however long it walks
+        let (wrong, reports) = metres_walked("move_speed = \"fast\"");
+        assert_eq!(wrong, unset);
+        assert_eq!(reports, 1);
+    }
 }
