@@ -8,7 +8,7 @@ Flint's particle system (`flint-particles`) provides GPU-instanced visual effect
 
 | | Inline `particle_emitter` | Effect asset + `particle_effect` |
 |---|---|---|
-| Where it lives | On a scene entity | `particles/<name>.particles.toml` next to the scene (or one level up) |
+| Where it lives | On a scene entity | `particles/<name>.particles.toml` beside the scene, beside any directory above it up to the project root, or in the engine: [the one search rule](assets.md#where-the-engine-looks-for-a-file) |
 | Emitters | One | Any number, simulated together |
 | Curves, forces, bursts timeline, sub-emitters | No (start/end values only) | Yes |
 | Reuse | Copy the block | Reference by name from any scene; `play_effect` from scripts |
@@ -169,7 +169,7 @@ Asset emitters can add `[[emitters.forces]]`:
 |---|---|
 | `blend_mode` | `alpha`, `additive`, `premultiplied`, `multiply` |
 | `sort` | `none`, `back_to_front` (correct alpha), `youngest_first`, `oldest_first` — per emitter, using the camera position |
-| `texture` | Sprite image, searched in `particles/`, the scene dir, then its parent. Empty draws a procedural soft disc |
+| `texture` | Sprite image, searched in the nearest `particles/`, the scene dir, its parent, then the other `particles/` folders effects are found in. Empty draws a procedural soft disc |
 | `frames_x`, `frames_y`, `animate_frames`, `frame_rate`, `random_start_frame` | Sprite sheets: frames follow lifetime, or run at `frame_rate` fps, optionally from a random start frame |
 | `stretch` | Velocity-aligned billboard stretch in seconds (rain streaks ~0.03) |
 | `soft_distance`, `fade_near`, `fade_far`, `lighting`, `fog` | Parsed and saved now; the soft-particle / fade pass is scheduled with the depth-grab work |
@@ -186,7 +186,7 @@ The system keeps a global alive cap (default 100 000; the F3 Particles panel exp
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `effect` | string | "" | Effect name (`name` field or file stem of a `particles/*.particles.toml`) |
+| `effect` | string | "" | Effect name (`name` field or file stem of a `particles/*.particles.toml`). Every effect file the scene can see is loaded, a nearer one hiding a farther one of the same name; a name that matches none is a warning listing each path tried. `flint asset where particles <name> --scene <scene>` shows the search |
 | `playing` / `autoplay` | bool | false / true | Playback state; `start_emitter` / `stop_emitter` toggle `playing` |
 | `scale` | f32 | 1.0 | Multiplies size, speed and shape distances |
 | `emission_scale` | f32 | 1.0 | Multiplies every emitter's rate |

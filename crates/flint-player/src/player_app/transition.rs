@@ -329,6 +329,8 @@ impl PlayerApp {
             Ok((world, scene_file)) => {
                 self.world = world;
                 self.scene_path = new_scene_path.clone();
+                // The new scene may belong to another project (ADR 0114)
+                self.refresh_project();
                 // A slow-motion moment never outlives the scene that asked for it
                 self.clock.time_scale = 1.0;
                 self.skybox_path = scene_file
@@ -590,7 +592,11 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
-        flint_particles::load_particle_effects_from_world(&self.scene_path, &mut self.particles);
+        flint_particles::load_particle_effects_from_world(
+            &self.project,
+            &self.scene_path,
+            &mut self.particles,
+        );
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));

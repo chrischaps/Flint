@@ -97,7 +97,7 @@ flint.toml: `project.schemas` must be a list of strings, found a string
 
 | Key | Today | Planned |
 |-----|-------|---------|
-| the file itself | Marks the project root for the content store and catalog (`flint asset`, `flint gen --register`); see [Assets: The Project Root](../concepts/assets.md#the-project-root) | The root every command, the player and the web build agree on |
+| the file itself | Marks the project root for the content store and catalog (`flint asset`, `flint gen --register`; see [Assets: The Project Root](../concepts/assets.md#the-project-root)), and for the [asset search](../concepts/assets.md#where-the-engine-looks-for-a-file), which climbs from a scene to this folder (particle effects so far) | The root every command, the player and the web build agree on, for every kind of asset |
 | `id` | Parsed and checked | Keys saves and user files; the web bundle's id |
 | `schemas` | **Read by every command, the viewer and the player**: the schema directories, in override order, whenever no `--schemas` flag is given. See [Multi-Schema Layering](#multi-schema-layering) | The same |
 | `scene` | Parsed and checked | What `flint play` opens with no argument |
@@ -291,6 +291,8 @@ Scripts, audio, and sprite paths are resolved relative to the game project root.
 - Scripts in `scripts/`
 - Audio in `audio/`
 - Sprites in `sprites/`
+
+Particle effects are the first kind on the engine's one search rule: `particles/` beside the scene, then beside each directory above it up to the project root, then `engine/particles/`. A scene any number of folders below `scenes/` finds the project's effects, and `flint asset where particles <name> --scene <scene>` prints the file chosen and every path tried. See [Assets: Where the Engine Looks for a File](../concepts/assets.md#where-the-engine-looks-for-a-file).
 
 ## Engine Subtree Workflow
 

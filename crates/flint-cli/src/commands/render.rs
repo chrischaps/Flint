@@ -1250,11 +1250,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if let Some(seconds) = args.particle_time {
         use flint_runtime::RuntimeSystem;
         let mut particles = flint_particles::ParticleSystem::new();
-        flint_particles::load_particle_effects_from_world(&args.scene, &mut particles);
+        let project = flint_core::project::Project::for_scene(Path::new(&args.scene));
+        flint_particles::load_particle_effects_from_world(&project, &args.scene, &mut particles);
         particles
             .initialize(&mut world)
             .context("Failed to initialize particles")?;
-        let dirs = flint_particles::texture_search_dirs(&args.scene);
+        let dirs = flint_particles::texture_search_dirs(&project, &args.scene);
         flint_render::load_particle_textures(
             &mut renderer,
             &ctx.device,
@@ -3692,11 +3693,16 @@ impl Stage {
         let first = self.particles.is_none();
         if first {
             let mut particles = flint_particles::ParticleSystem::new();
-            flint_particles::load_particle_effects_from_world(&args.scene, &mut particles);
+            let project = flint_core::project::Project::for_scene(Path::new(&args.scene));
+            flint_particles::load_particle_effects_from_world(
+                &project,
+                &args.scene,
+                &mut particles,
+            );
             particles
                 .initialize(&mut self.world)
                 .context("Failed to initialize particles")?;
-            let dirs = flint_particles::texture_search_dirs(&args.scene);
+            let dirs = flint_particles::texture_search_dirs(&project, &args.scene);
             flint_render::load_particle_textures(
                 &mut self.renderer,
                 &ctx.device,

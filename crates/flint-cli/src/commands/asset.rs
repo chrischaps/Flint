@@ -161,6 +161,27 @@ pub enum AssetCommands {
         output: Option<String>,
     },
 
+    /// Show which file the engine would load for an asset name, and
+    /// everywhere it looked first
+    #[command(after_help = super::asset_where::kinds_help())]
+    Where {
+        /// The kind of asset (see the list below)
+        #[arg(value_parser = super::asset_where::parse_kind)]
+        kind: flint_core::project::AssetKind,
+
+        /// The name a scene would use (`fire`)
+        name: String,
+
+        /// The scene that names it; without one, a scene in the working
+        /// directory is assumed
+        #[arg(long)]
+        scene: Option<String>,
+
+        /// One JSON document on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Manage generation jobs
     #[command(subcommand)]
     Job(JobCommands),
@@ -229,6 +250,12 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             style,
             output,
         } => run_regenerate(&name, seed, provider, style, output),
+        AssetCommands::Where {
+            kind,
+            name,
+            scene,
+            json,
+        } => super::asset_where::run(kind, &name, scene.as_deref(), json),
         AssetCommands::Job(job_cmd) => run_job(job_cmd),
     }
 }

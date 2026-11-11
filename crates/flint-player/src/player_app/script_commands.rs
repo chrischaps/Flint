@@ -166,9 +166,8 @@ impl PlayerApp {
                     if !self.particles.sync.spawn_effect(handle, &name, pos) {
                         tracing::warn!(
                             target: "script",
-                            "play_effect: unknown particle effect '{}' (expected particles/{}.particles.toml)",
-                            name,
-                            name
+                            "play_effect: {}",
+                            self.particles.sync.missing_effect_report(&name)
                         );
                     }
                 }

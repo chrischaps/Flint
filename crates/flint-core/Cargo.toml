@@ -9,4 +9,5 @@ description = "Core types and utilities for the Flint engine"
 serde = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 sha2 = { workspace = true }
