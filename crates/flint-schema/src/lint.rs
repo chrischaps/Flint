@@ -26,25 +26,90 @@ use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::project::AssetKind;
 use std::path::Path;
 
+/// What a schema file declares, which is the one top-level key it holds:
+/// `components/*.toml` hold `[component.<name>]` tables, `scene/*.toml`
+/// hold `[table.<name>]` ones (a scene-level table such as `[post_process]`,
+/// #686). The two are written alike below that key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaKind {
+    Component,
+    Table,
+}
+
+impl SchemaKind {
+    /// The top-level key: `component` or `table`.
+    pub fn key(self) -> &'static str {
+        match self {
+            SchemaKind::Component => "component",
+            SchemaKind::Table => "table",
+        }
+    }
+
+    /// The directory of a schema directory its files are in.
+    pub fn dir(self) -> &'static str {
+        match self {
+            SchemaKind::Component => "components",
+            SchemaKind::Table => "scene",
+        }
+    }
+
+    fn file_noun(self) -> &'static str {
+        match self {
+            SchemaKind::Component => "a component file",
+            SchemaKind::Table => "a scene-table file",
+        }
+    }
+
+    fn other(self) -> SchemaKind {
+        match self {
+            SchemaKind::Component => SchemaKind::Table,
+            SchemaKind::Table => SchemaKind::Component,
+        }
+    }
+}
+
 /// Every lint of one component schema file's text. `file` is what each
 /// diagnostic names. Text that is not TOML gives none: the loader's own
 /// error says so.
 pub fn lint_component_file(text: &str, file: Option<&Path>) -> Vec<Diagnostic> {
+    lint_schema_file(SchemaKind::Component, text, file)
+}
+
+/// [`lint_component_file`] for a scene-table file (`scene/*.toml`, #686):
+/// the same lints, about its `[table.<name>]` tables.
+pub fn lint_table_file(text: &str, file: Option<&Path>) -> Vec<Diagnostic> {
+    lint_schema_file(SchemaKind::Table, text, file)
+}
+
+/// Every lint of one schema file of `kind`. A `[table.*]` in a component
+/// file, or a `[component.*]` in a scene-table file, is ignored like any
+/// other stray key, and the hint says which directory it belongs in.
+pub fn lint_schema_file(kind: SchemaKind, text: &str, file: Option<&Path>) -> Vec<Diagnostic> {
     let Ok(doc) = text.parse::<toml::Table>() else {
         return Vec::new();
     };
     let mut found = Vec::new();
     for (key, value) in &doc {
-        if key != "component" {
+        if key != kind.key() {
+            let hint = if key == kind.other().key() {
+                Some(format!(
+                    "a `[{key}.<name>]` is declared in a file under `{}/` of the schema directory",
+                    kind.other().dir()
+                ))
+            } else {
+                diagnostic::did_you_mean(key, [kind.key()])
+            };
             found.push(
                 Diagnostic::warning(
                     codes::IGNORED_SCHEMA_KEY,
                     format!(
-                        "`{key}` is ignored: a component file holds `[component.<name>]` tables"
+                        "`{key}` is ignored: {} holds `[{}.<name>]` tables",
+                        kind.file_noun(),
+                        kind.key()
                     ),
                 )
                 .field(key.clone())
-                .hint_opt(diagnostic::did_you_mean(key, ["component"])),
+                .hint_opt(hint),
             );
             continue;
         }
@@ -53,9 +118,12 @@ pub fn lint_component_file(text: &str, file: Option<&Path>) -> Vec<Diagnostic> {
                 continue;
             };
             let before = found.len();
-            lint_component(name, def, &mut found);
+            lint_component(kind, name, def, &mut found);
             for d in &mut found[before..] {
-                d.component = Some(name.clone());
+                match kind {
+                    SchemaKind::Component => d.component = Some(name.clone()),
+                    SchemaKind::Table => d.table = Some(name.clone()),
+                }
             }
         }
     }
@@ -67,7 +135,8 @@ pub fn lint_component_file(text: &str, file: Option<&Path>) -> Vec<Diagnostic> {
     found
 }
 
-fn lint_component(name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
+fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
+    let key_word = kind.key();
     for (key, value) in def {
         if key == "fields" {
             for (field, field_def) in value.as_table().into_iter().flatten() {
@@ -78,18 +147,18 @@ fn lint_component(name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
                 Diagnostic::warning(
                     codes::IGNORED_SCHEMA_KEY,
                     format!(
-                        "`{key}` is ignored: it is written under `[component.{name}]`, and \
-                         fields are read from `[component.{name}.fields]`"
+                        "`{key}` is ignored: it is written under `[{key_word}.{name}]`, and \
+                         fields are read from `[{key_word}.{name}.fields]`"
                     ),
                 )
                 .hint(format!(
-                    "move it under `[component.{name}.fields]`; until then `{name}` has one \
+                    "move it under `[{key_word}.{name}.fields]`; until then `{name}` has one \
                      field fewer, and with none it is unchecked and its defaults are not applied"
                 ))
             } else {
                 Diagnostic::warning(
                     codes::IGNORED_SCHEMA_KEY,
-                    format!("`{key}` is ignored: a component holds `description` and `fields`"),
+                    format!("`{key}` is ignored: a {key_word} holds `description` and `fields`"),
                 )
                 .hint_opt(diagnostic::did_you_mean(
                     key,
@@ -314,6 +383,48 @@ desciption = "Typo"
         assert_eq!(
             found[0].hint.as_deref(),
             Some("did you mean `description`?")
+        );
+    }
+
+    /// A scene-table file is linted like a component file, about its
+    /// `[table.*]`; each kind in the other's directory is named with where
+    /// it goes.
+    #[test]
+    fn a_table_file_is_linted_and_each_kind_has_its_directory() {
+        let found = lint_table_file(
+            r#"
+[table.weather]
+wind = "f32"
+
+[table.weather.fields]
+rain = { type = "float" }
+
+[component.cloud]
+"#,
+            Some(Path::new("schemas/scene/weather.toml")),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "warning[ignored-schema-key] field 'component': `component` is ignored: a \
+                 scene-table file holds `[table.<name>]` tables",
+                "warning[old-type-name] [weather] rain: `float` is an old spelling of `f32`",
+                "warning[ignored-schema-key] [weather] wind: `wind` is ignored: it is written \
+                 under `[table.weather]`, and fields are read from `[table.weather.fields]`",
+            ]
+        );
+        assert_eq!(
+            found[0].hint.as_deref(),
+            Some(
+                "a `[component.<name>]` is declared in a file under `components/` of the \
+                 schema directory"
+            )
+        );
+        let in_components = lint_component_file("[table.weather]\n", None);
+        assert_eq!(
+            in_components[0].hint.as_deref(),
+            Some("a `[table.<name>]` is declared in a file under `scene/` of the schema directory")
         );
     }
 

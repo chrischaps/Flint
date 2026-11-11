@@ -93,6 +93,18 @@ pub fn component_json(component: &ComponentSchema) -> Value {
     })
 }
 
+/// One scene-level table (#686): what a component has, under
+/// `"kind": "table"`.
+pub fn table_json(table: &ComponentSchema) -> Value {
+    json!({
+        "kind": "table",
+        "name": table.name,
+        "description": table.description,
+        "open": table.is_open(),
+        "fields": fields_json(&table.fields),
+    })
+}
+
 /// One archetype: its components, and the defaults it gives them.
 pub fn archetype_json(archetype: &ArchetypeSchema) -> Value {
     let defaults: Map<String, Value> = sorted(&archetype.defaults)
@@ -109,12 +121,18 @@ pub fn archetype_json(archetype: &ArchetypeSchema) -> Value {
 }
 
 /// Everything loaded: the directories, the type names (and the old spellings
-/// that still load), every component and every archetype.
+/// that still load), every component, every scene table and every
+/// archetype.
 pub fn registry_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
     let components: Map<String, Value> = registry
         .components()
         .into_iter()
         .map(|c| (c.name.clone(), component_json(c)))
+        .collect();
+    let tables: Map<String, Value> = registry
+        .tables()
+        .into_iter()
+        .map(|t| (t.name.clone(), table_json(t)))
         .collect();
     let archetypes: Map<String, Value> = registry
         .archetypes()
@@ -134,27 +152,26 @@ pub fn registry_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
         "types": types,
         "old_type_names": old,
         "components": components,
+        "tables": tables,
         "archetypes": archetypes,
     })
 }
 
-/// `flint schema --list --json`: every component and archetype by name,
-/// with enough to choose one.
+/// `flint schema --list --json`: every component, scene table and archetype
+/// by name, with enough to choose one.
 pub fn list_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
-    let components: Vec<Value> = registry
-        .components()
-        .into_iter()
-        .map(|c| {
-            let mut fields: Vec<&str> = c.field_names();
-            fields.sort_unstable();
-            json!({
-                "name": c.name,
-                "description": c.description,
-                "open": c.is_open(),
-                "fields": fields,
-            })
+    let brief = |c: &ComponentSchema| {
+        let mut fields: Vec<&str> = c.field_names();
+        fields.sort_unstable();
+        json!({
+            "name": c.name,
+            "description": c.description,
+            "open": c.is_open(),
+            "fields": fields,
         })
-        .collect();
+    };
+    let components: Vec<Value> = registry.components().into_iter().map(brief).collect();
+    let tables: Vec<Value> = registry.tables().into_iter().map(brief).collect();
     let archetypes: Vec<Value> = registry
         .archetypes()
         .into_iter()
@@ -169,6 +186,7 @@ pub fn list_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
     json!({
         "schema_dirs": dirs,
         "components": components,
+        "tables": tables,
         "archetypes": archetypes,
     })
 }
@@ -340,6 +358,24 @@ pub fn component_schema(component: &ComponentSchema, registry: &SchemaRegistry) 
     Value::Object(out)
 }
 
+/// The JSON Schema of one scene-level table (#686): its fields, each by its
+/// type, a required one required (nothing else supplies a table's field).
+/// A key the table doesn't declare is allowed, as in a component. An open
+/// table is any table.
+pub fn scene_table_schema(table: &ComponentSchema) -> Value {
+    let mut out = match table_schema(&table.fields, &|_| false) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    if table.is_open() {
+        out.remove("properties");
+    }
+    if let Some(description) = &table.description {
+        out.insert("description".into(), json!(description));
+    }
+    Value::Object(out)
+}
+
 /// A JSON Schema (draft-07) for a `.scene.toml` under `registry`:
 ///
 /// - `[entities.<name>]` holds `archetype` (one of the loaded archetypes),
@@ -348,10 +384,21 @@ pub fn component_schema(component: &ComponentSchema, registry: &SchemaRegistry) 
 ///   (`unknown-component`).
 /// - A component's table takes its fields, each by its type. A key the
 ///   component doesn't declare is allowed, as the engine allows it.
-/// - `[scene]` and `[prefabs.<name>]` are described; any other top-level
-///   table (`[camera]`, `[post_process]`, ...) is allowed and not described
-///   (scene-level tables are #686).
+/// - `[scene]` and `[prefabs.<name>]` are described, and so is every
+///   scene-level table a loaded `[table.<name>]` declares (`[camera]`,
+///   `[post_process]`, a game's `[weather]`: #686), each a `$ref` into
+///   `definitions.tables`. A top-level table none declares is allowed, as
+///   the engine allows it (`unknown-table` is a warning).
 pub fn scene_json_schema(registry: &SchemaRegistry, dirs: &[String]) -> Value {
+    let mut tables = Map::new();
+    let mut table_properties = Map::new();
+    for table in registry.tables() {
+        tables.insert(table.name.clone(), scene_table_schema(table));
+        table_properties.insert(
+            table.name.clone(),
+            json!({ "$ref": format!("#/definitions/tables/{}", table.name) }),
+        );
+    }
     let mut components = Map::new();
     let mut entity_properties = Map::new();
     let archetype_names: Vec<&str> = registry
@@ -383,7 +430,7 @@ pub fn scene_json_schema(registry: &SchemaRegistry, dirs: &[String]) -> Value {
             json!({ "$ref": format!("#/definitions/components/{}", component.name) }),
         );
     }
-    json!({
+    let mut schema = json!({
         "$schema": DRAFT,
         "title": "Flint scene",
         "description": format!(
@@ -436,8 +483,17 @@ pub fn scene_json_schema(registry: &SchemaRegistry, dirs: &[String]) -> Value {
                 "additionalProperties": false,
             },
             "components": components,
+            "tables": tables,
         },
-    })
+    });
+    if let Some(properties) = schema["properties"].as_object_mut() {
+        // `scene`, `prefabs` and `entities` are the format's own: a table
+        // schema of one of those names would not be a scene table
+        for (name, reference) in table_properties {
+            properties.entry(name).or_insert(reference);
+        }
+    }
+    schema
 }
 
 #[cfg(test)]
@@ -463,6 +519,19 @@ shear = { type = "table", fields = { xy = "f32" } }
 
 [component.bag]
 description = "Read by scripts"
+"#,
+            )
+            .unwrap();
+        registry
+            .load_table_string(
+                r#"
+[table.weather]
+description = "What the sky is doing"
+
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0 }
+kind = { type = "enum", values = ["clear", "storm"], required = true }
+fronts = { type = "array", element = { type = "table", fields = { at = "f32" } } }
 "#,
             )
             .unwrap();
@@ -500,6 +569,47 @@ description = "Read by scripts"
             .collect();
         assert_eq!(names, ["bag", "rig"]);
         assert_eq!(list["archetypes"][0]["name"], "arm");
+    }
+
+    /// #686: a scene table is in every form of the export, as a component
+    /// is, and the scene's JSON Schema describes it at the top level.
+    #[test]
+    fn scene_tables_are_exported_beside_the_components() {
+        let registry = registry();
+        let all = registry_json(&registry, &[]);
+        let weather = &all["tables"]["weather"];
+        assert_eq!(weather["kind"], "table");
+        assert_eq!(weather["open"], false);
+        assert_eq!(weather["fields"]["rain"]["max"], 1.0);
+        assert_eq!(weather["fields"]["kind"]["required"], true);
+        assert!(all["components"].get("weather").is_none());
+
+        let list = list_json(&registry, &[]);
+        assert_eq!(list["tables"][0]["name"], "weather");
+        assert_eq!(
+            list["tables"][0]["fields"],
+            json!(["fronts", "kind", "rain"])
+        );
+
+        let schema = scene_json_schema(&registry, &[]);
+        assert_eq!(
+            schema["properties"]["weather"]["$ref"],
+            "#/definitions/tables/weather"
+        );
+        assert_eq!(schema["properties"]["scene"]["type"], "object");
+        let weather = &schema["definitions"]["tables"]["weather"];
+        assert_eq!(weather["required"], json!(["kind"]));
+        assert_eq!(weather["properties"]["rain"]["maximum"], 1.0);
+        assert_eq!(
+            weather["properties"]["fronts"]["items"]["properties"]["at"]["type"],
+            "number"
+        );
+        assert_eq!(
+            scene_table_schema(registry.get_table("weather").unwrap()),
+            *weather
+        );
+        // A table no schema declares is still allowed at the top level
+        assert!(schema.get("additionalProperties").is_none());
     }
 
     #[test]

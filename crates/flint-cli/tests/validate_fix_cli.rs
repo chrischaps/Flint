@@ -136,7 +136,8 @@ fn fix_keeps_every_table_the_comments_and_the_name() {
     let file: flint_scene::SceneFile = toml::from_str(&after).unwrap();
     assert_eq!(file.scene.name, "Porch at dusk");
     assert!(file.camera.is_some() && file.environment.is_some());
-    assert!(file.post_process.is_some() && file.living.is_some() && file.wooze.is_some());
+    assert!(file.post_process.is_some());
+    assert!(file.tables.contains_key("living") && file.tables.contains_key("wooze"));
     assert!(file.prefabs.contains_key("porch"));
 
     // The diff is of the file, not of two world dumps

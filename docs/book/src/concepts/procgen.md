@@ -474,7 +474,7 @@ set_wooze_zone("spot", #{ shape: "sphere", center: [0, 0, 0], radius: 5.0, glide
 remove_wooze_zone("spot", 1.0);                              // and out
 ```
 
-**Checking it.** `flint validate` fails on a malformed table, naming the zone: `wooze zone 'pocket': radius = -6 must be more than 0 metres`. It checks what the field itself needs, such as a sphere having a radius, and then `schemas/components/wooze.toml`, which `flint schema wooze_zone` prints and a game's own schemas can tighten. The player goes on without a bad zone, with a warning, so that a look lab doesn't refuse to start over one knob. A misspelt global key fails the scene's load, the same as in `[living]`.
+**Checking it.** `flint validate` fails on a malformed table, naming the zone: `wooze zone 'pocket': radius = -6 must be more than 0 metres`. It checks what the field itself needs, such as a sphere having a radius, and then `schemas/scene/wooze.toml`, the table's [schema](schemas.md#scene-level-tables), which `flint schema wooze` prints (zones and all) and a game's own schemas can tighten. A key a zone doesn't take is a warning with the nearest name. The player goes on without a bad zone, with a warning, so that a look lab doesn't refuse to start over one knob. A misspelt global key fails the scene's load, the same as in `[living]`.
 
 `--exit-after` adds a line saying how far apart the field has put the props:
 

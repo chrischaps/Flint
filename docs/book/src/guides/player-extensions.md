@@ -41,6 +41,7 @@ fn main() -> anyhow::Result<()> {
     );
     player.scene_camera = scene.camera.clone();
     player.scene_post_process = scene.post_process.clone();
+    player.scene_tables = scene.scene_tables(); // what ctx.scene_table reads
     player.set_schema_paths(dirs);
     player.add_extension(Box::new(MyGame));
 
@@ -137,6 +138,51 @@ WARN error[bad-enum-value] entity 'crate' collider.shape: "spere" is not a value
 ```
 
 A read that finds nothing wrong takes no lock and allocates nothing, so reading every frame is fine. `ctx.world.read_reports().snapshot()` returns what has been reported so far as `Diagnostic`s (a debug panel can list them, and a test can assert on them); `view.report(field, || Diagnostic::warning(..))` adds a finding of your own to the same once-only list; and `raw(field)` hands back the `toml::Value` for a shape no reader covers. For a table that isn't a component, `flint_core::toml_util` (`toml_f32`, `toml_f64`, `toml_vec3`, `toml_color`) coerces integers without reporting.
+
+### Reading the scene's tables
+
+A game gives a scene settings of its own as a top-level table, and reads it here. Declare the table in the game's schema layer, so `flint validate` checks every scene that writes it ([Schemas: A table of your own](../concepts/schemas.md#a-table-of-your-own)):
+
+```toml
+# schemas/scene/weather.toml
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0 }
+wind = "vec3"
+```
+
+```toml
+# scenes/storm.scene.toml
+[weather]
+rain = 0.7
+wind = [3.0, 0.0, -1.0]
+```
+
+`ctx.scene_table(name)` is the current scene's table as its file wrote it, and `ctx.scene_table_as::<T>(name)` reads it into a type of the game's:
+
+```rust
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct Weather {
+    rain: f32,
+    wind: [f32; 3],
+}
+
+impl PlayerExtension for MyGame {
+    fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+        // None: this scene has no [weather]
+        let weather: Weather = match ctx.scene_table_as("weather") {
+            Some(Ok(weather)) => weather,
+            Some(Err(e)) => { eprintln!("[weather]: {e}"); Weather::default() }
+            None => Weather::default(),
+        };
+        self.rain.set_rate(weather.rain);
+    }
+}
+```
+
+The values are the file's own: a `default` the schema states is not filled in, so give the type its defaults (`#[serde(default)]`), or read a key with a fallback. `ctx.scene_tables` holds every top-level table of the scene, the engine's `[camera]` and `[post_process]` included. A scene transition replaces them, so read each frame, or keep the last scene's and compare, not once at start. A host that builds `PlayerApp` itself gets them from `apply_scene_settings`, or sets `player.scene_tables = scene_file.scene_tables()`.
+
+The table reaches the extension whether or not a schema declares it. Without one it is an `unknown-table` warning on every load, and a typo in it is not caught.
 
 ### Saved data
 

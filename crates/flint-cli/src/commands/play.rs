@@ -128,7 +128,11 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     )?;
 
     // Load scene
-    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, mut scene_file) =
+        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&args.scene))
+        .context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -183,8 +187,10 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.style_time = args.style.style_time;
 
     // The scene's living props: what their shadows follow, and how woozy it is
-    app.scene_living = scene_file.living.clone();
-    app.scene_wooze = scene_file.wooze.clone();
+    let living_tables = flint_procgen::LivingTables::or_warn(&scene_file);
+    app.scene_living = living_tables.living;
+    app.scene_wooze = living_tables.wooze;
+    app.scene_tables = scene_file.scene_tables();
 
     // The registry and its directories, kept for transitions and chunks
     app.set_schemas(registry, schema_dirs);

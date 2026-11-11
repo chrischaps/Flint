@@ -2,7 +2,7 @@
 //! panel or a script, and saved as a preset a scene can name.
 //!
 //! One path for both: anything that changes a knob says so as a
-//! [`WoozePreset`](flint_scene::WoozePreset), whose unset fields leave a knob
+//! [`WoozePreset`](flint_procgen::WoozePreset), whose unset fields leave a knob
 //! alone. So what a preset file loads is exactly what a person turned, and setting
 //! a knob to the value it has already costs nothing.
 //!
@@ -13,12 +13,12 @@
 
 use flint_core::wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use flint_procgen::{
-    EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
-    ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
-};
-use flint_scene::{
     commit_look, read_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
     LivingVarianceDef, WoozeKnobs, WoozePreset,
+};
+use flint_procgen::{
+    EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
+    ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -96,13 +96,15 @@ pub(crate) struct Unsaved {
 impl Unsaved {
     fn of(edits: Vec<flint_scene::SceneEdit>) -> Self {
         let mut species: Vec<String> = Vec::new();
-        for name in edits.iter().filter_map(flint_scene::SceneEdit::species) {
+        for name in edits.iter().filter_map(flint_procgen::edit_species) {
             if !species.iter().any(|s| s == name) {
                 species.push(name.to_string());
             }
         }
         Self {
-            global: edits.iter().any(|edit| edit.species().is_none()),
+            global: edits
+                .iter()
+                .any(|edit| flint_procgen::edit_species(edit).is_none()),
             species,
             edits,
         }
@@ -610,7 +612,7 @@ impl PlayerApp {
     pub(super) fn save_living_preset(&mut self, name: &str) -> Result<PathBuf, String> {
         let (mut knobs, _) = self.living_shared_knobs();
         knobs.living.species = self.living_species_tables();
-        flint_scene::write_preset_in(&self.project, Path::new(&self.scene_path), name, &knobs)
+        flint_procgen::write_preset_in(&self.project, Path::new(&self.scene_path), name, &knobs)
     }
 
     /// Each species' own values as a preset holds them: every one that has some,
@@ -673,7 +675,7 @@ impl PlayerApp {
     #[cfg(any(feature = "debug-hud", test))]
     pub(crate) fn living_unsaved(&self) -> Unsaved {
         match self.living_base() {
-            Some(base) => Unsaved::of(flint_scene::look_edits(&base, &self.living_look())),
+            Some(base) => Unsaved::of(flint_procgen::look_edits(&base, &self.living_look())),
             None => Unsaved::default(),
         }
     }
@@ -821,7 +823,7 @@ impl PlayerApp {
     /// The names a preset can go by here: this scene's files, then the built-ins
     /// that no file has taken.
     pub(super) fn living_preset_names(&self) -> Vec<String> {
-        let mut names = flint_scene::list_presets_in(&self.project, Path::new(&self.scene_path));
+        let mut names = flint_procgen::list_presets_in(&self.project, Path::new(&self.scene_path));
         for (name, _) in PRESETS {
             if !names.iter().any(|taken| taken == name) {
                 names.push((*name).to_string());
@@ -1035,7 +1037,8 @@ pub(crate) fn tune_species(
 /// (#249), named as a commit names them.
 #[cfg(any(feature = "debug-hud", test))]
 pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
-    let wooze = scene.wooze.as_ref();
+    let tables = flint_procgen::LivingTables::or_warn(scene);
+    let wooze = tables.wooze.as_ref();
     let own = WoozePreset {
         wooze: WoozeKnobs {
             amplitude: wooze.and_then(|w| w.amplitude),
@@ -1045,11 +1048,11 @@ pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
         },
         living: LivingDef {
             shadows: None,
-            ..scene.living.clone().unwrap_or_default()
+            ..tables.living.clone().unwrap_or_default()
         },
         boil: None,
     };
-    flint_scene::look_edits(&WoozePreset::default(), &own)
+    flint_procgen::look_edits(&WoozePreset::default(), &own)
         .iter()
         .map(flint_scene::SceneEdit::label)
         .collect()

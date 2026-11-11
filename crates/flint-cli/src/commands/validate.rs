@@ -148,7 +148,7 @@ pub fn check(
     if let Some(fatal) = found
         .diagnostics
         .iter()
-        .find(|d| d.is_error() && d.entity.is_none())
+        .find(|d| d.is_error() && d.entity.is_none() && d.table.is_none())
     {
         anyhow::bail!("{}", fatal.one_line());
     }

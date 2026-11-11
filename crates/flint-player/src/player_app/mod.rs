@@ -424,12 +424,18 @@ pub struct PlayerApp {
     /// render modes, which share it) see at this many seconds.
     pub style_time: Option<f32>,
 
+    /// The current scene's top-level tables as its file wrote them (#686):
+    /// the engine's (`[camera]`, `[post_process]`, ...) and any a game added
+    /// (`[weather]`). What `ExtensionCtx::scene_table` reads. A host that
+    /// builds the app itself sets it from `SceneFile::scene_tables`, as
+    /// `apply_scene_settings` does; a scene transition replaces it.
+    pub scene_tables: toml::Table,
     // The scene's `[living]` table, and room to blend its props each frame
-    pub scene_living: Option<flint_scene::LivingDef>,
+    pub scene_living: Option<flint_procgen::LivingDef>,
     living_blend: flint_procgen::BlendFrame,
     // The scene's `[wooze]` table, and the field made from it, sampled on a clock
     // of its own that stops when animation does. No table: no field, no samples.
-    pub scene_wooze: Option<flint_scene::WoozeDef>,
+    pub scene_wooze: Option<flint_procgen::WoozeDef>,
     wooze: Option<flint_core::wooze::WoozeField>,
     wooze_time: f64,
     wooze_missing_warned: bool,

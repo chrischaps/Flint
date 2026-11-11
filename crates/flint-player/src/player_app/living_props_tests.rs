@@ -438,8 +438,8 @@ fn the_renderer_gets_the_jitter_influences_and_the_glb_does_not() {
 
 #[test]
 fn a_scene_living_table_reads_as_defaults() {
+    use flint_procgen::{LivingDef, LivingEchoesDef};
     use flint_procgen::{LivingDefaults, LivingShadows};
-    use flint_scene::{LivingDef, LivingEchoesDef};
 
     assert_eq!(defaults_of(None), LivingDefaults::default());
     let read = defaults_of(Some(&LivingDef {
@@ -450,7 +450,7 @@ fn a_scene_living_table_reads_as_defaults() {
             alpha: Some(0.5),
         }),
         stagger: Some("per_branch".into()),
-        variance: Some(flint_scene::LivingVarianceDef {
+        variance: Some(flint_procgen::LivingVarianceDef {
             amount: Some(0.5),
             steady: None,
             keep_size: Some(false),
@@ -475,7 +475,7 @@ fn a_scene_living_table_reads_as_defaults() {
             alpha: Some(2.0),
         }),
         stagger: Some("sideways".into()),
-        variance: Some(flint_scene::LivingVarianceDef {
+        variance: Some(flint_procgen::LivingVarianceDef {
             amount: Some(1.5),
             steady: Some(-0.5),
             keep_size: None,
@@ -508,7 +508,13 @@ glide = 0.5
     )
     .unwrap();
     // The player goes on without what's wrong; `flint validate` is what fails.
-    let field = field_of(scene.wooze.as_ref()).unwrap();
+    let field = field_of(
+        flint_procgen::LivingTables::of(&scene)
+            .unwrap()
+            .wooze
+            .as_ref(),
+    )
+    .unwrap();
     assert_eq!(field.zones().len(), 1);
     assert_eq!(field.zones()[0].name(), "good");
 }
@@ -539,7 +545,13 @@ glide = 0.8
 "#,
     )
     .unwrap();
-    let field = field_of(scene.wooze.as_ref()).unwrap();
+    let field = field_of(
+        flint_procgen::LivingTables::of(&scene)
+            .unwrap()
+            .wooze
+            .as_ref(),
+    )
+    .unwrap();
     resolver.process_living_in(1.0 / 60.0, Some((&field, 0.0)));
     let line = wooze_report(&field, resolver.living_props());
     assert!(line.contains("1 zones over 2 props"), "{line}");

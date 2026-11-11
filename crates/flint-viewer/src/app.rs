@@ -145,7 +145,9 @@ pub fn run(
     load_user_styles(scene_path);
     // A word may name one of the scene's styles, registered just now
     flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
-    let (world, scene_file) = load_scene(scene_path, &registry)?;
+    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -266,7 +268,8 @@ pub fn run_editor(
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     load_user_styles(scene_path);
-    let (world, scene_file) = load_scene(scene_path, &registry)?;
+    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -2165,7 +2168,11 @@ impl ViewerApp {
 
             let reload_result = {
                 let state = self.state.lock().unwrap();
-                load_scene(&scene_path, &state.registry)
+                load_scene(&scene_path, &state.registry).and_then(|(world, mut scene_file)| {
+                    let path = std::path::Path::new(&scene_path);
+                    flint_procgen::settle_scene(&mut scene_file, path)?;
+                    Ok((world, scene_file))
+                })
             };
 
             match reload_result {
@@ -2773,7 +2780,7 @@ impl ApplicationHandler for ViewerApp {
 /// The wooze field a scene describes, naming what's wrong with it and going on
 /// without that part, as the player does.
 fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_core::wooze::WoozeField> {
-    let (field, issues) = scene.wooze.as_ref()?.field();
+    let (field, issues) = flint_procgen::LivingTables::or_warn(scene).wooze?.field();
     for issue in issues {
         tracing::warn!("{issue}; going without it");
     }

@@ -351,7 +351,16 @@ impl PlayerApp {
         let registry = self.schemas_for_scene(&new_scene_path);
 
         // Parse and load scene
-        match flint_scene::load_scene(&new_scene_path, &registry) {
+        // Living props' tables are checked and their preset filled in, as at
+        // the first load (#686)
+        let loaded = flint_scene::load_scene(&new_scene_path, &registry).and_then(
+            |(world, mut scene_file)| {
+                let path = std::path::Path::new(&new_scene_path);
+                flint_procgen::settle_scene(&mut scene_file, path)?;
+                Ok((world, scene_file))
+            },
+        );
+        match loaded {
             Ok((world, scene_file)) => {
                 self.world = world;
                 self.scene_path = new_scene_path.clone();
@@ -395,8 +404,10 @@ impl PlayerApp {
                     &new_scene_path,
                     scene_file.post_process.clone(),
                 );
-                self.scene_living = scene_file.living.clone();
-                self.scene_wooze = scene_file.wooze.clone();
+                let living_tables = flint_procgen::LivingTables::or_warn(&scene_file);
+                self.scene_living = living_tables.living;
+                self.scene_wooze = living_tables.wooze;
+                self.scene_tables = scene_file.scene_tables();
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;
             }

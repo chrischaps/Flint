@@ -29,3 +29,4 @@ flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
+flint-procgen = { workspace = true }

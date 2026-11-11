@@ -4,7 +4,7 @@ A scene in Flint is a TOML file that describes a collection of entities and thei
 
 ## File Format
 
-Scene files use the `.scene.toml` extension and have two sections:
+Scene files use the `.scene.toml` extension and have three kinds of section:
 
 ```toml
 # Metadata
@@ -12,6 +12,14 @@ Scene files use the `.scene.toml` extension and have two sections:
 name = "The Rusty Flint Tavern"
 version = "1.0"
 description = "A showcase scene demonstrating Flint engine capabilities"
+
+# Scene-level tables: settings of the scene as a whole
+[camera]
+position = [0, 4, 10]
+target = [0, 1, 0]
+
+[post_process]
+exposure = 1.2
 
 # Entity definitions
 [entities.main_hall]
@@ -28,6 +36,20 @@ archetype = "room"
 | `description` | no | Optional description |
 | `input_config` | no | Path of an input config file for this scene, from the scene's directory or any directory above it up to the project root (see [Input System](physics-and-runtime.md#input-system)) |
 | `preload_audio` | no | Default `true`. When `false`, the player skips the blanket preload of every file under `audio/` at scene load, so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; only the convenience preload for script-triggered sounds is skipped (ADR 0066, scene audio preload opt-out). See [Audio](audio.md#preloading). |
+
+### Scene-level tables
+
+Every other top-level table is a setting of the scene as a whole. The engine's are:
+
+| Table | Holds | More |
+|-------|-------|------|
+| `[camera]` | the starting view: `position`, `target`, `fov`, `projection`, `ortho_height`, `near`, `far` | `flint schema camera` |
+| `[environment]` | `skybox`, ambient colours, scene-wide shading, `shadows`, `default_lights` | [Lighting](lighting.md) |
+| `[post_process]` | exposure, bloom, SSAO, fog, grading, and the stylize passes under `[post_process.styles.<name>]` | [Post-Processing](post-processing.md) |
+| `[living]` | what the scene says about all its living props | [Procedural Generation](procgen.md) |
+| `[wooze]` | the wooze field and its `[[wooze.zone]]` entries | [Procedural Generation](procgen.md) |
+
+Each is declared by a `[table.<name>]` schema and checked on every load: a key it doesn't declare warns with the nearest name, and **a top-level table no schema declares warns too** (`[enviroment]`: did you mean `environment`?), where it used to be dropped without a word. A game adds tables of its own, such as `[weather]`, by declaring them in its schema layer; the loader keeps them as written and a player extension reads them. See [Schemas: Scene-level tables](schemas.md#scene-level-tables).
 
 ### The `[entities.*]` Tables
 

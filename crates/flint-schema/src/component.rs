@@ -233,6 +233,19 @@ impl ComponentSchema {
     }
 }
 
+/// The schema of a scene-level table (`[post_process]`, a game's
+/// `[weather]`): a `[table.<name>]` in a schema directory's `scene/*.toml`
+/// (#686). Written and checked exactly as a component's is, so it is one:
+/// the name is the table's, and no entity carries it.
+pub type TableSchema = ComponentSchema;
+
+/// TOML file format for scene-table schemas: `[table.<name>]`, each with
+/// what a `[component.<name>]` holds.
+#[derive(Debug, Deserialize)]
+pub struct TableSchemaFile {
+    pub table: HashMap<String, ComponentSchemaDefinition>,
+}
+
 /// TOML file format for component schemas
 #[derive(Debug, Deserialize)]
 pub struct ComponentSchemaFile {

@@ -9,6 +9,7 @@ description = "egui-based validation viewer for Flint scenes"
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
+flint-procgen = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
 flint-particles = { workspace = true }

@@ -8,8 +8,9 @@ use std::path::Path;
 
 /// Write a world to a new scene file. Refuses a path that's already there
 /// (#677): the world holds only entities, so a file written from it has no
-/// `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`,
-/// prefabs, description or comments. An existing scene is changed through
+/// `[camera]`, `[environment]`, `[post_process]`, no table of a feature's or
+/// a game's (`[living]`, `[wooze]`, `[weather]`), no prefabs, description or
+/// comments. An existing scene is changed through
 /// [`crate::SceneDocument`] (`patch_field`, `apply_world_diff`), which writes
 /// only what changed.
 pub fn save_scene<P: AsRef<Path>>(
@@ -57,10 +58,10 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
         camera: None,
         environment: None,
         post_process: None,
-        living: None,
-        wooze: None,
+        tables: toml::Table::new(),
         prefabs: std::collections::HashMap::new(),
         entities: std::collections::HashMap::new(),
+        written: toml::Table::new(),
     };
 
     for info in world.all_entities() {
