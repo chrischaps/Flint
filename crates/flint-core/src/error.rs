@@ -93,6 +93,9 @@ pub enum FlintError {
 
     #[error("Generation error: {0}")]
     GenerationError(String),
+
+    #[error("Project error: {0}")]
+    ProjectError(#[from] crate::project::ProjectError),
 }
 
 /// Result type alias for Flint operations

@@ -688,9 +688,11 @@ mod tests {
         // The sea and a default body keep the ocean's band whole.
         assert_eq!(WaterBodyUniformsGpu::sea(&sea).params[3], 1.0);
         assert_eq!(WaterBodyLook::default().to_gpu(&sea, false).params[3], 1.0);
-        let stream: toml::Value =
-            toml::from_str("shape = 'river'
-shore_foam = 0.25").unwrap();
+        let stream: toml::Value = toml::from_str(
+            "shape = 'river'
+shore_foam = 0.25",
+        )
+        .unwrap();
         let look = WaterBodyLook::from_component(&stream);
         assert_eq!(look.shore_foam, 0.25);
         // Still or flowing, the band is the body's.

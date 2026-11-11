@@ -476,7 +476,11 @@ fn glow_properties_reach_the_text_draw() {
     };
     assert_eq!(text_glow(&mut sys), None, "no glow_radius, no glow");
     assert!(is_known_property("glow_color") && is_known_property("glow_radius"));
-    sys.set_style("header", "glow_color", StyleValue::Color([0.2, 0.9, 1.0, 0.8]));
+    sys.set_style(
+        "header",
+        "glow_color",
+        StyleValue::Color([0.2, 0.9, 1.0, 0.8]),
+    );
     sys.set_style("header", "glow_radius", StyleValue::Float(14.0));
     assert_eq!(text_glow(&mut sys), Some(([0.2, 0.9, 1.0, 0.8], 14.0)));
 }

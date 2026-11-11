@@ -907,7 +907,21 @@ pub(crate) fn tune_field(
     if wanted.iter().all(|(_, value)| value.is_none()) {
         return Vec::new();
     }
-    let field = field.get_or_insert_with(|| WoozeField::new(start));
+    tune_global(
+        field.get_or_insert_with(|| WoozeField::new(start)),
+        time,
+        knobs,
+    )
+}
+
+/// [`tune_field`] on a field there is.
+pub(crate) fn tune_global(field: &mut WoozeField, time: f64, knobs: &WoozeKnobs) -> Vec<String> {
+    let wanted = [
+        ("amplitude", knobs.amplitude),
+        ("step", knobs.step),
+        ("glide", knobs.glide),
+        ("jitter", knobs.jitter),
+    ];
     let now = field.global(time);
     let current = [now.amplitude, now.step, now.glide, now.jitter];
     // Only what's moved, so that the rest of a full set of knobs doesn't cut

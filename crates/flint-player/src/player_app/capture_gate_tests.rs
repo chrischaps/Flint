@@ -181,8 +181,10 @@ fn a_focused_button_leaves_the_pads_to_the_game() {
     // egui counts any focus as wanting the keyboard; the gate counts only
     // a text field (ADR 0110's amendment), so a pad ring's focused button
     // between frames holds nothing.
-    let mut app = headless_app("0 axis LeftStickY 0.8
-");
+    let mut app = headless_app(
+        "0 axis LeftStickY 0.8
+",
+    );
     app.add_extension(Box::new(Bare));
     focus_a_button(&app);
     assert!(app.egui_ctx.wants_keyboard_input());
@@ -225,13 +227,18 @@ fn a_capture_hears_its_script_alone() {
     };
     let resized = WindowEvent::Resized(winit::dpi::PhysicalSize::new(800, 600));
     // An input script, a screenshot or an exit time makes a capture
-    let mut app = headless_app("1.0 wheel 2
-");
+    let mut app = headless_app(
+        "1.0 wheel 2
+",
+    );
     assert!(app.capture.is_capture());
     for real in [&wheel, &click, &moved] {
         assert!(app.capture_drops(real), "{real:?}");
     }
-    assert!(!app.capture_drops(&resized), "lifecycle events still arrive");
+    assert!(
+        !app.capture_drops(&resized),
+        "lifecycle events still arrive"
+    );
     assert!(!app.capture_drops(&WindowEvent::Focused(true)));
     app.capture.input_script = None;
     app.capture.exit_after = Some(4.0);
@@ -249,8 +256,10 @@ fn a_capture_hears_its_script_alone() {
 fn a_captures_script_still_reaches_the_game() {
     // The script's keys take the path a real keyboard's does, past the
     // capture's gate: the frame they play on, the game sees them.
-    let mut app = headless_app("0 down KeyW
-");
+    let mut app = headless_app(
+        "0 down KeyW
+",
+    );
     app.add_extension(Box::new(Bare));
     app.tick();
     assert!(app.input.is_key_down(winit::keyboard::KeyCode::KeyW));

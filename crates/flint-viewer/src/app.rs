@@ -2137,9 +2137,8 @@ impl ViewerApp {
                             .and_then(|id| state.world.get_name(id))
                             .map(str::to_owned);
                         state.world = new_world;
-                        self.scene_tree.select(
-                            selected_name.and_then(|name| state.world.get_id(&name)),
-                        );
+                        self.scene_tree
+                            .select(selected_name.and_then(|name| state.world.get_id(&name)));
                         state.scene_post = with_look(
                             scene_file.post_process.clone(),
                             &state.scene_path,

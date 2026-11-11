@@ -37,6 +37,12 @@ pub struct CaptureReport {
     /// The value this column gave the swept knob.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<String>,
+    /// The value this row gave the second swept key, in a grid (#596).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row: Option<String>,
+    /// With `--reference`: the cell's distance to it, out of 100 (#596).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
     /// With `--scripts`: the `state` of the expression scripts saw then (#8).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expression: Option<String>,
@@ -153,9 +159,12 @@ pub struct WoozeReport {
 
 /// Every prop as it stands, by name, since a scene's entities load in no fixed
 /// order and two runs ought to read the same.
-pub fn props_report(run: &LivingRun) -> Vec<PropReport> {
+/// `field` is the stage's, where its clock stands.
+pub fn props_report(
+    run: &LivingRun,
+    field: Option<(&flint_core::wooze::WoozeField, f64)>,
+) -> Vec<PropReport> {
     let props = run.props();
-    let field = run.field().map(|field| (field, run.time()));
     let mut report: Vec<PropReport> = props
         .props()
         .iter()
@@ -269,6 +278,8 @@ mod tests {
             captures: vec![CaptureReport {
                 time: 3.5,
                 column: None,
+                row: None,
+                distance: None,
                 expression: None,
                 props: vec![],
             }],

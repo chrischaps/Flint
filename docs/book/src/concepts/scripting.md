@@ -197,6 +197,8 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
+| `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](audio.md#keeping-time-with-the-music) |
+| `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
 A sound's name is its file's path from the game root, extension included: the scene preloads `audio/whoosh.ogg` as `"audio/whoosh.ogg"`. The bare stem works too: a name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, so these three play the same file:
 
@@ -266,8 +268,9 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
-| `random()` | `f64` | Random value in `[0, 1)`. Under `flint render --scripts`, and in a player run with `--frame-step` or `--seed N`, a seeded sequence that's the same every run |
-| `random_range(min, max)` | `f64` | Random value in `[min, max)`, seeded the same way |
+| `random()` | `f64` | Random value in `[0, 1)`, the next of one SplitMix64 sequence every script shares, so two calls never repeat. It starts from the clock once, when the player starts; under `flint render --scripts`, and in a player run with `--frame-step` or `--seed N`, from a seed, so it's the same every run |
+| `random_range(min, max)` | `f64` | Random value in `[min, max)`, from the same sequence |
+| `seed_random(n)` | — | Restart the sequence at `n` (an `i64`; a negative one is the `u64` with its bits, so `seed_random(-1)` is `--seed 18446744073709551615`). The numbers after it are the ones `--seed n` gives, every run. Call it in `on_init` or a callback, not at the top of the script: top-level statements run again before every callback, so it would restart the sequence each frame. It reseeds every script's draws, not only its own |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |
 | `abs(x)` | `f64` | Absolute value |
@@ -996,7 +999,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `screen_width()` | `f64` | Logical screen width in points |
+| `screen_width()` | `f64` | Logical screen width in points (the window's, from the first frame: #657) |
 | `screen_height()` | `f64` | Logical screen height in points |
 | `measure_text(text, size)` | `Map` | Laid-out size of `text` in the default font as `#{width, height}` |
 | `measure_text_ex(text, size, font, spacing)` | `Map` | Same, for a named font family and extra letter spacing (`""` = default font) |
@@ -1103,6 +1106,8 @@ draw_text_opts(40.0, 40.0, "128", 96.0, #{
 Array entries may mix ints and floats. Back to front: shadow, glow, stroke, text.
 
 A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best (`demo/hud_glow.scene.toml`).
+
+A picture can be no wider or taller than the GPU's largest texture (8192 pixels on most desktops). Lettering whose halo would pass it has its halo drawn at a half, a third and so on of the screen's pixel size and stretched back over the same place, which a glow's softness hides; a warning says so once a run (#657).
 
 ![A 12 point translucent stroke as eight copies, the same stroke as one band, and two glows](../images/hud-glow.png)
 

@@ -86,6 +86,20 @@ pub extern "C" fn flint_render(frames: usize) -> *const f32 {
     with_mixer(|m| m.render(frames).as_ptr()).unwrap_or(std::ptr::null())
 }
 
+/// Where the watched voices are (#658): a pointer to
+/// [`flint_report_len`] `f64`s laid out as [`crate::protocol::REPORT_STRIDE`]
+/// to a voice. Good until the next call into the module.
+#[no_mangle]
+pub extern "C" fn flint_report() -> *const f64 {
+    with_mixer(|m| m.report().as_ptr()).unwrap_or(std::ptr::null())
+}
+
+/// How many `f64`s the last [`flint_report`] wrote.
+#[no_mangle]
+pub extern "C" fn flint_report_len() -> usize {
+    with_mixer(|m| m.report_len()).unwrap_or(0)
+}
+
 /// Commands that failed so far.
 #[no_mangle]
 pub extern "C" fn flint_errors() -> u32 {

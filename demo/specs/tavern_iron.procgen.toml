@@ -1,0 +1,40 @@
+# The Rusty Flint's ironwork: hand-forged black iron with rust in the
+# hammer pits, for barrel hoops, hinges, the chandelier and the firedogs.
+# Models give it metallic = 1; this is the colour, relief and roughness.
+#
+#   flint gen demo/specs/tavern_iron.procgen.toml -o demo/textures/tavern/tavern_iron.png
+
+generator = "texture_v1"
+
+[meta]
+name = "tavern_iron"
+description = "Hammered black iron, rusting in the pits"
+version = "1.0.0"
+tags = ["texture", "metal", "iron", "tavern"]
+
+[seed]
+mode = "fixed"
+value = 1066
+
+[params]
+width = 512
+height = 512
+output_maps = ["albedo", "normal", "roughness"]
+seamless = true
+pattern = "perlin_organic"
+noise_type = "perlin"
+octaves = 5
+frequency = 6.0
+persistence = 0.5
+height_bands = 5
+base_color = "#2E2A27"
+color_variation = 0.1
+mortar_color = "#6B3A1E"
+mortar_threshold = 0.07
+roughness_base = 0.55
+roughness_variation = 0.12
+roughness_mortar = 0.9
+normal_strength = 1.4
+detail_scale = 20.0
+detail_octaves = 4
+detail_strength = 0.12

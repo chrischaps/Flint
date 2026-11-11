@@ -14,6 +14,7 @@ pub mod draw2d;
 pub mod engine;
 pub mod module_resolver;
 pub mod projector;
+pub mod random;
 #[cfg(not(target_arch = "wasm32"))]
 mod reload_worker;
 pub mod style_reader;
@@ -119,8 +120,8 @@ impl ScriptSystem {
     /// (`flint render --scripts`, #8). `random()` and `random_range(a, b)` draw
     /// from one SplitMix64 started at `seed`, shared by every script in the
     /// order they run; Rhai's `timestamp()`, which reads the wall clock, fails
-    /// and says to use `total_time()`. The player keeps its own, and seeds
-    /// only `random()` ([`Self::seed_random`]).
+    /// and says to use `total_time()`. The player keeps the clock, and
+    /// seeds only `random()` ([`Self::seed_random`]).
     pub fn make_deterministic(&mut self, seed: u64) {
         self.seed_random(seed);
         self.rhai_engine_mut().register_fn(
@@ -135,30 +136,15 @@ impl ScriptSystem {
         );
     }
 
-    /// Make `random()` and `random_range(a, b)` one SplitMix64 sequence
-    /// started at `seed`, shared by every script in the order they call it,
-    /// in place of the wall-clock hash they draw from by default. The
-    /// player's `--seed` (and `--frame-step`, #635) and `flint render
-    /// --scripts` both come here, so the same seed gives the same numbers.
-    /// The sequence lives as long as the engine, through scene changes.
+    /// Restart `random()` and `random_range(a, b)` at `seed`: one
+    /// SplitMix64 sequence shared by every script in the order they call it.
+    /// Without this it starts from the wall clock, once, when the engine is
+    /// made (#580). The player's `--seed` (and `--frame-step`, #635), `flint
+    /// render --scripts` and a script's own `seed_random(n)` all come here,
+    /// so the same seed gives the same numbers. The sequence lives as long as
+    /// the engine, through scene changes.
     pub fn seed_random(&mut self, seed: u64) {
-        let state = std::sync::Arc::new(std::sync::Mutex::new(seed));
-        let next = move || -> f64 {
-            let mut s = lock_or_recover(&state);
-            *s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = *s;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^= z >> 31;
-            // The top 53 bits, as a float in [0, 1).
-            (z >> 11) as f64 / (1u64 << 53) as f64
-        };
-        let rhai = self.rhai_engine_mut();
-        let random = next.clone();
-        rhai.register_fn("random", move || -> f64 { random() });
-        rhai.register_fn("random_range", move |min: f64, max: f64| -> f64 {
-            min + (max - min) * next()
-        });
+        self.engine.random.seed(seed);
     }
 
     /// The expression state scripts see now (`expression()`): the last one
@@ -365,6 +351,20 @@ impl ScriptSystem {
     pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.conducted = conducted;
+    }
+
+    /// Where each playing `audio_source` is in its sound, and the output
+    /// latency where known, for `audio_position` / `audio_output_latency`
+    /// (#658). The host sets them every frame before scripts run, paused or
+    /// not.
+    pub fn set_audio_clock(
+        &mut self,
+        positions: &std::collections::HashMap<flint_core::EntityId, f64>,
+        output_latency: Option<f64>,
+    ) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.audio_positions.clone_from(positions);
+        c.audio_output_latency = output_latency;
     }
 
     /// Load a script file for a specific entity (for chunk loading).
@@ -915,6 +915,61 @@ mod tests {
         // Only the render takes the wall clock away
         assert!(player.iter().any(|l| l == "clock"), "{player:?}");
         assert!(render.iter().any(|l| l == "no clock"), "{render:?}");
+    }
+
+    #[test]
+    fn a_script_seeds_random_itself_and_draws_what_the_host_seed_draws() {
+        // #580: seed_random(n) in Rhai is --seed n, mid-run as well as at start
+        let run = |source: &str, host_seed: Option<u64>| {
+            let (mut system, seen) = recording_system();
+            if let Some(seed) = host_seed {
+                system.seed_random(seed);
+            }
+            let mut world = FlintWorld::new();
+            let id = world.spawn("dice").unwrap();
+            let ast = system.engine.compile(source).unwrap();
+            system.engine.add_script(id, ast, "dice.rhai".into());
+            for _ in 0..3 {
+                system.update(&mut world, 1.0 / 60.0).unwrap();
+            }
+            let out = seen.lock().unwrap().clone();
+            out
+        };
+        let draw = r#"fn on_update() {
+            record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
+        }"#;
+        // In on_init: top-level statements run again before every callback,
+        // so a seed_random(n) up there would restart the sequence each frame
+        let seeded_here = r#"
+            fn on_init() { seed_random(1234); }
+            fn on_update() {
+                record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
+            }"#;
+        let by_host = run(draw, Some(1234));
+        assert_eq!(run(seeded_here, None), by_host);
+        assert_eq!(
+            run(seeded_here, Some(99)),
+            by_host,
+            "the script's seed wins"
+        );
+        // Unseeded runs start from the clock: two engines differ, and no two
+        // draws in a frame repeat
+        let (a, b) = (run(draw, None), run(draw, None));
+        assert_ne!(a, b);
+        for line in a.iter().chain(&b) {
+            let v: Vec<&str> = line.split(' ').collect();
+            assert_ne!(v[0], v[1], "{line}");
+        }
+        // Negative seeds are a u64's bits
+        let neg = run(
+            r#"fn on_init() { seed_random(-1); } fn on_update() { record(`${random()}`); }"#,
+            None,
+        );
+        let host = run(
+            r#"fn on_update() { record(`${random()}`); }"#,
+            Some(u64::MAX),
+        );
+        assert_eq!(neg, host);
     }
 
     #[test]

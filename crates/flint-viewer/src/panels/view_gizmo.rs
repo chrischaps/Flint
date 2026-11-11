@@ -120,7 +120,11 @@ impl ViewGizmo {
 
         // Background circle with subtle border
         painter.circle_filled(center, bg_radius, BG_FILL);
-        painter.circle_stroke(center, bg_radius, egui::Stroke::new(1.0f32, BG_STROKE_COLOR));
+        painter.circle_stroke(
+            center,
+            bg_radius,
+            egui::Stroke::new(1.0f32, BG_STROKE_COLOR),
+        );
 
         // Define all six axis endpoints
         let axes = [

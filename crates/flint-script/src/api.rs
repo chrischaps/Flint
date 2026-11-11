@@ -1826,6 +1826,38 @@ fn register_time_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 // ─── Audio API ───────────────────────────────────────────
 
 fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // audio_position(entity) -> f64 (#658): seconds into the sound the
+    // entity's audio_source is playing, wrapped for a loop, on the mixer's
+    // own clock; -1.0 before it has started (on the web, until the late
+    // bundle's sound is in and mixed) and after it ends. Read it to move a
+    // picture with the music: it follows the sound through hitches, pauses
+    // and the web's late start, where the sum of delta_time() can't.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("audio_position", move |id: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            if id < 0 {
+                return -1.0;
+            }
+            c.audio_positions
+                .get(&EntityId::from_raw(id as u64))
+                .copied()
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // audio_output_latency() -> f64 (#658): how long after it is mixed a
+    // sound is heard, seconds, where the platform says (the browser's
+    // baseLatency + outputLatency); -1.0 where it doesn't (the desktop).
+    // A picture in step with what is heard shows audio_position(e) minus it.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("audio_output_latency", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.audio_output_latency.unwrap_or(-1.0)
+        });
+    }
+
     // play_sound(name: &str)
     {
         let ctx = ctx.clone();
@@ -2653,26 +2685,8 @@ fn register_math_api(engine: &mut Engine) {
 
     engine.register_fn("lerp", |a: f64, b: f64, t: f64| -> f64 { a + (b - a) * t });
 
-    engine.register_fn("random", || -> f64 {
-        // Simple pseudo-random based on time — no external crate needed
-        let t = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        // Simple hash to get a 0..1 value
-        let hash = t.wrapping_mul(2654435761);
-        (hash as f64) / (u32::MAX as f64)
-    });
-
-    engine.register_fn("random_range", |min: f64, max: f64| -> f64 {
-        let t = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        let hash = t.wrapping_mul(2654435761);
-        let r = (hash as f64) / (u32::MAX as f64);
-        min + (max - min) * r
-    });
+    // random(), random_range() and seed_random() are the engine's
+    // ScriptRandom (random.rs, #580), registered by ScriptEngine::new
 
     engine.register_fn("sin", |x: f64| -> f64 { x.sin() });
     engine.register_fn("cos", |x: f64| -> f64 { x.cos() });
@@ -6467,6 +6481,25 @@ mod tests {
     }
 
     #[test]
+    fn a_script_reads_where_its_music_is() {
+        let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
+        let mut engine = Engine::new();
+        register_audio_api(&mut engine, ctx.clone());
+        let id = EntityId::from_raw(41);
+        let ask = |engine: &Engine, src: &str| -> f64 { engine.eval(src).unwrap() };
+        assert_eq!(ask(&engine, "audio_position(41)"), -1.0, "not started");
+        assert_eq!(ask(&engine, "audio_position(-1)"), -1.0);
+        assert_eq!(ask(&engine, "audio_output_latency()"), -1.0, "unknown");
+        {
+            let mut c = ctx.lock().unwrap();
+            c.audio_positions.insert(id, 1.25);
+            c.audio_output_latency = Some(0.042);
+        }
+        assert_eq!(ask(&engine, "audio_position(41)"), 1.25);
+        assert_eq!(ask(&engine, "audio_output_latency()"), 0.042);
+    }
+
+    #[test]
     fn a_script_reads_the_gpu() {
         let (engine, ctx) = quality_engine();
         ctx.lock().unwrap().gpu_info = flint_core::quality::GpuInfo {
@@ -6562,8 +6595,8 @@ mod tests {
 
     #[test]
     fn test_toml_to_dynamic_float() {
-        let d = toml_to_dynamic(toml::Value::Float(3.14));
-        assert!((d.as_float().unwrap() - 3.14).abs() < 1e-10);
+        let d = toml_to_dynamic(toml::Value::Float(3.25));
+        assert!((d.as_float().unwrap() - 3.25).abs() < 1e-10);
     }
 
     #[test]
@@ -6587,7 +6620,7 @@ mod tests {
 
     #[test]
     fn test_dynamic_to_toml_roundtrip() {
-        let original = toml::Value::Float(2.718);
+        let original = toml::Value::Float(2.75);
         let dynamic = toml_to_dynamic(original.clone());
         let back = dynamic_to_toml(&dynamic).unwrap();
         assert_eq!(original, back);

@@ -31,7 +31,7 @@ use flint_script::{CameraOverrides, PostProcessOverrides, ScriptSystem};
 
 use super::expression_feed::{json_to_map, ExpressionTimeline};
 use super::living_props::{LivingRun, WoozeClocks};
-use super::living_tuning::{tune_field, tune_props, tune_species, ScriptTune};
+use super::living_tuning::{tune_field, tune_global, tune_props, tune_species, ScriptTune};
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
@@ -192,7 +192,7 @@ impl HeadlessScripts {
                     }
                 }
                 ScriptCommand::SetWooze { knobs, seconds } => {
-                    self.change_wooze(living.as_deref_mut(), wooze, &|field, time| {
+                    self.change_wooze(wooze, &|field, time| {
                         field.set_global(table_of(&knobs)?, time, seconds)
                     });
                 }
@@ -201,14 +201,14 @@ impl HeadlessScripts {
                     fields,
                     seconds,
                 } => {
-                    self.change_wooze(living.as_deref_mut(), wooze, &|field, time| {
+                    self.change_wooze(wooze, &|field, time| {
                         field
                             .set_zone(&name, table_of(&fields)?, time, seconds)
                             .map_err(|e| format!("zone '{name}': {e}"))
                     });
                 }
                 ScriptCommand::RemoveWoozeZone { name, seconds } => {
-                    self.change_wooze(living.as_deref_mut(), wooze, &|field, time| {
+                    self.change_wooze(wooze, &|field, time| {
                         if field.remove_zone(&name, time, seconds) {
                             Ok(())
                         } else {
@@ -258,16 +258,19 @@ impl HeadlessScripts {
             ScriptTune::Grove(tune) => {
                 let start = (living.props().props().first())
                     .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
-                let time = living.time();
-                problems.extend(tune_field(living.field_slot(), start, time, &tune.wooze));
                 match wooze {
-                    Some(clocks) => clocks.change_field(|field, time| {
-                        tune_field(field, start, time, &tune.wooze);
-                    }),
+                    Some(clocks) => {
+                        let (field, time) = clocks.field_mut();
+                        problems.extend(tune_global(field, time, &tune.wooze));
+                    }
                     None => {
-                        // The tune gave a scene with no [wooze] table a field.
-                        if let Some(field) = living.field() {
-                            *wooze = Some(WoozeClocks::of_field(field.clone(), time, shallow));
+                        // A scene with no [wooze] table: the tune may give it a
+                        // field, at the time the props have reached.
+                        let time = living.time();
+                        let mut slot = None;
+                        problems.extend(tune_field(&mut slot, start, time, &tune.wooze));
+                        if let Some(field) = slot {
+                            *wooze = Some(WoozeClocks::of_field(field, time, shallow));
                         }
                     }
                 }
@@ -298,38 +301,21 @@ impl HeadlessScripts {
         }
     }
 
-    /// One change to the field, made the same way to the living props' copy and
-    /// the other clocks', which the player keep as one.
+    /// One change to the stage's field, at the time its clock has reached.
     fn change_wooze(
         &mut self,
-        living: Option<&mut LivingRun>,
         wooze: &mut Option<WoozeClocks>,
         change: &dyn Fn(&mut WoozeField, f64) -> Result<(), String>,
     ) {
-        let mut problem = None;
-        let mut changed = false;
-        if let Some(living) = living {
-            let time = living.time();
-            if let Some(field) = living.field_slot() {
-                changed = true;
-                problem = change(field, time).err();
-            }
-        }
-        if let Some(clocks) = wooze {
-            changed = true;
-            clocks.change_field(|field, time| {
-                if let Some(field) = field {
-                    let said = change(field, time).err();
-                    problem = problem.take().or(said);
-                }
-            });
-        }
-        if !changed {
+        let Some(clocks) = wooze else {
             self.note(
                 "set_wooze: this scene has no wooze field; give it a [wooze] table, even an \
                  empty one, to opt in",
             );
-        } else if let Some(reason) = problem {
+            return;
+        };
+        let (field, time) = clocks.field_mut();
+        if let Err(reason) = change(field, time) {
             tracing::warn!("A script's change to the wooze field: {reason}");
         }
     }
