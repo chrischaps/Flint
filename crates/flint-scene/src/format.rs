@@ -1,7 +1,7 @@
 //! Scene file format definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// Root structure of a scene TOML file: `[scene]`, the scene-level tables,
 /// `[prefabs.*]` and `[entities.*]`.
@@ -11,7 +11,10 @@ use std::collections::{BTreeMap, HashMap};
 /// is kept as written in [`tables`](Self::tables)** (#686) and written back
 /// by `toml::to_string`, so a game's own `[weather]` survives a load and
 /// reaches whoever reads it (a `PlayerExtension`, through
-/// `ExtensionCtx::scene_table`). A `[table.<name>]` schema declares one;
+/// `ExtensionCtx::scene_table`). The engine's own features read theirs the
+/// same way: `[living]` and `[wooze]` are in `tables`, and the crate that
+/// owns living props gives them their types (`flint_procgen::LivingTables`).
+/// A `[table.<name>]` schema declares one;
 /// [`diagnose`](crate::diagnose) warns about one no schema declares
 /// (`unknown-table`) and checks the fields of the ones that are declared.
 #[derive(Debug, Clone, Serialize)]
@@ -20,10 +23,9 @@ pub struct SceneFile {
     pub camera: Option<CameraDef>,
     pub environment: Option<EnvironmentDef>,
     pub post_process: Option<PostProcessDef>,
-    pub living: Option<LivingDef>,
-    pub wooze: Option<WoozeDef>,
     /// Every top-level table that is none of the above, by name, as the
-    /// file wrote it: a game's or an extension's own.
+    /// file wrote it: a feature's (`[living]`, `[wooze]`), a game's or an
+    /// extension's own.
     #[serde(flatten)]
     pub tables: toml::Table,
     pub prefabs: HashMap<String, PrefabInstance>,
@@ -65,8 +67,6 @@ impl<'de> Deserialize<'de> for SceneFile {
                         "camera" => file.camera = map.next_value()?,
                         "environment" => file.environment = map.next_value()?,
                         "post_process" => file.post_process = map.next_value()?,
-                        "living" => file.living = map.next_value()?,
-                        "wooze" => file.wooze = map.next_value()?,
                         "prefabs" => file.prefabs = map.next_value()?,
                         "entities" => file.entities = map.next_value()?,
                         _ => {
@@ -81,182 +81,6 @@ impl<'de> Deserialize<'de> for SceneFile {
 
         deserializer.deserialize_map(SceneVisitor)
     }
-}
-
-/// A scene's `[wooze]` table (#213): how woozy it is everywhere, and the zones
-/// that are more or less so. A scene without one has no field and pays nothing.
-/// [`WoozeDef::field`](crate::WoozeDef::field) makes it into one, and
-/// [`WoozeDef::check`](crate::WoozeDef::check) is what `flint validate` runs.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WoozeDef {
-    /// A built-in set of knobs to start from. Unset: everything as authored.
-    #[serde(default)]
-    pub preset: Option<String>,
-    /// How much of a consumer's slow drift shows, 0 to 1.
-    #[serde(default)]
-    pub amplitude: Option<f32>,
-    /// Seconds between pose targets.
-    #[serde(default)]
-    pub step: Option<f32>,
-    /// How much of a step is spent easing, 0 to 1.
-    #[serde(default)]
-    pub glide: Option<f32>,
-    /// How much of a consumer's fast jitter shows.
-    #[serde(default)]
-    pub jitter: Option<f32>,
-    /// `[[wooze.zone]]` entries. Raw, so that one that's wrong can be named
-    /// rather than failing the whole scene's parse with a line number.
-    #[serde(default)]
-    pub zone: Vec<toml::Value>,
-}
-
-/// A scene's `[living]` table: what it says about all its living props, ahead
-/// of any one spec. How woozy they are is `[wooze]`'s to say.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LivingDef {
-    /// What the shadows follow: `blended` (what's drawn; the default) or
-    /// `drift` (a slower pose with no stagger or jitter).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shadows: Option<String>,
-    /// How parts fall out of phase, over each spec's and each prop's own: `none`,
-    /// `per_level` or `per_branch`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stagger: Option<String>,
-    /// How soft every prop's silhouette is, 0 to 1 (#582), over each spec's:
-    /// the body fades where it turns away from the eye. 0 is a hard edge.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub softness: Option<f32>,
-    /// Faint time-offset copies of every prop. Fields left unset are each spec's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub echoes: Option<LivingEchoesDef>,
-    /// How much of the difference between poses is left. Fields left unset are
-    /// each spec's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variance: Option<LivingVarianceDef>,
-    /// `[living.species.<spec>]` (#246): one species' own values, over everything
-    /// above, a field at a time. Keyed by the spec's `meta.name`, which is what a
-    /// living prop's `model.asset` names.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub species: BTreeMap<String, LivingSpeciesDef>,
-}
-
-/// One species' values (#246): the clock knobs `[wooze]` has and the props'
-/// knobs `[living]` has, each beating the global one, zones included. Unset is
-/// whatever the layers below say.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LivingSpeciesDef {
-    /// How much of its slow drift shows, 0 to 1. The panel calls it drift.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub amplitude: Option<f32>,
-    /// Seconds between pose targets.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<f32>,
-    /// How much of a step is spent easing, 0 to 1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub glide: Option<f32>,
-    /// How much of its fast jitter shows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jitter: Option<f32>,
-    /// `none`, `per_level` or `per_branch`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stagger: Option<String>,
-    /// How soft its silhouette is, 0 to 1 (#582).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub softness: Option<f32>,
-    /// Its echoes, a field at a time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub echoes: Option<LivingEchoesDef>,
-    /// Its variance, a field at a time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variance: Option<LivingVarianceDef>,
-}
-
-/// A scene's `[living] echoes`, over each spec's a field at a time.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LivingEchoesDef {
-    /// How many copies; 0 turns them off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub count: Option<u32>,
-    /// How far the farthest copy is from now, in steps of the clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spread: Option<f32>,
-    /// The opacity of a copy at now, which falls off with distance from it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub alpha: Option<f32>,
-}
-
-/// A saved look (#218): a `<name>.wooze.toml` beside a scene, which its `[wooze]
-/// preset` can name. The tables are the shapes a scene's own take, so one can be
-/// pasted into the other. Zones aren't here, since they belong to a place.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WoozePreset {
-    /// The field's global knobs.
-    #[serde(default)]
-    pub wooze: WoozeKnobs,
-    /// What the scene says about its props: stagger, echoes, variance.
-    #[serde(default)]
-    pub living: LivingDef,
-    /// The shading boil.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub boil: Option<BoilDef>,
-}
-
-/// A wooze field's global knobs: whichever a preset sets.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WoozeKnobs {
-    /// How much of a consumer's slow drift shows, 0 to 1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub amplitude: Option<f32>,
-    /// Seconds between pose targets.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<f32>,
-    /// How much of a step is spent easing, 0 to 1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub glide: Option<f32>,
-    /// How much of a consumer's fast jitter shows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jitter: Option<f32>,
-}
-
-/// The shading boil in a preset, which is `kuwahara_boil`, `contour_boil` and
-/// `boil_on` from a scene's `[post_process]`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BoilDef {
-    /// Whether it boils at all. Off keeps the amounts for when it's back on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// How far each drawing moves the paint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kuwahara: Option<f32>,
-    /// How far each drawing moves the lines.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contour: Option<f32>,
-    /// A new drawing every this many film frames: 1, 2 or 3.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on: Option<u32>,
-}
-
-/// A scene's `[living] variance`, over each spec's a field at a time.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LivingVarianceDef {
-    /// How much of each pose's difference from the base is left, 0 to 1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub amount: Option<f32>,
-    /// How much of that is held back from the trunk side: 0 even, 1 all at the
-    /// tips.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steady: Option<f32>,
-    /// Scale each pose so its box matches the base's, as near as one scale can.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keep_size: Option<bool>,
 }
 
 /// A prefab template file (.prefab.toml)
@@ -985,8 +809,7 @@ impl SceneFile {
     /// The scene-level tables that are fields of this struct, by the name
     /// their header is written with. Any other top-level table is in
     /// [`tables`](Self::tables).
-    pub const TYPED_TABLES: &'static [&'static str] =
-        &["camera", "environment", "post_process", "living", "wooze"];
+    pub const TYPED_TABLES: &'static [&'static str] = &["camera", "environment", "post_process"];
 
     /// A scene from its text, with what its typed tables wrote kept in
     /// [`written`](Self::written) (and in
@@ -1041,8 +864,6 @@ impl SceneFile {
             camera: None,
             environment: None,
             post_process: None,
-            living: None,
-            wooze: None,
             tables: toml::Table::new(),
             prefabs: HashMap::new(),
             entities: HashMap::new(),

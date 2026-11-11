@@ -28,8 +28,8 @@ use flint_core::wooze::{WoozeField, WoozeSample};
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
+use flint_procgen::{BoilDef, WoozePreset};
 use flint_runtime::{GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem};
-use flint_scene::{BoilDef, WoozePreset};
 use flint_script::context::{LogLevel, ScriptCommand};
 use flint_script::{CameraOverrides, PostProcessOverrides, ScriptSystem};
 

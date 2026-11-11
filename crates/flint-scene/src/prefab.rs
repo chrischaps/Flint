@@ -250,8 +250,6 @@ mod tests {
             camera: None,
             environment: None,
             post_process: None,
-            living: None,
-            wooze: None,
             tables: toml::Table::new(),
             prefabs: HashMap::new(),
             entities: HashMap::new(),

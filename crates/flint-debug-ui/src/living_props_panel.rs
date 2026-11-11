@@ -8,7 +8,7 @@
 
 use crate::DebugPanel;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use flint_scene::{
+use flint_procgen::{
     BoilDef, LivingDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
 

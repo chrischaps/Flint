@@ -1,5 +1,6 @@
 //! The engine's scene-table schemas (`schemas/scene/*.toml`, #686) against
-//! the structs that read the tables.
+//! the structs of this crate that read the tables (`[living]` and `[wooze]`
+//! are held to theirs in flint-procgen, which owns them).
 //!
 //! The schema is what `flint schema`, an editor and `flint validate` go by;
 //! the struct is what runs. A field in one and not the other is a check that
@@ -134,19 +135,4 @@ fn camera_and_environment_schemas_declare_only_what_is_read() {
     // to the other
     assert_eq!(table(&registry, "camera").fields.len(), 7);
     assert_eq!(table(&registry, "environment").fields.len(), 9);
-}
-
-/// `[living]` and `[wooze]` refuse a key they don't know, so a table writing
-/// every declared field parsing is the whole check.
-#[test]
-fn living_and_wooze_schemas_declare_only_what_is_read() {
-    let registry = schemas();
-    for name in ["living", "wooze"] {
-        let schema = table(&registry, name);
-        let text = scene_writing_all_of(schema);
-        toml::from_str::<SceneFile>(&text)
-            .unwrap_or_else(|e| panic!("[{name}] with every declared field: {e}\n{text}"));
-    }
-    assert_eq!(table(&registry, "living").fields.len(), 6);
-    assert_eq!(table(&registry, "wooze").fields.len(), 6);
 }

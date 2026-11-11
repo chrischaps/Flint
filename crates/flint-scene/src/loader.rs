@@ -40,8 +40,8 @@ pub fn load_scene_diagnosed<P: AsRef<Path>>(
     load_text_diagnosed(&content, path, registry)
 }
 
-/// Load scene text as though it were the file at `path`: prefabs and a wooze
-/// preset resolve from there. What `flint entity create/delete` (#678) runs on
+/// Load scene text as though it were the file at `path`: prefabs resolve
+/// from there. What `flint entity create/delete` (#678) runs on
 /// the text it is about to write, so an edit that would leave the scene
 /// unloadable is refused before the file changes. Diagnostics are logged as
 /// [`load_scene`] logs them.
@@ -56,7 +56,12 @@ pub fn load_scene_text(
 }
 
 /// What [`load_scene_diagnosed`] and [`load_scene_text`] share: parse, expand
-/// prefabs, fill in the wooze preset, diagnose, build the world.
+/// prefabs, diagnose, build the world.
+///
+/// The scene-level tables are handed back as the file wrote them. A feature
+/// that settles its own after a load does so itself: living props fill in the
+/// preset `[wooze] preset` names with `flint_procgen::settle_scene`, which
+/// this loader did while those tables were its own (#686).
 fn load_text_diagnosed(
     content: &str,
     path: &Path,
@@ -67,11 +72,7 @@ fn load_text_diagnosed(
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
-    // The tables are diagnosed as the file wrote them, before a preset fills
-    // them in
     let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
-    fill_in_preset(&mut scene_file, path);
-
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file, found))
 }
@@ -94,14 +95,6 @@ fn parse_scene(content: &str, path: Option<&Path>) -> Result<SceneFile> {
 fn log_string_diagnostics(scene_file: &SceneFile, registry: &SchemaRegistry) {
     let found = diagnose_scene(scene_file, None, registry);
     diagnostic::log_summary(&format!("scene '{}'", scene_file.scene.name), &found);
-}
-
-/// Fill in what a `[wooze] preset` file says. A look lab shouldn't refuse to start
-/// over one: what's wrong is named, and `flint validate` fails on it.
-fn fill_in_preset(scene_file: &mut SceneFile, path: &Path) {
-    for issue in crate::wooze::apply_preset_file(scene_file, path) {
-        tracing::warn!("{issue}");
-    }
 }
 
 /// A `transform.shear` that shears nothing, or folds space flat, says so
@@ -182,7 +175,6 @@ pub fn reload_scene<P: AsRef<Path>>(
     prefab::expand_prefabs(&mut scene_file, path)?;
     let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
-    fill_in_preset(&mut scene_file, path);
 
     // Clear existing world
     world.clear();
@@ -769,36 +761,6 @@ position = [2.5, 1.0, -3.5]
             (table_t.position.z - (-3.5)).abs() < 0.001,
             "table z={}, expected -3.5",
             table_t.position.z
-        );
-    }
-
-    #[test]
-    fn test_load_living_table() {
-        let file: crate::SceneFile = toml::from_str(
-            r#"
-[scene]
-name = "grove"
-
-[living]
-shadows = "drift"
-"#,
-        )
-        .unwrap();
-        let living = file.living.expect("[living] should be present");
-        assert_eq!(living.shadows.as_deref(), Some("drift"));
-
-        let bad = toml::from_str::<crate::SceneFile>(
-            r#"
-[scene]
-name = "grove"
-
-[living]
-glide = 0.3
-"#,
-        );
-        assert!(
-            bad.is_err(),
-            "glide is [wooze]'s now, and shouldn't pass for nothing"
         );
     }
 }

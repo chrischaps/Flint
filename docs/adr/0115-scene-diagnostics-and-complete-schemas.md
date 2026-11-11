@@ -203,3 +203,31 @@ Chris accepted the recommendations on 2026-11-10:
   `rolling_meadow` writes `flint render`'s `distance`/`pitch`/`yaw` as
   camera keys; `campfire` has `[lights.*]` tables. No frozen fixture is
   flagged.
+
+### The living tables leave flint-scene (#686, second half)
+
+- **`[living]` and `[wooze]` are flint-procgen's.** Their types, the preset
+  files, `WoozeDef::field` / `check` and the look commit moved to
+  `flint_procgen::scene_tables` as they were (flint-scene's `wooze.rs`,
+  `commit.rs` and 175 lines of `format.rs`), and `SceneFile` holds the two
+  tables raw in `tables`, as it holds a game's. flint-procgen now depends on
+  flint-scene and flint-schema; nothing in flint-scene's tree depended on
+  flint-procgen, so there is no cycle. flint-debug-ui and flint-viewer gained
+  flint-procgen for the types.
+- **The loader no longer fills in a wooze preset.** That was the last thing
+  `load_scene` knew about one feature. A host that plays or draws a scene
+  calls `flint_procgen::settle_scene(&mut scene_file, path)` after
+  `load_scene`; `PlayerApp::apply_scene_settings` does it too, so a game
+  binary built on it is unchanged. A call per host, not a registry of
+  parse hooks in flint-scene: a hook a test or a tool forgets to install
+  would change what a scene means without a word, where a missing call is a
+  missing line in the one place that reads the tables.
+- **A table that doesn't fit its type still refuses the scene**, from
+  `settle_scene` instead of from the file's parse, so the message names the
+  file and the table (`grove.scene.toml: [living]: unknown field glide`)
+  and no longer a line and column.
+- What stayed in flint-scene: `SceneEdit`, `SceneScalar` and
+  `SceneDocument::apply_edit`, which are about any table, and two
+  formatting rules in the patcher keyed by the names `living` and `wooze`
+  (a new `[living]` goes after `[wooze]`; an emptied
+  `[living.species.<x>]` is dropped). They are strings, not types.

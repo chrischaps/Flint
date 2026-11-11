@@ -140,7 +140,7 @@ fn tune_living_takes_what_a_preset_file_holds() {
     let [ScriptCommand::TuneLiving { knobs }] = &commands[..] else {
         panic!("{commands:?}");
     };
-    let tune: flint_scene::WoozePreset = knobs.clone().try_into().unwrap();
+    let tune: flint_procgen::WoozePreset = knobs.clone().try_into().unwrap();
     assert_eq!(tune.wooze.step, Some(0.25));
     assert_eq!(tune.wooze.glide, Some(1.0));
     assert_eq!(tune.wooze.amplitude, None);

@@ -42,7 +42,7 @@ use super::procgen_assets::{AssetSink, ProcGenMode};
 /// A scene's `[living]` table as the resolver wants it. A bad value is named
 /// and then means its default, since a look lab shouldn't refuse to start over
 /// one knob.
-pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
+pub fn defaults_of(table: Option<&flint_procgen::LivingDef>) -> LivingDefaults {
     let Some(table) = table else {
         return LivingDefaults::default();
     };
@@ -96,7 +96,7 @@ pub fn softness_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f3
 /// One species' table (#246) as the resolver wants it. Each bad value goes to
 /// `say`, by key, and is left unset, so the layers below decide it.
 pub fn species_of(
-    def: &flint_scene::LivingSpeciesDef,
+    def: &flint_procgen::LivingSpeciesDef,
     say: &mut dyn FnMut(String),
 ) -> SpeciesOverride {
     let mut knob = |name: &str, value: Option<f32>| {
@@ -129,7 +129,7 @@ pub fn species_of(
 }
 
 /// Everything wrong with one species' table, for `flint validate`.
-pub fn species_problems(def: &flint_scene::LivingSpeciesDef) -> Vec<String> {
+pub fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
     let mut problems = Vec::new();
     species_of(def, &mut |problem| problems.push(problem));
     problems
@@ -163,7 +163,7 @@ pub fn stagger_name(stagger: Stagger) -> &'static str {
 /// A `variance` table as the resolver wants it, with a bad field sent to `say`
 /// and then left to the layers below.
 pub fn variance_of(
-    table: Option<&flint_scene::LivingVarianceDef>,
+    table: Option<&flint_procgen::LivingVarianceDef>,
     say: &mut dyn FnMut(String),
 ) -> VarianceOverride {
     let Some(table) = table else {
@@ -191,7 +191,7 @@ pub fn variance_of(
 /// The field a scene's `[wooze]` table describes, if it has one. For the same
 /// reason as above, what's wrong with it is named and left out, here where
 /// `flint validate` fails on it.
-pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
+pub fn field_of(table: Option<&flint_procgen::WoozeDef>) -> Option<WoozeField> {
     let (field, issues) = table?.field();
     for issue in issues {
         tracing::warn!("{issue}; going without it");
@@ -202,7 +202,7 @@ pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
 /// An `echoes` table as the resolver wants it, with a bad field sent to `say`
 /// and then left to the layers below.
 pub fn echoes_of(
-    table: Option<&flint_scene::LivingEchoesDef>,
+    table: Option<&flint_procgen::LivingEchoesDef>,
     say: &mut dyn FnMut(String),
 ) -> EchoOverride {
     let Some(table) = table else {
@@ -256,7 +256,7 @@ impl LivingRun {
     /// model loader, with every lineage built and every ring full.
     pub fn load(
         scene_path: &str,
-        living: Option<&flint_scene::LivingDef>,
+        living: Option<&flint_procgen::LivingDef>,
         world: &mut FlintWorld,
         sink: super::procgen_assets::GpuSink<'_>,
     ) -> Self {
@@ -281,7 +281,7 @@ impl LivingRun {
     /// time, and each species it names takes exactly its values. Its `[wooze]`
     /// knobs go to the stage's field, [`WoozeClocks::of_scene`]. What can't be used
     /// is returned.
-    pub fn apply_preset(&mut self, living: &flint_scene::LivingDef) -> Vec<String> {
+    pub fn apply_preset(&mut self, living: &flint_procgen::LivingDef) -> Vec<String> {
         let mut problems = Vec::new();
         let mut say = |problem: String| problems.push(problem);
         let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
@@ -382,7 +382,7 @@ impl WoozeClocks {
     /// The clocks of a scene's `[wooze]` table with `knobs` laid over it, or `None`
     /// if the scene has no table and nothing is laid over it, so nothing samples.
     pub fn of_scene(
-        table: Option<&flint_scene::WoozeDef>,
+        table: Option<&flint_procgen::WoozeDef>,
         knobs: Option<&toml::Table>,
         shallow: bool,
     ) -> Result<Option<Self>, String> {

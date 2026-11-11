@@ -502,7 +502,7 @@ impl SceneDocument {
     /// `echoes.count`. Only that value's text changes: a value that already says
     /// the same is left as written, and one that's replaced keeps its comment.
     /// A species table left with nothing in it goes.
-    pub fn apply_edit(&mut self, edit: &crate::commit::SceneEdit) -> Result<(), String> {
+    pub fn apply_edit(&mut self, edit: &crate::edit::SceneEdit) -> Result<(), String> {
         let (leaf, inside) = edit
             .key
             .split_last()
@@ -1276,7 +1276,8 @@ intensity = 2.0
         assert_eq!(handle.parent.as_deref(), Some("door"));
         assert!(handle.components.contains_key("transform"));
         assert!(out.starts_with("# The grove at dusk. Keep this comment.\n"));
-        assert!(file.wooze.is_some() && file.camera.is_some() && file.living.is_some());
+        assert!(file.camera.is_some());
+        assert!(file.tables.contains_key("wooze") && file.tables.contains_key("living"));
     }
 
     #[test]
