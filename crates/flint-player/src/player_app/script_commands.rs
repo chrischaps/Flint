@@ -152,9 +152,8 @@ impl PlayerApp {
                     LogLevel::Warn => tracing::warn!(target: "script", "{}", message),
                     LogLevel::Error => tracing::error!(target: "script", "{}", message),
                 },
-                ScriptCommand::EmitBurst { entity_id, count } => {
-                    let eid = flint_core::EntityId(entity_id as u64);
-                    self.particles.sync.queue_burst(eid, count.max(0) as u32);
+                ScriptCommand::EmitBurst { entity, count } => {
+                    self.particles.sync.queue_burst(entity, count.max(0) as u32);
                 }
                 ScriptCommand::PlayEffect {
                     handle,

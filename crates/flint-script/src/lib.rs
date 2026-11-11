@@ -124,16 +124,13 @@ impl ScriptSystem {
     /// seeds only `random()` ([`Self::seed_random`]).
     pub fn make_deterministic(&mut self, seed: u64) {
         self.seed_random(seed);
-        self.rhai_engine_mut().register_fn(
-            "timestamp",
-            || -> std::result::Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
-                Err(
-                    "timestamp() reads the wall clock, which a deterministic run doesn't \
-                     have: use total_time() or delta_time()"
-                        .into(),
-                )
-            },
-        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let declared = self.engine.api_registry().declares("timestamp", 0);
+        #[cfg(target_arch = "wasm32")]
+        let declared = false;
+        if !declared {
+            api::forbid_wall_clock(&mut self.script_api());
+        }
     }
 
     /// Restart `random()` and `random_range(a, b)` at `seed`: one

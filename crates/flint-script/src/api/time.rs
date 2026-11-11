@@ -2,7 +2,7 @@
 //! scale (ADR 0116).
 
 use super::builder::kind::Num;
-use super::builder::ScriptApi;
+use super::builder::{CallResult, ScriptApi};
 
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("time");
@@ -29,4 +29,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .run(|call, (scale,)| {
         call.ctx().time_scale_request = Some(scale.clamp(0.05, 4.0));
     });
+}
+
+/// A deterministic run's `timestamp()` (`ScriptSystem::make_deterministic`,
+/// #8): in place of Rhai's, which reads the wall clock, an error that says
+/// which clock to use.
+pub(crate) fn forbid_wall_clock(api: &mut ScriptApi) {
+    api.module("time")
+        .func(
+            "timestamp",
+            "Fails in a deterministic run (flint render --scripts), which has no wall clock: use total_time().",
+        )
+        .run(|call, ()| -> CallResult<()> {
+            Err(call.error(
+                "it reads the wall clock, which a deterministic run doesn't have: use \
+                 total_time() or delta_time()",
+            ))
+        });
 }

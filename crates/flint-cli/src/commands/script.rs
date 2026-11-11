@@ -6,12 +6,14 @@
 //! flint script api --json           # one JSON document, for agents and the book
 //! ```
 //!
-//! The functions declared through the builder (`flint_script::api::builder`)
-//! come with named parameters, kinds and a doc. The rest, registered on the
-//! Rhai engine directly until ADR 0116 step 2 ports them, are listed from
-//! Rhai's metadata as `undeclared`: their Rust parameter types and return,
-//! no names or docs. The callbacks follow. A game binary with extensions
-//! prints its own from `ScriptSystem::api_listing`.
+//! Every engine function is declared through the builder
+//! (`flint_script::api::builder`), with named parameters, kinds and a doc.
+//! A function a game's extension registers on the Rhai engine directly
+//! (`rhai_engine_mut`) is listed from Rhai's metadata as `undeclared`: its
+//! Rust parameter types and return, no names or docs. The engine's own
+//! listing has none, and prints no such section. The callbacks follow. A
+//! game binary with extensions prints its own from
+//! `ScriptSystem::api_listing`.
 
 use anyhow::Result;
 use flint_script::api::registry::{ApiEntry, ApiListing, UndeclaredFn, CONVENTIONS};
@@ -157,8 +159,8 @@ fn to_text(listing: &ApiListing) -> String {
         if !listing.undeclared.is_empty() {
             let _ = writeln!(
                 out,
-                "undeclared ({} functions, not yet declared through the builder: \
-                 Rust types, no parameter names or docs)",
+                "undeclared ({} functions, registered on the Rhai engine directly, not \
+                 through the builder: Rust types, no parameter names or docs)",
                 listing.undeclared.len()
             );
             for u in &listing.undeclared {
@@ -231,6 +233,24 @@ mod tests {
             .unwrap()
             .contains("warns once"));
         assert!(to_text(&l).starts_with("conventions\n"));
+    }
+
+    /// ADR 0116 step 2 ported the last of the engine's functions: only an
+    /// extension's raw registration is undeclared, and an empty section
+    /// prints nothing.
+    #[test]
+    fn the_engine_declares_every_function() {
+        let l = listing();
+        let undeclared: Vec<&str> = l.undeclared.iter().map(|u| u.signature.as_str()).collect();
+        assert!(undeclared.is_empty(), "undeclared: {undeclared:?}");
+        assert!(!to_text(&l).contains("undeclared"));
+        let mut system = flint_script::ScriptSystem::new();
+        system
+            .rhai_engine_mut()
+            .register_fn("game_raw", |n: i64| n + 1);
+        let l = system.api_listing();
+        assert_eq!(l.undeclared.len(), 1);
+        assert!(to_text(&l).contains("undeclared (1 functions"));
     }
 
     #[test]
