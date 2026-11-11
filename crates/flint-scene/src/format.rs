@@ -685,10 +685,7 @@ impl PostProcessDef {
     pub fn boil(&self, style: &str) -> Option<f32> {
         let table = self.style_tables();
         let value = table.get(style)?.get("boil")?;
-        value
-            .as_float()
-            .or_else(|| value.as_integer().map(|i| i as f64))
-            .map(|v| v as f32)
+        flint_core::toml_util::toml_f64(value).map(|v| v as f32)
     }
 
     /// Set style `style`'s shading boil (a wooze preset's `[boil]`, which
