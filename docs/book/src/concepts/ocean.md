@@ -350,8 +350,8 @@ hull and drive the transform from the result:
 
 ```rhai
 fn on_update() {
-    let me = entity();
-    let p = get_field(me, "transform", "position");
+    let me = self_entity();
+    let p = get_position(me);
     let h = ocean_height(p.x, p.z);
     // ... ease the hull toward h, tilt from ocean_normal ...
 }

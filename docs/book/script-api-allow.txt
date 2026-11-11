@@ -1,0 +1,47 @@
+# Names `flint script api --check-book` lets through in the book's code
+# (#695): calls in spans and Rhai blocks that aren't script functions.
+#
+#   page: name name ...   allowed on that page (its path under src/)
+#   name                  allowed on every page; keep these rare
+#
+# Everything else written as a call must be a declared function at an arity
+# it is declared at, a callback, a Rhai built-in, or a function the book's
+# own examples define with `fn`. A ghost is a call to none of those: fix the
+# page, don't list it here.
+
+# Rust: the engine's traits and types, named in prose
+architecture/overview.md: assign_columns constraint create_spec_from_prompt estimate_cost generate interpret_spec param_schema refine_spec update validate_model
+concepts/ai-generation.md: import_gltf
+concepts/animation.md: fixed_update update
+concepts/audio.md: fixed_update update
+concepts/glyph-atlas.md: atlas_indices bounds coverage for_angle for_arms inversions pick slots
+concepts/lighting.md: lighting_levers
+concepts/particles.md: resolve
+concepts/physics-and-runtime.md: fixed_update initialize shutdown update
+concepts/procgen.md: import_gltf revision
+concepts/quality-settings.md: effective_post_process_config post_process_config
+concepts/rendering.md: segment
+concepts/scripting.md: update layer_painter    # the RuntimeSystem phase; the architecture diagram
+concepts/terrain.md: register_static_trimesh
+concepts/touch-input.md: TouchStart TouchMove TouchEnd binding_value   # the touch pipeline diagram
+guides/android.md: AAssetDir_getNextFileName android_main resumed suspended
+guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh set_ground str ui upload_mesh_with vec3 vec4 view
+guides/profiling.md: present set_gpu_timing
+# Rust and WGSL: a stylize pass's context and shader helpers
+concepts/stylize-passes.md: bind color color_of color_setting depth_bind edges_bind first_write mask_bind option palette_ink palette_ink_lab param pub resize_postprocess sampled sampled_input srgb style_id target texel_size uniform
+concepts/stylize-passes.md: flint_depth flint_edge flint_edges flint_hash flint_luma flint_mask_id flint_params_at flint_sample flint_style_blend flint_to_display flint_to_linear flint_view_depth flint_world_pos mix
+
+# Formulas and shader maths in prose
+concepts/post-processing.md: log2 pow
+concepts/rendering.md: mix
+concepts/sky.md: fract
+concepts/touch-controls.md: env         # CSS env(safe-area-inset-*)
+
+# Not calls: an L-system symbol, a log line
+concepts/procgen.md: F asset
+
+# Illustrative helpers a sentence names without defining
+concepts/scripting.md: clamp_speed
+
+# Proposed functions: the roadmap's, not yet in the engine
+roadmap.md: find_path move_along_path wait set_reverb_zone set_reverb_mix spawn_decal save_game load_game debug_line debug_box debug_sphere debug_ray

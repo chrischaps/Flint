@@ -598,10 +598,12 @@ inside a hallucination with no way out. Instead, a dead script means a healed
 world. The cost is that you must call it every frame the effect is active:
 
 ```rhai
+fn envelope(t) { max(1.0 - t / 4.0, 0.0) }   // your own: 1 at the start, 0 after 4 s
+
 fn on_update() {
-    let m = current_mix();          // your own envelope
+    let m = envelope(total_time());
     if m > 0.001 {
-        set_render_mode(active_mode, m);
+        set_render_mode(3, m);          // 3 is drunk
     }
     // stop calling -> the engine restores the world by itself
 }
