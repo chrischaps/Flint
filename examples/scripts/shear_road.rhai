@@ -21,7 +21,7 @@ fn lay(ids, t) {
         let x1 = x + dx;
         let y1 = y + dy;
         let id = ids[i];
-        set_position(id, (x + x1) / 2.0, (y + y1) / 2.0 - 0.05, -(i.to_float() + 0.5) * 8.0);
+        set_position(id, (x + x1) / 2.0, (y + y1) / 2.0 - 0.05, -(i + 0.5) * 8.0);
         set_shear(id, #{ xz: -(x1 - x) / 8.0, yz: -(y1 - y) / 8.0 });
         x = x1;
         y = y1;

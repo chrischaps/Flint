@@ -104,6 +104,14 @@ fn integers_work_where_numbers_are_wanted() {
         .unwrap()
         .position;
     assert_eq!((p.x, p.y, p.z), (1.0, 2.5, -3.0));
+    // The first-draft call #696 names, all ints
+    let y: f64 = eval(
+        &engine,
+        &mut world,
+        &format!("set_position({id}, 0, 1, 0); get_position({id}).y"),
+    )
+    .unwrap();
+    assert_eq!(y, 1.0);
     // And floats, through the exact-typed twin, as before
     let x: f64 = eval(
         &engine,

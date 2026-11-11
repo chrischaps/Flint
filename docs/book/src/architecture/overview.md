@@ -277,9 +277,9 @@ Rhai scripting engine for runtime game logic:
 - `ScriptSync` --- discovers entities with `script` components, monitors file timestamps for hot-reload
 - `ScriptSystem` --- `RuntimeSystem` implementation running in `update()` (variable-rate)
 - Full API: entity CRUD, input, time, audio, animation, physics (raycast, camera), math, events, logging, UI draw
-- `ScriptCommand` pattern --- deferred audio/event effects processed by PlayerApp after script batch
+- `ScriptCommand` pattern --- every effect on the host (sound, styles, scenes, the camera's and post-processing's per-frame requests), carried out through one `ScriptHost` interface by `host::apply`, the one dispatcher the player and `flint render --scripts` share (ADR 0116, #697)
 - `DrawCommand` pattern --- immediate-mode 2D draw primitives (text, rect, circle, line, sprite) rendered via egui
-- `ScriptCallContext` with raw `*mut FlintWorld` pointer for world access during call batches
+- `ScriptCallContext` with raw `*mut FlintWorld` pointer for world access during call batches, reached only through `try_world`/`call.world()`; `unsafe` is in `context.rs` alone
 - Depends on `flint-physics` for raycast and camera direction access
 
 ### flint-asset-gen

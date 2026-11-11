@@ -402,13 +402,17 @@ fn test_physics_api_without_physics() {
             r#"
         fn on_init() {
             // physics pointer is null — should return () without crashing
-            let hit = raycast(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 100.0, -1);
+            let hit = raycast(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 100.0);
+            if type_of(hit) != "()" { throw "a hit with no physics"; }
+            set_field(self_entity(), "probe", "age", 1.0);
         }
     "#,
         )
         .unwrap();
 
+    probe_component(&mut world, id);
     engine.add_script(id, ast, "test.rhai".into());
-    // Should not panic
+    // Should not panic, and the call is found and answers ()
     engine.call_inits(&mut world);
+    assert_eq!(probe_float(&world, id, "age"), 1.0, "on_init ran through");
 }
