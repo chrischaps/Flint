@@ -2,6 +2,8 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+#[cfg(test)]
+mod asset_search_tests;
 mod camera_cut;
 #[cfg(test)]
 mod capture_gate_tests;
@@ -310,6 +312,9 @@ pub struct PlayerApp {
     ui_fonts: HashSet<String>,
     /// Unknown font names already warned about (one warn per name).
     ui_fonts_warned: HashSet<String>,
+    /// UI sprites already warned about as missing or unreadable, by scene
+    /// folder and name: a draw command asks for its sprite every frame.
+    ui_sprites_warned: HashSet<String>,
     /// Wide-stroke and glow pictures for HUD and world text (#626).
     text_halos: text_halo::TextHalos,
     /// The `fonts/` root the current font set was scanned from; rescan on

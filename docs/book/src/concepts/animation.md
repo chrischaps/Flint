@@ -8,7 +8,7 @@ Property animations are the simplest form --- animate any transform property (po
 
 ### Animation Clips
 
-Clips are `.anim.toml` files stored in the `demo/animations/` directory:
+Clips are `.anim.toml` files in an `animations/` directory the scene can see ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)); the demos' are in `demo/animations/`:
 
 ```toml
 # animations/door_swing.anim.toml
@@ -334,8 +334,11 @@ during playback print `[sequence] cue '<name>' at <t>s`.
 
 #### Sequences at runtime
 
-The player loads every `*.sequence.toml` from the scene's `animations/`
-directory (or `../animations/`) and registers it by `name`. Scripts start one
+The player loads every `*.sequence.toml` from each `animations/` the scene
+can see ([beside the scene, beside each directory above it up to the project
+root, then the engine's](assets.md#where-the-engine-looks-for-a-file)) and registers it by `name`; a nearer file hides
+a farther one of the same file name. A `sequence` no loaded file gives is
+warned about with the folders that were read. Scripts start one
 with `play_sequence(entity, name)` and stop it with `stop_sequence(entity)`;
 both just write `animator.sequence`, so a scene can also autoplay one:
 

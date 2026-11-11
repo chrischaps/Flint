@@ -81,6 +81,11 @@ pub trait AssetSink {
     fn has_mesh(&self, name: &str) -> bool;
     /// The file loader would find a file for `name`.
     fn has_file(&self, name: &str, kind: AssetKind) -> bool;
+    /// When `name` has no file: the not-found text, with every path tried.
+    /// `None` when there is a file, or the sink can't say where it looked.
+    fn missing_file(&self, _name: &str, _kind: AssetKind) -> Option<String> {
+        None
+    }
     /// Upload (or replace) the mesh `name`.
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData);
     /// Upload (or replace) a living lineage's skinned rest mesh as `name`.
@@ -223,6 +228,11 @@ fn fall_through(req: &AssetRequest, reason: String, sink: &mut dyn AssetSink) ->
     if sink.has_file(&req.name, req.kind) {
         Outcome::FileFallback(reason)
     } else {
+        // Both were tried: the outcome's line says why the spec gave
+        // nothing, and this one where the file was looked for.
+        if let Some(missing) = sink.missing_file(&req.name, req.kind) {
+            tracing::warn!("{missing}\n  and before the files: its procgen spec, which failed");
+        }
         sink.upload_placeholder(&req.name, req.kind);
         Outcome::Placeholder(reason)
     }
@@ -375,9 +385,18 @@ impl AssetSink for GpuSink<'_> {
 
     fn has_file(&self, name: &str, kind: AssetKind) -> bool {
         match kind {
-            AssetKind::Model => model_loader::resolve_model_path(self.config, name).is_some(),
-            AssetKind::Texture => model_loader::resolve_texture_path(self.config, name).is_some(),
+            AssetKind::Model => model_loader::resolve_model_path(self.config, name).is_ok(),
+            AssetKind::Texture => model_loader::resolve_texture_path(self.config, name).is_ok(),
         }
+    }
+
+    fn missing_file(&self, name: &str, kind: AssetKind) -> Option<String> {
+        match kind {
+            AssetKind::Model => model_loader::resolve_model_path(self.config, name),
+            AssetKind::Texture => model_loader::resolve_texture_path(self.config, name),
+        }
+        .err()
+        .map(|missing| missing.to_string())
     }
 
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData) {
@@ -501,7 +520,7 @@ impl AssetSink for GpuSink<'_> {
     fn load_file(&mut self, name: &str, kind: AssetKind) -> bool {
         match kind {
             AssetKind::Model => {
-                let Some(path) = model_loader::resolve_model_path(self.config, name) else {
+                let Ok(path) = model_loader::resolve_model_path(self.config, name) else {
                     return false;
                 };
                 match flint_import::import_gltf(&path) {
@@ -522,7 +541,7 @@ impl AssetSink for GpuSink<'_> {
                 }
             }
             AssetKind::Texture => {
-                let Some(path) = model_loader::resolve_texture_path(self.config, name) else {
+                let Ok(path) = model_loader::resolve_texture_path(self.config, name) else {
                     return false;
                 };
                 self.renderer.remove_texture(name);

@@ -724,14 +724,14 @@ impl ViewerApp {
             scene_renderer.update_from_world(&state.world, &render_context.device);
 
             // Particles (ADR 0068): effects next to the scene, then textures.
-            let project = flint_core::project::Project::for_scene(Path::new(&state.scene_path));
+            let project = &config.project;
             flint_particles::load_particle_effects_from_world(
-                &project,
+                project,
                 &state.scene_path,
                 &mut self.particles,
             );
             self.particles.sync.sync_from_world(&state.world);
-            let dirs = flint_particles::texture_search_dirs(&project, &state.scene_path);
+            let dirs = flint_particles::texture_search_dirs(project, &state.scene_path);
             flint_render::load_particle_textures(
                 &mut scene_renderer,
                 &render_context.device,
@@ -2170,16 +2170,14 @@ impl ViewerApp {
                         // Particles: effects may have changed on disk too
                         // (the watcher covers the scene dir recursively).
                         self.particles.clear();
-                        let project =
-                            flint_core::project::Project::for_scene(Path::new(&state.scene_path));
+                        let project = &config.project;
                         flint_particles::load_particle_effects_from_world(
-                            &project,
+                            project,
                             &state.scene_path,
                             &mut self.particles,
                         );
                         self.particles.sync.sync_from_world(&state.world);
-                        let dirs =
-                            flint_particles::texture_search_dirs(&project, &state.scene_path);
+                        let dirs = flint_particles::texture_search_dirs(project, &state.scene_path);
                         flint_render::load_particle_textures(
                             renderer,
                             &context.device,

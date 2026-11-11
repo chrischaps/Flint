@@ -163,7 +163,7 @@ fullbright = true
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `texture` | string | `""` | Sprite sheet texture name (from `sprites/` directory) |
+| `texture` | string | `""` | Sprite sheet texture, found as a [texture](assets.md#where-the-engine-looks-for-a-file) is: beside the scene or in `textures/`, then the same up to the project root |
 | `width` | f32 | `1.0` | World-space width of the quad |
 | `height` | f32 | `1.0` | World-space height of the quad |
 | `frame` | i32 | `0` | Current frame index in the sprite sheet |

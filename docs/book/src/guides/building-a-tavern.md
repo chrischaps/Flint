@@ -149,7 +149,7 @@ loop = true
 spatial = false
 ```
 
-Place audio files (OGG, WAV, MP3, or FLAC) in the `audio/` directory next to the scene.
+Place audio files (`.ogg`, `.wav`, `.mp3` or `.flac`, in lower case) in the `audio/` directory next to the scene, or in the project's own `audio/` ([where the engine looks](../concepts/assets.md#where-the-engine-looks-for-a-file)).
 
 ## 8. Add Animations
 

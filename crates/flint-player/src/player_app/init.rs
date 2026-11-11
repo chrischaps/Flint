@@ -96,6 +96,7 @@ impl PlayerApp {
             ui_textures: HashMap::new(),
             ui_fonts: HashSet::new(),
             ui_fonts_warned: HashSet::new(),
+            ui_sprites_warned: HashSet::new(),
             text_halos: Default::default(),
             ui_fonts_root: None,
             ui_fonts_installed: false,
@@ -535,7 +536,10 @@ impl PlayerApp {
             .map(|p| p.to_path_buf());
 
         // Load models from world (including skeletal data)
+        // Which project the scene is in, before anything is searched for
+        self.refresh_project();
         let config = build_model_load_config(
+            &self.project,
             &self.scene_path,
             &self.world,
             self.catalog.as_ref(),
@@ -732,6 +736,7 @@ impl PlayerApp {
         load_audio_from_world(
             &self.world,
             &mut self.audio,
+            &self.project,
             &self.scene_path,
             self.scene_preload_audio,
             // In the browser the audio may already be here at start, and
@@ -748,9 +753,9 @@ impl PlayerApp {
         self.start_music_session();
 
         // Initialize animation
-        load_animations_from_world(&self.scene_path, &mut self.animation);
-        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
-        load_sequences_from_world(&self.scene_path, &mut self.animation);
+        load_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
+        load_sequences_from_world(&self.project, &self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
@@ -1038,23 +1043,17 @@ impl PlayerApp {
             return true;
         }
 
+        // The project's one search (ADR 0114): `sprites/<name>` then `<name>`
+        // beside the scene, then the same beside each directory up to the
+        // project root, then in the mounted engine.
         let scene_dir = Path::new(&self.scene_path)
             .parent()
+            .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-
-        // Search: scene_dir/sprites/{name} → game_root/sprites/{name} → scene_dir/{name}
-        let candidates = [
-            scene_dir.join("sprites").join(name),
-            scene_dir
-                .parent()
-                .map(|p| p.join("sprites").join(name))
-                .unwrap_or_default(),
-            scene_dir.join(name),
-        ];
-
-        for path in &candidates {
-            if vfs::exists(path) {
-                if let Ok(img) = flint_render::open_image(path) {
+        use flint_core::project::AssetKind;
+        let problem = match self.project.resolve(AssetKind::Sprites, name, scene_dir) {
+            Ok(path) => match flint_render::open_image(&path) {
+                Ok(img) => {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
                     let color_image =
@@ -1066,10 +1065,15 @@ impl PlayerApp {
                     println!("Loaded UI sprite: {}", name);
                     return true;
                 }
-            }
+                Err(e) => format!("UI sprite '{name}': {}: {e}", path.display()),
+            },
+            Err(missing) => missing.to_string(),
+        };
+        // A draw command asks again every frame: say it once a scene folder.
+        let key = format!("{}|{name}", scene_dir.display());
+        if self.ui_sprites_warned.insert(key) {
+            tracing::warn!("{problem}");
         }
-
-        tracing::warn!("UI sprite not found: {}", name);
         false
     }
 

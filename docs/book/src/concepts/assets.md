@@ -33,7 +33,7 @@ Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)
 
 ## Where the Engine Looks for a File
 
-A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; the rest still have searches of their own and move over kind by kind, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
+A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; scripts, procgen specs, prefabs, fonts and the style assets still have searches of their own and move over kind by kind, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
 
 1. **beside the scene**: the kind's folder in the scene's own directory;
 2. **beside each directory above the scene**, one at a time, up to and including the [project root](#the-project-root);
@@ -52,13 +52,37 @@ my_game/                       flint.toml here: the project root
         └── cave.scene.toml
 ```
 
-At each of those directories `D`, the file tried is `D/<folder>/<name><extension>`:
+At each of those directories `D`, the file tried is `D/<folder>/<name><extension>`, for each of the kind's folders in turn and then each of its extensions. A kind is only that: its folders and its extensions.
 
 | Kind | Folder | Extension | A scene writes |
 |------|--------|-----------|----------------|
 | `particles` | `particles/` | `.particles.toml` | `particle_effect.effect = "campfire"`, `play_effect("campfire", ...)` |
+| `models` | `models/` | `.glb`, then `.gltf` | `model.asset = "barrel"` |
+| `textures` | `D` itself, then `textures/` | a file name as written; a name with no extension is tried bare, then `.png`, then `_color.png` | `material.texture = "wall.png"` or `"wall"`, `sprite.texture = "hero.png"` |
+| `sprites` | `sprites/`, then `D` itself | a file name as written | `draw_sprite(x, y, w, h, "heart.png")` |
+| `animations` | `animations/` | `.anim.toml` | every clip is loaded; `animator.clip = "door_swing"` names one by the `name` inside its file |
+| `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one |
+| `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` |
+| `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound` |
 
-A name that already ends in the kind's extension is taken as written (`campfire.particles.toml`), and a name may carry a subfolder (`fx/campfire` is `particles/fx/campfire.particles.toml`). Two details at the edges, the same for every kind:
+`flint asset where --help` prints this table from the engine's own.
+
+**Names.** A name that already ends in one of the kind's extensions is taken as written (`campfire.particles.toml`, `barrel.gltf`), and a name may carry a subfolder (`fx/campfire` is `particles/fx/campfire.particles.toml`). Textures, sprites and sounds are named by **file name**: a name with a dot in its last part is that file, whatever follows the dot (`sky.hdr`, `wall.jpg`). Extensions are matched as they are spelled, for every kind: `hit.OGG` is not found by the preload, and `barrel.GLB` in `model.asset` becomes `barrel.GLB.glb`.
+
+**A folder of "`D` itself".** Textures, sprites and sounds may sit loose beside a scene, or be named by a path from it (`audio/fire.ogg`, `ui/heart.png`), so the directory of the walk is one of their folders. That is why `audio_source.file = "audio/fire.ogg"` finds `audio/fire.ogg` beside the scene and beside every directory above it.
+
+**As written, first.** A name that is a path of its own is tried as written before any of the above, with the kind's extensions:
+
+- starting with `./` or `../`, from the scene's directory: `texture = "../shared/wall.png"`, `asset = "./local/barrel"`. If that misses, the name goes through the search like any other.
+- absolute (`/art/wall.png`, `C:/art/wall.png`): that one file, and nowhere else.
+
+No path is tried twice, and the list a miss prints is in the order tried, the as-written paths first.
+
+**Kinds loaded as a whole.** Animation clips, sequences, sprite animations and the `audio/` preload load every file the scene can see, from every one of those folders, a nearer file hiding a farther one of the same file name. Only a kind's named folders are listed, never the scene's own directory, and not their subfolders.
+
+**Models and textures have two sources ahead of the files.** A name in the [asset catalog](#asset-catalog) resolves to its stored file first, and the player then asks for a [procgen spec](procgen.md) of the same name; the search above is for the file, and is what runs when neither has it. A miss says so under the paths: `and before the files: the asset catalog, a procgen spec of the same name`.
+
+Two details at the edges, the same for every kind:
 
 - **No project marker.** A scene in a folder with no `flint.toml`, no `.flint/` and no `schemas/` + `scenes/` layout above it is its own project root. The engine then also looks one level above the scene, as every search did before there were projects.
 - **A scene outside the root** (`--project` naming another folder) is searched beside itself, then at the root, then in the engine.
@@ -70,6 +94,19 @@ Inside an engine checkout the root already is the engine, so there is no third p
 Ask the engine which file it would load, and where it looked first:
 
 ```
+$ flint asset where models barrel --scene scenes/act1/cave/deep.scene.toml
+model 'barrel'
+  project  . (flint.toml)
+  scene    scenes/act1/cave
+  loads    models/barrel.glb
+  tried before it:
+    scenes/act1/cave/models/barrel.glb
+    scenes/act1/cave/models/barrel.gltf
+    scenes/act1/models/barrel.glb
+    scenes/act1/models/barrel.gltf
+    scenes/models/barrel.glb
+    scenes/models/barrel.gltf
+
 $ flint asset where particles campfire --scene scenes/act1/cave/deep.scene.toml
 particle effect 'campfire'
   project  C:/games/ember-game (flint.toml)
