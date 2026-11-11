@@ -313,7 +313,7 @@ with the `door` component and three constraints about rooms and doors (`schemas/
 schemas = ["schemas", "schemas/examples"]
 ```
 
-A game gets none of them by default: `flint schema furniture` in a game finds nothing, and an entity with `archetype = "furniture"` takes no defaults from it. A game that wants the vocabulary (to follow [Your First Project](../getting-started/first-project.md), or to run an example scene of the engine's from inside the game) lists the layer between the engine's set and its own:
+A game gets none of them by default: `flint schema furniture` in a game finds nothing, and an entity with `archetype = "furniture"` takes no defaults from it and is an `unknown-archetype` error under `flint validate`. A game that wants the vocabulary (to follow [Your First Project](../getting-started/first-project.md), or to run an example scene of the engine's from inside the game) lists the layer between the engine's set and its own:
 
 ```toml
 [project]

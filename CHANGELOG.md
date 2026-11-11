@@ -77,6 +77,10 @@ scenes/hall.scene.toml: 4 errors, 1 warning
   first five problems at each load, transitions and chunks included, and
   carry on: nothing that loaded before stops loading. The per-component
   `[scene] entity '<name>' component '<comp>': <reason>` warnings are gone.
+- `flint examples --check` fails an example on an error diagnostic. The
+  engine's examples are clean of them; the components only their scripts
+  read (`film`, `story`, `tour`, `orbit`, `hologram_style`) are open schemas
+  in `schemas/examples/components/`.
 - The engine's `material` schema now declares `color` and
   `base_color_r/g/b/a`, which the renderer always read.
 
