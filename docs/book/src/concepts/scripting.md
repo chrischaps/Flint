@@ -27,10 +27,10 @@ enabled = true
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `source` | string | `""` | Path to `.rhai` file (relative to the `scripts/` directory) |
+| `source` | string | `""` | The `.rhai` file, by its name in a `scripts/` folder (`hud.rhai`, `ui/menu.rhai`) |
 | `enabled` | bool | `true` | Whether the script is active |
 
-Script files live in the `scripts/` directory next to your scene file.
+Script files live in a `scripts/` folder: beside the scene, beside any directory above it up to the project root, or in the engine's (`engine/scripts/`). Each script is looked for in that order and the nearest file of its name wins ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)), so a scene can keep a script of its own beside it and still use the project's. A `source` that isn't found is warned about with every path tried, and `flint asset where scripts hud.rhai --scene <scene>` prints the file chosen.
 
 ## Event Callbacks
 
@@ -1169,7 +1169,7 @@ pop_over_ui();
 
 #### Shared Modules (`scripts/lib`)
 
-Scripts can `import` shared Rhai modules from `<project>/scripts/lib/` (the `lib/` folder inside whichever `scripts/` directory the scene resolved). `import "ui_kit" as ui;` loads `scripts/lib/ui_kit.rhai`; nested paths work too (`import "fx/easing" as ease;`). Every top-level `fn` in a module is exported automatically (mark helpers `private` to hide them); top-level variables must be `export`ed:
+Scripts can `import` shared Rhai modules from `scripts/lib/`. A module is a script like any other and is found the same way: `import "ui_kit" as ui;` loads the nearest `scripts/lib/ui_kit.rhai`, from beside the scene up to the project root and then the engine's, so a scene's own `scripts/lib/` can override one module and leave the rest to the project; nested paths work too (`import "fx/easing" as ease;`). Every top-level `fn` in a module is exported automatically (mark helpers `private` to hide them); top-level variables must be `export`ed:
 
 ```rhai
 // scripts/lib/ui_kit.rhai
@@ -1491,7 +1491,9 @@ To pick out the new names, the reload runs the new source's top-level statements
 
 This enables a fast iteration workflow: edit a script in your text editor, save, and see the result in the running game without restarting.
 
-Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
+Shared modules under `scripts/lib/` are watched as well, in every `scripts/` folder the scene can see: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
+
+Hot reload follows the search. A script or module of the same name written **nearer** to the scene than the one loaded (a new `scripts/hud.rhai` beside the scene, say, when the project's was running) takes over, as it would on the next launch; the log says `[script] hud.rhai is now <path>`.
 
 In the player none of this waits on the disk in a frame (#633). A watcher thread (`flint_core::file_watch`) stats the files every quarter second and passes a change on only once the file has held still for two of its looks, so a change lands a quarter to half a second after the last write. A second thread reads and compiles the changed script, checking that the file didn't move while it read it, and compiles a changed `scripts/lib` module by module; the frame only swaps finished ASTs in. Before this, a frame could wait seconds on a file another process was writing, and a script half-written when it was read could be compiled as a shorter one. UI documents, user styles, glyph sets, palettes and style images ask the same watcher. Tools such as `flint render --scripts` poll the disk directly, as they always did.
 

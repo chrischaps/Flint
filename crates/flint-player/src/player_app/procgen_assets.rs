@@ -23,11 +23,11 @@
 //! resolution order is tested without a GPU; [`GpuSink`] is the real one.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use flint_core::components as comp;
+use flint_core::project::Project;
 use flint_core::toml_util::toml_vec3;
-use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_procgen::{
@@ -100,25 +100,27 @@ pub trait AssetSink {
     fn load_file(&mut self, name: &str, kind: AssetKind) -> bool;
 }
 
-/// The directories searched for `*.procgen.toml`, least specific first: the
-/// resolver lets later directories override earlier ones, so a spec beside
-/// the scene beats a game-wide one of the same name.
-pub fn spec_dirs(scene_path: &str) -> Vec<PathBuf> {
-    let scene_dir = Path::new(scene_path).parent().unwrap_or(Path::new("."));
-    let mut dirs = Vec::new();
-    if let Some(parent) = scene_dir.parent() {
-        dirs.push(parent.join("specs"));
+/// Index the specs the scene can see into `resolver`: every
+/// `*.procgen.toml` the project's one search lists (`AssetKind::Specs`:
+/// `specs/` and `models/`, with their subfolders, beside the scene, in each
+/// directory above it up to the project root, then in the engine), each
+/// under its `[meta] name`, the nearest of a name winning.
+pub fn discover_specs(resolver: &mut ProcGenResolver, project: &Project, scene_path: &str) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    for listed in project.list(flint_core::project::AssetKind::Specs, scene_dir) {
+        // The list holds one file a name, the nearest, so none overwrites
+        // another. A spec that doesn't parse is skipped, as it always was.
+        match flint_procgen::ProcGenSpec::from_file(&listed.path) {
+            Ok(spec) => resolver.index_spec(spec),
+            Err(e) => tracing::debug!(
+                "procgen spec {} skipped: {e}",
+                flint_core::project::shown(&listed.path)
+            ),
+        }
     }
-    dirs.push(scene_dir.join("specs"));
-    dirs.push(scene_dir.join("models"));
-    dirs.into_iter().filter(|d| vfs::is_dir(d)).collect()
-}
-
-/// Index the scene's specs into `resolver`.
-pub fn discover_specs(resolver: &mut ProcGenResolver, scene_path: &str) {
-    let dirs = spec_dirs(scene_path);
-    let refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-    resolver.discover_and_index(&refs);
 }
 
 /// The names in `world` that procgen should provide: those with a spec, not
@@ -565,7 +567,7 @@ pub fn resolve_scene(
     mut sink: GpuSink<'_>,
 ) {
     let started = web_time::Instant::now();
-    discover_specs(resolver, scene_path);
+    discover_specs(resolver, &sink.config.project, scene_path);
     super::living_props::resolve(world, sink.config, resolver, &mut sink, mode);
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {

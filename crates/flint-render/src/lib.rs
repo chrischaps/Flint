@@ -95,8 +95,8 @@ pub use quality::{gpu_info, GpuInfo, QualitySettings, QualityValue};
 pub use render_scale::{clamp_render_scale, scaled_size, MIN_RENDER_SCALE};
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
-    load_particle_textures, ArchetypeVisual, LightingLevers, LodSettings, RendererConfig,
-    SceneRenderer, DEFAULT_CLEAR_COLOR,
+    load_particle_textures, load_scene_particle_textures, ArchetypeVisual, LightingLevers,
+    LodSettings, RendererConfig, SceneRenderer, DEFAULT_CLEAR_COLOR,
 };
 pub use skinned_pipeline::SkinnedPipeline;
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};

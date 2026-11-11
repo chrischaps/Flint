@@ -109,7 +109,7 @@ Higher values produce finer detail but may show visible tiling at a distance. Fu
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `heightmap` | string | | Path to grayscale PNG (relative to scene directory) |
+| `heightmap` | string | | Path to grayscale PNG, from the scene's directory or any directory above it up to the project root ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)) |
 | `width` | f32 | 256.0 | World-space extent along X axis |
 | `depth` | f32 | 256.0 | World-space extent along Z axis |
 | `height_scale` | f32 | 50.0 | Maximum height in world units |

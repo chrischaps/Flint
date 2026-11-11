@@ -39,8 +39,7 @@ pub use emitter::{
 };
 pub use loader::{
     load_effect_from_file, load_effect_from_str, load_effects_from_dir,
-    load_particle_effects_from_world, load_visible_effects, resolve_particles_dir,
-    texture_search_dirs, EFFECT_SUFFIX,
+    load_particle_effects_from_world, load_visible_effects, EFFECT_SUFFIX,
 };
 pub use particle::{Particle, ParticleInstance, ParticlePool};
 pub use sim::EmitterFrame;

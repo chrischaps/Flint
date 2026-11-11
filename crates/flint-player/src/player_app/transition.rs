@@ -171,30 +171,52 @@ impl PlayerApp {
         self.physics
             .sync_new_entities(&mut self.world, &spawned_ids);
 
-        // Re-sync scripts for new entities
-        let chunk_scripts_dir = chunk_path
+        // Re-sync scripts for new entities: each found by the project's one
+        // rule (`AssetKind::Scripts`), searched for from the chunk's folder
+        // and, failing that, from the scene's.
+        let chunk_dir = chunk_path.parent().unwrap_or_else(|| Path::new("."));
+        let scene_dir = Path::new(&self.scene_path)
             .parent()
             .unwrap_or_else(|| Path::new("."))
-            .join("scripts");
-        for &id in &spawned_ids {
-            if let Some(comps) = self.world.get_components(id) {
-                if let Some(script_comp) = comps.get(comp::SCRIPT) {
-                    if let Some(source) = script_comp.get("source").and_then(|v| v.as_str()) {
-                        // Try chunk's own scripts dir first, then scene's scripts dir
-                        let scene_scripts_dir = Path::new(&self.scene_path)
-                            .parent()
-                            .unwrap_or_else(|| Path::new("."))
-                            .join("scripts");
-                        let script_path = if vfs::exists(chunk_scripts_dir.join(source)) {
-                            chunk_scripts_dir.join(source)
-                        } else {
-                            scene_scripts_dir.join(source)
-                        };
-                        if vfs::exists(&script_path) {
-                            self.script.load_script_for_entity(id, &script_path);
+            .to_path_buf();
+        let scene_dir = scene_dir.as_path();
+        let sources: Vec<(flint_core::EntityId, String)> = spawned_ids
+            .iter()
+            .filter_map(|&id| {
+                let source = self.world.get_components(id)?.get(comp::SCRIPT)?;
+                let source = source.get("source")?.as_str()?;
+                (!source.is_empty()).then(|| (id, source.to_string()))
+            })
+            .collect();
+        for (id, source) in sources {
+            // TEMPORARY, for one release (ADR 0114 decision 3, #765): a
+            // chunk's script was `scripts/<source>` beside the chunk, else
+            // beside the scene, and nowhere else.
+            let old = [chunk_dir, scene_dir]
+                .map(|dir| dir.join("scripts").join(&source))
+                .into_iter()
+                .find(|path| vfs::exists(path));
+            let found = self
+                .script
+                .load_script_named(id, &source, chunk_dir)
+                .or_else(|_| self.script.load_script_named(id, &source, scene_dir));
+            match (&found, old) {
+                (Err(not_found), None) => tracing::warn!("chunk '{chunk_id}': {not_found}"),
+                (found, Some(old)) => {
+                    let new = found.as_ref().ok().cloned();
+                    if new.as_deref().map(flint_core::vfs::normalize)
+                        != Some(flint_core::vfs::normalize(&old))
+                    {
+                        flint_core::project::OrderChange {
+                            kind: flint_core::project::AssetKind::Scripts,
+                            name: source.clone(),
+                            old,
+                            new,
                         }
+                        .log();
                     }
                 }
+                (Ok(_), None) => {}
             }
         }
 
@@ -319,7 +341,7 @@ impl PlayerApp {
         println!("[transition] Loading scene: {}", target_scene);
 
         // Resolve scene path relative to current scene
-        let new_scene_path = resolve_scene_path(&self.scene_path, target_scene);
+        let new_scene_path = resolve_scene_path(&self.project, &self.scene_path, target_scene);
 
         // The new scene's schema directories and its registry
         let registry = self.schemas_for_scene(&new_scene_path);
@@ -482,16 +504,7 @@ impl PlayerApp {
                 let scene_dir = Path::new(&self.scene_path)
                     .parent()
                     .unwrap_or_else(|| Path::new("."));
-                let skybox_path = {
-                    let p = scene_dir.join(skybox_rel);
-                    if vfs::exists(&p) {
-                        p
-                    } else if let Some(parent) = scene_dir.parent() {
-                        parent.join(skybox_rel)
-                    } else {
-                        p
-                    }
-                };
+                let skybox_path = self.project.file_or_beside("skybox", skybox_rel, scene_dir);
                 if vfs::exists(&skybox_path) {
                     renderer.load_skybox(&context.device, &context.queue, &skybox_path);
                 }
@@ -604,7 +617,7 @@ impl PlayerApp {
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
         self.load_particle_textures();
 
-        load_scripts_from_world(&self.scene_path, &mut self.script);
+        load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
         self.script
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
