@@ -181,6 +181,12 @@ pub struct ExtensionCtx<'a> {
     /// through it to find the first thing drawn along it. Empty until the
     /// first frame is drawn. Scripts cast through the same scene.
     pub rays: std::sync::Arc<flint_core::ray_mesh::RayScene>,
+    /// The current scene's top-level tables, as its file wrote them (#686):
+    /// `[post_process]`, `[camera]`, and any table of the game's own. See
+    /// [`scene_table`](Self::scene_table). A scene transition replaces
+    /// them, so read here each frame (or when the scene changes) rather
+    /// than once at start.
+    pub scene_tables: &'a toml::Table,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
     pub(crate) cursor_captured: bool,
@@ -192,6 +198,44 @@ impl ExtensionCtx<'_> {
     /// is the window centre and clicks skip egui.
     pub fn is_cursor_captured(&self) -> bool {
         self.cursor_captured
+    }
+
+    /// The current scene's `[<name>]` table as its file wrote it, or `None`
+    /// when the scene has none (#686).
+    ///
+    /// This is how a game gives a scene its own settings: the scene writes
+    /// `[weather]`, the game's schema layer declares `[table.weather]` in
+    /// `schemas/scene/weather.toml` (so `flint validate` checks every field
+    /// and a misspelled `[wether]` is named), and the extension reads it
+    /// here. The values are the file's own: a default the schema states is
+    /// not filled in, so read with a fallback.
+    ///
+    /// ```ignore
+    /// let rain = ctx
+    ///     .scene_table("weather")
+    ///     .and_then(|weather| flint_core::toml_util::toml_f32(weather.get("rain")?))
+    ///     .unwrap_or(0.0);
+    /// ```
+    pub fn scene_table(&self, name: &str) -> Option<&toml::Table> {
+        self.scene_tables.get(name)?.as_table()
+    }
+
+    /// [`scene_table`](Self::scene_table) read into a type of the game's:
+    /// `None` when the scene has no such table, `Err` when it doesn't fit.
+    ///
+    /// ```ignore
+    /// #[derive(serde::Deserialize, Default)]
+    /// #[serde(default)]
+    /// struct Weather { rain: f32, wind: [f32; 3] }
+    ///
+    /// let weather: Weather = ctx.scene_table_as("weather").transpose()?.unwrap_or_default();
+    /// ```
+    pub fn scene_table_as<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Option<Result<T, toml::de::Error>> {
+        let table = self.scene_table(name)?;
+        Some(toml::Value::Table(table.clone()).try_into())
     }
 
     /// Fire a custom game event, as a script's `fire_event_data` does.

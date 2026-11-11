@@ -185,6 +185,27 @@ pub fn check(
         }
     };
 
+    // `[living]` and `[wooze]` are living props' tables, kept raw by the
+    // scene file (#686): one that doesn't fit its type (a misspelt key)
+    // refuses the scene when it is played (`flint_procgen::settle_scene`),
+    // as it did when it failed the file's parse: an error in every kind of
+    // check, by the table's name
+    if let Err(problem) = flint_procgen::LivingTables::of(&file) {
+        // `[living]: unknown field ...`: the table, then what serde said
+        let (table, said) = problem
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once("]: "))
+            .map_or((None, problem.as_str()), |(table, said)| {
+                (Some(table), said)
+            });
+        let d = Diagnostic::error(codes::TOML_PARSE, said)
+            .file(scene)
+            .hint("the scene does not load until the table fits");
+        out.diagnostics.push(match table {
+            Some(table) => d.table(table),
+            None => d,
+        });
+    }
     if checks.files {
         assets(scene, scene_dir, &file, &project, memo, &mut out);
     }
@@ -192,7 +213,18 @@ pub fn check(
         styles(scene, scene_dir, &file, &text, memo, &mut out.diagnostics);
     }
     if checks.tables {
-        out.diagnostics.extend(wooze(scene, &file, schemas));
+        let wooze = wooze(scene, &file, schemas);
+        // The scene pass has checked `[wooze]` against its `[table.wooze]`
+        // schema like any table (#686), and this check holds it to the same
+        // schema and to the field itself, one issue a zone, in the field's
+        // words and by the zone's name. One mistake is said once: these
+        // stay, and the pass's warnings (a key the schema doesn't declare)
+        // with them.
+        if !wooze.is_empty() {
+            out.diagnostics
+                .retain(|d| !(d.is_error() && d.table.as_deref() == Some("wooze")));
+        }
+        out.diagnostics.extend(wooze);
         out.diagnostics
             .extend(species(scene, &file, world.as_ref()));
     }
@@ -521,8 +553,11 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
 /// The zone, when it is about one, is the diagnostic's field.
 fn wooze(scene: &Path, file: &SceneFile, schemas: &SceneSchemas) -> Vec<Diagnostic> {
     let mut file = file.clone();
-    let preset_issues = flint_scene::apply_preset_file(&mut file, scene);
-    let Some(table) = file.wooze else {
+    let preset_issues = flint_procgen::apply_preset_file(&mut file, scene);
+    let Some(table) = flint_procgen::LivingTables::of(&file)
+        .ok()
+        .and_then(|tables| tables.wooze)
+    else {
         return Vec::new();
     };
     preset_issues
@@ -547,8 +582,11 @@ fn wooze(scene: &Path, file: &SceneFile, schemas: &SceneSchemas) -> Vec<Diagnost
 fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Diagnostic> {
     let mut file = file.clone();
     // A preset the scene names can hold species too, laid under its own.
-    flint_scene::apply_preset_file(&mut file, scene);
-    let Some(living) = file.living.filter(|living| !living.species.is_empty()) else {
+    flint_procgen::apply_preset_file(&mut file, scene);
+    let living = flint_procgen::LivingTables::of(&file)
+        .ok()
+        .and_then(|tables| tables.living);
+    let Some(living) = living.filter(|living| !living.species.is_empty()) else {
         return Vec::new();
     };
     let grown: Option<Vec<String>> = world.map(|world| {

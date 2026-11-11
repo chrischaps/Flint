@@ -719,7 +719,7 @@ fn with_the_clock_frozen_a_flip_changes_only_what_the_presets_differ_in() {
 /// A grove with a zone of its own, on a field like Woozy Grove's.
 fn zoned_app(folder: &Path) -> PlayerApp {
     let mut app = app_with(4, folder);
-    let def: flint_scene::WoozeDef = toml::from_str(
+    let def: flint_procgen::WoozeDef = toml::from_str(
         r#"
 preset = "linklater"
 [[zone]]
@@ -1150,7 +1150,7 @@ fn softness_comes_in_every_way_the_other_knobs_do() {
 
 #[test]
 fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
-    let living: flint_scene::LivingDef = toml::from_str(
+    let living: flint_procgen::LivingDef = toml::from_str(
         r#"
         [species.thorn]
         step = 0.25
@@ -1226,7 +1226,10 @@ mod scopes {
         let mut app = app_with(0, folder);
         app.procgen_resolver
             .set_living_defaults(super::super::super::living_props::defaults_of(
-                scene.living.as_ref(),
+                flint_procgen::LivingTables::of(&scene)
+                    .unwrap()
+                    .living
+                    .as_ref(),
             ));
         for spec in ["grove_birch", "grove_cypress", "grove_oak", "grove_thorn"] {
             let path = repo().join(format!("examples/specs/{spec}.procgen.toml"));
@@ -1256,7 +1259,12 @@ mod scopes {
             app.procgen_resolver.add_living_prop(request).unwrap();
         }
         app.procgen_resolver.make_living_now();
-        app.wooze = super::super::super::living_props::field_of(scene.wooze.as_ref());
+        app.wooze = super::super::super::living_props::field_of(
+            flint_procgen::LivingTables::of(&scene)
+                .unwrap()
+                .wooze
+                .as_ref(),
+        );
         app.tick_procgen(0.0);
         app
     }
@@ -1895,8 +1903,20 @@ archetype = "x"
     fn fresh(folder: &Path) -> PlayerApp {
         let text = std::fs::read_to_string(scene_path(folder)).unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
-        let mut app = two_species_from(folder, true, scene.living.as_ref());
-        app.wooze = super::super::super::living_props::field_of(scene.wooze.as_ref());
+        let mut app = two_species_from(
+            folder,
+            true,
+            flint_procgen::LivingTables::of(&scene)
+                .unwrap()
+                .living
+                .as_ref(),
+        );
+        app.wooze = super::super::super::living_props::field_of(
+            flint_procgen::LivingTables::of(&scene)
+                .unwrap()
+                .wooze
+                .as_ref(),
+        );
         app.tick_procgen(0.0);
         app.before_living_tick();
         app

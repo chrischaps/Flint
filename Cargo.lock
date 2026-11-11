@@ -1769,6 +1769,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "flint-core",
+ "flint-procgen",
  "flint-render",
  "flint-scene",
  "flint-terrain",
@@ -1894,6 +1895,7 @@ dependencies = [
  "pollster",
  "profiling",
  "rhai",
+ "serde",
  "serde_json",
  "toml",
  "tracing",
@@ -1915,6 +1917,8 @@ dependencies = [
  "bincode",
  "flint-core",
  "flint-import",
+ "flint-scene",
+ "flint-schema",
  "gltf",
  "image",
  "rand 0.9.2",
@@ -1923,6 +1927,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
  "web-time",
 ]
 
@@ -2026,6 +2031,7 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-physics",
+ "flint-procgen",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2063,6 +2069,7 @@ dependencies = [
  "flint-ecs",
  "flint-import",
  "flint-particles",
+ "flint-procgen",
  "flint-render",
  "flint-scene",
  "flint-schema",

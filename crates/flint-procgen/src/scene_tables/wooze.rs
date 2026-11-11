@@ -6,13 +6,14 @@
 //! warns and goes without it, and `flint validate` fails on it, through
 //! [`WoozeDef::check`].
 
-use crate::format::{
-    LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef, SceneFile, WoozeDef,
+use super::{
+    LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingTables, LivingVarianceDef, WoozeDef,
     WoozePreset,
 };
 use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::wooze::{check_knob_named, preset, WoozeField, WoozeSample};
+use flint_scene::SceneFile;
 use flint_schema::{validate_component_data, SchemaRegistry};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -126,8 +127,16 @@ pub fn write_preset_in(
 /// The exception is `[boil]`, since a scene's `[post_process]` has no way to say
 /// it hasn't set a value, and nothing to fill in with no such table: the passes
 /// that boil are off. What's wrong with the file comes back to be named.
+///
+/// The scene's `[wooze]` and `[living]` are read out of its tables
+/// ([`LivingTables`]) and the filled ones put back. A scene whose tables
+/// don't fit their types is left as it is: [`settle_scene`](super::settle_scene)
+/// refuses it first.
 pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeIssue> {
-    let Some(def) = &mut scene.wooze else {
+    let Ok(mut tables) = LivingTables::of(scene) else {
+        return Vec::new();
+    };
+    let Some(def) = &mut tables.wooze else {
         return Vec::new();
     };
     let Some(name) = def.preset.clone() else {
@@ -146,7 +155,10 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
     };
     let preset = match found {
         Ok(preset) => preset,
-        Err(message) => return vec![issue(message)],
+        Err(message) => {
+            tables.put(scene);
+            return vec![issue(message)];
+        }
     };
     let issues: Vec<WoozeIssue> = preset.problems().into_iter().map(issue).collect();
 
@@ -155,8 +167,9 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
     def.glide = def.glide.or(preset.wooze.glide);
     def.jitter = def.jitter.or(preset.wooze.jitter);
 
-    let living = scene.living.get_or_insert_with(Default::default);
+    let living = tables.living.get_or_insert_with(Default::default);
     *living = living.clone().over(preset.living);
+    tables.put(scene);
 
     if let (Some(boil), Some(post)) = (preset.boil, &mut scene.post_process) {
         let on = boil.enabled.unwrap_or(true);
@@ -495,14 +508,16 @@ impl WoozeDef {
     }
 
     /// Everything wrong with this table: first what the field itself can't use,
-    /// which says the most, and then anything that passes that but not the `wooze`
-    /// and `wooze_zone` schemas, which a game's own schemas can tighten. One issue
-    /// a zone at most, so that one mistake isn't reported twice.
+    /// which says the most, and then anything that passes that but not the
+    /// `[table.wooze]` schema (and its `zone` field's, for a zone), which a game's
+    /// own schemas can tighten. One issue a zone at most, so that one mistake isn't
+    /// reported twice.
     pub fn check(&self, schemas: &SchemaRegistry) -> Vec<WoozeIssue> {
         let (_, mut issues) = self.field();
+        let table_schema = schemas.get_table("wooze");
 
         let global_is_fine = issues.iter().all(|issue| issue.zone.is_some());
-        if let (true, Some(schema)) = (global_is_fine, schemas.get_component("wooze")) {
+        if let (true, Some(schema)) = (global_is_fine, table_schema) {
             let mut table = toml::Table::new();
             if let Some(name) = &self.preset {
                 table.insert("preset".into(), toml::Value::String(name.clone()));
@@ -526,7 +541,8 @@ impl WoozeDef {
             }
         }
 
-        if let Some(schema) = schemas.get_component("wooze_zone") {
+        if let Some(schema) = table_schema.and_then(zone_schema) {
+            let schema = &schema;
             for (i, zone) in self.zone.iter().enumerate() {
                 let label = zone_label(zone, i);
                 if issues
@@ -547,6 +563,22 @@ impl WoozeDef {
     }
 }
 
+/// What `[table.wooze]` says one `[[wooze.zone]]` entry holds: the fields of its
+/// `zone` array's element, as a schema of their own.
+fn zone_schema(wooze: &flint_schema::TableSchema) -> Option<flint_schema::TableSchema> {
+    let flint_schema::FieldType::Array { element } = &wooze.get_field("zone")?.field_type else {
+        return None;
+    };
+    let flint_schema::FieldType::Fields { fields } = &**element else {
+        return None;
+    };
+    Some(flint_schema::TableSchema {
+        name: "wooze.zone".to_string(),
+        description: None,
+        fields: fields.clone(),
+    })
+}
+
 /// A zone's name, or `zone <n>`, counting from 1, if it hasn't got one.
 fn zone_label(zone: &toml::Value, index: usize) -> String {
     match zone.get("name").and_then(|name| name.as_str()) {
@@ -558,7 +590,7 @@ fn zone_label(zone: &toml::Value, index: usize) -> String {
 #[cfg(test)]
 mod preset_tests {
     use super::*;
-    use crate::format::{BoilDef, WoozeKnobs};
+    use crate::scene_tables::{living_of, wooze_of, BoilDef, WoozeKnobs};
 
     fn tuned() -> WoozePreset {
         WoozePreset {
@@ -731,7 +763,7 @@ mod preset_tests {
         );
         assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
 
-        let wooze = scene.wooze.as_ref().unwrap();
+        let wooze = &wooze_of(&scene).unwrap();
         assert_eq!(wooze.preset, None);
         assert_eq!(wooze.glide, Some(0.9), "the scene's own word stands");
         assert_eq!(wooze.step, Some(1.0 / 3.0));
@@ -739,7 +771,7 @@ mod preset_tests {
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(field.sample([0.0; 3], 0.0).jitter, 2.0);
 
-        let living = scene.living.as_ref().unwrap();
+        let living = &living_of(&scene).unwrap();
         let echoes = living.echoes.unwrap();
         assert_eq!(echoes.count, Some(1), "a field at a time");
         assert_eq!(echoes.spread, Some(1.8));
@@ -761,7 +793,7 @@ mod preset_tests {
         let mut scene: SceneFile =
             toml::from_str("[scene]\nname = \"g\"\n[wooze]\npreset = \"calm\"\n").unwrap();
         assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
-        let (field, _) = scene.wooze.unwrap().field();
+        let (field, _) = wooze_of(&scene).unwrap().field();
         assert_eq!(field.sample([0.0; 3], 0.0).amplitude, 0.7);
     }
 
@@ -771,7 +803,7 @@ mod preset_tests {
         let mut scene: SceneFile =
             toml::from_str("[scene]\nname = \"g\"\n[wooze]\npreset = \"boil\"\n").unwrap();
         assert!(apply_preset_file(&mut scene, &folder.scene()).is_empty());
-        assert_eq!(scene.wooze.unwrap().preset.as_deref(), Some("boil"));
+        assert_eq!(wooze_of(&scene).unwrap().preset.as_deref(), Some("boil"));
     }
 
     #[test]
@@ -786,7 +818,7 @@ mod preset_tests {
         let said = issues[0].to_string();
         assert!(said.contains("misty") && said.contains("stepp"), "{said}");
         // And nothing goes on to say it isn't a built-in, too.
-        assert!(scene.wooze.unwrap().field().1.is_empty());
+        assert!(wooze_of(&scene).unwrap().field().1.is_empty());
     }
 
     #[test]
@@ -834,12 +866,16 @@ mod preset_tests {
 
 #[cfg(test)]
 mod tests {
-    use crate::SceneFile;
+    use crate::scene_tables::LivingTables;
     use flint_core::wooze::{preset, WoozeSample, AMPLITUDE_MAX, JITTER_MAX, STEP_MIN};
+    use flint_scene::SceneFile;
     use flint_schema::SchemaRegistry;
 
-    fn scene(table: &str) -> SceneFile {
-        toml::from_str(&format!("[scene]\nname = \"grove\"\n{table}")).unwrap()
+    /// The living tables of a scene holding `table`.
+    fn scene(table: &str) -> LivingTables {
+        let file: SceneFile =
+            toml::from_str(&format!("[scene]\nname = \"grove\"\n{table}")).unwrap();
+        LivingTables::of(&file).unwrap()
     }
 
     fn schemas() -> SchemaRegistry {
@@ -966,12 +1002,11 @@ glide = 0.5
     fn a_games_schema_can_tighten_what_a_zone_may_be() {
         let mut schemas = schemas();
         schemas
-            .load_component_string(
+            .load_table_string(
                 r#"
-[component.wooze_zone.fields]
-glide = { type = "f32", min = 0.0, max = 0.5 }
-[component.wooze.fields]
+[table.wooze.fields]
 step = { type = "f32", min = 1.0 }
+zone = { type = "array", element = { type = "table", fields = { glide = { type = "f32", min = 0.0, max = 0.5 } } } }
 "#,
             )
             .unwrap();
@@ -997,8 +1032,10 @@ step = { type = "f32", min = 1.0 }
 
     #[test]
     fn a_misspelt_global_knob_fails_the_table() {
-        let bad = toml::from_str::<SceneFile>("[scene]\nname = \"g\"\n[wooze]\ngilde = 0.3\n");
-        assert!(bad.is_err());
+        let file: SceneFile =
+            toml::from_str("[scene]\nname = \"g\"\n[wooze]\ngilde = 0.3\n").unwrap();
+        let bad = LivingTables::of(&file);
+        assert!(bad.unwrap_err().contains("[wooze]: unknown field `gilde`"));
     }
 
     /// The schema is what agents read and games override, the code is what runs,
@@ -1007,11 +1044,9 @@ step = { type = "f32", min = 1.0 }
     fn the_schema_and_the_field_agree_on_every_knob() {
         let schemas = schemas();
         let wooze = schemas
-            .get_component("wooze")
-            .expect("schemas/components/wooze.toml");
-        let zone = schemas
-            .get_component("wooze_zone")
-            .expect("the zone's schema");
+            .get_table("wooze")
+            .expect("schemas/scene/wooze.toml");
+        let zone = &super::zone_schema(wooze).expect("the zone's schema");
         let ranges = [
             ("amplitude", Some(0.0), Some(f64::from(AMPLITUDE_MAX))),
             ("step", Some(f64::from(STEP_MIN)), None),
@@ -1040,7 +1075,8 @@ step = { type = "f32", min = 1.0 }
 
 #[cfg(test)]
 mod species_tests {
-    use crate::format::{LivingDef, SceneFile};
+    use crate::scene_tables::{living_of, LivingDef};
+    use flint_scene::SceneFile;
 
     #[test]
     fn a_scene_says_what_one_species_does_and_a_wrong_key_fails() {
@@ -1057,7 +1093,7 @@ mod species_tests {
             "#,
         )
         .unwrap();
-        let living = scene.living.unwrap();
+        let living = living_of(&scene).unwrap();
         let thorn = &living.species["grove_thorn"];
         assert_eq!(thorn.step, Some(0.25));
         assert_eq!(thorn.echoes.unwrap().count, Some(1));
@@ -1086,7 +1122,7 @@ mod species_tests {
 
     #[test]
     fn a_bad_species_value_is_named_with_its_species() {
-        let preset = crate::WoozePreset::parse(
+        let preset = crate::scene_tables::WoozePreset::parse(
             "[living.species.thorn]\nglide = 2.0\nstagger = \"sideways\"\n",
         )
         .unwrap();

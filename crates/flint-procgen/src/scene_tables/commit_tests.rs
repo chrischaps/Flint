@@ -1,6 +1,8 @@
 use super::*;
-use crate::format::{BoilDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs};
-use crate::SceneFile;
+use crate::scene_tables::{
+    living_of, wooze_of, write_preset, BoilDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs,
+};
+use flint_scene::SceneFile;
 
 const GROVE: &str = r#"# A grove, by hand.
 [scene]
@@ -38,13 +40,13 @@ asset = "grove_oak"
 /// The look `GROVE` gives, in the shape the player reads back.
 fn grove_look() -> WoozePreset {
     let scene: SceneFile = toml::from_str(GROVE).unwrap();
-    let wooze = scene.wooze.unwrap();
+    let wooze = wooze_of(&scene).unwrap();
     WoozePreset {
         wooze: WoozeKnobs {
             step: wooze.step,
             ..Default::default()
         },
-        living: scene.living.unwrap(),
+        living: living_of(&scene).unwrap(),
         boil: Some(BoilDef {
             enabled: Some(true),
             kuwahara: Some(0.5),
@@ -123,7 +125,9 @@ fn a_new_field_goes_into_the_inline_table_that_holds_its_neighbours() {
     thorn(&mut now).echoes.as_mut().unwrap().spread = Some(1.0 / 3.0);
     let after = commit(GROVE, &grove_look(), &now);
     let scene: SceneFile = toml::from_str(&after).unwrap();
-    let echoes = scene.living.unwrap().species["grove_thorn"].echoes.unwrap();
+    let echoes = living_of(&scene).unwrap().species["grove_thorn"]
+        .echoes
+        .unwrap();
     assert_eq!(echoes.spread, Some(1.0 / 3.0), "the same bits back");
     assert_eq!(echoes.count, Some(1));
     let (gone, new) = changed(GROVE, &after);
@@ -154,7 +158,7 @@ fn a_new_species_table_sits_with_the_others_and_brings_no_empty_living() {
         "{after}"
     );
     let scene: SceneFile = toml::from_str(&after).unwrap();
-    assert_eq!(scene.living.unwrap().species, now.living.species);
+    assert_eq!(living_of(&scene).unwrap().species, now.living.species);
 }
 
 #[test]
@@ -176,7 +180,7 @@ fn a_scene_with_no_living_gets_one_after_its_wooze_not_after_its_entities() {
     assert!(species < after.find("[entities.oak]").unwrap(), "{after}");
     let scene: SceneFile = toml::from_str(&after).unwrap();
     assert_eq!(
-        scene.living.unwrap().species["grove_thorn"].step,
+        living_of(&scene).unwrap().species["grove_thorn"].step,
         Some(0.125)
     );
 }
@@ -195,7 +199,7 @@ fn a_cleared_value_is_taken_out_and_a_species_left_with_none_goes() {
     assert!(!after.contains("grove_thorn"), "{after}");
     assert!(!after.contains("thorns barely echo"), "{after}");
     let scene: SceneFile = toml::from_str(&after).unwrap();
-    assert!(scene.living.unwrap().species.is_empty());
+    assert!(living_of(&scene).unwrap().species.is_empty());
 }
 
 #[test]
@@ -223,7 +227,7 @@ fn global_values_land_in_wooze_and_living_and_the_boil_in_post_process() {
     });
     let after = commit(GROVE, &grove_look(), &now);
     let scene: SceneFile = toml::from_str(&after).unwrap();
-    let living = scene.living.unwrap();
+    let living = living_of(&scene).unwrap();
     assert_eq!(living.stagger.as_deref(), Some("per_level"));
     assert_eq!(living.echoes.unwrap().alpha, Some(0.35));
     assert_eq!(
@@ -275,7 +279,7 @@ fn every_edit_names_its_table_and_key() {
         ]
     );
     let edits = look_edits(&grove_look(), &now);
-    assert!(edits.iter().all(|e| e.species() == Some("grove_thorn")));
+    assert!(edits.iter().all(|e| edit_species(e) == Some("grove_thorn")));
 }
 
 /// A folder of its own, gone when dropped.
@@ -316,7 +320,7 @@ fn a_commit_writes_the_file_and_says_what_a_preset_still_sets() {
         },
         ..Default::default()
     };
-    crate::write_preset(&path, "misty", &preset).unwrap();
+    write_preset(&path, "misty", &preset).unwrap();
 
     // As loaded, the thorns have the preset's jitter under the scene's own.
     let mut base = grove_look();

@@ -307,7 +307,11 @@ fn main() -> Result<()> {
     }
 
     // Load scene
-    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, mut scene_file) =
+        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&args.scene))
+        .context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());

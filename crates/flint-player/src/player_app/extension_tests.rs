@@ -549,3 +549,190 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         .collect();
     assert_eq!(open, [("Net", true), ("Town", false)]);
 }
+
+/// A game's own scene-level setting, end to end (#686): its schema layer
+/// declares `[table.weather]`, a scene writes `[weather]`, and an extension
+/// reads it from `ExtensionCtx`. A typo in the table, or in its name, is a
+/// diagnostic of the load.
+mod scene_tables {
+    use super::*;
+    use flint_core::diagnostic::codes;
+    use flint_schema::SchemaRegistry;
+
+    /// What the game's extension keeps of the scene's weather.
+    #[derive(Debug, Default, Clone, PartialEq, serde::Deserialize)]
+    #[serde(default)]
+    struct Weather {
+        rain: f32,
+        wind: [f32; 3],
+        kind: String,
+    }
+
+    #[derive(Default)]
+    struct WeatherReader {
+        seen: Arc<Mutex<Vec<Option<Weather>>>>,
+        raw_rain: Arc<Mutex<Option<f64>>>,
+    }
+
+    impl PlayerExtension for WeatherReader {
+        fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+            let weather = ctx
+                .scene_table_as::<Weather>("weather")
+                .map(|read| read.expect("[weather] fits the game's type"));
+            self.seen.lock().unwrap().push(weather);
+            *self.raw_rain.lock().unwrap() = ctx
+                .scene_table("weather")
+                .and_then(|weather| weather.get("rain")?.as_float());
+            assert!(ctx.scene_table("nothing_here").is_none());
+        }
+    }
+
+    const WEATHER_SCHEMA: &str = r#"
+[table.weather]
+description = "What the sky is doing in this scene"
+
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0, description = "How hard it rains" }
+wind = { type = "vec3", description = "Metres a second, in world space" }
+kind = { type = "enum", values = ["clear", "storm"], default = "clear" }
+"#;
+
+    const STORM: &str = r#"
+[scene]
+name = "Storm"
+
+[weather]
+rain = 0.7
+wind = [3.0, 0.0, -1.0]
+kind = "storm"
+
+[entities.rock.transform]
+position = [0, 0, 0]
+"#;
+
+    /// A game project in a temp folder: a manifest naming its schema layer,
+    /// that layer's `scene/weather.toml`, and `scene` as its one scene.
+    struct Game(std::path::PathBuf);
+
+    impl Game {
+        fn new(test: &str, scene: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("flint_scene_table_{test}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("schemas/scene")).unwrap();
+            std::fs::create_dir_all(dir.join("schemas/components")).unwrap();
+            std::fs::create_dir_all(dir.join("scenes")).unwrap();
+            std::fs::write(
+                dir.join("flint.toml"),
+                "[project]\nschemas = [\"schemas\"]\n",
+            )
+            .unwrap();
+            std::fs::write(dir.join("schemas/scene/weather.toml"), WEATHER_SCHEMA).unwrap();
+            std::fs::write(
+                dir.join("schemas/components/transform.toml"),
+                "[component.transform.fields]\nposition = \"vec3\"\n",
+            )
+            .unwrap();
+            std::fs::write(dir.join("scenes/storm.scene.toml"), scene).unwrap();
+            Self(dir)
+        }
+
+        fn scene(&self) -> std::path::PathBuf {
+            self.0.join("scenes/storm.scene.toml")
+        }
+
+        /// The scene loaded as the player loads it: schemas by the one
+        /// resolver, from the project's manifest.
+        fn load(
+            &self,
+        ) -> (
+            FlintWorld,
+            flint_scene::SceneFile,
+            Vec<flint_core::diagnostic::Diagnostic>,
+        ) {
+            let none: &[&str] = &[];
+            let (registry, dirs) = SchemaRegistry::resolve(Some(&self.scene()), none).unwrap();
+            assert_eq!(dirs.source.name(), "manifest");
+            assert!(registry.get_table("weather").is_some());
+            flint_scene::load_scene_diagnosed(self.scene(), &registry).unwrap()
+        }
+    }
+
+    impl Drop for Game {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_games_table_is_declared_read_by_an_extension_and_checked() {
+        let game = Game::new("read", STORM);
+        let (world, scene_file, found) = game.load();
+        assert_eq!(found, [], "a scene that fits its schemas says nothing");
+
+        let mut app = PlayerApp::new(
+            world,
+            game.scene().to_string_lossy().into_owned(),
+            false,
+            None,
+            None,
+        );
+        app.apply_scene_settings(&scene_file);
+        let reader = WeatherReader::default();
+        let (seen, raw_rain) = (reader.seen.clone(), reader.raw_rain.clone());
+        app.add_extension(Box::new(reader));
+        app.tick();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(Weather {
+                rain: 0.7,
+                wind: [3.0, 0.0, -1.0],
+                kind: "storm".into(),
+            })]
+        );
+        assert_eq!(*raw_rain.lock().unwrap(), Some(0.7));
+
+        // A scene with no [weather] reads as none, and the next scene's
+        // tables replace this one's
+        app.scene_tables = flint_scene::SceneFile::new("calm").scene_tables();
+        app.tick();
+        assert_eq!(seen.lock().unwrap()[1], None);
+    }
+
+    #[test]
+    fn a_typo_in_a_games_table_is_diagnosed() {
+        let game = Game::new(
+            "typo",
+            &STORM
+                .replace("rain = 0.7", "rian = 0.7")
+                .replace("kind = \"storm\"", "kind = \"strom\""),
+        );
+        let (_, _, found) = game.load();
+        let said: Vec<String> = found
+            .iter()
+            .map(|d| match &d.hint {
+                Some(hint) => format!("{d} ({hint})"),
+                None => d.to_string(),
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-enum-value] [weather] kind: \"strom\" is not a value of `kind` \
+                 (did you mean `storm`? allowed values: clear, storm)",
+                "warning[unknown-field] [weather] rian: `weather` has no field `rian` (did you \
+                 mean `rain`?)",
+            ]
+        );
+
+        // ...and so is a typo in its name
+        let game = Game::new("name", &STORM.replace("[weather]", "[wether]"));
+        let (_, scene_file, found) = game.load();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::UNKNOWN_TABLE);
+        assert_eq!(found[0].hint.as_deref(), Some("did you mean `weather`?"));
+        // The table is kept all the same: the load drops nothing
+        assert!(scene_file.tables.contains_key("wether"));
+    }
+}
