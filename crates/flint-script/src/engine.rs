@@ -121,7 +121,7 @@ fn has_function(ast: &AST, name: &str) -> bool {
 }
 
 /// Expected parameter counts for engine callbacks.
-const CALLBACK_ARITIES: &[(&str, usize)] = &[
+pub(crate) const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_INIT, 0),
     (cb::ON_UPDATE, 0),
     (cb::ON_COLLISION, 1),
@@ -189,6 +189,8 @@ pub struct ScriptEngine {
     update_times: Option<Vec<(String, f32)>>,
     /// Scripts' `random()` sequence, seeded once from the clock (#580)
     pub(crate) random: crate::random::ScriptRandom,
+    /// What the declared API registered (ADR 0116); empty on the web
+    registry: api::ApiRegistry,
 }
 
 impl ScriptEngine {
@@ -197,7 +199,12 @@ impl ScriptEngine {
         let mut engine = compiler();
 
         // Register all API functions
-        api::register_all(&mut engine, ctx.clone());
+        let mut registry = api::ApiRegistry::default();
+        api::register_all(&mut api::ScriptApi::new(
+            &mut engine,
+            ctx.clone(),
+            &mut registry,
+        ));
         let random = crate::random::ScriptRandom::from_clock();
         random.register(&mut engine);
 
@@ -208,7 +215,19 @@ impl ScriptEngine {
             module_base: None,
             update_times: None,
             random,
+            registry,
         }
+    }
+
+    /// Declare functions through the builder (ADR 0116), into the same
+    /// registry as Flint's own, so `api_listing` lists them.
+    pub fn script_api(&mut self) -> api::ScriptApi<'_> {
+        api::ScriptApi::new(&mut self.engine, self.ctx.clone(), &mut self.registry)
+    }
+
+    /// Every function declared through the builder (empty on the web).
+    pub fn api_registry(&self) -> &api::ApiRegistry {
+        &self.registry
     }
 
     /// Point `import "name"` at `<dir>/name.rhai` and drop any cached
@@ -260,6 +279,11 @@ impl ScriptEngine {
     /// of Flint's API (see `ScriptSystem::rhai_engine_mut`).
     pub fn rhai_engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
+    }
+
+    /// The underlying Rhai engine, read-only.
+    pub fn rhai_engine(&self) -> &Engine {
+        &self.engine
     }
 
     /// Compile a Rhai source file into an AST
