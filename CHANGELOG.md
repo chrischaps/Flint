@@ -34,6 +34,60 @@ to do.
 
 ## 2026-11-10
 
+### `flint.toml`'s `schemas` is read by every command; `--schemas` is the whole list (#706)
+**What changed.** One rule now decides which schema directories load, the same
+in `flint play`, `flint-player`, `flint render`, `flint validate`, `flint
+query`, `flint entity`, `flint schema`, `flint edit` (the scene viewer and
+`--spline`) and `flint prefab view`:
+
+1. the `--schemas` flags, if any were given;
+2. else `[project] schemas` in the `flint.toml` of the project the scene is
+   in (the working directory's project for `flint schema`);
+3. else, as before, `schemas/` in the working directory, beside the scene and
+   one level up, whichever exist.
+
+So a game whose `flint.toml` says `schemas = ["engine/schemas", "schemas"]`
+needs no schema flags on any command, from any folder of the project. What a
+game can notice:
+
+- **`flint query` and `flint entity` take `--schemas`**, repeatable, and read
+  the manifest. `query` used to load only `schemas/` in the working directory
+  (and hid a schema file that didn't parse: that is an error now); `entity`
+  took one directory.
+- **`flint edit <scene>` loads every `--schemas`**, and constraints from each.
+  It used to take the first and drop the rest, so a game's scene opened with
+  the engine's archetypes and none of its own.
+- **`--schemas` is the whole list.** `play`, `render`, `validate`, the spline
+  editor and `flint-player` used to add any `schemas/` beside the scene or one
+  level up to the flags; with flags they no longer do. A game run from its
+  root with `--schemas engine/schemas --schemas schemas` loads what it did.
+  For this release, those commands print a line on stderr for each directory
+  they would have added and now leave out: `warning: schemas is no longer
+  added to --schemas: the flags are the whole list now. Pass it with another
+  --schemas, or list it under [project] schemas in flint.toml`. The warning
+  goes away in a later release; the behaviour stays.
+- **A named directory that doesn't exist is an error** in every command,
+  where it used to be skipped: `schema directory not found: nope (named by
+  --schemas)`, or `(named by `schemas` in <root>/flint.toml)`. This includes a
+  manifest listing `engine/schemas` in a checkout with no engine subtree.
+- With no flags and no `schemas` key, each command finds what it found
+  before. In the player, a scene transition into another project reads that
+  project's manifest.
+- `flint bundle` uses the manifest's `schemas` when `bundle.toml` has no
+  `schemas` key (it used to assume `engine/schemas` and `schemas`).
+- For a game with its own binary: `PlayerApp::set_schema_paths` works as
+  before; `set_schema_dirs` takes the answer of
+  `flint_schema::SchemaRegistry::resolve(scene, flags)`, which is how to get
+  the same directories the commands do. `flint_schema::discover_schema_dirs`
+  is deprecated.
+
+**What to do.** Add `schemas = ["engine/schemas", "schemas"]` under
+`[project]` in your `flint.toml` and drop the flags from your scripts, or keep
+the flags: both load the same thing. If a command now stops with `schema
+directory not found`, the flag or manifest entry it names was being ignored
+before: fix the path or remove it. If you relied on a `schemas/` folder beside
+a scene being added to your flags, name it with another `--schemas`.
+
 ### `random()` no longer repeats, and scripts can `seed_random(n)` (#580)
 **What changed.** `random()` and `random_range(min, max)` used to hash the
 wall clock on every call, so calls close together (two in a row in one
@@ -54,16 +108,15 @@ sequence every frame.
 marker, may hold `[project]` with `id` (a string), `schemas` (a list of
 folders relative to the root, in override order), `scene` and `input` (paths
 relative to the root). Every key is optional, an empty file is still a valid
-marker, and other tables are left alone. The values are parsed and checked
-and not yet acted on: `--schemas` flags, the scene argument and the input
-config work as before. The commands that look for a project root (`flint
+marker, and other tables are left alone. `schemas` is read (the entry above);
+`id`, `scene` and `input` are parsed and checked and not yet acted on: the
+scene argument and the input config work as before. The commands that look for a project root (`flint
 asset ...`, `flint gen --register`, anything given `--project <dir>`) now stop
 with an error naming the file and the key when `[project]` holds a value of
 the wrong type or a key Flint doesn't know.
 **What to do.** Nothing, unless your `flint.toml` already has a `[project]`
 table with other keys in it: move those to a table of another name. You can
-add `id` and `schemas = ["engine/schemas", "schemas"]` now; later releases
-will read them in place of the `--schemas` flags (ADR 0114).
+add `id` and `schemas = ["engine/schemas", "schemas"]` now (ADR 0114).
 
 ### Escape reaches the game when the game binds it (#639)
 **What changed.** If any action in the loaded input config binds Escape, a

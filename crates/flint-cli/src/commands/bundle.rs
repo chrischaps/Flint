@@ -581,17 +581,12 @@ fn check_scenes(source: Arc<MemorySource>, scenes: &[String], schemas: &[String]
                 return problems;
             }
         };
-        // `flint-player` merges a scene's own schemas/ beside it too.
+        // `flint-player` merges a scene's own schemas/ beside it too: the
+        // list the player will hold for each scene, from the same resolver.
         for scene in scenes {
-            let extra: Vec<String> = flint_schema::discover_schema_dirs(scene)
-                .into_iter()
-                .map(|d| normalize(&d))
-                .filter(|d| !schemas.contains(d))
-                .collect();
-            if !extra.is_empty() {
-                let mut all = schemas.to_vec();
-                all.extend(extra);
-                if let Ok(r) = flint_schema::SchemaRegistry::load_from_directories(&all) {
+            let dirs = flint_core::project::host_schema_dirs(schemas, Some(Path::new(scene)));
+            if dirs.dirs.len() > schemas.len() {
+                if let Ok(r) = flint_schema::SchemaRegistry::load_from_directories(&dirs.dirs) {
                     registry = r;
                 }
             }
@@ -766,14 +761,29 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
     if !files.contains_key(&scene) {
         bail!("the start scene {scene} is not packed");
     }
-    let schemas: Vec<String> = config
-        .schemas
-        .clone()
-        .unwrap_or_else(|| vec!["engine/schemas".into(), "schemas".into()])
-        .into_iter()
-        .map(|s| normalize(Path::new(&s)))
-        .filter(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))))
-        .collect();
+    // bundle.toml's list, else the project manifest's (ADR 0114), else the
+    // game-repo layout; as bundle paths, and only those that were packed
+    let manifest_schemas = || -> Result<Option<Vec<String>>> {
+        let project = flint_core::project::Project::at(root)
+            .map_err(|e| anyhow::anyhow!("reading the project manifest: {e}"))?;
+        Ok((!project.schemas.is_empty()).then(|| {
+            project
+                .schemas
+                .iter()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect()
+        }))
+    };
+    let schemas: Vec<String> = match config.schemas.clone() {
+        Some(listed) => listed,
+        None => {
+            manifest_schemas()?.unwrap_or_else(|| vec!["engine/schemas".into(), "schemas".into()])
+        }
+    }
+    .into_iter()
+    .map(|s| normalize(Path::new(&s)))
+    .filter(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))))
+    .collect();
 
     // Check before writing: a bundle with a hole in it fails here.
     let mut problems = check_references(&files);

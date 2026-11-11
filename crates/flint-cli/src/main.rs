@@ -54,6 +54,12 @@ enum Commands {
         /// Output format (json or toml)
         #[arg(long, default_value = "json")]
         format: String,
+
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// Show schema information
@@ -61,8 +67,10 @@ enum Commands {
         /// Component or archetype name
         name: String,
 
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory
+        #[arg(long, action = clap::ArgAction::Append)]
         schemas: Vec<String>,
     },
 
@@ -79,8 +87,10 @@ enum Commands {
         #[arg(long)]
         watch: bool,
 
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+        /// working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
         schemas: Vec<String>,
 
         /// Hide the egui inspector panels (entity tree, inspector, stats)
@@ -195,11 +205,9 @@ fn main() -> Result<()> {
             query,
             scene,
             format,
-        } => query::run(&query, scene.as_deref(), &format),
-        Commands::Schema { name, schemas } => schema::run(
-            &name,
-            &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        ),
+            schemas,
+        } => query::run(&query, scene.as_deref(), &format, &schemas),
+        Commands::Schema { name, schemas } => schema::run(&name, &schemas),
         Commands::Validate(args) => validate::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
@@ -221,18 +229,14 @@ fn main() -> Result<()> {
             watch,
             schemas,
             no_inspector,
-        } => {
-            // Serve uses first schemas path (viewer doesn't need multi-dir yet)
-            let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
-            flint_viewer::app::run(
-                &scene,
-                watch,
-                schemas_path,
-                !no_inspector,
-                false,
-                Default::default(),
-            )
-        }
+        } => flint_viewer::app::run(
+            &scene,
+            watch,
+            &schemas,
+            !no_inspector,
+            false,
+            Default::default(),
+        ),
         Commands::Gen(args) => gen::run(args),
         Commands::GenPreview(args) => gen_preview::run(args),
         Commands::TerrainEdit(args) => terrain_edit::run(args),

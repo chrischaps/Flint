@@ -211,11 +211,16 @@ Use the CLI to inspect schema definitions:
 
 ```bash
 # Show a component schema
-flint schema door --schemas schemas
+flint schema door
 
 # Show an archetype schema
-flint schema room --schemas schemas
+flint schema room
+
+# From somewhere else, or to pick the directories yourself
+flint schema door --schemas engine/schemas --schemas schemas
 ```
+
+With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
 This outputs the component fields, types, defaults, and constraints --- useful for both humans exploring the schema and AI agents discovering what fields are available.
 
@@ -268,17 +273,35 @@ No engine recompilation needed --- schemas are loaded at runtime from the TOML f
 
 ## Game Project Schemas
 
-Games can define their own schemas that extend or override the engine's built-in schemas. The `--schemas` flag accepts multiple paths, with later paths taking priority:
+Games can define their own schemas that extend or override the engine's built-in schemas. Several directories load in order, with later ones taking priority. A game names them once in its `flint.toml`:
+
+```toml
+[project]
+schemas = ["engine/schemas", "schemas"]
+```
+
+Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+
+### Which directories load
+
+Every command that loads schemas, the viewer and the player ask one resolver, so they always agree:
+
+1. the `--schemas` flags, if any were given (repeatable on every command; they are the whole list, in the order given);
+2. else the `schemas` list in the `flint.toml` of the project the scene belongs to;
+3. else `schemas/` in the working directory, beside the scene, and one level up from the scene, whichever exist.
 
 ```bash
-# From a game project root (engine at engine/)
+# From anywhere in a game with the manifest above: no flags
+flint render scenes/arena.scene.toml -o arena.png
+
+# The flags override the manifest for one run
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/arena.scene.toml \
   --schemas engine/schemas \
   --schemas schemas
 ```
 
-In this example, `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+A directory named by a flag or by the manifest that doesn't exist is an error naming the directory and where the name came from (`schema directory not found: nope (named by --schemas)`). See [Building a Game Project](../guides/building-a-game-project.md#multi-schema-layering).
 
 ### Game Project Directory Structure
 

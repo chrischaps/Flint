@@ -20,7 +20,7 @@ cargo run --bin flint -- edit demo/phase4_runtime.scene.toml    # scene viewer w
 cargo test
 ```
 
-`flint init` starts a new game, which carries the engine inside it as a git subtree at `engine/` and layers its own schemas over the engine's (`--schemas engine/schemas --schemas schemas`). That is how every game in the family is built.
+`flint init` starts a new game, which carries the engine inside it as a git subtree at `engine/` and layers its own schemas over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`, or `--schemas engine/schemas --schemas schemas` on a command). That is how every game in the family is built.
 
 To run the web player locally (see `docs/design/web.md`):
 

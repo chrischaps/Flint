@@ -521,8 +521,9 @@ pub struct PlayerApp {
     // Scene transition lifecycle
     transition_phase: TransitionPhase,
 
-    // Schema paths preserved across transitions
-    schema_paths: Vec<String>,
+    // Schema directories and where the list came from (ADR 0114), kept for
+    // transitions and chunks
+    schema_dirs: flint_core::project::SchemaDirs,
 
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
