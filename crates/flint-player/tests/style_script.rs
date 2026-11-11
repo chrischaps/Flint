@@ -1,15 +1,90 @@
 //! Scripts setting and clearing an entity's style (#269): the Rhai calls
-//! queue commands, the player applies them to the world, and a set or a
-//! clear fires `style_changed` to scripts' `on_event`.
+//! queue commands, a host applies them to the world through the one
+//! dispatcher (#697), and a set or a clear fires `style_changed` to
+//! scripts' `on_event`.
 
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_player::{
-    apply_style_command, Easing, StyleApplied, StyleTweens, STYLE_CHANGED, STYLE_TWEEN_DONE,
-};
+use flint_player::{Easing, StyleApplied, StyleTweens, STYLE_CHANGED, STYLE_TWEEN_DONE};
 use flint_render::PostProcessConfig;
 use flint_runtime::GameEvent;
 use flint_script::context::ScriptCommand;
 use flint_script::engine::ScriptEngine;
+use flint_script::ScriptHost;
+
+/// The style commands as the player's and a capture's hosts do them: each
+/// `StyleTweens` method, from its `ScriptHost` method, with what it did.
+struct Styles<'a> {
+    world: &'a mut FlintWorld,
+    tweens: &'a mut StyleTweens,
+    config: &'a PostProcessConfig,
+    out: Vec<StyleApplied>,
+}
+
+impl ScriptHost for Styles<'_> {
+    fn set_entity_style(&mut self, entity: EntityId, style: String) {
+        let r = self.tweens.set_entity_style(self.world, entity, &style);
+        self.out.push(r);
+    }
+    fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
+        let r = self
+            .tweens
+            .set_style_param(self.world, entity, &param, value);
+        self.out.push(r);
+    }
+    fn tween_style_param(
+        &mut self,
+        entity: EntityId,
+        param: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: String,
+    ) {
+        let r = self.tweens.tween(
+            self.world,
+            self.config,
+            entity,
+            &param,
+            &target,
+            seconds,
+            &easing,
+        );
+        self.out.push(r);
+    }
+    fn clear_entity_style(&mut self, entity: EntityId) {
+        let r = self.tweens.clear_entity_style(self.world, entity);
+        self.out.push(r);
+    }
+}
+
+/// `commands` through the dispatcher to the style methods: what each did.
+fn run(
+    world: &mut FlintWorld,
+    tweens: &mut StyleTweens,
+    config: &PostProcessConfig,
+    commands: Vec<ScriptCommand>,
+) -> Vec<StyleApplied> {
+    let mut host = Styles {
+        world,
+        tweens,
+        config,
+        out: Vec::new(),
+    };
+    flint_script::host::apply_all(&mut host, commands);
+    host.out
+}
+
+/// One style command: what it did.
+fn one(
+    tweens: &mut StyleTweens,
+    world: &mut FlintWorld,
+    config: &PostProcessConfig,
+    command: ScriptCommand,
+) -> StyleApplied {
+    run(world, tweens, config, vec![command])
+        .pop()
+        .expect("a style command says what it did")
+}
 
 /// One frame as the player runs it: scripts' updates, then their commands.
 /// Returns the events the commands fired and the failures they logged.
@@ -17,8 +92,10 @@ fn frame(engine: &mut ScriptEngine, world: &mut FlintWorld) -> (Vec<GameEvent>, 
     engine.call_updates(world);
     let mut events = Vec::new();
     let mut failures = Vec::new();
-    for cmd in engine.drain_commands() {
-        match apply_style_command(world, &cmd) {
+    let commands = engine.drain_commands();
+    let mut tweens = StyleTweens::default();
+    for applied in run(world, &mut tweens, &PostProcessConfig::default(), commands) {
+        match applied {
             StyleApplied::Done(Some(e)) => events.push(e),
             StyleApplied::Failed(f) => failures.push(f),
             _ => {}
@@ -124,8 +201,9 @@ fn tween_frame(
     let step = tweens.step(world, dt);
     let (mut events, mut failures) = (step.events, step.failures);
     engine.call_updates(world);
-    for cmd in engine.drain_commands() {
-        match tweens.apply(world, config, &cmd) {
+    let commands = engine.drain_commands();
+    for applied in run(world, tweens, config, commands) {
+        match applied {
             StyleApplied::Done(Some(e)) => events.push(e),
             StyleApplied::Failed(f) => failures.push(f),
             _ => {}
@@ -254,7 +332,7 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
         easing: "linear".into(),
     };
     let apply = |tweens: &mut StyleTweens, world: &mut FlintWorld, c: ScriptCommand| {
-        tweens.apply(world, &config, &c)
+        one(tweens, world, &config, c)
     };
 
     apply(
@@ -326,21 +404,42 @@ fn a_tween_refuses_what_cannot_ease() {
         StyleApplied::Failed(f) => f,
         other => panic!("refusal expected, got {other:?}"),
     };
-    let unstyled = failed(tweens.apply(&mut world, &config, &tween("cell", 8.0.into(), "")));
-    assert!(unstyled.contains("set_entity_style first"), "{unstyled}");
-    tweens.apply(
+    let unstyled = failed(one(
+        &mut tweens,
         &mut world,
         &config,
-        &ScriptCommand::SetEntityStyle {
+        tween("cell", 8.0.into(), ""),
+    ));
+    assert!(unstyled.contains("set_entity_style first"), "{unstyled}");
+    one(
+        &mut tweens,
+        &mut world,
+        &config,
+        ScriptCommand::SetEntityStyle {
             entity: barrel,
             style: "ascii".into(),
         },
     );
-    let option = failed(tweens.apply(&mut world, &config, &tween("ramp", "blocks".into(), "")));
+    let option = failed(one(
+        &mut tweens,
+        &mut world,
+        &config,
+        tween("ramp", "blocks".into(), ""),
+    ));
     assert!(option.contains("can't ease"), "{option}");
-    let easing = failed(tweens.apply(&mut world, &config, &tween("cell", 8.0.into(), "bouncy")));
+    let easing = failed(one(
+        &mut tweens,
+        &mut world,
+        &config,
+        tween("cell", 8.0.into(), "bouncy"),
+    ));
     assert!(easing.contains("ease_in_out"), "{easing}");
-    let kind = failed(tweens.apply(&mut world, &config, &tween("cell", "big".into(), "")));
+    let kind = failed(one(
+        &mut tweens,
+        &mut world,
+        &config,
+        tween("cell", "big".into(), ""),
+    ));
     assert!(kind.contains("a number"), "{kind}");
     assert!(tweens.is_empty());
 }

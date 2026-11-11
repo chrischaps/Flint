@@ -29,7 +29,8 @@ pub use player_app::fonts::project_font_definitions;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_scripts::{
-    apply_look, CameraView, HeadlessScripts, ScriptLook, SCRIPT_SEED,
+    apply_look, CameraView, HeadlessScripts, RendererRequests, ScriptLook, Skipped,
+    PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 pub use player_app::living_props::import_of as living_import;
@@ -39,9 +40,10 @@ pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
 pub use player_app::scene_loading::{
     load_scene_grass_ground, load_user_styles, post_process_config_from_def,
 };
+pub use player_app::script_commands::apply_camera_overrides;
 pub use player_app::style_commands::{
-    apply_post_style_command, apply_style_command, is_post_style_command, Easing, SceneStyles,
-    StyleApplied, StyleTweens, TweenStep, POST_STYLE_CHANGED, STYLE_CHANGED, STYLE_TWEEN_DONE,
+    reset_post_style, set_post_style, set_post_style_param, Easing, SceneStyles, StyleApplied,
+    StyleTweens, TweenStep, POST_STYLE_CHANGED, STYLE_CHANGED, STYLE_TWEEN_DONE,
 };
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;

@@ -768,10 +768,10 @@ impl ScriptEngine {
         }
     }
 
-    /// Drain all accumulated script commands
+    /// Drain what scripts asked of the host: the queued commands, then the
+    /// frame's requests (`ScriptCallContext::take_commands`).
     pub fn drain_commands(&self) -> Vec<ScriptCommand> {
-        let mut c = crate::lock_or_recover(&self.ctx);
-        std::mem::take(&mut c.commands)
+        crate::lock_or_recover(&self.ctx).take_commands()
     }
 
     /// What scripts' `get_entity_style` and `get_style_param` ask (#372).
@@ -1588,7 +1588,7 @@ mod tests {
         let id = world.spawn("roller").unwrap();
 
         // Not set until a script calls the API.
-        assert_eq!(engine.ctx.lock().unwrap().camera_roll_override, None);
+        assert_eq!(engine.ctx.lock().unwrap().requests.camera.roll, None);
 
         let ast = engine
             .compile("fn on_update() { set_camera_roll(0.25); }")
@@ -1599,10 +1599,10 @@ mod tests {
 
         // Set after the frame, and take() clears it (one-frame override).
         assert_eq!(
-            engine.ctx.lock().unwrap().camera_roll_override.take(),
+            engine.ctx.lock().unwrap().requests.camera.roll.take(),
             Some(0.25)
         );
-        assert_eq!(engine.ctx.lock().unwrap().camera_roll_override, None);
+        assert_eq!(engine.ctx.lock().unwrap().requests.camera.roll, None);
     }
 
     #[test]

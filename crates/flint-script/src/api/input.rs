@@ -124,7 +124,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("enabled", Bool)
     .run(|call, (enabled,)| {
-        call.ctx().touch_controls_override = Some(enabled);
+        call.ctx().requests.touch_controls = Some(enabled);
     });
 
     // ── Mouse ──
@@ -192,7 +192,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("captured", Bool)
     .run(|call, (captured,)| {
-        call.ctx().cursor_captured_override = Some(captured);
+        call.ctx().requests.cursor_captured = Some(captured);
     });
 
     m.func(

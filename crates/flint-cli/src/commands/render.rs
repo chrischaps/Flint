@@ -3334,6 +3334,9 @@ struct Stage {
     scripts: Option<HeadlessScripts>,
     /// What the scripts' look was when it last went to the renderer.
     look_applied: ScriptLook,
+    /// The scene's own `[post_process]` block, which a script's `set_look`
+    /// lays a look under (#697), as the player's does.
+    scene_post: Option<flint_scene::PostProcessDef>,
     /// Whether this is a capture of a moment, which draws shallow wooze.
     moment: bool,
 }
@@ -3653,6 +3656,7 @@ impl Stage {
                 &mut world,
                 timeline,
                 (ctx.width as f32, ctx.height as f32),
+                renderer.post_process_config(),
             )
         });
         // A capture that draws particles has them from here, so what the scripts
@@ -3674,6 +3678,7 @@ impl Stage {
             let commands = scripts.tick(&mut world, 0.0, 0.0, view_of(&camera));
             scripts.apply(
                 commands,
+                &mut world,
                 living.as_mut(),
                 &mut wooze,
                 particles.as_mut(),
@@ -3724,11 +3729,81 @@ impl Stage {
             particles_said: false,
             scripts,
             look_applied: ScriptLook::default(),
+            scene_post: scene_file.post_process.clone(),
             moment,
         })
     }
 
     /// Move the clocks on to `t` and take a picture. `t` only goes forward.
+    /// Lay on the renderer what the scripts have asked of it since the last
+    /// capture, and tell them what it draws with.
+    fn lay_script_requests(&mut self, args: &RenderArgs, ctx: &HeadlessContext) -> Result<()> {
+        let Some(scripts) = &mut self.scripts else {
+            return Ok(());
+        };
+        let asked = scripts.take_renderer_requests();
+        let mut config = self.renderer.post_process_config().clone();
+        let mut changed = false;
+        if let Some(name) = &asked.look {
+            let base = match &self.scene_post {
+                Some(def) => def.clone(),
+                None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
+                    .map_err(|e| anyhow::anyhow!("set_look: {e}"))?,
+            };
+            let scope = flint_core::project::AssetScope::new(
+                self.project.clone(),
+                Path::new(&args.scene)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            );
+            match flint_render::look::resolve_in(&base, name.as_deref(), &scope) {
+                Ok(def) => {
+                    let boil = config.boil;
+                    config = post_process_config(args, Some(&def))?;
+                    // The shading boil's drawing is the clock's, not the look's
+                    config.boil = boil;
+                    // The scripts' overrides go over the new look
+                    self.look_applied = ScriptLook::default();
+                    changed = true;
+                }
+                Err(e) => tracing::warn!("set_look: {e}"),
+            }
+        }
+        if let Some(styles) = asked.styles {
+            config.styles = styles.styles;
+            changed = true;
+        }
+        changed |= scripts.tune_boil_into(&mut config);
+        let look = scripts.look();
+        if look != self.look_applied {
+            flint_player::apply_look(&mut config, &look, &self.look_applied);
+            self.look_applied = look;
+            changed = true;
+        }
+        if changed {
+            self.renderer.set_post_process_config(config);
+            self.renderer.ensure_style_resources(&ctx.device);
+            self.renderer.ensure_fxaa_resources(&ctx.device);
+            scripts.set_post_config(self.renderer.post_process_config());
+        }
+        if asked.lod_scale.is_some() || asked.draw_distance_scale.is_some() {
+            let mut lod = self.renderer.lod_settings();
+            lod.lod_scale = asked.lod_scale.unwrap_or(lod.lod_scale);
+            lod.draw_distance_scale = asked.draw_distance_scale.unwrap_or(lod.draw_distance_scale);
+            self.renderer.set_lod_settings(lod);
+        }
+        let quality = asked
+            .quality
+            .map(|q| self.renderer.set_quality(&ctx.device, &q.clamped()));
+        let lod = self.renderer.lod_settings();
+        scripts.set_renderer_state((lod.lod_scale, lod.draw_distance_scale), quality);
+        if asked.reset_style_history {
+            self.renderer.reset_style_history();
+        }
+        Ok(())
+    }
+
     fn capture(
         &mut self,
         args: &RenderArgs,
@@ -3743,21 +3818,12 @@ impl Stage {
         if let Some(posed) = &self.animation {
             posed.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
-        // The scripts' post-processing, as sticky as the player's: their boil
-        // tunes in order (#579), then the overrides.
-        if let Some(scripts) = &mut self.scripts {
-            let mut config = self.renderer.post_process_config().clone();
-            let mut changed = scripts.tune_boil_into(&mut config);
-            let look = scripts.look();
-            if look != self.look_applied {
-                flint_player::apply_look(&mut config, &look);
-                self.look_applied = look;
-                changed = true;
-            }
-            if changed {
-                self.renderer.set_post_process_config(config);
-                self.renderer.ensure_style_resources(&ctx.device);
-            }
+        // What the scripts asked of the renderer (#697), as sticky as the
+        // player's: a look first (it replaces the config, as the player's
+        // does), their whole-frame styles, boil tunes in order (#579), the
+        // overrides, then the distance and quality levers.
+        if self.scripts.is_some() {
+            self.lay_script_requests(args, ctx)?;
         }
         if let (Some(clocks), None) = (&self.wooze, args.boil_time) {
             let on = self.renderer.post_process_config().boil_on;
@@ -3854,6 +3920,7 @@ impl Stage {
             let commands = scripts.tick(&mut self.world, self.clock, dt, view_of(&self.camera));
             scripts.apply(
                 commands,
+                &mut self.world,
                 self.living.as_mut(),
                 &mut self.wooze,
                 self.particles.as_mut(),
@@ -4055,24 +4122,10 @@ fn view_of(camera: &Camera) -> CameraView {
 }
 
 /// Move the camera where the scripts' last tick asked (`set_camera_position`,
-/// `set_camera_target`, `set_camera_fov`, ...), as the player's frame does.
+/// `set_camera_target`, `set_camera_fov`, `set_camera_roll`...), with the
+/// player's own function (#697).
 fn follow_script_camera(camera: &mut Camera, scripts: &HeadlessScripts) {
-    let asked = scripts.camera();
-    if let Some([x, y, z]) = asked.position {
-        camera.position = Vec3::new(x, y, z);
-    }
-    if let Some([x, y, z]) = asked.target {
-        camera.target = Vec3::new(x, y, z);
-    }
-    if let Some(fov) = asked.fov {
-        camera.fov = fov;
-    }
-    if let Some(orthographic) = asked.orthographic {
-        camera.orthographic = orthographic;
-    }
-    if let Some(height) = asked.ortho_height {
-        camera.ortho_height = height;
-    }
+    flint_player::apply_camera_overrides(camera, &scripts.camera());
 }
 
 /// Load terrain from world entities for headless rendering (no physics).

@@ -18,7 +18,6 @@ use super::{
 };
 #[cfg(feature = "debug-hud")]
 use flint_core::components as comp;
-use flint_core::Vec3 as FlintVec3;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::GrassEntityPosition;
@@ -1106,12 +1105,6 @@ impl PlayerApp {
             perf.record_scripts(self.script.update_times());
         }
 
-        // set_time_scale: this frame's physics already has its accumulator,
-        // so the new scale starts with the next tick
-        if let Some(scale) = self.script.take_time_scale_request() {
-            self.clock.time_scale = scale;
-        }
-
         // Fixed-timestep physics + FPS camera/listener follow, against the
         // poses and joint targets the scripts just wrote
         self.tick_fixed_physics(&config, has_fps_player);
@@ -1125,6 +1118,16 @@ impl PlayerApp {
             &mut self.persistent_store,
             &self.physics,
         );
+
+        // Style tweens (#370) move on with game time, and pause with the
+        // scripts that started them. Stepped before this frame's commands,
+        // so a tween asked for now starts moving next frame, and a
+        // set_style_param this frame overrides (and stops) it.
+        self.step_style_tweens();
+
+        // What on_update asked (#697): the one dispatcher, so the camera a
+        // script set is in place for on_draw_ui and the frame
+        self.dispatch_script_commands();
 
         // Script camera overrides (chase cam etc.) + roll basis + listener
         self.apply_script_camera_overrides(has_fps_player);
@@ -1216,18 +1219,19 @@ impl PlayerApp {
 
     fn finish_frame(&mut self) {
         // Apply audio low-pass filter override from scripts
-        if let Some(cutoff) = self.script.take_audio_overrides() {
+        if let Some(cutoff) = self.script_requests.audio_lowpass.take() {
             self.audio.set_filter_cutoff(cutoff);
         }
 
         // A menu put the touch controls away, or play brought them back.
-        if let Some(enabled) = self.script.take_touch_controls_override() {
+        if let Some(enabled) = self.script_requests.touch_controls.take() {
             self.input.touch_controls_mut().set_enabled(enabled);
         }
 
         // A quality setting moved the distance levers (#56).
         if let Some(renderer) = &mut self.scene_renderer {
-            let (lod, draw) = self.script.take_lod_requests();
+            let lod = self.script_requests.lod_scale.take();
+            let draw = self.script_requests.draw_distance_scale.take();
             let mut s = renderer.lod_settings();
             if lod.is_some() || draw.is_some() {
                 s.lod_scale = lod.unwrap_or(s.lod_scale);
@@ -1241,7 +1245,7 @@ impl PlayerApp {
 
         // Apply cursor capture request from scripts (skipped while a debug
         // panel is open — the panel needs the mouse).
-        if let Some(capture) = self.script.take_cursor_capture_override() {
+        if let Some(capture) = self.script_requests.cursor_captured.take() {
             #[cfg(feature = "debug-hud")]
             let panel_open = self.debug_panels.iter().any(|p| p.is_open());
             #[cfg(not(feature = "debug-hud"))]
@@ -1460,56 +1464,8 @@ impl PlayerApp {
 
     fn apply_script_camera_overrides(&mut self, has_fps_player: bool) {
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let cam = self.script.take_camera_overrides();
-        if let Some(pos) = cam.position {
-            self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
-        }
-        if let Some(target) = cam.target {
-            self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
-        }
-        if let Some(fov) = cam.fov {
-            self.camera.fov = fov;
-        }
-        if let Some(ortho) = cam.orthographic {
-            self.camera.orthographic = ortho;
-        }
-        if let Some(height) = cam.ortho_height {
-            self.camera.ortho_height = height;
-        }
-        // Roll rebuilds the up vector from the view basis each frame it is set;
-        // when absent the up vector must reset to world up (overrides are
-        // one-frame take()s — without the reset, roll would stick after a
-        // script stops setting it, e.g. hot-reload into a compile error).
-        match cam.roll {
-            Some(roll) => {
-                let forward = flint_core::Vec3::new(
-                    self.camera.target.x - self.camera.position.x,
-                    self.camera.target.y - self.camera.position.y,
-                    self.camera.target.z - self.camera.position.z,
-                )
-                .normalized();
-                let right = forward.cross(&flint_core::Vec3::UP);
-                let right_len = (right.dot(&right)).sqrt();
-                if right_len > 1e-4 {
-                    let right = FlintVec3::new(
-                        right.x / right_len,
-                        right.y / right_len,
-                        right.z / right_len,
-                    );
-                    let base_up = right.cross(&forward);
-                    let (sin_r, cos_r) = roll.sin_cos();
-                    self.camera.up = FlintVec3::new(
-                        base_up.x * cos_r + right.x * sin_r,
-                        base_up.y * cos_r + right.y * sin_r,
-                        base_up.z * cos_r + right.z * sin_r,
-                    );
-                }
-                // Degenerate (looking straight up/down): keep the previous up.
-            }
-            None => {
-                self.camera.up = flint_core::Vec3::UP;
-            }
-        }
+        let cam = std::mem::take(&mut self.script_requests.camera);
+        super::script_commands::apply_camera_overrides(&mut self.camera, &cam);
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
         if !has_fps_player && cam.position.is_some() {
@@ -1526,15 +1482,9 @@ impl PlayerApp {
         }
     }
 
-    #[profiling::function]
-    fn drive_script_ui(&mut self) {
-        // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
-        self.script.call_draw_uis(&mut self.world);
-
-        // Style tweens (#370) move on with game time, and pause with the
-        // scripts that started them. Stepped before this frame's commands,
-        // so a tween asked for now starts moving next frame, and a
-        // set_style_param this frame overrides (and stops) it.
+    /// Move the style tweens on by this frame's game time (#370), while
+    /// scripts run.
+    fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().scripts == SystemPolicy::Run {
             let step = self
                 .style_tweens
@@ -1546,9 +1496,15 @@ impl PlayerApp {
                 tracing::warn!(target: "script", "{message}");
             }
         }
+    }
 
-        let script_commands = self.script.drain_commands();
-        self.process_script_commands(script_commands);
+    #[profiling::function]
+    fn drive_script_ui(&mut self) {
+        // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
+        self.script.call_draw_uis(&mut self.world);
+
+        // What on_draw_ui asked, through the same dispatcher
+        self.dispatch_script_commands();
 
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.script.drain_draw_commands();
@@ -1853,8 +1809,13 @@ impl PlayerApp {
     }
 
     fn drain_post_overrides(&mut self) {
-        // Drain script post-processing overrides for this frame
-        let pp = self.script.take_postprocess_overrides();
+        // Script post-processing overrides for this frame (the commands
+        // are in by now: both drains run before this)
+        let requests = &mut self.script_requests;
+        let pp = std::mem::take(&mut requests.post);
+        let fog_color = requests.fog_color.take();
+        let pp_mode = requests.render_mode.take();
+        let pp_mode_params = requests.mode_params.take();
         self.pp_vignette_override = pp.vignette;
         self.pp_bloom_override = pp.bloom;
         self.pp_exposure_override = pp.exposure;
@@ -1869,8 +1830,7 @@ impl PlayerApp {
         self.pp_dof_strength_override = pp.dof_strength;
         self.pp_dof_focus_distance_override = pp.dof_focus_distance;
         self.pp_dof_focus_range_override = pp.dof_focus_range;
-        self.pp_fog_color_override = self.script.take_fog_color_override();
-        let (pp_mode, pp_mode_params) = self.script.take_render_mode_overrides();
+        self.pp_fog_color_override = fog_color;
         self.pp_render_mode_override = pp_mode;
         self.pp_mode_params_override = pp_mode_params;
 

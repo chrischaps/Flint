@@ -1,11 +1,17 @@
-//! The style commands scripts queue (#269): `set_entity_style`,
-//! `set_style_param` and `clear_entity_style`, applied to the world by
-//! `flint_render::entity_style`. The renderer reads the world after
-//! scripts each frame, so a change shows the frame it was made.
+//! What the style commands scripts queue do (#269): `set_entity_style`,
+//! `set_style_param`, `tween_style_param` and `clear_entity_style`, applied
+//! to the world by `flint_render::entity_style` through [`StyleTweens`]. The
+//! renderer reads the world after scripts each frame, so a change shows the
+//! frame it was made.
 //!
 //! The whole-frame ones (#369), `set_post_style`, `set_post_style_param`
-//! and `reset_post_style`, edit the renderer's post-process config through
-//! `flint_render::post_style` instead.
+//! and `reset_post_style`, edit a post-process config through
+//! `flint_render::post_style` instead ([`set_post_style`] and the two after
+//! it).
+//!
+//! Both hosts call these from their `ScriptHost` methods (#697): the player
+//! (`script_commands.rs`) and a headless capture (`headless_scripts.rs`), so
+//! a style command does the same in each.
 
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -13,7 +19,6 @@ use flint_render::entity_style;
 use flint_render::post_style;
 use flint_render::PostProcessConfig;
 use flint_runtime::GameEvent;
-use flint_script::context::ScriptCommand;
 use flint_script::{EntityStyle, StyleReader};
 
 /// The event a style change fires to scripts' `on_event`, with
@@ -24,11 +29,9 @@ pub const STYLE_CHANGED: &str = "style_changed";
 /// `#{ style, enabled }`: on `set_post_style` and `reset_post_style`.
 pub const POST_STYLE_CHANGED: &str = "post_style_changed";
 
-/// What applying one command did.
+/// What applying one style command did.
 #[derive(Debug)]
 pub enum StyleApplied {
-    /// Not a style command: the caller handles it.
-    NotAStyleCommand,
     /// Applied. Setting or clearing a style hands back the `style_changed`
     /// event to fire; a param change fires none (it may come every frame).
     Done(Option<GameEvent>),
@@ -78,31 +81,6 @@ impl StyleReader for SceneStyles {
 
     fn style_param(&self, world: &FlintWorld, id: EntityId, param: &str) -> Option<toml::Value> {
         entity_style::style_setting(world, &self.config, id, param)
-    }
-}
-
-/// Apply `cmd` to `world` if it's a style command.
-pub fn apply_style_command(world: &mut FlintWorld, cmd: &ScriptCommand) -> StyleApplied {
-    match cmd {
-        ScriptCommand::SetEntityStyle { entity, style } => {
-            match entity_style::set_entity_style(world, *entity, style) {
-                Ok(()) => StyleApplied::Done(Some(changed(*entity, style))),
-                Err(e) => StyleApplied::Failed(format!("set_entity_style: {e}")),
-            }
-        }
-        ScriptCommand::SetStyleParam {
-            entity,
-            param,
-            value,
-        } => match entity_style::set_style_param(world, *entity, param, value.clone()) {
-            Ok(_) => StyleApplied::Done(None),
-            Err(e) => StyleApplied::Failed(format!("set_style_param: {e}")),
-        },
-        ScriptCommand::ClearEntityStyle { entity } => {
-            let had = entity_style::clear_entity_style(world, *entity);
-            StyleApplied::Done(had.then(|| changed(*entity, "")))
-        }
-        _ => StyleApplied::NotAStyleCommand,
     }
 }
 
@@ -246,67 +224,92 @@ impl StyleTweens {
         self.tweens.clear();
     }
 
-    /// Apply `cmd` as [`apply_style_command`] does, plus the tween command
-    /// and what the others do to running tweens. `config` is the scene's
-    /// post-process config, where a tween of a setting the entity doesn't
-    /// carry starts.
-    pub fn apply(
+    /// `set_entity_style`: draw `entity` (and its subtree) in `style`. A
+    /// running tween ends by itself once the style it eased is gone.
+    pub fn set_entity_style(
         &mut self,
         world: &mut FlintWorld,
-        config: &flint_render::PostProcessConfig,
-        cmd: &ScriptCommand,
+        entity: EntityId,
+        style: &str,
     ) -> StyleApplied {
-        match cmd {
-            ScriptCommand::TweenStyleParam {
-                entity,
-                param,
-                target,
-                seconds,
-                easing,
-            } => {
-                let Some(easing) = Easing::from_name(easing) else {
-                    return StyleApplied::Failed(format!(
-                        "tween_style_param: no easing `{easing}`; one of {}",
-                        Easing::NAMES.join(", ")
-                    ));
-                };
-                let id = *entity;
-                let (style, from, to) =
-                    match entity_style::tween_endpoints(world, id, param, target, config) {
-                        Ok(ends) => ends,
-                        Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
-                    };
-                self.stop(id, Some(param));
-                let tween = StyleTween {
-                    entity: id,
-                    style,
-                    param: param.clone(),
-                    from,
-                    to,
-                    seconds: *seconds,
-                    elapsed: 0.0,
-                    easing,
-                };
-                if !(*seconds > 0.0) {
-                    // No time to ease over: there now, done now
-                    return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
-                        Ok(_) => StyleApplied::Done(Some(tween_done(id, param))),
-                        Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
-                    };
-                }
-                self.tweens.push(tween);
-                StyleApplied::Done(None)
-            }
-            ScriptCommand::SetStyleParam { entity, param, .. } => {
-                self.stop(*entity, Some(param));
-                apply_style_command(world, cmd)
-            }
-            ScriptCommand::ClearEntityStyle { entity } => {
-                self.stop(*entity, None);
-                apply_style_command(world, cmd)
-            }
-            _ => apply_style_command(world, cmd),
+        match entity_style::set_entity_style(world, entity, style) {
+            Ok(()) => StyleApplied::Done(Some(changed(entity, style))),
+            Err(e) => StyleApplied::Failed(format!("set_entity_style: {e}")),
         }
+    }
+
+    /// `set_style_param`: one setting of the entity's style, now. A tween of
+    /// that setting stops (the script took over).
+    pub fn set_style_param(
+        &mut self,
+        world: &mut FlintWorld,
+        entity: EntityId,
+        param: &str,
+        value: toml::Value,
+    ) -> StyleApplied {
+        self.stop(entity, Some(param));
+        match entity_style::set_style_param(world, entity, param, value) {
+            Ok(_) => StyleApplied::Done(None),
+            Err(e) => StyleApplied::Failed(format!("set_style_param: {e}")),
+        }
+    }
+
+    /// `clear_entity_style`: take the entity's own style off, and stop its
+    /// tweens.
+    pub fn clear_entity_style(&mut self, world: &mut FlintWorld, entity: EntityId) -> StyleApplied {
+        self.stop(entity, None);
+        let had = entity_style::clear_entity_style(world, entity);
+        StyleApplied::Done(had.then(|| changed(entity, "")))
+    }
+
+    /// `tween_style_param`: ease `param` to `target` over `seconds` of game
+    /// time, from where it is. `config` is the scene's post-process config,
+    /// where a tween of a setting the entity doesn't carry starts. A new
+    /// tween of the same setting replaces the old one from wherever it had
+    /// got to; no time to ease over sets it now and is done now.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tween(
+        &mut self,
+        world: &mut FlintWorld,
+        config: &PostProcessConfig,
+        entity: EntityId,
+        param: &str,
+        target: &toml::Value,
+        seconds: f64,
+        easing: &str,
+    ) -> StyleApplied {
+        let Some(easing) = Easing::from_name(easing) else {
+            return StyleApplied::Failed(format!(
+                "tween_style_param: no easing `{easing}`; one of {}",
+                Easing::NAMES.join(", ")
+            ));
+        };
+        let id = entity;
+        let (style, from, to) =
+            match entity_style::tween_endpoints(world, id, param, target, config) {
+                Ok(ends) => ends,
+                Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
+            };
+        self.stop(id, Some(param));
+        let tween = StyleTween {
+            entity: id,
+            style,
+            param: param.to_string(),
+            from,
+            to,
+            seconds,
+            elapsed: 0.0,
+            easing,
+        };
+        if !(seconds > 0.0) {
+            // No time to ease over: there now, done now
+            return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
+                Ok(_) => StyleApplied::Done(Some(tween_done(id, param))),
+                Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
+            };
+        }
+        self.tweens.push(tween);
+        StyleApplied::Done(None)
     }
 
     fn stop(&mut self, entity: EntityId, param: Option<&str>) {
@@ -346,17 +349,6 @@ impl StyleTweens {
     }
 }
 
-/// Whether `cmd` is a whole-frame style command (#369), which
-/// [`apply_post_style_command`] applies to the renderer's config.
-pub fn is_post_style_command(cmd: &ScriptCommand) -> bool {
-    matches!(
-        cmd,
-        ScriptCommand::SetPostStyle { .. }
-            | ScriptCommand::SetPostStyleParam { .. }
-            | ScriptCommand::ResetPostStyle { .. }
-    )
-}
-
 fn post_changed(style: &str, config: &PostProcessConfig) -> GameEvent {
     let mut data = toml::Table::new();
     data.insert("style".into(), style.into());
@@ -367,35 +359,39 @@ fn post_changed(style: &str, config: &PostProcessConfig) -> GameEvent {
     }
 }
 
-/// Apply a whole-frame style command (#369) to `config`, the renderer's
-/// post-process config, to be handed back with `set_post_process_config`.
-/// `authored` gives the scene's own config, asked for only on a reset.
-pub fn apply_post_style_command(
+/// `set_post_style` (#369): switch a whole-frame style on or off in
+/// `config` (the renderer's, to be handed back with
+/// `set_post_process_config`), firing `post_style_changed`.
+pub fn set_post_style(config: &mut PostProcessConfig, style: &str, enabled: bool) -> StyleApplied {
+    match post_style::set_post_style(config, style, enabled) {
+        Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
+        Err(e) => StyleApplied::Failed(format!("set_post_style: {e}")),
+    }
+}
+
+/// `set_post_style_param`: one setting of a whole-frame style. Fires
+/// nothing (it may come every frame).
+pub fn set_post_style_param(
     config: &mut PostProcessConfig,
-    authored: impl FnOnce() -> PostProcessConfig,
-    cmd: &ScriptCommand,
+    style: &str,
+    param: &str,
+    value: toml::Value,
 ) -> StyleApplied {
-    match cmd {
-        ScriptCommand::SetPostStyle { style, enabled } => {
-            match post_style::set_post_style(config, style, *enabled) {
-                Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
-                Err(e) => StyleApplied::Failed(format!("set_post_style: {e}")),
-            }
-        }
-        ScriptCommand::SetPostStyleParam {
-            style,
-            param,
-            value,
-        } => match post_style::set_post_style_param(config, style, param, value.clone()) {
-            Ok(()) => StyleApplied::Done(None),
-            Err(e) => StyleApplied::Failed(format!("set_post_style_param: {e}")),
-        },
-        ScriptCommand::ResetPostStyle { style } => {
-            match post_style::reset_post_style(config, &authored(), style) {
-                Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
-                Err(e) => StyleApplied::Failed(format!("reset_post_style: {e}")),
-            }
-        }
-        _ => StyleApplied::NotAStyleCommand,
+    match post_style::set_post_style_param(config, style, param, value) {
+        Ok(()) => StyleApplied::Done(None),
+        Err(e) => StyleApplied::Failed(format!("set_post_style_param: {e}")),
+    }
+}
+
+/// `reset_post_style`: put a whole-frame style back to `authored`, the
+/// scene's own config, firing `post_style_changed`.
+pub fn reset_post_style(
+    config: &mut PostProcessConfig,
+    authored: &PostProcessConfig,
+    style: &str,
+) -> StyleApplied {
+    match post_style::reset_post_style(config, authored, style) {
+        Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
+        Err(e) => StyleApplied::Failed(format!("reset_post_style: {e}")),
     }
 }
