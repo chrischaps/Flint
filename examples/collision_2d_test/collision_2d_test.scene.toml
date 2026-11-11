@@ -10,7 +10,6 @@ ortho_height = 12.0
 
 # --- Player (dynamic, 2D mode, sprite-sized collider) ---
 [entities.player]
-archetype = "custom"
 
 [entities.player.transform]
 position = [0, 8, 0]
@@ -35,7 +34,6 @@ source = "collision_test.rhai"
 
 # --- Ground platform (static, 2D mode) ---
 [entities.ground]
-archetype = "custom"
 
 [entities.ground.transform]
 position = [0, 0, 0]
@@ -56,7 +54,6 @@ friction = 0.5
 
 # --- Obstacle (static, 2D mode) ---
 [entities.obstacle]
-archetype = "custom"
 
 [entities.obstacle.transform]
 position = [3, 2, 0]
@@ -76,7 +73,6 @@ friction = 0.5
 
 # --- Trigger zone (sensor, 2D mode) ---
 [entities.trigger_zone]
-archetype = "custom"
 
 [entities.trigger_zone.transform]
 position = [-3, 3, 0]

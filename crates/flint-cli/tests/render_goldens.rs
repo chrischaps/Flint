@@ -52,6 +52,8 @@ fn broken_user_style_prints_where_it_failed() {
             "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml",
             "--schemas",
             "schemas",
+            "--schemas",
+            "schemas/examples",
             "--no-grid",
             "--width",
             "64",

@@ -131,12 +131,12 @@ flint scene info levels/tavern.scene.toml
 The `flint-scene` crate handles serialization. Scenes are loaded into the ECS world as entities with dynamic components, and saved back to TOML with stable ordering.
 
 When a scene is loaded:
-1. The TOML is parsed into a scene structure
+1. The TOML is parsed into a scene structure. A file that is not TOML is an error that names the file as well as the line
 2. Each entity definition creates an ECS entity with a stable `EntityId`
 3. If the entity names an archetype, the archetype's `defaults` are written in first for every component the entity did not author itself
-4. Each authored component is validated against its component schema. Failures are **warnings, not errors**: the loader logs `[scene] entity '<name>' component '<comp>': <reason>` through `tracing` and keeps going. Without a tracing subscriber you will not see them, so a scene that loads is not necessarily a scene that validates. Run `flint validate` for an authoritative answer.
+4. Every entity is checked against the schemas in one pass: its archetype, each component and each field (see [Scene Diagnostics](schemas.md#scene-diagnostics)). Nothing found here stops the load: the loader logs one summary line and the first five problems through `tracing`, as warnings, and keeps going. An unknown archetype gives the entity no defaults. A scene that loads is not necessarily a scene that validates: `flint validate` prints the whole list and fails on an error.
 5. The authored data is merged field-by-field into whatever the archetype put there (see [Schemas](schemas.md))
-6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely, and validation in step 4 ran on the authored data *before* defaults landed, so a missing required field still warns even though a default will fill it.
+6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely. Step 4 knows about them: a `required` field that an archetype default or the field's own `default` will fill is not reported as missing.
 7. Parent-child relationships are established
 8. The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)
 
@@ -311,10 +311,10 @@ Attach a spline to an entity with the `spline` component:
 [entities.track_path]
 
 [entities.track_path.spline]
-source = "oval_plus.spline.toml"
+file = "oval_plus.spline.toml"
 ```
 
-The engine loads the `.spline.toml` file, samples it into a dense point array stored as the `spline_data` ECS component, and makes it available for script queries via the [Spline API](scripting.md#spline-api).
+`file` is found like any file a scene names: beside the scene, then beside each folder up to the project root. The engine loads the `.spline.toml` file, samples it into a dense point array stored as the `spline_data` ECS component, and makes it available for script queries via the [Spline API](scripting.md#spline-api).
 
 ### Spline Meshes
 
@@ -324,17 +324,17 @@ The `spline_mesh` component generates geometry by sweeping a rectangular cross-s
 [entities.road_surface]
 
 [entities.road_surface.spline_mesh]
-spline = "track_path"
+spline = "track_path"        # the entity with the `spline`
 width = 12.0
 height = 0.3
-offset_y = -0.15
-
-[entities.road_surface.material]
-base_color = [0.3, 0.3, 0.3]
+offset = [0.0, -0.15]        # [right, up] from the path, in metres
+color = [0.3, 0.3, 0.3, 1.0]
 roughness = 0.8
+texture = "textures/asphalt.png"
+texture_length = 6.0         # metres of road per texture repeat
 ```
 
-One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and materials.
+One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities. `flint schema spline_mesh` lists every field with its fallback; `spline`, `width` and `height` are required. The mesh is built in world space, so leave the entity's transform at the origin.
 
 ## Further Reading
 

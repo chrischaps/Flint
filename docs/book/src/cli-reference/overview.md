@@ -14,7 +14,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
+| `flint validate <scene>` | Check a scene against its schemas (every unknown archetype, component and field and every value of the wrong type, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format json` |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
@@ -151,9 +151,9 @@ adapter, no window) also exits 1 now, from `flint play` too.
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
 ```bash
-flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 \
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 \
   --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
-flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 --seed 2 \
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 --seed 2 \
   --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
 ```
 
@@ -318,7 +318,7 @@ This loads the engine's built-in components (transform, material, rigidbody, etc
 The player is also available as a standalone binary for distribution:
 
 ```bash
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 
 # From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
@@ -330,7 +330,7 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render examples/phase3_showcase.scene.toml --output hero.png --schemas schemas
+flint render examples/phase3_showcase.scene.toml --output hero.png
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 
@@ -714,6 +714,7 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | `--project <dir>` | The project root, instead of the one found by walking up; its `flint.toml` is the manifest read |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
 | `--fix` | Apply auto-fixes (with `validate`) |
+| `--strict` | With `validate`: a field no schema declares is an error, not a warning (`[project] strict = true` in `flint.toml` does it for every run) |
 | `--dry-run` | Preview changes without applying |
 
 ## Usage

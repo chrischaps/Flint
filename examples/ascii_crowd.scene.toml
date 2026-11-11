@@ -51,16 +51,18 @@ sun_glow = 1.6
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.6, -0.45, -0.55]
+[entities.sun.light]
+type = "directional"
+direction = [-0.6, 0.45, 0.55]
 color = [1.0, 0.80, 0.60]
 intensity = 2.6
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, 0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
 color = [0.50, 0.60, 0.90]
 intensity = 0.4
 

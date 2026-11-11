@@ -22,7 +22,7 @@ position = [0, 12, 0]
 move_speed = 6.0
 jump_force = 7.0
 [entities.player.script]
-path = "scripts/third_person_camera.rhai"
+source = "third_person_camera.rhai"
 
 # Post-processing: warm golden-hour atmosphere
 [post_process]
@@ -53,8 +53,9 @@ fog_height_origin = 0.0
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [-0.5, -0.6, -0.3]
+[entities.sun.light]
+type = "directional"
+direction = [0.5, 0.6, 0.3]
 color = [1.0, 0.92, 0.78]
 intensity = 2.2
 
@@ -62,8 +63,9 @@ intensity = 2.2
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [0.3, -0.8, 0.5]
+[entities.fill.light]
+type = "directional"
+direction = [-0.3, 0.8, -0.5]
 color = [0.6, 0.7, 0.85]
 intensity = 0.4
 
@@ -114,7 +116,6 @@ archetype = "furniture"
 position = [15, 8, -10]
 scale = [3.0, 2.2, 2.8]
 [entities.boulder_large.bounds]
-size = [1.0, 1.0, 1.0]
 [entities.boulder_large.material]
 color = [0.45, 0.42, 0.38, 1.0]
 roughness = 0.95
@@ -128,7 +129,6 @@ position = [-8, 3, 5]
 rotation = [0, 35, 0]
 scale = [1.5, 1.0, 1.2]
 [entities.rock_1.bounds]
-size = [1.0, 1.0, 1.0]
 [entities.rock_1.material]
 color = [0.5, 0.47, 0.42, 1.0]
 roughness = 0.9
@@ -141,7 +141,6 @@ position = [-6, 3, 7]
 rotation = [0, -20, 0]
 scale = [0.8, 0.6, 0.9]
 [entities.rock_2.bounds]
-size = [1.0, 1.0, 1.0]
 [entities.rock_2.material]
 color = [0.48, 0.44, 0.40, 1.0]
 roughness = 0.92
@@ -154,7 +153,6 @@ archetype = "furniture"
 position = [40, 6, 30]
 scale = [1.0, 4.0, 1.0]
 [entities.standing_stone.bounds]
-size = [1.0, 1.0, 1.0]
 [entities.standing_stone.material]
 color = [0.55, 0.52, 0.48, 1.0]
 roughness = 0.85

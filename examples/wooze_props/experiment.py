@@ -113,7 +113,7 @@ def variant_files(name: str, scene_lines: dict, vine_lines: dict) -> list:
 def render(scene: Path, out: Path, camera: list, measure: bool = False) -> None:
     extra = MEASURE if measure else []
     command = [
-        str(FLINT), "render", str(scene), "--schemas", str(ROOT / "schemas"),
+        str(FLINT), "render", str(scene), "--schemas", str(ROOT / "schemas"), "--schemas", str(ROOT / "schemas" / "examples"),
         "--time", SPAN, "--fps", FPS, "--width", str(WIDTH), "--height", str(HEIGHT),
         "--output", str(out), *camera, *extra,
     ]
@@ -183,7 +183,7 @@ def play(scene: Path, gif: Path) -> None:
         old.unlink()
     step = f"{1 / 12:.7f}"
     command = [
-        str(PLAYER), str(scene), "--schemas", str(ROOT / "schemas"), "--width", str(WIDTH),
+        str(PLAYER), str(scene), "--schemas", str(ROOT / "schemas"), "--schemas", str(ROOT / "schemas" / "examples"), "--width", str(WIDTH),
         "--height", str(HEIGHT), "--frame-step", step, "--screenshot", str(frames_dir / "f.png"),
         "--screenshot-every", step, "--exit-after", "4",
     ]

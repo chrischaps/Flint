@@ -68,7 +68,7 @@ anchor = "top_right"               # default
 `examples/input_touch.toml` is this block for the first-person demos:
 
 ```bash
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas \
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml \
   --input-config examples/input_touch.toml --touch-controls always
 ```
 

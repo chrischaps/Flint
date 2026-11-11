@@ -5,6 +5,7 @@
 //! - `ContentHash` - SHA-256 based content hashing
 //! - `Transform`, `Vec3` - Spatial types
 //! - Error types and Result alias
+//! - `diagnostic` - `Diagnostic`, the one shape for what is wrong with a scene (ADR 0115)
 //! - `vfs` - The read-only file layer every runtime read goes through
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
@@ -12,6 +13,7 @@
 pub mod bundle;
 pub mod callbacks;
 pub mod components;
+pub mod diagnostic;
 mod error;
 pub mod events;
 pub mod file_watch;
@@ -32,6 +34,7 @@ pub mod wooze;
 pub mod world_line;
 pub mod world_text;
 
+pub use diagnostic::{Diagnostic, Severity};
 pub use error::{FlintError, Result};
 pub use hash::ContentHash;
 pub use id::EntityId;

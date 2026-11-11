@@ -3,9 +3,9 @@
 # turns away from the eye; its cards keep their edges, and nothing about how it
 # moves changes. 0 is a hard edge, drawn exactly as before.
 #
-#   cargo run --bin flint -- render examples/soft_form.scene.toml --schemas schemas \
+#   cargo run --bin flint -- render examples/soft_form.scene.toml \
 #     --time 2 --sweep wooze.preset=hard,soft,softest -o soft.png
-#   cargo run --bin flint-player -- examples/soft_form.scene.toml --schemas schemas
+#   cargo run --bin flint-player -- examples/soft_form.scene.toml
 #
 # The presets are examples/wooze/{hard,soft,softest}.wooze.toml. In the player, F3's
 # Living Props panel has it under Silhouette, and a script turns it with

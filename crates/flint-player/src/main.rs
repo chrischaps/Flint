@@ -437,8 +437,8 @@ fn main() -> Result<()> {
     app.audio
         .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
-    // Preserve schema paths for scene transitions (includes auto-discovered)
-    app.set_schema_dirs(schema_dirs);
+    // The registry and its directories, kept for transitions and chunks
+    app.set_schemas(registry, schema_dirs);
 
     event_loop.run_app(&mut app)?;
     // A failed start or a screenshot that never reached the disk exits

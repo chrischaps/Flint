@@ -17,7 +17,7 @@ pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
 }
 
 /// Registry that holds all loaded component and archetype schemas
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SchemaRegistry {
     components: HashMap<String, ComponentSchema>,
     archetypes: HashMap<String, ArchetypeSchema>,

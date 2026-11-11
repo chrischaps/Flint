@@ -37,7 +37,7 @@ won't fit. Frames go outside the repo on purpose.
 One run of the player on one scene:
 
 ```bash
-flint-player examples/film/02_type.scene.toml --schemas schemas \
+flint-player examples/film/02_type.scene.toml \
   --width 3840 --height 2160 --pixels-per-point 2 \
   --frame-step 0.0166667 --screenshot out/frame.png --screenshot-every 0.0166667 \
   --exit-after 13.9917 --music-volume 0 --sfx-volume 0

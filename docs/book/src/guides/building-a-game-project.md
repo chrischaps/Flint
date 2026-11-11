@@ -94,6 +94,7 @@ id = "my_game"                            # saves, web bundle id, user files
 schemas = ["engine/schemas", "schemas"]   # in override order: a later one wins
 scene = "scenes/level_1.scene.toml"       # the scene to open by default
 input = "config/input.toml"               # the game's input config
+strict = true                             # a field no schema declares is an error
 save_version = 2                          # the version save files are written at
 ```
 
@@ -104,7 +105,7 @@ Flint finds the manifest by walking up from a scene or from the working director
 The file is checked when it is read. A value of the wrong type, or a key in `[project]` that Flint doesn't know, is an error that names the file and the key, so a typo doesn't pass silently:
 
 ```
-flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input, save_version)
+flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input, strict, save_version)
 flint.toml: `project.schemas` must be a list of strings, found a string
 ```
 
@@ -116,6 +117,7 @@ flint.toml: `project.schemas` must be a list of strings, found a string
 | `id` | `flint bundle` and `flint export web`: the bundle's name and the game's `?game=` id, when `bundle.toml` has no `name` (`--name` wins over both). The player: save data lives under the OS user directory in a folder of this name, `<config>/<id>/saves/` ([Where saves live](../concepts/scripting.md#where-saves-live)); without it the input config's `game_id` is used, and a game with neither saves inside its own folder. Input rebinds are still named for the input config's `game_id` |
 | `schemas` | Every command, the viewer and the player: the schema directories, in override order, whenever no `--schemas` flag is given. `flint bundle` writes the same list into the bundle. See [Multi-Schema Layering](#multi-schema-layering) |
 | `scene` | `flint play` and `flint-player` with no scene argument open it. `flint bundle` starts the bundle there when `bundle.toml` has no `scene` |
+| `strict` | `flint validate`: `true` makes a field that its component's schema doesn't declare an error (`unknown-field`), where it is a warning otherwise; the same as `--strict` on one run. It changes what `flint validate` fails on, nothing about how a scene loads or plays. See [Scene Diagnostics](../concepts/schemas.md#unknown-fields-and-strict) |
 | `input` | The player: the game layer of the [input config](../concepts/physics-and-runtime.md#config-layering), unless the scene names its own with `[scene] input_config` |
 | `save_version` | The player: a whole number, 0 when left out. A save file at a lower version is handed to the scripts' `on_persist_migrate(from)` before `on_init`, then stamped with this one ([Versions and migration](../concepts/scripting.md#versions-and-migration)) |
 
@@ -140,6 +142,8 @@ A game loads two schema directories, in order, with the later one overriding the
 2. **Game schemas** from `schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
 
 If both directories define a component with the same name, the game's version takes priority.
+
+The engine's set has no room-builder vocabulary in it: `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room` and `door` are the layer the engine's example scenes are written in, `engine/schemas/examples`. A game that wants them lists that directory between the two (`["engine/schemas", "engine/schemas/examples", "schemas"]`); most games define archetypes of their own instead. See [Schemas: The Examples Layer](../concepts/schemas.md#the-examples-layer).
 
 Say so once, in the manifest:
 

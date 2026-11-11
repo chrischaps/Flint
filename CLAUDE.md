@@ -16,7 +16,7 @@ cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, g
                                #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
 cargo run --bin flint -- <cmd> # Run CLI
 cargo run --bin flint -- play examples/phase4_runtime.scene.toml  # Play a scene
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas  # Standalone player
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)
 cargo run --bin flint -- export web examples/  # any game as a folder a static server plays (#106):
                                #   examples/dist/web = player + games/<id>/ bundles + games.json;
                                #   --out, --player <trunk dist> (else trunk builds it), --meta k=v, --clean
@@ -43,8 +43,8 @@ Flint uses an **edit -> validate -> play** loop:
 
 1. **`flint render`** -- Headless scene-to-PNG snapshot. Primary validation tool for AI agents.
    ```bash
-   flint render levels/demo.scene.toml --output test.png --schemas schemas --width 1280 --height 720
-   flint render levels/demo.scene.toml --output test.png --schemas schemas \
+   flint render levels/demo.scene.toml --output test.png --width 1280 --height 720
+   flint render levels/demo.scene.toml --output test.png \
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
    ```
    Every flag: `flint render --help`, `--list-styles --json`, `--look help`, and `crates/flint-cli/CLAUDE.md`.
@@ -154,13 +154,14 @@ A bullet below that names a feature in a line or two has its full text in one of
 - Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
 - `flint_core::toml_util` -- use `toml_f64`/`toml_f32`/`toml_vec3`/etc. instead of inline coercion patterns
-- Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes
+- `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room`, `door` (and the `door` component) are not the engine's: they are the examples' layer, `schemas/examples/` (#681). The root `flint.toml` lists it after `schemas/`, so every scene in this checkout resolves them with no flag; a `--schemas` flag is the whole list, so `--schemas schemas` alone leaves them out (add `--schemas schemas/examples`), and a game has none of them unless its own `flint.toml` lists `engine/schemas/examples`. In an example, never put `furniture` on a non-visual entity: it includes `bounds` and draws a teal box. The renderer still colours a `bounds` box by these names (`default_archetype_visuals`)
+- Every `flint_core::components` constant has a schema in `schemas/components/`, and every schema a reader: `cargo test -p flint-schema --test engine_schemas` holds it (ADR 0115; what it checks: `crates/flint-core/CLAUDE.md`). A schema field's `default` is written into the component at load, so give one only where the reader falls back to that same value
 - Per-frame GPU allocations are the renderer's CPU cliff: never `create_buffer`/`create_bind_group` inside a per-entity loop; what a draw needs per entity comes from a cache (`crates/flint-render/CLAUDE.md`)
 - One submission a frame (#139): `SceneRenderer::encode_to` records the whole frame (grass, shadows, scene, post-process, depth upscale, world lines) into the caller's encoder, the player adds its HUD and the GPU timer's resolve (`encode_gpu_timings`), submits once, then calls `frame_submitted` (grass and timer read-backs). `render_to` is that with its own submit.
 - CI (`.github/workflows/ci.yml`, #757) runs `rustfmt` (the tree is formatted; an unformatted file fails the PR and `issue.sh land`), `clippy (native)` (`cargo clippy --all-targets`: warnings pass, a deny-level lint or code that doesn't compile fails), the wasm and headless checks, and the GPU tests on WARP, which don't block while they fail on main (`continue-on-error`). No unit tests run in CI yet
 - CI's `wasm32 check` (`.github/workflows/ci.yml`) builds `flint-player` and every crate it links for `wasm32-unknown-unknown` on each PR. Run it locally with `bash scripts/wasm-check.sh` before pushing runtime-crate changes. It also denies `Instant::now`/`SystemTime::now` and their `elapsed()`, which compile on wasm but panic there: runtime code uses the `web-time` crate (a workspace dep: `web-time = { workspace = true }`), which #100 moved every older site to. Desktop-only deps in a runtime crate go under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`, as in flint-player's Cargo.toml (docs/design/web.md)
 - `FlintWorld::spawn` ids come from a process-wide counter and scenes load from a `HashMap`, so entity ids differ run to run -- derive anything reproducible (seeds) from entity **names**, never ids
-- Lights are `[entities.x.light]` with a `type`, and a directional `direction` points *toward* the light. No system reads a `directional_light` table and `flint validate` passes it, so a scene with only that gets `default_scene_lights` and no warning (several benches do).
+- Lights are `[entities.x.light]` with a `type`, and a directional `direction` points *toward* the light. `flint schema light` lists the fields. No system reads a `directional_light` table and `flint validate` still passes it (the unknown-component diagnostic is #683), so a scene with only that gets `default_scene_lights` and no warning: the frozen fixtures under `tests/fixtures/scenes/` still do, on purpose, and the examples no longer do (#681).
 
 ## Documentation Pipeline
 
@@ -173,7 +174,8 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 ## Project Structure
 
 - `crates/` -- All workspace crates
-- `schemas/` -- Engine component and archetype TOML definitions
+- `schemas/` -- Engine component and archetype TOML definitions; `schemas/examples/` -- the room-builder layer the examples are written in, not part of the engine's set
+- `flint.toml` -- the checkout as a project: `schemas = ["schemas", "schemas/examples"]`, read by everything run from this tree (a game with the engine as a subtree never reads it)
 - `styles/` -- Style guide TOML definitions for AI generation
 - `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
 - `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with their assets. No golden may load from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test

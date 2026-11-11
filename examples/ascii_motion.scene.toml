@@ -8,14 +8,14 @@
 # headless (#345), the same orbit as the script below, glyphs counted from
 # the style's own grid:
 #
-#   flint render examples/ascii_motion.scene.toml --schemas schemas --no-grid \
+#   flint render examples/ascii_motion.scene.toml --no-grid \
 #     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats
 #
 # and again with --style ascii:temporal=off. Add --style ascii:edges=0 to
 # leave out the edge glyphs (#267), which the history doesn't hold yet.
 # The player's capture, with the script, is the other way:
 #
-#   cargo run --bin flint-player -- examples/ascii_motion.scene.toml --schemas schemas \
+#   cargo run --bin flint-player -- examples/ascii_motion.scene.toml \
 #     --frame-step 0.0166667 --screenshot out/on.png --screenshot-every 0.0166667 --exit-after 3
 #
 # with tools/ascii_flips.py counting glyphs from the PNGs.
@@ -74,16 +74,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.75, -0.38, 0.35]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
 color = [1.0, 0.86, 0.66]
 intensity = 2.4
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, -0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.35
 

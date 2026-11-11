@@ -6,7 +6,7 @@
 # the field's beat, with their shadows, and the set on the right shows what they look
 # like pasted in. The figure is imported and skinned, and rides the same field.
 #
-#   cargo run --release -p flint-player -- examples/shallow_wooze.scene.toml --schemas schemas
+#   cargo run --release -p flint-player -- examples/shallow_wooze.scene.toml
 #
 # A box at the far left of the clearing is a calm zone, where the field's amplitude
 # drops to a fifth: the crate inside it barely moves, through no setting of its own.
@@ -59,16 +59,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.62, -0.52, -0.45]
+[entities.sun.light]
+type = "directional"
+direction = [-0.62, 0.52, 0.45]
 color = [1.0, 0.86, 0.66]
 intensity = 2.6
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, 0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.4
 

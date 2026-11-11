@@ -9,7 +9,7 @@ Every image here was made with `flint render` from the commands beside it, at 12
 The frame is `examples/ascii_entities.scene.toml`, a meadow clearing with a bench, a skinned YBot, a barrel, and a crate with a lantern on it. The camera is the same for each:
 
 ```bash
-CAM="--no-grid --target 0.7,0.7,4.2 --distance 5.2 --yaw 29 --pitch 10 --width 1280 --height 720 --schemas schemas"
+CAM="--no-grid --target 0.7,0.7,4.2 --distance 5.2 --yaw 29 --pitch 10 --width 1280 --height 720"
 ```
 
 | | |

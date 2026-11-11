@@ -4,8 +4,8 @@
 # On a desktop the insets are zero and the prompt says ENTER; a phone held
 # sideways can be stood in for:
 #
-#   cargo run --bin flint-player -- examples/safe_area_hud.scene.toml --schemas schemas
-#   cargo run --bin flint-player -- examples/safe_area_hud.scene.toml --schemas schemas \
+#   cargo run --bin flint-player -- examples/safe_area_hud.scene.toml
+#   cargo run --bin flint-player -- examples/safe_area_hud.scene.toml \
 #     --touch-device --safe-area 47,0,47,21
 
 [scene]

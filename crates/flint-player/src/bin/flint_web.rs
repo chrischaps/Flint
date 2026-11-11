@@ -209,6 +209,9 @@ mod web {
         scene_file: SceneFile,
         scene_path: String,
         schemas: flint_core::project::SchemaDirs,
+        /// What the scene was loaded with: the compiled-in engine schemas
+        /// under the bundle's. The player keeps it for transitions (#683).
+        registry: SchemaRegistry,
     }
 
     async fn start() -> Result<(), String> {
@@ -278,7 +281,7 @@ mod web {
         }
         app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);
-        app.set_schema_dirs(loaded.schemas);
+        app.set_schemas(loaded.registry, loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
@@ -340,6 +343,7 @@ mod web {
                 scene_file,
                 scene_path,
                 schemas,
+                registry,
             },
             source,
             manifest.late,
@@ -358,6 +362,7 @@ mod web {
             scene_file,
             scene_path: url.to_string(),
             schemas: Default::default(),
+            registry,
         })
     }
 

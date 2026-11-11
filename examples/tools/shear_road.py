@@ -75,7 +75,7 @@ def main():
         w("#  the bend breathing right to left and back.")
     w("#")
     w("#  Render:  cargo run --bin flint -- render examples/shear_road.scene.toml \\")
-    w("#             --output renders/shear_road.png --schemas schemas --no-grid")
+    w("#             --output renders/shear_road.png --no-grid")
     if not yaw:
         w("#  Moving:  ... --scripts --time 0..10.5 --fps 12 -o renders/shear_road.gif")
     w("#  Play:    cargo run --bin flint -- play examples/shear_road.scene.toml")

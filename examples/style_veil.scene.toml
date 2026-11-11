@@ -49,18 +49,20 @@ sun_glow = 0.2
 [entities.moon]
 [entities.moon.transform]
 position = [0, 30, 0]
-[entities.moon.directional_light]
-direction = [-0.5, -0.6, -0.6]
+[entities.moon.light]
+type = "directional"
+direction = [0.5, 0.6, 0.6]
 color = [0.55, 0.62, 0.85]
 intensity = 0.5
 
 [entities.firelight]
 [entities.firelight.transform]
 position = [0, 0.6, 0.1]
-[entities.firelight.point_light]
+[entities.firelight.light]
+type = "point"
 color = [1.0, 0.62, 0.30]
 intensity = 5.0
-radius = 7.0
+range = 7.0
 
 [entities.ground]
 archetype = "furniture"

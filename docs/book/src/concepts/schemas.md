@@ -4,10 +4,10 @@ Schemas define the structure of your game world. They specify what components ex
 
 ## Component Schemas
 
-A component schema defines a reusable data type. Components live in `schemas/components/`:
+A component schema defines a reusable data type. Components live in the `components/` folder of a schema directory. This one is from the layer the engine's examples are written in ([below](#the-examples-layer)):
 
 ```toml
-# schemas/components/door.toml
+# schemas/examples/components/door.toml
 [component.door]
 description = "A door that can connect spaces"
 
@@ -45,19 +45,120 @@ Fields can include validation constraints:
 
 ```toml
 open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
-required_key = { type = "entity_ref", optional = true }
+style = { type = "enum", values = ["hinged", "sliding"], required = true }
 ```
 
-- `default` --- value used when not explicitly set. Defaults are consumed in two places: `flint entity create` writes them into the new entity, and the scene loader fills them into any component the entity lists but leaves partially specified (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
+- `default` --- value used when not explicitly set. The scene loader fills them into any component the entity lists but leaves partially specified (`flint entity create` writes only the fields you give it, and leaves the rest to the loader) (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
 - `min` / `max` --- numeric range bounds
-- `optional` --- whether the field can be omitted (defaults to false)
+- `required` --- the field must be written (defaults to false). An archetype default or the field's own `default` counts as written
 - `values` --- valid options for enum types
 
-Validation runs in two modes. At scene load it is advisory: a field that fails its constraints is logged as a warning and the scene still loads. Under `flint validate` it is authoritative and the command reports every failure.
+A component schema with a name and **no fields** is open: the component is known and nothing in its table is checked. See [a component only scripts read](#a-component-only-scripts-read).
+
+## Scene Diagnostics
+
+Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint.
+
+```
+$ flint validate scenes/hall.scene.toml
+scenes/hall.scene.toml: 4 errors, 1 warning
+
+  error[unknown-archetype] entity 'hero' field 'archetype': no archetype named `playr`, so the entity gets no defaults
+      hint: did you mean `player`?
+  error[bad-type] entity 'hero' transform.scale: expected vec3, got string
+  error[unknown-component] entity 'lever' component 'interactible': no component named `interactible`, so nothing checks it
+      hint: did you mean `interactable`?
+  error[bad-enum-value] entity 'pond' water_body.shape: "lak" is not a value of `shape`
+      hint: did you mean `lake`? allowed values: lake, river
+  warning[unknown-field] entity 'hero' transform.postion: `transform` has no field `postion`
+      hint: did you mean `position`?
+```
+
+The same pass runs in two places:
+
+- **`flint validate <scene>`** prints the whole list, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`) beside the constraint `violations`. It needs no constraint files.
+- **Every scene load** (`flint play`, `flint-player`, `flint render`, the viewer, a scene transition, a `load_chunk`) logs one summary line and the first five, as warnings, and carries on. A scene with mistakes still plays; `flint validate` is the gate to run before playing.
+
+```
+WARN scenes/hall.scene.toml: 4 errors, 1 warning (the full list: flint validate scenes/hall.scene.toml)
+WARN   error[unknown-archetype] entity 'hero' field 'archetype': no archetype named `playr`, so the entity gets no defaults (did you mean `player`?)
+```
+
+### Diagnostic codes
+
+The codes are stable: a code keeps its meaning, and a new kind of problem gets a new code.
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `unknown-field` | warning | a component table has a field its schema does not declare; the hint is the nearest declared field |
+| `bad-type` | error | a value of the wrong type for its field: a string where the schema says `f32`, a `vec3` of two numbers, a component that is not a table |
+| `bad-enum-value` | error | a string that is none of an enum field's `values`; the hint lists them |
+| `out-of-range` | error | a number below the field's `min` or above its `max` |
+| `missing-field` | error | a `required` field that neither the entity, its archetype's defaults nor the field's `default` supplies |
+| `unknown-component` | error | a component table that no loaded schema directory declares; the hint is the nearest component name |
+| `unknown-archetype` | error | an `archetype = "..."` that no loaded schema directory declares, so the entity gets no defaults |
+| `toml-parse` | error | the file is not valid TOML, or not a scene; the message has the line and column |
+| `file-unreadable` | error | the scene file could not be read |
+| `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
+| `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
+
+A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
+
+### Unknown fields and `strict`
+
+An unknown field is a warning because games add fields to components and read them from scripts. To make it an error:
+
+```bash
+flint validate scenes/hall.scene.toml --strict     # for one run
+```
+
+```toml
+# flint.toml: for every run in this project
+[project]
+strict = true
+```
+
+To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field.
+
+### A component only scripts read
+
+A component that a scene writes and only a script reads still needs to be declared, or it is an `unknown-component`. Declare it by name in the game's schema directory. With fields it is checked; with none it is open:
+
+```toml
+# schemas/components/inventory.toml
+[component.inventory]
+description = "Read by scripts/inventory.rhai"
+```
+
+A component a script attaches at run time, which no scene file writes, is never seen by this pass and needs no schema.
+
+Not checked yet: that an entity a field names exists, that an asset a field names is there, and the scene-level tables (`[camera]`, `[environment]`, `[post_process]` has its own check). The readers in the engine that fall back to a default on a wrong value are being moved to report through the same list.
 
 ## Built-in Components
 
-Flint ships with several built-in component schemas:
+Every component the engine reads has a schema in `schemas/components/`, and `flint schema <name>` prints it with each field's type, default and meaning. A test (`cargo test -p flint-schema --test engine_schemas`) keeps the two in step: every component constant in `flint_core::components` has a schema, and every schema is read by engine code. A few of them:
+
+### Model and Light
+
+The two components nearly every scene uses. `flint schema model` and `flint schema light` print the full text; [Lighting](lighting.md#the-light-component) has the light fields as a table.
+
+```toml
+# schemas/components/model.toml (descriptions cut short)
+[component.model.fields]
+asset = { type = "string", required = true }   # `barrel` is models/barrel.glb
+runtime = { type = "bool" }                     # set by code that uploads a mesh
+
+# schemas/components/light.toml
+[component.light.fields]
+type = { type = "enum", values = ["directional", "point", "spot"], default = "directional" }
+color = { type = "vec3", default = [1.0, 1.0, 1.0] }
+intensity = { type = "f32", default = 1.0 }
+direction = { type = "vec3" }                   # directional: TOWARD the light
+# range, radius, source_radius, inner_angle, outer_angle, angular_size,
+# volumetric_intensity, volumetric_color
+```
+
+Most light fields carry no `default`. A default is written into the component when a scene loads, and some of these mean something by being absent: `range` falls back to the older `radius`, and `volumetric_color` follows `color`. Their fallbacks are in the field descriptions. `spline` and `spline_mesh` have schemas too ([Scenes: Splines](scenes.md#splines)).
 
 ### Transform
 
@@ -82,19 +183,6 @@ description = "Axis-aligned bounding box"
 [component.bounds.fields]
 min = { type = "vec3", default = [0, 0, 0] }
 max = { type = "vec3", default = [10, 4, 10] }
-```
-
-### Door
-
-```toml
-# schemas/components/door.toml
-[component.door]
-description = "A door that can connect spaces"
-
-[component.door.fields]
-style = { type = "enum", values = ["hinged", "sliding", "rotating"], default = "hinged" }
-locked = { type = "bool", default = false }
-open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 ```
 
 ### Material
@@ -176,34 +264,63 @@ The sprite component is used for billboard sprites that always face the camera. 
 
 ## Archetype Schemas
 
-Archetypes bundle components together with defaults. They live in `schemas/archetypes/`:
+Archetypes bundle components together with defaults. They live in the `archetypes/` folder of a schema directory:
 
 ```toml
-# schemas/archetypes/room.toml
-[archetype.room]
-description = "A room or enclosed space"
+# schemas/examples/archetypes/wall.toml
+[archetype.wall]
+description = "A solid wall segment"
 components = ["transform", "bounds"]
 
-[archetype.room.defaults.bounds]
-min = [0, 0, 0]
-max = [10, 4, 10]
+[archetype.wall.defaults.bounds]
+min = [-5, 0, -0.15]
+max = [5, 4, 0.15]
 ```
 
 The `components` array lists which component schemas an entity of this archetype requires. The `defaults` section provides values used when a component field isn't explicitly set.
 
 ### Built-in Archetypes
 
+The engine's own set, `schemas/archetypes/`:
+
 | Archetype | Components | Description |
 |-----------|------------|-------------|
-| `room` | transform, bounds | An enclosed space |
-| `door` | transform, door | A door entity |
-| `furniture` | transform, bounds | A piece of furniture |
 | `character` | transform | A character or NPC |
-| `wall` | transform, bounds, material | A wall surface |
-| `floor` | transform, bounds, material | A floor surface |
-| `ceiling` | transform, bounds, material | A ceiling surface |
-| `pillar` | transform, bounds, material | A structural pillar |
-| `player` | transform, character_controller, rigidbody, collider | Player-controlled entity |
+| `player` | transform, collider, rigidbody, character_controller, audio_listener | Player-controlled character with physics and a first-person camera |
+| `sprite` | transform, sprite | A flat 2D sprite |
+| `animated_sprite` | transform, sprite, sprite_animator | A 2D sprite with sheet animation |
+| `terrain` | transform, terrain | Heightmap terrain |
+
+### The Examples Layer
+
+The scenes under `examples/` are written in a room-builder vocabulary that is not part of the engine's set. It is a schema directory of its own, `schemas/examples/`:
+
+| Archetype | Components | Description |
+|-----------|------------|-------------|
+| `room` | transform | A parent that groups a room's entities |
+| `door` | transform, door, audio_trigger | A door |
+| `furniture` | transform, bounds | A box, 1 m a side by default |
+| `wall` | transform, bounds | A wall segment |
+| `floor` | transform, bounds | A floor slab |
+| `ceiling` | transform, bounds | A ceiling panel |
+| `pillar` | transform, bounds | A column |
+
+with the `door` component and three constraints about rooms and doors (`schemas/examples/constraints/basics.toml`). The Flint checkout's own `flint.toml` lists the layer after the engine's set, so every example resolves these names with no flag:
+
+```toml
+# flint.toml at the root of the Flint repository
+[project]
+schemas = ["schemas", "schemas/examples"]
+```
+
+A game gets none of them by default: `flint schema furniture` in a game finds nothing, and an entity with `archetype = "furniture"` takes no defaults from it and is an `unknown-archetype` error under `flint validate`. A game that wants the vocabulary (to follow [Your First Project](../getting-started/first-project.md), or to run an example scene of the engine's from inside the game) lists the layer between the engine's set and its own:
+
+```toml
+[project]
+schemas = ["engine/schemas", "engine/schemas/examples", "schemas"]
+```
+
+Most games are better served by archetypes of their own. Every archetype with `bounds` draws a box, so `furniture` on an entity with no shape (a light, a script holder) draws a 1 m box where nothing was meant.
 
 ## Introspecting Schemas
 
@@ -211,13 +328,13 @@ Use the CLI to inspect schema definitions:
 
 ```bash
 # Show a component schema
-flint schema door
+flint schema light
 
 # Show an archetype schema
-flint schema room
+flint schema player
 
 # From somewhere else, or to pick the directories yourself
-flint schema door --schemas engine/schemas --schemas schemas
+flint schema light --schemas engine/schemas --schemas schemas
 ```
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).

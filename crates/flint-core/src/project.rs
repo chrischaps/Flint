@@ -29,6 +29,7 @@
 //! schemas = ["engine/schemas", "schemas"]   # in override order, later wins
 //! scene = "scenes/main.scene.toml"          # the scene to open by default
 //! input = "config/input.toml"
+//! strict = true                             # an undeclared component field is an error
 //! save_version = 2                          # the version saves are written at
 //! ```
 //!
@@ -78,7 +79,7 @@ pub use root::guessed_root;
 pub const MANIFEST_FILE: &str = "flint.toml";
 
 /// The keys `[project]` may hold.
-const PROJECT_KEYS: [&str; 5] = ["id", "schemas", "scene", "input", "save_version"];
+const PROJECT_KEYS: [&str; 6] = ["id", "schemas", "scene", "input", "strict", "save_version"];
 
 /// Why a directory was taken as the project root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +138,7 @@ pub enum ProjectError {
 
     /// `[project]` holds a key this version doesn't know.
     #[error(
-        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, save_version)",
+        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version)",
         file.display()
     )]
     UnknownKey { file: PathBuf, key: String },
@@ -164,6 +165,9 @@ pub struct Project {
     pub scene: Option<PathBuf>,
     /// `[project] input`: the input config, relative to the root.
     pub input: Option<PathBuf>,
+    /// `[project] strict`: a field no schema declares is an error, not a
+    /// warning (ADR 0115), as `flint validate --strict` makes it for a run.
+    pub strict: bool,
     /// `[project] save_version`: the version the game's save data is at
     /// (#726). A save file at a lower one is handed to the scripts'
     /// `on_persist_migrate(from)`. 0 when the manifest doesn't say.
@@ -271,6 +275,7 @@ impl Project {
             schemas: Vec::new(),
             scene: None,
             input: None,
+            strict: false,
             save_version: 0,
         }
     }
@@ -335,6 +340,11 @@ impl Project {
         self.id = string("id")?.map(str::to_string);
         self.scene = string("scene")?.map(PathBuf::from);
         self.input = string("input")?.map(PathBuf::from);
+        match table.get("strict") {
+            None => {}
+            Some(toml::Value::Boolean(strict)) => self.strict = *strict,
+            Some(other) => return Err(wrong("project.strict".into(), "true or false", other)),
+        }
         self.save_version = match table.get("save_version") {
             None => 0,
             Some(toml::Value::Integer(v)) if *v >= 0 => *v,
@@ -830,6 +840,7 @@ id = "float"
 schemas = ["engine/schemas", "schemas"]
 scene = "scenes/main.scene.toml"
 input = "config/input.toml"
+strict = true
 "#;
 
     #[test]
@@ -853,6 +864,7 @@ input = "config/input.toml"
                     Some(Path::new("scenes/main.scene.toml"))
                 );
                 assert_eq!(p.input.as_deref(), Some(Path::new("config/input.toml")));
+                assert!(p.strict, "[project] strict (ADR 0115)");
                 assert_eq!(p.manifest_path(), Path::new("game").join("flint.toml"));
                 assert_eq!(
                     p.schema_dirs(),
@@ -1030,7 +1042,7 @@ save_version = 1.5
 
     #[test]
     fn a_wrong_type_names_the_file_and_the_key() {
-        let cases: [(&str, &str, &str, &str); 7] = [
+        let cases: [(&str, &str, &str, &str); 8] = [
             (
                 "[project]\nid = 7\n",
                 "project.id",
@@ -1060,6 +1072,12 @@ save_version = 1.5
                 "project.input",
                 "a string",
                 "a list",
+            ),
+            (
+                "[project]\nstrict = \"yes\"\n",
+                "project.strict",
+                "true or false",
+                "a string",
             ),
             ("project = \"float\"\n", "project", "a table", "a string"),
             (

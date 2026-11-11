@@ -1,0 +1,6 @@
+[component.model]
+description = "Draws a 3D model on the entity, at its transform. `asset` names it: a mesh a `flint gen` spec or the asset catalog provides, else the file `models/<asset>.glb` (then `.gltf`) found by the project's one asset search (`flint asset where models <name> --scene <scene>` shows where). A model with several nodes is expanded into one child entity per node at load, and the parent's `model` is then removed; a skinned model stays on its entity and plays through `animator`. Related: `material` and `material_overrides` recolour it, `lod` caps its draw distance, `visibility` hides it, `living_prop` makes it one of a varying lineage."
+
+[component.model.fields]
+asset = { type = "string", required = true, description = "The model's name, without folder or extension (`barrel` is `models/barrel.glb`). May carry subfolders (`props/barrel`). An entity whose model is not found draws nothing and the load warns with the paths tried." }
+runtime = { type = "bool", description = "True when `asset` names a mesh that code uploads while the game runs (a player extension's `attach_mesh`, a living prop), so no file is looked for. The engine sets it; a scene rarely writes it. Unset: false." }
