@@ -3,7 +3,8 @@
 use anyhow::Result;
 use clap::Subcommand;
 use flint_asset::{
-    AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, Project, ResolutionStrategy,
+    AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, Project, ProjectStore,
+    ResolutionStrategy,
 };
 use flint_asset_gen::provider::{
     AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams,
@@ -347,7 +348,7 @@ fn run_generate(
     println!("  Prompt: {}", prompt);
 
     // Generate
-    let project = Project::current();
+    let project = Project::current()?;
     let out_dir = match output_dir.as_deref() {
         Some(d) => std::path::PathBuf::from(d),
         None => project.generated_dir(),
@@ -396,7 +397,7 @@ fn run_generate(
 fn run_manifest(output: &str, assets_dir: Option<&str>) -> Result<()> {
     let assets_dir = match assets_dir {
         Some(d) => std::path::PathBuf::from(d),
-        None => Project::current().catalog_dir(),
+        None => Project::current()?.catalog_dir(),
     };
     let manifest = flint_asset_gen::manifest::BuildManifest::from_assets_directory(&assets_dir)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -428,7 +429,7 @@ fn run_regenerate(
     output_dir: Option<String>,
 ) -> Result<()> {
     // Look up the existing asset in catalog for its metadata
-    let catalog = AssetCatalog::load_from_directory(Project::current().catalog_dir())?;
+    let catalog = AssetCatalog::load_from_directory(Project::current()?.catalog_dir())?;
     let meta = catalog
         .get(name)
         .ok_or_else(|| anyhow::anyhow!("Asset '{}' not found in catalog", name))?;
@@ -486,7 +487,7 @@ fn run_regenerate(
 }
 
 fn run_job(cmd: JobCommands) -> Result<()> {
-    let store = JobStore::default_store();
+    let store = JobStore::default_store()?;
 
     match cmd {
         JobCommands::Status { id } => {
@@ -606,7 +607,7 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
     }
 
     // Store in the project's content-addressed storage (#179)
-    let project = Project::current();
+    let project = Project::current()?;
     let store = ContentStore::new(project.store_dir());
     store.store(source_path)?;
 
@@ -623,7 +624,7 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
 }
 
 fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &str) -> Result<()> {
-    let catalog_dir = Project::current().catalog_dir();
+    let catalog_dir = Project::current()?.catalog_dir();
     let catalog = AssetCatalog::load_from_directory(&catalog_dir)?;
 
     if catalog.is_empty() {
@@ -674,7 +675,7 @@ fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &st
 }
 
 fn run_info(name: &str) -> Result<()> {
-    let catalog = AssetCatalog::load_from_directory(Project::current().catalog_dir())?;
+    let catalog = AssetCatalog::load_from_directory(Project::current()?.catalog_dir())?;
 
     match catalog.get(name) {
         Some(meta) => {
@@ -730,7 +731,7 @@ fn run_resolve(
             None => None,
         };
 
-        let generated = Project::for_path(Path::new(scene_path))
+        let generated = Project::for_path(Path::new(scene_path))?
             .generated_dir()
             .display()
             .to_string();
@@ -760,7 +761,7 @@ fn run_resolve(
 
     // The scene's project's catalog, not the working directory's (#179).
     let catalog =
-        AssetCatalog::load_from_directory(Project::for_path(Path::new(scene_path)).catalog_dir())?;
+        AssetCatalog::load_from_directory(Project::for_path(Path::new(scene_path))?.catalog_dir())?;
     let resolver = AssetResolver::new(strategy);
 
     // Load and scan scene for asset references

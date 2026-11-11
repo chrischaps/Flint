@@ -34,6 +34,22 @@ to do.
 
 ## 2026-11-10
 
+### `flint.toml` gains a `[project]` table, and a bad one is refused (#706)
+**What changed.** The `flint.toml` at a project's root, until now only a
+marker, may hold `[project]` with `id` (a string), `schemas` (a list of
+folders relative to the root, in override order), `scene` and `input` (paths
+relative to the root). Every key is optional, an empty file is still a valid
+marker, and other tables are left alone. The values are parsed and checked
+and not yet acted on: `--schemas` flags, the scene argument and the input
+config work as before. The commands that look for a project root (`flint
+asset ...`, `flint gen --register`, anything given `--project <dir>`) now stop
+with an error naming the file and the key when `[project]` holds a value of
+the wrong type or a key Flint doesn't know.
+**What to do.** Nothing, unless your `flint.toml` already has a `[project]`
+table with other keys in it: move those to a table of another name. You can
+add `id` and `schemas = ["engine/schemas", "schemas"]` now; later releases
+will read them in place of the `--schemas` flags (ADR 0114).
+
 ### Escape reaches the game when the game binds it (#639)
 **What changed.** If any action in the loaded input config binds Escape, a
 press no longer closes the window: it goes to the game like any other key.

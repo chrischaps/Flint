@@ -1,7 +1,7 @@
 //! Shared helpers for registering generated/imported assets into Flint's catalog.
 
 use crate::provider::{AssetKind, GenerateRequest, GenerateResult};
-use flint_asset::{AssetMeta, AssetType, ContentStore, Project};
+use flint_asset::{AssetMeta, AssetType, ContentStore, Project, ProjectStore};
 use flint_core::{FlintError, Result};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ pub fn register_generated_asset(
     request: &GenerateRequest,
     result: &GenerateResult,
 ) -> Result<RegisteredAsset> {
-    register_generated_asset_in(&Project::current(), request, result)
+    register_generated_asset_in(&Project::current()?, request, result)
 }
 
 /// Register a generated asset into `project`'s store and catalog.
@@ -82,7 +82,7 @@ pub fn register_generated_asset_with_roots(
 
 /// Write a sidecar file into the current project's `assets/` catalog.
 pub fn write_asset_sidecar(meta: &AssetMeta) -> Result<PathBuf> {
-    write_asset_sidecar_with_root(meta, &Project::current().catalog_dir())
+    write_asset_sidecar_with_root(meta, &Project::current()?.catalog_dir())
 }
 
 /// Write a sidecar file under a specific assets root directory.
