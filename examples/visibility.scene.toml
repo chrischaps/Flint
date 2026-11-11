@@ -5,7 +5,7 @@
 #   cart ............... a parent hidden with its two child wheels
 #   lamp ............... a hidden post whose warm point light goes out with it
 #
-#   cargo run --bin flint -- render examples/visibility.scene.toml --schemas schemas --no-grid -o vis.png
+#   cargo run --bin flint -- render examples/visibility.scene.toml --no-grid -o vis.png
 #
 # Scripts flip the same switch: set_visible(id, false) / is_visible(id).
 

@@ -53,8 +53,9 @@ fog_height_origin = 0.0
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [-0.5, -0.6, -0.3]
+[entities.sun.light]
+type = "directional"
+direction = [0.5, 0.6, 0.3]
 color = [1.0, 0.92, 0.78]
 intensity = 2.2
 
@@ -62,8 +63,9 @@ intensity = 2.2
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [0.3, -0.8, 0.5]
+[entities.fill.light]
+type = "directional"
+direction = [-0.3, 0.8, -0.5]
 color = [0.6, 0.7, 0.85]
 intensity = 0.4
 

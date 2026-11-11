@@ -2,7 +2,7 @@
 # own bone buffer and its own ring of poses kept full ahead of its clock, drifting
 # between them on the warped clock with its leaves boiling.
 #
-#   cargo run --release -p flint-player -- examples/living_props.scene.toml --schemas schemas --exit-after 60
+#   cargo run --release -p flint-player -- examples/living_props.scene.toml --exit-after 60
 #
 # prints `[living]` lines saying whether the rings stayed full and within the
 # procgen frame budget, and what blending cost. To turn the dial, add a table:
@@ -59,16 +59,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.62, -0.52, -0.45]
+[entities.sun.light]
+type = "directional"
+direction = [-0.62, 0.52, 0.45]
 color = [1.0, 0.86, 0.66]
 intensity = 2.6
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, 0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.4
 

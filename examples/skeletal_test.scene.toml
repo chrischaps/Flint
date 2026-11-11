@@ -8,7 +8,7 @@
 #    * GPU vertex skinning with 65-joint skeleton
 #    * Looping animation playback via animator + skeleton components
 #
-#  Launch:  cargo run --bin flint-player -- examples/skeletal_test.scene.toml --schemas schemas
+#  Launch:  cargo run --bin flint-player -- examples/skeletal_test.scene.toml
 #     or:   cargo run --bin flint -- play examples/skeletal_test.scene.toml
 # ================================================================
 

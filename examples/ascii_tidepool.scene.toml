@@ -66,8 +66,9 @@ ambient_ground = [0.01, 0.008, 0.006, 1.0]
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.18, -0.14, 0.97]
+[entities.sun.light]
+type = "directional"
+direction = [-0.18, 0.14, -0.97]
 color = [1.0, 0.55, 0.25]
 intensity = 1.6
 
@@ -76,18 +77,20 @@ intensity = 1.6
 [entities.moon]
 [entities.moon.transform]
 position = [0, 40, 0]
-[entities.moon.directional_light]
-direction = [-0.55, -0.5, -0.67]
+[entities.moon.light]
+type = "directional"
+direction = [0.55, 0.5, 0.67]
 color = [0.45, 0.6, 1.0]
 intensity = 1.0
 
 [entities.lantern_light]
 [entities.lantern_light.transform]
 position = [-0.65, 1.35, 1.05]
-[entities.lantern_light.point_light]
+[entities.lantern_light.light]
+type = "point"
 color = [1.0, 0.68, 0.32]
 intensity = 20.0
-radius = 6.0
+range = 6.0
 
 # --- Ground ---
 

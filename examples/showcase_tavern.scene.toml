@@ -10,7 +10,7 @@
 #  that opens on examples/showcase_crucible.scene.toml.
 #
 #  Launch:  cargo run --bin flint -- play examples/showcase_tavern.scene.toml
-#  Look:    flint render examples/showcase_tavern.scene.toml -o showcase.png --schemas schemas
+#  Look:    flint render examples/showcase_tavern.scene.toml -o showcase.png
 #           (the [camera] below looks across the room at the hearth and the wall)
 # ================================================================
 

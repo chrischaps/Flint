@@ -8,7 +8,7 @@
 #  acknowledges how many sparks you've collected from the tavern.
 #
 #  Reached via: hidden passage in the tavern (scene transition)
-#  Or directly: cargo run --bin flint-player -- examples/showcase_crucible.scene.toml --schemas schemas
+#  Or directly: cargo run --bin flint-player -- examples/showcase_crucible.scene.toml
 #
 #  Controls: same as tavern scene
 # ================================================================
