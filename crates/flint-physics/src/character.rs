@@ -98,23 +98,15 @@ impl CharacterController {
             None => return,
         };
 
-        // Read character controller settings from component
+        // Read character controller settings from component. Read every
+        // step, so a script can change them; the view takes an integer
+        // (`move_speed = 8` was 5.0, the default, before #685).
         let (move_speed, jump_force) = {
-            let components = match world.get_components(entity_id) {
-                Some(c) => c,
-                None => return,
-            };
-
-            let cc_data = components.get(comp::CHARACTER_CONTROLLER);
-            let speed = cc_data
-                .and_then(|v| v.get("move_speed"))
-                .and_then(|v| v.as_float())
-                .unwrap_or(5.0) as f32;
-            let jump = cc_data
-                .and_then(|v| v.get("jump_force"))
-                .and_then(|v| v.as_float())
-                .unwrap_or(6.0) as f32;
-            (speed, jump)
+            if world.get_components(entity_id).is_none() {
+                return;
+            }
+            let cc = world.view(entity_id, comp::CHARACTER_CONTROLLER);
+            (cc.f32("move_speed", 5.0), cc.f32("jump_force", 6.0))
         };
 
         // Process mouse look
@@ -247,13 +239,11 @@ impl CharacterController {
 
         let transform = world.get_transform(entity_id).unwrap_or_default();
 
-        // Read eye height from character_controller component (default: height * 0.85)
+        // Eye height: 85% of character_controller.height, 1.5 when unset
         let eye_offset = world
-            .get_components(entity_id)
-            .and_then(|c| c.get(comp::CHARACTER_CONTROLLER))
-            .and_then(|v| v.get("height"))
-            .and_then(|v| v.as_float())
-            .map(|h| h as f32 * 0.85)
+            .view(entity_id, comp::CHARACTER_CONTROLLER)
+            .opt_f32("height")
+            .map(|h| h * 0.85)
             .unwrap_or(1.5);
 
         Vec3::new(

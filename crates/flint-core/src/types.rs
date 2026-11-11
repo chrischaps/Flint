@@ -155,7 +155,7 @@ impl Shear {
     /// for anything else, a term that isn't a number, or a shear that is
     /// all zeros, so an unsheared entity stays `None`.
     pub fn from_toml(value: &toml::Value) -> Option<[f32; 6]> {
-        let num = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        let num = crate::toml_util::toml_f64;
         let mut out = [0.0f32; 6];
         match value {
             toml::Value::Table(t) => {

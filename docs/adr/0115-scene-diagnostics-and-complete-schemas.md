@@ -138,3 +138,27 @@ Chris accepted the recommendations on 2026-11-10:
    plus the first few. `flint validate` prints the full list.
 3. **Old type spellings** (`float`, `boolean`) are rewritten in the engine's
    schema files and warned about in a game's.
+
+## Step 4 as built (#685)
+
+- The view is `flint_ecs::ComponentView`, from `FlintWorld::view(id,
+  component)`. A missing field or component reads as the default and is not
+  reported; a wrong type or unknown choice reads as the default and is.
+  `opt_*` readers cover a field whose absence means something else.
+- **Runtime reports reuse `bad-type` and `bad-enum-value`**, at the severity
+  they are listed with, since they mean the same thing; they are logged as
+  warnings, as a load's summary is. One new code, `needs-component`
+  (warning), for a collider with no rigidbody.
+- **Once per (entity name, component, field)**, kept on the world
+  (`FlintWorld::read_reports`), so a reloaded scene is told again and a test
+  can read the list. Names, not ids: ids differ run to run.
+- **The lint lives in the wasm check** (`scripts/wasm-clippy/clippy.toml`),
+  the one check that walks exactly the runtime crates at deny level. It does
+  not see tests, the CLI, the viewer, or code compiled only off wasm; the
+  native clippy job does not carry the rule, because it prints warnings
+  without failing and would flag every test's assertion on a `toml::Value`.
+- Ported: physics, audio, and the renderer's material tint. The readers in
+  the other runtime crates are not on the view yet. They coerce integers
+  through `toml_util` and stay silent about a wrong type.
+- The scene pass (`flint validate`) does not raise `needs-component`: it is
+  found by the system that reads the component, while the game runs.

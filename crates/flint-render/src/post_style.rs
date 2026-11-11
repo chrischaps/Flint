@@ -49,10 +49,7 @@ pub fn set_post_style_param(
     value: toml::Value,
 ) -> Result<(), String> {
     let d = style(name)?;
-    let number = value
-        .as_float()
-        .or_else(|| value.as_integer().map(|i| i as f64))
-        .filter(|n| n.is_finite());
+    let number = flint_core::toml_util::toml_f64(&value).filter(|n| n.is_finite());
     let wrong = |want: &str| {
         Err(format!(
             "`{name}` setting `{param}` takes {want}, not {}",

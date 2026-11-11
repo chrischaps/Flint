@@ -77,6 +77,10 @@ pub mod codes {
     pub const BAD_PREFAB: &str = "bad-prefab";
     /// No schema was loaded, so nothing could be checked.
     pub const NO_SCHEMAS: &str = "no-schemas";
+    /// A component that does nothing without another the entity lacks: a
+    /// `collider` with no `rigidbody`. Found by the system that reads it,
+    /// while the game runs (#685).
+    pub const NEEDS_COMPONENT: &str = "needs-component";
     /// An `entity` field (or an entity's `parent`) that names no entity of
     /// the scene. An empty string is "not set" and passes.
     pub const UNKNOWN_ENTITY: &str = "unknown-entity";
@@ -150,6 +154,11 @@ pub mod codes {
             NO_SCHEMAS,
             Severity::Warning,
             "no schema was loaded, so components were not checked",
+        ),
+        (
+            NEEDS_COMPONENT,
+            Severity::Warning,
+            "a component that does nothing without another the entity lacks",
         ),
         (
             UNKNOWN_ENTITY,
@@ -501,7 +510,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 16);
+        assert_eq!(seen.len(), 17);
     }
 
     #[test]

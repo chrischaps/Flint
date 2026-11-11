@@ -102,12 +102,53 @@ A table arrives in scripts as a map, and anything else arrives as `#{ value: dat
 
 In the other direction, scripts call the native functions the extension registered.
 
+### Reading components
+
+Components are TOML tables, so reading one by hand is a chain of `get`, a type test and a default, and each link fails in silence: `as_float` reads the integer `8` as nothing, and a misspelled option falls through to whatever the `match` ends with. Read through a **view** instead (ADR 0115), as the engine's physics and audio do:
+
+```rust
+use flint_core::components as comp;
+
+let c = ctx.world.view(id, comp::COLLIDER);
+let friction = c.f32("friction", 0.5);                           // 0.5, 1 and 1.0 are all numbers
+let shape = c.choice("shape", &["box", "sphere", "capsule"], "box");
+let offset = c.vec3("offset", [0.0; 3]);
+let label = c.opt_str("label");                                  // None when not written
+
+// A game's own component works the same way; the name is any string
+let hp = ctx.world.view(id, "health").i64("max", 100);
+```
+
+| Reader | Takes | With no default |
+|--------|-------|-----------------|
+| `f32(field, default)`, `f64` | an integer or a float | `opt_f32`, `opt_f64` |
+| `i64(field, default)` | an integer, or a float with no fraction (`3.0`) | `opt_i64` |
+| `bool(field, default)` | `true` or `false` | `opt_bool` |
+| `str(field, default)` | a string | `opt_str` |
+| `choice(field, &allowed, default)` | one of `allowed`; returns the entry from that list | `opt_choice` |
+| `vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
+| `vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
+| `color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
+
+A field that isn't written reads as the default, and so does every field of a component the entity doesn't have (`exists()` says which); neither is reported. A value of the wrong type, or a string that is none of a `choice`'s values, reads as the default too, and is **reported once** for that entity, component and field: a warning in the log with the entity's name, what was expected and, for a choice, the allowed values and the nearest one.
+
+```
+WARN error[bad-enum-value] entity 'crate' collider.shape: "spere" is not a value of `shape` (did you mean `sphere`? allowed values: box, sphere, capsule; the default "box" is used)
+```
+
+A read that finds nothing wrong takes no lock and allocates nothing, so reading every frame is fine. `ctx.world.read_reports().snapshot()` returns what has been reported so far as `Diagnostic`s (a debug panel can list them, and a test can assert on them); `view.report(field, || Diagnostic::warning(..))` adds a finding of your own to the same once-only list; and `raw(field)` hands back the `toml::Value` for a shape no reader covers. For a table that isn't a component, `flint_core::toml_util` (`toml_f32`, `toml_f64`, `toml_vec3`, `toml_color`) coerces integers without reporting.
+
 ### Saved data
 
 `ctx.persist` is the same `PersistentStore` that scripts reach with `persist_get` and `persist_set`, the one the player keeps in the game's save file (see [Scripting: Persistence](../concepts/scripting.md#persistence) and [Where saves live](../concepts/scripting.md#where-saves-live)). It's loaded before any script's `on_init`, so the first `pre_update` already sees last session's values.
 
 ```rust
-let volume = ctx.persist.get("music_volume").and_then(|v| v.as_float()).unwrap_or(0.8);
+// toml_f64 takes `music_volume = 1` as well as `1.0`; `as_float` would not
+let volume = ctx
+    .persist
+    .get("music_volume")
+    .and_then(flint_core::toml_util::toml_f64)
+    .unwrap_or(0.8);
 ctx.persist.set("last_level", "harbour".into());
 ```
 

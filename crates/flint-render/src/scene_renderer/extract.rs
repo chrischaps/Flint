@@ -29,28 +29,24 @@ impl SceneRenderer {
     /// ECS `material.base_color_r/g/b[/a]` tint for a model entity, checking the
     /// entity first and then its parent (so expanded GLB child nodes inherit a
     /// script-set colour). `None` when neither declares one.
-    fn ecs_base_color_override(world: &FlintWorld, entity_id: EntityId) -> Option<[f32; 4]> {
-        let extract = |m: &toml::Value| -> Option<[f32; 4]> {
-            let r = m.get("base_color_r")?.as_float()? as f32;
-            let g = m.get("base_color_g")?.as_float()? as f32;
-            let b = m.get("base_color_b")?.as_float()? as f32;
-            let a = m
-                .get("base_color_a")
-                .and_then(|v| v.as_float())
-                .unwrap_or(1.0) as f32;
+    ///
+    /// Read through the typed view (#685): `base_color_r = 1`, an integer,
+    /// used to drop the whole colour, because each channel was read with
+    /// `as_float`. A channel of the wrong type still means no tint, and is
+    /// reported once.
+    pub(crate) fn ecs_base_color_override(
+        world: &FlintWorld,
+        entity_id: EntityId,
+    ) -> Option<[f32; 4]> {
+        let extract = |id: EntityId| -> Option<[f32; 4]> {
+            let m = world.view(id, comp::MATERIAL);
+            let r = m.opt_f32("base_color_r")?;
+            let g = m.opt_f32("base_color_g")?;
+            let b = m.opt_f32("base_color_b")?;
+            let a = m.f32("base_color_a", 1.0);
             Some([r, g, b, a])
         };
-        world
-            .get_components(entity_id)
-            .and_then(|c| c.get(comp::MATERIAL))
-            .and_then(extract)
-            .or_else(|| {
-                world
-                    .get_parent(entity_id)
-                    .and_then(|pid| world.get_components(pid))
-                    .and_then(|c| c.get(comp::MATERIAL))
-                    .and_then(extract)
-            })
+        extract(entity_id).or_else(|| world.get_parent(entity_id).and_then(extract))
     }
 
     /// ECS `material.emissive_scale` for a model entity (ADR 0090), on the
@@ -1744,5 +1740,61 @@ impl SceneRenderer {
 
             batch_start = batch_end;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world_with_material(text: &str) -> (FlintWorld, EntityId) {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("lamp").unwrap();
+        let data: toml::Value = toml::from_str(text).unwrap();
+        world.set_component(id, comp::MATERIAL, data).unwrap();
+        (world, id)
+    }
+
+    /// #685: each channel was read with `as_float`, so one integer channel
+    /// (`base_color_r = 1`) dropped the whole tint, in silence.
+    #[test]
+    fn an_integer_colour_channel_keeps_the_tint() {
+        let (world, id) =
+            world_with_material("base_color_r = 1\nbase_color_g = 0.5\nbase_color_b = 0");
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, id),
+            Some([1.0, 0.5, 0.0, 1.0])
+        );
+        assert!(world.read_reports().is_empty());
+
+        // A child with no material of its own takes its parent's
+        let mut world = world;
+        let child = world.spawn("lamp_shade").unwrap();
+        world.set_parent(child, id).unwrap();
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, child),
+            Some([1.0, 0.5, 0.0, 1.0])
+        );
+    }
+
+    #[test]
+    fn a_channel_of_the_wrong_type_is_no_tint_and_is_reported_once() {
+        let (world, id) =
+            world_with_material("base_color_r = \"red\"\nbase_color_g = 0.5\nbase_color_b = 0.0");
+        for _ in 0..3 {
+            assert_eq!(SceneRenderer::ecs_base_color_override(&world, id), None);
+        }
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1);
+        assert_eq!(
+            said[0].one_line(),
+            "error[bad-type] entity 'lamp' material.base_color_r: expected a number, got string \
+             \"red\" (read as if it were not set)"
+        );
+
+        // No colour written at all is not a mistake
+        let (world, id) = world_with_material("roughness = 0.4");
+        assert_eq!(SceneRenderer::ecs_base_color_override(&world, id), None);
+        assert!(world.read_reports().is_empty());
     }
 }
