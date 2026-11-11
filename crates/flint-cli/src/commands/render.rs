@@ -3793,9 +3793,15 @@ impl Stage {
             lod.draw_distance_scale = asked.draw_distance_scale.unwrap_or(lod.draw_distance_scale);
             self.renderer.set_lod_settings(lod);
         }
-        let quality = asked
-            .quality
-            .map(|q| self.renderer.set_quality(&ctx.device, &q.clamped()));
+        // The capture's size and scale are its flags', as the player keeps
+        // the render scale its own to set
+        let quality = asked.quality.map(|q| {
+            let q = flint_render::QualitySettings {
+                render_scale: self.renderer.render_scale(),
+                ..q.clamped()
+            };
+            self.renderer.set_quality(&ctx.device, &q)
+        });
         let lod = self.renderer.lod_settings();
         scripts.set_renderer_state((lod.lod_scale, lod.draw_distance_scale), quality);
         if asked.reset_style_history {
