@@ -20,7 +20,7 @@ cargo run --bin flint -- edit examples/phase4_runtime.scene.toml    # scene view
 cargo test
 ```
 
-`flint init` starts a new game, which carries the engine inside it as a git subtree at `engine/` and layers its own schemas over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`, or `--schemas engine/schemas --schemas schemas` on a command). That is how every game in the family is built.
+`flint init <name>` starts a new game: a `flint.toml` manifest, a lit scene with a player, a HUD script, an input config and a `CLAUDE.md` for agents, then the three commands that validate, render and play it. By default the manifest names this checkout's schemas by path, so those commands work at once. `flint init <name> --engine subtree` writes the pattern every game in the family uses, with the engine carried inside the game as a git subtree at `engine/` and the game's schemas layered over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`), and prints the `git subtree add` to run.
 
 To run the web player locally (see `docs/design/web.md`):
 

@@ -57,7 +57,7 @@ The gizmo uses constraint-plane dragging: for single-axis movement, it automatic
 | Input | Action |
 |-------|--------|
 | W / E / R | Gizmo mode: translate / rotate / scale (entity selected) |
-| Ctrl+S | Save scene to disk |
+| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
 | Ctrl+Z | Undo position change |
 | Ctrl+Shift+Z | Redo position change |
 | Escape | Cancel current gizmo drag |

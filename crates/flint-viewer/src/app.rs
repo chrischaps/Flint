@@ -18,7 +18,7 @@ use flint_render::{
     post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
     SceneRenderer,
 };
-use flint_scene::{load_scene, save_scene, CameraDef, PostProcessDef, SceneDocument};
+use flint_scene::{load_scene, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::{SchemaDirs, SchemaRegistry};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
@@ -1948,79 +1948,78 @@ impl ViewerApp {
         }
     }
 
-    /// Save the scene to disk using structure-preserving patcher when possible
+    /// Save the scene: write the edited fields into the file through its
+    /// `SceneDocument`, leaving everything else as written (#677). With
+    /// nothing edited this does nothing, so Ctrl+S on an untouched scene, or
+    /// a second Ctrl+S, leaves the file byte for byte as it was.
     fn save(&mut self) {
+        if self.dirty_fields.is_empty() {
+            self.dirty = false;
+            self.update_window_title();
+            self.status_message = Some(("Nothing to save".to_string(), Instant::now()));
+            return;
+        }
         let mut st = self.state.lock().unwrap();
         let scene_path = st.scene_path.clone();
-        let has_doc = st.scene_doc.is_some();
 
-        // Try structure-preserving save via patcher
-        if has_doc && !self.dirty_fields.is_empty() {
-            // Collect patch data from world first (immutable borrow of world)
-            let patches: Vec<(String, String, String, toml::Value)> = self
-                .dirty_fields
-                .iter()
-                .filter_map(|(entity_name, component, field)| {
-                    let eid = st.world.get_id(entity_name)?;
-                    let components = st.world.get_components(eid)?;
-                    let value = components.get_field(component, field)?;
-                    Some((
-                        entity_name.clone(),
-                        component.clone(),
-                        field.clone(),
-                        value.clone(),
-                    ))
-                })
-                .collect();
+        // Collect patch data from world first (immutable borrow of world)
+        let patches: Vec<(String, String, String, toml::Value)> = self
+            .dirty_fields
+            .iter()
+            .filter_map(|(entity_name, component, field)| {
+                let eid = st.world.get_id(entity_name)?;
+                let components = st.world.get_components(eid)?;
+                let value = components.get_field(component, field)?;
+                Some((
+                    entity_name.clone(),
+                    component.clone(),
+                    field.clone(),
+                    value.clone(),
+                ))
+            })
+            .collect();
 
-            // Now apply patches (mutable borrow of doc only)
-            let doc = st.scene_doc.as_mut().unwrap();
-            for (entity_name, component, field, value) in &patches {
-                if let Err(e) = doc.patch_field(entity_name, component, field, value) {
-                    tracing::warn!("Patch error: {}", e);
-                }
-            }
-
-            match doc.save(&scene_path) {
-                Ok(()) => {
-                    drop(st);
-                    self.dirty = false;
-                    self.dirty_fields.clear();
-                    self.last_save_time = Some(Instant::now());
-                    self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
-                    self.update_window_title();
-                    self.status_message = Some(("Saved!".to_string(), Instant::now()));
-                    println!("Saved scene to {} (structure-preserving)", scene_path);
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!("Patcher save failed, falling back to full save: {}", e);
-                }
+        // No document means the file didn't parse when it was read. The world
+        // alone would write a scene without its look, camera, wooze field and
+        // prefabs, so the viewer doesn't write it at all.
+        let Some(doc) = st.scene_doc.as_mut() else {
+            drop(st);
+            tracing::error!("Not saving {scene_path}: it didn't parse as TOML when it was read");
+            self.status_message = Some((
+                "Save refused: the scene file didn't parse; reload it".to_string(),
+                Instant::now(),
+            ));
+            return;
+        };
+        let mut skipped = Vec::new();
+        for (entity_name, component, field, value) in &patches {
+            if let Err(e) = doc.patch_field(entity_name, component, field, value) {
+                tracing::warn!("Not saved: {}", e);
+                skipped.push(e);
             }
         }
 
-        // Fallback: full serialize save
-        let scene_name = Path::new(&scene_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("scene")
-            .to_string();
-
-        match save_scene(&scene_path, &st.world, &scene_name) {
+        match doc.save(&scene_path) {
             Ok(()) => {
-                // Re-parse the document after full save so future patches work
-                st.scene_doc = SceneDocument::from_file(&scene_path).ok();
                 drop(st);
                 self.dirty = false;
                 self.dirty_fields.clear();
                 self.last_save_time = Some(Instant::now());
                 self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
                 self.update_window_title();
-                self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                let message = match skipped.first() {
+                    None => "Saved!".to_string(),
+                    // An entity a prefab instance expands into isn't in the file
+                    Some(first) => format!(
+                        "Saved, but {} edit(s) had nowhere to go: {first}",
+                        skipped.len()
+                    ),
+                };
+                self.status_message = Some((message, Instant::now()));
                 println!("Saved scene to {}", scene_path);
             }
             Err(e) => {
-                tracing::error!("Failed to save scene: {:?}", e);
+                tracing::error!("Failed to save scene: {}", e);
                 drop(st);
                 self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
             }

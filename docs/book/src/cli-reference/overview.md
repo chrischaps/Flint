@@ -6,7 +6,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 
 | Command | Description |
 |---------|-------------|
-| `flint init <name>` | Initialize a new project |
+| `flint init <name>` | Start a game project: manifest, lit scene, HUD script, input config, agent guide ([below](#the-init-command)) |
 | `flint entity create` | Create an entity in a scene |
 | `flint entity delete` | Delete an entity from a scene |
 | `flint scene create` | Create a new scene file |
@@ -43,6 +43,27 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint spike-rumble` | Time the gamepad rumble command paths |
 
 The seven music commands are documented on their own page: [Music Commands](music.md).
+
+## The `init` Command
+
+```bash
+flint init my_game                       # the walk template, naming this engine checkout by path
+flint init my_game --template 2d         # walk | blank | 2d
+flint init my_game --engine subtree      # engine/ inside the game: prints the git subtree add to run
+flint init my_game --engine-path ../Flint
+flint init . --force                     # into a directory with files; existing files are kept
+```
+
+It writes a game project from templates compiled into the binary: `flint.toml` (`[project] id`, `schemas`, `scene`, `input`), `scenes/main.scene.toml` (lit, with a `[camera]`), `scripts/hud.rhai` on a `hud_controller` entity, `config/input.toml`, `bundle.toml`, `.gitignore`, an empty `schemas/` for the game's own components, `renders/`, and `CLAUDE.md` + `AGENTS.md` for coding agents. Then it prints the commands to run next, none of which needs `--schemas`.
+
+| Flag | Description |
+|------|-------------|
+| `--template walk\|blank\|2d` | The first scene. `walk` (default): a first-person player facing a lit ring of stones. `blank`: a lit ground, one box, no player. `2d`: sprites under an orthographic camera, one steered by a script |
+| `--engine path\|subtree\|none` | Where the engine's schemas come from. `path` (default): a Flint checkout on this machine, named by absolute path in `flint.toml`; the printed commands work at once. `subtree`: `engine/schemas`, the game-repo pattern; `flint init` runs no git, so it prints the `git subtree add`, and commands stop with `schema directory not found` until it has run. `none`: only the game's own `schemas/`; scenes validate and render, engine archetypes resolve to nothing, and `flint play` is not offered |
+| `--engine-path <dir>` | With `--engine path`: the checkout to name (default: the one this `flint` was built from) |
+| `--force` | Write into a directory that already holds files. A file already there is kept; nothing is overwritten or deleted |
+
+No engine schema is copied into the game. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
 
 ## The `play` Command
 
@@ -272,7 +293,7 @@ take a default size weight in the column layout.
 `Escape` releases the mouse so panels can be clicked; clicking the world
 recaptures it.
 
-The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
+For first-person play the scene needs an entity with a `character_controller` component (the `player` archetype bundles one with its collider and rigidbody). Physics colliders on other entities define the walkable geometry. A scene with no such entity plays through its `[camera]`.
 
 ### Game Project Pattern
 
@@ -561,7 +582,7 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Space | Return to the scene's authored `[camera]` framing (viewer default if the scene has none) |
 | O | Toggle auto-orbit |
 | `[` / `]` | Slow down / speed up auto-orbit |
-| Ctrl+S | Save scene to disk |
+| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
 | Ctrl+Z | Undo position change |
 | Ctrl+Shift+Z | Redo position change |
 | Escape | Cancel gizmo drag / exit |

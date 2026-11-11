@@ -33,8 +33,10 @@ Every scene is a TOML file you can read, diff, and version. Every operation is a
 Create a scene, add entities, query them, and view the result --- all from the command line:
 
 ```bash
-# Initialize a project
+# Start a project: a manifest, a lit scene, a HUD script, ready to play
 flint init my-game
+cd my-game
+flint play
 
 # Create a scene and populate it
 flint scene create levels/tavern.scene.toml --name "The Tavern"

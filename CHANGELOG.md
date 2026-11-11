@@ -111,6 +111,75 @@ the engine's table.
 - A script that stores a key named `meta` holding only `#{ version: <int> }`:
   rename the key before upgrading.
 
+### Viewer Ctrl+S and `flint validate --fix` keep the rest of the scene file (#677)
+**What changed.** Both used to rewrite an existing scene from its entities
+alone, which deleted `[camera]`, `[environment]`, `[post_process]`,
+`[living]`, `[wooze]`, `[prefabs]`, the `[scene]` description and
+`input_config`, and every comment; `--fix` also renamed the scene "scene" and
+baked prefab entities into the file. Now:
+
+- **Ctrl+S in `flint edit`** writes only the fields you edited, each in place
+  with its comment. With nothing edited it writes nothing, so saving an
+  untouched scene leaves it byte for byte as it was. A file with CRLF line
+  endings keeps them.
+- **`flint validate --fix`** writes only what its fixes changed
+  (`SceneDocument::apply_world_diff`). A fix to an entity that comes from a
+  prefab is printed as `not written` rather than baked in. `--output-diff` is
+  the diff of the file.
+- **`flint_scene::save_scene` refuses a path that already exists** and
+  returns an error saying so. It is for new scenes only.
+
+**What to do.** A scene that lost its tables to an earlier save needs them put
+back by hand (git has them). Rust code calling `save_scene` on an existing
+file: load a `SceneDocument` and call `patch_field`, `remove_field`,
+`add_entity` or `apply_world_diff`, then `save`.
+
+### `flint init` writes a real game project: manifest, lit scene, HUD, input config, agent guide (#707)
+**What changed.** `flint init <name>` used to write a room and a door with no
+light, camera, player or script, its own copies of the engine's `transform`,
+`bounds` and `door` schemas (which shadowed the engine's), a `furniture`
+archetype, and a `CLAUDE.md` naming folders it hadn't made. It now writes the
+game-project pattern, from templates compiled into the binary:
+
+- `flint.toml` with `[project] id`, `schemas`, `scene` and `input`, so none of
+  the commands it prints needs `--schemas` and `flint play` needs no scene;
+- `scenes/main.scene.toml`: lit (a `light` with a `type`), with a `[camera]`,
+  a ground and something to see; `scripts/hud.rhai` on a `hud_controller`;
+  `config/input.toml`; `bundle.toml`; `.gitignore`; `renders/`;
+- an **empty** `schemas/components` and `schemas/archetypes`: no engine schema
+  is copied into the game, and there is no `schemas/constraints`, `levels/`
+  or `assets/` folder any more;
+- `CLAUDE.md` and `AGENTS.md`, which name only paths and commands that exist.
+
+New flags: `--template walk|blank|2d` (default `walk`: a first-person player
+facing a lit ring of stones), `--engine path|subtree|none`, `--engine-path
+<dir>` and `--force`.
+
+- `--engine path` (the default) names the Flint checkout the `flint` binary
+  was built from, by absolute path, in `flint.toml` and in `bundle.toml`'s
+  `[mount]`. The printed commands work at once; the path is right on that
+  machine only.
+- `--engine subtree` names `engine/schemas`, the pattern the games use.
+  `flint init` runs no git and no network commands: it prints the `git
+  subtree add`, and until that has run every command stops with `schema
+  directory not found`.
+- `--engine none` names only the game's `schemas/`. The scene validates and
+  renders, engine archetypes resolve to nothing, and it does not offer
+  `flint play`.
+
+It refuses a directory that already holds files (it used to refuse any
+existing directory). With `--force` it writes into one and keeps every file
+already there. The "Next steps" no longer print the hidden `flint serve`
+alias.
+
+**What to do.** Nothing for an existing game: `flint init` only writes new
+projects. A script that ran `flint init x` and then read `x/levels/demo.scene.toml`
+or `x/schemas/components/*.toml` must read `x/scenes/main.scene.toml` instead,
+and will find the game's `schemas/` empty. A game still carrying the old
+scaffold's `schemas/components/transform.toml`, `bounds.toml` or `door.toml`
+should delete them: they hide the engine's (the old `transform` has no
+`shear` or `rotation_quat`).
+
 ## 2026-11-10
 
 ### `flint play` and `flint bundle` read `flint.toml`; saves, `load_ui`, `load_data` and the procgen cache use the project root (#706)
