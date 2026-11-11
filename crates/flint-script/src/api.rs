@@ -16,6 +16,8 @@ mod camera;
 mod camera_2d;
 mod chunk;
 mod conducted;
+#[cfg(test)]
+mod conducted_tests;
 mod convert;
 mod data;
 mod debug;
@@ -24,8 +26,12 @@ mod declared_tests;
 mod draw;
 mod draw_world;
 mod entity;
+#[cfg(test)]
+mod entity_tests;
 mod event;
 mod expression;
+#[cfg(test)]
+mod host_io_tests;
 mod input;
 mod living;
 mod log;

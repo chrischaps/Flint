@@ -13,6 +13,8 @@ pub mod context;
 pub mod draw2d;
 pub mod engine;
 pub mod host;
+#[cfg(test)]
+mod layout_tests;
 pub mod module_resolver;
 pub mod projector;
 pub mod random;
