@@ -43,6 +43,7 @@ pub mod replay_chart;
 pub mod scene;
 pub mod schema;
 pub mod schema_export;
+pub mod spec_save;
 pub mod spike_rumble;
 pub mod spline_edit;
 pub mod style;

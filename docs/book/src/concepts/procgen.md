@@ -833,6 +833,8 @@ A style guide is the `[style]` TOML that `flint asset` uses, e.g. `styles/mediev
 - **Procgen previewer** (any spec whose pattern is not `pipeline`): a 3D orbit viewport for meshes or texture tabs for images, plus a parameter panel generated from the generator's schema. Edits regenerate live. `R` rerolls the seed, `Ctrl+S` saves the spec, `Ctrl+Shift+S` saves as, `Ctrl+E` exports the output, `Space` resets the view, `T` toggles tiled preview for textures, `O` toggles auto-orbit with `[` and `]` for speed, `Tab` hides the panels. `--watch` reloads when the file changes on disk.
 - **Texture pipeline editor** (`pattern = "pipeline"`): a three-pane node editor built on egui-snarl, with global parameters and the selected node's parameters on the left, the graph in the middle, and the output maps with a channel browser on the right. `Ctrl+Z` and `Ctrl+Shift+Z` undo and redo, `Delete` removes the selected node, `Ctrl+S` saves, `Ctrl+E` exports.
 
+Both editors save by patching the file rather than rewriting it: a value you changed is replaced on its own line, keeping its trailing comment; a key the editor drops (a knob the current pattern ignores) goes, and the comment above it moves to the next key; a new key is added at the end of its table. Comments, key order and spacing stay as written, and a save with nothing changed leaves the file byte for byte. The node editor writes back only what the file said: the defaults it fills in on loading and the ids and wires it gives every node are left out wherever the file didn't name them and inference rebuilds the same graph.
+
 ```bash
 flint edit specs/oak_tree.procgen.toml
 flint edit specs/alien_organic.procgen.toml     # pipeline pattern, opens the node editor
