@@ -59,6 +59,7 @@ fn main() -> anyhow::Result<()> {
 | Method | When it runs | Use it for |
 |---|---|---|
 | `register_script_api(&mut rhai::Engine)` | Once, inside `add_extension` | Native functions and types for scripts |
+| `register_generators(&mut GeneratorRegistry)` | Once, inside `add_extension` | The game's own [procgen generators](#procgen-generators) (ADR 0119) |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
@@ -74,6 +75,26 @@ Extensions run in the order they were added.
 `register_script_api` gets the player's Rhai engine. Flint's own API is already registered, so a function with the same name and parameter types replaces Flint's. The engine outlives scene transitions, so registrations last the whole run.
 
 The engine uses rhai's `sync` feature, so a registered closure and everything it captures must be `Send + Sync`. Share state between the extension and its functions with `Arc<Mutex<_>>` or atomics.
+
+### Procgen generators
+
+A game can bring generators the engine doesn't ship: a `rock_v1` for a cave game, a `rune_v1` for its signage. Write one as `crates/flint-procgen/CONTRIBUTING.md` describes (a type implementing `flint_procgen::Generator`), then hand it to the player from `register_generators`:
+
+```rust
+use flint_procgen::GeneratorRegistry;
+
+impl PlayerExtension for CaveGame {
+    fn register_generators(&mut self, registry: &mut GeneratorRegistry) {
+        registry.register(Box::new(rock::RockGenerator));
+    }
+}
+```
+
+The registry already holds the built-ins, and it's the one the player resolves every scene's `*.procgen.toml` specs through. A spec in the game's `specs/` with `generator = "rock_v1"` then resolves like a tree: generated as the scene loads (or queued, under `--procgen-defer`), cached in memory and on the disk, and uploaded before the model loader looks for a file of that name. A generator registered under a built-in's name replaces the built-in.
+
+Add the extension before the event loop starts. The first scene's specs are resolved as it loads, and a spec resolved before its generator was registered has already fallen back to a file or a placeholder. Only the game's binary knows these generators. The stock `flint-player` shows a placeholder for such a spec, and `flint gen`, `flint edit` and `flint render` build their registries from the built-ins alone.
+
+A complete game binary with one is in the engine: `cargo run -p flint-player --example cave_game` (`crates/flint-player/examples/cave_game/`).
 
 ### The frame
 

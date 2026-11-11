@@ -39,13 +39,29 @@ impl ProcGenResolver {
         Self::with_config(ProcGenCacheConfig::default())
     }
 
-    /// Create a resolver whose cache and queue use `config`.
+    /// Create a resolver whose cache and queue use `config`, with the
+    /// built-in generators (and `mock`, for tests and validation).
     pub fn with_config(config: ProcGenCacheConfig) -> Self {
-        let budget_ms = config.runtime_max_generation_ms_per_frame;
         let mut registry = GeneratorRegistry::new();
         register_built_in_generators(&mut registry);
-        // Also register mock generator for testing/validation
         registry.register(Box::new(crate::mock::MockGenerator));
+        Self::with_registry(config, registry)
+    }
+
+    /// Create a resolver over a registry built elsewhere, used as it is: no
+    /// built-in is added, so call [`register_built_in_generators`] on it
+    /// first to keep them. This is how a resolver is rebuilt with another
+    /// cache without losing the generators a game registered (#195):
+    ///
+    /// ```
+    /// # use flint_procgen::{ProcGenCacheConfig, ProcGenResolver};
+    /// let mut old = ProcGenResolver::new();
+    /// let registry = std::mem::take(old.registry_mut());
+    /// let resolver = ProcGenResolver::with_registry(ProcGenCacheConfig::default(), registry);
+    /// assert!(resolver.registry().get("tree_v1").is_some());
+    /// ```
+    pub fn with_registry(config: ProcGenCacheConfig, registry: GeneratorRegistry) -> Self {
+        let budget_ms = config.runtime_max_generation_ms_per_frame;
         Self {
             specs: HashMap::new(),
             registry,
@@ -106,6 +122,21 @@ impl ProcGenResolver {
     /// a test's). One with a built-in's type name replaces it.
     pub fn register_generator(&mut self, generator: Box<dyn crate::Generator>) {
         self.registry.register(generator);
+    }
+
+    /// The generators specs are resolved with.
+    pub fn registry(&self) -> &GeneratorRegistry {
+        &self.registry
+    }
+
+    /// The generators specs are resolved with, to register more: a game's
+    /// own (#195), or a test's. A spec names its generator by type name, so
+    /// one added here serves every spec naming it from the next request on.
+    /// Replacing a generator under the same name keeps what was cached
+    /// unless the replacement's [revision](crate::Generator::revision)
+    /// differs, since the cache key holds the name and the revision.
+    pub fn registry_mut(&mut self) -> &mut GeneratorRegistry {
+        &mut self.registry
     }
 
     /// Queued requests that failed to generate since the last call. Each is

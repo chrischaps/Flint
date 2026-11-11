@@ -1,0 +1,20 @@
+# Scree: a fist-sized pebble, cut all over so it reads as broken, not round.
+
+generator = "rock_v1"
+
+[meta]
+name = "cave_pebble"
+description = "A small, sharply broken pebble"
+version = "1.0.0"
+tags = ["rock", "cave"]
+
+[seed]
+mode = "fixed"
+value = 311
+
+[params]
+radius = 0.14
+cuts = 16
+depth = 0.45
+squash = 0.7
+color = "#857A6C"

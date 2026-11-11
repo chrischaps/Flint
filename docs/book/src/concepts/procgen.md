@@ -77,6 +77,8 @@ Five commented specs in `specs/examples/` are the place to start: each opens by 
 
 The crate's [README](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/README.md) holds the full parameter catalog, generated from the schemas, and its [CONTRIBUTING guide](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/CONTRIBUTING.md) builds a new generator from scratch.
 
+A game can add generators of its own without touching the engine: its binary registers them through a player extension's `register_generators`, and its specs then name them like any of the ones below (ADR 0119; [Player Extensions: Procgen generators](../guides/player-extensions.md#procgen-generators)).
+
 ## Generators
 
 ### `tree_v1`
@@ -854,7 +856,7 @@ texture = "crypt_floor"          # specs/crypt_floor.procgen.toml, an image set
 
 A mesh's sub-meshes (a tree's bark and each leaf shade) upload as parts of the one model, each with its own material, and a material's generated normal map comes along. An image set uploads its first map under the spec's name and the rest as `<name>_normal`, `<name>_roughness` and so on, the companion names the material path looks for.
 
-When procgen can't make an asset (its generator isn't registered, the generator fails, or the output can't be drawn that way: a skinned creature as a model, a mesh as a texture) the player logs a warning saying why and falls through to the file. With no file either, a placeholder stays under the name: a magenta box standing on the entity's origin for a model, a 1x1 magenta texture for a texture.
+When procgen can't make an asset (its generator isn't registered, as a game's own generator isn't in the stock `flint-player`; the generator fails; or the output can't be drawn that way: a skinned creature as a model, a mesh as a texture) the player logs a warning saying why and falls through to the file. With no file either, a placeholder stays under the name: a magenta box standing on the entity's origin for a model, a 1x1 magenta texture for a texture.
 
 Outputs are cached in memory keyed by spec hash and seed under a 256 MB budget; the resolver lives as long as the player, so a scene loaded again (or another scene naming the same spec) is served from the cache. A `random` seed makes every instance unique; a `fixed` seed makes them identical, which is the difference between a cave full of beetles and one boss.
 
