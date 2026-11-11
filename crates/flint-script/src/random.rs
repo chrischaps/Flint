@@ -64,7 +64,7 @@ impl ScriptRandom {
             "The next number of the engine's one random sequence, every script's draws in turn.",
         )
         .returns(Num, "in [0, 1)")
-        .run(move |_, ()| random.next_f64());
+        .run_pure(move |()| random.next_f64());
         let random = self.clone();
         m.func(
             "random_range",
@@ -73,7 +73,7 @@ impl ScriptRandom {
         .arg("min", Num)
         .arg("max", Num)
         .returns(Num, "in [min, max)")
-        .run(move |_, (min, max)| min + (max - min) * random.next_f64());
+        .run_pure(move |(min, max)| min + (max - min) * random.next_f64());
         // An i64 seed's bits, as the host's u64 has them: seed_random(-1) is
         // --seed 18446744073709551615
         let random = self.clone();
@@ -82,7 +82,7 @@ impl ScriptRandom {
             "Restart every script's random sequence at a seed, as --seed does; call it in on_init, not at the top.",
         )
         .arg("seed", Int)
-        .run(move |_, (seed,)| random.seed(seed as u64));
+        .run_pure(move |(seed,)| random.seed(seed as u64));
     }
 }
 

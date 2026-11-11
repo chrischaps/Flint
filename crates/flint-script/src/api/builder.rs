@@ -221,7 +221,7 @@ impl<'f, K: Kinds> Func<'f, K> {
 
     /// Register it, taking each argument as a `Dynamic` and converting it
     /// by its kind. The body gets the converted arguments as a tuple.
-    pub fn run<F, R>(mut self, f: F)
+    pub fn run<F, R>(self, f: F)
     where
         F: Fn(&mut Call<'_>, K::Out) -> R + Send + Sync + 'static,
         R: ScriptReturn,
@@ -241,6 +241,38 @@ impl<'f, K: Kinds> Func<'f, K> {
                 }
             },
         );
+        self.register_converting(body);
+    }
+
+    /// Register a function that needs no call context: a pure function of
+    /// its arguments (`sin`, `lerp`, `clamp`). Like [`Func::run`] (the
+    /// exact-typed twin, the converting signature, [`Func::also_exact`], an
+    /// identical registry entry), but neither signature locks the
+    /// `ScriptCallContext`, which a body here can't reach. Its kinds are
+    /// [`PureKind`]s: no `Entity`, which needs the world.
+    pub fn run_pure<F, R>(self, f: F)
+    where
+        K: PureKinds,
+        F: Fn(K::Out) -> R + Send + Sync + 'static,
+        R: ScriptReturn,
+    {
+        let params: Arc<[&'static str]> = self.params.clone().into();
+        let name = self.name;
+        let body = Arc::new(
+            move |nctx: NativeCallContext, args: &mut [&mut Dynamic]| -> RhaiResult {
+                let out = K::convert_pure(args, &params, name, nctx.call_position())?;
+                f(out).into_result()
+            },
+        );
+        self.register_converting(body);
+    }
+
+    /// The registrations behind [`Func::run`] and [`Func::run_pure`].
+    fn register_converting<B>(mut self, body: Arc<B>)
+    where
+        B: Fn(NativeCallContext, &mut [&mut Dynamic]) -> RhaiResult + Send + Sync + 'static,
+    {
+        let name = self.name;
         // Rhai looks a call up by its arguments' exact types first, then
         // tries every mix of `Dynamic` in their place (2^n lookups for n
         // parameters). The exact twin (floats for `Num`, ints for `Entity`)
@@ -369,11 +401,16 @@ impl<'c> Call<'c> {
 
     /// A script error from this function, at the call's position.
     pub fn error(&self, message: impl std::fmt::Display) -> CallError {
-        Box::new(EvalAltResult::ErrorRuntime(
-            format!("{}: {message}", self.func).into(),
-            self.pos,
-        ))
+        error_at(self.func, self.pos, message)
     }
+}
+
+/// A script error from `func`, at `pos`.
+fn error_at(func: &'static str, pos: Position, message: impl std::fmt::Display) -> CallError {
+    Box::new(EvalAltResult::ErrorRuntime(
+        format!("{func}: {message}").into(),
+        pos,
+    ))
 }
 
 fn no_world(func: &'static str, pos: Position) -> CallError {
@@ -424,6 +461,12 @@ pub trait Kind: Copy + Send + Sync + 'static {
     fn convert(call: &mut Call<'_>, v: &mut Dynamic) -> Result<Self::Out, Conv>;
     /// The value from the typed path.
     fn from_typed(call: &mut Call<'_>, v: Self::Typed) -> Result<Self::Out, Conv>;
+}
+
+/// A [`Kind`] that converts without the call context: every kind but the
+/// entity ones. [`Func::run_pure`] takes only these.
+pub trait PureKind: Kind {
+    fn convert_pure(v: &mut Dynamic) -> Result<Self::Out, Conv>;
 }
 
 /// A number: an int or a float, as `f64`.
@@ -488,14 +531,21 @@ impl Kind for Num {
     const WANTS: &'static str = "a number (an int or a float)";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<f64, Conv> {
-        match v.as_float() {
-            Ok(f) => Ok(f),
-            Err(_) => v.as_int().map(|i| i as f64).map_err(|_| Conv::Mismatch),
-        }
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: f64) -> Result<f64, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for Num {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<f64, Conv> {
+        match v.as_float() {
+            Ok(f) => Ok(f),
+            Err(_) => v.as_int().map(|i| i as f64).map_err(|_| Conv::Mismatch),
+        }
     }
 }
 
@@ -507,11 +557,18 @@ impl Kind for Int {
     const WANTS: &'static str = "an integer (or a float with nothing after the point)";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<i64, Conv> {
-        int_like(v).ok_or(Conv::Mismatch)
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: i64) -> Result<i64, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for Int {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<i64, Conv> {
+        int_like(v).ok_or(Conv::Mismatch)
     }
 }
 
@@ -523,11 +580,18 @@ impl Kind for Bool {
     const WANTS: &'static str = "true or false";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<bool, Conv> {
-        v.as_bool().map_err(|_| Conv::Mismatch)
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: bool) -> Result<bool, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for Bool {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<bool, Conv> {
+        v.as_bool().map_err(|_| Conv::Mismatch)
     }
 }
 
@@ -575,16 +639,23 @@ impl Kind for Str {
     const WANTS: &'static str = "a string";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<ImmutableString, Conv> {
+        <Self as PureKind>::convert_pure(v)
+    }
+    #[inline]
+    fn from_typed(_: &mut Call<'_>, v: ImmutableString) -> Result<ImmutableString, Conv> {
+        Ok(v)
+    }
+}
+
+impl PureKind for Str {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<ImmutableString, Conv> {
         if !v.is_string() {
             return Err(Conv::Mismatch);
         }
         std::mem::take(v)
             .into_immutable_string()
             .map_err(|_| Conv::Mismatch)
-    }
-    #[inline]
-    fn from_typed(_: &mut Call<'_>, v: ImmutableString) -> Result<ImmutableString, Conv> {
-        Ok(v)
     }
 }
 
@@ -596,14 +667,21 @@ impl Kind for MapKind {
     const WANTS: &'static str = "a map (#{ ... })";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Map, Conv> {
-        if !v.is_map() {
-            return Err(Conv::Mismatch);
-        }
-        std::mem::take(v).try_cast::<Map>().ok_or(Conv::Mismatch)
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: Map) -> Result<Map, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for MapKind {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<Map, Conv> {
+        if !v.is_map() {
+            return Err(Conv::Mismatch);
+        }
+        std::mem::take(v).try_cast::<Map>().ok_or(Conv::Mismatch)
     }
 }
 
@@ -615,14 +693,21 @@ impl Kind for ArrayKind {
     const WANTS: &'static str = "an array ([ ... ])";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Array, Conv> {
-        if !v.is_array() {
-            return Err(Conv::Mismatch);
-        }
-        std::mem::take(v).try_cast::<Array>().ok_or(Conv::Mismatch)
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: Array) -> Result<Array, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for ArrayKind {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<Array, Conv> {
+        if !v.is_array() {
+            return Err(Conv::Mismatch);
+        }
+        std::mem::take(v).try_cast::<Array>().ok_or(Conv::Mismatch)
     }
 }
 
@@ -662,6 +747,16 @@ impl Kind for Color {
     const TYPED_NAME: &'static str = "color array";
     const WANTS: &'static str = "a colour ([r, g, b], [r, g, b, a] or \"#rrggbb\")";
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<[f32; 4], Conv> {
+        <Self as PureKind>::convert_pure(v)
+    }
+    fn from_typed(_: &mut Call<'_>, v: Array) -> Result<[f32; 4], Conv> {
+        color_from_array(&v).ok_or(Conv::Mismatch)
+    }
+}
+
+impl PureKind for Color {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<[f32; 4], Conv> {
         if let Some(a) = v.read_lock::<Array>() {
             return color_from_array(&a).ok_or(Conv::Mismatch);
         }
@@ -669,9 +764,6 @@ impl Kind for Color {
             return color_from_hex(&s).ok_or(Conv::Mismatch);
         }
         Err(Conv::Mismatch)
-    }
-    fn from_typed(_: &mut Call<'_>, v: Array) -> Result<[f32; 4], Conv> {
-        color_from_array(&v).ok_or(Conv::Mismatch)
     }
 }
 
@@ -683,11 +775,18 @@ impl Kind for Any {
     const WANTS: &'static str = "any value";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<Dynamic, Conv> {
-        Ok(std::mem::take(v))
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: Dynamic) -> Result<Dynamic, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for Any {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<Dynamic, Conv> {
+        Ok(std::mem::take(v))
     }
 }
 
@@ -699,14 +798,21 @@ impl Kind for FnKind {
     const WANTS: &'static str = "a function pointer (Fn(\"name\") or a closure)";
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<FnPtr, Conv> {
-        if !v.is_fnptr() {
-            return Err(Conv::Mismatch);
-        }
-        std::mem::take(v).try_cast::<FnPtr>().ok_or(Conv::Mismatch)
+        <Self as PureKind>::convert_pure(v)
     }
     #[inline]
     fn from_typed(_: &mut Call<'_>, v: FnPtr) -> Result<FnPtr, Conv> {
         Ok(v)
+    }
+}
+
+impl PureKind for FnKind {
+    #[inline]
+    fn convert_pure(v: &mut Dynamic) -> Result<FnPtr, Conv> {
+        if !v.is_fnptr() {
+            return Err(Conv::Mismatch);
+        }
+        std::mem::take(v).try_cast::<FnPtr>().ok_or(Conv::Mismatch)
     }
 }
 
@@ -809,6 +915,36 @@ pub trait TypedKinds: Kinds {
         R: ScriptReturn;
 }
 
+/// [`Kinds`] that all convert without the call context.
+pub trait PureKinds: Kinds {
+    fn convert_pure(
+        args: &mut [&mut Dynamic],
+        params: &[&'static str],
+        func: &'static str,
+        pos: Position,
+    ) -> Result<Self::Out, CallError>;
+}
+
+#[inline]
+fn pure_one<K: PureKind>(
+    v: &mut Dynamic,
+    param: &'static str,
+    func: &'static str,
+    pos: Position,
+) -> Result<K::Out, CallError> {
+    K::convert_pure(v).map_err(|_| {
+        error_at(
+            func,
+            pos,
+            format_args!(
+                "argument `{param}` must be {}, not {}",
+                K::WANTS,
+                v.type_name()
+            ),
+        )
+    })
+}
+
 /// A tuple of kinds with one more on the end.
 pub trait Push<N> {
     type Out;
@@ -872,6 +1008,19 @@ macro_rules! kinds_tuple {
                         f(&mut call, out).into_result()
                     },
                 );
+            }
+        }
+
+        impl<$($K: PureKind),*> PureKinds for ($($K,)*) {
+            #[inline]
+            #[allow(unused_variables)]
+            fn convert_pure(
+                args: &mut [&mut Dynamic],
+                params: &[&'static str],
+                func: &'static str,
+                pos: Position,
+            ) -> Result<Self::Out, CallError> {
+                Ok(($(pure_one::<$K>(&mut *args[$i], params[$i], func, pos)?,)*))
             }
         }
 

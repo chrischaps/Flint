@@ -155,6 +155,38 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     );
 }
 
+/// `.run_pure()` (the math module) never takes the call context's lock:
+/// these calls run while the test holds it, which `.run()` would deadlock
+/// on. Its entry and its errors are `.run()`'s.
+#[test]
+fn pure_functions_run_without_the_call_context() {
+    let engine = ScriptEngine::new();
+    let guard = crate::lock_or_recover(&engine.ctx);
+    let v: f64 = engine
+        .rhai_engine()
+        .eval("lerp(0, 10, 0.5) + sin(0.0) + clamp(5, 0, 3) + random_range(1, 1)")
+        .unwrap();
+    assert_eq!(v, 9.0);
+    let err = engine
+        .rhai_engine()
+        .eval::<f64>("let a = 1;\nsin(\"x\")")
+        .unwrap_err()
+        .to_string();
+    drop(guard);
+    for want in ["sin: argument `x` must be a number", "string", "line 2"] {
+        assert!(err.contains(want), "{err}");
+    }
+    let lerp = engine
+        .api_registry()
+        .entries()
+        .iter()
+        .find(|e| e.name == "lerp")
+        .unwrap();
+    assert!(!lerp.typed);
+    assert_eq!(lerp.module, "math");
+    assert_eq!(lerp.signature(), "lerp(a: num, b: num, t: num) -> num");
+}
+
 #[test]
 fn a_wrong_argument_names_the_function_the_parameter_and_the_kind() {
     let (engine, mut world, id) = engine_and_world();

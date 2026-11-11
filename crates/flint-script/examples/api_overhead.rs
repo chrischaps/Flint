@@ -16,7 +16,9 @@
 //! Results: docs/design/script-api-overhead.md.
 
 use flint_ecs::FlintWorld;
-use flint_script::api::overhead::{declare_draw, declare_set_position, Names, Path};
+use flint_script::api::overhead::{
+    declare_draw, declare_math, declare_set_position, MathPath, Names, Path,
+};
 use flint_script::context::{InputSnapshot, WorldScope};
 use flint_script::engine::ScriptEngine;
 use std::time::Instant;
@@ -52,7 +54,17 @@ fn engine(path: Path) -> ScriptEngine {
 /// needed one, so a loop that is a callback's first call resolves afresh
 /// every iteration; one native call before the loop keeps the cache for it.
 fn per_call(path: Path, call: &str, before: &str, calls: usize, frames: usize) -> f64 {
-    let mut engine = engine(path);
+    per_call_on(engine(path), call, before, calls, frames)
+}
+
+/// [`per_call`] on a given engine.
+fn per_call_on(
+    mut engine: ScriptEngine,
+    call: &str,
+    before: &str,
+    calls: usize,
+    frames: usize,
+) -> f64 {
     let ctx = engine.script_api().ctx().clone();
     let src = format!(
         "fn frame(id) {{ {before} for i in 0..{calls} {{ {call}; }} }}\n\
@@ -131,8 +143,62 @@ fn print_row(label: &str, v: f64, base: f64, unit: &str, note: &str) {
     );
 }
 
+/// The pure math subjects (`bench_lerp`, `bench_sin`) three ways: what
+/// the math module's lock-free closures cost, what `.run()` (which locks
+/// the call context) cost, and `.run_pure()`.
+fn math(rounds: usize) {
+    const PATHS: [(MathPath, &str); 3] = [
+        (MathPath::Today, "typed closure (before)"),
+        (MathPath::Locking, "builder run (locks)"),
+        (MathPath::Pure, "builder run_pure"),
+    ];
+    let cases = [
+        ("bench_lerp, 3 floats", "bench_lerp(1.0, 2.0, 0.5)"),
+        ("bench_sin, a float", "bench_sin(0.5)"),
+        ("bench_lerp, 3 ints", "bench_lerp(1, 2, 0)"),
+    ];
+    println!();
+    println!(
+        "pure math: ns per call over an empty loop's; best of {rounds} rounds of 400 frames x 1000 calls,"
+    );
+    println!("screen_width() before the loop (the cache lasts the frame)");
+    // An int call is compared with the typed closure's lerp in floats
+    let mut lerp_floats = f64::NAN;
+    for (label, call) in cases {
+        let ints = label.contains("ints");
+        let mut best = [f64::MAX; 3];
+        for _ in 0..rounds {
+            for (i, (path, _)) in PATHS.iter().enumerate() {
+                if ints && *path == MathPath::Today {
+                    continue;
+                }
+                let mut engine = ScriptEngine::new();
+                declare_math(&mut engine.script_api(), *path);
+                let ns = per_call_on(engine, call, "let w = screen_width();", 1000, 400);
+                best[i] = best[i].min(ns);
+            }
+        }
+        println!("{label}");
+        if label.starts_with("bench_lerp, 3 floats") {
+            lerp_floats = best[0];
+        }
+        let base = if ints { lerp_floats } else { best[0] };
+        for ((_, name), ns) in PATHS.iter().zip(best) {
+            if ns < f64::MAX {
+                print_row(name, ns, base, "ns", "");
+            } else {
+                println!("  {name:<28}   function not found (an int isn't a float)");
+            }
+        }
+    }
+}
+
 fn main() {
     let rounds = 7;
+    if std::env::args().any(|a| a == "--math") {
+        math(rounds);
+        return;
+    }
     let cases = [
         (
             "bench_rect, 8 floats",

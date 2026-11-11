@@ -9,6 +9,10 @@
 //! (as before the builder), an all-int `abs`, `min` or `max` still reaches
 //! Rhai's integer one and returns an int, and the converting signature
 //! catches the rest: `sin(1)`, `clamp(5, 0, 10)`.
+//!
+//! All are `.run_pure()`: pure functions that procedural layouts call
+//! hundreds of times a frame, so no call takes the call context's lock
+//! (docs/design/script-api-overhead.md, "Pure functions").
 
 use super::builder::kind::{Map, Num};
 use super::builder::ScriptApi;
@@ -31,73 +35,73 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("min", Num)
         .arg("max", Num)
         .returns(Num, "")
-        .run(|_, (value, min, max)| value.clamp(min, max));
+        .run_pure(|(value, min, max)| value.clamp(min, max));
 
     m.func("lerp", "Linear interpolation from a to b by t (0 a, 1 b).")
         .arg("a", Num)
         .arg("b", Num)
         .arg("t", Num)
         .returns(Num, "")
-        .run(|_, (a, b, t)| a + (b - a) * t);
+        .run_pure(|(a, b, t)| a + (b - a) * t);
 
     m.func("sin", "Sine of radians.")
         .arg("x", Num)
         .returns(Num, "")
-        .run(|_, (x,)| x.sin());
+        .run_pure(|(x,)| x.sin());
     m.func("cos", "Cosine of radians.")
         .arg("x", Num)
         .returns(Num, "")
-        .run(|_, (x,)| x.cos());
+        .run_pure(|(x,)| x.cos());
     m.func(
         "abs",
         "Absolute value (an int gives an int back, by Rhai's own abs).",
     )
     .arg("x", Num)
     .returns(Num, "")
-    .run(|_, (x,)| x.abs());
+    .run_pure(|(x,)| x.abs());
     m.func("sqrt", "Square root.")
         .arg("x", Num)
         .returns(Num, "")
-        .run(|_, (x,)| x.sqrt());
+        .run_pure(|(x,)| x.sqrt());
     m.func("floor", "The largest whole number not above x, as a float.")
         .arg("x", Num)
         .returns(Num, "")
-        .run(|_, (x,)| x.floor());
+        .run_pure(|(x,)| x.floor());
     m.func("ceil", "The smallest whole number not below x, as a float.")
         .arg("x", Num)
         .returns(Num, "")
-        .run(|_, (x,)| x.ceil());
+        .run_pure(|(x,)| x.ceil());
     m.func("min", "The smaller of two (two ints give an int back).")
         .arg("a", Num)
         .arg("b", Num)
         .returns(Num, "")
-        .run(|_, (a, b)| a.min(b));
+        .run_pure(|(a, b)| a.min(b));
     m.func("max", "The larger of two (two ints give an int back).")
         .arg("a", Num)
         .arg("b", Num)
         .returns(Num, "")
-        .run(|_, (a, b)| a.max(b));
+        .run_pure(|(a, b)| a.max(b));
     m.func("atan2", "The angle of (x, y) from the +x axis, radians.")
         .arg("y", Num)
         .arg("x", Num)
         .returns(Num, "-PI..PI")
-        .run(|_, (y, x)| y.atan2(x));
+        .run_pure(|(y, x)| y.atan2(x));
 
     m.func("PI", "The constant pi, 3.14159...")
         .returns(Num, "")
-        .run(|_, ()| PI);
+        .run_pure(|()| PI);
     m.func("TAU", "The constant tau = 2 pi, 6.28318...")
         .returns(Num, "")
-        .run(|_, ()| TAU);
+        .run_pure(|()| TAU);
 
     m.func("deg_to_rad", "Degrees as radians.")
         .arg("degrees", Num)
         .returns(Num, "")
-        .run(|_, (degrees,)| degrees * PI / 180.0);
+        .run_pure(|(degrees,)| degrees * PI / 180.0);
     m.func("rad_to_deg", "Radians as degrees.")
         .arg("radians", Num)
         .returns(Num, "")
-        .run(|_, (radians,)| radians * 180.0 / PI);
+        .run_pure(|(radians,)| radians * 180.0 / PI);
 
     // Direction helpers: the Y-up, right-handed coordinate system, FORWARD
     // (0, 0, -1) and RIGHT (1, 0, 0) turned by yaw about Y
@@ -107,7 +111,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("yaw_degrees", Num)
     .returns(Map, "#{x, y, z}, y 0")
-    .run(|_, (yaw,)| {
+    .run_pure(|(yaw,)| {
         let r = yaw * PI / 180.0;
         xyz(-r.sin(), 0.0, -r.cos())
     });
@@ -117,7 +121,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("yaw_degrees", Num)
     .returns(Map, "#{x, y, z}, y 0")
-    .run(|_, (yaw,)| {
+    .run_pure(|(yaw,)| {
         let r = yaw * PI / 180.0;
         xyz(r.cos(), 0.0, -r.sin())
     });
@@ -125,7 +129,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("wrap_angle", "Degrees brought into [0, 360).")
         .arg("degrees", Num)
         .returns(Num, "")
-        .run(|_, (degrees,)| ((degrees % 360.0) + 360.0) % 360.0);
+        .run_pure(|(degrees,)| ((degrees % 360.0) + 360.0) % 360.0);
 }
 
 #[cfg(test)]

@@ -105,6 +105,36 @@ call, or a function with many `Num` parameters could register a few more
 twins (all ints, say). `.run_typed()` is there if a function must refuse
 ints instead.
 
+## Pure functions: `.run_pure()` (step 2)
+
+Step 2 ported the math module (`sin`, `lerp`, `clamp`, ...) through `.run()`,
+which locks the `ScriptCallContext` for every call, even for a body that never
+touches it. The old math closures locked nothing, and procedural layouts call
+them hundreds of times a frame. `.run_pure(|args| ...)` registers the same
+signatures (exact-typed twin, converting signature) and the same registry
+entry, but its body gets no call handle, so neither signature locks anything.
+The math module and `random*` use it.
+
+`cargo run --release -p flint-script --example api_overhead -- --math`,
+2026-11-11, same machine as above, with `screen_width()` before the loop.
+ns per call over an empty loop's, best of 7 rounds of 400 frames x 1000
+calls, two runs:
+
+| | `lerp(1.0, 2.0, 0.5)` | `sin(0.5)` | `lerp(1, 2, 0)` (ints) |
+|---|---:|---:|---:|
+| typed closure (before ADR 0116) | 159.8 / 157.6 | 118.5 / 117.4 | not found |
+| builder `.run()` (locks) | 161.5 / 160.3 | 127.3 / 125.8 | 164.3 / 164.2 |
+| builder `.run_pure()` | **154.6 / 153.0** | **120.8 / 119.1** | **155.5 / 157.1** |
+
+The lock cost 8 to 9 ns a call on `sin` (+7%), and about 2 ns on `lerp`, where
+the argument handling is a larger share. `.run_pure()` takes that away: `lerp`
+measured 3% under the old closure in both runs, and `sin` 1.4 to 2% over it
+(about 2 ns, within this machine's noise between runs of identical code).
+An int `lerp` costs the same as a float one once the callback has made a
+native call before its loop. A loop whose first call is the math function
+still pays Rhai's search for ints, which for three parameters is up to 8
+hashes.
+
 ## The web build
 
 The registry is native-only and the builder drops docs and return notes on
