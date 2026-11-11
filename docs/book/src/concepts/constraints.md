@@ -129,7 +129,7 @@ The exit code is 0 if all constraints pass, 1 if any errors are found. Warnings 
 
 ## Real Example
 
-From `schemas/constraints/basics.toml`:
+From `schemas/examples/constraints/basics.toml`, the three rules that come with the [examples' room-builder layer](schemas.md#the-examples-layer). The engine's own set, `schemas/`, ships no constraints: a game writes its own.
 
 ```toml
 [[constraint]]

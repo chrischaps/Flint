@@ -176,7 +176,7 @@ schemas/constraints/
 └── gameplay.toml        # Game-specific rules (one player, door connectivity)
 ```
 
-All `.toml` files in `schemas/constraints/` are loaded automatically.
+All `.toml` files in the `constraints/` folder of every schema directory the project names are loaded automatically. The engine's own `schemas/` has none; the three rules about rooms and doors live with the [examples' layer](../concepts/schemas.md#the-examples-layer), `schemas/examples/constraints/basics.toml`.
 
 ## Cascade Detection
 

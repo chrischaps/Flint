@@ -63,6 +63,19 @@ name = "The Rusty Flint Tavern"
 version = "1.0"
 ```
 
+## Add the Room-Builder Layer
+
+The rest of this page builds with `room` and `door`, two archetypes from the vocabulary the engine's example scenes are written in. They are not part of the engine's own schema set: they are a layer beside it, `schemas/examples` in the Flint checkout. Open `flint.toml` and add that folder after the engine's, before the game's own:
+
+```toml
+[project]
+id = "my_tavern"
+# was: schemas = ["/path/to/Flint/schemas", "schemas"]
+schemas = ["/path/to/Flint/schemas", "/path/to/Flint/schemas/examples", "schemas"]
+```
+
+`flint schema room` now prints the archetype; before the edit it said `Schema 'room' not found`. A game of your own would more likely define its own archetypes in `schemas/archetypes/` ([Schemas](../concepts/schemas.md#creating-custom-schemas)); the layer is the quick way to follow along here.
+
 ## Add Rooms
 
 Build out the space with room entities:
@@ -73,7 +86,7 @@ flint entity create --archetype room --name "main_hall" \
     --props '{"transform":{"position":[0,0,0]},"bounds":{"min":[-7,0,-5],"max":[7,4,5]}}'
 ```
 
-`--archetype room` names one of the engine's archetypes (`flint schema room` prints it), and `--props` gives the entity's component values. A `bounds` component draws as a box.
+`--archetype room` names an archetype from the layer you just added (`flint schema room` prints it), and `--props` gives the entity's component values. A `bounds` component draws as a box.
 
 Add a kitchen connected to the main hall:
 

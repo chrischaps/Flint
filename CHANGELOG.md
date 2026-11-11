@@ -34,6 +34,74 @@ to do.
 
 ## 2026-11-11
 
+### The room-builder archetypes left the engine's schema set; `model`, `light`, `spline` and `spline_mesh` have schemas (#681)
+**What changed.** Three things, of which the first can stop a game from
+bundling.
+
+1. **`furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room` and `door`
+   (the archetypes), the `door` component and the three constraints about
+   rooms and doors are no longer in `engine/schemas`.** They are the
+   vocabulary the engine's example scenes are written in, and they moved to a
+   layer of their own, `engine/schemas/examples`. In a game that lists only
+   `engine/schemas`:
+   - `flint bundle` and `flint export web` refuse a scene that names one:
+     `archetype "furniture" (in no bundled schema)`;
+   - `flint entity create --archetype room` fails with `Unknown archetype`,
+     and `flint schema furniture` finds nothing;
+   - at load, an entity that names one takes no defaults from it. One that
+     writes its own `bounds` (or has a `model`) looks the same, since the
+     renderer still colours a box by the archetype's name; one that leaned on
+     the default box (`furniture`'s 1 m cube, a `wall`'s 10 x 4 m slab) draws
+     nothing, and a `door` no longer gets its `audio_trigger`;
+   - `flint validate` in a game with no constraints of its own now says `No
+     constraints found in provided schema directories.` and exits 0, where
+     the three room-and-door rules used to run on every game.
+2. **`flint schema model`, `flint schema light`, `flint schema spline` and
+   `flint schema spline_mesh` print their fields**, with each fallback in its
+   description. The fields are the ones the engine already read; nothing a
+   scene wrote before means something else now. The loader checks these
+   components against the schemas and warns, as it does for every other
+   component: a `light` whose `type` is not `directional`, `point` or `spot`
+   (it lit nothing before, in silence), a `model` with no `asset`, a
+   `spline_mesh` without `spline`, `width` and `height`, a number where a
+   list belongs. Loading fills in three defaults on a `light` that leaves
+   them out, the values the renderer already used: `type = "directional"`,
+   `color = [1, 1, 1]`, `intensity = 1.0`. A script that reads
+   `get_field(light, "light", "intensity")` now gets `1.0` rather than
+   nothing.
+3. **`flint_core::components::HEALTH` and `PLAYER` are gone.** No engine code
+   read a `health` or `player` component; a player extension that used the
+   constants writes the strings `"health"` and `"player"`.
+
+**What to do.** Search your scenes and prefabs for the seven archetype names:
+
+    grep -rnE 'archetype = "(furniture|wall|floor|ceiling|pillar|room|door)"' scenes prefabs
+
+If there are none, nothing. If there are, either keep the vocabulary by
+listing the layer between the engine's set and your own, in `flint.toml` (and
+in `bundle.toml`, if it has a `schemas` key of its own):
+
+    [project]
+    schemas = ["engine/schemas", "engine/schemas/examples", "schemas"]
+
+or, better for a game that only ever wanted a box, copy the one or two
+archetype files you use from `engine/schemas/examples/archetypes/` into your
+own `schemas/archetypes/` and leave the layer out. A command line that passes
+`--schemas engine/schemas --schemas schemas` needs `--schemas
+engine/schemas/examples` between them in the first case. To run one of the
+engine's examples from inside a game, pass all three.
+
+While you are in the scenes: nothing has ever read a
+`[entities.x.directional_light]` or `[entities.x.point_light]` table, and a
+scene whose only lights are spelled that way is lit by the engine's built-in
+key and fill. `flint schema light` shows the real table: `[entities.x.light]`
+with `type = "directional"`, and a `direction` that points *toward* the
+light, so a sun written as the way its rays travel (`[-0.5, -0.6, -0.3]`)
+becomes `[0.5, 0.6, 0.3]`. Twenty-seven of the engine's own example scenes
+were written that way and now carry real lights, so they look different:
+longer shadows, the lantern and fire lights lit. Nothing reads `cast_shadows`
+on a `light` either (it is a `material` field).
+
 ### `flint init` writes a real game project: manifest, lit scene, HUD, input config, agent guide (#707)
 **What changed.** `flint init <name>` used to write a room and a door with no
 light, camera, player or script, its own copies of the engine's `transform`,

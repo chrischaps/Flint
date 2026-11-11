@@ -414,7 +414,7 @@ softness = 0.45
 
 *`examples/soft_form.scene.toml` at 2 s, 1:1 crops of 1920 x 1080 renders: a hard edge, an outline that feathers into the dusk, and a whole rim that fades. Nothing else differs between them.*
 
-0 draws exactly as before. Above 0 the body draws in the translucent pass, after everything opaque, front faces only, and still writes depth and casts its whole shadow, since softness is how its outline looks to the eye, not how much of it is there. (Without the depth, SSAO read the cards behind the body through it and drew their outlines on it.) A body that's see-through anyway (`body_opacity` below 1) keeps its two-pass draw and casts no shadow, as before, and so does a soft body under shallow wooze. It's a run-time knob like echoes: a scene's `[living] softness`, a species' own, a preset, the F3 panel's **Silhouette** slider and `tune_living(#{ living: #{ softness: 0.6 } })` all set it, through the same layers, and `--report json` gives each prop's with its layer. Nothing baked reads it. A bench: `flint render examples/soft_form.scene.toml --schemas schemas --time 2 --sweep wooze.preset=hard,soft,softest`.
+0 draws exactly as before. Above 0 the body draws in the translucent pass, after everything opaque, front faces only, and still writes depth and casts its whole shadow, since softness is how its outline looks to the eye, not how much of it is there. (Without the depth, SSAO read the cards behind the body through it and drew their outlines on it.) A body that's see-through anyway (`body_opacity` below 1) keeps its two-pass draw and casts no shadow, as before, and so does a soft body under shallow wooze. It's a run-time knob like echoes: a scene's `[living] softness`, a species' own, a preset, the F3 panel's **Silhouette** slider and `tune_living(#{ living: #{ softness: 0.6 } })` all set it, through the same layers, and `--report json` gives each prop's with its layer. Nothing baked reads it. A bench: `flint render examples/soft_form.scene.toml --time 2 --sweep wooze.preset=hard,soft,softest`.
 
 ### The wooze field
 
@@ -667,7 +667,7 @@ A few things the grove had to work around, which any scene like it will meet:
 - **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
 - **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
 - **A character always starts facing +Z,** so a scene's way in has to be laid out along it.
-- **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. No system reads a `directional_light` table, and `flint validate` lets one through, so a scene with only that has the renderer's default light and no warning.
+- **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. `flint schema light` lists the fields. No system reads a `directional_light` table, and `flint validate` still lets one through, so a scene with only that has the renderer's default light and no warning.
 
 ### The sweet spot: `linklater`
 
