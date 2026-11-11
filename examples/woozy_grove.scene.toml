@@ -24,7 +24,7 @@
 #
 #   flint render examples/woozy_grove.scene.toml --time 3.5 --output grove.png
 #   flint render examples/woozy_grove.scene.toml --time 3.5 --sweep wooze.glide=0,0.3,1
-#   flint-player examples/woozy_grove.scene.toml --schemas schemas --exit-after 60
+#   flint-player examples/woozy_grove.scene.toml --exit-after 60
 #
 # The species are examples/specs/grove_*.procgen.toml: an oak, a cypress, a birch and a
 # gnarled thorn, all from the built-in L-system and none with [[lod]] (#193). Each

@@ -311,10 +311,10 @@ Attach a spline to an entity with the `spline` component:
 [entities.track_path]
 
 [entities.track_path.spline]
-source = "oval_plus.spline.toml"
+file = "oval_plus.spline.toml"
 ```
 
-The engine loads the `.spline.toml` file, samples it into a dense point array stored as the `spline_data` ECS component, and makes it available for script queries via the [Spline API](scripting.md#spline-api).
+`file` is found like any file a scene names: beside the scene, then beside each folder up to the project root. The engine loads the `.spline.toml` file, samples it into a dense point array stored as the `spline_data` ECS component, and makes it available for script queries via the [Spline API](scripting.md#spline-api).
 
 ### Spline Meshes
 
@@ -324,17 +324,17 @@ The `spline_mesh` component generates geometry by sweeping a rectangular cross-s
 [entities.road_surface]
 
 [entities.road_surface.spline_mesh]
-spline = "track_path"
+spline = "track_path"        # the entity with the `spline`
 width = 12.0
 height = 0.3
-offset_y = -0.15
-
-[entities.road_surface.material]
-base_color = [0.3, 0.3, 0.3]
+offset = [0.0, -0.15]        # [right, up] from the path, in metres
+color = [0.3, 0.3, 0.3, 1.0]
 roughness = 0.8
+texture = "textures/asphalt.png"
+texture_length = 6.0         # metres of road per texture repeat
 ```
 
-One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and materials.
+One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities. `flint schema spline_mesh` lists every field with its fallback; `spline`, `width` and `height` are required. The mesh is built in world space, so leave the entity's transform at the origin.
 
 ## Further Reading
 

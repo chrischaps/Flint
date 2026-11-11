@@ -1,8 +1,8 @@
 # ASCII Edges (#267): a sphere and a box under the full-screen ASCII style,
 # with line glyphs along their edges.
 #
-#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --schemas schemas --output edges.png
-#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --schemas schemas --ascii-no-edges --output tone.png
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --output edges.png
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --ascii-no-edges --output tone.png
 #
 # Luminance alone loses a silhouette wherever an object is as bright as
 # what's behind it; edges come from geometry instead (depth, normals
@@ -15,7 +15,7 @@
 #
 # Edge ink (#351): the outlines in an ink of their own, against a tone fill
 # in another (amber lines over a green phosphor fill):
-#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --schemas schemas --no-grid #     --style ascii:color=tint,edge_ink=color,edge_color=#ffb347 --output ink.png
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --no-grid #     --style ascii:color=tint,edge_ink=color,edge_color=#ffb347 --output ink.png
 # or in the table below: color = "tint", edge_ink = "color", edge_color = "#ffb347".
 # edge_ink = "hue" draws each line in its near side's own colour instead.
 
@@ -47,16 +47,18 @@ sun_glow = 0.6
 [entities.sun]
 [entities.sun.transform]
 position = [0, 30, 0]
-[entities.sun.directional_light]
-direction = [-0.55, -0.7, -0.45]
+[entities.sun.light]
+type = "directional"
+direction = [0.55, 0.7, 0.45]
 color = [1.0, 0.94, 0.84]
 intensity = 2.2
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 20, 0]
-[entities.fill.directional_light]
-direction = [0.6, -0.4, 0.5]
+[entities.fill.light]
+type = "directional"
+direction = [-0.6, 0.4, -0.5]
 color = [0.6, 0.7, 0.9]
 intensity = 0.5
 

@@ -294,7 +294,7 @@ With either `boil` at 0, or no `[wooze]` table, that pass renders byte for byte 
 To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
 
 ```bash
-flint-player examples/shading_boil.scene.toml --schemas schemas \
+flint-player examples/shading_boil.scene.toml \
   --frame-step 0.0416666666666667 --screenshot out/f.png --screenshot-every 0.0416666666666667 --exit-after 2
 ```
 

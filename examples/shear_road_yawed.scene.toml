@@ -11,7 +11,7 @@
 #  the neighbouring tiles. Compare examples/shear_road.scene.toml.
 #
 #  Render:  cargo run --bin flint -- render examples/shear_road.scene.toml \
-#             --output renders/shear_road.png --schemas schemas --no-grid
+#             --output renders/shear_road.png --no-grid
 #  Play:    cargo run --bin flint -- play examples/shear_road.scene.toml
 # ================================================================
 

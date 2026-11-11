@@ -49,7 +49,7 @@ The windowed hosts take the same words (#328): `flint play`, `flint-player` and 
 
 ```bash
 flint play examples/stylize_props.scene.toml --style ascii
-flint-player examples/stylize_props.scene.toml --schemas schemas --style pencil:spacing=5 --style-time 1.5
+flint-player examples/stylize_props.scene.toml --style pencil:spacing=5 --style-time 1.5
 flint edit examples/stylize_props.scene.toml --watch --style ascii:cell=10
 ```
 
@@ -140,7 +140,7 @@ glow = 0.0              # halo around bright glyphs
 
 ```bash
 flint render examples/ascii_lantern.scene.toml --width 1280 --height 720   # authored for the style
-flint render examples/pbr_test.scene.toml --ascii --schemas schemas --width 1280 --height 720
+flint render examples/pbr_test.scene.toml --ascii --width 1280 --height 720
 flint render examples/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii-tint 1,0.7,0.25
 ```
 
@@ -732,7 +732,7 @@ pixel = 4              # block size in points: 1 = per pixel, more = a chunky lo
 ```
 
 ```bash
-flint render examples/mesh_meadow.scene.toml --output meadow.png --schemas schemas \
+flint render examples/mesh_meadow.scene.toml --output meadow.png \
   --style palette:palette=phosphor,dither=1,pixel=4
 ```
 

@@ -48,7 +48,9 @@ name = "stylize"
 root = "../../../.."
 width = 640
 height = 360
-args = ["--schemas", "schemas"]
+# The fixtures are written in the examples' room-builder archetypes
+# (`furniture`), which the engine's own set no longer holds (#681).
+args = ["--schemas", "schemas", "--schemas", "schemas/examples"]
 
 [tolerance]
 level = 48

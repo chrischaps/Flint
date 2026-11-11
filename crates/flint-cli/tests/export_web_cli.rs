@@ -30,15 +30,18 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// A game an agent might write in an afternoon: one scene, one box, no
-/// engine subtree, no schemas of its own.
+/// engine subtree, no schemas of its own. The box is a plain `bounds`: the
+/// examples' `furniture` archetype is no part of the engine's set (#681),
+/// and a bundle refuses an archetype in no bundled schema.
 fn game(at: &Path, scene_name: &str, bundle_toml: Option<&str>) {
     std::fs::create_dir_all(at.join("scenes")).unwrap();
     std::fs::write(
         at.join("scenes/main.scene.toml"),
         format!(
             "[scene]\nname = \"{scene_name}\"\nversion = \"1.0\"\n\n\
-             [entities.crate]\narchetype = \"furniture\"\n\n\
-             [entities.crate.transform]\nposition = [0, 0, 0]\n"
+             [entities.crate]\n\n\
+             [entities.crate.transform]\nposition = [0, 0, 0]\n\n\
+             [entities.crate.bounds]\nmin = [0, 0, 0]\nmax = [1, 1, 1]\n"
         ),
     )
     .unwrap();

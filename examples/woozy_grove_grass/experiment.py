@@ -84,7 +84,7 @@ def variant_scene(name: str, changes: dict) -> Path:
 def render(scene: Path, out: Path, camera: list, measure: bool = False) -> None:
     width, height, extra = (WIDTH // 2, HEIGHT // 2, MEASURE) if measure else (WIDTH, HEIGHT, [])
     command = [
-        str(FLINT), "render", str(scene), "--schemas", str(ROOT / "schemas"),
+        str(FLINT), "render", str(scene), "--schemas", str(ROOT / "schemas"), "--schemas", str(ROOT / "schemas" / "examples"),
         "--time", SPAN, "--fps", FPS, "--width", str(width), "--height", str(height),
         "--output", str(out), *camera, *extra,
     ]

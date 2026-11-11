@@ -44,16 +44,18 @@ sun_glow = 1.8
 [entities.sun]
 [entities.sun.transform]
 position = [0, 30, 0]
-[entities.sun.directional_light]
-direction = [0.55, -0.16, -0.82]
+[entities.sun.light]
+type = "directional"
+direction = [-0.55, 0.16, 0.82]
 color = [1.0, 0.76, 0.52]
 intensity = 2.6
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.3, -0.8, 0.5]
+[entities.fill.light]
+type = "directional"
+direction = [0.3, 0.8, -0.5]
 color = [0.48, 0.56, 0.82]
 intensity = 0.3
 
@@ -76,7 +78,6 @@ specular_strength = 1.6
 # --- The rock ---
 
 [entities.rock_main]
-archetype = "furniture"
 [entities.rock_main.transform]
 position = [0, -1.0, 0]
 rotation = [0, 18, 0]
@@ -88,7 +89,6 @@ color = [0.16, 0.14, 0.13, 1.0]
 roughness = 0.95
 
 [entities.rock_low]
-archetype = "furniture"
 [entities.rock_low.transform]
 position = [3.6, -1.0, 1.4]
 rotation = [8, -24, 4]
@@ -100,7 +100,6 @@ color = [0.14, 0.12, 0.11, 1.0]
 roughness = 0.95
 
 [entities.rock_stone]
-archetype = "furniture"
 [entities.rock_stone.transform]
 position = [-3.4, -1.0, 2.2]
 rotation = [-6, 40, 10]
@@ -114,7 +113,6 @@ roughness = 0.95
 # --- The lighthouse: white tower, red band, a lamp that glows ---
 
 [entities.tower_base]
-archetype = "furniture"
 [entities.tower_base.transform]
 position = [0, 1.0, 0]
 [entities.tower_base.bounds]
@@ -125,7 +123,6 @@ color = [0.92, 0.89, 0.84, 1.0]
 roughness = 0.7
 
 [entities.tower_band]
-archetype = "furniture"
 [entities.tower_band.transform]
 position = [0, 4.2, 0]
 [entities.tower_band.bounds]
@@ -136,7 +133,6 @@ color = [0.72, 0.16, 0.12, 1.0]
 roughness = 0.6
 
 [entities.tower_top]
-archetype = "furniture"
 [entities.tower_top.transform]
 position = [0, 5.6, 0]
 [entities.tower_top.bounds]
@@ -147,7 +143,6 @@ color = [0.92, 0.89, 0.84, 1.0]
 roughness = 0.7
 
 [entities.gallery]
-archetype = "furniture"
 [entities.gallery.transform]
 position = [0, 7.2, 0]
 [entities.gallery.bounds]
@@ -159,7 +154,6 @@ roughness = 0.5
 metallic = 0.6
 
 [entities.lamp]
-archetype = "furniture"
 [entities.lamp.transform]
 position = [0, 7.38, 0]
 [entities.lamp.bounds]
@@ -171,7 +165,6 @@ emissive_scale = 6.0
 roughness = 0.3
 
 [entities.cap]
-archetype = "furniture"
 [entities.cap.transform]
 position = [0, 8.28, 0]
 [entities.cap.bounds]
@@ -185,7 +178,8 @@ metallic = 0.6
 [entities.lamp_light]
 [entities.lamp_light.transform]
 position = [0, 7.8, 0]
-[entities.lamp_light.point_light]
+[entities.lamp_light.light]
+type = "point"
 color = [1.0, 0.82, 0.5]
 intensity = 6.0
-radius = 14.0
+range = 14.0
