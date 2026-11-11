@@ -160,7 +160,6 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
-    app.scene_preload_audio = scene_file.scene.preload_audio;
     app.save_dir = args.save_dir.clone();
     app.window_size = args.window.size();
     app.window_options = args.window.clone();
@@ -172,25 +171,14 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.audio
         .set_bus_volume(flint_player::Bus::Sfx, args.sfx_volume);
 
-    // Pass skybox path from scene environment settings
-    if let Some(env) = &scene_file.environment {
-        app.skybox_path = env.skybox.clone();
-    }
-
-    // Pass camera settings from scene
-    app.scene_camera = scene_file.camera.clone();
-
-    // Pass post-processing settings from scene
-    // with the look it names laid under its keys (#356)
-    app.set_scene_post_process(scene_file.post_process.clone());
     app.style_specs = args.style.styles.clone();
     app.style_time = args.style.style_time;
 
-    // The scene's living props: what their shadows follow, and how woozy it is
-    let living_tables = flint_procgen::LivingTables::or_warn(&scene_file);
-    app.scene_living = living_tables.living;
-    app.scene_wooze = living_tables.wooze;
-    app.scene_tables = scene_file.scene_tables();
+    // Everything the scene file says (skybox, ambient and shading levers,
+    // camera, post-processing with its look, living props, wooze and the
+    // scene tables extensions read), taken as flint-player and every
+    // transition take it (#723, #686)
+    app.apply_scene_settings(&scene_file);
 
     // The registry and its directories, kept for transitions and chunks
     app.set_schemas(registry, schema_dirs);

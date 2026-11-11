@@ -80,12 +80,12 @@ The workspace has 27 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 5 | `flint-asset-gen` | asset, core, import, procgen | cli |
 | 5 | `flint-procgen-ai` | procgen | cli |
 | 5 | `flint-render` | core, ecs, import, particles, scene, terrain | cli, debug-ui, player, viewer |
-| 5 | `flint-script` | animation, core, ecs, physics, runtime, terrain | player |
+| 5 | `flint-script` | animation, core, ecs, physics, runtime, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, procgen, render, scene, terrain | cli, player (optional), viewer |
 | 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, import, input-capture, music, particles, physics, procgen, render, runtime, scene, schema, script, terrain | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, import, particles, procgen, render, scene, schema | cli |
 | 8 | `flint-android` | ecs, player, scene, schema | *(none)* |
-| 8 | `flint-cli` | animation, asset, asset-gen, constraint, core, debug-ui, ecs, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, runtime, scene, schema, terrain, viewer | *(none)* |
+| 8 | `flint-cli` | animation, asset, asset-gen, constraint, core, debug-ui, ecs, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, runtime, scene, schema, script, terrain, viewer | *(none)* |
 
 <!-- crate-table:end -->
 

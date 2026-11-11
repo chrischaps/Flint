@@ -37,6 +37,9 @@ mod persist;
 pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
+mod scene_entry;
+#[cfg(test)]
+mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
 mod script_commands;
@@ -513,6 +516,15 @@ pub struct PlayerApp {
     exit_requested: bool,
     /// Why `initialize` failed, kept so the binary can exit non-zero (#639).
     init_error: Option<String>,
+    /// The first scene a transition could not enter, with the path it was
+    /// read from and why (#723). The scene playing then is kept, and the run
+    /// exits non-zero when it ends.
+    scene_failure: Option<String>,
+    /// A windowless device for the tests that take a scene through a
+    /// transition with a real renderer (#723): `RenderContext` needs a
+    /// surface, so tests hand the renderer's device and queue over here.
+    #[cfg(test)]
+    test_gpu: Option<&'static flint_render::HeadlessContext>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,

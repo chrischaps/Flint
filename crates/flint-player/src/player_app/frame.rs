@@ -1801,7 +1801,7 @@ impl PlayerApp {
             }
             // What the scene authors, with --style over it, so a reloaded
             // style a word names keeps the word's settings (#328)
-            let authored = self.scene_post_config().unwrap_or_default();
+            let authored = self.scene_post_config();
             if let Some(renderer) = &mut self.scene_renderer {
                 let mut config = renderer.post_process_config().clone();
                 flint_render::stylize::custom::refresh_settings(&mut config, &authored, &reload);

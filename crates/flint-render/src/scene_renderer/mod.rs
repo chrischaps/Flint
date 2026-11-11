@@ -3642,7 +3642,19 @@ impl SceneRenderer {
         self.shadow_pass = Some(shadow_pass);
     }
 
-    /// Toggle shadows on/off, returns the new state
+    /// Draw no skybox until the next [`load_skybox`](Self::load_skybox): a
+    /// scene that names none starts without the last scene's (#723).
+    pub fn clear_skybox(&mut self) {
+        self.skybox_uniform_buffer = None;
+        self.skybox_uniform_bind_group = None;
+        self.skybox_texture_bind_group = None;
+    }
+
+    /// Whether a skybox is loaded and will be drawn.
+    pub fn has_skybox(&self) -> bool {
+        self.skybox_texture_bind_group.is_some()
+    }
+
     /// Load an equirectangular panorama image as a skybox
     pub fn load_skybox(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) {
         let skybox_pipeline = match &self.skybox_pipeline {

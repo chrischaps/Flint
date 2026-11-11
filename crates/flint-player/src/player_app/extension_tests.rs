@@ -120,6 +120,50 @@ fn pre_update_runs_in_add_order_before_on_update() {
     );
 }
 
+/// Declares `kart_speed(id)` through the builder (ADR 0116).
+struct Declarer;
+
+impl PlayerExtension for Declarer {
+    fn declare_script_api(&mut self, api: &mut flint_script::api::ScriptApi) {
+        use flint_script::api::builder::kind::{Entity, Num};
+        let mut m = api.module("kart");
+        m.func("kart_speed", "The kart's speed times a factor.")
+            .arg("kart", Entity)
+            .arg("factor", Num)
+            .returns(Num, "m/s; 0 for no kart")
+            .run(|call, (kart, factor)| {
+                let world = call.world()?;
+                Ok(world.get_name(kart).map_or(0.0, |n| n.len() as f64) * factor)
+            });
+    }
+}
+
+#[test]
+fn an_extension_declares_functions_that_are_listed_and_called() {
+    let mut app = headless_app();
+    app.add_extension(Box::new(Declarer));
+    let listing = app.script.api_listing();
+    let entry = listing
+        .declared
+        .iter()
+        .find(|e| e.name == "kart_speed")
+        .expect("listed");
+    assert_eq!(entry.module, "kart");
+    assert_eq!(
+        entry.signature(),
+        "kart_speed(kart: entity, factor: num) -> num"
+    );
+    assert!(listing.declared.iter().any(|e| e.name == "set_position"));
+
+    let log = attach_recording_script(
+        &mut app,
+        "declared",
+        r#"fn on_update() { record(`${kart_speed(get_entity("listener"), 2)}`); }"#,
+    );
+    app.tick();
+    assert_eq!(*log.lock().unwrap(), ["16.0"], "an int for a num, too");
+}
+
 /// Fires `pinged` with the frame count in every `pre_update`.
 struct Pinger {
     frame: i64,

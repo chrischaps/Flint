@@ -333,8 +333,8 @@ impl PlayerApp {
     /// Without a renderer there is no frame to style.
     fn apply_post_style(&mut self, cmd: &ScriptCommand) {
         // The scene's own settings, read only for a reset
-        let authored = matches!(cmd, ScriptCommand::ResetPostStyle { .. })
-            .then(|| self.scene_post_config().unwrap_or_default());
+        let authored =
+            matches!(cmd, ScriptCommand::ResetPostStyle { .. }).then(|| self.scene_post_config());
         let Some(renderer) = &mut self.scene_renderer else {
             return;
         };

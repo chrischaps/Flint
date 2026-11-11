@@ -6,12 +6,7 @@
 
 use super::input_config::{read_user_override_file, resolve_input_paths, resolve_user_override};
 use super::scene_loading;
-use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_particle_textures_from_world, load_scripts_from_world, load_sequences_from_world,
-    load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
-    register_skeletal_data,
-};
+use super::scene_loading::load_particle_textures_from_world;
 #[cfg(target_os = "android")]
 use super::AndroidGamepadTracker;
 use super::TransitionPhase;
@@ -25,11 +20,8 @@ use flint_ecs::FlintWorld;
 use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
-use flint_render::model_loader;
 use flint_render::{Camera, RenderContext, SceneRenderer};
-use flint_runtime::{
-    GameClock, GameStateMachine, InputConfig, InputState, PersistentStore, RuntimeSystem,
-};
+use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use std::collections::{HashMap, HashSet};
@@ -48,6 +40,9 @@ impl PlayerApp {
     pub fn run_failure(&self) -> Option<String> {
         if let Some(e) = &self.init_error {
             return Some(format!("the player failed to start: {e}"));
+        }
+        if let Some(e) = &self.scene_failure {
+            return Some(e.clone());
         }
         self.capture.missing()
     }
@@ -172,6 +167,9 @@ impl PlayerApp {
             expression_feed: None,
             exit_requested: false,
             init_error: None,
+            scene_failure: None,
+            #[cfg(test)]
+            test_gpu: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -224,6 +222,7 @@ impl PlayerApp {
     /// calls when they run. See `PlayerExtension` for when each hook runs.
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.script.rhai_engine_mut());
+        extension.declare_script_api(&mut self.script.script_api());
         extension.register_generators(self.procgen_resolver.registry_mut());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
@@ -261,34 +260,40 @@ impl PlayerApp {
         self.script.projector()
     }
 
-    /// Take the scene file's player settings: audio preload, skybox,
-    /// ambient and shading levers, camera and post-processing. Both entries
-    /// (`main.rs` and the web's `flint_web.rs`) call it after `new`.
+    /// Take the scene file's player settings: audio preload, input config,
+    /// skybox, ambient and shading levers, camera, post-processing, living
+    /// props and wooze. Every entry (`main.rs`, `flint play`, the web's
+    /// `flint_web.rs`, Android) calls it after `new`, and a transition calls
+    /// it for the scene it enters (#723). Each setting is replaced from the
+    /// file, so a block the scene doesn't author means the defaults, never
+    /// what the last scene had.
     pub fn apply_scene_settings(&mut self, scene_file: &flint_scene::SceneFile) {
         self.scene_preload_audio = scene_file.scene.preload_audio;
+        self.scene_input_config = scene_file.scene.input_config.clone();
 
         // No shadows, no built-in lights (#627)
         let env = scene_file.environment.as_ref();
         self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
         self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
 
-        // Skybox path + ambient from scene environment settings
-        if let Some(env) = &scene_file.environment {
-            self.skybox_path = env.skybox.clone();
-            if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
-                self.scene_ambient = Some((
-                    env.ambient_sky
+        // Skybox path, ambient and shading levers
+        self.skybox_path = env.and_then(|e| e.skybox.clone());
+        self.scene_ambient = env.and_then(|e| {
+            (e.ambient_sky.is_some() || e.ambient_ground.is_some()).then(|| {
+                (
+                    e.ambient_sky
                         .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
-                    env.ambient_ground
+                    e.ambient_ground
                         .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
-                ));
-            }
-            self.scene_diffuse_wrap = env.diffuse_wrap;
-            self.scene_oren_nayar = env.oren_nayar;
-            self.scene_sheen = env
-                .sheen_strength
-                .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s));
-        }
+                )
+            })
+        });
+        self.scene_diffuse_wrap = env.and_then(|e| e.diffuse_wrap);
+        self.scene_oren_nayar = env.and_then(|e| e.oren_nayar);
+        self.scene_sheen = env.and_then(|e| {
+            e.sheen_strength
+                .map(|s| (e.sheen_color.unwrap_or([1.0; 3]), s))
+        });
 
         self.scene_camera = scene_file.camera.clone();
         // User styles first: the post_process tables are read against the
@@ -350,11 +355,9 @@ impl PlayerApp {
         let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
         self.scene_post_process = Some(def);
         let config = self.scene_post_config();
-        if let (Some(renderer), Some(context), Some(config)) = (
-            self.scene_renderer.as_mut(),
-            self.render_context.as_ref(),
-            config,
-        ) {
+        if let (Some(renderer), Some(context)) =
+            (self.scene_renderer.as_mut(), self.render_context.as_ref())
+        {
             renderer.set_post_process_config(config);
             renderer.ensure_style_resources(&context.device);
             renderer.ensure_fxaa_resources(&context.device);
@@ -410,13 +413,10 @@ impl PlayerApp {
     }
 
     /// The post-processing config a scene starts with: its `[post_process]`
-    /// with the `--style` words written over it (#328). `None` when the
-    /// scene authors no block and there are no words, so the renderer keeps
-    /// what it has, as before.
-    pub fn scene_post_config(&self) -> Option<flint_render::PostProcessConfig> {
-        if self.scene_post_process.is_none() && self.style_specs.is_empty() {
-            return None;
-        }
+    /// with the `--style` words written over it (#328). A scene with no
+    /// block starts from the defaults, the config a new renderer has, not
+    /// from what the last scene left (#723).
+    pub fn scene_post_config(&self) -> flint_render::PostProcessConfig {
         let mut config = self
             .scene_post_process
             .as_ref()
@@ -425,7 +425,7 @@ impl PlayerApp {
         for e in flint_render::stylize::apply_style_specs(&mut config, &self.style_specs) {
             tracing::warn!("{e}");
         }
-        Some(config)
+        config
     }
 
     /// Apply scene-level camera configuration from `CameraDef`
@@ -489,60 +489,40 @@ impl PlayerApp {
         }
     }
 
-    /// Everything after the device: renderer, models, input, egui, the
-    /// scene's environment and the game systems.
+    /// Everything after the device: renderer, egui, quality, then the first
+    /// scene through the one bring-up a transition uses too
+    /// (`enter_scene`, #723).
     pub(super) fn finish_initialize(
         &mut self,
         window: Arc<Window>,
         render_context: RenderContext,
     ) -> Result<()> {
-        // Renderer + model/procgen loading (context and renderer stay locals
-        // until the environment pass is done — they are stored on self only
-        // once fully built, as before).
-        let (render_context, mut scene_renderer) = self.init_render_and_models(render_context)?;
+        self.camera.aspect = render_context.aspect_ratio();
+        let scene_renderer = SceneRenderer::new(
+            &render_context,
+            flint_render::RendererConfig {
+                sample_count: self.msaa_sample_count,
+                ..Default::default()
+            },
+        );
 
-        // Input bindings, gamepad backend, egui overlay
-        self.init_input_and_egui(&window, &render_context);
-
-        // Project fonts (fonts/*.ttf|otf) and the real text measurer for scripts
-        self.refresh_project_fonts();
-        self.install_text_measurer();
-
-        // Splines, ambient/wrap/sheen, skybox, terrain, camera, post config
-        self.apply_scene_environment(&render_context, &mut scene_renderer);
+        // Gamepad backend and the egui overlay
+        self.init_egui(&window, &render_context);
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
         self.update_vsync_pacing();
-        // Quality settings (FlintKart#55) before any script's on_init, so
-        // get_quality() and gpu_info() answer from the first frame.
+        // Quality settings (FlintKart#55; FLINT_SHADOWS, FLINT_SHADOW_RES and
+        // the rest) before any script's on_init, so get_quality() and
+        // gpu_info() answer from the first frame.
         self.init_quality();
 
-        // Saved persistent store (where: persist.rs) before any script's
-        // on_init runs, so persist_get sees last session's values. After
-        // the input config, whose game_id names the save folder of a game
-        // with no `[project] id`.
-        self.load_persistent_store();
+        // Which project the scene is in, and the procgen disk tier (#181),
+        // set up once, before the first scene's assets are resolved.
+        self.refresh_project();
+        self.init_procgen_disk_cache();
 
-        // Physics → audio → music session → animation → particles → scripts
-        // (audio before the scene-declared session, session before script
-        // init so the conducted context exists from the scripts' first
-        // frame — F3/F4 ordering).
-        self.init_game_systems()?;
-
-        // Capture cursor for first-person look (only if FPS player exists).
-        // On Android, always set cursor_captured = true so touch input flows
-        // without requiring a click-to-capture gate.
-        #[cfg(target_os = "android")]
-        {
-            self.cursor_captured = true;
-        }
-        #[cfg(not(target_os = "android"))]
-        if self.physics.has_player_entity() {
-            self.capture_cursor();
-        }
-
-        Ok(())
+        self.enter_scene(super::scene_entry::SceneEntry::Start)
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
@@ -573,99 +553,24 @@ impl PlayerApp {
         Ok(window)
     }
 
-    fn init_render_and_models(
-        &mut self,
-        render_context: RenderContext,
-    ) -> Result<(RenderContext, SceneRenderer)> {
-        self.camera.aspect = render_context.aspect_ratio();
-        self.camera.fov = 70.0; // Slightly wider FOV for first-person
-
-        let mut scene_renderer = SceneRenderer::new(
-            &render_context,
-            flint_render::RendererConfig {
-                sample_count: self.msaa_sample_count,
-                ..Default::default()
-            },
-        );
-        // FLINT_SHADOWS / FLINT_SHADOW_RES and the rest of the quality
-        // settings are applied by init_quality once the renderer is stored.
-
-        // Rebuild component index as a safety net after scene loading
-        self.world.rebuild_component_index();
-
-        // Which project the scene is in, before anything is searched for
-        self.refresh_project();
-        // The renderer's styles find their palettes, glyph sets and papers
-        // from the scene's project and folder (ADR 0114)
-        scene_renderer.set_asset_scope(self.kept_asset_scope());
-
-        // Load models from world (including skeletal data)
-        let config = build_model_load_config(
-            &self.project,
-            &self.scene_path,
-            &self.world,
-            self.catalog.as_ref(),
-            self.content_store.as_ref(),
-        );
-
-        // The procgen disk tier (#181), set up once, before the first scene's
-        // assets are resolved.
-        if self.procgen_resolver.disk_stats().is_none() {
-            let scene_dir = Path::new(&self.scene_path)
-                .parent()
-                .unwrap_or(Path::new("."));
-            if let Some(disk) = self
-                .procgen_disk_cache
-                .then(|| procgen_disk_config(&self.project, scene_dir))
-                .flatten()
-            {
-                println!("[procgen] disk cache: {}", disk.dir.display());
-                self.use_procgen_disk(disk);
-            }
+    /// The procgen disk tier (#181), once: a resolver made with it is kept
+    /// for the run, transitions included.
+    fn init_procgen_disk_cache(&mut self) {
+        if self.procgen_resolver.disk_stats().is_some() {
+            return;
         }
-
-        // Procgen before the model loader: catalog > procgen > file (#32).
-        self.procgen_resolver
-            .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
-        self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
-        self.wooze_time = 0.0;
-        super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
-        self.boil_clock = Default::default();
-        self.grass_wooze = Default::default();
-        self.living_tune.for_new_scene();
-        super::procgen_assets::resolve_scene(
-            &self.scene_path,
-            &mut self.world,
-            &mut self.procgen_resolver,
-            self.procgen_mode,
-            super::procgen_assets::GpuSink {
-                renderer: &mut scene_renderer,
-                device: &render_context.device,
-                queue: &render_context.queue,
-                config: &config,
-            },
-        );
-
-        let load_result = model_loader::load_models_from_world(
-            &mut self.world,
-            &mut scene_renderer,
-            &render_context.device,
-            &render_context.queue,
-            &config,
-        );
-        register_skeletal_data(&load_result, &mut self.animation);
-        register_node_animation_data(&load_result, &mut self.animation);
-        self.skeletal_entity_assets = load_result.skinned_entities;
-        scene_renderer.update_from_world(&self.world, &render_context.device);
-
-        Ok((render_context, scene_renderer))
+        let scene_dir = self.scene_dir();
+        if let Some(disk) = self
+            .procgen_disk_cache
+            .then(|| procgen_disk_config(&self.project, &scene_dir))
+            .flatten()
+        {
+            println!("[procgen] disk cache: {}", disk.dir.display());
+            self.use_procgen_disk(disk);
+        }
     }
 
-    fn init_input_and_egui(&mut self, window: &Arc<Window>, render_context: &RenderContext) {
-        // Load input configs with deterministic layering.
-        self.configure_input_bindings()
-            .unwrap_or_else(|e| tracing::warn!("Input config load error: {e:#}"));
-
+    fn init_egui(&mut self, window: &Arc<Window>, render_context: &RenderContext) {
         // Initialize gamepad backend (best-effort).
         self.gilrs = Gilrs::new().ok();
 
@@ -694,211 +599,6 @@ impl PlayerApp {
         );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
-    }
-
-    fn apply_scene_environment(
-        &mut self,
-        render_context: &RenderContext,
-        scene_renderer: &mut SceneRenderer,
-    ) {
-        // Generate procedural geometry from spline + spline_mesh entities
-        crate::spline_gen::load_splines(
-            &self.scene_path,
-            &mut self.world,
-            scene_renderer,
-            Some(&mut self.physics),
-            &render_context.device,
-            &render_context.queue,
-        );
-
-        // Refresh renderer with any new procedural meshes
-        scene_renderer.update_from_world(&self.world, &render_context.device);
-
-        scene_renderer.set_scene_shadows(self.scene_shadows);
-        scene_renderer.set_default_lights(self.scene_default_lights);
-        // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
-        if let Some((sky, ground)) = self.scene_ambient {
-            scene_renderer.set_ambient(sky, ground);
-        }
-        if let Some(wrap) = self.scene_diffuse_wrap {
-            scene_renderer.set_diffuse_wrap(wrap);
-        }
-        if let Some(oren) = self.scene_oren_nayar {
-            scene_renderer.set_oren_nayar(oren);
-        }
-        if let Some((color, strength)) = self.scene_sheen {
-            scene_renderer.set_sheen(color, strength);
-        }
-
-        // Load skybox if configured
-        if let Some(skybox_rel) = &self.skybox_path {
-            let scene_dir = Path::new(&self.scene_path)
-                .parent()
-                .unwrap_or_else(|| Path::new("."));
-
-            // A path found by the project's one search (`AssetKind::Files`);
-            // a miss is warned about there, with every path tried
-            let skybox_path = self
-                .project
-                .resolve(flint_core::project::AssetKind::Files, skybox_rel, scene_dir)
-                .unwrap_or_else(|not_found| {
-                    tracing::warn!("skybox: {not_found}");
-                    scene_dir.join(skybox_rel)
-                });
-
-            if vfs::exists(&skybox_path) {
-                scene_renderer.load_skybox(
-                    &render_context.device,
-                    &render_context.queue,
-                    &skybox_path,
-                );
-            }
-        }
-
-        // Load terrain from world
-        #[cfg(feature = "debug-hud")]
-        self.debug_panels.clear();
-        self.load_terrain_from_world(
-            &render_context.device,
-            &render_context.queue,
-            scene_renderer,
-        );
-
-        // Set terrain height callback for scripts
-        self.update_terrain_height_fn();
-
-        // Apply scene-level camera configuration
-        self.apply_camera_def();
-        self.apply_camera_tuning();
-
-        // Apply scene-level post-processing config
-        if let Some(config) = self.scene_post_config() {
-            scene_renderer.set_post_process_config(config);
-            scene_renderer.ensure_style_resources(&render_context.device);
-            scene_renderer.ensure_fxaa_resources(&render_context.device);
-        }
-    }
-
-    fn init_game_systems(&mut self) -> Result<()> {
-        // Initialize physics
-        self.physics
-            .initialize(&mut self.world)
-            .context("Failed to initialize physics")?;
-
-        // Initialize audio
-        load_audio_from_world(
-            &self.world,
-            &mut self.audio,
-            &self.project,
-            &self.scene_path,
-            self.scene_preload_audio,
-            // In the browser the audio may already be here at start, and
-            // decoding it all in one frame is the stall #124 removed:
-            // queue it. The desktop decodes up front, as a load can afford.
-            cfg!(target_arch = "wasm32"),
-        );
-        self.audio
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
-
-        // Scene-declared music session (F3): started before script init so a
-        // conducted context exists from the scripts' first frame (F4).
-        self.start_music_session();
-
-        // Initialize animation
-        load_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sprite_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sequences_from_world(&self.project, &self.scene_path, &mut self.animation);
-        self.animation
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
-
-        // Initialize particles: register `particles/*.particles.toml` first so
-        // `particle_effect` components resolve on the first sync.
-        self.refresh_project();
-        flint_particles::load_particle_effects_from_world(
-            &self.project,
-            &self.scene_path,
-            &mut self.particles,
-        );
-        self.particles
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
-        self.load_particle_textures();
-
-        // Initialize scripting (state_scope required so on_init can access persist store)
-        load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
-        self.script
-            .set_current_scene(&self.scene_path, &self.project);
-        {
-            let _state_scope = self.script.state_scope(
-                &mut self.state_machine,
-                &mut self.persistent_store,
-                &self.physics,
-            );
-            self.script
-                .initialize(&mut self.world)
-                .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
-        }
-
-        Ok(())
-    }
-
-    /// Scan world entities for `terrain` component, load heightmap, generate chunks,
-    /// upload GPU resources, and register physics colliders.
-    pub(super) fn load_terrain_from_world(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        scene_renderer: &mut SceneRenderer,
-    ) {
-        let mut grass_info = None;
-        load_terrain_from_world_inner(
-            &self.world,
-            &self.scene_path,
-            device,
-            queue,
-            scene_renderer,
-            &mut self.physics,
-            &mut self.terrain,
-            &mut grass_info,
-        );
-
-        // Create grass debug panel if grass was loaded
-        #[cfg(feature = "debug-hud")]
-        if let Some(info) = grass_info {
-            let panel = flint_debug_ui::GrassDebugPanel::new(
-                info.config,
-                std::path::PathBuf::from(&self.scene_path),
-                info.terrain_entity_name,
-            )
-            .with_component(info.component);
-            self.debug_panels.push(Box::new(panel));
-        }
-        #[cfg(not(feature = "debug-hud"))]
-        let _ = grass_info;
-        super::shallow_wooze::warn_grass_without_a_field(
-            scene_renderer.grass_config(),
-            self.wooze.as_ref(),
-        );
-
-        #[cfg(feature = "debug-hud")]
-        {
-            self.create_ocean_debug_panel();
-            self.create_tod_debug_panel();
-            self.create_weather_debug_panel();
-            self.create_reality_debug_panel();
-            self.create_visitor_debug_panel();
-            self.create_dead_calm_debug_panel();
-            self.create_camera_debug_panel();
-            self.create_particles_debug_panel();
-            self.create_living_debug_panel();
-            self.create_styles_debug_panel();
-            // Rendering & Effects (ADR 0053): unconditional, F4 summons it
-            self.create_render_debug_panel();
-            // The game's own (ADR 0107), after the engine's.
-            self.create_extension_debug_panels();
-        }
     }
 
     /// Update the terrain height callback on the script system.
@@ -1225,8 +925,13 @@ mod style_word_tests {
     }
 
     #[test]
-    fn without_words_or_a_block_the_renderer_keeps_its_config() {
-        assert!(app().scene_post_config().is_none());
+    fn without_words_or_a_block_a_scene_draws_the_defaults() {
+        // The config a new renderer has, so a scene with no block never
+        // keeps the last scene's (#723)
+        assert_eq!(
+            format!("{:?}", app().scene_post_config()),
+            format!("{:?}", flint_render::PostProcessConfig::default())
+        );
     }
 
     #[test]
@@ -1235,7 +940,7 @@ mod style_word_tests {
         app.style_specs = vec!["ascii:cell=12".into()];
 
         // A scene with no [post_process] still gets the style
-        let config = app.scene_post_config().unwrap();
+        let config = app.scene_post_config();
         assert!(config.styles.is_enabled("ascii"));
         assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
 
@@ -1246,14 +951,14 @@ mod style_word_tests {
             "[post_process]\nbloom_intensity = 0.3\n\
              [post_process.styles.ascii]\ncell = 6\nramp = \"blocks\"\n",
         ));
-        let config = app.scene_post_config().unwrap();
+        let config = app.scene_post_config();
         assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
         assert_eq!(config.styles.option("ascii", "ramp"), Some("blocks"));
         assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
 
         // ascii:off turns off a style the scene has on
         app.style_specs = vec!["ascii:off".into()];
-        assert!(!app.scene_post_config().unwrap().styles.is_enabled("ascii"));
+        assert!(!app.scene_post_config().styles.is_enabled("ascii"));
     }
 
     fn loaded(scene_text: &str) -> flint_scene::PostProcessDef {
@@ -1272,7 +977,7 @@ mod style_word_tests {
             "[post_process]\nlook = \"graphite\"\nbloom_intensity = 0.3\n",
         )));
         assert_eq!(app.current_look(), Some("graphite"));
-        let config = app.scene_post_config().unwrap();
+        let config = app.scene_post_config();
         assert!(config.styles.is_enabled("pencil"), "graphite's pencil");
         assert!(
             (config.bloom_intensity - 0.3).abs() < 1e-6,
@@ -1281,14 +986,14 @@ mod style_word_tests {
 
         app.set_look(Some("matrix")).unwrap();
         assert_eq!(app.current_look(), Some("matrix"));
-        let config = app.scene_post_config().unwrap();
+        let config = app.scene_post_config();
         assert!(config.styles.is_enabled("ascii"), "matrix is ASCII");
         assert!(!config.styles.is_enabled("pencil"), "graphite is gone");
         assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
 
         app.set_look(None).unwrap();
         assert_eq!(app.current_look(), None);
-        let config = app.scene_post_config().unwrap();
+        let config = app.scene_post_config();
         assert!(!config.styles.is_enabled("ascii"));
         assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
 
@@ -1302,6 +1007,9 @@ mod style_word_tests {
         let mut app = app();
         app.set_look(Some("ink_wash")).unwrap();
         assert_eq!(app.current_look(), Some("ink_wash"));
-        assert!(app.scene_post_config().is_some());
+        assert_ne!(
+            format!("{:?}", app.scene_post_config()),
+            format!("{:?}", flint_render::PostProcessConfig::default())
+        );
     }
 }

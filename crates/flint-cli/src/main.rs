@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, calibrate, check as check_cmd, edit_router, entity, examples, export, gen,
     gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render, render_suite,
-    replay_chart, scene, schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit,
+    replay_chart, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit,
     validate, validate_suite,
 };
 
@@ -65,6 +65,11 @@ enum Commands {
     /// Show schema information: one component or archetype, --list for
     /// all of them, --format json / json-schema for the schemas as data
     Schema(schema::SchemaArgs),
+
+    /// The script API: `flint script api [--json] [--filter x]` lists every
+    /// function a script can call, and the callbacks
+    #[command(subcommand)]
+    Script(script::ScriptCommands),
 
     /// Open a file in the appropriate interactive editor
     Edit(edit_router::EditArgs),
@@ -209,6 +214,7 @@ fn main() -> Result<()> {
             schemas,
         } => query::run(&query, scene.as_deref(), &format, &schemas),
         Commands::Schema(args) => schema::run(args),
+        Commands::Script(cmd) => script::run(cmd),
         Commands::Validate(args) => validate::run(args),
         Commands::Check(args) => check_cmd::run(*args),
         Commands::Examples(args) => examples::run(args),

@@ -60,6 +60,8 @@ The `on_interact` callback is sugar for the common pattern of proximity-based in
 
 All functions are available globally in every script. Entity IDs are passed as `i64` (Rhai's native integer type).
 
+The engine lists its own API: `flint script api` prints every function with its parameters, and `--json` gives the same as data (`--filter draw` narrows it). Functions declared through the engine's API builder (the Entity API below so far; the rest follow, ADR 0116) come with parameter names, what each accepts and a one-line doc; the others are listed with their parameter types until they are ported. A wrong argument to a declared function is a script error that names the function, the parameter and what it wanted, with the line: ``set_position: argument `x` must be a number (an int or a float), not string (line 12, position 5)``.
+
 ### Entity API
 
 | Function | Returns | Description |
@@ -101,9 +103,11 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
 | `despawn_entity(id)` | --- | Remove an entity from the world |
 
+Every number in the Entity API takes an integer as well as a float: `set_position(id, 0, 1, 0)` works, and so does an id written `3.0`. (Elsewhere in the API a float parameter still wants a float until its module is ported.)
+
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
-A setter given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and `set_field`, `set_position`, `set_rotation`, `set_rotation_quat`, `set_scale`, `set_shear`, `clear_shear`, `rotate_local`, `set_visible`, `set_joint_target`, `set_parent`, `set_material_color`, `set_material_override`, `set_material_emissive` and `clear_material_override` given it, or a despawned id, log a warning the first time for each script and function: `seeded_stars.rhai: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. Getters stay quiet and return their empty value. Test with `entity_exists(id)` where a missing entity is expected.
+A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every Entity API function given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected. `set_joint_target` is in the Entity API; outside it, the setters that warned before still do and the getters stay quiet until their module is ported.
 
 #### Hiding entities
 
@@ -854,6 +858,18 @@ Two additional callbacks fire during transitions:
 | `on_scene_enter` | `fn on_scene_enter()` | After a new scene is loaded and ready |
 | `on_scene_exit` | `fn on_scene_exit()` | Before the current scene is unloaded |
 
+A scene reached by `load_scene()` is brought up exactly as the first scene is at startup: the same code, in the same order. Everything the scene file says is taken from it, and anything it doesn't say is the default, never what the last scene had:
+
+- its `[scene] input_config`, or with none the project's input config (`[project] input` or `config/input.toml`);
+- its `[post_process]`, or with none the default post-processing, which also clears whatever a script set on the last scene;
+- its `[environment] skybox`, or no skybox; its ambient light, shadows and shading levers, or the defaults;
+- its `[camera]` over a fresh camera, so a scene with no `[camera]` doesn't inherit an orthographic projection or a field of view;
+- `on_init`, then `on_scene_enter`, with the state machine and the persistent store in reach.
+
+The persistent store, the game state stack, the window and the quality settings carry over.
+
+The target is read before the current scene is touched. If it can't be loaded (a missing file, a scene that doesn't parse), the current scene keeps playing, the error names the path it was read from, and the transition goes on to its Entering phase so a fade can come back in. The run then ends with a non-zero exit code, so a capture under `--exit-after` fails instead of passing on the wrong picture.
+
 ### Game State Machine API
 
 A pushdown automaton for managing game states (playing, paused, custom):
@@ -1565,7 +1581,7 @@ Every loaded document remembers its `.ui.toml`, `.style.toml` and shared token f
 | `ui_set_class(element_id, class)` | --- | Switch an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if an element exists in any loaded document |
 | `ui_get_rect(element_id)` | `Map` or `()` | Get resolved screen rect as `#{x, y, w, h}` |
-| `ui_hit(element_id, x, y)` | `bool` | True when the point (logical points, e.g. `mouse_position()`) lies inside the element's resolved rect; `false` for unknown ids |
+| `ui_hit(element_id, x, y)` | `bool` | True when the point (logical points, e.g. `mouse_x()`, `mouse_y()`) lies inside the element's resolved rect; `false` for unknown ids |
 | `ui_token(name)` | `Array`, `float`, `string`, `bool` or `()` | Read a style token from the loaded documents' `[tokens]` tables and shared theme: `"accent"`, `"$accent"` and `"color.accent"` all work. Arrays and numbers come back as floats |
 
 Element IDs are the TOML key names from the layout file (e.g., `"speed_label"`, `"lap_counter"`). Functions search all loaded documents when resolving an element ID.

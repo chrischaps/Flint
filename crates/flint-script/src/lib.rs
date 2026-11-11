@@ -610,6 +610,46 @@ impl ScriptSystem {
         self.engine.rhai_engine_mut()
     }
 
+    /// Declare functions through the builder (ADR 0116): registered like
+    /// [`Self::rhai_engine_mut`]'s, and listed with a doc and named
+    /// parameters by [`Self::api_listing`] and `flint script api`.
+    pub fn script_api(&mut self) -> api::ScriptApi<'_> {
+        self.engine.script_api()
+    }
+
+    /// The whole script API as it is registered now: what the builder
+    /// declared (Flint's and any extension's), what was registered on the
+    /// engine directly, and the callbacks. A game binary with extensions
+    /// prints its own listing from this (`flint script api` prints the
+    /// engine's). The undeclared part needs flint-script's `metadata`
+    /// feature (Rhai's); without it `undeclared_listed` is false.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn api_listing(&self) -> api::registry::ApiListing {
+        let registry = self.engine.api_registry();
+        #[cfg(feature = "metadata")]
+        let (undeclared, undeclared_listed) = {
+            let mut fns: Vec<api::registry::UndeclaredFn> = self
+                .engine
+                .rhai_engine()
+                .gen_fn_signatures(false)
+                .iter()
+                .filter_map(|sig| api::registry::parse_signature(sig))
+                .filter(|f| !registry.declares(&f.name, f.params.len()))
+                .collect();
+            fns.sort_by(|a, b| (&a.name, a.params.len()).cmp(&(&b.name, b.params.len())));
+            fns.dedup_by(|a, b| a.signature == b.signature);
+            (fns, true)
+        };
+        #[cfg(not(feature = "metadata"))]
+        let (undeclared, undeclared_listed) = (Vec::new(), false);
+        api::registry::ApiListing {
+            declared: registry.entries().to_vec(),
+            undeclared,
+            undeclared_listed,
+            callbacks: api::registry::CALLBACKS.to_vec(),
+        }
+    }
+
     /// Set the terrain height sampling callback for scripts
     pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);

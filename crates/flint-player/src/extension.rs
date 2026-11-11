@@ -47,9 +47,29 @@ pub trait PlayerExtension {
     /// atomics).
     fn register_script_api(&mut self, _engine: &mut rhai::Engine) {}
 
+    /// Declare functions through Flint's builder (ADR 0116), so they are
+    /// listed with their parameters and a doc beside the engine's
+    /// (`ScriptSystem::api_listing`), take integers where they want
+    /// numbers, and reach the world through the call handle:
+    ///
+    /// ```ignore
+    /// use flint_script::api::builder::kind::{Entity, Num};
+    /// let mut m = api.module("mygame");
+    /// m.func("boost", "Push the kart forward by this many m/s.")
+    ///     .arg("kart", Entity)
+    ///     .arg("speed", Num)
+    ///     .run(|call, (kart, speed)| { /* call.world_mut()? */ Ok(()) });
+    /// ```
+    ///
+    /// Called once from `add_extension`, after `register_script_api`.
+    /// Functions registered there, on the raw engine, still work and are
+    /// listed as undeclared.
+    fn declare_script_api(&mut self, _api: &mut flint_script::api::ScriptApi) {}
+
     /// Register the game's own procgen generators (ADR 0119, #195). Called
-    /// once, from `add_extension`, with the registry the player resolves
-    /// every scene's `*.procgen.toml` specs through; it already holds the
+    /// once, from `add_extension`, after the script API hooks, with the
+    /// registry the player resolves every scene's `*.procgen.toml` specs
+    /// through; it already holds the
     /// built-ins. A spec whose `generator` names a type registered here
     /// resolves like a built-in's: generated at load (or queued, under
     /// `--procgen-defer`), cached in memory and on the disk, and uploaded
