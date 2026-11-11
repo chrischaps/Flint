@@ -16,6 +16,9 @@ pub struct HeadlessContext {
     /// `depth_texture`'s id, new with each texture (#379; see
     /// [`RenderContext::depth_id`](crate::RenderContext::depth_id)).
     pub depth_id: u64,
+    /// The adapter drawing, so a timing can say which GPU and backend it
+    /// measured (#292: `WGPU_BACKEND` is otherwise invisible in the output).
+    pub adapter_info: wgpu::AdapterInfo,
 }
 
 impl HeadlessContext {
@@ -57,6 +60,7 @@ impl HeadlessContext {
             depth_texture,
             depth_view,
             depth_id: crate::bind_cache::new_depth_id(),
+            adapter_info: adapter.get_info(),
         })
     }
 
