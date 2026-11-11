@@ -234,6 +234,19 @@ the two files it names (or, for case 1, move the asset into the project or put
 a `flint.toml` in the folder that holds both). If something now draws or plays
 where it didn't, a scene was naming an asset the old rule could not reach.
 
+
+
+### `engine\scripts\android-build.bat` runs the bash script (#764)
+**What changed.** `android-build.bat` and `build-and-install.bat` are now
+one line each that runs `android-build.sh` / `build-and-install.sh` in Git
+for Windows' bash (found by `scripts\sh.cmd`; set `FLINT_BASH` to use
+another). The Android build no longer runs `cargo ndk` before Gradle, which
+runs it anyway, and with no game directory it now passes Gradle the
+directory above the engine, the same default Gradle already used. adb is
+still optional: without it the APK is built and its path printed.
+**What to do.** Nothing, if Git for Windows is installed. If a game script
+calls `gradlew.bat` with `-PgameDir` itself, it keeps working.
+
 ### Living props: `softness`, a soft silhouette at rest (#582)
 **What changed.** A living prop's body can feather at its outline without
 moving any more than it did. `softness` (0 to 1, default 0) fades the body

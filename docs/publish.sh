@@ -13,6 +13,9 @@
 #    ./docs/publish.sh --skip-rustdoc   # Skip cargo doc (faster)
 #    ./docs/publish.sh --serve          # Build and serve locally
 #
+#  The one implementation: docs/build.ps1 and docs/publish.bat call this
+#  through scripts/sh.cmd (#764).
+#
 # ============================================================
 
 set -euo pipefail

@@ -193,3 +193,19 @@ jobs:
 
       - name: scripts/changelog-check.sh
         run: bash scripts/changelog-check.sh "origin/${{ github.base_ref }}"
+
+  # The book's crate table (#764): tools/arch-analyzer writes it from every
+  # Cargo.toml into docs/book/src/architecture/crate-graph.md, between the
+  # crate-table markers. Fails when a dependency changed and the page didn't.
+  # Fix it with `cargo run -p flint-arch-analyzer -- --book` and commit the page.
+  crate-table:
+    name: crate table
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: flint-arch-analyzer --check-book
+        run: cargo run --locked -p flint-arch-analyzer -- --check-book
