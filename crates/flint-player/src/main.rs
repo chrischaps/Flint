@@ -40,8 +40,10 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     bundle: Option<std::path::PathBuf>,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     schemas: Vec<String>,
 
     /// Launch in fullscreen mode
@@ -251,27 +253,26 @@ fn main() -> Result<()> {
         None => None,
     };
 
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
-
-    // Load schemas from all directories
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| vfs::exists(p))
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
+    // The one resolver (ADR 0114): --schemas, else the manifest, else
+    // discovery. A bundle settled its list when it was packed
+    // (`args.schemas` holds it by now), plus what lies beside the scene.
+    let scene = std::path::Path::new(&args.scene);
+    let (registry, schema_dirs) = if args.bundle.is_some() {
+        let dirs = flint_core::project::host_schema_dirs(&args.schemas, Some(scene));
+        let registry =
+            SchemaRegistry::load_from_directories(&dirs.dirs).context("Failed to load schemas")?;
+        (registry, dirs)
     } else {
-        println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
+        match SchemaRegistry::resolve(Some(scene), &args.schemas) {
+            Ok(loaded) => loaded,
+            // Says which directory and who named it: nothing to add
+            Err(flint_core::FlintError::SchemaDirs(e)) => return Err(e.into()),
+            Err(e) => return Err(e).context("Failed to load schemas"),
+        }
     };
+    if schema_dirs.dirs.is_empty() {
+        println!("Warning: No schemas directories found");
+    }
 
     // --style words, checked once the scene's own styles are registered
     // (a user style is known only then, #274) so a typo stops here
@@ -411,7 +412,7 @@ fn main() -> Result<()> {
         .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
     // Preserve schema paths for scene transitions (includes auto-discovered)
-    app.set_schema_paths(all_schemas);
+    app.set_schema_dirs(schema_dirs);
 
     event_loop.run_app(&mut app)?;
     // A failed start or a screenshot that never reached the disk exits

@@ -10,5 +10,8 @@ mod validation;
 
 pub use archetype::ArchetypeSchema;
 pub use component::{ComponentSchema, FieldSchema, FieldType};
-pub use registry::{discover_schema_dirs, SchemaRegistry};
+pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
+#[allow(deprecated)]
+pub use registry::discover_schema_dirs;
+pub use registry::SchemaRegistry;
 pub use validation::validate_component_data;

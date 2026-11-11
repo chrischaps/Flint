@@ -4,20 +4,21 @@ use anyhow::{Context, Result};
 use flint_ecs::FlintWorld;
 use flint_query::{execute_query, format_json, format_toml, parse_query};
 use flint_scene::load_scene;
-use flint_schema::SchemaRegistry;
-use std::path::Path;
 
-pub fn run(query_str: &str, scene_path: Option<&str>, format: &str) -> Result<()> {
+pub fn run(
+    query_str: &str,
+    scene_path: Option<&str>,
+    format: &str,
+    schemas: &[String],
+) -> Result<()> {
     // Parse query
     let query = parse_query(query_str).context("Failed to parse query")?;
 
     // Load scene if provided
     let world = if let Some(path) = scene_path {
-        let registry = if Path::new("schemas").exists() {
-            SchemaRegistry::load_from_directory("schemas").unwrap_or_default()
-        } else {
-            SchemaRegistry::new()
-        };
+        // The one resolver (ADR 0114). With no directory found the scene
+        // still loads, with no archetype defaults
+        let (registry, _) = super::common_args::load_schemas(Some(path), schemas)?;
 
         let (world, _) = load_scene(path, &registry).context("Failed to load scene")?;
         world

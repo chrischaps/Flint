@@ -182,7 +182,7 @@ impl PlayerApp {
             persistent_store: PersistentStore::new(),
             persist_debounce: flint_runtime::SaveDebounce::default(),
             transition_phase: TransitionPhase::Idle,
-            schema_paths: Vec::new(),
+            schema_dirs: Default::default(),
             terrain: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
@@ -318,9 +318,21 @@ impl PlayerApp {
         Ok(())
     }
 
-    /// Set the schema paths used for scene loading (preserved across transitions).
+    /// Set the schema directories transitions and chunks load from, as a
+    /// list the host settled itself: those that exist are kept, and a scene
+    /// a transition leads to adds any `schemas/` beside it or one level up.
+    /// A host that resolved them (`SchemaRegistry::resolve`) hands the
+    /// answer to [`set_schema_dirs`](Self::set_schema_dirs) instead.
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
-        self.schema_paths = paths;
+        self.schema_dirs = flint_core::project::host_schema_dirs(&paths, None);
+    }
+
+    /// Set the schema directories as the one resolver named them (ADR
+    /// 0114), with where the list came from: `--schemas` flags stay as they
+    /// are across transitions, a manifest's list is read again for the new
+    /// scene's project, and a discovered one grows as it always did.
+    pub fn set_schema_dirs(&mut self, dirs: flint_core::project::SchemaDirs) {
+        self.schema_dirs = dirs;
     }
 
     /// Register a function that reads gamepad trigger/right-stick axes from the

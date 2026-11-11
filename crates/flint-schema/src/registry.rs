@@ -2,28 +2,18 @@
 
 use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
 use crate::component::{ComponentSchema, ComponentSchemaFile};
+use flint_core::project::SchemaDirs;
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Auto-discover `schemas/` directories by walking up from a scene file path.
-/// Checks `scene_dir/schemas/` then `parent_dir/schemas/`, matching the model
-/// loading pattern used elsewhere in the engine.
+/// The `schemas/` directories beside a scene and one level up, whichever
+/// exist.
+#[deprecated(note = "one resolver decides the schema directories now (ADR 0114): \
+            `SchemaRegistry::resolve`, or `flint_core::project::schema_dirs` for the list alone")]
 pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let mut dirs = Vec::new();
-    for dir in [Some(scene_dir), scene_dir.parent()] {
-        if let Some(d) = dir {
-            let schemas = d.join("schemas");
-            if vfs::is_dir(&schemas) {
-                dirs.push(schemas);
-            }
-        }
-    }
-    dirs
+    flint_core::project::host_schema_dirs(&[] as &[&Path], Some(Path::new(scene_path))).dirs
 }
 
 /// Registry that holds all loaded component and archetype schemas
@@ -37,6 +27,20 @@ impl SchemaRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The registry for a scene (or for the working directory when a command
+    /// has none), with the directories it was read from and where that list
+    /// came from. The one way a command, the viewer or the player gets its
+    /// schemas (ADR 0114): `flags` (`--schemas`) if any, else the project
+    /// manifest's `schemas`, else `schemas/` in the working directory,
+    /// beside the scene and one level up. See
+    /// [`flint_core::project::schema_dirs`]. A named directory that isn't
+    /// there is an error; a discovery that finds none is an empty registry
+    /// and an empty list, for the caller to remark on.
+    pub fn resolve(scene: Option<&Path>, flags: &[impl AsRef<Path>]) -> Result<(Self, SchemaDirs)> {
+        let dirs = flint_core::project::schema_dirs(scene, flags)?;
+        Ok((Self::load_from_directories(&dirs.dirs)?, dirs))
     }
 
     /// Load schemas from multiple directories, merging them in order.
@@ -220,7 +224,85 @@ impl SchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::project::SchemaSource;
+    use flint_core::vfs::MemorySource;
     use std::fs;
+    use std::sync::Arc;
+
+    fn lamp(description: &str) -> String {
+        format!(
+            "[component.lamp]\ndescription = \"{description}\"\n\n\
+             [component.lamp.fields]\non = {{ type = \"bool\", default = true }}\n"
+        )
+    }
+
+    fn describe(registry: &SchemaRegistry) -> Option<&str> {
+        registry.get_component("lamp")?.description.as_deref()
+    }
+
+    /// The one resolver, end to end over the vfs: the manifest's list in
+    /// its order (the game over the engine), flags instead when given, and
+    /// a missing named directory as the error.
+    #[test]
+    fn resolve_loads_what_the_flags_or_the_manifest_name() {
+        let mut files = MemorySource::new();
+        files.insert(
+            "flint.toml",
+            "[project]\nschemas = [\"engine/schemas\", \"schemas\"]\n",
+        );
+        files.insert("engine/schemas/components/lamp.toml", lamp("engine"));
+        files.insert("schemas/components/lamp.toml", lamp("game"));
+        files.insert("scenes/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let scene = Some(Path::new("scenes/a.scene.toml"));
+            let none: &[&str] = &[];
+            let (registry, dirs) = SchemaRegistry::resolve(scene, none).unwrap();
+            assert_eq!(dirs.source.name(), "manifest");
+            assert_eq!(dirs.dirs.len(), 2);
+            assert_eq!(
+                describe(&registry),
+                Some("game"),
+                "the later directory wins"
+            );
+
+            let (registry, dirs) = SchemaRegistry::resolve(scene, &["engine/schemas"]).unwrap();
+            assert_eq!(dirs.source, SchemaSource::Flags);
+            assert_eq!(describe(&registry), Some("engine"));
+
+            // Flag order is override order too
+            let (registry, _) =
+                SchemaRegistry::resolve(scene, &["schemas", "engine/schemas"]).unwrap();
+            assert_eq!(describe(&registry), Some("engine"));
+
+            let err = SchemaRegistry::resolve(scene, &["engine/schemas", "nope"]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "schema directory not found: nope (named by --schemas)"
+            );
+        });
+    }
+
+    /// No flags, no manifest: `schemas/` beside the scene and one level up,
+    /// and an empty registry (no error) when there is none.
+    #[test]
+    fn resolve_discovers_without_a_manifest() {
+        let mut files = MemorySource::new();
+        files.insert("game/schemas/components/lamp.toml", lamp("one up"));
+        files.insert("game/levels/a.scene.toml", "");
+        files.insert("bare/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let none: &[&str] = &[];
+            let (registry, dirs) =
+                SchemaRegistry::resolve(Some("game/levels/a.scene.toml".as_ref()), none).unwrap();
+            assert_eq!(dirs.source, SchemaSource::Discovery);
+            assert_eq!(describe(&registry), Some("one up"));
+
+            let (registry, dirs) =
+                SchemaRegistry::resolve(Some("bare/a.scene.toml".as_ref()), none).unwrap();
+            assert!(dirs.dirs.is_empty());
+            assert!(registry.get_component("lamp").is_none());
+        });
+    }
 
     /// Every field in the engine's own schemas names a type the parser knows,
     /// so none silently validates as a string (H8: `"integer"` did).

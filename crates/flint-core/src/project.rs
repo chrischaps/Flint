@@ -358,6 +358,196 @@ impl Project {
     }
 }
 
+/// Where a list of schema directories came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaSource {
+    /// `--schemas` flags: the whole list, nothing added.
+    Flags,
+    /// `[project] schemas` in this manifest file.
+    Manifest(PathBuf),
+    /// A list the host handed over (a bundle's manifest, a game embedding
+    /// the player), with any `schemas/` beside the scene or one level up.
+    Host,
+    /// No flags and no manifest list: `schemas/` in the working directory,
+    /// beside the scene and one level up, whichever exist.
+    Discovery,
+}
+
+impl SchemaSource {
+    /// One word for reports: `flags`, `manifest`, `host` or `discovery`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            SchemaSource::Flags => "flags",
+            SchemaSource::Manifest(_) => "manifest",
+            SchemaSource::Host => "host",
+            SchemaSource::Discovery => "discovery",
+        }
+    }
+}
+
+impl std::fmt::Display for SchemaSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchemaSource::Flags => f.write_str("--schemas"),
+            SchemaSource::Manifest(file) => write!(f, "`schemas` in {}", file.display()),
+            SchemaSource::Host => f.write_str("the bundle or the embedding game"),
+            SchemaSource::Discovery => f.write_str(
+                "discovery: schemas/ in the working directory, beside the scene and one level up",
+            ),
+        }
+    }
+}
+
+/// The schema directories a run loads, in override order (a later one wins),
+/// and where the list came from. Made by [`schema_dirs`] (every command and
+/// the viewer) or [`host_schema_dirs`] (a bundle, an embedding game).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaDirs {
+    pub dirs: Vec<PathBuf>,
+    pub source: SchemaSource,
+}
+
+impl Default for SchemaDirs {
+    /// No directories yet, to be discovered: what a player holds before its
+    /// host says anything.
+    fn default() -> Self {
+        Self {
+            dirs: Vec::new(),
+            source: SchemaSource::Discovery,
+        }
+    }
+}
+
+/// Why the schema directories could not be named.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SchemaDirsError {
+    /// A directory named by a flag or the manifest isn't there.
+    #[error("schema directory not found: {} (named by {named_by})", dir.display())]
+    Missing {
+        dir: PathBuf,
+        named_by: SchemaSource,
+    },
+    /// The project's manifest could not be read.
+    #[error(transparent)]
+    Project(#[from] ProjectError),
+}
+
+/// The one answer to "which schema directories?" (ADR 0114, decision 3).
+///
+/// - `flags` (the `--schemas` values) if any were given: they are the whole
+///   list.
+/// - Else `[project] schemas` of the project `scene` belongs to (the working
+///   directory's when there is no scene, the `--project` one when given).
+/// - Else discovery, as before there were manifests: `schemas/` in the
+///   working directory, beside the scene and one level up, whichever exist.
+///
+/// A directory that a flag or the manifest names and that isn't there is an
+/// error naming it and who named it. Discovery only returns what exists, so
+/// its list may be empty.
+pub fn schema_dirs(
+    scene: Option<&Path>,
+    flags: &[impl AsRef<Path>],
+) -> Result<SchemaDirs, SchemaDirsError> {
+    if !flags.is_empty() {
+        let dirs = flags.iter().map(|f| f.as_ref().to_path_buf()).collect();
+        return named(dirs, SchemaSource::Flags);
+    }
+    let project = match scene {
+        Some(scene) => Project::for_path(scene)?,
+        None => Project::current()?,
+    };
+    if !project.schemas.is_empty() {
+        let source = SchemaSource::Manifest(project.manifest_path());
+        return named(project.schema_dirs(), source);
+    }
+    let mut dirs = Vec::new();
+    if vfs::is_dir("schemas") {
+        dirs.push(PathBuf::from("schemas"));
+    }
+    if let Some(scene) = scene {
+        add_dirs_beside(scene, &mut dirs);
+    }
+    Ok(SchemaDirs {
+        dirs,
+        source: SchemaSource::Discovery,
+    })
+}
+
+/// The directories of a list the host already settled (a bundle's manifest,
+/// a game embedding the player): those of `listed` that exist, then any
+/// `schemas/` beside `scene` or one level up. Nothing here is an error; the
+/// packer checked the list when it wrote it.
+pub fn host_schema_dirs(listed: &[impl AsRef<Path>], scene: Option<&Path>) -> SchemaDirs {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for dir in listed {
+        let dir = dir.as_ref();
+        if vfs::is_dir(dir) && !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    if let Some(scene) = scene {
+        add_dirs_beside(scene, &mut dirs);
+    }
+    SchemaDirs {
+        dirs,
+        source: SchemaSource::Host,
+    }
+}
+
+impl SchemaDirs {
+    /// The directories for the scene a transition leads to. Flags stay as
+    /// they are. A manifest's list is read again, since the new scene may
+    /// belong to another project. A discovered or host list keeps what it
+    /// has and gains whatever lies beside the new scene, as the player
+    /// always did.
+    pub fn for_scene(&self, scene: &Path) -> Result<SchemaDirs, SchemaDirsError> {
+        match self.source {
+            SchemaSource::Flags => Ok(self.clone()),
+            SchemaSource::Host => {
+                let mut next = self.clone();
+                add_dirs_beside(scene, &mut next.dirs);
+                Ok(next)
+            }
+            SchemaSource::Manifest(_) | SchemaSource::Discovery => {
+                let mut next = schema_dirs(Some(scene), &[] as &[&Path])?;
+                if self.source == SchemaSource::Discovery && next.source == SchemaSource::Discovery
+                {
+                    let found = std::mem::replace(&mut next.dirs, self.dirs.clone());
+                    for dir in found {
+                        if !next.dirs.contains(&dir) {
+                            next.dirs.push(dir);
+                        }
+                    }
+                }
+                Ok(next)
+            }
+        }
+    }
+}
+
+/// A list somebody named: every directory in it has to be there.
+fn named(dirs: Vec<PathBuf>, source: SchemaSource) -> Result<SchemaDirs, SchemaDirsError> {
+    match dirs.iter().find(|d| !vfs::is_dir(d)) {
+        Some(dir) => Err(SchemaDirsError::Missing {
+            dir: dir.clone(),
+            named_by: source,
+        }),
+        None => Ok(SchemaDirs { dirs, source }),
+    }
+}
+
+/// `schemas/` beside a scene and one level up, appended where they exist
+/// and aren't listed yet. The whole of what "discovery" means for a scene.
+fn add_dirs_beside(scene: &Path, dirs: &mut Vec<PathBuf>) {
+    let scene_dir = scene.parent().unwrap_or_else(|| Path::new("."));
+    for dir in [Some(scene_dir), scene_dir.parent()].into_iter().flatten() {
+        let schemas = dir.join("schemas");
+        if vfs::is_dir(&schemas) && !dirs.contains(&schemas) {
+            dirs.push(schemas);
+        }
+    }
+}
+
 fn marker(dir: &Path, home: Option<&Path>) -> Option<Found> {
     if vfs::is_file(dir.join(MANIFEST_FILE)) {
         return Some(Found::Manifest);
@@ -822,6 +1012,253 @@ input = "config/input.toml"
                 Err(ProjectError::WrongType { .. })
             ));
         });
+    }
+
+    const NO_FLAGS: &[&str] = &[];
+    const GAME: &[(&str, &str)] = &[
+        (
+            "flint.toml",
+            "[project]\nschemas = [\"engine/schemas\", \"schemas\"]\n",
+        ),
+        ("engine/schemas/", ""),
+        ("schemas/", ""),
+        ("scenes/a.scene.toml", ""),
+        ("scenes/schemas/", ""),
+        ("elsewhere/schemas/", ""),
+    ];
+
+    fn paths(dirs: &SchemaDirs) -> Vec<String> {
+        dirs.dirs.iter().map(|d| vfs::normalize(d)).collect()
+    }
+
+    #[test]
+    fn schema_flags_are_the_whole_list() {
+        with_files(GAME, || {
+            let dirs =
+                schema_dirs(Some("scenes/a.scene.toml".as_ref()), &["elsewhere/schemas"]).unwrap();
+            assert_eq!(dirs.source, SchemaSource::Flags);
+            // Not the manifest's, and nothing beside the scene
+            assert_eq!(paths(&dirs), ["elsewhere/schemas"]);
+            // In the order given
+            let dirs = schema_dirs(None, &["schemas", "engine/schemas"]).unwrap();
+            assert_eq!(paths(&dirs), ["schemas", "engine/schemas"]);
+        });
+    }
+
+    #[test]
+    fn the_manifest_names_the_schemas_when_no_flag_does() {
+        with_files(GAME, || {
+            for scene in [Some("scenes/a.scene.toml"), None] {
+                let dirs = schema_dirs(scene.map(Path::new), NO_FLAGS).unwrap();
+                assert_eq!(
+                    dirs.source,
+                    SchemaSource::Manifest(PathBuf::from("./flint.toml")),
+                    "{scene:?}"
+                );
+                assert_eq!(dirs.source.name(), "manifest");
+                // In the manifest's order, and nothing beside the scene
+                assert_eq!(paths(&dirs), ["engine/schemas", "schemas"], "{scene:?}");
+            }
+        });
+        // The scene's project, not the working directory's
+        with_files(
+            &[
+                ("game/flint.toml", "[project]\nschemas = [\"s\"]\n"),
+                ("game/s/", ""),
+                ("game/scenes/deep/a.scene.toml", ""),
+                ("schemas/", ""),
+            ],
+            || {
+                let dirs =
+                    schema_dirs(Some("game/scenes/deep/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                assert_eq!(paths(&dirs), ["game/s"]);
+            },
+        );
+    }
+
+    #[test]
+    fn a_named_schema_directory_that_is_missing_is_an_error() {
+        with_files(GAME, || {
+            let err = schema_dirs(None, &["schemas", "nope"]).unwrap_err();
+            assert_eq!(
+                err,
+                SchemaDirsError::Missing {
+                    dir: PathBuf::from("nope"),
+                    named_by: SchemaSource::Flags,
+                }
+            );
+            assert_eq!(
+                err.to_string(),
+                "schema directory not found: nope (named by --schemas)"
+            );
+        });
+        // A manifest naming engine/schemas in a project with no engine subtree
+        with_files(
+            &[
+                (
+                    "flint.toml",
+                    "[project]\nschemas = [\"engine/schemas\", \"schemas\"]\n",
+                ),
+                ("schemas/", ""),
+                ("scenes/a.scene.toml", ""),
+            ],
+            || {
+                let err = schema_dirs(Some("scenes/a.scene.toml".as_ref()), NO_FLAGS).unwrap_err();
+                let SchemaDirsError::Missing { dir, named_by } = &err else {
+                    panic!("{err:?}");
+                };
+                assert_eq!(vfs::normalize(dir), "engine/schemas");
+                assert_eq!(named_by.name(), "manifest");
+                let said = err.to_string();
+                assert!(said.contains("engine/schemas"), "{said}");
+                assert!(said.contains("`schemas` in"), "{said}");
+                assert!(said.contains("flint.toml"), "{said}");
+                // The flags get round it
+                assert!(schema_dirs(Some("scenes/a.scene.toml".as_ref()), &["schemas"]).is_ok());
+            },
+        );
+        // A manifest that doesn't read is the error, unless flags were given
+        with_files(
+            &[("flint.toml", "[project]\nschemas = 3\n"), ("s/", "")],
+            || {
+                assert!(matches!(
+                    schema_dirs(None, NO_FLAGS),
+                    Err(SchemaDirsError::Project(ProjectError::WrongType { .. }))
+                ));
+                assert!(schema_dirs(None, &["s"]).is_ok());
+            },
+        );
+    }
+
+    #[test]
+    fn with_no_flags_and_no_list_schemas_are_discovered() {
+        // The working directory's, beside the scene, one level up: those
+        // that exist, in that order, each once
+        with_files(
+            &[
+                ("schemas/", ""),
+                ("game/schemas/", ""),
+                ("game/levels/schemas/", ""),
+                ("game/levels/a.scene.toml", ""),
+            ],
+            || {
+                let dirs =
+                    schema_dirs(Some("game/levels/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                assert_eq!(dirs.source, SchemaSource::Discovery);
+                assert_eq!(
+                    paths(&dirs),
+                    ["schemas", "game/levels/schemas", "game/schemas"]
+                );
+                // No scene: the working directory's alone
+                assert_eq!(paths(&schema_dirs(None, NO_FLAGS).unwrap()), ["schemas"]);
+            },
+        );
+        // An engine checkout's demo scene: no manifest list, so discovery
+        with_files(
+            &[
+                ("crates/flint-core/Cargo.toml", ""),
+                ("schemas/", ""),
+                ("demo/a.scene.toml", ""),
+            ],
+            || {
+                let dirs = schema_dirs(Some("demo/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                assert_eq!(dirs.source, SchemaSource::Discovery);
+                assert_eq!(paths(&dirs), ["schemas"]);
+            },
+        );
+        // A manifest with no `schemas` key is a marker: discovery
+        with_files(
+            &[
+                ("flint.toml", "[project]\nid = \"x\"\n"),
+                ("schemas/", ""),
+                ("engine/schemas/", ""),
+            ],
+            || {
+                let dirs = schema_dirs(None, NO_FLAGS).unwrap();
+                assert_eq!(dirs.source, SchemaSource::Discovery);
+                assert_eq!(paths(&dirs), ["schemas"]);
+            },
+        );
+        // Nothing anywhere: an empty list, not an error
+        with_files(&[("a.scene.toml", "")], || {
+            let dirs = schema_dirs(Some("a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+            assert_eq!(dirs, SchemaDirs::default());
+        });
+    }
+
+    #[test]
+    fn a_hosts_list_keeps_what_exists_and_adds_what_is_beside_the_scene() {
+        with_files(
+            &[
+                ("engine/schemas/", ""),
+                ("schemas/", ""),
+                ("levels/schemas/", ""),
+                ("levels/a.scene.toml", ""),
+            ],
+            || {
+                let dirs = host_schema_dirs(
+                    &["engine/schemas", "gone", "schemas"],
+                    Some("levels/a.scene.toml".as_ref()),
+                );
+                assert_eq!(dirs.source, SchemaSource::Host);
+                // `schemas` one level up is already listed
+                assert_eq!(
+                    paths(&dirs),
+                    ["engine/schemas", "schemas", "levels/schemas"]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn a_transition_asks_again_for_the_new_scene() {
+        with_files(
+            &[
+                ("schemas/", ""),
+                ("a/x.scene.toml", ""),
+                ("a/schemas/", ""),
+                ("b/y.scene.toml", ""),
+                ("b/schemas/", ""),
+                ("game/flint.toml", "[project]\nschemas = [\"s\"]\n"),
+                ("game/s/", ""),
+                ("game/z.scene.toml", ""),
+            ],
+            || {
+                // Flags stay as they are
+                let flags = schema_dirs(Some("a/x.scene.toml".as_ref()), &["schemas"]).unwrap();
+                assert_eq!(flags.for_scene("b/y.scene.toml".as_ref()).unwrap(), flags);
+                assert_eq!(
+                    flags.for_scene("game/z.scene.toml".as_ref()).unwrap(),
+                    flags
+                );
+
+                // Discovery keeps what it had and gains the new scene's
+                let found = schema_dirs(Some("a/x.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                assert_eq!(paths(&found), ["schemas", "a/schemas"]);
+                let next = found.for_scene("b/y.scene.toml".as_ref()).unwrap();
+                assert_eq!(next.source, SchemaSource::Discovery);
+                assert_eq!(paths(&next), ["schemas", "a/schemas", "b/schemas"]);
+
+                // Into a project with a manifest: its list, and back out again
+                let game = next.for_scene("game/z.scene.toml".as_ref()).unwrap();
+                assert_eq!(game.source.name(), "manifest");
+                assert_eq!(paths(&game), ["game/s"]);
+                let back = game.for_scene("b/y.scene.toml".as_ref()).unwrap();
+                assert_eq!(paths(&back), ["schemas", "b/schemas"]);
+
+                // A host's list only grows
+                let host = host_schema_dirs(&["schemas"], Some("a/x.scene.toml".as_ref()));
+                let next = host.for_scene("b/y.scene.toml".as_ref()).unwrap();
+                assert_eq!(next.source, SchemaSource::Host);
+                assert_eq!(paths(&next), ["schemas", "a/schemas", "b/schemas"]);
+
+                // A player nobody told anything discovers on its first ask
+                let first = SchemaDirs::default()
+                    .for_scene("a/x.scene.toml".as_ref())
+                    .unwrap();
+                assert_eq!(paths(&first), ["schemas", "a/schemas"]);
+            },
+        );
     }
 
     #[test]

@@ -26,8 +26,10 @@ pub struct ValidateArgs {
     #[arg(long)]
     pub output_diff: bool,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
     /// Output format (json or toml)
@@ -74,21 +76,10 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         eprintln!("warning: {warning}");
     }
 
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
-
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| std::path::Path::new(p).exists())
-        .collect();
-    let schema_registry = SchemaRegistry::load_from_directories(&existing)?;
+    // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
+    let (schema_registry, schema_dirs) =
+        super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    let existing = &schema_dirs.dirs;
     let mut wooze = wooze_violations(&args.scene, &schema_registry)?;
     wooze.extend(species_violations(&args.scene, &schema_registry)?);
     let mut constraint_registry = ConstraintRegistry::new();
@@ -101,7 +92,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         }
     } else {
         // Merge constraints from all schema directories (later directories are additive)
-        for path in &existing {
+        for path in existing {
             let loaded = ConstraintRegistry::load_from_directory(path)?;
             for constraint in loaded.all() {
                 constraint_registry.register(constraint.clone());

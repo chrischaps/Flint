@@ -208,7 +208,7 @@ mod web {
         world: FlintWorld,
         scene_file: SceneFile,
         scene_path: String,
-        schemas: Vec<String>,
+        schemas: flint_core::project::SchemaDirs,
     }
 
     async fn start() -> Result<(), String> {
@@ -278,7 +278,7 @@ mod web {
         }
         app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);
-        app.set_schema_paths(loaded.schemas);
+        app.set_schema_dirs(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
@@ -321,19 +321,14 @@ mod web {
         // The engine's schemas are compiled in; the bundle's own (its engine
         // subtree's, then the game's) load over them, as `--schemas` does.
         let mut registry = engine_registry()?;
-        let mut schemas = manifest.schemas.clone();
-        for dir in flint_schema::discover_schema_dirs(&scene_path) {
-            let dir = vfs::normalize(&dir);
-            if !schemas.contains(&dir) {
-                schemas.push(dir);
-            }
-        }
-        for dir in &schemas {
-            if vfs::is_dir(dir) {
-                registry
-                    .load_directory(dir)
-                    .map_err(|e| format!("schemas {dir}: {e}"))?;
-            }
+        let schemas = flint_core::project::host_schema_dirs(
+            &manifest.schemas,
+            Some(std::path::Path::new(&scene_path)),
+        );
+        for dir in &schemas.dirs {
+            registry
+                .load_directory(dir)
+                .map_err(|e| format!("schemas {}: {e}", dir.display()))?;
         }
 
         status(&format!("loading {scene_path}"));
@@ -362,7 +357,7 @@ mod web {
             world,
             scene_file,
             scene_path: url.to_string(),
-            schemas: Vec::new(),
+            schemas: Default::default(),
         })
     }
 

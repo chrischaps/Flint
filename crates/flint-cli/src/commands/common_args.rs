@@ -145,3 +145,22 @@ pub(crate) fn parse_vec4(s: &str) -> Result<[f32; 4], String> {
     }
     Ok(out)
 }
+
+/// The schemas for a scene, or for the working directory when a command
+/// has no scene, from the one resolver (ADR 0114): `--schemas` flags if any
+/// were given, else the project manifest's `schemas`, else `schemas/` in
+/// the working directory, beside the scene and one level up. Returns the
+/// directories too, and where the list came from. A directory that a flag
+/// or the manifest names and that isn't there is the error, by name.
+pub fn load_schemas(
+    scene: Option<&str>,
+    flags: &[String],
+) -> anyhow::Result<(flint_schema::SchemaRegistry, flint_schema::SchemaDirs)> {
+    use anyhow::Context;
+    match flint_schema::SchemaRegistry::resolve(scene.map(std::path::Path::new), flags) {
+        Ok(loaded) => Ok(loaded),
+        // Says which directory and who named it: nothing to add
+        Err(flint_core::FlintError::SchemaDirs(e)) => Err(e.into()),
+        Err(e) => Err(e).context("Failed to load schemas"),
+    }
+}
