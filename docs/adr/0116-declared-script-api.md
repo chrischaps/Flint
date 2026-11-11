@@ -99,6 +99,12 @@ found about scripting follows from that:
 
 ## Steps
 
+One agent owns #695 and carries out step 1 under its one claim, a PR a
+step (or several, where a step says so): `Part of #695` on each PR but the
+last, `Closes #695` on the last. The ticket's note has the details. A step
+that names another ticket is that ticket's work, and waits its turn through
+the tickets' blocked-by links. The steps get no sub-issues.
+
 1. The builder, registry and `flint script api --json`, with one module
    (`entity`) ported as the pattern, and a measurement of call overhead
    (see below) (#695).

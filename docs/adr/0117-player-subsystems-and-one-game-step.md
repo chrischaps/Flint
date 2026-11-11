@@ -91,6 +91,12 @@ problems are around it:
 
 ## Steps
 
+One agent owns #724 and carries out steps 1 and 3 under its one claim, a PR a
+step (or several, where a step says so): `Part of #724` on each PR but the
+last, `Closes #724` on the last. The ticket's note has the details. A step
+that names another ticket is that ticket's work, and waits its turn through
+the tickets' blocked-by links. The steps get no sub-issues.
+
 1. Group `PlayerApp`'s fields into `LaunchOptions`, `SceneSettings`,
    `PostOverrides` and `LivingState` structs. Mechanical, no behaviour
    change, and it takes the struct to about 40 fields.

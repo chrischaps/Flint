@@ -86,6 +86,12 @@ Behind the misses is the shape of `SceneRenderer`:
 
 ## Steps
 
+One agent owns #736 and carries out steps 2 and 3 under its one claim, a PR a
+step (or several, where a step says so): `Part of #736` on each PR but the
+last, `Closes #736` on the last. The ticket's note has the details. A step
+that names another ticket is that ticket's work, and waits its turn through
+the tickets' blocked-by links. The steps get no sub-issues.
+
 1. `ScenePipelines` and the `set_msaa` fix, with a GPU test that switches
    1 to 4 to 1 with every draw kind on screen (#735). A bug fix; it can land
    before the ADR is accepted.

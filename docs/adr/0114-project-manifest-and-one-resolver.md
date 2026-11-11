@@ -87,6 +87,12 @@ current scene (#726).
 
 ## Steps
 
+One agent owns #706 and carries out steps 1 to 3 under its one claim, a PR a
+step (or several, where a step says so): `Part of #706` on each PR but the
+last, `Closes #706` on the last. The ticket's note has the details. A step
+that names another ticket is that ticket's work, and waits its turn through
+the tickets' blocked-by links. The steps get no sub-issues.
+
 1. `Project` in `flint-core` with `discover` and the manifest parse; the CLI's
    `--project` override; `flint-asset` re-exports it. No behaviour change.
 2. The schema resolver, replacing the five (closes #704's cause).
