@@ -40,11 +40,37 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
-`flint render --gpu-time <frames>` prints the same scopes for one headless frame drawn that many times, so a pass can be timed without a window.
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
 
 The player adds `UI`, the HUD pass. The top line is the scopes' total, the GPU's busy time in the frame. The figures are smoothed over recent frames and come back a frame or two late, because the player never waits for them.
+
+### Timing headless
+
+`flint render --gpu-time <frames>` draws one headless frame that many times, keeps every frame's raw times, and prints each scope's spread instead of a smoothed figure (#292):
+
+```
+GPU time over 240 frames at 1920x1080 (scene 1920x1080) on NVIDIA GeForce RTX 4070 (Vulkan):
+  240 frames timed, the first 24 dropped as warm-up
+  pass             min     p50     p90     max  ms
+  Grass          0.030   0.031   0.034   0.035
+  Shadows        0.263   0.265   0.294   0.297
+  Scene          0.310   0.314   0.792   1.075
+  Style mask     0.020   0.022   0.024   0.025
+  SSAO           0.734   0.746   1.386   2.156
+  Bloom          0.048   0.049   0.054   0.507
+  Composite      0.028   0.029   0.032   0.034
+  ASCII          0.145   0.148   0.324   0.764
+  frame          1.585   1.602   2.869   3.628
+```
+
+(`examples/ascii_entities`, release build.) In five processes the p50s agreed to 0.005 ms a pass and 0.024 ms for the frame. The smoothed figure the command used to print, recomputed from the same frames, spread over 0.165--0.219 ms for ASCII and 1.80--1.99 ms for the frame, since it leant on wherever the last slow frames fell. Here Scene, SSAO and ASCII run slow in more than one frame in ten, which is why their p90 is twice their p50.
+
+The first tenth of the frames (at most 30) are dropped while pipelines and the GPU's clocks settle. Percentiles are nearest-rank: p90 is the time nine frames in ten came in under. The `frame` row is the spread of each frame's total, not a sum of the rows above it. The first line names the adapter and backend, so a `WGPU_BACKEND=dx12` run says so.
+
+Read p50 to compare two builds and p90 for how far one run can be trusted: two runs whose p50s are closer than their p90 − p50 haven't shown a difference. A machine whose GPU is shared with other work shows it here: a contended run has a wide p90 and max, and every pass reads high at once, including passes the change doesn't touch. `min` is the closest one run gets to the uncontended cost.
+
+`--gpu-time-json <file>` also writes it as JSON for tools: the adapter (`name`, `backend`, `driver`), the sizes, `frames_drawn` / `frames_timed` / `frames_dropped` / `frames_kept`, and for each pass and the `frame` total its `min_ms`, `p50_ms`, `p90_ms`, `max_ms`, `mean_ms` and `samples_ms`, each kept frame's raw time in order. A host can do the same through `GpuTimer::record(true)`, `flush` and `flint_render::gpu_timer::spread`.
 
 A scope covers the GPU's time on the work inside it, plus any time the GPU sat idle inside it waiting for the CPU's next submission. `Shadows` and each post-process effect are several submissions, so on a CPU-bound frame they read a little high. Under vsync the GPU also waits for the window's next image before the first pass that draws into it. That pass is timed inside its own submission, so the wait falls between scopes and is in none of them: with vsync on or off, the figures are the GPU's own.
 

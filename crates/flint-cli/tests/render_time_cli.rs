@@ -528,11 +528,24 @@ fn frames_on_the_clock_move_the_props_and_count_flips() {
     assert_eq!(stats["frames"], 3, "{stats}");
 }
 
-/// `--gpu-time` times the first cell's capture.
+/// `--gpu-time` times the first cell's capture: a spread a pass (#292), and
+/// with `--gpu-time-json` every kept frame's raw time beside it.
 #[test]
 fn a_clocked_render_can_be_timed_on_the_gpu() {
     let dir = project("clock_gpu_time");
-    let o = render(&dir, "a.png", &["--time", "1.3", "--gpu-time", "2"]);
+    let json = dir.join("gpu.json");
+    let o = render(
+        &dir,
+        "a.png",
+        &[
+            "--time",
+            "1.3",
+            "--gpu-time",
+            "20",
+            "--gpu-time-json",
+            json.to_str().unwrap(),
+        ],
+    );
     if no_gpu(&o) {
         return;
     }
@@ -542,7 +555,39 @@ fn a_clocked_render_can_be_timed_on_the_gpu() {
     }
     ok(&o);
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(out.contains("GPU time over 2 frames"), "{out}");
+    assert!(out.contains("GPU time over 20 frames"), "{out}");
+    assert!(
+        out.contains("20 frames timed, the first 2 dropped"),
+        "{out}"
+    );
+    let header = out.lines().find(|l| l.trim_start().starts_with("pass"));
+    let header: Vec<&str> = header.expect(&out).split_whitespace().collect();
+    assert_eq!(header, ["pass", "min", "p50", "p90", "max", "ms"]);
+
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(doc["frames_drawn"], 20);
+    assert_eq!(doc["frames_kept"], 18);
+    assert!(doc["adapter"]["backend"].is_string(), "{doc}");
+    let passes = doc["passes"].as_array().unwrap();
+    assert!(passes.iter().any(|p| p["label"] == "Scene"), "{doc}");
+    for p in passes.iter().chain([&doc["frame"]]) {
+        let at = |k: &str| p[k].as_f64().unwrap();
+        assert!(at("min_ms") <= at("p50_ms") && at("p50_ms") <= at("p90_ms"));
+        assert!(at("p90_ms") <= at("max_ms"), "{p}");
+        let samples = p["samples_ms"].as_array().unwrap().len();
+        assert!((1..=18).contains(&samples), "{p}");
+    }
+    assert_eq!(doc["frame"]["samples_ms"].as_array().unwrap().len(), 18);
+}
+
+/// `--gpu-time-json` means nothing without `--gpu-time`; clap says so.
+#[test]
+fn gpu_time_json_needs_gpu_time() {
+    let dir = project("gpu_time_json_alone");
+    let o = render(&dir, "a.png", &["--gpu-time-json", "x.json"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--gpu-time"), "{}", stderr(&o));
 }
 
 /// `--ai-refine` on the clock, with the free offline agent: each candidate is

@@ -419,9 +419,15 @@ pub struct RenderArgs {
     pub render_scale: Option<f32>,
 
     /// Render this many frames with GPU timing on and print each pass's
-    /// smoothed GPU time before writing the image
+    /// min, p50, p90 and max GPU time over them, the first tenth (at most
+    /// 30) dropped as warm-up, before writing the image (#292)
     #[arg(long)]
     pub gpu_time: Option<u32>,
+
+    /// With --gpu-time: also write the timing as JSON to this file, every
+    /// kept frame's raw time per pass included
+    #[arg(long, requires = "gpu_time")]
+    pub gpu_time_json: Option<String>,
 
     /// Draw a sequence of N frames on one renderer (#345), written as
     /// numbered PNGs beside --output (`seq.png` gives `seq_0000.png`...).
@@ -1291,9 +1297,15 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         particle_sim = Some(particles);
     }
 
-    // GPU timing: the same frame many times, each pass's time smoothed
+    // GPU timing: the same frame many times, each pass's spread (#292)
     if let Some(frames) = args.gpu_time {
-        time_gpu(ctx, &mut renderer, &camera, frames)?;
+        time_gpu(
+            ctx,
+            &mut renderer,
+            &camera,
+            frames,
+            args.gpu_time_json.as_deref(),
+        )?;
     }
 
     let frames = match meshes.first() {
@@ -1490,17 +1502,28 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     Ok(())
 }
 
+/// Frames `--gpu-time` leaves out at the start of `timed`: the first tenth,
+/// at most 30, while pipelines, caches and the GPU's clocks settle (#292).
+fn gpu_warmup(timed: usize) -> usize {
+    (timed / 10).min(30)
+}
+
 /// `--gpu-time N`: the frame `renderer` holds drawn N times with GPU timing,
-/// each pass's time smoothed over them, printed with the style chain's targets.
+/// each frame's times kept raw and each pass's spread over them printed
+/// (#292), with the style chain's targets; `--gpu-time-json` writes it too.
 fn time_gpu(
     ctx: &HeadlessContext,
     renderer: &mut SceneRenderer,
     camera: &Camera,
     frames: u32,
+    json: Option<&str>,
 ) -> Result<()> {
     let (width, height) = (ctx.width, ctx.height);
     if !renderer.set_gpu_timing(&ctx.device, &ctx.queue, true) {
         anyhow::bail!("--gpu-time: this adapter has no TIMESTAMP_QUERY");
+    }
+    if let Some(timer) = renderer.gpu_timer_mut() {
+        timer.record(true);
     }
     for _ in 0..frames.max(1) {
         let mut encoder = ctx
@@ -1519,28 +1542,42 @@ fn time_gpu(
         renderer.frame_submitted();
         ctx.device.poll(wgpu::Maintain::Wait);
     }
-    let stats = renderer.collect_stats();
+    let spread = match renderer.gpu_timer_mut() {
+        Some(timer) => {
+            timer.flush(&ctx.device);
+            let recorded = timer.recorded();
+            let spread = flint_render::gpu_timer::spread(recorded, gpu_warmup(recorded.len()));
+            timer.record(false);
+            spread
+        }
+        None => Default::default(),
+    };
     let (sw, sh) = renderer.scene_size();
+    let adapter = &ctx.adapter_info;
     say!(
-        "GPU time over {} frames at {}x{} (scene {}x{}):",
+        "GPU time over {} frames at {}x{} (scene {}x{}) on {} ({:?}):",
         frames,
         width,
         height,
         sw,
-        sh
+        sh,
+        adapter.name,
+        adapter.backend
     );
-    // As wide as the longest label (a style's, such as "Display bloom")
-    let w = stats
-        .gpu_passes
-        .iter()
-        .map(|p| p.label.len())
-        .max()
-        .unwrap_or(0)
-        .max(12);
-    for pass in &stats.gpu_passes {
-        say!("  {:<w$} {:>7.3} ms", pass.label, pass.ms);
+    say!(
+        "  {} frames timed, the first {} dropped as warm-up",
+        spread.frames + spread.dropped,
+        spread.dropped
+    );
+    for line in spread_lines(&spread) {
+        say!("{line}");
     }
-    say!("  {:<w$} {:>7.3} ms", "frame", stats.gpu_frame_ms);
+    if let Some(path) = json {
+        let doc = spread_json(&spread, frames, (width, height), (sw, sh), adapter);
+        std::fs::write(path, serde_json::to_string_pretty(&doc)?)
+            .context(format!("Failed to write {path}"))?;
+        say!("Wrote GPU timing to {path}");
+    }
     // What each of the style chain's textures costs (#412): the
     // built-ins' and every user style's targets
     let targets = renderer.style_target_entries();
@@ -1564,6 +1601,70 @@ fn time_gpu(
         }
     }
     Ok(())
+}
+
+/// `--gpu-time`'s table: a header, a row a pass, then the frame total's.
+/// The label column is as wide as the longest label (a style's, such as
+/// "Display bloom").
+fn spread_lines(spread: &flint_render::GpuSpread) -> Vec<String> {
+    let rows: Vec<(String, &flint_render::PassSpread)> = spread
+        .passes
+        .iter()
+        .map(|p| (p.name(), p))
+        .chain(spread.frame.iter().map(|f| ("frame".to_string(), f)))
+        .collect();
+    let w = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0).max(12);
+    let mut lines = vec![format!(
+        "  {:<w$} {:>7} {:>7} {:>7} {:>7}  ms",
+        "pass", "min", "p50", "p90", "max"
+    )];
+    for (name, p) in rows {
+        lines.push(format!(
+            "  {name:<w$} {:>7.3} {:>7.3} {:>7.3} {:>7.3}",
+            p.min, p.p50, p.p90, p.max
+        ));
+    }
+    lines
+}
+
+/// `--gpu-time-json`: the spread, each pass with its kept frames' raw times.
+fn spread_json(
+    spread: &flint_render::GpuSpread,
+    frames: u32,
+    (width, height): (u32, u32),
+    (scene_width, scene_height): (u32, u32),
+    adapter: &wgpu::AdapterInfo,
+) -> serde_json::Value {
+    let pass = |p: &flint_render::PassSpread| {
+        serde_json::json!({
+            "label": p.name(),
+            "frames": p.samples.len(),
+            "min_ms": p.min,
+            "p50_ms": p.p50,
+            "p90_ms": p.p90,
+            "max_ms": p.max,
+            "mean_ms": p.mean,
+            "samples_ms": p.samples,
+        })
+    };
+    serde_json::json!({
+        "adapter": {
+            "name": adapter.name,
+            "backend": format!("{:?}", adapter.backend),
+            "driver": adapter.driver,
+            "driver_info": adapter.driver_info,
+        },
+        "width": width,
+        "height": height,
+        "scene_width": scene_width,
+        "scene_height": scene_height,
+        "frames_drawn": frames.max(1),
+        "frames_timed": spread.frames + spread.dropped,
+        "frames_dropped": spread.dropped,
+        "frames_kept": spread.frames,
+        "passes": spread.passes.iter().map(pass).collect::<Vec<_>>(),
+        "frame": spread.frame.as_ref().map(pass),
+    })
 }
 
 /// One still frame, read back: under `config` when given (a sweep column,
@@ -2800,7 +2901,13 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             "GPU time is of the first cell's capture at t = {:.3} s",
             stage.captured.unwrap_or(0.0)
         );
-        time_gpu(ctx, &mut stage.renderer, &stage.camera, frames)?;
+        time_gpu(
+            ctx,
+            &mut stage.renderer,
+            &stage.camera,
+            frames,
+            args.gpu_time_json.as_deref(),
+        )?;
     }
 
     if report_json {
