@@ -34,6 +34,103 @@ to do.
 
 ## 2026-11-11
 
+### Scenes say everything that is wrong with them, and `flint validate` fails on it (ADR 0115, #683)
+**What changed.** A scene is checked against the schemas in one pass that
+never stops at the first problem, and each problem names its entity,
+component and field, with a suggestion:
+
+```
+scenes/hall.scene.toml: 4 errors, 1 warning
+
+  error[unknown-archetype] entity 'hero' field 'archetype': no archetype named `playr`, so the entity gets no defaults
+      hint: did you mean `player`?
+  error[bad-type] entity 'hero' transform.scale: expected vec3, got string
+  error[unknown-component] entity 'lever' component 'interactible': no component named `interactible`, so nothing checks it
+      hint: did you mean `interactable`?
+  error[bad-enum-value] entity 'pond' water_body.shape: "lak" is not a value of `shape`
+      hint: did you mean `lake`? allowed values: lake, river
+  warning[unknown-field] entity 'hero' transform.postion: `transform` has no field `postion`
+      hint: did you mean `position`?
+```
+
+- **Errors:** a value of the wrong type (`bad-type`), a string that is none
+  of an enum's values (`bad-enum-value`), a number outside `min`/`max`
+  (`out-of-range`), a required field that is missing (`missing-field`), a
+  component no loaded schema directory declares (`unknown-component`), an
+  archetype none declares (`unknown-archetype`), a file that is not TOML
+  (`toml-parse`, which now names the file, as the loader's own error does).
+  Until now an unknown archetype or component was skipped in silence, and
+  the rest stopped at the first problem per component without naming the
+  field.
+- **Warning:** a field its component's schema doesn't declare
+  (`unknown-field`). It used to be allowed without a word.
+- **`flint validate <scene>`** prints the whole list (text, or
+  `--format json` with a `diagnostics` array beside `violations`) and
+  **exits 1 on any error**. It now loads and checks the scene even when no
+  schema directory has constraint files; it used to print "No constraints
+  found" and exit 0 without reading the scene's entities. JSON's `valid`,
+  `errors` and `warnings` count both lists.
+- **`flint validate --strict`**, or `strict = true` under `[project]` in
+  `flint.toml`, makes an unknown field an error.
+- **The player and every command that loads a scene** (`flint play`,
+  `flint-player`, `flint render`, the viewer) log one summary line and the
+  first five problems at each load, transitions and chunks included, and
+  carry on: nothing that loaded before stops loading. The per-component
+  `[scene] entity '<name>' component '<comp>': <reason>` warnings are gone.
+- `flint examples --check` fails an example on an error diagnostic. The
+  engine's examples are clean of them; the components only their scripts
+  read (`film`, `story`, `tour`, `orbit`, `hologram_style`) are open schemas
+  in `schemas/examples/components/`.
+- The engine's `material` schema now declares `color` and
+  `base_color_r/g/b/a`, which the renderer always read.
+
+**What to do.** Run `flint validate` on your scenes; expect it to fail where
+it used to pass.
+
+- A typo: fix it; the hint usually names what you meant.
+- **A field of your own on an engine component** (read by your scripts):
+  declare it in your schema layer by overriding the component file with the
+  engine's fields plus yours (a later schema directory replaces a component
+  of the same name whole), or keep it in a component of your own. Until then
+  it is a warning and nothing fails, unless you turn `strict` on.
+- **A component of your own** (in a scene, read only by scripts): declare it
+  in your schema layer. One with fields is checked; one with a name and no
+  fields is known and unchecked:
+
+  ```toml
+  # schemas/components/inventory.toml
+  [component.inventory]
+  description = "Read by scripts/inventory.rhai"
+  ```
+
+  A component a script attaches at run time and no scene file writes needs
+  nothing.
+- **An `archetype = "..."` used as a label** with no archetype file: add
+  `schemas/archetypes/<name>.toml` (`[archetype.<name>]` and a `components`
+  list), or drop the line.
+- A game binary that embeds `PlayerApp`: `set_schema_paths` and
+  `set_schema_dirs` work as before. `set_schemas(registry, dirs)` hands over
+  the registry you loaded the first scene with, so the player never reads it
+  again (see the next entry).
+- Rust callers: `FlintError::InvalidFieldType` and `InvalidEnumValue` gained
+  a `field`; `flint_schema::validate_component` returns every problem as
+  `flint_core::Diagnostic`s, and `flint_scene::diagnose` does it for a file.
+
+### A scene transition never loads with an empty schema registry (#683)
+**What changed.** The player re-read every schema directory at each scene
+transition and each `load_chunk`, and when that read failed (a schema file
+that had stopped parsing, say) it loaded the scene with an empty registry
+and logged one line: archetype defaults and schema defaults vanished for
+that scene. The registry is now read once and kept. A chunk uses it as it
+is; a transition reads the disk again only when the next scene's schema
+directories differ (another project's `flint.toml`, or a `schemas/` beside
+the new scene), and a read that fails logs an error and keeps the registry
+already loaded. In the web player, the engine schemas compiled into the
+player now survive a transition too.
+
+**What to do.** Nothing. One thing to know: a schema file edited while the
+game runs is no longer picked up by the next transition; restart the player.
+
 ### `flint entity create/delete` edit one table and leave the rest of the file alone (#678)
 **What changed.** Both commands used to re-serialise the whole scene: a
 string with a `:` in `--props` was rewritten (`"a:b.glb"` became

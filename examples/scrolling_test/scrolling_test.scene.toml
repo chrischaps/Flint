@@ -11,7 +11,6 @@ ortho_height = 10.0
 # ─── Player (dynamic, 2D mode, script-driven movement) ───
 
 [entities.player]
-archetype = "custom"
 
 [entities.player.transform]
 position = [0, 3, 0]
@@ -40,7 +39,6 @@ source = "scroll_camera_test.rhai"
 # ─── Ground platform ───
 
 [entities.ground]
-archetype = "custom"
 
 [entities.ground.transform]
 position = [0, 0, 0]
@@ -65,7 +63,6 @@ friction = 0.8
 # ─── Elevated platform ───
 
 [entities.platform1]
-archetype = "custom"
 
 [entities.platform1.transform]
 position = [3, 4, 0]
@@ -90,7 +87,6 @@ friction = 0.8
 # ─── Higher platform ───
 
 [entities.platform2]
-archetype = "custom"
 
 [entities.platform2.transform]
 position = [-2, 7, 0]
@@ -115,7 +111,6 @@ friction = 0.8
 # ─── Parallax background: sky (barely moves) ───
 
 [entities.bg_sky]
-archetype = "custom"
 
 [entities.bg_sky.transform]
 position = [0, 5, 0]
@@ -136,7 +131,6 @@ repeat_y = true
 # ─── Parallax background: far mountains (slow) ───
 
 [entities.bg_mountains]
-archetype = "custom"
 
 [entities.bg_mountains.transform]
 position = [0, 3, 0]
@@ -156,7 +150,6 @@ repeat_x = true
 # ─── Parallax background: near buildings (medium) ───
 
 [entities.bg_buildings]
-archetype = "custom"
 
 [entities.bg_buildings.transform]
 position = [0, 2, 0]

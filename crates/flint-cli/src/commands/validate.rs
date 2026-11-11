@@ -5,8 +5,9 @@ use flint_constraint::{
     compute_scene_diff, ConstraintEvaluator, ConstraintFixer, ConstraintRegistry, Severity,
     ValidationReport, Violation,
 };
+use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::EntityId;
-use flint_scene::{load_scene, SceneDocument, SceneFile};
+use flint_scene::{load_scene_diagnosed, SceneDocument, SceneFile};
 use flint_schema::SchemaRegistry;
 
 #[derive(clap::Args)]
@@ -32,9 +33,36 @@ pub struct ValidateArgs {
     #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
-    /// Output format (json or toml)
+    /// Output format (text or json)
     #[arg(long, default_value = "text")]
     pub format: String,
+
+    /// A field no schema declares is an error, not a warning (as
+    /// `[project] strict = true` in flint.toml makes it for every run)
+    #[arg(long)]
+    pub strict: bool,
+}
+
+/// What is wrong with the scene's entities (ADR 0115): every archetype,
+/// component and field against the schemas, in one pass that never stops
+/// early. `strict` (the flag; the manifest's `strict` is applied by
+/// `diagnose`) makes an unknown field an error.
+fn scene_diagnostics(scene: &str, schemas: &SchemaRegistry, strict: bool) -> Vec<Diagnostic> {
+    let path = std::path::Path::new(scene);
+    let project = flint_core::project::Project::for_scene(path);
+    let mut found = flint_scene::diagnose(path, schemas, &project);
+    if strict {
+        diagnostic::promote_strict(&mut found);
+    }
+    found
+}
+
+/// Whether the scene can't be loaded at all, so there is nothing more to
+/// check: the diagnostics are the whole report.
+fn cannot_load(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|d| [codes::TOML_PARSE, codes::FILE_UNREADABLE, codes::BAD_PREFAB].contains(&d.code))
 }
 
 /// What a scene load would warn about its `[post_process.styles]` (#318):
@@ -70,13 +98,22 @@ fn style_warnings(scene: &str) -> Vec<String> {
 }
 
 /// Everything `flint validate <scene>` checks, returned instead of printed:
-/// the style warnings, then the violations (constraints, `[wooze]`,
-/// species). Unlike `run`, the scene is loaded even when no schema
-/// directory has constraints, so a scene that doesn't load is an `Err`.
-/// `flint examples --check` (#763) runs it on every example.
-pub fn check(scene: &str, schemas: &[String]) -> Result<(Vec<String>, ValidationReport)> {
+/// the style warnings, the violations (constraints, `[wooze]`, species),
+/// and the scene's diagnostics (ADR 0115). A scene that doesn't load is an
+/// `Err`. `flint examples --check` (#763) runs it on every example.
+pub fn check(
+    scene: &str,
+    schemas: &[String],
+) -> Result<(Vec<String>, ValidationReport, Vec<Diagnostic>)> {
     let warnings = style_warnings(scene);
     let (schema_registry, schema_dirs) = super::common_args::load_schemas(Some(scene), schemas)?;
+    let diagnostics = scene_diagnostics(scene, &schema_registry, false);
+    if let Some(fatal) = diagnostics
+        .iter()
+        .find(|d| d.is_error() && d.entity.is_none())
+    {
+        anyhow::bail!("{}", fatal.one_line());
+    }
     let mut violations = wooze_violations(scene, &schema_registry)?;
     violations.extend(species_violations(scene, &schema_registry)?);
     let mut constraint_registry = ConstraintRegistry::new();
@@ -85,11 +122,11 @@ pub fn check(scene: &str, schemas: &[String]) -> Result<(Vec<String>, Validation
             constraint_registry.register(constraint.clone());
         }
     }
-    let (world, _) = load_scene(scene, &schema_registry)?;
+    let (world, _, _) = load_scene_diagnosed(scene, &schema_registry)?;
     let mut report =
         ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry).validate();
     report.violations.extend(violations);
-    Ok((warnings, report))
+    Ok((warnings, report, diagnostics))
 }
 
 pub fn run(args: ValidateArgs) -> Result<()> {
@@ -104,6 +141,23 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
     super::common_args::warn_dropped_schemas(&schema_dirs);
     let existing = &schema_dirs.dirs;
+
+    // The scene's own diagnostics first (ADR 0115): they need no constraint
+    // files, and a scene that doesn't parse has nothing else to check
+    let diagnostics = scene_diagnostics(&args.scene, &schema_registry, args.strict);
+    if cannot_load(&diagnostics) {
+        if args.format == "json" {
+            let nothing = ValidationReport {
+                violations: Vec::new(),
+            };
+            print_report_json(&nothing, &diagnostics);
+        } else {
+            print!("{}", diagnostics_text(&args.scene, &diagnostics));
+            println!("The scene does not load, so nothing else was checked.");
+        }
+        std::process::exit(1);
+    }
+
     let mut wooze = wooze_violations(&args.scene, &schema_registry)?;
     wooze.extend(species_violations(&args.scene, &schema_registry)?);
     let mut constraint_registry = ConstraintRegistry::new();
@@ -124,20 +178,13 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         }
     }
 
-    if constraint_registry.is_empty() {
-        if !wooze.is_empty() {
-            print_and_fail(wooze, &args.format);
-        }
-        if existing.is_empty() {
-            println!("No constraints found in schemas/constraints/");
-        } else {
-            println!("No constraints found in provided schema directories.");
-        }
-        println!("Create constraint files to enable validation.");
-        return Ok(());
-    }
+    // With no constraint files the scene is still loaded and its
+    // diagnostics reported: this used to return here, having checked
+    // nothing about the entities (#683)
+    let no_constraints = constraint_registry.is_empty();
 
-    let (world, _scene_file) = load_scene(&args.scene, &schema_registry)?;
+    // `scene_diagnostics` has what a load would log; don't say it twice
+    let (world, _scene_file, _) = load_scene_diagnosed(&args.scene, &schema_registry)?;
     // The world as the file has it, for what the fixes change
     let loaded = &world;
 
@@ -171,7 +218,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             }
         } else {
             // Actually fix by reloading, modifying, and saving
-            let (mut world, _) = load_scene(&args.scene, &schema_registry)?;
+            let (mut world, _, _) = load_scene_diagnosed(&args.scene, &schema_registry)?;
             let report = fixer.fix(&mut world)?;
 
             println!("Fix results ({} iteration(s)):", report.iterations);
@@ -213,9 +260,14 @@ pub fn run(args: ValidateArgs) -> Result<()> {
                 }
             }
         }
-        // Nothing here fixes a zone, so a fixed scene can still be a bad one.
-        if !wooze.is_empty() {
-            print_and_fail(wooze, &args.format);
+        // Nothing here fixes a zone or a misspelled field, so a fixed scene
+        // can still be a bad one.
+        if !wooze.is_empty() || !diagnostics.is_empty() {
+            let report = ValidationReport { violations: wooze };
+            print_report(&args.scene, &report, &diagnostics, &args.format, false);
+            if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
+                std::process::exit(1);
+            }
         }
     } else {
         // Validation only
@@ -223,18 +275,65 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         let mut report = evaluator.validate();
         report.violations.extend(wooze);
 
-        if args.format == "json" {
-            print_report_json(&report);
-        } else {
-            print_report_text(&report);
-        }
+        print_report(
+            &args.scene,
+            &report,
+            &diagnostics,
+            &args.format,
+            no_constraints,
+        );
 
-        if !report.is_valid() {
+        if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
             std::process::exit(1);
         }
     }
 
     Ok(())
+}
+
+/// The whole report, as one JSON document or as text: the scene's
+/// diagnostics (if any), then the constraint violations.
+fn print_report(
+    scene: &str,
+    report: &ValidationReport,
+    diagnostics: &[Diagnostic],
+    format: &str,
+    no_constraints: bool,
+) {
+    if format == "json" {
+        print_report_json(report, diagnostics);
+        return;
+    }
+    print!("{}", diagnostics_text(scene, diagnostics));
+    if no_constraints && report.violations.is_empty() {
+        if diagnostics.is_empty() {
+            println!("No problems found.");
+        }
+        println!("No constraints found in the schema directories; schemas were checked.");
+    } else {
+        print_report_text(report);
+    }
+}
+
+/// The full list (ADR 0115 decision 2), errors first: a count line, then
+/// each diagnostic with its hint on the line below. Empty when there are
+/// none.
+fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return String::new();
+    }
+    let mut ordered = diagnostics.to_vec();
+    diagnostic::sort_errors_first(&mut ordered);
+    let mut out = format!("{scene}: {}\n\n", diagnostic::counts_line(diagnostics));
+    for d in &ordered {
+        // A parse error's message runs over several lines
+        out.push_str(&format!("  {}\n", d.to_string().replace('\n', "\n    ")));
+        if let Some(hint) = &d.hint {
+            out.push_str(&format!("      hint: {hint}\n"));
+        }
+    }
+    out.push('\n');
+    out
 }
 
 /// What's wrong with the scene's `[wooze]` table, as violations of a constraint
@@ -271,7 +370,7 @@ fn species_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Viola
     let Some(living) = file.living.filter(|living| !living.species.is_empty()) else {
         return Ok(Vec::new());
     };
-    let (world, _) = load_scene(scene, schemas)?;
+    let (world, _, _) = load_scene_diagnosed(scene, schemas)?;
     let mut grown: Vec<String> = world
         .all_entities()
         .iter()
@@ -316,17 +415,6 @@ fn species_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Viola
     Ok(violations)
 }
 
-/// Report violations with no constraint run to go with them, and fail.
-fn print_and_fail(violations: Vec<Violation>, format: &str) -> ! {
-    let report = ValidationReport { violations };
-    if format == "json" {
-        print_report_json(&report);
-    } else {
-        print_report_text(&report);
-    }
-    std::process::exit(1)
-}
-
 fn print_report_text(report: &flint_constraint::ValidationReport) {
     if report.violations.is_empty() {
         println!("All constraints passed.");
@@ -356,7 +444,7 @@ fn print_report_text(report: &flint_constraint::ValidationReport) {
     }
 }
 
-fn print_report_json(report: &flint_constraint::ValidationReport) {
+fn print_report_json(report: &flint_constraint::ValidationReport, diagnostics: &[Diagnostic]) {
     let violations: Vec<serde_json::Value> = report
         .violations
         .iter()
@@ -371,13 +459,32 @@ fn print_report_json(report: &flint_constraint::ValidationReport) {
         })
         .collect();
 
+    // One count over both lists: `valid` is "no error of either kind"
+    let errors = report.error_count() + diagnostic::count(diagnostics, diagnostic::Severity::Error);
+    let warnings =
+        report.warning_count() + diagnostic::count(diagnostics, diagnostic::Severity::Warning);
+    let summary = if diagnostics.is_empty() {
+        report.summary()
+    } else if report.violations.is_empty() {
+        format!(
+            "schema diagnostics: {}",
+            diagnostic::counts_line(diagnostics)
+        )
+    } else {
+        format!(
+            "{}; schema diagnostics: {}",
+            report.summary(),
+            diagnostic::counts_line(diagnostics)
+        )
+    };
     let output = serde_json::json!({
-        "valid": report.is_valid(),
-        "summary": report.summary(),
-        "errors": report.error_count(),
-        "warnings": report.warning_count(),
+        "valid": errors == 0,
+        "summary": summary,
+        "errors": errors,
+        "warnings": warnings,
         "info": report.info_count(),
         "violations": violations,
+        "diagnostics": diagnostics,
     });
 
     println!("{}", serde_json::to_string_pretty(&output).unwrap());

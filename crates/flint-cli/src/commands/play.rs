@@ -178,8 +178,8 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.scene_living = scene_file.living.clone();
     app.scene_wooze = scene_file.wooze.clone();
 
-    // Kept for scene transitions and chunks
-    app.set_schema_dirs(schema_dirs);
+    // The registry and its directories, kept for transitions and chunks
+    app.set_schemas(registry, schema_dirs);
 
     event_loop.run_app(&mut app)?;
     // A player that failed to start exits non-zero (#639).

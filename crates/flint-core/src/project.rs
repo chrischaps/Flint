@@ -29,6 +29,7 @@
 //! schemas = ["engine/schemas", "schemas"]   # in override order, later wins
 //! scene = "scenes/main.scene.toml"          # the scene to open by default
 //! input = "config/input.toml"
+//! strict = true                             # an undeclared component field is an error
 //! ```
 //!
 //! Every key is optional and so is the table: an empty `flint.toml` is a
@@ -77,7 +78,7 @@ pub use root::guessed_root;
 pub const MANIFEST_FILE: &str = "flint.toml";
 
 /// The keys `[project]` may hold.
-const PROJECT_KEYS: [&str; 4] = ["id", "schemas", "scene", "input"];
+const PROJECT_KEYS: [&str; 5] = ["id", "schemas", "scene", "input", "strict"];
 
 /// Why a directory was taken as the project root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +137,7 @@ pub enum ProjectError {
 
     /// `[project]` holds a key this version doesn't know.
     #[error(
-        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input)",
+        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict)",
         file.display()
     )]
     UnknownKey { file: PathBuf, key: String },
@@ -163,6 +164,9 @@ pub struct Project {
     pub scene: Option<PathBuf>,
     /// `[project] input`: the input config, relative to the root.
     pub input: Option<PathBuf>,
+    /// `[project] strict`: a field no schema declares is an error, not a
+    /// warning (ADR 0115), as `flint validate --strict` makes it for a run.
+    pub strict: bool,
 }
 
 static OVERRIDE: OnceLock<Project> = OnceLock::new();
@@ -266,6 +270,7 @@ impl Project {
             schemas: Vec::new(),
             scene: None,
             input: None,
+            strict: false,
         }
     }
 
@@ -329,6 +334,11 @@ impl Project {
         self.id = string("id")?.map(str::to_string);
         self.scene = string("scene")?.map(PathBuf::from);
         self.input = string("input")?.map(PathBuf::from);
+        match table.get("strict") {
+            None => {}
+            Some(toml::Value::Boolean(strict)) => self.strict = *strict,
+            Some(other) => return Err(wrong("project.strict".into(), "true or false", other)),
+        }
         if let Some(value) = table.get("schemas") {
             let list = value
                 .as_array()
@@ -805,6 +815,7 @@ id = "float"
 schemas = ["engine/schemas", "schemas"]
 scene = "scenes/main.scene.toml"
 input = "config/input.toml"
+strict = true
 "#;
 
     #[test]
@@ -828,6 +839,7 @@ input = "config/input.toml"
                     Some(Path::new("scenes/main.scene.toml"))
                 );
                 assert_eq!(p.input.as_deref(), Some(Path::new("config/input.toml")));
+                assert!(p.strict, "[project] strict (ADR 0115)");
                 assert_eq!(p.manifest_path(), Path::new("game").join("flint.toml"));
                 assert_eq!(
                     p.schema_dirs(),
@@ -945,7 +957,7 @@ input = "config/input.toml"
 
     #[test]
     fn a_wrong_type_names_the_file_and_the_key() {
-        let cases: [(&str, &str, &str, &str); 7] = [
+        let cases: [(&str, &str, &str, &str); 8] = [
             (
                 "[project]\nid = 7\n",
                 "project.id",
@@ -975,6 +987,12 @@ input = "config/input.toml"
                 "project.input",
                 "a string",
                 "a list",
+            ),
+            (
+                "[project]\nstrict = \"yes\"\n",
+                "project.strict",
+                "true or false",
+                "a string",
             ),
             ("project = \"float\"\n", "project", "a table", "a string"),
             (

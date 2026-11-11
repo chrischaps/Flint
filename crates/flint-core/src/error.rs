@@ -49,8 +49,13 @@ pub enum FlintError {
     #[error("Duplicate entity name: {0}")]
     DuplicateEntityName(String),
 
-    #[error("Invalid field type: expected {expected}, got {got}")]
-    InvalidFieldType { expected: String, got: String },
+    /// `field` is the dotted path inside the component (ADR 0115).
+    #[error("Invalid field type: `{field}` expected {expected}, got {got}")]
+    InvalidFieldType {
+        field: String,
+        expected: String,
+        got: String,
+    },
 
     #[error("Missing required field: {0}")]
     MissingRequiredField(String),
@@ -63,8 +68,12 @@ pub enum FlintError {
         value: f64,
     },
 
-    #[error("Invalid enum value: {value} is not one of {allowed:?}")]
-    InvalidEnumValue { value: String, allowed: Vec<String> },
+    #[error("Invalid enum value: `{field}` = \"{value}\" is not one of {allowed:?}")]
+    InvalidEnumValue {
+        field: String,
+        value: String,
+        allowed: Vec<String>,
+    },
 
     #[error("Constraint violation: {0}")]
     ConstraintViolation(String),

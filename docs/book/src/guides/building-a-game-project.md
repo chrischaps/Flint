@@ -94,6 +94,7 @@ id = "my_game"                            # saves, web bundle id, user files
 schemas = ["engine/schemas", "schemas"]   # in override order: a later one wins
 scene = "scenes/level_1.scene.toml"       # the scene to open by default
 input = "config/input.toml"               # the game's input config
+strict = true                             # a field no schema declares is an error
 ```
 
 Every key is optional, and so is the `[project]` table: an empty `flint.toml` is still a root marker. Paths are relative to the folder the file is in. Other tables in the file are left alone.
@@ -103,7 +104,7 @@ Flint finds the manifest by walking up from a scene or from the working director
 The file is checked when it is read. A value of the wrong type, or a key in `[project]` that Flint doesn't know, is an error that names the file and the key, so a typo doesn't pass silently:
 
 ```
-flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input)
+flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input, strict)
 flint.toml: `project.schemas` must be a list of strings, found a string
 ```
 
@@ -115,6 +116,7 @@ flint.toml: `project.schemas` must be a list of strings, found a string
 | `id` | `flint bundle` and `flint export web`: the bundle's name and the game's `?game=` id, when `bundle.toml` has no `name` (`--name` wins over both). Saves and user files will be keyed on it when they move to the OS user directory (#726); until then the input config's `game_id` names a game's user files |
 | `schemas` | Every command, the viewer and the player: the schema directories, in override order, whenever no `--schemas` flag is given. `flint bundle` writes the same list into the bundle. See [Multi-Schema Layering](#multi-schema-layering) |
 | `scene` | `flint play` and `flint-player` with no scene argument open it. `flint bundle` starts the bundle there when `bundle.toml` has no `scene` |
+| `strict` | `flint validate`: `true` makes a field that its component's schema doesn't declare an error (`unknown-field`), where it is a warning otherwise; the same as `--strict` on one run. It changes what `flint validate` fails on, nothing about how a scene loads or plays. See [Scene Diagnostics](../concepts/schemas.md#unknown-fields-and-strict) |
 | `input` | The player: the game layer of the [input config](../concepts/physics-and-runtime.md#config-layering), unless the scene names its own with `[scene] input_config` |
 
 ```bash

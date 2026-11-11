@@ -91,3 +91,50 @@ fn check_names_a_scene_missing_from_the_index_and_one_missing_from_disk() {
     );
     assert!(!out.contains("listed.scene.toml:"), "{out}");
 }
+
+/// An example with an error diagnostic fails the check, named with its
+/// entity and the suggestion (ADR 0115, #683); a field no schema declares is
+/// a warning and does not.
+#[test]
+fn check_fails_on_an_error_diagnostic_and_not_on_a_warning() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("examples-diagnostics");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("typo.scene.toml"),
+        "[scene]\nname = \"x\"\nversion = \"1.0\"\n\n[entities.lamp.lihgt]\nintensity = 1.0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("extra_field.scene.toml"),
+        "[scene]\nname = \"y\"\nversion = \"1.0\"\n\n[entities.box.transform]\npostion = [0, 1, 0]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("index.toml"),
+        "[[example]]\nscene = \"typo.scene.toml\"\ntopic = \"t\"\npurpose = \"p\"\n\
+         [[example]]\nscene = \"extra_field.scene.toml\"\ntopic = \"t\"\npurpose = \"p\"\n",
+    )
+    .unwrap();
+    let schemas = repo().join("schemas");
+    let (ok, out) = flint(
+        &[
+            "examples",
+            "--check",
+            "--dir",
+            dir.to_str().unwrap(),
+            "--schemas",
+            schemas.to_str().unwrap(),
+        ],
+        &dir,
+    );
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains(
+            "typo.scene.toml: error[unknown-component] entity 'lamp' component 'lihgt': \
+             no component named `lihgt`, so nothing checks it (did you mean `light`?)"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("extra_field.scene.toml:"), "{out}");
+}

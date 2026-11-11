@@ -11,7 +11,6 @@ ortho_height = 10.0
 # ─── The older format: a PNG grid named by a .font.toml ───
 
 [entities.grid_font]
-archetype = "custom"
 
 [entities.grid_font.transform]
 position = [-7.5, 2.6, 0]
@@ -25,7 +24,6 @@ color = [0.96, 0.92, 0.84, 1.0]
 # ─── The engine's own hand-drawn 8x8 set ───
 
 [entities.builtin_font]
-archetype = "custom"
 
 [entities.builtin_font.transform]
 position = [-7.5, 0.4, 0]
@@ -39,7 +37,6 @@ color = [0.55, 0.92, 0.78, 1.0]
 # ─── A glyph set from ../fonts/, the one the ASCII looks draw in ───
 
 [entities.halftone_font]
-archetype = "custom"
 
 [entities.halftone_font.transform]
 position = [-7.5, -1.8, 0]

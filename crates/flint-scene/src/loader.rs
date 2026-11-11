@@ -1,41 +1,95 @@
 //! Scene loading from TOML files
 
+use crate::diagnose::diagnose_scene;
 use crate::format::{PostProcessDef, SceneFile};
 use crate::prefab;
+use flint_core::diagnostic::{self, Diagnostic};
 use flint_core::vfs;
-use flint_core::Result;
+use flint_core::{FlintError, Result};
 use flint_ecs::FlintWorld;
-use flint_schema::{validate_component_data, SchemaRegistry};
+use flint_schema::SchemaRegistry;
 use std::path::Path;
 
-/// Load a scene from a TOML file (with prefab expansion)
+/// Load a scene from a TOML file (with prefab expansion).
+///
+/// What is wrong with its entities (an unknown archetype or component, a
+/// field of the wrong type: [`diagnose_scene`]) doesn't stop the load: it is
+/// logged once, as a summary line and the first few (ADR 0115).
+/// [`load_scene_diagnosed`] returns the list instead.
 pub fn load_scene<P: AsRef<Path>>(
     path: P,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
     let path = path.as_ref();
+    let (world, scene_file, found) = load_scene_diagnosed(path, registry)?;
+    diagnostic::log_summary(&flint_core::project::shown(path), &found);
+    Ok((world, scene_file))
+}
+
+/// [`load_scene`] that hands back what [`diagnose_scene`] found and logs
+/// nothing about it, for a host that reports diagnostics its own way
+/// (`flint validate`).
+pub fn load_scene_diagnosed<P: AsRef<Path>>(
+    path: P,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
+    let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
-    load_scene_text(&content, path, registry)
+    load_text_diagnosed(&content, path, registry)
 }
 
 /// Load scene text as though it were the file at `path`: prefabs and a wooze
 /// preset resolve from there. What `flint entity create/delete` (#678) runs on
 /// the text it is about to write, so an edit that would leave the scene
-/// unloadable is refused before the file changes.
+/// unloadable is refused before the file changes. Diagnostics are logged as
+/// [`load_scene`] logs them.
 pub fn load_scene_text(
     content: &str,
     path: &Path,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
-    let mut scene_file: SceneFile = toml::from_str(content)?;
+    let (world, scene_file, found) = load_text_diagnosed(content, path, registry)?;
+    diagnostic::log_summary(&flint_core::project::shown(path), &found);
+    Ok((world, scene_file))
+}
+
+/// What [`load_scene_diagnosed`] and [`load_scene_text`] share: parse, expand
+/// prefabs, fill in the wooze preset, diagnose, build the world.
+fn load_text_diagnosed(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
+    let mut scene_file = parse_scene(content, Some(path))?;
     note_post_process(&mut scene_file, content, Some(path));
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
 
+    let found = diagnose_scene(&scene_file, Some(path), registry);
     let world = build_world(&scene_file, registry)?;
-    Ok((world, scene_file))
+    Ok((world, scene_file, found))
+}
+
+/// Parse a scene's text. A file that isn't TOML, or isn't a scene, is an
+/// error that names the file (#683): the parser's own message has only a
+/// line and a column.
+fn parse_scene(content: &str, path: Option<&Path>) -> Result<SceneFile> {
+    toml::from_str(content).map_err(|e: toml::de::Error| match path {
+        Some(path) => FlintError::TomlParseError(format!(
+            "{}: {}",
+            flint_core::project::shown(path),
+            e.to_string().trim_end()
+        )),
+        None => e.into(),
+    })
+}
+
+/// What a load from a string logs: there is no file to name.
+fn log_string_diagnostics(scene_file: &SceneFile, registry: &SchemaRegistry) {
+    let found = diagnose_scene(scene_file, None, registry);
+    diagnostic::log_summary(&format!("scene '{}'", scene_file.scene.name), &found);
 }
 
 /// Fill in what a `[wooze] preset` file says. A look lab shouldn't refuse to start
@@ -80,13 +134,14 @@ pub fn load_scene_string(
     content: &str,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
-    let mut scene_file: SceneFile = toml::from_str(content)?;
+    let mut scene_file = parse_scene(content, None)?;
     note_post_process(&mut scene_file, content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
     }
 
+    log_string_diagnostics(&scene_file, registry);
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file))
 }
@@ -113,12 +168,14 @@ pub fn reload_scene<P: AsRef<Path>>(
 ) -> Result<SceneFile> {
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
-    let mut scene_file: SceneFile = toml::from_str(&content)?;
+    let mut scene_file = parse_scene(&content, Some(path))?;
     note_post_process(&mut scene_file, &content, Some(path));
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
+    let found = diagnose_scene(&scene_file, Some(path), registry);
+    diagnostic::log_summary(&flint_core::project::shown(path), &found);
 
     // Clear existing world
     world.clear();
@@ -133,12 +190,13 @@ pub fn reload_scene_string(
     world: &mut FlintWorld,
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
-    let mut scene_file: SceneFile = toml::from_str(content)?;
+    let mut scene_file = parse_scene(content, None)?;
     note_post_process(&mut scene_file, content, None);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
     }
+    log_string_diagnostics(&scene_file, registry);
 
     // Clear existing world
     world.clear();
@@ -169,7 +227,8 @@ fn populate_world(
     for (name, entity_def) in &scene_file.entities {
         let id = world.get_id(name).unwrap();
 
-        // Set archetype
+        // Set archetype. One the registry doesn't know gives no defaults;
+        // `diagnose_scene` has said so (unknown-archetype)
         if let Some(archetype) = &entity_def.archetype {
             // Apply archetype defaults through set_component to maintain index
             if let Some(arch_schema) = registry.get_archetype(archetype) {
@@ -187,12 +246,8 @@ fn populate_world(
 
         // Set component data
         for (comp_name, comp_data) in &entity_def.components {
-            // Validate against schema (warn, don't fail)
-            if let Some(schema) = registry.get_component(comp_name) {
-                if let Err(e) = validate_component_data(schema, comp_data) {
-                    tracing::warn!("[scene] entity '{}' component '{}': {}", name, comp_name, e);
-                }
-            }
+            // Checked against its schema by `diagnose_scene`, which the
+            // loaders run first: a load warns and never fails on it
             if comp_name == "transform" {
                 warn_on_shear(name, comp_data);
             }
