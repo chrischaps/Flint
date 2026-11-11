@@ -130,6 +130,8 @@ flint validate levels/tavern.scene.toml --strict
 
 `flint validate` checks two things: the scene against its schemas (an unknown archetype, component or field, a value of the wrong type; see [Scene Diagnostics](schemas.md#scene-diagnostics)), then the constraints. The schema check runs whether or not any constraint file exists. The exit code is 0 if neither finds an error, 1 if either does. Warnings do not affect the exit code. With `--format json` the document has both lists (`diagnostics` and `violations`), and `valid`, `errors` and `warnings` count both.
 
+`--fix` writes only what its fixes changed: a field set in place (its comment kept), a field taken out, a new child entity appended at the end of the file. The rest of the file is left as written, its `[scene]` name, `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, prefabs, comments and key order included. A fix to an entity a prefab instance expands into has nowhere in the scene file to go: it's printed as `not written` and the prefab is left alone. `--output-diff` prints the line diff of the file itself.
+
 ## Real Example
 
 From `schemas/constraints/basics.toml`:

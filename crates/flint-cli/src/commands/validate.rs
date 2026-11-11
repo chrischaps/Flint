@@ -7,7 +7,7 @@ use flint_constraint::{
 };
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::EntityId;
-use flint_scene::{load_scene_diagnosed, save_scene_string, SceneFile};
+use flint_scene::{load_scene_diagnosed, SceneDocument, SceneFile};
 use flint_schema::SchemaRegistry;
 
 #[derive(clap::Args)]
@@ -185,15 +185,10 @@ pub fn run(args: ValidateArgs) -> Result<()> {
 
     // `scene_diagnostics` has what a load would log; don't say it twice
     let (world, _scene_file, _) = load_scene_diagnosed(&args.scene, &schema_registry)?;
+    // The world as the file has it, for what the fixes change
+    let loaded = &world;
 
     if args.fix || args.dry_run {
-        // Save before state for diff
-        let before_toml = if args.output_diff {
-            Some(save_scene_string(&world, "scene")?)
-        } else {
-            None
-        };
-
         let fixer = ConstraintFixer::new(&schema_registry, &constraint_registry);
 
         if args.dry_run {
@@ -247,17 +242,21 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             }
 
             if !report.actions.is_empty() {
-                // Save the fixed scene
-                flint_scene::save_scene(&args.scene, &world, "scene")?;
+                // Write only what the fixes changed (#677): the file keeps its
+                // name, look, camera, wooze field, prefabs and comments.
+                let mut doc = SceneDocument::from_file(&args.scene).map_err(anyhow::Error::msg)?;
+                let before_text = doc.to_string();
+                let problems = doc.apply_world_diff(&loaded, &world);
+                for problem in &problems {
+                    eprintln!("  not written: {problem}");
+                }
+                doc.save(&args.scene).map_err(anyhow::Error::msg)?;
                 println!("\nScene saved to {}", args.scene);
 
                 if args.output_diff {
-                    if let Some(before) = before_toml {
-                        let after = save_scene_string(&world, "scene")?;
-                        let diff = compute_scene_diff(&before, &after);
-                        println!("\nDiff:");
-                        print!("{}", diff);
-                    }
+                    let diff = compute_scene_diff(&before_text, &doc.to_string());
+                    println!("\nDiff:");
+                    print!("{}", diff);
                 }
             }
         }
