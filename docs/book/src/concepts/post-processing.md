@@ -631,7 +631,7 @@ the Matrix mode nearly black.
 - **Rgba16Float** for the HDR buffer provides sufficient precision for bloom extraction without the memory cost of Rgba32Float
 - **Progressive downsample/upsample** (rather than a single Gaussian blur) produces wide, natural-looking bloom cheaply
 - **1x1 black fallback texture** when bloom is disabled avoids conditional bind group creation
-- **Lazy allocation** --- Kuwahara, contour and FXAA pipelines and textures are created the first time they are enabled, so the default path pays nothing for them
+- **Lazy allocation** --- Kuwahara, contour and FXAA pipelines and textures are created on the first frame they are enabled, however the config was set (scene load, a hot reload, the debug menu, a script), so the default path pays nothing for them
 - **Gate-safe defaults** --- MSAA, FXAA and film grain default off, and grain time is pinned at 0 headlessly, so `flint render` output stays byte-stable for pixel-diff gates
 - **Resize handling** --- `PostProcessResources` are recreated on window resize since the HDR texture and bloom mip chain are resolution-dependent
 - **Extended shadow depth** --- the shadow frustum's depth range is extended beyond the camera frustum so off-screen casters (ceilings, walls behind the camera) are captured in the shadow map, which is critical for correct volumetric shafts in enclosed spaces
