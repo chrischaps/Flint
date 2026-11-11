@@ -1,0 +1,16 @@
+# {{name}}'s input layer. The engine's built-in actions sit under it:
+# move_forward / move_backward / move_left / move_right (WASD), jump (Space),
+# interact (E), sprint (Left Shift) and fire. An action named here replaces
+# the built-in of the same name; a new name adds one. Scripts read them with
+# is_action_pressed("name"), is_action_just_pressed("name") and
+# action_value("name").
+
+version = 1
+game_id = "{{id}}"
+
+# H shows and hides the controls panel that scripts/hud.rhai draws.
+[actions.toggle_help]
+kind = "button"
+[[actions.toggle_help.bindings]]
+type = "key"
+code = "KeyH"

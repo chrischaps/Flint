@@ -4,70 +4,84 @@ This guide walks through setting up a standalone game project that uses Flint's 
 
 ## Setting Up a Game Repository
 
-Game projects live in their own git repositories with the Flint engine included as a git subtree. This gives you a single clone with everything needed to build and play, while keeping game and engine commits separate.
+Game projects live in their own git repositories with the Flint engine included as a git subtree at `engine/`. This gives you a single clone with everything needed to build and play, while keeping game and engine commits separate.
 
-### 1. Create the repository
+### 1. Start the project with `flint init`
 
 ```bash
-mkdir my_game && cd my_game
-git init
-mkdir schemas schemas/components schemas/archetypes scripts scenes sprites audio
+flint init my_game --engine subtree
+```
+
+`flint init` writes the whole pattern: a `flint.toml` manifest naming `engine/schemas` and the game's own `schemas`, a lit first scene with a camera and a player, a script-drawn HUD, an input config, packing rules for the web build, an empty game `schemas/` and a `CLAUDE.md` that maps the project for a coding agent. It copies no engine schema into the game, and it runs no git and no network commands: it prints the ones to run.
+
+```
+Next steps:
+  cd my_game
+  git init
+  git add .
+  git commit -m "Start my_game"
+  git remote add flint-engine https://github.com/chrischaps/Flint.git
+  git subtree add --prefix=engine flint-engine main --squash
+  flint validate scenes/main.scene.toml
+  flint render scenes/main.scene.toml --output renders/main.png
+  flint play
 ```
 
 ### 2. Add the engine as a subtree
 
+Run the git lines it printed. The `--squash` flag collapses engine history into one commit, keeping your game history clean. Full engine history stays in the Flint repo. Until the subtree is there, the manifest names a directory that doesn't exist, and every command says so (`schema directory not found: .../engine/schemas`).
+
+Then build the engine the game now carries, and put its `flint` on your PATH (or call it by path):
+
 ```bash
-git remote add flint-engine https://github.com/chrischaps/Flint.git
-git subtree add --prefix=engine flint-engine main --squash
+cargo build --release --manifest-path engine/Cargo.toml
 ```
 
-The `--squash` flag collapses engine history into one commit, keeping your game history clean. Full engine history stays in the Flint repo.
+### Trying a game before it has a repository
 
-### 3. Create convenience scripts
+Without `--engine`, `flint init my_game` names the engine checkout your `flint` was built from, by absolute path (`--engine path`, the default; `--engine-path <dir>` names another). The printed commands then work at once, with no git and no network, on that machine only. The project's `CLAUDE.md` lists the steps that move it to a subtree later: the git lines above, then `schemas = ["engine/schemas", "schemas"]` in `flint.toml`.
 
-**`play.bat`** --- launch any scene by name:
+`--engine none` names no engine at all: the scene validates and renders, but engine archetypes resolve to nothing, so it is a starting point only for a project that will name its schemas some other way.
 
-```batch
-@echo off
-set SCENE=%~1
-if "%SCENE%"=="" set SCENE=level_1
-cargo run --manifest-path engine\Cargo.toml --bin flint-player -- scenes\%SCENE%.scene.toml --schemas engine\schemas --schemas schemas %2 %3 %4
-```
+### Templates
 
-**`build.bat`** --- build the engine in release mode:
+| `--template` | The first scene |
+|---|---|
+| `walk` (default) | A ring of standing stones round a lit plinth, and a first-person player (`archetype = "player"`) who starts outside it, facing it |
+| `blank` | A lit ground, one box and a camera; no player |
+| `2d` | Flat sprites under an orthographic camera, one steered with WASD by `scripts/player.rhai` |
 
-```batch
-@echo off
-cargo build --manifest-path engine\Cargo.toml --release
-```
+`flint init` refuses a directory that already holds files. With `--force` it writes into one, keeping any file that is already there: nothing is overwritten or deleted.
 
 ## Directory Structure
 
+What `flint init` writes, and the folders a game grows beside it:
+
 ```
 my_game/                         (your git repo)
-├── engine/                      (git subtree ← Flint repo)
+├── engine/                      (git subtree ← Flint repo; you add it)
 │   ├── crates/
 │   ├── schemas/                 (engine schemas: transform, material, etc.)
 │   └── Cargo.toml
-├── schemas/
-│   ├── components/              # Game-specific component definitions
-│   │   ├── health.toml
-│   │   ├── weapon.toml
-│   │   └── enemy_ai.toml
-│   └── archetypes/              # Game-specific archetype bundles
-│       ├── enemy.toml
-│       └── pickup.toml
-├── scripts/                     # Rhai game logic scripts
-│   ├── player_weapon.rhai
-│   ├── enemy_ai.rhai
-│   └── hud.rhai
-├── scenes/                      # Scene files
-│   └── level_1.scene.toml
-├── sprites/                     # Billboard sprite textures
-├── audio/                       # Sound effects and music
 ├── flint.toml                   # Project manifest (marks the root)
-├── play.bat                     # Convenience launcher
-└── build.bat                    # Engine build script
+├── CLAUDE.md                    # The project's map, for you and for agents
+├── AGENTS.md                    # Points other agents at CLAUDE.md
+├── bundle.toml                  # Packing rules for the web build
+├── .gitignore
+├── config/
+│   └── input.toml               # The game's input actions
+├── scenes/
+│   └── main.scene.toml          # The first scene: lit, with a [camera]
+├── scripts/
+│   └── hud.rhai                 # The HUD, on the scene's hud_controller
+├── schemas/
+│   ├── components/              # Game-specific component definitions (empty)
+│   └── archetypes/              # Game-specific archetype bundles (empty)
+├── renders/                     # Where renders go (git ignores its contents)
+│
+├── models/                      # ...and what you add: one folder per kind of asset
+├── sprites/
+└── audio/
 ```
 
 ## The Project Manifest
@@ -114,7 +128,7 @@ With no `scene` key, `flint play` with no argument says what to do:
 Error: no scene given: pass one (a path to a .scene.toml), or name the project's default with `scene = "scenes/main.scene.toml"` under [project] in C:/games/my_game/flint.toml
 ```
 
-`bundle.toml` stays a separate file: it holds the packing rules (`exclude`, `include`, `[late]`, `[mount]`, `[web]`), and its `name`, `scene` and `schemas` are needed only to say something other than the manifest does. The manifest itself is packed into the bundle, so the web player finds the same project there. `flint init` does not write a `flint.toml` yet (#707). The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
+`bundle.toml` stays a separate file: it holds the packing rules (`exclude`, `include`, `[late]`, `[mount]`, `[web]`), and its `name`, `scene` and `schemas` are needed only to say something other than the manifest does. The manifest itself is packed into the bundle, so the web player finds the same project there. `flint init` writes the manifest with all four keys. The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
 
 ## Multi-Schema Layering
 
@@ -287,13 +301,18 @@ fn on_draw_ui() {
 
 ## Running the Game
 
-```bash
-# Via convenience script
-.\play.bat level_1
+From any folder of the project:
 
-# Via the standalone player directly (schemas from flint.toml)
-cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
-  scenes\level_1.scene.toml
+```bash
+flint play                              # the manifest's [project] scene
+flint play scenes/level_1.scene.toml    # another scene
+```
+
+To run the engine the game carries without installing it, go through cargo. The schemas still come from `flint.toml`:
+
+```bash
+cargo run --manifest-path engine/Cargo.toml --bin flint -- play
+cargo run --manifest-path engine/Cargo.toml --bin flint-player -- scenes/level_1.scene.toml
 ```
 
 ## Asset Resolution

@@ -1,0 +1,76 @@
+# {{name}}: the first scene. A lit ground and one box, ready to build on.
+#
+#   flint render scenes/main.scene.toml --output renders/main.png
+#   flint play
+#
+# Everything here is an engine component. `flint schema <name>` prints any of
+# them: transform, bounds, material, rigidbody, collider.
+
+[scene]
+name = "{{name}}"
+version = "1.0"
+description = "A lit ground and one box"
+
+# What `flint render` and `flint play` look through. There is no player
+# entity here, so nothing moves the camera until a script does
+# (set_camera_position, set_camera_target) or a player is added.
+[camera]
+position = [4.0, 3.0, -7.0]
+target = [0.0, 0.7, 0.0]
+fov = 50.0
+
+# The sky's share of the light: cool from above, warm from the ground.
+[environment]
+ambient_sky = [0.10, 0.13, 0.22]
+ambient_ground = [0.06, 0.05, 0.04]
+
+
+# A light is a `light` table with a `type`. A directional light's
+# `direction` points toward the light, not away from it.
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.45, 0.7, -0.55]
+color = [1.0, 0.92, 0.80]
+intensity = 1.8
+
+
+# All game UI is drawn by scripts; this entity only carries one.
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "hud.rhai"
+
+
+# `bounds` draws a box, `material` colours it, and a static `rigidbody`
+# with a `collider` makes it solid.
+[entities.ground]
+[entities.ground.transform]
+position = [0.0, -0.1, 0.0]
+[entities.ground.bounds]
+min = [-12.0, -0.1, -12.0]
+max = [12.0, 0.1, 12.0]
+[entities.ground.material]
+color = [0.16, 0.21, 0.16, 1.0]
+roughness = 0.95
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [24.0, 0.2, 24.0]
+friction = 0.8
+
+[entities.box]
+[entities.box.transform]
+position = [0.0, 0.7, 0.0]
+rotation = [0.0, 30.0, 0.0]
+[entities.box.bounds]
+min = [-0.7, -0.7, -0.7]
+max = [0.7, 0.7, 0.7]
+[entities.box.material]
+color = [0.80, 0.34, 0.12, 1.0]
+roughness = 0.55
+[entities.box.rigidbody]
+body_type = "static"
+[entities.box.collider]
+shape = "box"
+size = [1.4, 1.4, 1.4]

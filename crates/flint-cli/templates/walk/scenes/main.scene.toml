@@ -1,0 +1,251 @@
+# {{name}}: the first scene. A ring of standing stones round a lit plinth,
+# and a player who starts outside the ring, facing it.
+#
+#   flint render scenes/main.scene.toml --output renders/main.png
+#   flint play
+#
+# Everything here is an engine component. `flint schema <name>` prints any of
+# them: transform, bounds, material, rigidbody, collider, character_controller.
+
+[scene]
+name = "{{name}}"
+version = "1.0"
+description = "A ring of standing stones at dusk"
+
+# What `flint render` looks through. In play the player's own first-person
+# camera takes over.
+[camera]
+position = [4.5, 3.2, -11.0]
+target = [0.0, 1.3, 0.0]
+fov = 55.0
+
+# The sky's share of the light: cool from above, warm from the ground.
+[environment]
+ambient_sky = [0.10, 0.13, 0.22]
+ambient_ground = [0.06, 0.05, 0.04]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.06
+vignette_enabled = true
+vignette_intensity = 0.3
+fxaa = true
+
+
+# ------------------------------------------------------------
+#  Light. A light is a `light` table with a `type`. A directional
+#  light's `direction` points toward the light, not away from it.
+# ------------------------------------------------------------
+
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.45, 0.6, -0.65]
+color = [1.0, 0.86, 0.68]
+intensity = 1.8
+
+[entities.lantern]
+[entities.lantern.transform]
+position = [0.0, 2.3, 0.0]
+[entities.lantern.light]
+type = "point"
+color = [1.0, 0.62, 0.28]
+intensity = 14.0
+radius = 9.0
+
+
+# ------------------------------------------------------------
+#  Player. A character starts facing +Z, so it stands at -Z and
+#  the scene is laid out in front of it. WASD, mouse, Space, Shift.
+# ------------------------------------------------------------
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0.0, 1.0, -8.0]
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+camera_mode = "first_person"
+
+
+# ------------------------------------------------------------
+#  HUD. All game UI is drawn by scripts; this entity only carries one.
+# ------------------------------------------------------------
+
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "hud.rhai"
+
+
+# ------------------------------------------------------------
+#  Ground. `bounds` draws a box, `material` colours it, and a static
+#  `rigidbody` with a `collider` makes it solid.
+# ------------------------------------------------------------
+
+[entities.ground]
+[entities.ground.transform]
+position = [0.0, -0.1, 0.0]
+[entities.ground.bounds]
+min = [-18.0, -0.1, -18.0]
+max = [18.0, 0.1, 18.0]
+[entities.ground.material]
+color = [0.16, 0.22, 0.15, 1.0]
+roughness = 0.95
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [36.0, 0.2, 36.0]
+friction = 0.8
+
+
+# ------------------------------------------------------------
+#  The plinth and the ember on it
+# ------------------------------------------------------------
+
+[entities.plinth]
+[entities.plinth.transform]
+position = [0.0, 0.45, 0.0]
+[entities.plinth.bounds]
+min = [-0.7, -0.45, -0.7]
+max = [0.7, 0.45, 0.7]
+[entities.plinth.material]
+color = [0.34, 0.32, 0.30, 1.0]
+roughness = 0.8
+[entities.plinth.rigidbody]
+body_type = "static"
+[entities.plinth.collider]
+shape = "box"
+size = [1.4, 0.9, 1.4]
+
+[entities.ember]
+[entities.ember.transform]
+position = [0.0, 1.25, 0.0]
+rotation = [35.0, 45.0, 0.0]
+[entities.ember.bounds]
+min = [-0.28, -0.28, -0.28]
+max = [0.28, 0.28, 0.28]
+[entities.ember.material]
+color = [1.0, 0.55, 0.18, 1.0]
+metallic = 0.3
+roughness = 0.35
+
+
+# ------------------------------------------------------------
+#  The ring: seven stones, a gap at -Z where the player walks in
+# ------------------------------------------------------------
+
+[entities.stone_1]
+[entities.stone_1.transform]
+position = [-3.4, 1.3, -3.4]
+rotation = [0.0, 45.0, 0.0]
+[entities.stone_1.bounds]
+min = [-0.6, -1.3, -0.35]
+max = [0.6, 1.3, 0.35]
+[entities.stone_1.material]
+color = [0.27, 0.28, 0.31, 1.0]
+roughness = 0.9
+[entities.stone_1.rigidbody]
+body_type = "static"
+[entities.stone_1.collider]
+shape = "box"
+size = [1.2, 2.6, 0.7]
+
+[entities.stone_2]
+[entities.stone_2.transform]
+position = [-4.8, 1.0, 0.0]
+rotation = [0.0, 90.0, 0.0]
+[entities.stone_2.bounds]
+min = [-0.7, -1.0, -0.4]
+max = [0.7, 1.0, 0.4]
+[entities.stone_2.material]
+color = [0.24, 0.26, 0.28, 1.0]
+roughness = 0.9
+[entities.stone_2.rigidbody]
+body_type = "static"
+[entities.stone_2.collider]
+shape = "box"
+size = [1.4, 2.0, 0.8]
+
+[entities.stone_3]
+[entities.stone_3.transform]
+position = [-3.4, 1.6, 3.4]
+rotation = [0.0, 135.0, 0.0]
+[entities.stone_3.bounds]
+min = [-0.55, -1.6, -0.35]
+max = [0.55, 1.6, 0.35]
+[entities.stone_3.material]
+color = [0.30, 0.29, 0.29, 1.0]
+roughness = 0.9
+[entities.stone_3.rigidbody]
+body_type = "static"
+[entities.stone_3.collider]
+shape = "box"
+size = [1.1, 3.2, 0.7]
+
+[entities.stone_4]
+[entities.stone_4.transform]
+position = [0.0, 1.9, 4.8]
+[entities.stone_4.bounds]
+min = [-0.75, -1.9, -0.4]
+max = [0.75, 1.9, 0.4]
+[entities.stone_4.material]
+color = [0.26, 0.27, 0.31, 1.0]
+roughness = 0.9
+[entities.stone_4.rigidbody]
+body_type = "static"
+[entities.stone_4.collider]
+shape = "box"
+size = [1.5, 3.8, 0.8]
+
+[entities.stone_5]
+[entities.stone_5.transform]
+position = [3.4, 1.5, 3.4]
+rotation = [0.0, 45.0, 0.0]
+[entities.stone_5.bounds]
+min = [-0.6, -1.5, -0.35]
+max = [0.6, 1.5, 0.35]
+[entities.stone_5.material]
+color = [0.29, 0.28, 0.28, 1.0]
+roughness = 0.9
+[entities.stone_5.rigidbody]
+body_type = "static"
+[entities.stone_5.collider]
+shape = "box"
+size = [1.2, 3.0, 0.7]
+
+[entities.stone_6]
+[entities.stone_6.transform]
+position = [4.8, 1.1, 0.0]
+rotation = [0.0, 90.0, 0.0]
+[entities.stone_6.bounds]
+min = [-0.65, -1.1, -0.4]
+max = [0.65, 1.1, 0.4]
+[entities.stone_6.material]
+color = [0.25, 0.27, 0.30, 1.0]
+roughness = 0.9
+[entities.stone_6.rigidbody]
+body_type = "static"
+[entities.stone_6.collider]
+shape = "box"
+size = [1.3, 2.2, 0.8]
+
+[entities.stone_7]
+[entities.stone_7.transform]
+position = [3.4, 1.2, -3.4]
+rotation = [0.0, 135.0, 0.0]
+[entities.stone_7.bounds]
+min = [-0.6, -1.2, -0.35]
+max = [0.6, 1.2, 0.35]
+[entities.stone_7.material]
+color = [0.28, 0.29, 0.29, 1.0]
+roughness = 0.9
+[entities.stone_7.rigidbody]
+body_type = "static"
+[entities.stone_7.collider]
+shape = "box"
+size = [1.2, 2.4, 0.7]

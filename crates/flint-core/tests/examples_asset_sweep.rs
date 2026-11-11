@@ -313,10 +313,9 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
     // where this test stands (it is the only test in this binary).
     std::env::set_current_dir(&repo).unwrap();
     let mut scenes = Vec::new();
-    // examples/ with its film sets, the test game, the frozen scenes the
+    // examples/ with its film sets, the frozen scenes the
     // goldens and CLI tests load (#763), and the goldens' own fixture.
     scenes_under(&repo.join("examples"), &mut scenes);
-    scenes_under(&repo.join("testGame"), &mut scenes);
     scenes_under(&repo.join("tests/fixtures"), &mut scenes);
     scenes_under(&repo.join("crates/flint-cli/tests/golden"), &mut scenes);
     scenes.sort();
@@ -520,7 +519,7 @@ fn the_engines_own_scenes_load_the_files_they_loaded_before() {
     }
 
     println!(
-        "{} scenes under examples/, testGame/, tests/fixtures/ and the goldens' fixture ({unread} not plain TOML tables)",
+        "{} scenes under examples/, tests/fixtures/ and the goldens' fixture ({unread} not plain TOML tables)",
         scenes.len()
     );
     println!(
