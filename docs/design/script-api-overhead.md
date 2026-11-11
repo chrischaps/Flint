@@ -1,4 +1,4 @@
-# What the declared script API costs a call (ADR 0116, step 1)
+# What the declared script API costs a call (ADR 0116, steps 1 and 2)
 
 ADR 0116 declares script functions through a builder that takes arguments as
 `Dynamic` and converts them by kind, where every function used to be a typed
@@ -134,6 +134,85 @@ An int `lerp` costs the same as a float one once the callback has made a
 native call before its loop. A loop whose first call is the math function
 still pays Rhai's search for ints, which for three parameters is up to 8
 hashes.
+
+## The all-int copy, and the draw functions ported (step 2)
+
+Chris's decision of 2026-11-11 (ADR 0116, Decisions 5): a function declared
+with `.run()` or `.run_pure()` that has four or more `Num` parameters gets an
+all-int exact copy beside its float twin, ints for `Num` and the twin's types
+for the other kinds. It is automatic. The second step 2 batch ported the
+draw and UI functions (`draw`, `draw_world`, `view`, `ui`, `screen_ui`,
+`sprite`, `camera_2d`, `touch`) through `.run()`, so every draw call has its
+float twin and, with four or more numbers, its all-int copy: 43 declared
+functions have one.
+
+`cargo run --release -p flint-script --example api_overhead`, 2026-11-11,
+same machine, busier than in step 1 (the typed closure's float `draw_rect`
+read 380 ns where step 1 had 338, and two rows running identical code,
+`set_position` floats under step 1's and step 2's `.run()`, read 1161 and
+564 ns in the uncached case of run 1). The subjects now include `.run()`
+without the copy (`Path::ConvertingNoIntCopy`, step 1's registration). ns per
+call over an empty loop's, best of 7 rounds of 400 frames x 1000 calls (run 1
+of two; run 2 is below the tables)
+
+**The loop is the callback's first call** (Rhai's lookup cache is per
+iteration):
+
+| `bench_rect` | 8 floats | 8 ints | mixed (5 of 8 ints) |
+|---|---:|---:|---:|
+| typed closure (before ADR 0116) | 380.4 | not found | not found |
+| `.run()`, step 1 (no copy) | 361.3 | 4301.0 | 4696.0 |
+| `.run()`, step 2 (all-int copy) | 362.0 | **384.2** | 4314.8 |
+
+**`screen_width()` before the loop** (the cache lasts the frame):
+
+| `bench_rect` | 8 floats | 8 ints | mixed |
+|---|---:|---:|---:|
+| typed closure (before ADR 0116) | 566.9 | not found | not found |
+| `.run()`, step 1 (no copy) | 540.3 | 595.2 | 584.5 |
+| `.run()`, step 2 (all-int copy) | 545.5 | **569.9** | 575.3 |
+
+The all-int call went from 4.3 us to within 6% of the float call (22 ns)
+where Rhai can't cache it, and is as fast as the old typed float call where
+it can. A mixed call still takes the search: about 4.3 us uncached, about
+the same as a float call cached. `flint script check` (#694) is to flag int
+literals in hot draw calls.
+
+Run 2, an hour later on a busier machine, kept the shape and not the
+numbers: uncached, floats 383 ns, all ints 644 ns under step 2 against
+9356 ns under step 1, mixed about 9.7 us either way; its cached rows swung
+up to 2x between registrations that differ in nothing the call reaches
+(the typed closure's float call 1230 ns, the all-`Dynamic` one 614 ns), so
+run 1's are the ones tabled. One oddity held in both runs: uncached
+`bench_set_position` with floats read about 2x slower under the step 1 side
+(1161 / 1168 ns) than under step 2 (564 / 582 ns), though the function is
+registered identically in both (three numbers: no copy). The two engines
+differ only in whether `bench_rect` has its all-int copy, so Rhai's
+uncached lookup cost depends on the rest of the registered set in a way not
+looked into here; the real engine is the step 2 side.
+
+**The demo.** `seeded_stars.rhai`'s `on_draw_ui` (146 draws a frame, all
+floats), us per frame, best of 7 rounds of 600 frames: typed closures 253.3,
+`.run_typed()` 253.7, step 1 `.run()` 249.8, step 2 `.run()` 248.0 (-2.1%),
+`.run()` without the twin 271.1 (run 2: 249.5, 250.1, 245.6, 244.9 (-1.8%),
+265.2).
+
+**The player A/B.** `flint-player` release on `seeded_stars`,
+`FLINT_VSYNC=0 --exit-after 22 --perf`: A is this branch (every draw call
+declared), B is `origin/main` at `b9f540be` built from `git archive` in its
+own target dir (draw calls as typed closures), C a second copy of B's binary,
+the control. Five runs each, alternated A B C, two 10-second windows a run:
+
+| | `script ui`, mean ms | min to max | frame p50, mean ms |
+|---|---:|---:|---:|
+| A branch | 0.160 | 0.14 to 0.20 | 0.82 |
+| B origin/main | 0.160 | 0.14 to 0.19 | 0.84 |
+| C origin/main again | 0.154 | 0.14 to 0.16 | 0.78 |
+
+A and B are equal to the player's 0.01 ms resolution, and B differs from its
+own copy by more than from A. The gate is +5% of the frame, about 40 us at
+this frame time; the harness puts the port at -5 us. **The phone was not
+measured**; Chris waived that half of the gate (ADR 0116, Decisions 4).
 
 ## The web build
 

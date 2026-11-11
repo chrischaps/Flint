@@ -164,3 +164,25 @@ Chris accepted the recommendations on 2026-11-10:
    hot draw functions keep typed registrations.
 3. **Deprecated names** stay for one release, marked in the listing and
    flagged by the checker, then go, with a changelog entry (#765).
+
+Chris decided on 2026-11-11, after step 1's measurement and the first
+step 2 batch (docs/design/script-api-overhead.md):
+
+4. **The phone half of the overhead gate is waived.** Desktop passed it in
+   step 1 (the converting path measured 2.9% faster than the typed closures
+   on the heaviest script-drawn example) and again with the draw functions
+   ported. The phone (Pixel 8 Pro, web build) was not measured, in step 1
+   or since; that the ratios hold there is an expectation, not a
+   measurement.
+5. **Integers in many-number functions.** For every function declared with
+   `.run()` (or `.run_pure()`) that has four or more `Num` parameters, the
+   builder registers an all-int exact copy beside the float twin: ints for
+   `Num`, the twin's types for the other kinds. It is automatic, not opt-in
+   (`.without_int_copy()` exists, doc-hidden, for the harness), so a call
+   like `draw_rect(10, 10, 100, 50, 1, 1, 1, 1)` is found on Rhai's first
+   lookup instead of by its 2^n search. Measured: 4301 ns a call before,
+   384 ns after, where the float call is 362 ns, when the loop's call is the
+   callback's first. A call mixing ints and floats in `Num` slots still
+   takes the search (about 4.3 us in that case; within 2% of the old typed float call
+   once Rhai has cached it). `flint script check` (#694) will flag int
+   literals in hot draw calls; that is not part of step 2.

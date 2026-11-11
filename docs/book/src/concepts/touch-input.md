@@ -103,8 +103,8 @@ Touch state is accessible from [Rhai scripts](scripting.md) via these functions:
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `touch_count()` | `i64` | Number of currently active touches |
-| `touch_x(index)` | `f64` | Normalized X position (0--1) of touch at index |
-| `touch_y(index)` | `f64` | Normalized Y position (0--1) of touch at index |
+| `touch_x(id)` | `f64` | Normalized X position (0--1) of the touch with that ID (`-1.0` if none) |
+| `touch_y(id)` | `f64` | Normalized Y position (0--1) of the touch with that ID (`-1.0` if none) |
 | `is_touching(id)` | `bool` | Whether the given touch ID is currently active |
 | `touch_just_started(id)` | `bool` | Whether the touch ID just became active this frame |
 | `touch_just_ended(id)` | `bool` | Whether the touch ID just ended this frame |
@@ -114,8 +114,8 @@ Touch state is accessible from [Rhai scripts](scripting.md) via these functions:
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `tap_count()` | `i64` | Number of taps detected this frame |
-| `tap_x(index)` | `f64` | Normalized X position of tap at index |
-| `tap_y(index)` | `f64` | Normalized Y position of tap at index |
+| `tap_x(index)` | `f64` | Normalized X position of tap at index (`-1.0` if out of range) |
+| `tap_y(index)` | `f64` | Normalized Y position of tap at index (`-1.0` if out of range) |
 
 ### Swipe Detection
 

@@ -60,9 +60,11 @@ The `on_interact` callback is sugar for the common pattern of proximity-based in
 
 All functions are available globally in every script. Entity IDs are passed as `i64` (Rhai's native integer type).
 
-The engine lists its own API: `flint script api` prints every function with its parameters, and `--json` gives the same as data (`--filter draw` narrows it). Functions declared through the engine's API builder (ADR 0116) come with parameter names, what each accepts and a one-line doc; the others are listed with their parameter types until they are ported. Declared so far: the Entity, Input (with Input and Cursor), Time, Audio (with Audio Filter), Animation, Math, Event, Log and Physics APIs (raycasts, the camera, 2D physics), and the Post-Processing table; the rest follow. A wrong argument to a declared function is a script error that names the function, the parameter and what it wanted, with the line: ``set_position: argument `x` must be a number (an int or a float), not string (line 12, position 5)``. The listing opens with the rules every declared function keeps (`conventions`): what a number parameter accepts, and what a function does with an entity that isn't there or a query that finds nothing.
+The engine lists its own API: `flint script api` prints every function with its parameters, and `--json` gives the same as data (`--filter draw` narrows it). Functions declared through the engine's API builder (ADR 0116) come with parameter names, what each accepts and a one-line doc; the others are listed with their parameter types until they are ported. Declared so far: the Entity, Input (with Input and Cursor), Time, Audio (with Audio Filter), Animation, Math, Event, Log and Physics APIs (raycasts, the camera, 2D physics, the 2D camera), the Post-Processing table, the whole UI Draw API (with its query functions and the lines and text in the world), the Data-Driven UI and screen-UI setters, the Sprite API and the touch functions; the rest follow. A wrong argument to a declared function is a script error that names the function, the parameter and what it wanted, with the line: ``set_position: argument `x` must be a number (an int or a float), not string (line 12, position 5)``. The listing opens with the rules every declared function keeps (`conventions`): what a number parameter accepts, and what a function does with an entity that isn't there or a query that finds nothing.
 
-In every declared function a number takes an integer as well as a float (`set_position(id, 0, 1, 0)`, `set_camera_fov(60)`, `sin(1)`), and an integer parameter, such as a layer index or a mouse button, takes a float with nothing after the point (`is_mouse_pressed(0.0)`). Elsewhere a float parameter still wants a float until its module is ported.
+In every declared function a number takes an integer as well as a float (`set_position(id, 0, 1, 0)`, `set_camera_fov(60)`, `sin(1)`, `draw_rect(10, 10, 100, 50, 1, 1, 1, 1)`), and an integer parameter, such as a layer index or a mouse button, takes a float with nothing after the point (`is_mouse_pressed(0.0)`, `draw_rect_ex(.., 0.0)`). Elsewhere a float parameter still wants a float until its module is ported.
+
+A call whose numbers are all floats, or (for a function with four or more numbers, such as the draw calls) all ints, is found at once. A call that mixes ints and floats among its numbers, `draw_text(10, 20, "hp", 16, 1.0, 1.0, 1.0, 1.0)`, works too, but Rhai finds the function by trying the combinations of its argument types, which costs about 4 µs a call for eight numbers when nothing in the callback has been called before the loop it is in (Rhai remembers the answer for the rest of a callback once it has one). In a loop that draws hundreds of things a frame, write the numbers all one way.
 
 ### Entity API
 
@@ -109,7 +111,7 @@ Every number in the Entity API takes an integer as well as a float: `set_positio
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
-A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every declared function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d` and `get_velocity_2d`) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected. Functions not yet declared keep their old handling: the setters that warned before still do and the rest stay quiet until their module is ported.
+A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every declared function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d`, `get_velocity_2d`, `move_character`, `get_collider_extents`, `camera_follow`, the Sprite API and the screen-UI setters `set_text`, `set_text_color`, `ui_set_value`, `set_anchor` and `set_anchor_offset`) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected. Functions not yet declared keep their old handling: the setters that warned before still do and the rest stay quiet until their module is ported.
 
 #### Hiding entities
 
@@ -1145,7 +1147,9 @@ Load and manipulate TOML-defined UI documents at runtime:
 | `ui_reset_style(element_id)` | --- | Remove all style overrides |
 | `ui_set_class(element_id, class_name)` | --- | Change an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if a UI element exists |
-| `ui_get_rect(element_id)` | `Map` | Get resolved position/size as `#{x, y, width, height}` |
+| `ui_get_rect(element_id)` | `Map` or `()` | Get resolved position/size as `#{x, y, w, h}`, or `()` for an element no document has |
+| `ui_hit(element_id, x, y)` | `bool` | Whether a screen point lies inside the element's resolved rect |
+| `ui_token(name)` | value or `()` | A style token (see [Rhai API: Data-Driven UI](#rhai-api-data-driven-ui)) |
 
 Older scenes place HUD elements as entities with `screen_anchor`, `ui_text` and `ui_fill` components instead of a UI document. Those are driven with entity-level setters:
 
@@ -1392,7 +1396,7 @@ Put the `import` at the top level of the script: the engine evaluates a script's
 
 #### Layer Ordering
 
-All `_ex` draw variants accept a `layer` parameter which must be an **integer** (`0`, `1`, `-1`), not a float. Using `0.0` instead of `0` will cause a "Function not found" error because Rhai does not implicitly convert between `float` and `int`. Commands are sorted by layer before rendering:
+All `_ex` draw variants take a `layer`, an integer (`0`, `1`, `-1`); a float with nothing after the point (`0.0`) is the same layer, and one with a fraction (`0.5`) is a script error naming the parameter. Commands are sorted by layer before rendering:
 
 - **Negative layers** render behind (background elements)
 - **Layer 0** is the default
