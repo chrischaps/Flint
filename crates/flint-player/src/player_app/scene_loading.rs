@@ -459,6 +459,16 @@ pub(super) fn register_skeletal_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
+    register_skeletal_data_saying(load_result, animation, &mut |line| println!("{line}"));
+}
+
+/// [`register_skeletal_data`], each clip it registers told to `say` rather
+/// than printed: a headless host keeps stdout for its own output.
+pub(super) fn register_skeletal_data_saying(
+    load_result: &model_loader::ModelLoadResult,
+    animation: &mut AnimationSystem,
+    say: &mut dyn FnMut(String),
+) {
     // Skeletons built from the first import of each asset, so entities that hit
     // the mesh cache (`import_result: None` — every 2nd+ entity sharing a
     // skinned asset) still get their own skeleton and animate independently.
@@ -486,12 +496,12 @@ pub(super) fn register_skeletal_data(
             .or_insert(skeletons);
         for imported_clip in &import_result.skeletal_clips {
             let clip = SkeletalClip::from_imported(imported_clip);
-            println!(
+            say(format!(
                 "  Skeletal clip: {} ({:.1}s, {} tracks)",
                 clip.name,
                 clip.duration,
                 clip.joint_tracks.len()
-            );
+            ));
             animation.add_skeletal_clip(clip);
         }
     }
@@ -517,16 +527,25 @@ pub(super) fn register_node_animation_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
+    register_node_animation_data_saying(load_result, animation, &mut |line| println!("{line}"));
+}
+
+/// [`register_node_animation_data`], telling `say` what it registers.
+pub(super) fn register_node_animation_data_saying(
+    load_result: &model_loader::ModelLoadResult,
+    animation: &mut AnimationSystem,
+    say: &mut dyn FnMut(String),
+) {
     for loaded in &load_result.models {
         if let Some(ref import_result) = loaded.import_result {
             for imported_clip in &import_result.node_clips {
                 let clip = NodeClip::from_imported(imported_clip);
-                println!(
+                say(format!(
                     "  Node clip: {} ({:.1}s, {} tracks)",
                     clip.name,
                     clip.duration,
                     clip.node_tracks.len()
-                );
+                ));
                 animation.add_node_clip(clip);
             }
         }
@@ -668,10 +687,25 @@ pub(super) fn load_animations_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
+    load_animations_saying(project, scene_path, animation, &mut |line| {
+        println!("{line}")
+    });
+}
+
+/// [`load_animations_from_world`], telling `say` what it loads.
+pub(super) fn load_animations_saying(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+    say: &mut dyn FnMut(String),
+) {
     for path in visible_files(project, AssetKind::Animations, scene_path) {
         match flint_animation::loader::load_clip_from_file(&path) {
             Ok(clip) => {
-                println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
+                say(format!(
+                    "Loaded animation: {} ({:.1}s)",
+                    clip.name, clip.duration
+                ));
                 animation.add_property_clip(clip);
             }
             Err(e) => {
@@ -690,17 +724,29 @@ pub(super) fn load_sequences_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
+    load_sequences_saying(project, scene_path, animation, &mut |line| {
+        println!("{line}")
+    });
+}
+
+/// [`load_sequences_from_world`], telling `say` what it loads.
+pub(super) fn load_sequences_saying(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+    say: &mut dyn FnMut(String),
+) {
     animation
         .set_sequence_search(project.search_dirs(AssetKind::Sequences, scene_dir_of(scene_path)));
     for path in visible_files(project, AssetKind::Sequences, scene_path) {
         match flint_animation::load_sequence_from_file(&path) {
             Ok(seq) => {
-                println!(
+                say(format!(
                     "Loaded sequence: {} ({:.1}s, {} events)",
                     seq.name,
                     seq.resolved_duration(),
                     seq.events.len()
-                );
+                ));
                 animation.add_sequence(seq);
             }
             Err(e) => {
@@ -718,16 +764,28 @@ pub(super) fn load_sprite_animations_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
+    load_sprite_animations_saying(project, scene_path, animation, &mut |line| {
+        println!("{line}")
+    });
+}
+
+/// [`load_sprite_animations_from_world`], telling `say` what it loads.
+pub(super) fn load_sprite_animations_saying(
+    project: &Project,
+    scene_path: &str,
+    animation: &mut AnimationSystem,
+    say: &mut dyn FnMut(String),
+) {
     for path in visible_files(project, AssetKind::SpriteAnimations, scene_path) {
         match flint_animation::sprite_clip::load_sprite_clips_from_file(&path) {
             Ok(clips) => {
                 for clip in clips {
-                    println!(
+                    say(format!(
                         "Loaded sprite animation: {} ({}ms, {} frames)",
                         clip.name,
                         clip.total_duration_ms(),
                         clip.frames.len()
-                    );
+                    ));
                     animation.add_sprite_clip(clip);
                 }
             }

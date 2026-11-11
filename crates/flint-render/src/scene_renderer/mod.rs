@@ -5580,9 +5580,11 @@ impl SceneRenderer {
             .map_or(self.surface_size, |r| (r.width, r.height))
     }
 
-    /// Ensure FXAA GPU resources exist (call after enabling FXAA at runtime
-    /// and after resize). No-op when `fxaa` is disabled — the default-off
-    /// path allocates nothing (ADR 0050, Kuwahara lazy pattern).
+    /// Ensure FXAA GPU resources exist. Every frame does this itself
+    /// ([`encode_to`](Self::encode_to), #297), as it builds styles; calling
+    /// it after setting a config moves the shader compile off the first
+    /// frame that draws FXAA. No-op when `fxaa` is disabled — the
+    /// default-off path allocates nothing (ADR 0050, Kuwahara lazy pattern).
     pub fn ensure_fxaa_resources(&mut self, device: &wgpu::Device) {
         if !self.postprocess_config.fxaa_enabled {
             return;
@@ -6100,6 +6102,10 @@ impl SceneRenderer {
         // When nothing new is on this is a walk over the registry.
         self.sync_debug_styles();
         self.ensure_style_resources(device);
+        // FXAA likewise (#297): a host that only sets the config (the
+        // viewer's hot reload and scene/default toggle, a script's post
+        // override) drew none until a resize. Two `Option` checks when built.
+        self.ensure_fxaa_resources(device);
         if self.device_lost {
             return;
         }

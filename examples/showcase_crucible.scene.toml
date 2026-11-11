@@ -513,8 +513,8 @@ archetype = "character"
 
 [entities.forge_spirit.transform]
 position = [-3, 0.5, -2]
-rotation = [90, 45, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 45, 0]
+scale = [1.5, 1.5, 1.5]
 
 [entities.forge_spirit.model]
 asset = "YBotWithIdle"

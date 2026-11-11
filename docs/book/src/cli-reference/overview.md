@@ -419,7 +419,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--fov <deg>` | (auto) | Field of view |
 | `--no-grid` | `false` | Disable ground grid |
 | `--select <entity>` | (none) | Outline this entity (by name) and its descendants as `flint edit` does when it is picked |
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `wireframe-overlay`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Wireframe edges on solid geometry |
 | `--show-normals` | `false` | Normal direction arrows |
 | `--no-tonemapping` | `false` | Raw linear output |
@@ -498,6 +498,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
+| `--anim-time <s>` | (none) | Run the scene's animation (skeletal clips, layers, sequences, property tweens, node and sprite clips, then IK) to this time at a fixed 1/60 s step before capturing, as the player poses it there. Deterministic; with `--time` or `--frames` it runs on with the clock. Without it skinned meshes draw in their bind pose. See [Headless Rendering](../guides/headless-rendering.md#posed-characters) |
 | `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`, or a PNG a frame to `--output frames/f-%05d.png`; either runs in about one frame's memory however long. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
 | `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
 | `--scripts` | `false` | Run the scene's scripts, one tick a clock step in the player's frame order, deterministically (seeded `random()`, no wall clock). What isn't drawn headless is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
@@ -526,11 +527,12 @@ When no camera flags are given, the render starts from the scene's `[camera]` bl
 > particles, render modes and the HUD still aren't (a warning names them). The
 > render-mode flags exist so a stylized frame can be captured without a script.
 > For animation, note that skinned meshes render at
-> **bind pose** headlessly. To capture a posed frame of a rigged model, use the
-> model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
-> (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
-> exception: `--particle-time 2` steps every emitter before the capture. So are
-> living props, which draw at time 0 or at `--time`.
+> **bind pose** headlessly unless you pass `--anim-time 1.5`, which poses every
+> animated entity as the player has it at that time. For one rigged model on its
+> own, the model previewer does it too: `flint edit model.glb --render out.png
+> --anim-time 1.5` (optionally with `--clip`, `--layer` or `--sequence`). Particles
+> step the same way with `--particle-time 2`, and living props draw at time 0 or
+> at `--time`.
 
 ## The `edit` Command
 

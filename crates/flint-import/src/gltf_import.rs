@@ -400,6 +400,14 @@ fn extract_skeletons(
 ) -> Vec<ImportedSkeleton> {
     let mut skeletons = Vec::new();
 
+    let nodes: Vec<gltf::Node> = document.nodes().collect();
+    let mut node_parent: HashMap<usize, usize> = HashMap::new();
+    for node in &nodes {
+        for child in node.children() {
+            node_parent.insert(child.index(), node.index());
+        }
+    }
+
     for skin in document.skins() {
         let skin_name = skin
             .name()
@@ -429,8 +437,10 @@ fn extract_skeletons(
                 .map(String::from)
                 .unwrap_or_else(|| format!("joint_{}", joint_idx));
 
-            // Find parent: walk up the glTF node tree and check if the parent is also a joint
-            let parent = find_parent_joint(document, node.index(), &node_to_joint);
+            // Walk up to the nearest ancestor that is a joint, keeping the
+            // non-joint nodes passed on the way (#294).
+            let (parent, parent_offset) =
+                find_parent_joint(&node_parent, &nodes, node.index(), &node_to_joint);
 
             let ibm = ibms.get(joint_idx).copied().unwrap_or_else(identity_4x4);
             let (rest_translation, rest_rotation, rest_scale) = node.transform().decomposed();
@@ -443,6 +453,7 @@ fn extract_skeletons(
                 rest_translation,
                 rest_rotation,
                 rest_scale,
+                parent_offset,
             });
         }
 
@@ -455,22 +466,46 @@ fn extract_skeletons(
     skeletons
 }
 
-/// Find the parent joint index for a given node, if the parent is within the skin's joint set
+/// The nearest ancestor of `node_index` that is one of the skin's joints,
+/// and the transform of the non-joint nodes between the two (or between the
+/// node and the scene root when no ancestor is a joint), `None` when that is
+/// identity. See `ImportedJoint::parent_offset`.
 fn find_parent_joint(
-    document: &gltf::Document,
+    node_parent: &HashMap<usize, usize>,
+    nodes: &[gltf::Node],
     node_index: usize,
     node_to_joint: &HashMap<usize, usize>,
-) -> Option<usize> {
-    // Walk all nodes to find the parent of node_index
-    for node in document.nodes() {
-        for child in node.children() {
-            if child.index() == node_index {
-                // Found the parent node — check if it's a joint
-                return node_to_joint.get(&node.index()).copied();
-            }
+) -> (Option<usize>, Option<[[f32; 4]; 4]>) {
+    let identity = identity_4x4();
+    let mut offset: Option<[[f32; 4]; 4]> = None;
+    let mut cur = node_parent.get(&node_index).copied();
+    // A parent map from a valid glTF is a forest; the bound stops a cycle.
+    for _ in 0..nodes.len() {
+        let Some(index) = cur else { break };
+        if let Some(&joint) = node_to_joint.get(&index) {
+            return (Some(joint), offset);
+        }
+        let m = nodes[index].transform().matrix();
+        if m != identity {
+            offset = Some(match offset {
+                Some(below) => mat4_mul(&m, &below),
+                None => m,
+            });
+        }
+        cur = node_parent.get(&index).copied();
+    }
+    (None, offset)
+}
+
+/// Multiply two column-major 4x4 matrices (`m[col][row]`).
+fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut out = [[0.0f32; 4]; 4];
+    for col in 0..4 {
+        for row in 0..4 {
+            out[col][row] = (0..4).map(|k| a[k][row] * b[col][k]).sum();
         }
     }
-    None
+    out
 }
 
 /// Extract skeletal animation clips from glTF animations

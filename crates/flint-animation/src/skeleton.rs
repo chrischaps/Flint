@@ -31,6 +31,11 @@ pub struct Skeleton {
     pub joint_names: Vec<String>,
     pub parents: Vec<Option<usize>>,
     pub inverse_bind_matrices: Vec<[[f32; 4]; 4]>,
+    /// Per joint, the non-joint glTF nodes between it and its parent (or
+    /// the scene root), applied before its local pose; `None` is identity.
+    /// A Mixamo `Armature` node's centimetre scale and Z-up turn ride here
+    /// (`flint_import::ImportedJoint::parent_offset`, #294).
+    pub parent_offsets: Vec<Option<[[f32; 4]; 4]>>,
     pub local_poses: Vec<JointPose>,
     /// Rest (bind) local poses — the reference for additive layers
     pub rest_poses: Vec<JointPose>,
@@ -53,6 +58,7 @@ impl Skeleton {
             .iter()
             .map(|j| j.inverse_bind_matrix)
             .collect();
+        let parent_offsets = imported.joints.iter().map(|j| j.parent_offset).collect();
         // Seed the pose buffer from the joints' REST transforms, not
         // identity: clips only overwrite the properties they animate, so
         // an unanimated joint must hold its bind-local transform — with
@@ -75,6 +81,7 @@ impl Skeleton {
             joint_names,
             parents,
             inverse_bind_matrices,
+            parent_offsets,
             local_poses,
             rest_poses,
             bone_matrices,
@@ -118,7 +125,10 @@ impl Skeleton {
         let count = self.joint_count();
 
         for i in 0..count {
-            let local = pose_to_mat4(&self.local_poses[i]);
+            let mut local = pose_to_mat4(&self.local_poses[i]);
+            if let Some(offset) = self.parent_offsets.get(i).copied().flatten() {
+                local = mat4_mul(&offset, &local);
+            }
 
             self.global_matrices[i] = match self.parents[i] {
                 Some(parent_idx) => mat4_mul(&self.global_matrices[parent_idx], &local),
@@ -241,6 +251,7 @@ mod tests {
                     rest_translation: [0.0, 0.0, 0.0],
                     rest_rotation: [0.0, 0.0, 0.0, 1.0],
                     rest_scale: [1.0, 1.0, 1.0],
+                    parent_offset: None,
                 },
                 flint_import::ImportedJoint {
                     name: "child".to_string(),
@@ -250,6 +261,7 @@ mod tests {
                     rest_translation: [0.0, 0.0, 0.0],
                     rest_rotation: [0.0, 0.0, 0.0, 1.0],
                     rest_scale: [1.0, 1.0, 1.0],
+                    parent_offset: None,
                 },
             ],
         };
@@ -290,6 +302,7 @@ mod tests {
                     rest_translation: [0.0, 0.0, 0.0],
                     rest_rotation: [0.0, 0.0, 0.0, 1.0],
                     rest_scale: [1.0, 1.0, 1.0],
+                    parent_offset: None,
                 },
                 flint_import::ImportedJoint {
                     name: "child".to_string(),
@@ -299,6 +312,7 @@ mod tests {
                     rest_translation: [0.0, 0.0, 0.0],
                     rest_rotation: [0.0, 0.0, 0.0, 1.0],
                     rest_scale: [1.0, 1.0, 1.0],
+                    parent_offset: None,
                 },
             ],
         };
@@ -333,6 +347,7 @@ mod tests {
                 rest_translation: [0.13, 0.0, -0.05],
                 rest_rotation: [0.0, 0.0, 0.0, 1.0],
                 rest_scale: [1.0, 1.0, 1.0],
+                parent_offset: None,
             }],
         };
         let skel = Skeleton::from_imported(&imported);
@@ -351,6 +366,7 @@ mod tests {
             ],
             parents: vec![None, Some(0), Some(1), Some(2), Some(1)],
             inverse_bind_matrices: vec![IDENTITY_4X4; 5],
+            parent_offsets: vec![None; 5],
             local_poses: vec![JointPose::default(); 5],
             rest_poses: vec![JointPose::default(); 5],
             bone_matrices: vec![IDENTITY_4X4; 5],
@@ -362,5 +378,45 @@ mod tests {
         );
         assert_eq!(skel.subtree_mask("root").unwrap(), vec![true; 5]);
         assert!(skel.subtree_mask("nope").is_none());
+    }
+
+    /// The Mixamo YBot keeps its root joint under an `Armature` node
+    /// (scale 0.01, +90 degrees about X) that its inverse bind matrices are
+    /// written against. Posed without that node, every bone was 100 times
+    /// too large and lying down, so the tavern's NPCs needed a 0.015 scale
+    /// to look right while animated and were 3 cm tall at rest (#294).
+    #[test]
+    fn mixamo_armature_node_is_part_of_the_pose() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testModels/YBotWithIdle.glb"
+        );
+        let import = flint_import::import_gltf(path).expect("YBotWithIdle.glb imports");
+        let mut skel = Skeleton::from_imported(&import.skeletons[0]);
+        let hips = skel.joint_index("mixamorig:Hips").unwrap();
+        assert!(
+            skel.parent_offsets[hips].is_some(),
+            "Armature rides on Hips"
+        );
+        skel.compute_bone_matrices();
+
+        // The rest pose is the bind pose: every bone matrix is identity, so
+        // an animated figure is as large as the mesh, which is metre-scale.
+        for (i, bone) in skel.bone_matrices.iter().enumerate() {
+            for (col, column) in bone.iter().enumerate() {
+                for (row, value) in column.iter().enumerate() {
+                    let want = if col == row { 1.0 } else { 0.0 };
+                    assert!(
+                        (value - want).abs() < 1e-3,
+                        "{}: bone[{col}][{row}] = {value}",
+                        skel.joint_names[i],
+                    );
+                }
+            }
+        }
+        // Hips about a metre up, standing on Y.
+        let [x, y, z] = skel.joint_position("mixamorig:Hips").unwrap();
+        assert!((0.9..1.1).contains(&y), "hips at y = {y}");
+        assert!(x.abs() < 0.05 && z.abs() < 0.05, "hips at ({x}, {z})");
     }
 }

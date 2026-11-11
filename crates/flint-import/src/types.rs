@@ -273,6 +273,16 @@ pub struct ImportedJoint {
     /// Quaternion xyzw
     pub rest_rotation: [f32; 4],
     pub rest_scale: [f32; 3],
+    /// The transform of the non-joint glTF nodes between this joint and
+    /// `parent` (column-major), or between it and the scene root when
+    /// `parent` is `None`. `None` when there are none, or they're identity.
+    ///
+    /// A glTF joint's world matrix includes every ancestor, and the inverse
+    /// bind matrices are written against it. A Mixamo export puts its root
+    /// joint under an `Armature` node that holds the centimetre-to-metre
+    /// scale and the Z-up turn, so a pose that skips that node comes out
+    /// 100 times too large and lying down (#294).
+    pub parent_offset: Option<[[f32; 4]; 4]>,
 }
 
 /// A complete skeleton extracted from a glTF skin

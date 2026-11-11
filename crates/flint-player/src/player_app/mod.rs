@@ -18,6 +18,7 @@ mod extension_tests;
 pub mod fonts;
 mod frame;
 pub mod frame_rate;
+pub mod headless_animation;
 pub mod headless_scripts;
 #[cfg(test)]
 mod hold_tests;

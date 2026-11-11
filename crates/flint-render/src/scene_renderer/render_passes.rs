@@ -1587,8 +1587,9 @@ impl SceneRenderer {
 
         // FXAA (ADR 0050): when active, composite renders into the lazily
         // allocated intermediate instead of the swapchain, and the FXAA pass
-        // resolves intermediate → target. Falls back to the direct path if
-        // ensure_fxaa_resources hasn't run (both Options are checked).
+        // resolves intermediate → target. `encode_to` builds both before the
+        // frame (#297); both Options are still checked, falling back to the
+        // direct path.
         let fxaa_active = self.postprocess_config.enabled
             && self.postprocess_config.fxaa_enabled
             && pp.fxaa.is_some()
