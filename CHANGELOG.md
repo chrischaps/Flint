@@ -61,6 +61,11 @@ game can notice:
   editor and `flint-player` used to add any `schemas/` beside the scene or one
   level up to the flags; with flags they no longer do. A game run from its
   root with `--schemas engine/schemas --schemas schemas` loads what it did.
+  For this release, those commands print a line on stderr for each directory
+  they would have added and now leave out: `warning: schemas is no longer
+  added to --schemas: the flags are the whole list now. Pass it with another
+  --schemas, or list it under [project] schemas in flint.toml`. The warning
+  goes away in a later release; the behaviour stays.
 - **A named directory that doesn't exist is an error** in every command,
   where it used to be skipped: `schema directory not found: nope (named by
   --schemas)`, or `(named by `schemas` in <root>/flint.toml)`. This includes a

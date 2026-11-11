@@ -164,3 +164,13 @@ pub fn load_schemas(
         Err(e) => Err(e).context("Failed to load schemas"),
     }
 }
+
+/// TEMPORARY, for one release (ADR 0114 decision 3, #765): say on stderr
+/// which `schemas/` beside the scene this command used to add to its
+/// `--schemas` flags and no longer does. For the commands that did add
+/// them: play, render, validate and the spline editor. Never stdout.
+pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
+    for warning in dirs.dropped_warnings() {
+        eprintln!("{warning}");
+    }
+}

@@ -405,6 +405,13 @@ impl std::fmt::Display for SchemaSource {
 pub struct SchemaDirs {
     pub dirs: Vec<PathBuf>,
     pub source: SchemaSource,
+    /// TEMPORARY, for one release (ADR 0114, decision 3: a change of order
+    /// is logged for one release, then the log goes; #765). With flags and
+    /// a scene: the `schemas/` beside the scene or one level up that the
+    /// commands used to add to the flags and no longer do, less any the
+    /// flags name themselves. Empty otherwise.
+    /// [`dropped_warnings`](Self::dropped_warnings) words them.
+    pub dropped: Vec<PathBuf>,
 }
 
 impl Default for SchemaDirs {
@@ -414,6 +421,7 @@ impl Default for SchemaDirs {
         Self {
             dirs: Vec::new(),
             source: SchemaSource::Discovery,
+            dropped: Vec::new(),
         }
     }
 }
@@ -450,7 +458,17 @@ pub fn schema_dirs(
 ) -> Result<SchemaDirs, SchemaDirsError> {
     if !flags.is_empty() {
         let dirs = flags.iter().map(|f| f.as_ref().to_path_buf()).collect();
-        return named(dirs, SchemaSource::Flags);
+        let mut resolved = named(dirs, SchemaSource::Flags)?;
+        // TEMPORARY, for one release (ADR 0114 decision 3): what the old
+        // rule would have added to these flags
+        if let Some(scene) = scene {
+            let mut beside = Vec::new();
+            add_dirs_beside(scene, &mut beside);
+            let named: Vec<String> = resolved.dirs.iter().map(|d| same_dir_key(d)).collect();
+            beside.retain(|d| !named.contains(&same_dir_key(d)));
+            resolved.dropped = beside;
+        }
+        return Ok(resolved);
     }
     let project = match scene {
         Some(scene) => Project::for_path(scene)?,
@@ -470,6 +488,7 @@ pub fn schema_dirs(
     Ok(SchemaDirs {
         dirs,
         source: SchemaSource::Discovery,
+        dropped: Vec::new(),
     })
 }
 
@@ -491,10 +510,30 @@ pub fn host_schema_dirs(listed: &[impl AsRef<Path>], scene: Option<&Path>) -> Sc
     SchemaDirs {
         dirs,
         source: SchemaSource::Host,
+        dropped: Vec::new(),
     }
 }
 
 impl SchemaDirs {
+    /// TEMPORARY, for one release (ADR 0114 decision 3, #765): one line for
+    /// each directory in [`dropped`](Self::dropped), for a command that
+    /// used to add it to its `--schemas` flags (play, render, validate, the
+    /// spline editor, `flint-player`) to print on stderr. Never stdout:
+    /// `flint render --report json` owns that.
+    pub fn dropped_warnings(&self) -> Vec<String> {
+        self.dropped
+            .iter()
+            .map(|dir| {
+                format!(
+                    "warning: {} is no longer added to --schemas: the flags are the whole \
+                     list now. Pass it with another --schemas, or list it under \
+                     [project] schemas in flint.toml",
+                    dir.display()
+                )
+            })
+            .collect()
+    }
+
     /// The directories for the scene a transition leads to. Flags stay as
     /// they are. A manifest's list is read again, since the new scene may
     /// belong to another project. A discovered or host list keeps what it
@@ -532,7 +571,23 @@ fn named(dirs: Vec<PathBuf>, source: SchemaSource) -> Result<SchemaDirs, SchemaD
             dir: dir.clone(),
             named_by: source,
         }),
-        None => Ok(SchemaDirs { dirs, source }),
+        None => Ok(SchemaDirs {
+            dirs,
+            source,
+            dropped: Vec::new(),
+        }),
+    }
+}
+
+/// One spelling for a directory, so `schemas`, `./schemas` and an absolute
+/// path to the same folder compare equal: taken from the working directory
+/// as [`anchor`] does, `.` and `..` folded, and without case on Windows.
+fn same_dir_key(dir: &Path) -> String {
+    let key = vfs::normalize(&anchor(dir));
+    if cfg!(windows) {
+        key.to_lowercase()
+    } else {
+        key
     }
 }
 
@@ -1043,6 +1098,103 @@ input = "config/input.toml"
             let dirs = schema_dirs(None, &["schemas", "engine/schemas"]).unwrap();
             assert_eq!(paths(&dirs), ["schemas", "engine/schemas"]);
         });
+    }
+
+    /// TEMPORARY with `SchemaDirs::dropped` (one release, ADR 0114
+    /// decision 3).
+    #[test]
+    fn flags_say_what_the_old_rule_would_have_added() {
+        let dropped = |scene: &str, flags: &[&str]| -> Vec<String> {
+            let dirs = schema_dirs(Some(scene.as_ref()), flags).unwrap();
+            assert_eq!(dirs.dropped_warnings().len(), dirs.dropped.len());
+            dirs.dropped.iter().map(|d| vfs::normalize(d)).collect()
+        };
+        with_files(GAME, || {
+            // The engine's alone: the game's own, one level up from the
+            // scene, and the one beside the scene were both added before
+            assert_eq!(
+                dropped("scenes/a.scene.toml", &["engine/schemas"]),
+                ["scenes/schemas", "schemas"]
+            );
+            let dirs =
+                schema_dirs(Some("scenes/a.scene.toml".as_ref()), &["engine/schemas"]).unwrap();
+            let said = &dirs.dropped_warnings()[1];
+            assert!(
+                said.starts_with("warning: schemas is no longer added"),
+                "{said}"
+            );
+            assert!(said.contains("another --schemas"), "{said}");
+            assert!(said.contains("flint.toml"), "{said}");
+
+            // Named by the flags, however it is spelled: nothing to say
+            assert_eq!(
+                dropped("scenes/a.scene.toml", &["engine/schemas", "./schemas"]),
+                ["scenes/schemas"]
+            );
+            assert_eq!(
+                dropped(
+                    "scenes/a.scene.toml",
+                    &["engine/schemas", "scenes/../schemas", "scenes/schemas/"]
+                ),
+                [] as [&str; 0]
+            );
+            // A game root's usual flags, and the goldens' `--schemas schemas`
+            assert_eq!(
+                dropped("elsewhere/a.scene.toml", &["engine/schemas", "schemas"]),
+                ["elsewhere/schemas"]
+            );
+            assert_eq!(
+                dropped("engine/a.scene.toml", &["schemas"]),
+                ["engine/schemas"]
+            );
+        });
+        with_files(
+            &[
+                ("engine/schemas/", ""),
+                ("schemas/", ""),
+                ("scenes/a.scene.toml", ""),
+                ("demo/b.scene.toml", ""),
+            ],
+            || {
+                assert!(dropped("scenes/a.scene.toml", &["engine/schemas", "schemas"]).is_empty());
+                assert!(dropped("demo/b.scene.toml", &["schemas"]).is_empty());
+                assert!(dropped("demo/b.scene.toml", &["./schemas"]).is_empty());
+                // No scene, no flags, a manifest, a host: never
+                assert!(schema_dirs(None, &["engine/schemas"])
+                    .unwrap()
+                    .dropped
+                    .is_empty());
+                assert!(schema_dirs(Some("scenes/a.scene.toml".as_ref()), NO_FLAGS)
+                    .unwrap()
+                    .dropped
+                    .is_empty());
+                assert!(host_schema_dirs(
+                    &["engine/schemas"],
+                    Some("scenes/a.scene.toml".as_ref())
+                )
+                .dropped
+                .is_empty());
+            },
+        );
+    }
+
+    /// An absolute flag and a relative discovery are the same folder (on
+    /// the disk, where the working directory anchors both).
+    #[test]
+    fn an_absolute_flag_names_the_same_folder_as_a_relative_one() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            same_dir_key(&cwd.join("schemas")),
+            same_dir_key(Path::new("./schemas"))
+        );
+        assert_eq!(
+            same_dir_key(&cwd.join("scenes").join("..").join("schemas")),
+            same_dir_key(Path::new("schemas"))
+        );
+        assert_ne!(
+            same_dir_key(Path::new("a/schemas")),
+            same_dir_key(Path::new("schemas"))
+        );
     }
 
     #[test]

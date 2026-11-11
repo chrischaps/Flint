@@ -333,6 +333,50 @@ fn without_a_schemas_key_discovery_is_what_it_was() {
     );
 }
 
+/// For one release (ADR 0114 decision 3): a command that used to add the
+/// `schemas/` near the scene to its flags says, on stderr, which one it no
+/// longer adds. Silent when the flags name it, and in the commands that
+/// never added any.
+#[test]
+fn flags_that_leave_out_a_once_added_directory_say_so_on_stderr() {
+    let dir = project("dropped", None);
+    let o = run(&dir, &["validate", SCENE], &ENGINE_ONLY);
+    let said = stderr(&o);
+    let line = "is no longer added to --schemas";
+    assert_eq!(said.matches(line).count(), 1, "{said}");
+    let warning = said.lines().find(|l| l.contains(line)).unwrap();
+    assert!(warning.starts_with("warning: "), "{warning}");
+    assert!(warning.contains("schemas"), "{warning}");
+    assert!(warning.contains("another --schemas"), "{warning}");
+    assert!(warning.contains("flint.toml"), "{warning}");
+    assert!(!stdout(&o).contains(line), "stdout is the command's answer");
+
+    // Both named, in any spelling: nothing
+    for flags in [
+        &BOTH[..],
+        &["--schemas", "engine/schemas", "--schemas", "./schemas"][..],
+    ] {
+        let o = run(&dir, &["validate", SCENE], flags);
+        assert!(!stderr(&o).contains(line), "{flags:?}: {}", stderr(&o));
+    }
+    let absolute = dir.join("schemas");
+    let o = run(
+        &dir,
+        &["validate", SCENE],
+        &[
+            "--schemas",
+            "engine/schemas",
+            "--schemas",
+            absolute.to_str().unwrap(),
+        ],
+    );
+    assert!(!stderr(&o).contains(line), "{}", stderr(&o));
+
+    // query and entity never added any, so they have nothing to take back
+    let o = run(&dir, &["query", "entities", "--scene", SCENE], &ENGINE_ONLY);
+    assert!(!stderr(&o).contains(line), "{}", stderr(&o));
+}
+
 #[test]
 fn render_reads_the_manifest() {
     let dir = project("render", None);

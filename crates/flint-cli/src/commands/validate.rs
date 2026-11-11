@@ -79,6 +79,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let (schema_registry, schema_dirs) =
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    super::common_args::warn_dropped_schemas(&schema_dirs);
     let existing = &schema_dirs.dirs;
     let mut wooze = wooze_violations(&args.scene, &schema_registry)?;
     wooze.extend(species_violations(&args.scene, &schema_registry)?);

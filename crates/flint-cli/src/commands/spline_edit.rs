@@ -22,6 +22,7 @@ pub fn run(args: EditArgs) -> Result<()> {
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let (registry, schema_dirs) =
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    super::common_args::warn_dropped_schemas(&schema_dirs);
     if schema_dirs.dirs.is_empty() {
         println!("Warning: No schemas directories found");
     }

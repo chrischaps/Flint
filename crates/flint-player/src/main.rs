@@ -270,6 +270,10 @@ fn main() -> Result<()> {
             Err(e) => return Err(e).context("Failed to load schemas"),
         }
     };
+    // TEMPORARY, for one release (ADR 0114 decision 3, #765)
+    for warning in schema_dirs.dropped_warnings() {
+        eprintln!("{warning}");
+    }
     if schema_dirs.dirs.is_empty() {
         println!("Warning: No schemas directories found");
     }
