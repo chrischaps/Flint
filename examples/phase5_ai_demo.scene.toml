@@ -56,7 +56,6 @@ enabled = true
 # ============================================================
 
 [entities.floor]
-archetype = "static_body"
 
 [entities.floor.transform]
 position = [0, -0.1, 0]
@@ -87,7 +86,6 @@ tags = ["floor", "stone", "interior"]
 # --- Walls ---
 
 [entities.wall_north]
-archetype = "static_body"
 
 [entities.wall_north.transform]
 position = [0, 2.5, -10]
@@ -106,7 +104,6 @@ roughness = 0.75
 metallic = 0.0
 
 [entities.wall_south]
-archetype = "static_body"
 
 [entities.wall_south.transform]
 position = [0, 2.5, 10]
@@ -125,7 +122,6 @@ roughness = 0.75
 metallic = 0.0
 
 [entities.wall_east]
-archetype = "static_body"
 
 [entities.wall_east.transform]
 position = [10, 2.5, 0]
@@ -142,7 +138,6 @@ body_type = "static"
 texture = "timber_wall"
 
 [entities.wall_west]
-archetype = "static_body"
 
 [entities.wall_west.transform]
 position = [-10, 2.5, 0]
@@ -159,7 +154,6 @@ body_type = "static"
 texture = "timber_wall"
 
 [entities.timber_wall_def]
-archetype = "prop"
 
 [entities.timber_wall_def.asset_def]
 name = "timber_wall"
@@ -176,7 +170,6 @@ tags = ["wall", "wood", "interior"]
 # ============================================================
 
 [entities.tavern_table]
-archetype = "static_body"
 
 [entities.tavern_table.transform]
 position = [-3, 0, -2]
@@ -201,7 +194,6 @@ size_class = "medium"
 tags = ["furniture", "table", "wood"]
 
 [entities.tavern_chair_1]
-archetype = "static_body"
 
 [entities.tavern_chair_1.transform]
 position = [-3, 0, -1]
@@ -227,7 +219,6 @@ size_class = "small"
 tags = ["furniture", "chair", "wood"]
 
 [entities.tavern_chair_2]
-archetype = "static_body"
 
 [entities.tavern_chair_2.transform]
 position = [-3, 0, -3]
@@ -244,7 +235,6 @@ body_type = "static"
 asset = "tavern_chair"
 
 [entities.bar_counter]
-archetype = "static_body"
 
 [entities.bar_counter.transform]
 position = [5, 0, -5]
@@ -275,7 +265,6 @@ tags = ["furniture", "bar", "wood"]
 # ============================================================
 
 [entities.barrel_1]
-archetype = "static_body"
 
 [entities.barrel_1.transform]
 position = [8, 0, -8]
@@ -300,7 +289,6 @@ size_class = "medium"
 tags = ["prop", "barrel", "wood"]
 
 [entities.barrel_2]
-archetype = "static_body"
 
 [entities.barrel_2.transform]
 position = [8, 0, -6.5]
@@ -321,7 +309,6 @@ asset = "ale_barrel"
 # ============================================================
 
 [entities.sun]
-archetype = "light"
 
 [entities.sun.transform]
 position = [10, 15, 8]
@@ -332,7 +319,6 @@ color = [1.0, 0.92, 0.78]
 intensity = 0.3
 
 [entities.torch_1]
-archetype = "light"
 
 [entities.torch_1.transform]
 position = [-9, 3.5, 0]
@@ -343,7 +329,6 @@ color = [1.0, 0.7, 0.3]
 intensity = 3.0
 
 [entities.torch_2]
-archetype = "light"
 
 [entities.torch_2.transform]
 position = [9, 3.5, 0]
@@ -354,7 +339,6 @@ color = [1.0, 0.65, 0.25]
 intensity = 3.0
 
 [entities.fireplace_light]
-archetype = "light"
 
 [entities.fireplace_light.transform]
 position = [0, 1.5, -9]
@@ -370,7 +354,6 @@ intensity = 5.0
 # ============================================================
 
 [entities.ambient_tavern]
-archetype = "audio"
 
 [entities.ambient_tavern.transform]
 position = [0, 2, 0]
@@ -388,7 +371,6 @@ type = "audio"
 tags = ["ambient", "interior", "tavern"]
 
 [entities.fire_crackle]
-archetype = "audio"
 
 [entities.fire_crackle.transform]
 position = [0, 1, -9]
