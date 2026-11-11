@@ -929,6 +929,7 @@ mod tests {
             echo_blend: Default::default(),
             echo_slide: 0.0,
             echo_places: Default::default(),
+            softness: 0.0,
         });
         living.variance = variance;
         spec.living = Some(living);

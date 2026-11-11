@@ -132,7 +132,10 @@ impl SceneRenderer {
                 }
                 draw_uniforms.push(slot(draw.model));
             }
-            for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
+            for draw in Self::skinned_shadow_draws(
+                &self.skinned_entity_draws,
+                &self.transparent_skinned_draws,
+            ) {
                 if let Some(wooze) = draw.wooze {
                     draw_wooze.push((draw_uniforms.len() as u32, wooze));
                 }
@@ -326,7 +329,10 @@ impl SceneRenderer {
                 // Render skinned entities into shadow map
                 pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
 
-                for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
+                for draw in Self::skinned_shadow_draws(
+                    &self.skinned_entity_draws,
+                    &self.transparent_skinned_draws,
+                ) {
                     let woozy = draw.wooze.as_ref().and(shadow_wooze);
                     if let Some(wooze) = woozy {
                         let pipeline = if draw.double_sided {
@@ -1226,6 +1232,11 @@ impl SceneRenderer {
                     render_pass
                         .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     let woozy = draw.wooze.as_ref().and(self.wooze_skinned.as_ref());
+                    if draw.soft_edge_only && woozy.is_none() {
+                        render_pass.set_pipeline(&sp.soft_edge_pipeline);
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        continue;
+                    }
                     if draw.blend_mode == crate::pipeline::BlendMode::Alpha {
                         render_pass.set_pipeline(
                             woozy.map_or(&sp.transparent_alpha_back_pipeline, |w| &w.alpha_back),

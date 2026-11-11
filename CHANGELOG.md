@@ -124,6 +124,31 @@ the two files it names (or, for case 1, move the asset into the project or put
 a `flint.toml` in the folder that holds both). If something now draws or plays
 where it didn't, a scene was naming an asset the old rule could not reach.
 
+### Living props: `softness`, a soft silhouette at rest (#582)
+**What changed.** A living prop's body can feather at its outline without
+moving any more than it did. `softness` (0 to 1, default 0) fades the body
+where its surface turns away from the eye; its cards (a tree's leaves, a
+form's marks) keep their edges, and its echoes feather with it. It can be set
+wherever echoes and variance can:
+
+- a spec's `[living] softness = 0.45`;
+- a scene's `[living] softness`, or one species' `[living.species.<spec>] softness`;
+- a `wooze/<name>.wooze.toml` preset's `[living]` tables;
+- a script: `tune_living(#{ living: #{ softness: 0.6 } })` for every prop,
+  `tune_living(#{ species: "my_form", softness: 0.6 })` for one species, and
+  `clear_living("my_form", ["softness"])` to give it back;
+- the F3 Living Props panel's **Silhouette** slider.
+
+A value outside 0 to 1 is refused: a spec fails to parse, `flint validate`
+fails a scene whose `[living.species.<spec>]` has one, the player warns about
+a scene-wide one and keeps each spec's, and a script's tune names it and
+leaves the knob alone. `flint render --report json` lists each prop's `softness` and the layer
+that set it. A body with softness above 0 draws after everything opaque, still
+writes depth and still casts its whole shadow.
+
+**What to do.** Nothing. At the default of 0 every prop draws exactly as
+before, and old specs, scenes and presets load unchanged.
+
 ### Particle effects are found from any depth, by one search rule; `flint asset where` (#706)
 **What changed.** A `particle_effect` (and `play_effect` from a script) used
 to find its `particles/<name>.particles.toml` in one folder only: `particles/`

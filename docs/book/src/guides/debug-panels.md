@@ -93,6 +93,7 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 | Shading boil | On or off, `paint`, `ink`, and on ones, twos or threes. Paint needs Kuwahara on and ink needs contour on, both in F4, and the panel says so |
 | Echoes | `count`, `spread` and `alpha`, with `count = 0` in reach to compare the grove without them |
 | Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |
+| Silhouette | `softness`: the body's outline feathers at rest, 0 a hard edge; the cards keep theirs ([Softness](../concepts/procgen.md#softness)) |
 
 **What a knob does right away.** Nothing here pops except stagger, which can't change without moving a part to its new place on the clock.
 

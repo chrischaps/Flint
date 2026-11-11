@@ -491,6 +491,26 @@ struct SkinnedDrawCall {
     wooze: Option<ShallowWoozeUniforms>,
     /// As [`DrawCall::double_sided`].
     double_sided: bool,
+    /// Translucent only for its soft edge (#582): it still casts a whole
+    /// shadow, since softness is how the outline looks to the eye, not how
+    /// much light the body stops.
+    soft_edge_only: bool,
+}
+
+impl SceneRenderer {
+    /// The skinned draws that go into the shadow map, in the order every
+    /// shadow loop walks them: the opaque ones that cast, then the translucent
+    /// ones that are translucent only for their softness (#582).
+    /// Over the two lists, not `self`, so the shadow pass can hold its own
+    /// borrow of the renderer's shadow state.
+    fn skinned_shadow_draws<'a>(
+        opaque: &'a [SkinnedDrawCall],
+        translucent: &'a [SkinnedDrawCall],
+    ) -> impl Iterator<Item = &'a SkinnedDrawCall> + Clone {
+        let opaque = opaque.iter().filter(|d| d.casts_shadow);
+        let soft = (translucent.iter()).filter(|d| d.casts_shadow && d.soft_edge_only);
+        opaque.chain(soft)
+    }
 }
 
 /// One faint copy of a skinned entity (#228): bones of its own and how opaque
@@ -863,6 +883,9 @@ pub struct SceneRenderer {
     entity_shadow_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
     /// Per entity, what each skinned part's vertex colour is multiplied by.
     entity_part_tints: HashMap<flint_core::EntityId, Vec<[f32; 3]>>,
+    /// Per entity, how soft each skinned part's silhouette is (#582); a part
+    /// missing or at 0 is a hard edge.
+    entity_part_softness: HashMap<flint_core::EntityId, Vec<f32>>,
     /// Living props' echoes, in the order they draw. Empty costs nothing.
     entity_echoes: HashMap<flint_core::EntityId, Vec<EntityEcho>>,
     /// The entities whose echoes may only add light.
@@ -985,6 +1008,7 @@ impl SceneRenderer {
             asset_bone_matrices: HashMap::new(),
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
+            entity_part_softness: HashMap::new(),
             entity_echoes: HashMap::new(),
             entity_echo_lighten: std::collections::HashSet::new(),
             skinned_bone_binds: HashMap::new(),
@@ -2528,6 +2552,7 @@ impl SceneRenderer {
             asset_bone_matrices: HashMap::new(),
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
+            entity_part_softness: HashMap::new(),
             entity_echoes: HashMap::new(),
             entity_echo_lighten: std::collections::HashSet::new(),
             skinned_bone_binds: HashMap::new(),
@@ -2999,6 +3024,30 @@ impl SceneRenderer {
         tints[part] = tint;
     }
 
+    /// How soft one part of an entity's skinned mesh is at its silhouette
+    /// (#582), 0 to 1: above 0 its alpha falls where the surface turns away
+    /// from the eye, so the outline feathers, and the part draws translucent,
+    /// after everything opaque; its echoes feather with it. 0 is a hard edge,
+    /// drawn exactly as with no softness at all. Shared by content like a
+    /// tint, so a few distinct values cost a few materials.
+    pub fn set_entity_part_softness(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        part: usize,
+        softness: f32,
+    ) {
+        let softness = if softness.is_finite() {
+            softness.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let parts = self.entity_part_softness.entry(entity_id).or_default();
+        if parts.len() <= part {
+            parts.resize(part + 1, 0.0);
+        }
+        parts[part] = softness;
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.entity_bone_buffers.clear();
@@ -3006,6 +3055,7 @@ impl SceneRenderer {
         self.asset_bone_matrices.clear();
         self.entity_shadow_bone_buffers.clear();
         self.entity_part_tints.clear();
+        self.entity_part_softness.clear();
         self.entity_echoes.clear();
         self.entity_echo_lighten.clear();
         self.skinned_bone_binds.clear();
@@ -3304,7 +3354,8 @@ impl SceneRenderer {
             _ => 0,
         };
         let casting = self.entity_draws.iter().filter(|d| d.casts_shadow);
-        let casting_skinned = self.skinned_entity_draws.iter().filter(|d| d.casts_shadow);
+        let casting_skinned =
+            Self::skinned_shadow_draws(&self.skinned_entity_draws, &self.transparent_skinned_draws);
         let shadow_entity_draws =
             (casting.clone().count() + casting_skinned.clone().count()) as u32 + terrain_draws;
         let shadow_draw_calls = shadow_entity_draws * cascade_count;

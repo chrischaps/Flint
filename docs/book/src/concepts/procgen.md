@@ -401,6 +401,21 @@ Each echo is another palette and a draw per part, so what count does is worth kn
 
 At the default six, a 60 s run at the display's rate held 60 fps, with 1 frame in 3480 over 1.5x the median. Most of what echoes add is CPU: nearly every palette moves on nearly every frame under `per_level` stagger, about 260 writes of 16 KB, or some 250 MB/s up to the GPU. Off-screen props still blend and draw. Dropping echoes by distance is the first thing to reach for if a scene needs the room. `--exit-after` prints how many echoes and draws a scene has.
 
+### Softness
+
+`softness` (0 to 1, default 0) feathers a prop's silhouette at rest, so a form can be soft without being busy (Flint#582). Jitter frays an outline by moving its cards, and echoes double it by adding copies: both make it agitated. Softness moves nothing. The body's alpha falls where its surface turns away from the eye, eased over the first `softness` of |N·V|: facing the eye it's whole, and at the outline, where the surface runs along the line of sight, it's gone, into whatever is behind it. The cards (a tree's leaves, a form's marks) keep their edges, and the echoes feather with the body.
+
+```toml
+[living]          # in a spec, a scene, a preset, or [living.species.<spec>]
+softness = 0.45
+```
+
+![The same pose at softness 0, 0.45 and 1](../images/living-softness.png)
+
+*`demo/soft_form.scene.toml` at 2 s, 1:1 crops of 1920 x 1080 renders: a hard edge, an outline that feathers into the dusk, and a whole rim that fades. Nothing else differs between them.*
+
+0 draws exactly as before. Above 0 the body draws in the translucent pass, after everything opaque, front faces only, and still writes depth and casts its whole shadow, since softness is how its outline looks to the eye, not how much of it is there. (Without the depth, SSAO read the cards behind the body through it and drew their outlines on it.) A body that's see-through anyway (`body_opacity` below 1) keeps its two-pass draw and casts no shadow, as before, and so does a soft body under shallow wooze. It's a run-time knob like echoes: a scene's `[living] softness`, a species' own, a preset, the F3 panel's **Silhouette** slider and `tune_living(#{ living: #{ softness: 0.6 } })` all set it, through the same layers, and `--report json` gives each prop's with its layer. Nothing baked reads it. A bench: `flint render demo/soft_form.scene.toml --schemas schemas --time 2 --sweep wooze.preset=hard,soft,softest`.
+
 ### The wooze field
 
 Once anything in a scene drifts, anything that holds still looks wrong, so how woozy a place is belongs to the world and not to each prop. A scene with a `[wooze]` table has one function of position and time that everything reads: `flint_core::wooze::WoozeField::sample(position, time)` returns `{ amplitude, step, glide, jitter }`.
@@ -529,7 +544,7 @@ A species is a spec, named by its `meta.name`, which is what a living prop's `mo
 | `entity` | A `living_prop` component | `stagger` only. `lineage_seed`, `pose_ring` and `phase_offset` are the entity's alone |
 | `global` | The scene's `[living]` and `[wooze]` globals, a preset it names, and any knob moved live for the whole grove | Everything |
 | `zone:<name>` | A `[[wooze.zone]]` where the prop stands | The clock's four knobs |
-| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance` |
+| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance`, `softness` |
 
 Each layer beats every one above it, a field at a time: a species that sets echo `count` still takes `spread` from the layers below. So a global knob does what it always did, and a species value survives it. Move `glide` on the [F3 panel](../guides/debug-panels.md#living-props-f3) and every tree takes it except a species that set its own. Pick a species under the panel's **Tuning**, or click one of its trees in the world, to move its own values, see the layer each one comes from, and clear them.
 

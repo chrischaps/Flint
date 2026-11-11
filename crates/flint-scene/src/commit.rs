@@ -161,6 +161,7 @@ fn species_entries(out: &mut Entries, name: &str, def: &LivingSpeciesDef) {
     put(out, &table, "glide", float(def.glide));
     put(out, &table, "jitter", float(def.jitter));
     props_entries(out, &table, &def.stagger, def.echoes, def.variance);
+    put(out, &table, "softness", float(def.softness));
 }
 
 /// Every value a look holds, by where it goes in a scene: `[wooze]`, `[living]`,
@@ -183,6 +184,7 @@ fn entries(look: &WoozePreset) -> Entries {
         living.echoes,
         living.variance,
     );
+    put(&mut out, &["living"], "softness", float(living.softness));
     for (name, def) in &living.species {
         species_entries(&mut out, name, def);
     }

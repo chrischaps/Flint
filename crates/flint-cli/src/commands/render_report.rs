@@ -228,6 +228,7 @@ fn values_of(
         ("variance.amount", value(at.variance_amount)),
         ("variance.steady", value(at.variance_steady)),
         ("variance.keep_size", value(at.keep_size)),
+        ("softness", value(at.softness)),
     ])
 }
 

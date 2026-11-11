@@ -113,6 +113,8 @@ pub struct LivingDefaults {
     pub stagger: Option<Stagger>,
     /// The scene's word on variance, over each spec's, a field at a time.
     pub variance: VarianceOverride,
+    /// The scene's word on softness (#582), over each spec's.
+    pub softness: Option<f32>,
     /// `[living.species.<spec>]` (#246): each species' own values, over all of
     /// the above and over the wooze field, zones included. Keyed by spec name.
     pub species: BTreeMap<String, SpeciesOverride>,
@@ -132,6 +134,8 @@ pub struct SpeciesOverride {
     pub echoes: EchoOverride,
     /// Its variance, a field at a time.
     pub variance: VarianceOverride,
+    /// Its softness (#582), over the scene's and the spec's.
+    pub softness: Option<f32>,
 }
 
 impl SpeciesOverride {
@@ -142,6 +146,7 @@ impl SpeciesOverride {
             stagger: self.stagger.or(under.stagger),
             echoes: self.echoes.merged(under.echoes),
             variance: self.variance.merged(under.variance),
+            softness: self.softness.or(under.softness),
         }
     }
 
@@ -251,6 +256,7 @@ pub struct ResolvedProp {
     pub variance_amount: Resolved<f32>,
     pub variance_steady: Resolved<f32>,
     pub keep_size: Resolved<bool>,
+    pub softness: Resolved<f32>,
 }
 
 /// Every layer the grove's values are made of, apart from the field, to put back
@@ -259,6 +265,7 @@ pub struct ResolvedProp {
 pub struct LivingLayers {
     echoes: Vec<EchoOverride>,
     staggers: Vec<Option<Stagger>>,
+    softnesses: Vec<Option<f32>>,
     clocks: Vec<(WoozeSample, bool)>,
     variances: Vec<VarianceOverride>,
     species: Vec<(String, SpeciesOverride)>,
@@ -663,6 +670,10 @@ pub struct LivingProp {
     stagger_entity: bool,
     /// The global layer's word on its stagger.
     stagger_global: Option<Stagger>,
+    /// Its spec's softness (#582), the lowest layer.
+    softness_spec: f32,
+    /// The global layer's word on its softness.
+    softness_global: Option<f32>,
 }
 
 /// New clocks for a prop, held back until its ring has what they read.
@@ -1399,6 +1410,43 @@ impl LivingProps {
         self.refresh_props(scope)
     }
 
+    /// Give every prop this softness in the global layer, or one species this
+    /// softness of its own (#582). It changes no pose and fills no ring: only how
+    /// the body draws, from the next upload. Returns whether any prop has it.
+    pub fn tune_softness(&mut self, scope: LivingScope, softness: f32) -> bool {
+        let softness = softness.clamp(0.0, 1.0);
+        match scope {
+            LivingScope::All => {
+                for prop in &mut self.props {
+                    prop.softness_global = Some(softness);
+                }
+                !self.props.is_empty()
+            }
+            LivingScope::Species(name) => {
+                let species = self.species_index(name);
+                self.species[species].over.softness = Some(softness);
+                self.props.iter().any(|prop| prop.species == species)
+            }
+        }
+    }
+
+    /// How soft a prop's silhouette draws, 0 to 1, from its layers: its
+    /// species' own, then the global layer's, then its spec's.
+    pub fn softness(&self, id: LivingPropId) -> f32 {
+        let prop = &self.props[id.0];
+        self.species[prop.species]
+            .over
+            .softness
+            .or(prop.softness_global)
+            .unwrap_or(prop.softness_spec)
+    }
+
+    /// What the global layer says of softness: the first prop's, which a scene's
+    /// `[living] softness` and every live change set alike for all of them.
+    pub fn global_softness(&self) -> Option<f32> {
+        self.props.first().and_then(|prop| prop.softness_global)
+    }
+
     /// What the global layer says (#249): the first prop's echoes and stagger and
     /// the first lineage's variance, which every live change and a scene's
     /// `[living]` set alike for all of them. Unset fields are each spec's.
@@ -1418,6 +1466,7 @@ impl LivingProps {
         LivingLayers {
             echoes: self.props.iter().map(|p| p.echo_global).collect(),
             staggers: self.props.iter().map(|p| p.stagger_global).collect(),
+            softnesses: self.props.iter().map(|p| p.softness_global).collect(),
             clocks: (self.props.iter())
                 .map(|p| (p.wooze_below, p.clock_live))
                 .collect(),
@@ -1436,6 +1485,9 @@ impl LivingProps {
         }
         for (prop, stagger) in self.props.iter_mut().zip(&layers.staggers) {
             prop.stagger_global = *stagger;
+        }
+        for (prop, softness) in self.props.iter_mut().zip(&layers.softnesses) {
+            prop.softness_global = *softness;
         }
         for (prop, (below, live)) in self.props.iter_mut().zip(&layers.clocks) {
             prop.wooze_below = *below;
@@ -1632,6 +1684,10 @@ impl LivingProps {
                     over.variance.keep_size.is_some(),
                     global_variance.keep_size.is_some(),
                 ),
+            ),
+            softness: resolved(
+                self.softness(id),
+                layer_of(over.softness.is_some(), prop.softness_global.is_some()),
             ),
         }
     }
@@ -1851,6 +1907,8 @@ impl LivingProps {
             stagger_own,
             stagger_entity: request.stagger.is_some(),
             stagger_global: self.defaults.stagger,
+            softness_spec: living.softness,
+            softness_global: self.defaults.softness,
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }
@@ -4803,9 +4861,52 @@ value = 1
                     amount: Some(0.9),
                     ..Default::default()
                 },
+                softness: None,
             },
         );
         defaults
+    }
+
+    #[test]
+    fn softness_layers_from_the_spec_up_and_changes_no_pose() {
+        // The spec's 0 is a hard edge.
+        let mut resolver = grove(LivingDefaults {
+            softness: Some(0.25),
+            ..LivingDefaults::default()
+        });
+        let field = field("", &[]);
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        let before = resolver.living_props().stats();
+        let props = resolver.living_props_mut();
+        let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).softness;
+        assert_eq!(read(props, 0).value, 0.25, "the scene's beats the spec's");
+        assert_eq!(read(props, 0).layer, LivingLayer::Global);
+        assert_eq!(props.global_softness(), Some(0.25));
+
+        // A species of its own beats the grove's, and the grove's then moved live
+        // leaves it standing.
+        assert!(props.tune_softness(LivingScope::Species("thorn"), 0.8));
+        assert!(props.tune_softness(LivingScope::All, 0.5));
+        assert_eq!(props.softness(LivingPropId(0)), 0.5);
+        assert_eq!(props.softness(LivingPropId(2)), 0.8);
+        assert_eq!(read(props, 2).layer, LivingLayer::Species);
+        // Out of range is held to it.
+        assert!(props.tune_softness(LivingScope::All, 3.0));
+        assert_eq!(props.softness(LivingPropId(1)), 1.0);
+        assert!(!props.tune_softness(LivingScope::Species("fern"), 0.5));
+
+        // As loaded puts every layer back.
+        let layers = LivingLayers {
+            softnesses: vec![None; 4],
+            ..props.layers()
+        };
+        props.restore_layers(&layers);
+        assert_eq!(props.softness(LivingPropId(0)), 0.0, "the spec's again");
+        assert_eq!(read(props, 0).layer, LivingLayer::Spec);
+        assert_eq!(props.softness(LivingPropId(2)), 0.8, "a species' own stays");
+
+        // Nothing about the poses moved: softness is how the body draws.
+        assert_eq!(resolver.living_props().stats(), before);
     }
 
     #[test]
