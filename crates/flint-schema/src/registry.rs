@@ -19,6 +19,18 @@ pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
     flint_core::project::host_schema_dirs(&[] as &[&Path], Some(Path::new(scene_path))).dirs
 }
 
+/// A schema file that isn't the TOML its loader reads, as an error that
+/// names the file (#333). The parser's message alone (`expected newline,
+/// found #`) was all `flint render` printed for a bad
+/// `components/style_mask.toml`.
+fn parse_error(path: &Path, e: toml::de::Error) -> FlintError {
+    FlintError::TomlParseError(format!(
+        "{}: {}",
+        flint_core::project::shown(path),
+        e.to_string().trim_end()
+    ))
+}
+
 /// Registry that holds all loaded component and archetype schemas
 #[derive(Debug, Default, Clone)]
 pub struct SchemaRegistry {
@@ -142,13 +154,7 @@ impl SchemaRegistry {
     pub fn load_table_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
         let content = vfs::read_to_string(path)?;
-        let file: TableSchemaFile = toml::from_str(&content).map_err(|e| {
-            FlintError::TomlParseError(format!(
-                "{}: {}",
-                flint_core::project::shown(path),
-                e.to_string().trim_end()
-            ))
-        })?;
+        let file: TableSchemaFile = toml::from_str(&content).map_err(|e| parse_error(path, e))?;
         self.lints
             .extend(crate::lint::lint_table_file(&content, Some(path)));
         self.insert_tables(file, &path.display().to_string());
@@ -194,7 +200,8 @@ impl SchemaRegistry {
     pub fn load_component_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
         let content = vfs::read_to_string(path)?;
-        let file: ComponentSchemaFile = toml::from_str(&content)?;
+        let file: ComponentSchemaFile =
+            toml::from_str(&content).map_err(|e| parse_error(path, e))?;
         self.lints
             .extend(crate::lint::lint_component_file(&content, Some(path)));
         self.insert_components(file, &path.display().to_string())
@@ -250,8 +257,10 @@ impl SchemaRegistry {
 
     /// Load an archetype schema from a TOML file
     pub fn load_archetype_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let path = path.as_ref();
         let content = vfs::read_to_string(path)?;
-        let file: ArchetypeSchemaFile = toml::from_str(&content)?;
+        let file: ArchetypeSchemaFile =
+            toml::from_str(&content).map_err(|e| parse_error(path, e))?;
 
         for (name, def) in file.archetype {
             let schema = def.to_archetype_schema(name.clone());
