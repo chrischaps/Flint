@@ -34,7 +34,7 @@ fn smooth(x) {
 fn colour_at(t) {
     let stage_len = 2.5;
     let n = (t / stage_len).floor().to_int();
-    let into = smooth((t - n.to_float() * stage_len - (stage_len - 0.8)) / 0.8);
+    let into = smooth((t - n * stage_len - (stage_len - 0.8)) / 0.8);
     let a = palette(n);
     let b = palette(n + 1);
     [
@@ -52,7 +52,7 @@ fn on_update() {
         if figure < 0 {
             continue;
         }
-        let c = colour_at(t - i.to_float() * 0.35);
+        let c = colour_at(t - i * 0.35);
         set_material_emissive(figure, "Alpha_Joints_MAT.002", c[0], c[1], c[2], 6.0);
     }
     let c = colour_at(t - 0.7);

@@ -17,7 +17,7 @@ fn on_init() {
 fn on_update() {
     let t = total_time();
     let shot = (t / shot_length).floor().to_int();
-    let local = t - shot.to_float() * shot_length;
+    let local = t - shot * shot_length;
     if shot % 2 == 0 {
         // Wide: over the clearing from the south-east, drifting left
         let a = 0.55 + local * 0.05;

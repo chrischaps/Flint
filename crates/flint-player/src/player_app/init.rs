@@ -153,6 +153,8 @@ impl PlayerApp {
             pp_fog_color_override: None,
             pp_render_mode_override: None,
             pp_mode_params_override: None,
+            script_requests: Default::default(),
+            script_quality: None,
             pp_mode_was_active: false,
             #[cfg(feature = "debug-hud")]
             pp_debug_freeze: false,

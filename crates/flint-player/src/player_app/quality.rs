@@ -92,7 +92,7 @@ impl PlayerApp {
     /// A script's `set_quality` from this frame, applied before the frame
     /// draws.
     pub(super) fn apply_script_quality(&mut self) {
-        if let Some(q) = self.script.take_quality_request() {
+        if let Some(q) = self.script_quality.take() {
             if q != self.quality {
                 tracing::info!("[quality] script: {}", q.clamped().to_query());
                 self.apply_quality(q);

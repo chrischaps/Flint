@@ -13,43 +13,43 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("set_vignette", "Vignette intensity (0 none, 1 heavy).")
         .arg("intensity", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_vignette_override = Some(v as f32);
+            call.ctx().requests.post.vignette = Some(v as f32);
         });
 
     m.func("set_bloom_intensity", "Bloom strength (0 none).")
         .arg("intensity", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_bloom_override = Some(v as f32);
+            call.ctx().requests.post.bloom = Some(v as f32);
         });
 
     m.func("set_exposure", "Exposure multiplier (1 as authored).")
         .arg("value", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_exposure_override = Some(v as f32);
+            call.ctx().requests.post.exposure = Some(v as f32);
         });
 
     m.func("set_chromatic_aberration", "Chromatic aberration strength.")
         .arg("intensity", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_chromatic_aberration_override = Some(v as f32);
+            call.ctx().requests.post.chromatic_aberration = Some(v as f32);
         });
 
     m.func("set_radial_blur", "Radial blur strength.")
         .arg("intensity", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_radial_blur_override = Some(v as f32);
+            call.ctx().requests.post.radial_blur = Some(v as f32);
         });
 
     m.func("set_ssao_intensity", "SSAO intensity.")
         .arg("intensity", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_ssao_intensity_override = Some(v as f32);
+            call.ctx().requests.post.ssao_intensity = Some(v as f32);
         });
 
     m.func("set_fog_density", "Fog density.")
         .arg("density", Num)
         .run(|call, (v,)| {
-            call.ctx().postprocess_fog_density_override = Some(v as f32);
+            call.ctx().requests.post.fog_density = Some(v as f32);
         });
 
     m.func("set_fog_color", "Fog colour, linear 0..1.")
@@ -57,7 +57,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("g", Num)
         .arg("b", Num)
         .run(|call, (r, g, b)| {
-            call.ctx().postprocess_fog_color_override = Some([r as f32, g as f32, b as f32]);
+            call.ctx().requests.fog_color = Some([r as f32, g as f32, b as f32]);
         });
 
     m.func(
@@ -66,7 +66,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("amount", Num)
     .run(|call, (v,)| {
-        call.ctx().postprocess_desaturation_override = Some(v as f32);
+        call.ctx().requests.post.desaturation = Some(v as f32);
     });
 
     m.func(
@@ -75,7 +75,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("strength", Num)
     .run(|call, (v,)| {
-        call.ctx().postprocess_dof_strength_override = Some(v as f32);
+        call.ctx().requests.post.dof_strength = Some(v as f32);
     });
 
     m.func(
@@ -86,8 +86,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("range", Num)
     .run(|call, (distance, range)| {
         let c = call.ctx();
-        c.postprocess_dof_focus_distance_override = Some(distance as f32);
-        c.postprocess_dof_focus_range_override = Some(range as f32);
+        c.requests.post.dof_focus_distance = Some(distance as f32);
+        c.requests.post.dof_focus_range = Some(range as f32);
     });
 
     m.func(
@@ -97,7 +97,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("mode", Int)
     .arg("mix", Num)
     .run(|call, (mode, mix)| {
-        call.ctx().postprocess_render_mode_override =
+        call.ctx().requests.render_mode =
             Some((mode.max(0) as u32, mix.clamp(0.0, 1.0) as f32));
     });
 
@@ -110,8 +110,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("z", Num)
     .arg("w", Num)
     .run(|call, (x, y, z, w)| {
-        call.ctx().postprocess_mode_params_override =
-            Some([x as f32, y as f32, z as f32, w as f32]);
+        call.ctx().requests.mode_params = Some([x as f32, y as f32, z as f32, w as f32]);
     });
 
     // ── Distance levers (#56) ──
@@ -123,7 +122,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("scale", Num)
     .run(|call, (scale,)| {
-        call.ctx().lod_scale_request = Some(scale as f32);
+        call.ctx().requests.lod_scale = Some(scale as f32);
     });
 
     m.func(
@@ -132,7 +131,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("scale", Num)
     .run(|call, (scale,)| {
-        call.ctx().draw_distance_scale_request = Some(scale as f32);
+        call.ctx().requests.draw_distance_scale = Some(scale as f32);
     });
 
     m.func(
@@ -142,7 +141,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .returns(Num, "")
     .run(|call, ()| {
         let c = call.ctx_ref();
-        c.lod_scale_request.unwrap_or(c.lod_scale) as f64
+        c.requests.lod_scale.unwrap_or(c.lod_scale) as f64
     });
 
     m.func(
@@ -152,7 +151,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .returns(Num, "")
     .run(|call, ()| {
         let c = call.ctx_ref();
-        c.draw_distance_scale_request
+        c.requests
+            .draw_distance_scale
             .unwrap_or(c.draw_distance_scale) as f64
     });
 }

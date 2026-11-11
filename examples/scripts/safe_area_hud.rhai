@@ -33,7 +33,7 @@ fn on_draw_ui() {
     let y0 = sh * 0.5 - row * 1.5;
     let items = ["CONTINUE", "NEW RUN", "SETTINGS"];
     for i in 0..items.len() {
-        let y = y0 + row * i.to_float();
+        let y = y0 + row * i;
         if i == 0 {
             draw_rect(x, y + 3.0, w, row - 6.0, 1.0, 0.55, 0.3, 0.28);
         }
