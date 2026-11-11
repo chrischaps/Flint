@@ -81,6 +81,22 @@ pub mod codes {
     /// `collider` with no `rigidbody`. Found by the system that reads it,
     /// while the game runs (#685).
     pub const NEEDS_COMPONENT: &str = "needs-component";
+    /// An `entity` field (or an entity's `parent`) that names no entity of
+    /// the scene. An empty string is "not set" and passes.
+    pub const UNKNOWN_ENTITY: &str = "unknown-entity";
+    /// An `asset` field that names no file the project's asset search finds;
+    /// the hint lists the paths tried.
+    pub const MISSING_ASSET: &str = "missing-asset";
+    /// A schema file spells a type the old way (`float` for `f32`). Raised
+    /// about a game's schema layer; the engine's own files are held by a test.
+    pub const OLD_TYPE_NAME: &str = "old-type-name";
+    /// A schema file names a type (or an asset kind) the engine doesn't
+    /// know, so the field is checked as a string.
+    pub const UNKNOWN_TYPE: &str = "unknown-type";
+    /// A schema file holds a key the loader ignores: a field written under
+    /// `[component.x]` instead of `[component.x.fields]`, or a misspelled
+    /// key of a field.
+    pub const IGNORED_SCHEMA_KEY: &str = "ignored-schema-key";
 
     /// Every code, the severity it is raised with, and what it means.
     pub const ALL: &[(&str, Severity, &str)] = &[
@@ -143,6 +159,31 @@ pub mod codes {
             NEEDS_COMPONENT,
             Severity::Warning,
             "a component that does nothing without another the entity lacks",
+        ),
+        (
+            UNKNOWN_ENTITY,
+            Severity::Error,
+            "an entity reference that names no entity in the scene",
+        ),
+        (
+            MISSING_ASSET,
+            Severity::Error,
+            "an asset reference that names no file the project's search finds",
+        ),
+        (
+            OLD_TYPE_NAME,
+            Severity::Warning,
+            "a schema file spells a type the old way (float for f32)",
+        ),
+        (
+            UNKNOWN_TYPE,
+            Severity::Warning,
+            "a schema file names a type or asset kind the engine does not know",
+        ),
+        (
+            IGNORED_SCHEMA_KEY,
+            Severity::Warning,
+            "a schema file holds a key the loader ignores",
         ),
     ];
 }
@@ -469,7 +510,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 12);
+        assert_eq!(seen.len(), 17);
     }
 
     #[test]

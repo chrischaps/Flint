@@ -13,8 +13,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
-| `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Check a scene against its schemas (every unknown archetype, component and field and every value of the wrong type, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format json` |
+| `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
+| `flint validate <scene>` | Check a scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format json` |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
