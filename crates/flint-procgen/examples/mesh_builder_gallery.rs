@@ -10,8 +10,8 @@
 
 use flint_core::{Transform, Vec3};
 use flint_procgen::algorithms::mesh_builder::{
-    build_spine_from_positions, cuboid, extrude_profile_along_curve, CrossSection,
-    ExtrudeParams, ExtrudePoint, MeshBuilder,
+    build_spine_from_positions, cuboid, extrude_profile_along_curve, CrossSection, ExtrudeParams,
+    ExtrudePoint, MeshBuilder,
 };
 use flint_procgen::{MaterialData, MeshData};
 use std::f32::consts::TAU;
@@ -62,8 +62,14 @@ fn column() -> MeshData {
     )
     .expect("column shaft");
     b.merge(&tube);
-    b.merge_transformed(&cuboid(0.9, 0.3, 0.9), &place([0.0, 0.15, 0.0], [0.0; 3], [1.0; 3]));
-    b.merge_transformed(&cuboid(0.8, 0.16, 0.8), &place([0.0, 2.68, 0.0], [0.0; 3], [1.0; 3]));
+    b.merge_transformed(
+        &cuboid(0.9, 0.3, 0.9),
+        &place([0.0, 0.15, 0.0], [0.0; 3], [1.0; 3]),
+    );
+    b.merge_transformed(
+        &cuboid(0.8, 0.16, 0.8),
+        &place([0.0, 2.68, 0.0], [0.0; 3], [1.0; 3]),
+    );
     b.build()
 }
 
@@ -133,7 +139,10 @@ fn crystal_cluster() -> MeshData {
     let mut right = MeshBuilder::new();
     for (h, r, tilt, turn, x, z) in half {
         // Tilt about Z leans the crystal toward -X; negate so it leans out.
-        right.merge_transformed(&crystal(h, r), &place([x, 0.0, z], [0.0, turn, -tilt], [1.0; 3]));
+        right.merge_transformed(
+            &crystal(h, r),
+            &place([x, 0.0, z], [0.0, turn, -tilt], [1.0; 3]),
+        );
     }
     let right = right.build();
 
@@ -142,12 +151,17 @@ fn crystal_cluster() -> MeshData {
     // The left half is the same crystals through a mirror: winding and
     // tangent handedness flip with it, so the copy still faces outward.
     b.merge_transformed(&right, &place([0.0; 3], [0.0, 30.0, 0.0], [-0.9, 0.9, 0.9]));
-    b.merge_transformed(&crystal(1.5, 0.17), &place([0.0, 0.0, -0.05], [-6.0, 0.0, 0.0], [1.0; 3]));
+    b.merge_transformed(
+        &crystal(1.5, 0.17),
+        &place([0.0, 0.0, -0.05], [-6.0, 0.0, 0.0], [1.0; 3]),
+    );
     b.build()
 }
 
 fn main() {
-    let out = std::env::args().nth(1).unwrap_or_else(|| "gallery.glb".into());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "gallery.glb".into());
 
     let mut scene = MeshBuilder::new();
     let pieces = [
@@ -155,14 +169,29 @@ fn main() {
             material("plinth", [0.16, 0.15, 0.14], 0.8),
             {
                 let mut b = MeshBuilder::new();
-                b.merge_transformed(&cuboid(7.6, 0.16, 2.4), &place([0.0, -0.08, 0.0], [0.0; 3], [1.0; 3]));
+                b.merge_transformed(
+                    &cuboid(7.6, 0.16, 2.4),
+                    &place([0.0, -0.08, 0.0], [0.0; 3], [1.0; 3]),
+                );
                 b.build()
             },
             [0.0, 0.0, 0.0],
         ),
-        (material("marble", [0.86, 0.83, 0.77], 0.35), column(), [-2.6, 0.0, 0.0]),
-        (material("tendril", [0.22, 0.52, 0.38], 0.55), tendril(), [0.0, 0.0, 0.0]),
-        (material("amethyst", [0.55, 0.30, 0.78], 0.15), crystal_cluster(), [2.6, 0.0, 0.0]),
+        (
+            material("marble", [0.86, 0.83, 0.77], 0.35),
+            column(),
+            [-2.6, 0.0, 0.0],
+        ),
+        (
+            material("tendril", [0.22, 0.52, 0.38], 0.55),
+            tendril(),
+            [0.0, 0.0, 0.0],
+        ),
+        (
+            material("amethyst", [0.55, 0.30, 0.78], 0.15),
+            crystal_cluster(),
+            [2.6, 0.0, 0.0],
+        ),
     ];
     for (mat, mesh, at) in pieces {
         let index = scene.add_material(mat);

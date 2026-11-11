@@ -24,7 +24,8 @@ cd flint
 cargo build
 cargo test
 cargo clippy
-cargo fmt --check
+cargo fmt --all
+bash scripts/ci.sh        # what a PR must pass: formatting (--full adds clippy and the wasm check)
 ```
 
 ## Running the Demo
@@ -44,7 +45,7 @@ Release builds are strongly recommended for `render`, `play`, and the full test 
 
 ## Code Style
 
-- Run `cargo fmt` before committing
+- Run `cargo fmt --all` before committing. CI's `rustfmt` job and `scripts/issue.sh land` both refuse an unformatted file
 - Run `cargo clippy` and address warnings
 - Each crate has its own error type using `thiserror`
 - Tests live alongside the code they test (`#[cfg(test)]` modules)

@@ -235,196 +235,201 @@ fn draw_left_panel(
             // of drawing over the right-hand controls.
             ui.style_mut().spacing.scroll.floating = false;
             // Drag-to-scroll would fight the curve/gradient key drags.
-            egui::ScrollArea::vertical().drag_to_scroll(false).show(ui, |ui| {
-                // Effect header
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("EFFECT").small().weak());
-                    let r =
-                        ui.add(egui::TextEdit::singleline(&mut effect.name).desired_width(160.0));
-                    if r.changed() {
-                        a.changed = true;
-                    }
-                    ui.label("seed");
-                    let mut seed = effect.seed as i64;
-                    if ui
-                        .add(egui::DragValue::new(&mut seed).range(0..=i64::from(u32::MAX)))
-                        .changed()
-                    {
-                        effect.seed = seed.max(0) as u32;
-                        a.changed = true;
-                    }
-                });
-                if let Some(err) = &f.validation {
-                    ui.colored_label(Color32::from_rgb(255, 120, 90), err);
-                }
-                ui.add_space(4.0);
-
-                // Emitter list
-                ui.label(egui::RichText::new("EMITTERS").small().weak());
-                let n = effect.emitters.len();
-                views.resize(
-                    n,
-                    EmitterView {
-                        muted: false,
-                        show_gizmo: true,
-                    },
-                );
-                let mut reorder: Option<(usize, usize)> = None;
-                let mut remove: Option<usize> = None;
-                let mut duplicate: Option<usize> = None;
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..n {
-                    let is_sel = *selected == Some(i);
-                    let (alive, cap) = f.per_emitter.get(i).copied().unwrap_or((0, 0));
+            egui::ScrollArea::vertical()
+                .drag_to_scroll(false)
+                .show(ui, |ui| {
+                    // Effect header
                     ui.horizontal(|ui| {
-                        let swatch = first_color(&effect.emitters[i]);
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-                        ui.painter().circle_filled(r.center(), 5.0, swatch);
-                        let muted = views[i].muted || solo.is_some_and(|s| s != i);
-                        let name = effect.emitters[i].name.clone();
-                        let text = if muted {
-                            egui::RichText::new(&name).weak()
-                        } else {
-                            egui::RichText::new(&name)
-                        };
-                        let resp = ui.selectable_label(is_sel, text);
-                        if resp.clicked() {
-                            *selected = Some(i);
+                        ui.label(egui::RichText::new("EFFECT").small().weak());
+                        let r = ui
+                            .add(egui::TextEdit::singleline(&mut effect.name).desired_width(160.0));
+                        if r.changed() {
+                            a.changed = true;
                         }
-                        resp.context_menu(|ui| {
-                            if ui.button("Duplicate").clicked() {
-                                duplicate = Some(i);
-                                ui.close_menu();
+                        ui.label("seed");
+                        let mut seed = effect.seed as i64;
+                        if ui
+                            .add(egui::DragValue::new(&mut seed).range(0..=i64::from(u32::MAX)))
+                            .changed()
+                        {
+                            effect.seed = seed.max(0) as u32;
+                            a.changed = true;
+                        }
+                    });
+                    if let Some(err) = &f.validation {
+                        ui.colored_label(Color32::from_rgb(255, 120, 90), err);
+                    }
+                    ui.add_space(4.0);
+
+                    // Emitter list
+                    ui.label(egui::RichText::new("EMITTERS").small().weak());
+                    let n = effect.emitters.len();
+                    views.resize(
+                        n,
+                        EmitterView {
+                            muted: false,
+                            show_gizmo: true,
+                        },
+                    );
+                    let mut reorder: Option<(usize, usize)> = None;
+                    let mut remove: Option<usize> = None;
+                    let mut duplicate: Option<usize> = None;
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..n {
+                        let is_sel = *selected == Some(i);
+                        let (alive, cap) = f.per_emitter.get(i).copied().unwrap_or((0, 0));
+                        ui.horizontal(|ui| {
+                            let swatch = first_color(&effect.emitters[i]);
+                            let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+                            ui.painter().circle_filled(r.center(), 5.0, swatch);
+                            let muted = views[i].muted || solo.is_some_and(|s| s != i);
+                            let name = effect.emitters[i].name.clone();
+                            let text = if muted {
+                                egui::RichText::new(&name).weak()
+                            } else {
+                                egui::RichText::new(&name)
+                            };
+                            let resp = ui.selectable_label(is_sel, text);
+                            if resp.clicked() {
+                                *selected = Some(i);
                             }
-                            if ui.add_enabled(n > 1, egui::Button::new("Delete")).clicked() {
-                                remove = Some(i);
-                                ui.close_menu();
-                            }
+                            resp.context_menu(|ui| {
+                                if ui.button("Duplicate").clicked() {
+                                    duplicate = Some(i);
+                                    ui.close_menu();
+                                }
+                                if ui.add_enabled(n > 1, egui::Button::new("Delete")).clicked() {
+                                    remove = Some(i);
+                                    ui.close_menu();
+                                }
+                            });
+                            ui.weak(format!("{alive}/{cap}"));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(i + 1 < n, egui::Button::new("v").small())
+                                        .clicked()
+                                    {
+                                        reorder = Some((i, i + 1));
+                                    }
+                                    if ui
+                                        .add_enabled(i > 0, egui::Button::new("^").small())
+                                        .clicked()
+                                    {
+                                        reorder = Some((i, i - 1));
+                                    }
+                                    let mut gz = views[i].show_gizmo;
+                                    if ui
+                                        .toggle_value(&mut gz, "◎")
+                                        .on_hover_text("Show shape gizmo")
+                                        .changed()
+                                    {
+                                        views[i].show_gizmo = gz;
+                                    }
+                                    let mut m = views[i].muted;
+                                    if ui
+                                        .toggle_value(&mut m, "M")
+                                        .on_hover_text("Mute (preview only)")
+                                        .changed()
+                                    {
+                                        views[i].muted = m;
+                                        a.structural = true; // re-sim; not a document change
+                                        a.changed = false;
+                                    }
+                                    let mut s = *solo == Some(i);
+                                    if ui
+                                        .toggle_value(&mut s, "S")
+                                        .on_hover_text("Solo (preview only)")
+                                        .changed()
+                                    {
+                                        *solo = if s { Some(i) } else { None };
+                                        a.structural = true;
+                                    }
+                                },
+                            );
                         });
-                        ui.weak(format!("{alive}/{cap}"));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add_enabled(i + 1 < n, egui::Button::new("v").small())
-                                .clicked()
-                            {
-                                reorder = Some((i, i + 1));
-                            }
-                            if ui
-                                .add_enabled(i > 0, egui::Button::new("^").small())
-                                .clicked()
-                            {
-                                reorder = Some((i, i - 1));
-                            }
-                            let mut gz = views[i].show_gizmo;
-                            if ui
-                                .toggle_value(&mut gz, "◎")
-                                .on_hover_text("Show shape gizmo")
-                                .changed()
-                            {
-                                views[i].show_gizmo = gz;
-                            }
-                            let mut m = views[i].muted;
-                            if ui
-                                .toggle_value(&mut m, "M")
-                                .on_hover_text("Mute (preview only)")
-                                .changed()
-                            {
-                                views[i].muted = m;
-                                a.structural = true; // re-sim; not a document change
-                                a.changed = false;
-                            }
-                            let mut s = *solo == Some(i);
-                            if ui
-                                .toggle_value(&mut s, "S")
-                                .on_hover_text("Solo (preview only)")
-                                .changed()
-                            {
-                                *solo = if s { Some(i) } else { None };
-                                a.structural = true;
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("+ Emitter").clicked() {
+                            let em = EmitterDef {
+                                name: unique(effect, "emitter"),
+                                ..Default::default()
+                            };
+                            effect.emitters.push(em);
+                            views.push(EmitterView {
+                                muted: false,
+                                show_gizmo: true,
+                            });
+                            *selected = Some(effect.emitters.len() - 1);
+                            a.changed = true;
+                            a.structural = true;
+                        }
+                        ui.menu_button("New from preset...", |ui| {
+                            for name in presets::names() {
+                                if ui.button(name).clicked() {
+                                    a.add_preset = Some(name);
+                                    ui.close_menu();
+                                }
                             }
                         });
                     });
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("+ Emitter").clicked() {
-                        let em = EmitterDef {
-                            name: unique(effect, "emitter"),
-                            ..Default::default()
-                        };
-                        effect.emitters.push(em);
-                        views.push(EmitterView {
-                            muted: false,
-                            show_gizmo: true,
-                        });
-                        *selected = Some(effect.emitters.len() - 1);
+                    if let Some((from, to)) = reorder {
+                        effect.emitters.swap(from, to);
+                        views.swap(from, to);
+                        if *selected == Some(from) {
+                            *selected = Some(to);
+                        }
                         a.changed = true;
                         a.structural = true;
                     }
-                    ui.menu_button("New from preset...", |ui| {
-                        for name in presets::names() {
-                            if ui.button(name).clicked() {
-                                a.add_preset = Some(name);
-                                ui.close_menu();
+                    if let Some(i) = duplicate {
+                        let mut copy = effect.emitters[i].clone();
+                        copy.name = unique(effect, &copy.name);
+                        effect.emitters.insert(i + 1, copy);
+                        views.insert(i + 1, views[i]);
+                        *selected = Some(i + 1);
+                        a.changed = true;
+                        a.structural = true;
+                    }
+                    if let Some(i) = remove {
+                        effect.emitters.remove(i);
+                        views.remove(i);
+                        if *selected == Some(i) {
+                            *selected = effect.emitters.len().checked_sub(1);
+                        }
+                        a.changed = true;
+                        a.structural = true;
+                    }
+
+                    ui.separator();
+
+                    // Selected emitter sections
+                    let sibling_names: Vec<String> =
+                        effect.emitters.iter().map(|e| e.name.clone()).collect();
+                    if let Some(i) = *selected {
+                        if let Some(em) = effect.emitters.get_mut(i) {
+                            let mut changed = false;
+                            changed |= section_emission(ui, em);
+                            changed |= section_shape(ui, em);
+                            changed |= section_motion(ui, em);
+                            changed |= section_lifetime(ui, em, i);
+                            let (c, browse) = section_rendering(ui, em);
+                            changed |= c;
+                            if browse {
+                                a.browse_texture = Some(i);
+                            }
+                            changed |= section_bursts(ui, em);
+                            changed |= section_sub_emitters(ui, em, &sibling_names, i);
+                            if changed {
+                                a.changed = true;
                             }
                         }
-                    });
+                    } else {
+                        ui.weak("Select an emitter to edit it.");
+                    }
+                    ui.add_space(12.0);
                 });
-                if let Some((from, to)) = reorder {
-                    effect.emitters.swap(from, to);
-                    views.swap(from, to);
-                    if *selected == Some(from) {
-                        *selected = Some(to);
-                    }
-                    a.changed = true;
-                    a.structural = true;
-                }
-                if let Some(i) = duplicate {
-                    let mut copy = effect.emitters[i].clone();
-                    copy.name = unique(effect, &copy.name);
-                    effect.emitters.insert(i + 1, copy);
-                    views.insert(i + 1, views[i]);
-                    *selected = Some(i + 1);
-                    a.changed = true;
-                    a.structural = true;
-                }
-                if let Some(i) = remove {
-                    effect.emitters.remove(i);
-                    views.remove(i);
-                    if *selected == Some(i) {
-                        *selected = effect.emitters.len().checked_sub(1);
-                    }
-                    a.changed = true;
-                    a.structural = true;
-                }
-
-                ui.separator();
-
-                // Selected emitter sections
-                let sibling_names: Vec<String> =
-                    effect.emitters.iter().map(|e| e.name.clone()).collect();
-                if let Some(i) = *selected {
-                    if let Some(em) = effect.emitters.get_mut(i) {
-                        let mut changed = false;
-                        changed |= section_emission(ui, em);
-                        changed |= section_shape(ui, em);
-                        changed |= section_motion(ui, em);
-                        changed |= section_lifetime(ui, em, i);
-                        let (c, browse) = section_rendering(ui, em);
-                        changed |= c;
-                        if browse {
-                            a.browse_texture = Some(i);
-                        }
-                        changed |= section_bursts(ui, em);
-                        changed |= section_sub_emitters(ui, em, &sibling_names, i);
-                        if changed {
-                            a.changed = true;
-                        }
-                    }
-                } else {
-                    ui.weak("Select an emitter to edit it.");
-                }
-                ui.add_space(12.0);
-            });
         });
 }
 

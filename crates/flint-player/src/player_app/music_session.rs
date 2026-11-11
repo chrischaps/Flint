@@ -15,12 +15,12 @@
 
 use anyhow::{anyhow, Result};
 use flint_audio::engine::AudioEngine;
+use flint_core::vfs;
 use flint_music::chart_session::{
     judgment_offset_samples, parse_lean_mode, ChartSession, ChartSessionConfig,
 };
 use flint_music::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
-use flint_core::vfs;
 use std::path::Path;
 use web_time::Instant;
 

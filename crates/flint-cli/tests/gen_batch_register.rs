@@ -437,7 +437,14 @@ fn every_folder_of_a_project_shares_one_store() {
     let outside = scratch("one_store_outside");
     let fourth = ok(gen_in(
         &outside,
-        &[s(&spec), "-o", "tree.glb", "--register", "--project", s(&game)],
+        &[
+            s(&spec),
+            "-o",
+            "tree.glb",
+            "--register",
+            "--project",
+            s(&game),
+        ],
     ));
     assert!(fourth.contains("Cached: "), "with --project:\n{fourth}");
     assert!(fourth.contains("by --project"), "{fourth}");

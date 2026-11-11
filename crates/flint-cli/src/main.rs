@@ -6,9 +6,9 @@ mod file_dialog;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, export, entity, gen, gen_preview, init, play, play_chart,
-    play_suite, prefab, preview, query, render, render_suite, replay_chart, scene, schema,
-    spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
+    asset, bundle, calibrate, edit_router, entity, export, gen, gen_preview, init, play,
+    play_chart, play_suite, prefab, preview, query, render, render_suite, replay_chart, scene,
+    schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
