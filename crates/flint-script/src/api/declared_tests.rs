@@ -118,6 +118,44 @@ fn integers_work_where_numbers_are_wanted() {
 }
 
 #[test]
+fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
+    let (engine, mut world, id) = engine_and_world();
+    let _: () = eval(
+        &engine,
+        &mut world,
+        &format!(
+            "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
+             set_fog_color(1, 0, 0); play_sound(\"blip\", 1, 2); \
+             set_anim_layer({id}, 1.0, \"wave\", 1); set_velocity_2d({id}, 3, 4)"
+        ),
+    )
+    .unwrap();
+    let pressed: bool = eval(&engine, &mut world, "is_mouse_pressed(0.0)").unwrap();
+    assert!(!pressed);
+    {
+        let c = crate::lock_or_recover(&engine.ctx);
+        assert_eq!(c.postprocess_render_mode_override, Some((1, 1.0)));
+        assert_eq!(c.camera_fov_override, Some(60.0));
+        assert_eq!(c.time_scale_request, Some(2.0));
+        assert_eq!(c.postprocess_fog_color_override, Some([1.0, 0.0, 0.0]));
+        assert_eq!(c.commands.len(), 2, "the sound and the velocity");
+    }
+    let eid = flint_core::EntityId::from_raw(id as u64);
+    let layers = world
+        .get_components(eid)
+        .and_then(|c| c.get_field("animator", "layers").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap();
+    assert_eq!(layers.len(), 2, "slot 0 padded, slot 1 set");
+    // A fractional float is not an int
+    let err = eval::<()>(&engine, &mut world, "is_mouse_pressed(0.5)").unwrap_err();
+    assert!(
+        err.contains("`button`") && err.contains("an integer"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_wrong_argument_names_the_function_the_parameter_and_the_kind() {
     let (engine, mut world, id) = engine_and_world();
     let err = eval::<()>(
@@ -158,6 +196,89 @@ fn a_missing_entity_returns_the_fallback_and_warns_once() {
         funcs,
         ["distance", "get_parent", "get_position", "get_shear"]
     );
+}
+
+/// A script value of each kind, for calling every declared function.
+fn sample(kind: &str, live: i64) -> String {
+    match kind {
+        "num" | "float" => "1.0".into(),
+        "int" | "any" => "0".into(),
+        "bool" => "true".into(),
+        "entity" | "entity?" => live.to_string(),
+        "str" => "\"x\"".into(),
+        "map" => "#{}".into(),
+        "array" => "[]".into(),
+        "color" | "color array" => "[1.0, 1.0, 1.0]".into(),
+        "fn" => "Fn(\"f\")".into(),
+        other => panic!("no sample for kind {other}"),
+    }
+}
+
+/// #701: every declared function with an entity parameter, given `-1` or a
+/// despawned id there, skips its body, warns (once per script and
+/// function), returns its fallback and queues nothing for the host.
+#[test]
+fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
+    let (engine, mut world, live) = engine_and_world();
+    let gone = world.spawn("gone").unwrap();
+    world.despawn(gone).unwrap();
+    let entries = engine.api_registry().entries().to_vec();
+    let mut checked = Vec::new();
+    for e in &entries {
+        for (i, p) in e.params.iter().enumerate() {
+            if p.kind != "entity" {
+                continue;
+            }
+            for dead in [-1, gone.raw() as i64] {
+                let args: Vec<String> = e
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(j, q)| {
+                        if j == i {
+                            dead.to_string()
+                        } else {
+                            sample(q.kind, live)
+                        }
+                    })
+                    .collect();
+                let src = format!("{}({})", e.name, args.join(", "));
+                crate::lock_or_recover(&engine.ctx)
+                    .bad_target_warned
+                    .clear();
+                for _ in 0..2 {
+                    if let Err(err) = eval::<Dynamic>(&engine, &mut world, &src) {
+                        panic!("{src}: {err}");
+                    }
+                }
+                let c = crate::lock_or_recover(&engine.ctx);
+                let warned = c
+                    .bad_target_warned
+                    .iter()
+                    .filter(|(_, f)| *f == e.name)
+                    .count();
+                assert_eq!(warned, 1, "{src} warned {warned} times");
+                assert!(
+                    c.commands.is_empty(),
+                    "{src} queued a command for a dead id: {:?}",
+                    c.commands
+                );
+            }
+            checked.push(e.name);
+        }
+    }
+    // The ported modules' entity functions are all here
+    for name in [
+        "set_position",
+        "play_clip",
+        "set_anim_layer_ex",
+        "play_sequence",
+        "audio_position",
+        "set_velocity_2d",
+        "get_velocity_2d",
+    ] {
+        assert!(checked.contains(&name), "{name} not checked");
+    }
 }
 
 #[test]

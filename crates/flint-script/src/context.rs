@@ -397,8 +397,9 @@ pub enum ScriptCommand {
     ReplaceState {
         name: String,
     },
+    /// A live entity: `set_velocity_2d` resolves the id before queuing.
     SetVelocity2D {
-        entity_id: i64,
+        entity: EntityId,
         vx: f64,
         vy: f64,
     },

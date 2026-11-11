@@ -122,6 +122,7 @@ impl Module<'_> {
             params: Vec::new(),
             fallback: None,
             preferred_signature: true,
+            exact: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             entry: ApiEntry {
                 module: self.name,
@@ -147,6 +148,7 @@ pub struct Func<'f, K> {
     params: Vec<&'static str>,
     fallback: Option<Dynamic>,
     preferred_signature: bool,
+    exact: Vec<Vec<TypeId>>,
     #[cfg(not(target_arch = "wasm32"))]
     entry: ApiEntry,
     _kinds: std::marker::PhantomData<K>,
@@ -168,6 +170,7 @@ impl<'f, K: Kinds> Func<'f, K> {
             params,
             fallback: self.fallback,
             preferred_signature: self.preferred_signature,
+            exact: self.exact,
             #[cfg(not(target_arch = "wasm32"))]
             entry: self.entry,
             _kinds: std::marker::PhantomData,
@@ -195,6 +198,18 @@ impl<'f, K: Kinds> Func<'f, K> {
         self
     }
 
+    /// Also register the body under these exact argument types, one per
+    /// parameter. Rhai tries a call's exact types everywhere, its own
+    /// built-ins too, before any `Dynamic` signature, so a function sharing
+    /// a name with a built-in (`log`, Rhai's base-10 logarithm of a float)
+    /// needs the built-in's types registered as well to be found for them.
+    /// [`Func::run`] only.
+    pub fn also_exact(mut self, types: &[TypeId]) -> Self {
+        debug_assert_eq!(types.len(), K::LEN, "{}: one type per parameter", self.name);
+        self.exact.push(types.to_vec());
+        self
+    }
+
     /// Register only the all-`Dynamic` signature, without the exact-typed
     /// twin that lets Rhai find the function on its first lookup. For the
     /// overhead measurement (ADR 0116); nothing else wants it.
@@ -206,7 +221,7 @@ impl<'f, K: Kinds> Func<'f, K> {
 
     /// Register it, taking each argument as a `Dynamic` and converting it
     /// by its kind. The body gets the converted arguments as a tuple.
-    pub fn run<F, R>(self, f: F)
+    pub fn run<F, R>(mut self, f: F)
     where
         F: Fn(&mut Call<'_>, K::Out) -> R + Send + Sync + 'static,
         R: ScriptReturn,
@@ -237,6 +252,11 @@ impl<'f, K: Kinds> Func<'f, K> {
             let body = body.clone();
             self.engine
                 .register_raw_fn(name, preferred, move |nctx, args| body(nctx, args));
+        }
+        for types in std::mem::take(&mut self.exact) {
+            let body = body.clone();
+            self.engine
+                .register_raw_fn(name, types, move |nctx, args| body(nctx, args));
         }
         self.engine
             .register_raw_fn(name, dynamic, move |nctx, args| body(nctx, args));
