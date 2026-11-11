@@ -253,7 +253,7 @@ flint render examples/ascii_motion.scene.toml --no-grid \
 
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
-A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
+A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `flint goldens` gate on a reversal budget is #478.
 
 ### Mesh sequences
 
@@ -416,7 +416,7 @@ flint render examples/mesh_meadow.scene.toml --no-grid --variants examples/varia
 
 ![The meadow's lantern at 2x through the spike's rounds: smooth, the continuous ramp, banded tone, and banded tone with edge glyphs](../images/render-variants-rounds-zoom.png)
 
-Every variant renders in the one process on one GPU device, with glTF files decoded once and texture mip chains built once, as `render-suite` runs its cases. Each still builds its own renderer, since a variant can change what a renderer is built with (MSAA, shadows, the scene's styles). A variant is one still: one that draws `--frames`, a mesh sequence or a `--time` span is refused. Variants that come out a different size are refused too (a sheet has one cell size), and two neighbours that come out pixel-identical are named in a warning, since the flags that differ changed nothing this frame shows.
+Every variant renders in the one process on one GPU device, with glTF files decoded once and texture mip chains built once, as `flint goldens` runs its cases. Each still builds its own renderer, since a variant can change what a renderer is built with (MSAA, shadows, the scene's styles). A variant is one still: one that draws `--frames`, a mesh sequence or a `--time` span is refused. Variants that come out a different size are refused too (a sheet has one cell size), and two neighbours that come out pixel-identical are named in a warning, since the flags that differ changed nothing this frame shows.
 
 ## A Span of Time as a GIF
 
@@ -508,14 +508,14 @@ Headless rendering works on machines without a display. On one without a GPU, it
 
 ## Golden Suites
 
-`flint render-suite` given a `*.goldens.toml` renders a list of cases as `flint render` would and compares each with a golden PNG (#271). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
+`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `flint render-suite <x>.goldens.toml`, which still works and runs the same command. It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
 
 ```bash
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml
 #   PASS  ascii-full      0.00% past 48 (limit 2.00%), mean 0.00 (limit 3.00), max 0, 1316 ms
 #   ...
-flint render-suite my.goldens.toml --case tavern --out-dir out/goldens
-flint render-suite my.goldens.toml --bless          # write the renders over the goldens
+flint goldens my.goldens.toml --case tavern --out-dir out/goldens
+flint goldens my.goldens.toml --bless          # write the renders over the goldens
 ```
 
 ```toml
@@ -596,7 +596,7 @@ or `drift: none, every passing case is byte-identical with its golden`. The cont
 
 ### One process
 
-Cases run in the `render-suite` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
+Cases run in the `flint goldens` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
 
 The cost is crash isolation. A case that panics is run again in its own `flint render` process (the device is dropped and made again for the next case), and its log is the case's message. `--isolate` spawns every case, as before #329.
 

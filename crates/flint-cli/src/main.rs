@@ -8,9 +8,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, calibrate, check as check_cmd, edit_router, entity, examples, export, gen,
-    gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render, render_suite,
-    replay_chart, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit,
-    validate, validate_suite,
+    gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render,
+    render_goldens, render_suite, replay_chart, scene, schema, script, spike_rumble, spline_edit,
+    style, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -138,9 +138,13 @@ enum Commands {
     /// Replay a recorded or synthetic session through judgment, fully headless
     ReplayChart(replay_chart::ReplayChartArgs),
 
-    /// Render a suite offline and deterministically: a music `.suite.toml`
-    /// to WAV, or a `.goldens.toml` of scenes gated against golden PNGs
+    /// Render a music suite (`.suite.toml`) to WAV, offline and
+    /// deterministically
     RenderSuite(render_suite::RenderSuiteArgs),
+
+    /// Render a `.goldens.toml` of scenes and gate each against its golden
+    /// PNG (`--bless` rewrites them)
+    Goldens(render_goldens::GoldensArgs),
 
     /// Prefab operations
     #[command(subcommand)]
@@ -191,7 +195,10 @@ fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    // `render-suite <x>.goldens.toml` is `goldens` (#327)
+    let cli = Cli::parse_from(render_goldens::route_render_suite_goldens(
+        std::env::args_os().collect(),
+    ));
     if let Some(dir) = &cli.project {
         if !dir.is_dir() {
             anyhow::bail!("--project {}: not a directory", dir.display());
@@ -227,6 +234,7 @@ fn main() -> Result<()> {
         Commands::SpikeRumble(args) => spike_rumble::run(args),
         Commands::ReplayChart(args) => replay_chart::run(args),
         Commands::RenderSuite(args) => render_suite::run(args),
+        Commands::Goldens(args) => render_goldens::run_command(args),
         Commands::Play(args) => play::run(args),
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),

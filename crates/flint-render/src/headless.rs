@@ -65,7 +65,7 @@ impl HeadlessContext {
     }
 
     /// Give the context targets of a new size, on the same device (#329:
-    /// `render-suite` keeps one device for every case, and cases can ask
+    /// `flint goldens` keeps one device for every case, and cases can ask
     /// for different sizes).
     pub fn resize(&mut self, width: u32, height: u32) {
         if (width, height) == (self.width, self.height) {

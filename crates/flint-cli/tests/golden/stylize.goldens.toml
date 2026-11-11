@@ -1,7 +1,7 @@
 # Stylize goldens (#271): every registered style, pinned.
 #
-#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
-#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless
+#   cargo run --bin flint -- goldens crates/flint-cli/tests/golden/stylize.goldens.toml
+#   cargo run --bin flint -- goldens crates/flint-cli/tests/golden/stylize.goldens.toml --bless
 #
 # `cargo test -p flint-cli --test render_goldens` runs the same suite. Each
 # case is one `flint render`, single-sample unless it says `--msaa 4`, with

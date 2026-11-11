@@ -544,7 +544,7 @@ static MIP_MEMO: std::sync::Mutex<Option<MipMemo>> = std::sync::Mutex::new(None)
 
 /// Keep every [`mip_chain`] built, by its pixels, and hand out copies
 /// (#329), or (`false`) drop them. For a process that uploads the same
-/// textures renderer after renderer: `flint render-suite` builds a fresh
+/// textures renderer after renderer: `flint goldens` builds a fresh
 /// renderer a case, and a debug build's box filter was most of what a
 /// model's load cost once its file decode was memoized. Off by default.
 pub fn memoize_mip_chains(on: bool) {

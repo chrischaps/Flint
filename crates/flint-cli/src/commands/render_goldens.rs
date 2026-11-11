@@ -1,4 +1,5 @@
-//! `flint render-suite <file>.goldens.toml` (#271): render a list of
+//! `flint goldens <file>.goldens.toml` (#271, its own command since #327;
+//! `render-suite` given one still runs it): render a list of
 //! scenes with `flint render`, each with its own flags, and compare every
 //! image with a checked-in golden PNG. The suite fails when any case moves
 //! past its tolerance, so a change to the stylize framework (or anything
@@ -84,42 +85,98 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The flags `render-suite` takes for a `.goldens.toml`.
+/// `flint goldens <manifest>`: the manifest and the flags (#327). Its own
+/// command, so `--help` lists only what a golden suite takes; `render-suite`
+/// given a `.goldens.toml` is routed here before parsing
+/// ([`route_render_suite_goldens`]).
+#[derive(clap::Args, Debug)]
+#[command(after_help = "Also run as `flint render-suite <file>.goldens.toml`, \
+    which is this command.\nManifest format: `flint goldens` in the book \
+    (guides/headless-rendering.md#golden-suites).")]
+pub struct GoldensArgs {
+    /// The suite: a `.goldens.toml` of cases, each a scene and its
+    /// `flint render` flags, compared with a golden PNG beside the manifest
+    pub manifest: String,
+
+    #[command(flatten)]
+    pub golden: GoldenArgs,
+}
+
+/// Run `flint goldens`.
+pub fn run_command(args: GoldensArgs) -> Result<()> {
+    run(&args.manifest, &args.golden)
+}
+
+/// `flint render-suite <x>.goldens.toml ...` was how a golden suite ran
+/// before it had a command (#271); it still works, by naming the command
+/// `goldens` when any word after `render-suite` ends in `.goldens.toml`
+/// (no music flag takes one, and the manifest may come after a golden
+/// flag's value: `--out-dir out x.goldens.toml`). Done on the words,
+/// before clap, so `render-suite`'s own flags and help stay the music
+/// suite's alone. Anything else passes through unchanged.
+pub fn route_render_suite_goldens(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    // The subcommand is the first word after the binary that is neither a
+    // flag nor `--project`'s value (the one global option taking a value)
+    let mut i = 1;
+    while i < args.len() {
+        let word = args[i].to_string_lossy();
+        if word == "--project" {
+            i += 2;
+        } else if word.starts_with('-') {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if args.get(i).is_some_and(|w| w == "render-suite")
+        && args[i + 1..]
+            .iter()
+            .any(|w| w.to_string_lossy().ends_with(".goldens.toml"))
+    {
+        args[i] = "goldens".into();
+    }
+    args
+}
+
+/// The flags `flint goldens` takes.
 #[derive(clap::Args, Debug, Default)]
+// Flattened, these would number from 0 and put the global `--project`
+// after `--bless`; from 1 they follow it, as every other command's flags do
+#[command(next_display_order = 1)]
 pub struct GoldenArgs {
-    /// Goldens: write each render over its golden instead of comparing
+    /// Write each render over its golden instead of comparing
     /// (this adapter's variant, when the case has one)
     #[arg(long)]
     pub bless: bool,
 
-    /// Goldens: write each render as this adapter's variant of its golden,
+    /// Write each render as this adapter's variant of its golden,
     /// `<stem>.<adapter>.png`, for a case another adapter draws differently
     #[arg(long)]
     pub bless_variant: bool,
 
-    /// Goldens: re-bless only the cases that pass but aren't byte-identical
+    /// Re-bless only the cases that pass but aren't byte-identical
     /// with their golden (#387), for a deliberate catch-up commit. Failing
     /// cases are left alone and still fail the run
     #[arg(long, conflicts_with_all = ["bless", "bless_variant"])]
     pub bless_drifted: bool,
 
-    /// Goldens: run only this case. A name that is exactly a case's picks
+    /// Run only this case. A name that is exactly a case's picks
     /// that case alone (`ascii-silhouette-cell` skips
     /// `ascii-silhouette-cell-object`); one that names no case picks every
     /// case whose name contains it (repeatable)
     #[arg(long = "case")]
     pub cases: Vec<String>,
 
-    /// Goldens: where renders, diffs and report.json go (default: a
+    /// Where renders, diffs and report.json go (default: a
     /// folder in the system temp dir)
     #[arg(long)]
     pub out_dir: Option<String>,
 
-    /// Goldens: fail, rather than skip, when there is no GPU adapter
+    /// Fail, rather than skip, when there is no GPU adapter
     #[arg(long)]
     pub require_gpu: bool,
 
-    /// Goldens: run each case as its own `flint render` process. Slower
+    /// Run each case as its own `flint render` process. Slower
     /// (a GPU device, schemas and shaders a case) but a crash takes down
     /// only its case; by default every case runs in this process on one
     /// device, and a case that panics is run again in its own (#329)
@@ -580,7 +637,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
 
     let flint = std::env::current_exe().context("finding the flint binary")?;
     println!(
-        "render-suite '{}': {} case(s){}, {}, from {}",
+        "goldens '{}': {} case(s){}, {}, from {}",
         manifest.suite.name,
         chosen.len(),
         if args.bless || args.bless_variant {
@@ -1059,6 +1116,48 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn routed(words: &[&str]) -> Vec<String> {
+        let args = words.iter().map(std::ffi::OsString::from).collect();
+        route_render_suite_goldens(args)
+            .into_iter()
+            .map(|w| w.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// #327: `render-suite <x>.goldens.toml` still runs the goldens, the
+    /// manifest anywhere after it, `--project` before it or not; a music
+    /// suite and every other command are left alone.
+    #[test]
+    fn render_suite_with_a_goldens_manifest_is_routed_to_goldens() {
+        assert_eq!(
+            routed(&["flint", "render-suite", "s.goldens.toml", "--bless"]),
+            ["flint", "goldens", "s.goldens.toml", "--bless"]
+        );
+        assert_eq!(
+            routed(&["flint", "render-suite", "--out-dir", "o", "s.goldens.toml"]),
+            ["flint", "goldens", "--out-dir", "o", "s.goldens.toml"]
+        );
+        assert_eq!(
+            routed(&["flint", "--project", "g", "render-suite", "s.goldens.toml"]),
+            ["flint", "--project", "g", "goldens", "s.goldens.toml"]
+        );
+        for kept in [
+            &["flint", "render-suite", "m.suite.toml", "-o", "x.wav"][..],
+            &["flint", "render-suite", "--help"],
+            &["flint", "render", "s.goldens.toml"],
+            &[
+                "flint",
+                "--project",
+                "render-suite",
+                "render",
+                "x.goldens.toml",
+            ],
+            &["flint"],
+        ] {
+            assert_eq!(routed(kept), kept, "{kept:?}");
+        }
+    }
 
     fn solid(v: u8) -> image::RgbaImage {
         image::RgbaImage::from_pixel(10, 10, image::Rgba([v, v, v, 255]))

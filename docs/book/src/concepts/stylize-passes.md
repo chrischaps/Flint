@@ -1425,15 +1425,15 @@ The F2 overlay's `Style targets` line includes them in its total. F4's `user` ta
 
 ## Goldens
 
-Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint render-suite` renders each case as `flint render` would, all in one process (#329), and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite. CI runs it on WARP for every PR (#314), against a `<stem>.warp.png` variant where WARP's render differs from the golden by more than the tolerance allows ([adapters and variants](../guides/headless-rendering.md#adapters-and-golden-variants)). Each run leaves an `index.html` contact sheet in its out dir, failures first, with golden, render and diff side by side ([the contact sheet](../guides/headless-rendering.md#the-contact-sheet)). Review a `--bless` there.
+Every registered style is pinned by a golden image in `crates/flint-cli/tests/golden/`, listed in `stylize.goldens.toml` (#271). `flint goldens` renders each case as `flint render` would, all in one process (#329), and fails when one moves past its tolerance; `cargo test -p flint-cli --test render_goldens` runs the same suite. CI runs it on WARP for every PR (#314), against a `<stem>.warp.png` variant where WARP's render differs from the golden by more than the tolerance allows ([adapters and variants](../guides/headless-rendering.md#adapters-and-golden-variants)). Each run leaves an `index.html` contact sheet in its out dir, failures first, with golden, render and diff side by side ([the contact sheet](../guides/headless-rendering.md#the-contact-sheet)). Review a `--bless` there.
 
 `--case` takes a case's name or part of one. An exact name picks that case alone: `--case ascii-silhouette-cell` blesses `ascii-silhouette-cell` and leaves `ascii-silhouette-cell-object` as it was. A part that names no case picks every case containing it, so `--case ascii-silhouette` runs both. After blessing a single case, run the whole suite before committing.
 
 ```bash
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --case ascii-silhouette-cell
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless    # after a deliberate change
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless-drifted  # catch up passes that moved
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml            # gate
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml --case ascii-silhouette-cell
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml --bless    # after a deliberate change
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml --bless-drifted  # catch up passes that moved
 ```
 
 A run names every case that passes without being byte-identical with its golden, or says there are none ([drift](../guides/headless-rendering.md#drift), #387).
