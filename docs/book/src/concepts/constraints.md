@@ -127,6 +127,8 @@ flint validate levels/tavern.scene.toml --schemas schemas
 
 The exit code is 0 if all constraints pass, 1 if any errors are found. Warnings do not affect the exit code.
 
+`--fix` writes only what its fixes changed: a field set in place (its comment kept), a field taken out, a new child entity appended at the end of the file. The rest of the file is left as written, its `[scene]` name, `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, prefabs, comments and key order included. A fix to an entity a prefab instance expands into has nowhere in the scene file to go: it's printed as `not written` and the prefab is left alone. `--output-diff` prints the line diff of the file itself.
+
 ## Real Example
 
 From `schemas/constraints/basics.toml`:
