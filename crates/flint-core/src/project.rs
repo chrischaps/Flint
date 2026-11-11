@@ -247,7 +247,7 @@ impl Project {
         let mut engine: Option<PathBuf> = None;
         let mut dir = Some(start.clone());
         while let Some(d) = dir {
-            if vfs::is_file(d.join("crates/flint-core/Cargo.toml")) {
+            if is_engine_checkout(&d) {
                 // An engine checkout: a game above it owns the project.
                 engine.get_or_insert_with(|| d.clone());
             } else if let Some(found) = marker(&d, home.as_deref()) {
@@ -669,6 +669,29 @@ fn named(dirs: Vec<PathBuf>, source: SchemaSource) -> Result<SchemaDirs, SchemaD
             dropped: Vec::new(),
         }),
     }
+}
+
+/// Whether `dir` is the root of a Flint engine checkout: the one marker
+/// [`Project::discover`] passes through (`crates/flint-core/Cargo.toml`).
+pub fn is_engine_checkout(dir: &Path) -> bool {
+    vfs::is_file(dir.join("crates/flint-core/Cargo.toml"))
+}
+
+/// Whether `path` lies inside a Flint engine checkout: the engine's own
+/// repository, or the `engine/` subtree a game carries. How a schema file is
+/// told to be the engine's rather than a game's (ADR 0115 decision 3: an old
+/// type spelling is rewritten in the engine's files and warned about in a
+/// game's), wherever the checkout is and however the directory was named
+/// (`--schemas ../Flint/schemas` as much as `engine/schemas`).
+pub fn in_engine_checkout(path: &Path) -> bool {
+    let mut dir = Some(anchor(path));
+    while let Some(d) = dir {
+        if is_engine_checkout(&d) {
+            return true;
+        }
+        dir = parent_dir(&d);
+    }
+    false
 }
 
 /// One spelling for a directory, so `schemas`, `./schemas` and an absolute

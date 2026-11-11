@@ -5,9 +5,11 @@
 //! path. It never stops at the first. [`validate_component_data`] is the
 //! older yes-or-no form over it, for a caller that wants one error.
 
-use crate::component::{ComponentSchema, FieldType};
+use crate::component::{ComponentSchema, FieldSchema, FieldType};
 use flint_core::diagnostic::{self, codes, Diagnostic};
+use flint_core::project::AssetKind;
 use flint_core::{FlintError, Result};
+use std::collections::HashMap;
 
 /// Everything wrong with `data` as a `schema` component, in a stable order:
 /// required fields that are missing (by name), then each written field (by
@@ -56,6 +58,11 @@ enum Problem {
     },
     Unknown {
         field: String,
+        /// The table the key is in, when that is a field's own table
+        /// (`transform.shear`); `None` for the component's.
+        table: Option<String>,
+        /// The names that table declares.
+        declared: Vec<String>,
     },
     BadType {
         field: String,
@@ -92,20 +99,31 @@ impl Problem {
                 format!("required field `{field}` is missing"),
             )
             .field(field),
-            Problem::Unknown { field } => {
-                let hint =
-                    diagnostic::did_you_mean(&field, schema.fields.keys().map(String::as_str))
-                        .unwrap_or_else(|| {
-                            format!(
-                                "the fields of `{}` are {}; a game's own field is declared in its \
-                             schema layer",
-                                schema.name,
-                                listed(schema.fields.keys())
-                            )
-                        });
+            Problem::Unknown {
+                field,
+                table,
+                declared,
+            } => {
+                let owner = match &table {
+                    Some(table) => format!("{}.{table}", schema.name),
+                    None => schema.name.clone(),
+                };
+                // The key as written: the last part of a nested path
+                let key = match &table {
+                    Some(table) => field[table.len() + 1..].to_string(),
+                    None => field.clone(),
+                };
+                let hint = diagnostic::did_you_mean(&key, declared.iter().map(String::as_str))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "the fields of `{owner}` are {}; a game's own field is declared in \
+                             its schema layer",
+                            listed(declared.iter())
+                        )
+                    });
                 Diagnostic::warning(
                     codes::UNKNOWN_FIELD,
-                    format!("`{}` has no field `{field}`", schema.name),
+                    format!("`{owner}` has no field `{key}`"),
                 )
                 .field(field)
                 .hint(hint)
@@ -166,7 +184,7 @@ impl Problem {
                 FlintError::ValidationError("Component data must be a table".to_string())
             }
             Problem::Missing { field } => FlintError::MissingRequiredField(field),
-            Problem::Unknown { field } => {
+            Problem::Unknown { field, .. } => {
                 FlintError::ValidationError(format!("Field '{field}': not in the schema"))
             }
             Problem::BadType {
@@ -219,41 +237,60 @@ fn problems(schema: &ComponentSchema, data: &toml::Value) -> Vec<Problem> {
         }];
     };
     let mut found = Vec::new();
+    // A schema that declares no field at all is open: it names the
+    // component and checks nothing in it
+    if !schema.fields.is_empty() {
+        table_problems(&schema.fields, table, None, &mut found);
+    }
+    found
+}
+
+/// What is wrong with `table` as a table of `fields`: the component's own
+/// (`inside` is `None`), or a field's (`inside` is its dotted path).
+fn table_problems(
+    fields: &HashMap<String, FieldSchema>,
+    table: &toml::Table,
+    inside: Option<&str>,
+    found: &mut Vec<Problem>,
+) {
+    let path = |name: &str| match inside {
+        Some(inside) => format!("{inside}.{name}"),
+        None => name.to_string(),
+    };
 
     // Required fields that are not there, by name (the schema is a HashMap)
-    let mut missing: Vec<&String> = schema
-        .fields
+    let mut missing: Vec<&String> = fields
         .iter()
         .filter(|(name, field)| field.required && !table.contains_key(*name))
         .map(|(name, _)| name)
         .collect();
     missing.sort_unstable();
-    found.extend(missing.into_iter().map(|field| Problem::Missing {
-        field: field.clone(),
-    }));
+    found.extend(
+        missing
+            .into_iter()
+            .map(|field| Problem::Missing { field: path(field) }),
+    );
 
     // Each written field, by name
     let mut written: Vec<(&String, &toml::Value)> = table.iter().collect();
     written.sort_unstable_by_key(|(name, _)| *name);
     for (field_name, value) in written {
-        match schema.fields.get(field_name) {
+        match fields.get(field_name) {
             Some(field_schema) => check_value(
-                field_name,
+                &path(field_name),
                 &field_schema.field_type,
                 value,
                 field_schema.min,
                 field_schema.max,
-                &mut found,
+                found,
             ),
-            // A schema that declares no field at all is open: it names
-            // the component and checks nothing in it
-            None if schema.fields.is_empty() => {}
             None => found.push(Problem::Unknown {
-                field: field_name.clone(),
+                field: path(field_name),
+                table: inside.map(str::to_string),
+                declared: fields.keys().cloned().collect(),
             }),
         }
     }
-    found
 }
 
 fn check_value(
@@ -280,7 +317,25 @@ fn check_value(
         (FieldType::F32 | FieldType::F64, toml::Value::Integer(n)) => {
             check_range(field_name, *n as f64, min, max, found)
         }
-        (FieldType::String, toml::Value::String(_)) => {}
+        // An entity or an asset is named by a string; whether the name leads
+        // anywhere is `flint_scene::diagnose`'s to say ([`references`])
+        (
+            FieldType::String | FieldType::Entity | FieldType::Asset { .. },
+            toml::Value::String(_),
+        ) => {}
+        (FieldType::Vec2, toml::Value::Array(arr)) => {
+            check_numbers(field_name, "vec2", 2..=2, arr, found)
+        }
+        (FieldType::Vec4, toml::Value::Array(arr)) => {
+            check_numbers(field_name, "vec4", 4..=4, arr, found)
+        }
+        // A colour is [r, g, b] or [r, g, b, a]: what `toml_color` reads
+        (FieldType::Color, toml::Value::Array(arr)) => {
+            check_numbers(field_name, "color", 3..=4, arr, found)
+        }
+        (FieldType::Fields { fields }, toml::Value::Table(t)) => {
+            table_problems(fields, t, Some(field_name), found)
+        }
         // Vec3 can be {x, y, z} or an array [x, y, z]
         (FieldType::Vec3, toml::Value::Table(t)) => {
             if ["x", "y", "z"].iter().all(|k| t.contains_key(*k)) {
@@ -315,7 +370,7 @@ fn check_value(
                 }
             }
         }
-        // Color can be {r, g, b, a}
+        // ...or the older {r, g, b, a}, which no engine reader takes
         (FieldType::Color, toml::Value::Table(t)) => {
             if !["r", "g", "b"].iter().all(|k| t.contains_key(*k)) {
                 found.push(shape("a color table needs r, g and b"));
@@ -354,6 +409,126 @@ fn check_value(
             expected: field_type.type_name().to_string(),
             got: value_type_name(value),
         }),
+    }
+}
+
+/// `arr` as a `type_name` of `len` numbers: the wrong count is one problem
+/// about the field, a member that is no number one about `field[i]`.
+fn check_numbers(
+    field_name: &str,
+    type_name: &str,
+    len: std::ops::RangeInclusive<usize>,
+    arr: &[toml::Value],
+    found: &mut Vec<Problem>,
+) {
+    if !len.contains(&arr.len()) {
+        let wanted = if len.start() == len.end() {
+            len.start().to_string()
+        } else {
+            format!("{} or {}", len.start(), len.end())
+        };
+        found.push(Problem::Shape {
+            field: field_name.to_string(),
+            message: format!("a {type_name} is {wanted} numbers, got {}", arr.len()),
+        });
+        return;
+    }
+    for (i, item) in arr.iter().enumerate() {
+        check_number(&format!("{field_name}[{i}]"), item, found);
+    }
+}
+
+/// What a reference names: an entity of the scene, or a file of one of some
+/// asset kinds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceKind {
+    Entity,
+    Asset(Vec<AssetKind>),
+}
+
+/// One `entity` or `asset` value written in a component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    /// Dotted path of the field: `target`, `layers[1].mask`.
+    pub field: String,
+    /// The name written.
+    pub name: String,
+    pub kind: ReferenceKind,
+}
+
+/// Every entity and asset `data` names as a `schema` component, by field
+/// name: the values of its `entity` and `asset` fields, through arrays and
+/// tables with fields. What `flint_scene::diagnose` checks to exist.
+///
+/// Left out: an empty string (the reference is not set; a script fills it),
+/// a value that is not a string ([`validate_component`] has said `bad-type`),
+/// an asset with no kind, and an asset whose `unless` sibling is `true`.
+pub fn references(schema: &ComponentSchema, data: &toml::Value) -> Vec<Reference> {
+    let mut found = Vec::new();
+    if let Some(table) = data.as_table() {
+        table_references(&schema.fields, table, None, &mut found);
+    }
+    found
+}
+
+fn table_references(
+    fields: &HashMap<String, FieldSchema>,
+    table: &toml::Table,
+    inside: Option<&str>,
+    found: &mut Vec<Reference>,
+) {
+    let mut written: Vec<(&String, &toml::Value)> = table.iter().collect();
+    written.sort_unstable_by_key(|(name, _)| *name);
+    for (name, value) in written {
+        let Some(field) = fields.get(name) else {
+            continue;
+        };
+        let path = match inside {
+            Some(inside) => format!("{inside}.{name}"),
+            None => name.clone(),
+        };
+        value_references(&path, &field.field_type, value, table, found);
+    }
+}
+
+fn value_references(
+    path: &str,
+    field_type: &FieldType,
+    value: &toml::Value,
+    siblings: &toml::Table,
+    found: &mut Vec<Reference>,
+) {
+    let named = |kind: ReferenceKind| {
+        value
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .map(|name| Reference {
+                field: path.to_string(),
+                name: name.to_string(),
+                kind,
+            })
+    };
+    match (field_type, value) {
+        (FieldType::Entity, _) => found.extend(named(ReferenceKind::Entity)),
+        (FieldType::Asset { kinds, unless }, _) => {
+            let off = unless
+                .as_deref()
+                .and_then(|sibling| siblings.get(sibling))
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false);
+            if !off && !kinds.is_empty() {
+                found.extend(named(ReferenceKind::Asset(kinds.clone())));
+            }
+        }
+        (FieldType::Array { element }, toml::Value::Array(items)) => {
+            for (i, item) in items.iter().enumerate() {
+                value_references(&format!("{path}[{i}]"), element, item, siblings, found);
+            }
+        }
+        (FieldType::Fields { fields }, toml::Value::Table(table)) => {
+            table_references(fields, table, Some(path), found)
+        }
+        _ => {}
     }
 }
 
@@ -648,6 +823,153 @@ mod tests {
             validate_component(&schema, &toml::Value::Boolean(true)).len(),
             1
         );
+    }
+
+    fn schema_of(fields_toml: &str) -> ComponentSchema {
+        let mut registry = crate::SchemaRegistry::new();
+        registry
+            .load_component_string(&format!("[component.rig.fields]\n{fields_toml}"))
+            .unwrap();
+        registry.get_component("rig").unwrap().clone()
+    }
+
+    fn said(schema: &ComponentSchema, data: &str) -> Vec<String> {
+        let data: toml::Value = toml::from_str(data).unwrap();
+        validate_component(schema, &data)
+            .iter()
+            .map(|d| d.to_string())
+            .collect()
+    }
+
+    const NOTHING: [&str; 0] = [];
+
+    /// vec2 / vec3 / vec4 are that many numbers, no more and no fewer (they
+    /// were float arrays of any length), and a colour is 3 or 4.
+    #[test]
+    fn vectors_have_a_fixed_length_and_a_colour_three_or_four() {
+        let schema =
+            schema_of("limits = \"vec2\"\naxis = \"vec3\"\nrect = \"vec4\"\ntint = \"color\"\n");
+        assert_eq!(
+            said(
+                &schema,
+                "limits = [0, 1.5]\naxis = [0, 1, 0]\nrect = [0, 0, 8, 8]\ntint = [1, 0.5, 0]\n"
+            ),
+            NOTHING
+        );
+        assert_eq!(said(&schema, "tint = [1, 0.5, 0, 0.25]\n"), NOTHING);
+        assert_eq!(
+            said(
+                &schema,
+                "limits = [0, 1, 2]\naxis = [0, 1]\nrect = [0, 0, 8]\ntint = [1, 0.5]\n"
+            ),
+            [
+                "error[bad-type] rig.axis: a vec3 is 3 numbers, got 2",
+                "error[bad-type] rig.limits: a vec2 is 2 numbers, got 3",
+                "error[bad-type] rig.rect: a vec4 is 4 numbers, got 3",
+                "error[bad-type] rig.tint: a color is 3 or 4 numbers, got 2",
+            ]
+        );
+        assert_eq!(
+            said(&schema, "limits = [0, \"wide\"]\ntint = \"red\"\n"),
+            [
+                "error[bad-type] rig.limits[1]: expected a number, got string",
+                "error[bad-type] rig.tint: expected color, got string",
+            ]
+        );
+        // The older colour forms still pass
+        assert_eq!(
+            said(&schema, "tint = { r = 1.0, g = 0.5, b = 0.0 }\n"),
+            NOTHING
+        );
+        assert_eq!(said(&schema, "tint = 0xFF8844\n"), NOTHING);
+    }
+
+    /// A table that declares fields is checked like a component, each
+    /// problem under the table's path; an array of them the same.
+    #[test]
+    fn a_table_with_fields_is_checked_inside() {
+        let schema = schema_of(
+            "shear = { type = \"table\", fields = { xy = \"f32\", xz = \"f32\" } }\n\
+             layers = { type = \"array\", element = { type = \"table\", fields = { \
+             clip = { type = \"string\", required = true }, \
+             mode = { type = \"enum\", values = [\"additive\", \"override\"] } } } }\n",
+        );
+        assert_eq!(said(&schema, "shear = { xy = 0.25 }\n"), NOTHING);
+        let data: toml::Value = toml::from_str(
+            "shear = { xy = \"a lot\", xzz = 0.2 }\n\
+             layers = [{ clip = \"wave\" }, { mode = \"overide\" }]\n",
+        )
+        .unwrap();
+        let found = validate_component(&schema, &data);
+        let lines: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            lines,
+            [
+                "error[missing-field] rig.layers[1].clip: required field `layers[1].clip` is \
+                 missing",
+                "error[bad-enum-value] rig.layers[1].mode: \"overide\" is not a value of \
+                 `layers[1].mode`",
+                "error[bad-type] rig.shear.xy: expected f32, got string",
+                "warning[unknown-field] rig.shear.xzz: `rig.shear` has no field `xzz`",
+            ]
+        );
+        assert_eq!(found[3].hint.as_deref(), Some("did you mean `xz`?"));
+        assert_eq!(
+            said(&schema, "shear = 3\n"),
+            ["error[bad-type] rig.shear: expected table, got integer"]
+        );
+    }
+
+    /// `entity` and `asset` values are strings here; `references` lists the
+    /// ones that name something, for the scene pass to look up.
+    #[test]
+    fn references_lists_the_entities_and_assets_a_component_names() {
+        let schema = schema_of(
+            "target = { type = \"entity\", default = \"\" }\n\
+             pole = \"entity\"\n\
+             asset = { type = \"asset\", kind = [\"models\", \"specs\"], unless = \"runtime\" }\n\
+             runtime = \"bool\"\n\
+             sounds = { type = \"array\", element = { type = \"asset\", kind = \"audio\" } }\n\
+             links = { type = \"array\", element = { type = \"table\", fields = { to = \"entity\" } } }\n\
+             loose = { type = \"asset\" }\n",
+        );
+        assert_eq!(
+            said(&schema, "target = 3\n"),
+            ["error[bad-type] rig.target: expected entity, got integer"]
+        );
+        let data: toml::Value = toml::from_str(
+            "target = \"hand\"\npole = \"\"\nasset = \"barrel\"\nloose = \"x.bin\"\n\
+             sounds = [\"hit.ogg\", \"\"]\nlinks = [{ to = \"a\" }, { to = \"b\" }]\n",
+        )
+        .unwrap();
+        assert_eq!(validate_component(&schema, &data), []);
+        let found: Vec<(String, String, ReferenceKind)> = references(&schema, &data)
+            .into_iter()
+            .map(|r| (r.field, r.name, r.kind))
+            .collect();
+        let s = |a: &str, b: &str, k: ReferenceKind| (a.to_string(), b.to_string(), k);
+        assert_eq!(
+            found,
+            [
+                s(
+                    "asset",
+                    "barrel",
+                    ReferenceKind::Asset(vec![AssetKind::Models, AssetKind::Specs])
+                ),
+                s("links[0].to", "a", ReferenceKind::Entity),
+                s("links[1].to", "b", ReferenceKind::Entity),
+                s(
+                    "sounds[0]",
+                    "hit.ogg",
+                    ReferenceKind::Asset(vec![AssetKind::Audio])
+                ),
+                s("target", "hand", ReferenceKind::Entity),
+            ],
+            "an empty name, and an asset with no kind, are left out"
+        );
+        // `unless`: a mesh that code uploads has no file to look for
+        let runtime: toml::Value = toml::from_str("asset = \"blob\"\nruntime = true\n").unwrap();
+        assert_eq!(references(&schema, &runtime), []);
     }
 
     /// The old error variants name their field now (#683).
