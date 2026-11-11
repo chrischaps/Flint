@@ -28,7 +28,7 @@ const MANIFEST: &str = "[project]\nid = \"lanterns\"\n\
 
 /// The scene, written at two depths. It names a model, a texture, an
 /// effect and a script by the names a scene uses, an engine archetype
-/// (`floor`) and the game's own (`lantern_post`, which only `schemas/`
+/// (`character`, since the room-builder ones are the examples' layer, #681) and the game's own (`lantern_post`, which only `schemas/`
 /// knows and which draws a box).
 const SCENE_BODY: &str = r#"
 [camera]
@@ -51,7 +51,7 @@ position = [-1.5, 0.5, 0]
 asset = "crate"
 
 [entities.ground]
-archetype = "floor"
+archetype = "character"
 [entities.ground.transform]
 position = [0, 0, 0]
 [entities.ground.bounds]
@@ -88,7 +88,7 @@ position = [0, 0.5, 0]
 asset = "ghost"
 
 [entities.ground]
-archetype = "floor"
+archetype = "character"
 [entities.ground.bounds]
 min = [-2, -0.1, -2]
 max = [2, 0, 2]
@@ -376,7 +376,7 @@ fn query_validate_entity_and_schema_need_no_schemas_flag() {
         assert!(ok(&flint(&dir, &oil)).contains("post"), "{scene}");
         let floors = [
             "query",
-            "entities where archetype == 'floor'",
+            "entities where archetype == 'character'",
             "--scene",
             scene,
         ];
@@ -432,7 +432,7 @@ fn every_loader_names_the_same_two_directories() {
                 "the engine's"
             );
             assert!(registry.get_archetype("lantern_post").is_some());
-            assert!(registry.get_archetype("floor").is_some());
+            assert!(registry.get_archetype("character").is_some());
         }
     }
 }
@@ -662,7 +662,7 @@ fn bundle_takes_its_name_and_scene_from_the_manifest_and_packs_it() {
                 flint_schema::SchemaRegistry::resolve(Some(Path::new(scene)), &none).unwrap();
             assert_eq!(dirs.source.name(), "manifest");
             assert!(registry.get_archetype("lantern_post").is_some());
-            assert!(registry.get_archetype("floor").is_some());
+            assert!(registry.get_archetype("character").is_some());
             // And its assets
             let scene_dir = Path::new(scene).parent().unwrap();
             let model = project.resolve(AssetKind::Models, "crate", scene_dir);

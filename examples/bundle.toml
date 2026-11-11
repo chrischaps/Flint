@@ -9,6 +9,10 @@
 
 name = "demo"
 scene = "phase4_runtime.scene.toml"
+# The engine's set (mounted below), then the room-builder layer the examples
+# are written in: `furniture`, `wall`, `door`... (#681). Named here because
+# the repository's flint.toml spells them from the repository root.
+schemas = ["engine/schemas", "engine/schemas/examples"]
 
 exclude = [
     # scenes that play only from the repo root, naming models or scenes by

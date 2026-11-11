@@ -1,0 +1,10 @@
+# The Overgrown Ruins: a small game kept inside the engine checkout, with
+# the engine beside it rather than under it.
+#
+#   flint play showcase_game/levels/tavern_hub.scene.toml
+
+[project]
+# The engine's set, the room-builder layer its levels are written in
+# (`room`, `wall`, `floor`, `door`, `furniture`; #681), then the game's own.
+schemas = ["../schemas", "../schemas/examples", "schemas"]
+scene = "levels/tavern_hub.scene.toml"
