@@ -877,11 +877,19 @@ impl ScriptCallContext {
     /// such an id it warns, naming the script and the function, so a setter
     /// that would do nothing says so once instead of failing in silence.
     pub fn setter_target(&mut self, func: &'static str, id: i64) -> Option<EntityId> {
-        if self.world.is_null() {
-            return None;
-        }
-        // SAFETY: non-null, so set by the host for this call's scope
-        let world = unsafe { &*self.world };
+        self.entity_target(func, id, None)
+    }
+
+    /// [`Self::setter_target`] for every function the declared API builds
+    /// (ADR 0116): an `Entity` argument resolves through here, `line` being
+    /// where the script called it, when Rhai says.
+    pub fn entity_target(
+        &mut self,
+        func: &'static str,
+        id: i64,
+        line: Option<usize>,
+    ) -> Option<EntityId> {
+        let world = self.try_world()?;
         let eid = EntityId::from_raw(id.max(0) as u64);
         if id >= 0 && world.contains(eid) {
             return Some(eid);
@@ -901,12 +909,39 @@ impl ScriptCallContext {
             } else {
                 "(no entity has that id; was it despawned?)"
             };
+            let at = line.map(|l| format!(" line {l}:")).unwrap_or_default();
             tracing::warn!(
-                "{script}: {func}({id}, ...) did nothing: there is no entity {id} {why}. \
+                "{script}:{at} {func}({id}, ...) did nothing: there is no entity {id} {why}. \
                  Warned once for this script and function"
             );
         }
         None
+    }
+
+    /// The world scripts are running against, or `None` outside a call
+    /// scope (a script's top level runs once at load with no world).
+    ///
+    /// The one safe way to it (ADR 0116): the host sets `world` for the
+    /// scope of a call batch (`WorldScope`) and nulls it after, and the
+    /// borrow handed out here is tied to this context, which the registered
+    /// function holds locked for the length of its call.
+    pub fn try_world(&self) -> Option<&FlintWorld> {
+        // SAFETY: non-null only inside a host's call scope, where it points
+        // at the world the host lent for that scope and is not touching
+        (!self.world.is_null()).then(|| unsafe { &*self.world })
+    }
+
+    /// [`Self::try_world`], mutably. Taking `&mut self` means a function
+    /// holds at most one `&mut FlintWorld` at a time.
+    pub fn try_world_mut(&mut self) -> Option<&mut FlintWorld> {
+        // SAFETY: as `try_world`; the `&mut self` borrow keeps it unique
+        (!self.world.is_null()).then(|| unsafe { &mut *self.world })
+    }
+
+    /// The physics system, when the host has lent one for this scope.
+    pub fn try_physics(&self) -> Option<&PhysicsSystem> {
+        // SAFETY: as `try_world`
+        (!self.physics.is_null()).then(|| unsafe { &*self.physics })
     }
 
     /// Record a draw command, stamping the clip rect currently on the stack

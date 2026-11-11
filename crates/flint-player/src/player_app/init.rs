@@ -222,6 +222,7 @@ impl PlayerApp {
     /// calls when they run. See `PlayerExtension` for when each hook runs.
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.script.rhai_engine_mut());
+        extension.declare_script_api(&mut self.script.script_api());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
         if self.ui_fonts_installed {

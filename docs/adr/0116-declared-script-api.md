@@ -139,6 +139,13 @@ the tickets' blocked-by links. The steps get no sub-issues.
   calls a frame on a HUD-heavy game, and the phone is the tight budget. Step
   1 measures it (a draw-heavy demo scene, desktop and Pixel) before the rest
   is ported, and the builder keeps a typed escape hatch for hot functions.
+  Measured in step 1 (docs/design/script-api-overhead.md): on the heaviest
+  script-drawn example (146 draw calls a frame) the converting path is no
+  slower than the typed closures on desktop (-2.9% in the harness, no
+  difference in the player), because `.run()` registers an exact-typed twin
+  that float calls land on. An int in a `Num` slot costs Rhai's 2^n search
+  per call when the call can't be cached (about 4 us for 8 arguments). The
+  phone was not measured.
 - Integer arguments start working everywhere, which is additive. A few
   scripts may rely on an overload pair that the new kinds merge; the port
   keeps existing overloads by arity.
