@@ -77,6 +77,10 @@ pub mod codes {
     pub const BAD_PREFAB: &str = "bad-prefab";
     /// No schema was loaded, so nothing could be checked.
     pub const NO_SCHEMAS: &str = "no-schemas";
+    /// A component that does nothing without another the entity lacks: a
+    /// `collider` with no `rigidbody`. Found by the system that reads it,
+    /// while the game runs (#685).
+    pub const NEEDS_COMPONENT: &str = "needs-component";
 
     /// Every code, the severity it is raised with, and what it means.
     pub const ALL: &[(&str, Severity, &str)] = &[
@@ -134,6 +138,11 @@ pub mod codes {
             NO_SCHEMAS,
             Severity::Warning,
             "no schema was loaded, so components were not checked",
+        ),
+        (
+            NEEDS_COMPONENT,
+            Severity::Warning,
+            "a component that does nothing without another the entity lacks",
         ),
     ];
 }
@@ -460,7 +469,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 11);
+        assert_eq!(seen.len(), 12);
     }
 
     #[test]
