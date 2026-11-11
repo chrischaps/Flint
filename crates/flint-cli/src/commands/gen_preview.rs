@@ -628,27 +628,22 @@ impl GenPreviewApp {
 
     /// The edited params minus any the generator would ignore under the
     /// current settings (a knob set while another pattern was selected).
-    /// Unknown keys stay: the editor didn't write them.
     fn params_to_save(&self) -> toml::map::Map<String, toml::Value> {
-        let mut params = self.params.clone();
-        let table = toml::Value::Table(params.clone());
-        for issue in flint_procgen::lint_params(&self.param_schema, &table) {
-            if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
-                params.remove(&key);
-            }
-        }
-        params
+        params_to_save(&self.param_schema, &self.params)
     }
 
-    fn save_spec(&mut self) {
+    fn spec_text_for_save(&mut self) -> Result<String, String> {
         self.spec.params = toml::Value::Table(self.params_to_save());
         self.spec.seed = SeedConfig {
             mode: SeedMode::Fixed,
             value: Some(self.current_seed),
             derive_from: None,
         };
+        spec_text_for_save(&self.spec_path, &self.spec)
+    }
 
-        match toml::to_string_pretty(&self.spec) {
+    fn save_spec(&mut self) {
+        match self.spec_text_for_save() {
             Ok(content) => {
                 if let Err(e) = std::fs::write(&self.spec_path, &content) {
                     self.set_status(&format!("Failed to save: {e}"));
@@ -815,14 +810,7 @@ impl GenPreviewApp {
         };
 
         if let Some(path) = dialog.save_file() {
-            self.spec.params = toml::Value::Table(self.params_to_save());
-            self.spec.seed = SeedConfig {
-                mode: SeedMode::Fixed,
-                value: Some(self.current_seed),
-                derive_from: None,
-            };
-
-            match toml::to_string_pretty(&self.spec) {
+            match self.spec_text_for_save() {
                 Ok(content) => {
                     if let Err(e) = std::fs::write(&path, &content) {
                         self.set_status(&format!("Failed to save: {e}"));
@@ -1587,3 +1575,90 @@ pub(super) fn build_mesh_world(submesh_count: usize) -> FlintWorld {
 // ─── Parameter UI helpers (delegated to gen_preview_common) ─────────────────
 
 use super::gen_preview_common::{format_count, group_fields, random_seed, render_param_field};
+
+/// `params` minus any the generator would ignore under the current settings.
+/// Unknown keys stay: the editor didn't write them.
+fn params_to_save(
+    schema: &serde_json::Value,
+    params: &toml::map::Map<String, toml::Value>,
+) -> toml::map::Map<String, toml::Value> {
+    let mut params = params.clone();
+    let table = toml::Value::Table(params.clone());
+    for issue in flint_procgen::lint_params(schema, &table) {
+        if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
+            params.remove(&key);
+        }
+    }
+    params
+}
+
+/// The text Ctrl+S writes: the file at `path` with only `[params]` and
+/// `[seed]` patched to `spec`'s, so its comments, key order and formatting
+/// survive (#194). A missing or broken file is written fresh from the spec.
+fn spec_text_for_save(path: &Path, spec: &ProcGenSpec) -> Result<String, String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let Ok(mut doc) = text.parse::<toml::Table>() else {
+        return toml::to_string_pretty(spec).map_err(|e| e.to_string());
+    };
+    doc.insert("params".into(), spec.params.clone());
+    let seed = toml::Value::try_from(&spec.seed).map_err(|e| e.to_string())?;
+    doc.insert("seed".into(), seed);
+    super::spec_save::patch_document(&text, &toml::Value::Table(doc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #194's done-when, through the code Ctrl+S runs: open the commented
+    /// example oak, move one slider, save; one line of the file changes.
+    #[test]
+    fn saving_one_slider_change_rewrites_one_line() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = root.join("specs/examples/oak_tree.procgen.toml");
+        let dir = std::env::temp_dir().join(format!("flint-194-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oak_tree.procgen.toml");
+        std::fs::copy(&src, &path).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let mut spec = ProcGenSpec::from_file(&path).unwrap();
+        let mut registry = GeneratorRegistry::new();
+        flint_procgen::register_built_in_generators(&mut registry);
+        let schema = registry.get(&spec.generator).unwrap().param_schema();
+        let mut params = spec.params.as_table().unwrap().clone();
+
+        // Saving untouched writes the file back byte for byte.
+        spec.params = toml::Value::Table(params_to_save(&schema, &params));
+        assert_eq!(spec_text_for_save(&path, &spec).unwrap(), before);
+
+        params.insert("crown_radius".into(), toml::Value::Float(4.4));
+        spec.params = toml::Value::Table(params_to_save(&schema, &params));
+        let after = spec_text_for_save(&path, &spec).unwrap();
+        let changed: Vec<_> = before
+            .lines()
+            .zip(after.lines())
+            .filter(|(a, b)| a != b)
+            .collect();
+        assert_eq!(before.lines().count(), after.lines().count());
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(
+            changed[0].1,
+            "crown_radius = 4.4                       # how far the limbs reach from the trunk"
+        );
+        assert_eq!(ProcGenSpec::parse(&after).unwrap().params, spec.params);
+
+        // The old save's output (toml::to_string_pretty), for comparison.
+        if let Ok(out) = std::env::var("FLINT_194_SAVE_DIR") {
+            let out = Path::new(&out);
+            std::fs::write(out.join("before.toml"), &before).unwrap();
+            std::fs::write(out.join("after_new.toml"), &after).unwrap();
+            std::fs::write(
+                out.join("after_old.toml"),
+                toml::to_string_pretty(&spec).unwrap(),
+            )
+            .unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

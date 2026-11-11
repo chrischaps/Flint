@@ -565,13 +565,26 @@ impl TexEditApp {
             }
         };
 
-        let mut doc: toml::Value = match raw.parse() {
-            Ok(v) => v,
+        let mut doc: toml::Value = match raw.parse::<toml::Table>() {
+            Ok(v) => toml::Value::Table(v),
             Err(e) => {
                 self.status_message = Some((format!("Parse error: {e}"), Instant::now()));
                 return;
             }
         };
+
+        // Only what the file said, and what changed, goes back (#194).
+        let source_ops: Vec<toml::Value> = doc
+            .get("params")
+            .and_then(|p| p.get("ops"))
+            .and_then(|o| o.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let ops_toml = super::spec_save::pipeline_ops_for_save(
+            &ops_toml,
+            &source_ops,
+            &self.map_params.output_maps,
+        );
 
         if let Some(root) = doc.as_table_mut() {
             // Update seed value
@@ -599,7 +612,13 @@ impl TexEditApp {
         // Pause file watcher
         self.watcher_paused_until = Some(Instant::now() + Duration::from_secs(2));
 
-        let output = toml::to_string_pretty(&doc).unwrap_or_default();
+        let output = match super::spec_save::patch_document(&raw, &doc) {
+            Ok(text) => text,
+            Err(e) => {
+                self.status_message = Some((format!("Save error: {e}"), Instant::now()));
+                return;
+            }
+        };
         match std::fs::write(&self.spec_path, output) {
             Ok(()) => {
                 self.status_message = Some((
