@@ -54,6 +54,29 @@ the children first or pass `--recursive`. A scene that a past `entity`
 command baked or filled with defaults stays as it is; `git log -p` on it shows
 what was lost.
 
+### Viewer Ctrl+S and `flint validate --fix` keep the rest of the scene file (#677)
+**What changed.** Both used to rewrite an existing scene from its entities
+alone, which deleted `[camera]`, `[environment]`, `[post_process]`,
+`[living]`, `[wooze]`, `[prefabs]`, the `[scene]` description and
+`input_config`, and every comment; `--fix` also renamed the scene "scene" and
+baked prefab entities into the file. Now:
+
+- **Ctrl+S in `flint edit`** writes only the fields you edited, each in place
+  with its comment. With nothing edited it writes nothing, so saving an
+  untouched scene leaves it byte for byte as it was. A file with CRLF line
+  endings keeps them.
+- **`flint validate --fix`** writes only what its fixes changed
+  (`SceneDocument::apply_world_diff`). A fix to an entity that comes from a
+  prefab is printed as `not written` rather than baked in. `--output-diff` is
+  the diff of the file.
+- **`flint_scene::save_scene` refuses a path that already exists** and
+  returns an error saying so. It is for new scenes only.
+
+**What to do.** A scene that lost its tables to an earlier save needs them put
+back by hand (git has them). Rust code calling `save_scene` on an existing
+file: load a `SceneDocument` and call `patch_field`, `remove_field`,
+`add_entity` or `apply_world_diff`, then `save`.
+
 ### `flint init` writes a real game project: manifest, lit scene, HUD, input config, agent guide (#707)
 **What changed.** `flint init <name>` used to write a room and a door with no
 light, camera, player or script, its own copies of the engine's `transform`,

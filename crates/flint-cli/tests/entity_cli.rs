@@ -165,6 +165,28 @@ fn create_adds_only_its_table() {
     );
 }
 
+/// A Windows checkout's CRLF file keeps CRLF on every line, old and new, so a
+/// create still adds only its own lines byte for byte.
+#[test]
+fn create_keeps_crlf_line_endings() {
+    let root = project("crlf");
+    let crlf = SCENE.replace('\n', "\r\n");
+    std::fs::write(root.join("hall.scene.toml"), &crlf).unwrap();
+    ok(&root, CREATE_LAMP);
+    let after = scene(&root);
+    assert!(after.starts_with(&crlf), "the old text must be untouched");
+    assert!(
+        !after.replace("\r\n", "").contains('\n'),
+        "a bare LF crept in:\n{after:?}"
+    );
+
+    ok(
+        &root,
+        &["entity", "delete", "porch", "--scene", "hall.scene.toml"],
+    );
+    assert_eq!(scene(&root), crlf);
+}
+
 /// Strings with colons come back exactly as typed, through the loader.
 #[test]
 fn colons_round_trip() {

@@ -4,6 +4,7 @@
 //! preserving comments, formatting, and ordering of unchanged content.
 //! This produces minimal diffs when saving from the viewer.
 
+use flint_ecs::FlintWorld;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -11,6 +12,9 @@ use std::path::Path;
 /// A parsed scene document that can be patched field-by-field
 pub struct SceneDocument {
     doc: toml_edit::DocumentMut,
+    /// The file's lines end in `\r\n` (a Windows checkout). `toml_edit` writes
+    /// `\n`, which would change every line of the file on save (#677).
+    crlf: bool,
 }
 
 /// A dirty field identifier: (entity_name, component_name, field_name)
@@ -29,7 +33,10 @@ impl SceneDocument {
         let doc: toml_edit::DocumentMut = content
             .parse()
             .map_err(|e| format!("Failed to parse TOML: {}", e))?;
-        Ok(Self { doc })
+        Ok(Self {
+            doc,
+            crlf: content.contains("\r\n"),
+        })
     }
 
     /// Patch a single field in the document.
@@ -64,11 +71,177 @@ impl SceneDocument {
             .and_then(|v| v.as_table_like_mut())
             .ok_or_else(|| format!("Component '{}' is not a table", component))?;
 
-        // Set the field value
-        let edit_value = toml_to_edit_value(value);
-        comp.insert(field, toml_edit::Item::Value(edit_value));
+        // A value that already says the same is left as written (#677), and
+        // one that's replaced keeps its comment.
+        match comp.get_mut(field).and_then(|item| item.as_value_mut()) {
+            Some(there) if says_same(there, value) => {}
+            Some(there) => {
+                let decor = there.decor().clone();
+                *there = toml_to_edit_value(value);
+                *there.decor_mut() = decor;
+            }
+            None => {
+                comp.insert(field, toml_edit::Item::Value(toml_to_edit_value(value)));
+            }
+        }
 
         Ok(())
+    }
+
+    /// Take `field` out of an entity's component table. Nothing to do if the
+    /// file doesn't write it (an archetype default the fix took away).
+    pub fn remove_field(&mut self, entity_name: &str, component: &str, field: &str) {
+        if let Some(comp) = self
+            .entity_mut(entity_name)
+            .and_then(|e| e.get_mut(component))
+            .and_then(|c| c.as_table_like_mut())
+        {
+            comp.remove(field);
+        }
+    }
+
+    /// Whether `[entities.<name>]` is written in the file. An entity a prefab
+    /// instance expands into is in the world but not here.
+    pub fn has_entity(&self, name: &str) -> bool {
+        self.has_table(&["entities", name])
+    }
+
+    fn entity_mut(&mut self, name: &str) -> Option<&mut dyn toml_edit::TableLike> {
+        self.doc
+            .get_mut("entities")
+            .and_then(|v| v.as_table_like_mut())
+            .and_then(|e| e.get_mut(name))
+            .and_then(|v| v.as_table_like_mut())
+    }
+
+    /// Write a new entity at the end of the file: `[entities.<name>]` with its
+    /// archetype and parent, then a table per component, in name order
+    /// ([`insert_entity`](Self::insert_entity) with the components sorted).
+    pub fn add_entity(
+        &mut self,
+        name: &str,
+        archetype: Option<&str>,
+        parent: Option<&str>,
+        components: &std::collections::HashMap<String, toml::Value>,
+    ) -> Result<(), String> {
+        let mut sorted: Vec<(String, toml::Value)> = components
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        self.insert_entity(name, archetype, parent, &sorted)
+    }
+
+    /// Write into the file what changed between two worlds loaded from it
+    /// (#677): the fields `after` sets differently, the fields and components
+    /// it took away, the entities it added and the ones it removed. Nothing
+    /// else in the file changes, so its `[scene]`, `[camera]`, `[environment]`,
+    /// `[post_process]`, `[living]`, `[wooze]`, prefabs, comments and key
+    /// order stay as they were. Entities are matched by name, and so are their
+    /// parents.
+    ///
+    /// Returns what couldn't be written: a change to an entity the file doesn't
+    /// hold (one a prefab instance expands into), a renamed parent.
+    pub fn apply_world_diff(&mut self, before: &FlintWorld, after: &FlintWorld) -> Vec<String> {
+        let mut problems = Vec::new();
+        for info in before.all_entities() {
+            if !after.contains_name(&info.name) {
+                if let Some(entities) = self
+                    .doc
+                    .get_mut("entities")
+                    .and_then(|v| v.as_table_like_mut())
+                {
+                    if entities.remove(&info.name).is_none() {
+                        problems.push(format!(
+                            "'{}' was removed, but the file doesn't write it (a prefab's?)",
+                            info.name
+                        ));
+                    }
+                }
+            }
+        }
+        let empty = std::collections::HashMap::new();
+        for info in after.all_entities() {
+            let now = after.get_components(info.id);
+            let now_data = now.map(|c| &c.data).unwrap_or(&empty);
+            let Some(old_id) = before.get_id(&info.name) else {
+                let archetype = now.and_then(|c| c.archetype.as_deref());
+                if let Err(e) =
+                    self.add_entity(&info.name, archetype, info.parent.as_deref(), now_data)
+                {
+                    problems.push(e);
+                }
+                continue;
+            };
+            let then = before.get_components(old_id);
+            let then_data = then.map(|c| &c.data).unwrap_or(&empty);
+            let mut changes: Vec<FieldChange> = Vec::new();
+            if then.and_then(|c| c.archetype.as_ref()) != now.and_then(|c| c.archetype.as_ref()) {
+                changes.push(FieldChange::Entity("archetype"));
+            }
+            if before.get_parent(old_id).and_then(|p| before.get_name(p))
+                != after.get_parent(info.id).and_then(|p| after.get_name(p))
+            {
+                changes.push(FieldChange::Entity("parent"));
+            }
+            diff_components(then_data, now_data, &mut changes);
+            if changes.is_empty() {
+                continue;
+            }
+            if !self.has_entity(&info.name) {
+                problems.push(format!(
+                    "'{}' changed, but the file doesn't write it (a prefab's?): not saved",
+                    info.name
+                ));
+                continue;
+            }
+            for change in changes {
+                let result = match change {
+                    FieldChange::Entity(key) => {
+                        let value = match key {
+                            "archetype" => now.and_then(|c| c.archetype.clone()),
+                            _ => info.parent.clone(),
+                        };
+                        let entity = self.entity_mut(&info.name).expect("checked above");
+                        match value {
+                            Some(v) => {
+                                entity.insert(key, toml_edit::value(v));
+                            }
+                            None => {
+                                entity.remove(key);
+                            }
+                        }
+                        Ok(())
+                    }
+                    FieldChange::Set(component, field, value) => {
+                        self.patch_field(&info.name, component, field, value)
+                    }
+                    FieldChange::Remove(component, field) => {
+                        self.remove_field(&info.name, component, field);
+                        Ok(())
+                    }
+                    FieldChange::Component(component, value) => {
+                        let entity = self.entity_mut(&info.name).expect("checked above");
+                        match value {
+                            Some(v) => {
+                                entity.insert(
+                                    component,
+                                    toml_edit::Item::Value(toml_to_edit_value(v)),
+                                );
+                            }
+                            None => {
+                                entity.remove(component);
+                            }
+                        }
+                        Ok(())
+                    }
+                };
+                if let Err(e) = result {
+                    problems.push(e);
+                }
+            }
+        }
+        problems
     }
 
     /// Patch multiple dirty fields at once
@@ -214,11 +387,6 @@ impl SceneDocument {
             .unwrap_or_default()
     }
 
-    /// Whether `[entities.<name>]` is in the file.
-    pub fn has_entity(&self, name: &str) -> bool {
-        self.entities().is_some_and(|t| t.contains_key(name))
-    }
-
     /// The entities in the file whose `parent` is `name`, in file order.
     pub fn children_of(&self, name: &str) -> Vec<String> {
         let Some(entities) = self.entities() else {
@@ -295,15 +463,19 @@ impl SceneDocument {
             entity.insert("parent", toml_edit::value(parent));
         }
         for (component, data) in components {
-            let fields = data
-                .as_table()
-                .ok_or_else(|| format!("Component '{component}' must be a table of fields"))?;
-            let mut table = toml_edit::Table::new();
-            table.decor_mut().set_prefix("\n");
-            for (field, value) in fields {
-                table.insert(field, toml_edit::Item::Value(toml_to_edit_value(value)));
-            }
-            entity.insert(component, toml_edit::Item::Table(table));
+            let item = match data {
+                toml::Value::Table(fields) => {
+                    let mut table = toml_edit::Table::new();
+                    table.decor_mut().set_prefix("\n");
+                    for (field, value) in fields {
+                        table.insert(field, toml_edit::Item::Value(toml_to_edit_value(value)));
+                    }
+                    toml_edit::Item::Table(table)
+                }
+                // Not a component the loader can use, but written as it was given
+                other => toml_edit::Item::Value(toml_to_edit_value(other)),
+            };
+            entity.insert(component, item);
         }
         // No archetype, parent or component: still a table the loader sees
         entity.set_implicit(false);
@@ -426,9 +598,15 @@ impl SceneDocument {
         })
     }
 
-    /// Serialize the document back to a string (preserving formatting)
+    /// Serialize the document back to a string (preserving formatting, line
+    /// endings included)
     pub fn to_string(&self) -> String {
-        self.doc.to_string()
+        let text = self.doc.to_string();
+        if self.crlf {
+            text.replace("\r\n", "\n").replace('\n', "\r\n")
+        } else {
+            text
+        }
     }
 
     /// Write the document to a file
@@ -487,6 +665,90 @@ fn last_position(item: &toml_edit::Item, last: &mut Option<usize>) {
             }
         }
         _ => {}
+    }
+}
+
+/// One difference between an entity in two worlds.
+enum FieldChange<'a> {
+    /// Its `archetype` or `parent` key
+    Entity(&'static str),
+    /// A field of a component table, set
+    Set(&'a str, &'a str, &'a toml::Value),
+    /// A field of a component table, taken away
+    Remove(&'a str, &'a str),
+    /// A component that isn't a table of fields, or a whole component taken
+    /// away (`None`)
+    Component(&'a str, Option<&'a toml::Value>),
+}
+
+fn diff_components<'a>(
+    then: &'a std::collections::HashMap<String, toml::Value>,
+    now: &'a std::collections::HashMap<String, toml::Value>,
+    out: &mut Vec<FieldChange<'a>>,
+) {
+    let mut names: Vec<&String> = then.keys().chain(now.keys()).collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        match (then.get(name), now.get(name)) {
+            (Some(_), None) => out.push(FieldChange::Component(name, None)),
+            (old, Some(toml::Value::Table(fields))) => {
+                let old_fields = old.and_then(|v| v.as_table());
+                let mut keys: Vec<&String> = fields.keys().collect();
+                keys.sort();
+                for key in keys {
+                    let value = &fields[key];
+                    if old_fields.and_then(|t| t.get(key)) != Some(value) {
+                        out.push(FieldChange::Set(name, key, value));
+                    }
+                }
+                if let Some(old_fields) = old_fields {
+                    let mut gone: Vec<&String> = old_fields
+                        .keys()
+                        .filter(|k| !fields.contains_key(*k))
+                        .collect();
+                    gone.sort();
+                    for key in gone {
+                        out.push(FieldChange::Remove(name, key));
+                    }
+                }
+            }
+            (old, Some(value)) => {
+                if old != Some(value) {
+                    out.push(FieldChange::Component(name, Some(value)));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+/// Whether the file's value already says `value`. A number written `1` is the
+/// same as `1.0`: the loader reads either.
+fn says_same(there: &toml_edit::Value, value: &toml::Value) -> bool {
+    let mut bare = there.clone();
+    bare.decor_mut().clear();
+    let Ok(table) = toml::from_str::<toml::Table>(&format!("x = {bare}")) else {
+        return false;
+    };
+    table
+        .get("x")
+        .is_some_and(|written| same_value(written, value))
+}
+
+fn same_value(a: &toml::Value, b: &toml::Value) -> bool {
+    use toml::Value::{Array, Float, Integer, Table};
+    match (a, b) {
+        (Integer(i), Float(f)) | (Float(f), Integer(i)) => *i as f64 == *f,
+        (Array(x), Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same_value(p, q))
+        }
+        (Table(x), Table(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| same_value(v, w)))
+        }
+        _ => a == b,
     }
 }
 
@@ -792,5 +1054,236 @@ archetype = "light"
             out.contains("[post_process.styles.kuwahara]\nsharpness = 9.0"),
             "{out}"
         );
+    }
+
+    /// A scene carrying every top-level table the format has, and comments
+    /// (#677): what each writer must leave alone.
+    const EVERY_TABLE: &str = r#"# The grove at dusk. Keep this comment.
+[scene]
+name = "Grove at dusk"
+version = "1.0"
+description = "Every top-level table"
+input_config = "grove.input.toml"
+preload_audio = false
+
+[camera]
+position = [0.0, 4.0, 12.0]
+target = [0.0, 1.0, 0.0]
+fov = 50.0
+
+[environment]
+ambient = 0.3
+
+[post_process]
+bloom_intensity = 0.05 # soft
+look = "ink_wash"
+
+[post_process.styles.kuwahara]
+radius = 5
+
+[living]
+stagger = "per_level"
+
+[wooze]
+preset = "linklater"
+glide = 0.8
+
+[[wooze.zone]]
+name = "pocket"
+shape = "sphere"
+center = [0, 0, 12]
+radius = 6
+falloff = 4
+
+[prefabs.porch]
+template = "lamp"
+prefix = "porch"
+
+# The door, which the fix touches
+[entities.door]
+archetype = "door"
+
+[entities.door.door]
+open_angle = 200.0 # too far
+locked = false
+
+[entities.door.transform]
+position = [1, 0, 0] # written as integers
+
+[entities.lamp]
+parent = "door"
+
+[entities.lamp.light]
+intensity = 2.0
+"#;
+
+    const TOP_LEVEL: [&str; 8] = [
+        "scene",
+        "camera",
+        "environment",
+        "post_process",
+        "living",
+        "wooze",
+        "prefabs",
+        "entities",
+    ];
+
+    fn every_table_world() -> FlintWorld {
+        let registry = flint_schema::SchemaRegistry::new();
+        crate::loader::load_scene_string(EVERY_TABLE, &registry)
+            .unwrap()
+            .0
+    }
+
+    /// Every line of `before` but `except` is in `after`, in order.
+    fn kept_lines(before: &str, after: &str, except: &[&str]) {
+        let mut rest = after.lines();
+        for line in before.lines().filter(|l| !except.contains(l)) {
+            assert!(rest.any(|l| l == line), "lost or moved {line:?}:\n{after}");
+        }
+    }
+
+    #[test]
+    fn a_world_with_nothing_changed_writes_the_file_byte_for_byte() {
+        let world = every_table_world();
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        let problems = doc.apply_world_diff(&world, &every_table_world());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(doc.to_string(), EVERY_TABLE);
+    }
+
+    #[test]
+    fn patching_a_field_to_what_it_says_changes_nothing() {
+        // The viewer patches every field it touched, an undone edit included
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        let same = toml::Value::Array(vec![
+            toml::Value::Float(1.0),
+            toml::Value::Float(0.0),
+            toml::Value::Float(0.0),
+        ]);
+        doc.patch_field("door", "transform", "position", &same)
+            .unwrap();
+        doc.patch_field("door", "door", "locked", &toml::Value::Boolean(false))
+            .unwrap();
+        assert_eq!(doc.to_string(), EVERY_TABLE);
+    }
+
+    #[test]
+    fn a_crlf_file_keeps_its_line_endings() {
+        // A Windows checkout (core.autocrlf): toml_edit alone writes \n
+        let crlf = EVERY_TABLE.replace('\n', "\r\n");
+        let mut doc = SceneDocument::from_str(&crlf).unwrap();
+        assert_eq!(doc.to_string(), crlf);
+        doc.patch_field("lamp", "light", "intensity", &toml::Value::Float(3.0))
+            .unwrap();
+        let out = doc.to_string();
+        assert!(out.contains("intensity = 3.0\r\n"), "{out:?}");
+        assert!(!out.replace("\r\n", "").contains('\n'), "{out:?}");
+    }
+
+    #[test]
+    fn a_patched_field_keeps_its_comment() {
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        doc.patch_field("door", "door", "open_angle", &toml::Value::Float(90.0))
+            .unwrap();
+        let out = doc.to_string();
+        assert!(out.contains("open_angle = 90.0 # too far"), "{out}");
+        kept_lines(EVERY_TABLE, &out, &["open_angle = 200.0 # too far"]);
+    }
+
+    #[test]
+    fn every_writer_keeps_every_top_level_table() {
+        // The viewer's writer: field patches
+        let mut viewer = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        viewer
+            .patch_field("lamp", "light", "intensity", &toml::Value::Float(3.5))
+            .unwrap();
+        // validate --fix's writer: what changed between two worlds
+        let before = every_table_world();
+        let mut after = every_table_world();
+        let door = after.get_id("door").unwrap();
+        let comps = after.get_components_mut(door).unwrap();
+        comps.set_field("door", "open_angle", toml::Value::Float(90.0));
+        let mut fixer = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        assert!(fixer.apply_world_diff(&before, &after).is_empty());
+
+        for (writer, doc, changed) in [
+            ("viewer", viewer, "intensity = 2.0"),
+            ("validate --fix", fixer, "open_angle = 200.0 # too far"),
+        ] {
+            let out = doc.to_string();
+            let parsed: toml::Table = toml::from_str(&out).unwrap();
+            for table in TOP_LEVEL {
+                assert!(
+                    parsed.contains_key(table),
+                    "{writer} lost [{table}]:\n{out}"
+                );
+            }
+            kept_lines(EVERY_TABLE, &out, &[changed]);
+            let file: crate::SceneFile = toml::from_str(&out).unwrap();
+            assert_eq!(file.scene.name, "Grove at dusk", "{writer}");
+            assert_eq!(
+                file.scene.description.as_deref(),
+                Some("Every top-level table")
+            );
+            assert!(!file.scene.preload_audio, "{writer}");
+            assert!(file.prefabs.contains_key("porch"), "{writer}");
+        }
+    }
+
+    #[test]
+    fn a_world_diff_writes_removed_fields_components_and_new_entities() {
+        let before = every_table_world();
+        let mut after = every_table_world();
+        let door = after.get_id("door").unwrap();
+        let comps = after.get_components_mut(door).unwrap();
+        // remove_invalid: the field goes
+        comps
+            .get_mut("door")
+            .and_then(|v| v.as_table_mut())
+            .unwrap()
+            .remove("open_angle");
+        // add_child: a new entity, parented
+        let handle = after.spawn("door_handle").unwrap();
+        let comps = after.get_components_mut(handle).unwrap();
+        comps.archetype = Some("handle".into());
+        comps.set_field("transform", "position", toml::Value::Array(vec![]));
+        after.set_parent(handle, door).unwrap();
+        // a lamp despawned
+        after.despawn_by_name("lamp").unwrap();
+
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        let problems = doc.apply_world_diff(&before, &after);
+        assert!(problems.is_empty(), "{problems:?}");
+        let out = doc.to_string();
+        assert!(!out.contains("open_angle"), "{out}");
+        assert!(out.contains("locked = false"), "{out}");
+        assert!(!out.contains("[entities.lamp]"), "{out}");
+        let file: crate::SceneFile = toml::from_str(&out).unwrap();
+        let handle = &file.entities["door_handle"];
+        assert_eq!(handle.archetype.as_deref(), Some("handle"));
+        assert_eq!(handle.parent.as_deref(), Some("door"));
+        assert!(handle.components.contains_key("transform"));
+        assert!(out.starts_with("# The grove at dusk. Keep this comment.\n"));
+        assert!(file.wooze.is_some() && file.camera.is_some() && file.living.is_some());
+    }
+
+    #[test]
+    fn a_change_to_an_entity_the_file_does_not_write_is_reported() {
+        // An entity a prefab instance expands into is in the world only
+        let mut before = every_table_world();
+        before.spawn("porch_bulb").unwrap();
+        let mut after = every_table_world();
+        let bulb = after.spawn("porch_bulb").unwrap();
+        after.get_components_mut(bulb).unwrap().set_field(
+            "light",
+            "intensity",
+            toml::Value::Float(9.0),
+        );
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        let problems = doc.apply_world_diff(&before, &after);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("porch_bulb"), "{problems:?}");
+        assert_eq!(doc.to_string(), EVERY_TABLE);
     }
 }
