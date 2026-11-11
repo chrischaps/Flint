@@ -97,7 +97,7 @@ Three component schemas define audio behavior:
 | `min_distance` | f32 | 1.0 | Distance at full volume |
 | `max_distance` | f32 | 25.0 | Distance at silence |
 | `autoplay` | bool | true | Start playing on scene load |
-| `bus` | string | `"sfx"` | Mixer bus: `"sfx"` or `"music"` |
+| `bus` | string | `"sfx"` | Mixer bus: `"sfx"` or `"music"`. Any other name plays on `sfx` and is reported once ([Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs)) |
 
 > **Looping component sources must keep `autoplay = true`.** Components have no
 > play/stop API — scripts can only fade their volume. If you need a sound that
