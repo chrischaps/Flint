@@ -1,0 +1,115 @@
+# {{name}}: the first scene, in 2D. An orthographic camera over flat
+# sprites: a field, a few lanterns, and a square you steer with WASD.
+#
+#   flint render scenes/main.scene.toml --output renders/main.png
+#   flint play
+#
+# `flint schema sprite` prints every key of the sprite component.
+
+[scene]
+name = "{{name}}"
+version = "1.0"
+description = "A 2D field with a square to steer"
+
+# Orthographic: `ortho_height` is half the world units that fit top to bottom.
+# The camera looks down -Z at the XY plane the sprites lie in.
+[camera]
+projection = "orthographic"
+ortho_height = 6.0
+position = [0.0, 0.0, 50.0]
+target = [0.0, 0.0, 0.0]
+
+
+# All game UI is drawn by scripts; this entity only carries one.
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "hud.rhai"
+
+
+# ------------------------------------------------------------
+#  Sprites. `layer` is the draw order: higher is in front, and
+#  `anchor_y = 0.5` puts a sprite's middle at its position. A sprite
+#  with no texture is a rectangle of its `tint`; name a PNG under
+#  sprites/ in `texture` to draw a picture instead.
+# ------------------------------------------------------------
+
+[entities.field]
+archetype = "sprite"
+[entities.field.transform]
+position = [0.0, 0.0, 0.0]
+[entities.field.sprite]
+mode = "sprite2d"
+texture = ""
+width = 40.0
+height = 24.0
+anchor_y = 0.5
+layer = 0
+tint = [0.02, 0.03, 0.07, 1.0]
+
+[entities.path]
+archetype = "sprite"
+[entities.path.transform]
+position = [0.0, -1.0, 0.0]
+[entities.path.sprite]
+mode = "sprite2d"
+texture = ""
+width = 18.0
+height = 1.6
+anchor_y = 0.5
+layer = 1
+tint = [0.06, 0.07, 0.10, 1.0]
+
+[entities.lantern_1]
+archetype = "sprite"
+[entities.lantern_1.transform]
+position = [-6.0, 1.5, 0.0]
+[entities.lantern_1.sprite]
+mode = "sprite2d"
+texture = ""
+width = 0.7
+height = 0.7
+anchor_y = 0.5
+layer = 5
+tint = [1.0, 0.36, 0.06, 1.0]
+
+[entities.lantern_2]
+archetype = "sprite"
+[entities.lantern_2.transform]
+position = [0.0, 2.6, 0.0]
+[entities.lantern_2.sprite]
+mode = "sprite2d"
+texture = ""
+width = 0.7
+height = 0.7
+anchor_y = 0.5
+layer = 5
+tint = [1.0, 0.50, 0.12, 1.0]
+
+[entities.lantern_3]
+archetype = "sprite"
+[entities.lantern_3.transform]
+position = [6.0, 1.5, 0.0]
+[entities.lantern_3.sprite]
+mode = "sprite2d"
+texture = ""
+width = 0.7
+height = 0.7
+anchor_y = 0.5
+layer = 5
+tint = [1.0, 0.36, 0.06, 1.0]
+
+# The player: a sprite with a script that reads the move actions.
+[entities.player]
+archetype = "sprite"
+[entities.player.transform]
+position = [0.0, -1.0, 0.0]
+[entities.player.sprite]
+mode = "sprite2d"
+texture = ""
+width = 1.0
+height = 1.0
+anchor_y = 0.5
+layer = 10
+tint = [0.10, 0.62, 0.55, 1.0]
+[entities.player.script]
+source = "player.rhai"

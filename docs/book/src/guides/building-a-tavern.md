@@ -11,7 +11,7 @@ flint init tavern-game
 cd tavern-game
 ```
 
-This creates a project directory with `schemas/` containing default component and archetype definitions.
+This creates a game project: a `flint.toml` manifest that names the engine's schemas (so no command below needs a `--schemas` flag), a first scene of its own at `scenes/main.scene.toml`, and an empty `schemas/` for components of your own. See [Your First Project](../getting-started/first-project.md).
 
 ## 2. Create the Scene
 
