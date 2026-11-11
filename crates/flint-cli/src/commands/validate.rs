@@ -47,10 +47,15 @@ pub struct ValidateArgs {
 /// component and field against the schemas, in one pass that never stops
 /// early. `strict` (the flag; the manifest's `strict` is applied by
 /// `diagnose`) makes an unknown field an error.
+///
+/// First, what is wrong with the game's own schema files (#684): an old
+/// type spelling, an unknown type, a key the loader ignores. Warnings, and
+/// only about files outside an engine checkout (`SchemaRegistry::game_lints`).
 fn scene_diagnostics(scene: &str, schemas: &SchemaRegistry, strict: bool) -> Vec<Diagnostic> {
     let path = std::path::Path::new(scene);
     let project = flint_core::project::Project::for_scene(path);
-    let mut found = flint_scene::diagnose(path, schemas, &project);
+    let mut found = schemas.game_lints();
+    found.extend(flint_scene::diagnose(path, schemas, &project));
     if strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -326,8 +331,18 @@ fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic]) -> String {
     diagnostic::sort_errors_first(&mut ordered);
     let mut out = format!("{scene}: {}\n\n", diagnostic::counts_line(diagnostics));
     for d in &ordered {
+        // One about another file (a schema file's lint) names it
+        let elsewhere = d
+            .file
+            .as_deref()
+            .filter(|file| !flint_core::project::same_path(file, std::path::Path::new(scene)))
+            .map(|file| format!("{}: ", flint_core::project::shown(file)))
+            .unwrap_or_default();
         // A parse error's message runs over several lines
-        out.push_str(&format!("  {}\n", d.to_string().replace('\n', "\n    ")));
+        out.push_str(&format!(
+            "  {elsewhere}{}\n",
+            d.to_string().replace('\n', "\n    ")
+        ));
         if let Some(hint) = &d.hint {
             out.push_str(&format!("      hint: {hint}\n"));
         }

@@ -76,3 +76,6 @@ rfd = { workspace = true, optional = true }
 
 [dev-dependencies]
 naga = { version = "23", features = ["wgsl-in"] }
+# A JSON Schema validator, for the test that `flint schema --format json-schema`
+# describes every example scene (#684). Tests only.
+boon = "0.6"
