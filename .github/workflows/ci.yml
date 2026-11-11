@@ -179,12 +179,14 @@ jobs:
           path: target/tmp/stylize-goldens/
           if-no-files-found: warn
 
-  # A change a game can notice needs an entry in CHANGELOG.md (#765): games
-  # carry the engine as a squashed subtree, so the changelog is how they learn
-  # what an update changed. Fails a pull request that touches the schemas, the
-  # script API or the scene format with no entry and no `Changelog: none
-  # (reason)` line in a commit message. Run it locally with
-  # `bash scripts/changelog-check.sh`.
+  # A change a game can notice needs a changelog entry (#765): games carry the
+  # engine as a squashed subtree, so the changelog is how they learn what an
+  # update changed. An entry is a fragment, changelog.d/<issue>-<slug>.md
+  # (#788; changelog.yml assembles them after the merge). Fails a pull request
+  # that touches the schemas, the script API or the scene format with no
+  # fragment and no `Changelog: none (reason)` line in a commit message, a
+  # malformed fragment, or a CHANGELOG.md grown past 3 KB. Run it locally with
+  # `bash scripts/changelog-check.sh`; `bash scripts/changelog-test.sh` tests it.
   changelog:
     name: changelog
     if: github.event_name == 'pull_request'
