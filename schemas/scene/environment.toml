@@ -1,0 +1,21 @@
+# A scene's `[environment]` table: the sky image, the ambient light and how
+# matte surfaces shade.
+#
+#   [environment]
+#   skybox = "sky_sunset.hdr"
+#   ambient_sky = [0.30, 0.38, 0.52]
+#   ambient_ground = [0.12, 0.10, 0.08]
+
+[table.environment]
+description = "A scene's [environment] table: skybox, ambient light and scene-wide shading."
+
+[table.environment.fields]
+skybox = { type = "asset", kind = "files", description = "An equirectangular panorama image for the sky, found by the project's file search from the scene's directory" }
+ambient_sky = { type = "vec3", description = "Hemisphere ambient sky colour [r, g, b] (linear). Unset keeps the renderer's default" }
+ambient_ground = { type = "vec3", description = "Hemisphere ambient ground colour [r, g, b] (linear). Unset keeps the renderer's default" }
+diffuse_wrap = { type = "f32", description = "Diffuse terminator wrap: 0 is physically sharp, about 0.2 to 0.5 is soft and matte. Unset is 0" }
+oren_nayar = { type = "f32", description = "Blend from Lambert diffuse toward Oren-Nayar, 0 to 1: rough matte surfaces get a flatter, chalkier falloff. Unset is 0" }
+sheen_color = { type = "vec3", description = "Sheen rim tint [r, g, b] (linear); only shows with a sheen_strength. Unset is white" }
+sheen_strength = { type = "f32", description = "Sheen rim strength, 0 to about 0.3 (higher over-brightens). Unset is 0" }
+shadows = { type = "bool", description = "False: the scene casts no shadows, whatever the quality tier says. Unset is true" }
+default_lights = { type = "bool", description = "False: a scene with no light entities is lit by its ambient and emission alone, not the renderer's built-in key and fill. Unset is true" }

@@ -9,6 +9,13 @@
 //! naming no file the project's asset search finds (#684). Every one names
 //! its file, entity, component and field.
 //!
+//! The scene-level tables are part of the same pass (#686): a top-level
+//! table no loaded `[table.<name>]` schema declares is `unknown-table`, with
+//! the nearest declared name (`[enviroment]`: did you mean `environment`?),
+//! and a declared one is checked like a component, field by field
+//! ([`flint_schema::validate_table`]), its references included. Those name
+//! the table in place of an entity and a component.
+//!
 //! The loaders run the same pass ([`diagnose_scene_in`]) over what they
 //! parsed and log a summary, so a scene that plays has still said what is
 //! wrong with it; `flint validate` prints the whole list and fails on an
@@ -20,7 +27,7 @@ use crate::prefab;
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::project::{self, AssetKind, Project};
 use flint_core::vfs;
-use flint_schema::{references, validate_component, ReferenceKind, SchemaRegistry};
+use flint_schema::{references, validate_component, validate_table, ReferenceKind, SchemaRegistry};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -49,7 +56,7 @@ pub fn diagnose(
             return vec![Diagnostic::error(codes::FILE_UNREADABLE, e.to_string()).file(scene_file)]
         }
     };
-    let mut scene: SceneFile = match toml::from_str(&content) {
+    let mut scene: SceneFile = match SceneFile::parse(&content) {
         Ok(scene) => scene,
         Err(e) => return vec![parse_diagnostic(scene_file, &e)],
     };
@@ -128,12 +135,11 @@ fn diagnose_entities(
     mut lookup: Option<&mut Lookup>,
 ) -> Vec<Diagnostic> {
     let mut found = Vec::new();
-    if scene.entities.is_empty() {
-        return found;
-    }
+    diagnose_tables(scene, registry, lookup.as_deref_mut(), &mut found);
+    let no_schemas = registry.component_names().is_empty() && registry.archetype_names().is_empty();
     // With no schema at all every table would be "unknown": say the one
     // thing that is wrong instead
-    if registry.component_names().is_empty() && registry.archetype_names().is_empty() {
+    if !scene.entities.is_empty() && no_schemas {
         found.push(
             Diagnostic::warning(
                 codes::NO_SCHEMAS,
@@ -144,7 +150,7 @@ fn diagnose_entities(
                  flint.toml",
             ),
         );
-    } else {
+    } else if !scene.entities.is_empty() {
         let mut names: Vec<&String> = scene.entities.keys().collect();
         names.sort_unstable();
         for name in names {
@@ -175,6 +181,61 @@ fn light_table_hint(component: &str) -> Option<String> {
              type = \"{kind}\" (`flint schema light` lists its fields)"
         )
     })
+}
+
+/// The scene-level tables against the `[table.<name>]` schemas (#686), in
+/// name order: one no schema declares is `unknown-table` (a warning: nothing
+/// reads it, and the scene plays as if it were not written), a declared one
+/// is checked field by field, and its `entity` and `asset` fields are looked
+/// up as a component's are.
+///
+/// With **no** table schema loaded nothing is said: a schema directory from
+/// before the kind existed declares none, and every `[camera]` would be
+/// unknown. One of flint-scene's own tables ([`SceneFile::TYPED_TABLES`])
+/// with no schema is passed over for the same reason: the engine reads it
+/// whatever the schemas say.
+fn diagnose_tables(
+    scene: &SceneFile,
+    registry: &SchemaRegistry,
+    mut lookup: Option<&mut Lookup>,
+    found: &mut Vec<Diagnostic>,
+) {
+    if registry.table_names().is_empty() {
+        return;
+    }
+    for (name, data) in &scene.scene_tables() {
+        let Some(schema) = registry.get_table(name) else {
+            if SceneFile::TYPED_TABLES.contains(&name.as_str()) {
+                continue;
+            }
+            found.push(
+                Diagnostic::warning(
+                    codes::UNKNOWN_TABLE,
+                    format!("no scene table named `{name}`, so nothing reads it"),
+                )
+                .table(name.clone())
+                .hint(
+                    diagnostic::did_you_mean(name, registry.table_names()).unwrap_or_else(|| {
+                        format!(
+                            "a table a game adds is declared in its schema layer, as \
+                             `[table.{name}]` in scene/{name}.toml; `flint schema --list` \
+                             names the ones loaded"
+                        )
+                    }),
+                ),
+            );
+            continue;
+        };
+        found.extend(validate_table(schema, data));
+        let Some(lookup) = lookup.as_deref_mut() else {
+            continue;
+        };
+        for reference in references(schema, data) {
+            if let Some(d) = lookup.unresolved(&reference) {
+                found.push(d.table(name.clone()).field(reference.field));
+            }
+        }
+    }
 }
 
 /// What a reference is looked up in: the scene's entities, and the project's
@@ -216,6 +277,35 @@ impl Lookup<'_> {
                  \"\" when a script fills it at run time"
                     .to_string()
             })
+    }
+
+    /// The diagnostic for `reference` when it leads nowhere, without its
+    /// place (the caller names the entity and component, or the table).
+    fn unresolved(&mut self, reference: &flint_schema::Reference) -> Option<Diagnostic> {
+        match &reference.kind {
+            ReferenceKind::Entity => {
+                if self.scene.entities.contains_key(&reference.name) {
+                    return None;
+                }
+                Some(
+                    Diagnostic::error(
+                        codes::UNKNOWN_ENTITY,
+                        format!("no entity named `{}`", reference.name),
+                    )
+                    .hint(self.unknown_entity_hint(&reference.name)),
+                )
+            }
+            ReferenceKind::Asset(kinds) => {
+                let tried = self.missing_asset(kinds, &reference.name)?;
+                Some(
+                    Diagnostic::error(
+                        codes::MISSING_ASSET,
+                        format!("{} '{}' not found", asset_noun(kinds), reference.name),
+                    )
+                    .hint(tried),
+                )
+            }
+        }
     }
 
     /// `None` when a file of one of `kinds` is found for `name`, or an
@@ -335,33 +425,13 @@ fn diagnose_entity(
             continue;
         };
         for reference in references(schema, data) {
-            let d = match &reference.kind {
-                ReferenceKind::Entity => {
-                    if lookup.scene.entities.contains_key(&reference.name) {
-                        continue;
-                    }
-                    Diagnostic::error(
-                        codes::UNKNOWN_ENTITY,
-                        format!("no entity named `{}`", reference.name),
-                    )
-                    .hint(lookup.unknown_entity_hint(&reference.name))
-                }
-                ReferenceKind::Asset(kinds) => {
-                    let Some(tried) = lookup.missing_asset(kinds, &reference.name) else {
-                        continue;
-                    };
-                    Diagnostic::error(
-                        codes::MISSING_ASSET,
-                        format!("{} '{}' not found", asset_noun(kinds), reference.name),
-                    )
-                    .hint(tried)
-                }
-            };
-            found.push(
-                d.entity(name)
-                    .component(component.clone())
-                    .field(reference.field),
-            );
+            if let Some(d) = lookup.unresolved(&reference) {
+                found.push(
+                    d.entity(name)
+                        .component(component.clone())
+                        .field(reference.field),
+                );
+            }
         }
         // The tip is found among this entity's children: one that is
         // somewhere else in the scene is never reached
@@ -434,6 +504,33 @@ components = ["transform", "door"]
 
 [archetype.door.defaults.door]
 style = "hinged"
+"#,
+        ),
+        // The scene-level tables (#686): one of the engine's, with a nested
+        // table and an asset field, and one of a game's
+        (
+            "schemas/scene/environment.toml",
+            r#"
+[table.environment]
+description = "The sky and the ambient light"
+
+[table.environment.fields]
+skybox = { type = "asset", kind = "files" }
+shadows = "bool"
+fog = { type = "table", fields = { density = { type = "f32", min = 0.0 } } }
+"#,
+        ),
+        (
+            "game/schemas/scene/weather.toml",
+            r#"
+[table.weather]
+description = "What the sky is doing"
+
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0 }
+wind = "vec3"
+kind = { type = "enum", values = ["clear", "storm"], required = true }
+watcher = "entity"
 "#,
         ),
         // A game's own layer: a component the engine has never heard of
@@ -527,6 +624,131 @@ locked = "no"
         assert!(found
             .iter()
             .all(|d| d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
+    }
+
+    /// #686, the first Done-when box: a misspelled top-level table is said,
+    /// with the table it most likely is, and a table nothing declares says
+    /// where a game declares one. Warnings: the scene plays without them.
+    #[test]
+    fn an_unknown_top_level_table_warns_with_a_suggestion() {
+        let found = found_in(
+            r#"
+[scene]
+name = "Typo"
+
+[enviroment]
+shadows = false
+
+[inventory]
+slots = 4
+"#,
+        );
+        let said: Vec<String> = found.iter().map(|d| d.one_line()).collect();
+        assert_eq!(
+            said,
+            [
+                "scenes/a.scene.toml: warning[unknown-table] [enviroment]: no scene table named \
+                 `enviroment`, so nothing reads it (did you mean `environment`?)",
+                "scenes/a.scene.toml: warning[unknown-table] [inventory]: no scene table named \
+                 `inventory`, so nothing reads it (a table a game adds is declared in its \
+                 schema layer, as `[table.inventory]` in scene/inventory.toml; `flint schema \
+                 --list` names the ones loaded)",
+            ]
+        );
+        assert!(found.iter().all(|d| d.severity == Severity::Warning));
+        assert_eq!(found[0].table.as_deref(), Some("enviroment"));
+        assert_eq!(found[0].entity, None);
+
+        // --strict, and `[project] strict = true`, make it an error, as
+        // they do an unknown field
+        let mut strict = found.clone();
+        diagnostic::promote_strict(&mut strict);
+        assert!(strict.iter().all(Diagnostic::is_error));
+    }
+
+    /// A declared table is checked like a component: every field, nested
+    /// ones and references included, in one pass, naming the table.
+    #[test]
+    fn a_declared_table_is_checked_field_by_field() {
+        let found = found_in(
+            r#"
+[scene]
+name = "Storm"
+
+[environment]
+shadws = false
+skybox = "skies/none.hdr"
+fog = { density = -1.0, colour = [1, 1, 1] }
+
+[weather]
+rain = "lots"
+wind = [1.0, 0.0]
+watcher = "nobody"
+
+[entities.rock.transform]
+position = [0, 0, 0]
+"#,
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "warning[unknown-field] [environment] fog.colour: `environment.fog` has no \
+                 field `colour`",
+                "error[out-of-range] [environment] fog.density: -1 is below the minimum 0",
+                "warning[unknown-field] [environment] shadws: `environment` has no field \
+                 `shadws`",
+                "error[missing-asset] [environment] skybox: file 'skies/none.hdr' not found",
+                "error[missing-field] [weather] kind: required field `kind` is missing",
+                "error[bad-type] [weather] rain: expected f32, got string",
+                "error[bad-type] [weather] wind: a vec3 is 3 numbers, got 2",
+                "error[unknown-entity] [weather] watcher: no entity named `nobody`",
+            ]
+        );
+        assert_eq!(found[2].hint.as_deref(), Some("did you mean `shadows`?"));
+        assert!(found.iter().all(|d| d.component.is_none()
+            && d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
+    }
+
+    /// A table of the game's layer is known with that layer and unknown
+    /// without it; a scene with tables and no entities is still checked; a
+    /// registry from before the kind existed says nothing about tables.
+    #[test]
+    fn tables_are_known_by_the_layer_that_declares_them() {
+        let scene = "[scene]\nname = \"s\"\n[weather]\nkind = \"storm\"\nrain = 0.5\n";
+        assert_eq!(found_in(scene), []);
+        let found = with_scene(&[("scenes/a.scene.toml", scene)], |_, project| {
+            let engine_only = SchemaRegistry::load_from_directories(&["schemas"]).unwrap();
+            diagnose(Path::new("scenes/a.scene.toml"), &engine_only, project)
+        });
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, codes::UNKNOWN_TABLE);
+
+        let mut components_only = SchemaRegistry::new();
+        components_only
+            .load_component_string("[component.loot]\n")
+            .unwrap();
+        let parsed = SceneFile::parse(scene).unwrap();
+        assert_eq!(diagnose_scene(&parsed, None, &components_only), []);
+    }
+
+    /// One of flint-scene's own tables is checked from what the file wrote,
+    /// a key serde dropped included; without that record (a scene built in
+    /// code) it is passed over.
+    #[test]
+    fn a_typed_table_is_checked_from_what_was_written() {
+        let scene = "[scene]\nname = \"s\"\n[environment]\nshadws = false\n";
+        with_scene(&[], |registry, _| {
+            let parsed = SceneFile::parse(scene).unwrap();
+            let found = diagnose_scene(&parsed, None, registry);
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert_eq!(found[0].code, codes::UNKNOWN_FIELD);
+            let unrecorded: SceneFile = toml::from_str(scene).unwrap();
+            assert_eq!(diagnose_scene(&unrecorded, None, registry), []);
+            // [camera] has no schema here: the engine reads it all the same
+            let camera = SceneFile::parse("[scene]\nname = \"s\"\n[camera]\nfov = 50.0\n").unwrap();
+            assert_eq!(diagnose_scene(&camera, None, registry), []);
+        });
     }
 
     #[test]

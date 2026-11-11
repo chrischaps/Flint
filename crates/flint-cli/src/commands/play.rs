@@ -185,6 +185,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     // The scene's living props: what their shadows follow, and how woozy it is
     app.scene_living = scene_file.living.clone();
     app.scene_wooze = scene_file.wooze.clone();
+    app.scene_tables = scene_file.scene_tables();
 
     // The registry and its directories, kept for transitions and chunks
     app.set_schemas(registry, schema_dirs);

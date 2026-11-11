@@ -2,15 +2,16 @@
 //!
 //! ```text
 //! flint schema light                      one component or archetype, as text
-//! flint schema --list                     every component and archetype
+//! flint schema post_process               one scene-level table (#686)
+//! flint schema --list                     every component, scene table and archetype
 //! flint schema --list --json              ...as JSON
 //! flint schema light --format json        one, as data
 //! flint schema --format json              everything loaded, as data
 //! flint schema --format json-schema       a JSON Schema for a .scene.toml
 //! ```
 //!
-//! A name that is no component or archetype is an error (#684: it used to
-//! print "not found" and exit 0).
+//! A name that is no component, scene table or archetype is an error (#684:
+//! it used to print "not found" and exit 0).
 
 use super::schema_export;
 use anyhow::{bail, Context, Result};
@@ -20,11 +21,11 @@ use flint_schema::SchemaRegistry;
 
 #[derive(Args)]
 pub struct SchemaArgs {
-    /// Component or archetype name. Without one: --list, or --format json /
-    /// json-schema for everything loaded
+    /// Component, scene-table or archetype name. Without one: --list, or
+    /// --format json / json-schema for everything loaded
     pub name: Option<String>,
 
-    /// List every component and archetype loaded
+    /// List every component, scene table and archetype loaded
     #[arg(long)]
     pub list: bool,
 
@@ -87,10 +88,13 @@ pub fn run(args: SchemaArgs) -> Result<()> {
 
     let name = args.name.as_deref();
     if args.list && name.is_some() {
-        bail!("--list is every component and archetype: leave the name out");
+        bail!("--list is every component, scene table and archetype: leave the name out");
     }
     if let Some(name) = name {
-        if registry.get_component(name).is_none() && registry.get_archetype(name).is_none() {
+        if registry.get_component(name).is_none()
+            && registry.get_table(name).is_none()
+            && registry.get_archetype(name).is_none()
+        {
             bail!("{}", not_found(name, &registry));
         }
     }
@@ -98,28 +102,37 @@ pub fn run(args: SchemaArgs) -> Result<()> {
     let out = match (format, name) {
         (Format::Text, None) if args.list => list_text(&registry, &shown),
         (Format::Text, None) => bail!(
-            "name a component or archetype (`flint schema light`), or pass --list for all of \
-             them, --format json for the schemas as data, --format json-schema for a JSON \
-             Schema of a scene file"
+            "name a component, scene table or archetype (`flint schema light`), or pass --list \
+             for all of them, --format json for the schemas as data, --format json-schema for \
+             a JSON Schema of a scene file"
         ),
         (Format::Text, Some(name)) => one_text(name, &registry),
         (Format::Json, None) if args.list => pretty(&schema_export::list_json(&registry, &shown)),
         (Format::Json, None) => pretty(&schema_export::registry_json(&registry, &shown)),
-        (Format::Json, Some(name)) => pretty(&match registry.get_component(name) {
-            Some(component) => schema_export::component_json(component),
-            None => schema_export::archetype_json(registry.get_archetype(name).unwrap()),
+        (Format::Json, Some(name)) => pretty(&match (
+            registry.get_component(name),
+            registry.get_table(name),
+        ) {
+            (Some(component), _) => schema_export::component_json(component),
+            (None, Some(table)) => schema_export::table_json(table),
+            (None, None) => schema_export::archetype_json(registry.get_archetype(name).unwrap()),
         }),
         (Format::JsonSchema, None) if args.list => {
             bail!("--list has no JSON Schema: `flint schema --format json-schema` is the scene's")
         }
         (Format::JsonSchema, None) => pretty(&schema_export::scene_json_schema(&registry, &shown)),
-        (Format::JsonSchema, Some(name)) => match registry.get_component(name) {
-            Some(component) => pretty(&schema_export::component_schema(component, &registry)),
-            None => bail!(
-                "`{name}` is an archetype, which has no table of its own to describe: \
+        (Format::JsonSchema, Some(name)) => {
+            match (registry.get_component(name), registry.get_table(name)) {
+                (Some(component), _) => {
+                    pretty(&schema_export::component_schema(component, &registry))
+                }
+                (None, Some(table)) => pretty(&schema_export::scene_table_schema(table)),
+                (None, None) => bail!(
+                    "`{name}` is an archetype, which has no table of its own to describe: \
                  `flint schema --format json-schema` is the whole scene's"
-            ),
-        },
+                ),
+            }
+        }
     };
 
     match &args.output {
@@ -144,8 +157,9 @@ fn not_found(name: &str, registry: &SchemaRegistry) -> String {
     let names = registry
         .component_names()
         .into_iter()
+        .chain(registry.table_names())
         .chain(registry.archetype_names());
-    let mut message = format!("no component or archetype named `{name}`");
+    let mut message = format!("no component, scene table or archetype named `{name}`");
     if let Some(near) = diagnostic::did_you_mean(name, names) {
         message.push_str(&format!(": {near}"));
     }
@@ -167,33 +181,42 @@ fn brief(description: Option<&str>) -> String {
 
 fn list_text(registry: &SchemaRegistry, dirs: &[String]) -> String {
     let components = registry.components();
+    let tables = registry.tables();
     let archetypes = registry.archetypes();
     let width = components
         .iter()
+        .chain(tables.iter())
         .map(|c| c.name.len())
         .chain(archetypes.iter().map(|a| a.name.len()))
         .max()
         .unwrap_or(0);
     let mut out = format!("Schemas from: {}\n\n", dirs.join(", "));
-    out.push_str(&format!("Components ({}):\n", components.len()));
-    for c in &components {
-        let fields = match c.fields.len() {
-            0 => "open".to_string(),
-            1 => "1 field".to_string(),
-            n => format!("{n} fields"),
-        };
-        out.push_str(
-            format!(
-                "  {:width$}  {:>9}  {}",
-                c.name,
-                fields,
-                brief(c.description.as_deref())
-            )
-            .trim_end(),
-        );
+    let mut rows = |heading: &str, schemas: &[&flint_schema::ComponentSchema]| {
+        out.push_str(&format!("{heading} ({}):\n", schemas.len()));
+        for c in schemas {
+            let fields = match c.fields.len() {
+                0 => "open".to_string(),
+                1 => "1 field".to_string(),
+                n => format!("{n} fields"),
+            };
+            out.push_str(
+                format!(
+                    "  {:width$}  {:>9}  {}",
+                    c.name,
+                    fields,
+                    brief(c.description.as_deref())
+                )
+                .trim_end(),
+            );
+            out.push('\n');
+        }
         out.push('\n');
-    }
-    out.push_str(&format!("\nArchetypes ({}):\n", archetypes.len()));
+    };
+    rows("Components", &components);
+    // A scene's top-level tables (`[post_process]`, a game's `[weather]`):
+    // #686. A schema directory from before the kind existed has none.
+    rows("Scene tables", &tables);
+    out.push_str(&format!("Archetypes ({}):\n", archetypes.len()));
     for a in &archetypes {
         out.push_str(&format!(
             "  {:width$}  {}\n",
@@ -202,58 +225,41 @@ fn list_text(registry: &SchemaRegistry, dirs: &[String]) -> String {
         ));
     }
     out.push_str(
-        "\n`open` is a component with no fields declared: its name is known and nothing in \
-         it is checked.\n`flint schema <name>` shows one; `--format json` gives all of it as \
-         data.\n",
+        "\n`open` is a component or table with no fields declared: its name is known and \
+         nothing in it is checked.\nA scene table is a top-level table of a scene file \
+         (`[post_process]`), declared as `[table.<name>]` under scene/.\n`flint schema \
+         <name>` shows one; `--format json` gives all of it as data.\n",
     );
     out
 }
 
 fn one_text(name: &str, registry: &SchemaRegistry) -> String {
     let mut out = String::new();
-    // Try component first, then archetype
-    if let Some(component) = registry.get_component(name) {
-        out.push_str(&format!("Component: {}\n", component.name));
+    // Try component first, then scene table, then archetype
+    let fielded = [
+        ("Component", "component", registry.get_component(name)),
+        ("Scene table", "table", registry.get_table(name)),
+    ];
+    for (heading, noun, schema) in fielded {
+        let Some(component) = schema else {
+            continue;
+        };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("{heading}: {}\n", component.name));
         if let Some(desc) = &component.description {
             out.push_str(&format!("Description: {desc}\n"));
         }
         out.push_str("\nFields:\n");
         if component.is_open() {
-            out.push_str(
-                "  (none declared: the component is open, and nothing in it is checked)\n",
-            );
-        }
-
-        let mut fields: Vec<_> = component.fields.iter().collect();
-        fields.sort_by_key(|(name, _)| *name);
-
-        for (field_name, field_schema) in fields {
-            let required = if field_schema.required {
-                " (required)"
-            } else {
-                ""
-            };
             out.push_str(&format!(
-                "  {} : {}{}",
-                field_name,
-                field_schema.field_type.describe(),
-                required
+                "  (none declared: the {noun} is open, and nothing in it is checked)\n"
             ));
-            if let Some(default) = &field_schema.default {
-                out.push_str(&format!(" = {}", format_toml_value(default)));
-            }
-            out.push('\n');
-
-            if let Some(desc) = &field_schema.description {
-                out.push_str(&format!("    # {desc}\n"));
-            }
-
-            if field_schema.min.is_some() || field_schema.max.is_some() {
-                let min = field_schema.min.map(|v| v.to_string()).unwrap_or_default();
-                let max = field_schema.max.map(|v| v.to_string()).unwrap_or_default();
-                out.push_str(&format!("    # Range: {min} .. {max}\n"));
-            }
         }
+        fields_text(&component.fields, 1, &mut out);
+    }
+    if !out.is_empty() {
         return out;
     }
 
@@ -290,6 +296,66 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
         }
     }
     out
+}
+
+/// `fields` by name, each with its description and range below it. A table
+/// that declares its own fields (and an array of such tables: a
+/// `[[wooze.zone]]`) has them listed under it, a level in.
+fn fields_text(
+    fields: &std::collections::HashMap<String, flint_schema::FieldSchema>,
+    depth: usize,
+    out: &mut String,
+) {
+    use flint_schema::FieldType;
+    let pad = "  ".repeat(depth);
+    let mut fields: Vec<_> = fields.iter().collect();
+    fields.sort_by_key(|(name, _)| *name);
+
+    for (field_name, field_schema) in fields {
+        let required = if field_schema.required {
+            " (required)"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "{pad}{} : {}{}",
+            field_name,
+            field_schema.field_type.describe(),
+            required
+        ));
+        if let Some(default) = &field_schema.default {
+            out.push_str(&format!(" = {}", format_toml_value(default)));
+        }
+        out.push('\n');
+
+        if let Some(desc) = &field_schema.description {
+            out.push_str(&format!("{pad}  # {desc}\n"));
+        }
+
+        if field_schema.min.is_some() || field_schema.max.is_some() {
+            let min = field_schema.min.map(|v| v.to_string()).unwrap_or_default();
+            let max = field_schema.max.map(|v| v.to_string()).unwrap_or_default();
+            out.push_str(&format!("{pad}  # Range: {min} .. {max}\n"));
+        }
+
+        let nested = match &field_schema.field_type {
+            FieldType::Fields { fields } => Some(fields),
+            FieldType::Array { element } => match &**element {
+                FieldType::Fields { fields } => Some(fields),
+                _ => None,
+            },
+            _ => None,
+        };
+        // Only where a nested field says more than its name, which the
+        // type line above already lists
+        if let Some(nested) = nested {
+            if nested.values().any(|f| {
+                f.description.is_some() || f.required || f.min.is_some() || f.max.is_some()
+            }) {
+                fields_text(nested, depth + 2, out);
+            }
+        }
+    }
 }
 
 fn format_toml_value(v: &toml::Value) -> String {

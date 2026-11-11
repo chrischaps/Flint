@@ -63,13 +63,15 @@ fn load_text_diagnosed(
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
     let mut scene_file = parse_scene(content, Some(path))?;
-    note_post_process(&mut scene_file, content, Some(path));
+    note_post_process(content, Some(path), registry);
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
+    // The tables are diagnosed as the file wrote them, before a preset fills
+    // them in
+    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     fill_in_preset(&mut scene_file, path);
 
-    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file, found))
 }
@@ -78,7 +80,7 @@ fn load_text_diagnosed(
 /// error that names the file (#683): the parser's own message has only a
 /// line and a column.
 fn parse_scene(content: &str, path: Option<&Path>) -> Result<SceneFile> {
-    toml::from_str(content).map_err(|e: toml::de::Error| match path {
+    SceneFile::parse(content).map_err(|e: toml::de::Error| match path {
         Some(path) => FlintError::TomlParseError(format!(
             "{}: {}",
             flint_core::project::shown(path),
@@ -136,8 +138,8 @@ pub fn load_scene_string(
     content: &str,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
-    let mut scene_file = parse_scene(content, None)?;
-    note_post_process(&mut scene_file, content, None);
+    let scene_file = parse_scene(content, None)?;
+    note_post_process(content, None, registry);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
@@ -150,15 +152,18 @@ pub fn load_scene_string(
 
 /// Warn about `[post_process]` keys that are no field (#354): serde drops
 /// them silently, so a typo would leave the default in place. The scene
-/// still loads. Then record the keys the block wrote
-/// ([`PostProcessDef::authored`]), which a look goes under (#356).
-fn note_post_process(scene_file: &mut SceneFile, content: &str, path: Option<&Path>) {
+/// still loads. Only when no loaded schema declares `[table.post_process]`:
+/// with one (the engine's `schemas/scene/`), the same keys are
+/// `unknown-field` diagnostics in the load's one list (#686), and saying it
+/// twice helps nobody. ([`SceneFile::parse`] records the keys the block
+/// wrote, [`PostProcessDef::authored`], which a look goes under, #356.)
+fn note_post_process(content: &str, path: Option<&Path>, registry: &SchemaRegistry) {
+    if registry.get_table("post_process").is_some() {
+        return;
+    }
     let source = path.map(|p| p.display().to_string());
     for warning in PostProcessDef::unknown_field_warnings(content, source.as_deref()) {
         tracing::warn!("{warning}");
-    }
-    if let Some(def) = &mut scene_file.post_process {
-        def.authored = PostProcessDef::authored_table(content);
     }
 }
 
@@ -171,13 +176,13 @@ pub fn reload_scene<P: AsRef<Path>>(
     let path = path.as_ref();
     let content = vfs::read_to_string(path)?;
     let mut scene_file = parse_scene(&content, Some(path))?;
-    note_post_process(&mut scene_file, &content, Some(path));
+    note_post_process(&content, Some(path), registry);
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
-    fill_in_preset(&mut scene_file, path);
     let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
+    fill_in_preset(&mut scene_file, path);
 
     // Clear existing world
     world.clear();
@@ -192,8 +197,8 @@ pub fn reload_scene_string(
     world: &mut FlintWorld,
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
-    let mut scene_file = parse_scene(content, None)?;
-    note_post_process(&mut scene_file, content, None);
+    let scene_file = parse_scene(content, None)?;
+    note_post_process(content, None, registry);
 
     if !scene_file.prefabs.is_empty() {
         tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");

@@ -192,7 +192,18 @@ pub fn check(
         styles(scene, scene_dir, &file, &text, memo, &mut out.diagnostics);
     }
     if checks.tables {
-        out.diagnostics.extend(wooze(scene, &file, schemas));
+        let wooze = wooze(scene, &file, schemas);
+        // The scene pass has checked `[wooze]` against its `[table.wooze]`
+        // schema like any table (#686), and this check holds it to the same
+        // schema and to the field itself, one issue a zone, in the field's
+        // words and by the zone's name. One mistake is said once: these
+        // stay, and the pass's warnings (a key the schema doesn't declare)
+        // with them.
+        if !wooze.is_empty() {
+            out.diagnostics
+                .retain(|d| !(d.is_error() && d.table.as_deref() == Some("wooze")));
+        }
+        out.diagnostics.extend(wooze);
         out.diagnostics
             .extend(species(scene, &file, world.as_ref()));
     }

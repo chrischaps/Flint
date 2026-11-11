@@ -495,14 +495,16 @@ impl WoozeDef {
     }
 
     /// Everything wrong with this table: first what the field itself can't use,
-    /// which says the most, and then anything that passes that but not the `wooze`
-    /// and `wooze_zone` schemas, which a game's own schemas can tighten. One issue
-    /// a zone at most, so that one mistake isn't reported twice.
+    /// which says the most, and then anything that passes that but not the
+    /// `[table.wooze]` schema (and its `zone` field's, for a zone), which a game's
+    /// own schemas can tighten. One issue a zone at most, so that one mistake isn't
+    /// reported twice.
     pub fn check(&self, schemas: &SchemaRegistry) -> Vec<WoozeIssue> {
         let (_, mut issues) = self.field();
+        let table_schema = schemas.get_table("wooze");
 
         let global_is_fine = issues.iter().all(|issue| issue.zone.is_some());
-        if let (true, Some(schema)) = (global_is_fine, schemas.get_component("wooze")) {
+        if let (true, Some(schema)) = (global_is_fine, table_schema) {
             let mut table = toml::Table::new();
             if let Some(name) = &self.preset {
                 table.insert("preset".into(), toml::Value::String(name.clone()));
@@ -526,7 +528,8 @@ impl WoozeDef {
             }
         }
 
-        if let Some(schema) = schemas.get_component("wooze_zone") {
+        if let Some(schema) = table_schema.and_then(zone_schema) {
+            let schema = &schema;
             for (i, zone) in self.zone.iter().enumerate() {
                 let label = zone_label(zone, i);
                 if issues
@@ -545,6 +548,22 @@ impl WoozeDef {
         }
         issues
     }
+}
+
+/// What `[table.wooze]` says one `[[wooze.zone]]` entry holds: the fields of its
+/// `zone` array's element, as a schema of their own.
+fn zone_schema(wooze: &flint_schema::TableSchema) -> Option<flint_schema::TableSchema> {
+    let flint_schema::FieldType::Array { element } = &wooze.get_field("zone")?.field_type else {
+        return None;
+    };
+    let flint_schema::FieldType::Fields { fields } = &**element else {
+        return None;
+    };
+    Some(flint_schema::TableSchema {
+        name: "wooze.zone".to_string(),
+        description: None,
+        fields: fields.clone(),
+    })
 }
 
 /// A zone's name, or `zone <n>`, counting from 1, if it hasn't got one.
@@ -966,12 +985,11 @@ glide = 0.5
     fn a_games_schema_can_tighten_what_a_zone_may_be() {
         let mut schemas = schemas();
         schemas
-            .load_component_string(
+            .load_table_string(
                 r#"
-[component.wooze_zone.fields]
-glide = { type = "f32", min = 0.0, max = 0.5 }
-[component.wooze.fields]
+[table.wooze.fields]
 step = { type = "f32", min = 1.0 }
+zone = { type = "array", element = { type = "table", fields = { glide = { type = "f32", min = 0.0, max = 0.5 } } } }
 "#,
             )
             .unwrap();
@@ -1007,11 +1025,9 @@ step = { type = "f32", min = 1.0 }
     fn the_schema_and_the_field_agree_on_every_knob() {
         let schemas = schemas();
         let wooze = schemas
-            .get_component("wooze")
-            .expect("schemas/components/wooze.toml");
-        let zone = schemas
-            .get_component("wooze_zone")
-            .expect("the zone's schema");
+            .get_table("wooze")
+            .expect("schemas/scene/wooze.toml");
+        let zone = &super::zone_schema(wooze).expect("the zone's schema");
         let ranges = [
             ("amplitude", Some(0.0), Some(f64::from(AMPLITUDE_MAX))),
             ("step", Some(f64::from(STEP_MIN)), None),

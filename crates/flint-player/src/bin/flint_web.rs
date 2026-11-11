@@ -423,6 +423,11 @@ mod web {
                 .load_archetype_string(toml)
                 .map_err(|e| format!("engine archetype schema: {e}"))?;
         }
+        for toml in engine_schemas::SCENE {
+            registry
+                .load_table_string(toml)
+                .map_err(|e| format!("engine scene-table schema: {e}"))?;
+        }
         Ok(registry)
     }
 

@@ -59,8 +59,10 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
         post_process: None,
         living: None,
         wooze: None,
+        tables: toml::Table::new(),
         prefabs: std::collections::HashMap::new(),
         entities: std::collections::HashMap::new(),
+        written: toml::Table::new(),
     };
 
     for info in world.all_entities() {

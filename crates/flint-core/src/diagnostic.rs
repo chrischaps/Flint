@@ -98,6 +98,12 @@ pub mod codes {
     /// `[component.x]` instead of `[component.x.fields]`, or a misspelled
     /// key of a field.
     pub const IGNORED_SCHEMA_KEY: &str = "ignored-schema-key";
+    /// A top-level table of a scene that no loaded schema directory declares
+    /// as a `[table.<name>]` (#686): a misspelled `[enviroment]`, or a
+    /// game's own table before its schema says so. A warning (nothing reads
+    /// it, so the scene plays as if it were not there); `--strict` makes it
+    /// an error.
+    pub const UNKNOWN_TABLE: &str = "unknown-table";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -287,6 +293,11 @@ pub mod codes {
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
         ),
+        (
+            UNKNOWN_TABLE,
+            Severity::Warning,
+            "a top-level scene table no loaded schema directory declares",
+        ),
     ];
 }
 
@@ -299,7 +310,12 @@ pub struct Diagnostic {
     pub file: Option<PathBuf>,
     pub entity: Option<String>,
     pub component: Option<String>,
-    /// Dotted path inside the component: `friction`, `points[2]`, `shear.xz`.
+    /// The scene-level table it is in (`post_process`, a game's `weather`),
+    /// for a problem that is in no entity (#686).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<String>,
+    /// Dotted path inside the component or the table: `friction`,
+    /// `points[2]`, `shear.xz`.
     pub field: Option<String>,
     pub message: String,
     /// What to do about it: "did you mean `light`?", the allowed values.
@@ -318,6 +334,7 @@ impl Diagnostic {
             file: None,
             entity: None,
             component: None,
+            table: None,
             field: None,
             message: message.into(),
             hint: None,
@@ -348,6 +365,12 @@ impl Diagnostic {
         self
     }
 
+    /// The scene-level table the problem is in.
+    pub fn table(mut self, table: impl Into<String>) -> Self {
+        self.table = Some(table.into());
+        self
+    }
+
     pub fn field(mut self, field: impl Into<String>) -> Self {
         self.field = Some(field.into());
         self
@@ -374,9 +397,16 @@ impl Diagnostic {
         self.severity == Severity::Error
     }
 
-    /// Where it is, without the file: `entity 'crate' collider.friction`.
-    /// Empty when the diagnostic is about the file as a whole.
+    /// Where it is, without the file: `entity 'crate' collider.friction`,
+    /// or `[post_process] bloom_intensity` for a scene-level table. Empty
+    /// when the diagnostic is about the file as a whole.
     pub fn location(&self) -> String {
+        if let Some(table) = &self.table {
+            return match &self.field {
+                Some(field) => format!("[{table}] {field}"),
+                None => format!("[{table}]"),
+            };
+        }
         let mut parts = Vec::new();
         if let Some(entity) = &self.entity {
             parts.push(format!("entity '{entity}'"));
@@ -436,10 +466,12 @@ pub fn has_errors(diagnostics: &[Diagnostic]) -> bool {
     diagnostics.iter().any(Diagnostic::is_error)
 }
 
-/// `--strict` (and `[project] strict = true`): an unknown field is an error.
+/// `--strict` (and `[project] strict = true`): an unknown field is an error,
+/// and so is an unknown scene table (#686). Both are the scene saying
+/// something no schema declares.
 pub fn promote_strict(diagnostics: &mut [Diagnostic]) {
     for d in diagnostics {
-        if d.code == codes::UNKNOWN_FIELD {
+        if d.code == codes::UNKNOWN_FIELD || d.code == codes::UNKNOWN_TABLE {
             d.severity = Severity::Error;
         }
     }
@@ -628,19 +660,42 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 31);
+        assert_eq!(seen.len(), 32);
+    }
+
+    /// A problem in a scene-level table names the table as its header is
+    /// written, and its serialized form has `table` only then.
+    #[test]
+    fn a_scene_table_is_named_by_its_header() {
+        let field = Diagnostic::warning(codes::UNKNOWN_FIELD, "no field `bloom_intesity`")
+            .table("post_process")
+            .field("bloom_intesity");
+        assert_eq!(
+            field.to_string(),
+            "warning[unknown-field] [post_process] bloom_intesity: no field `bloom_intesity`"
+        );
+        let table = Diagnostic::warning(codes::UNKNOWN_TABLE, "no scene table").table("enviroment");
+        assert_eq!(
+            table.to_string(),
+            "warning[unknown-table] [enviroment]: no scene table"
+        );
+        let text = toml::to_string(&table).unwrap();
+        assert!(text.contains("table = \"enviroment\""), "{text}");
+        let entity = Diagnostic::error(codes::BAD_TYPE, "x").entity("e");
+        assert!(!toml::to_string(&entity).unwrap().contains("table"));
     }
 
     #[test]
-    fn strict_promotes_only_unknown_fields() {
+    fn strict_promotes_only_unknown_fields_and_tables() {
         let mut list = vec![
             Diagnostic::warning(codes::UNKNOWN_FIELD, "a"),
             Diagnostic::warning(codes::NO_SCHEMAS, "b"),
             Diagnostic::error(codes::BAD_TYPE, "c"),
+            Diagnostic::warning(codes::UNKNOWN_TABLE, "d"),
         ];
-        assert_eq!(counts_line(&list), "1 error, 2 warnings");
+        assert_eq!(counts_line(&list), "1 error, 3 warnings");
         promote_strict(&mut list);
-        assert_eq!(count(&list, Severity::Error), 2);
+        assert_eq!(count(&list, Severity::Error), 3);
         assert_eq!(list[1].severity, Severity::Warning);
         assert!(has_errors(&list));
         assert_eq!(counts_line(&[]), "no problems");

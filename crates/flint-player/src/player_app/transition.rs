@@ -397,6 +397,7 @@ impl PlayerApp {
                 );
                 self.scene_living = scene_file.living.clone();
                 self.scene_wooze = scene_file.wooze.clone();
+                self.scene_tables = scene_file.scene_tables();
                 self.scene_input_config = scene_file.scene.input_config.clone();
                 self.scene_preload_audio = scene_file.scene.preload_audio;
             }

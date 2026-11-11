@@ -133,6 +133,7 @@ impl PlayerApp {
             scene_post_process: None,
             style_specs: Vec::new(),
             style_time: None,
+            scene_tables: toml::Table::new(),
             scene_living: None,
             living_blend: Default::default(),
             scene_wooze: None,
@@ -282,6 +283,7 @@ impl PlayerApp {
         self.set_scene_post_process(scene_file.post_process.clone());
         self.scene_living = scene_file.living.clone();
         self.scene_wooze = scene_file.wooze.clone();
+        self.scene_tables = scene_file.scene_tables();
     }
 
     /// Take a scene's `[post_process]` block, with the look it names

@@ -3,24 +3,84 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-/// Root structure of a scene TOML file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Root structure of a scene TOML file: `[scene]`, the scene-level tables,
+/// `[prefabs.*]` and `[entities.*]`.
+///
+/// A scene-level table is any other top-level table. The ones flint-scene
+/// reads itself are fields ([`SceneFile::TYPED_TABLES`]); **every other one
+/// is kept as written in [`tables`](Self::tables)** (#686) and written back
+/// by `toml::to_string`, so a game's own `[weather]` survives a load and
+/// reaches whoever reads it (a `PlayerExtension`, through
+/// `ExtensionCtx::scene_table`). A `[table.<name>]` schema declares one;
+/// [`diagnose`](crate::diagnose) warns about one no schema declares
+/// (`unknown-table`) and checks the fields of the ones that are declared.
+#[derive(Debug, Clone, Serialize)]
 pub struct SceneFile {
     pub scene: SceneMetadata,
-    #[serde(default)]
     pub camera: Option<CameraDef>,
-    #[serde(default)]
     pub environment: Option<EnvironmentDef>,
-    #[serde(default)]
     pub post_process: Option<PostProcessDef>,
-    #[serde(default)]
     pub living: Option<LivingDef>,
-    #[serde(default)]
     pub wooze: Option<WoozeDef>,
-    #[serde(default)]
+    /// Every top-level table that is none of the above, by name, as the
+    /// file wrote it: a game's or an extension's own.
+    #[serde(flatten)]
+    pub tables: toml::Table,
     pub prefabs: HashMap<String, PrefabInstance>,
-    #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+    /// The typed tables ([`SceneFile::TYPED_TABLES`]) as the file wrote
+    /// them, before their defaults were filled in: what
+    /// [`diagnose`](crate::diagnose) checks against their `[table.*]`
+    /// schemas, so a misspelled key serde dropped is still named.
+    /// [`SceneFile::parse`] and the loaders record it; a scene built in code
+    /// or read with `toml::from_str` has none, and its typed tables are not
+    /// checked.
+    #[serde(skip)]
+    pub written: toml::Table,
+}
+
+impl<'de> Deserialize<'de> for SceneFile {
+    /// Each known table straight into its type (so an error keeps its line
+    /// and column, which `#[serde(flatten)]` would lose), and every other
+    /// top-level key into [`tables`](SceneFile::tables).
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SceneVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SceneVisitor {
+            type Value = SceneFile;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a scene file")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<SceneFile, A::Error> {
+                let mut scene: Option<SceneMetadata> = None;
+                let mut file = SceneFile::new("");
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "scene" => scene = Some(map.next_value()?),
+                        "camera" => file.camera = map.next_value()?,
+                        "environment" => file.environment = map.next_value()?,
+                        "post_process" => file.post_process = map.next_value()?,
+                        "living" => file.living = map.next_value()?,
+                        "wooze" => file.wooze = map.next_value()?,
+                        "prefabs" => file.prefabs = map.next_value()?,
+                        "entities" => file.entities = map.next_value()?,
+                        _ => {
+                            file.tables.insert(key, map.next_value()?);
+                        }
+                    }
+                }
+                file.scene = scene.ok_or_else(|| serde::de::Error::missing_field("scene"))?;
+                Ok(file)
+            }
+        }
+
+        deserializer.deserialize_map(SceneVisitor)
+    }
 }
 
 /// A scene's `[wooze]` table (#213): how woozy it is everywhere, and the zones
@@ -922,6 +982,52 @@ impl EntityDef {
 }
 
 impl SceneFile {
+    /// The scene-level tables that are fields of this struct, by the name
+    /// their header is written with. Any other top-level table is in
+    /// [`tables`](Self::tables).
+    pub const TYPED_TABLES: &'static [&'static str] =
+        &["camera", "environment", "post_process", "living", "wooze"];
+
+    /// A scene from its text, with what its typed tables wrote kept in
+    /// [`written`](Self::written) (and in
+    /// [`PostProcessDef::authored`]). What the loaders and
+    /// [`diagnose`](crate::diagnose) parse with.
+    pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
+        let mut scene: SceneFile = toml::from_str(text)?;
+        if let Ok(mut doc) = toml::from_str::<toml::Table>(text) {
+            for name in Self::TYPED_TABLES {
+                if let Some(value) = doc.remove(*name) {
+                    scene.written.insert((*name).to_string(), value);
+                }
+            }
+        }
+        if let Some(def) = &mut scene.post_process {
+            def.authored = match scene.written.get("post_process") {
+                Some(toml::Value::Table(post)) => Some(post.clone()),
+                _ => None,
+            };
+        }
+        Ok(scene)
+    }
+
+    /// The scene-level table `name` as the file wrote it: one of
+    /// [`tables`](Self::tables), or a typed one from
+    /// [`written`](Self::written).
+    pub fn table(&self, name: &str) -> Option<&toml::Value> {
+        self.tables.get(name).or_else(|| self.written.get(name))
+    }
+
+    /// Every scene-level table as the file wrote it, by name: the typed
+    /// ones ([`written`](Self::written)) and the rest
+    /// ([`tables`](Self::tables)). What the player hands its extensions.
+    pub fn scene_tables(&self) -> toml::Table {
+        let mut all = self.written.clone();
+        for (name, value) in &self.tables {
+            all.insert(name.clone(), value.clone());
+        }
+        all
+    }
+
     /// Create a new scene file
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -937,8 +1043,10 @@ impl SceneFile {
             post_process: None,
             living: None,
             wooze: None,
+            tables: toml::Table::new(),
             prefabs: HashMap::new(),
             entities: HashMap::new(),
+            written: toml::Table::new(),
         }
     }
 
@@ -985,6 +1093,85 @@ max = [10, 4, 8]
         let scene: SceneFile = toml::from_str(toml_str).unwrap();
         assert_eq!(scene.scene.name, "Test Scene");
         assert!(scene.entities.contains_key("room1"));
+    }
+
+    const WEATHER: &str = r#"
+[scene]
+name = "Storm"
+
+[camera]
+fov = 40.0
+fovv = 1
+
+[weather]
+wind = [1.0, 0.0, 0.0]
+rain = 0.7
+
+[[weather.front]]
+at = 12.5
+
+[entities.rock]
+"#;
+
+    /// #686: a top-level table that is no field is kept, as written, and
+    /// written back.
+    #[test]
+    fn a_table_that_is_no_field_is_kept_and_written_back() {
+        let scene: SceneFile = toml::from_str(WEATHER).unwrap();
+        assert_eq!(
+            scene.tables.keys().collect::<Vec<_>>(),
+            ["weather"],
+            "the typed tables, [scene] and [entities] are not in it"
+        );
+        let weather = &scene.tables["weather"];
+        assert_eq!(weather["rain"].as_float(), Some(0.7));
+        assert_eq!(weather["front"][0]["at"].as_float(), Some(12.5));
+        assert_eq!(scene.camera.as_ref().unwrap().fov, Some(40.0));
+        assert!(scene.written.is_empty(), "only `parse` records it");
+
+        let saved = toml::to_string_pretty(&scene).unwrap();
+        let reread: SceneFile = toml::from_str(&saved).unwrap();
+        assert_eq!(reread.tables, scene.tables, "{saved}");
+        assert!(reread.entities.contains_key("rock"));
+    }
+
+    /// `parse` also keeps what the typed tables wrote, a key serde dropped
+    /// included, and hands every table out by name.
+    #[test]
+    fn parse_keeps_what_the_typed_tables_wrote() {
+        let scene = SceneFile::parse(WEATHER).unwrap();
+        assert_eq!(scene.written.keys().collect::<Vec<_>>(), ["camera"]);
+        assert_eq!(scene.written["camera"]["fovv"].as_integer(), Some(1));
+        assert_eq!(scene.table("camera").unwrap()["fov"].as_float(), Some(40.0));
+        assert!(scene.table("weather").is_some());
+        assert!(scene.table("environment").is_none());
+        let all = scene.scene_tables();
+        assert_eq!(all.keys().collect::<Vec<_>>(), ["camera", "weather"]);
+
+        let post = SceneFile::parse("[scene]\nname = \"p\"\n[post_process]\nexposure = 2.0\n")
+            .unwrap()
+            .post_process
+            .unwrap();
+        assert_eq!(
+            post.authored.unwrap().keys().collect::<Vec<_>>(),
+            ["exposure"]
+        );
+    }
+
+    /// A mistake in a typed table still names its line (the reason the
+    /// tables are not a `#[serde(flatten)]` field on the way in), and a file
+    /// with no `[scene]` says so.
+    #[test]
+    fn a_parse_error_keeps_its_line() {
+        let err =
+            toml::from_str::<SceneFile>("[scene]\nname = \"s\"\n\n[camera]\nfov = \"wide\"\n")
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("line 5"), "{err}");
+        let err = toml::from_str::<SceneFile>("[weather]\nrain = 1\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing field `scene`"), "{err}");
     }
 }
 

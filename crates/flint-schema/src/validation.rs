@@ -5,7 +5,7 @@
 //! path. It never stops at the first. [`validate_component_data`] is the
 //! older yes-or-no form over it, for a caller that wants one error.
 
-use crate::component::{ComponentSchema, FieldSchema, FieldType};
+use crate::component::{ComponentSchema, FieldSchema, FieldType, TableSchema};
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::project::AssetKind;
 use flint_core::{FlintError, Result};
@@ -31,6 +31,30 @@ pub fn validate_component(schema: &ComponentSchema, data: &toml::Value) -> Vec<D
     problems(schema, data)
         .into_iter()
         .map(|problem| problem.diagnostic(schema))
+        .collect()
+}
+
+/// [`validate_component`] for a scene-level table (#686): `data` is the
+/// scene's `[<name>]` table and `schema` its `[table.<name>]`. The same
+/// checks, with each diagnostic naming the table
+/// ([`Diagnostic::table`](flint_core::diagnostic::Diagnostic)) and no
+/// component. A table schema with no fields is open, as a component's is.
+pub fn validate_table(schema: &TableSchema, data: &toml::Value) -> Vec<Diagnostic> {
+    problems(schema, data)
+        .into_iter()
+        .map(|problem| {
+            let not_a_table = match &problem {
+                Problem::NotATable { got } => Some(*got),
+                _ => None,
+            };
+            let mut d = problem.diagnostic(schema);
+            d.component = None;
+            d.table = Some(schema.name.clone());
+            if let Some(got) = not_a_table {
+                d.message = format!("`[{}]` is a table, got {got}", schema.name);
+            }
+            d
+        })
         .collect()
 }
 

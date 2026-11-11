@@ -76,9 +76,74 @@ style = { type = "enum", values = ["hinged", "sliding"], required = true }
 
 A component schema with a name and **no fields** is open: the component is known and nothing in its table is checked. See [a component only scripts read](#a-component-only-scripts-read).
 
+## Scene-level tables
+
+A scene file has tables that belong to no entity: `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`. Each is declared the way a component is, as a `[table.<name>]` in a file under the schema directory's `scene/`, and takes the same fields, types and constraints:
+
+```toml
+# schemas/scene/camera.toml
+[table.camera]
+description = "A scene's [camera] table: the starting view."
+
+[table.camera.fields]
+projection = { type = "enum", values = ["perspective", "orthographic"], default = "perspective" }
+position = { type = "vec3", description = "Where the camera is, [x, y, z]" }
+fov = { type = "f32", description = "Field of view in degrees (perspective only)" }
+```
+
+`flint schema --list` names them under **Scene tables**, and `flint schema post_process` prints one. A `[[wooze.zone]]` entry is the `zone` field of `[table.wooze]`: an array of tables with fields of their own.
+
+Every scene load and `flint validate` check them in the same pass as the entities ([Scene Diagnostics](#scene-diagnostics)):
+
+```text
+$ flint validate scenes/hall.scene.toml
+scenes/hall.scene.toml: 1 error, 2 warnings
+
+  error[bad-enum-value] [camera] projection: "ortho" is not a value of `projection`
+      hint: allowed values: orthographic, perspective
+  warning[unknown-table] [enviroment]: no scene table named `enviroment`, so nothing reads it
+      hint: did you mean `environment`?
+  warning[unknown-field] [post_process] bloom_intesity: `post_process` has no field `bloom_intesity`
+      hint: did you mean `bloom_intensity`?
+```
+
+- A top-level table **no schema declares** is `unknown-table`, a warning: nothing reads it, and the scene plays as if it were not written. `--strict` makes it an error, as it does an unknown field.
+- A key a declared table doesn't declare is `unknown-field`, with the nearest name.
+- A value of the wrong type, out of range or outside an enum is an error, and an `entity` or `asset` field is looked up (`[environment] skybox` is an `asset` of kind `files`).
+
+The tables the engine reads into a Rust struct (`[camera]`, `[environment]`, `[post_process]`, and `[living]` and `[wooze]`) are stricter about one thing: a value of the wrong TOML type there stops the file from parsing, as `toml-parse` with the line and column, before any schema is consulted.
+
+### A table of your own
+
+A game adds a scene-level setting without touching the engine. Declare it in the game's schema layer:
+
+```toml
+# schemas/scene/weather.toml
+[table.weather]
+description = "What the sky is doing in this scene."
+
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0 }
+wind = { type = "vec3", description = "Metres a second, in world space" }
+kind = { type = "enum", values = ["clear", "storm"], default = "clear" }
+```
+
+write it in a scene:
+
+```toml
+[weather]
+rain = 0.7
+wind = [3.0, 0.0, -1.0]
+kind = "storm"
+```
+
+and read it from the game's Rust: [Player Extensions: Reading the scene's tables](../guides/player-extensions.md#reading-the-scenes-tables). The loader keeps every top-level table it has no field for, as written, so the table reaches the extension whether or not a schema declares it; the schema is what gets it checked, and gets `[wether]` and `rian = 0.7` named. Like a component, a table declared with no fields is open: known, and nothing in it checked. A later schema directory replaces a table of the same name whole.
+
+`schemas/components/` holds only components: a `[table.*]` written there (or a `[component.*]` under `scene/`) is ignored, and `flint validate` says so (`ignored-schema-key`) with the directory it belongs in.
+
 ## Scene Diagnostics
 
-Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint. A diagnostic about a file that is not there also lists every path the engine `tried`.
+Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint. A diagnostic about a file that is not there also lists every path the engine `tried`. One in a [scene-level table](#scene-level-tables) names the table (`[post_process] bloom_intesity`) in place of an entity and a component; in JSON it has a `table` key.
 
 ```
 $ flint validate scenes/hall.scene.toml
@@ -128,9 +193,10 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
 | `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
-| `ignored-schema-key` | warning | a schema file of the game's holds a key the loader ignores: a field written under `[component.x]` instead of `[component.x.fields]`, or a misspelled key of a field |
+| `ignored-schema-key` | warning | a schema file of the game's holds a key the loader ignores: a field written under `[component.x]` instead of `[component.x.fields]`, a misspelled key of a field, or a `[table.*]` in a component file |
+| `unknown-table` | warning | a top-level table of the scene that no loaded schema directory declares as a [`[table.<name>]`](#scene-level-tables); the hint is the nearest table name. Not raised when no table schema is loaded at all |
 
-The last three are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
+`old-type-name`, `unknown-type` and `ignored-schema-key` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 `flint check` adds the codes of the project around the scene:
 
@@ -170,7 +236,7 @@ The components read this way are `rigidbody`, `collider`, `joint`, `character_co
 
 ### Unknown fields and `strict`
 
-An unknown field is a warning because games add fields to components and read them from scripts. To make it an error:
+An unknown field is a warning because games add fields to components and read them from scripts; an unknown scene table is one for the same reason (an extension may read it). To make both errors:
 
 ```bash
 flint validate scenes/hall.scene.toml --strict     # for one run
@@ -196,7 +262,7 @@ description = "Read by scripts/inventory.rhai"
 
 A component a script attaches at run time, which no scene file writes, is never seen by this pass and needs no schema.
 
-Not checked yet: that an entity a field names exists, that an asset a field names is there, and the scene-level tables (`[camera]`, `[environment]`, `[post_process]` has its own check). The readers in the engine that fall back to a default on a wrong value are being moved to report through the same list.
+Not checked by this pass: what only the reader of a table can know. `[post_process.styles.<name>]` is checked by the renderer against its style registry, a `[[wooze.zone]]`'s shape rules and `[living.species.<spec>]` by `flint validate`. The readers in the engine that fall back to a default on a wrong value are being moved to report through the same list.
 
 ## Built-in Components
 
@@ -391,11 +457,12 @@ Most games are better served by archetypes of their own. Every archetype with `b
 Use the CLI to inspect schema definitions:
 
 ```bash
-# Every component and archetype that is loaded
+# Every component, scene table and archetype that is loaded
 flint schema --list
 
-# One component, or one archetype
+# One component, one scene table, or one archetype
 flint schema light
+flint schema post_process
 flint schema player
 
 # From somewhere else, or to pick the directories yourself
@@ -404,7 +471,7 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-`flint schema <name>` prints the fields, types, defaults and ranges. A name that is neither a component nor an archetype is an error (exit code 1) with the nearest name as a suggestion.
+`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
 
 ### Schemas as data
 
@@ -414,7 +481,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components` and `archetypes`. A component has `description`, `open` (true when it declares no fields) and `fields`; a field has `type`, `required`, and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields) and `fields`; a field has `type`, `required`, and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
 
 ### Editor completion: a JSON Schema for scenes
 
@@ -447,9 +514,9 @@ What it holds to, and what it leaves to `flint validate`:
 - A table under an entity that is no loaded component is refused, as `flint validate` refuses it. A key a component doesn't declare is allowed, as the engine allows it (a warning).
 - A field is `required` only when nothing else can supply it: it has no default and no archetype gives it one.
 - Whether an `entity` or an `asset` leads anywhere is not something a JSON Schema can say: run `flint validate`.
-- `[scene]` and `[prefabs.<name>]` are described. The other top-level tables (`[camera]`, `[post_process]`, ...) are allowed and not described yet.
+- `[scene]`, `[prefabs.<name>]` and every [scene-level table](#scene-level-tables) a loaded schema declares (`[camera]`, `[post_process]`, a game's `[weather]`) are described, so their keys complete too. A top-level table none declares is allowed, as the engine allows it (a warning).
 
-The file is generated from the schema directories, so write it again when a schema changes. `--output` writes plain UTF-8; a shell redirect on Windows may add a byte-order mark that JSON readers refuse. `flint schema light --format json-schema` is one component's table alone.
+The file is generated from the schema directories, so write it again when a schema changes. `--output` writes plain UTF-8; a shell redirect on Windows may add a byte-order mark that JSON readers refuse. `flint schema light --format json-schema` is one component's table alone, and `flint schema post_process --format json-schema` one scene table's.
 
 ## Creating Custom Schemas
 
@@ -545,9 +612,11 @@ my_game/                    (standalone git repo)
 │   │   ├── health.toml
 │   │   ├── weapon.toml
 │   │   └── enemy_ai.toml
-│   └── archetypes/
-│       ├── enemy.toml
-│       └── pickup.toml
+│   ├── archetypes/
+│   │   ├── enemy.toml
+│   │   └── pickup.toml
+│   └── scene/              (the game's own scene-level tables)
+│       └── weather.toml
 ├── scripts/
 │   ├── enemy_ai.rhai
 │   ├── weapon.rhai

@@ -1893,6 +1893,7 @@ dependencies = [
  "pollster",
  "profiling",
  "rhai",
+ "serde",
  "serde_json",
  "toml",
  "tracing",
