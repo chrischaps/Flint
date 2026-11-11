@@ -123,9 +123,12 @@ flint validate levels/tavern.scene.toml --fix
 
 # Specify a schemas directory
 flint validate levels/tavern.scene.toml --schemas schemas
+
+# A field no schema declares is an error, not a warning
+flint validate levels/tavern.scene.toml --strict
 ```
 
-The exit code is 0 if all constraints pass, 1 if any errors are found. Warnings do not affect the exit code.
+`flint validate` checks two things: the scene against its schemas (an unknown archetype, component or field, a value of the wrong type; see [Scene Diagnostics](schemas.md#scene-diagnostics)), then the constraints. The schema check runs whether or not any constraint file exists. The exit code is 0 if neither finds an error, 1 if either does. Warnings do not affect the exit code. With `--format json` the document has both lists (`diagnostics` and `violations`), and `valid`, `errors` and `warnings` count both.
 
 ## Real Example
 

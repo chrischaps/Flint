@@ -45,15 +45,94 @@ Fields can include validation constraints:
 
 ```toml
 open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
-required_key = { type = "entity_ref", optional = true }
+style = { type = "enum", values = ["hinged", "sliding"], required = true }
 ```
 
 - `default` --- value used when not explicitly set. Defaults are consumed in two places: `flint entity create` writes them into the new entity, and the scene loader fills them into any component the entity lists but leaves partially specified (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
 - `min` / `max` --- numeric range bounds
-- `optional` --- whether the field can be omitted (defaults to false)
+- `required` --- the field must be written (defaults to false). An archetype default or the field's own `default` counts as written
 - `values` --- valid options for enum types
 
-Validation runs in two modes. At scene load it is advisory: a field that fails its constraints is logged as a warning and the scene still loads. Under `flint validate` it is authoritative and the command reports every failure.
+A component schema with a name and **no fields** is open: the component is known and nothing in its table is checked. See [a component only scripts read](#a-component-only-scripts-read).
+
+## Scene Diagnostics
+
+Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint.
+
+```
+$ flint validate scenes/hall.scene.toml
+scenes/hall.scene.toml: 4 errors, 1 warning
+
+  error[unknown-archetype] entity 'hero' field 'archetype': no archetype named `playr`, so the entity gets no defaults
+      hint: did you mean `player`?
+  error[bad-type] entity 'hero' transform.scale: expected vec3, got string
+  error[unknown-component] entity 'lever' component 'interactible': no component named `interactible`, so nothing checks it
+      hint: did you mean `interactable`?
+  error[bad-enum-value] entity 'pond' water_body.shape: "lak" is not a value of `shape`
+      hint: did you mean `lake`? allowed values: lake, river
+  warning[unknown-field] entity 'hero' transform.postion: `transform` has no field `postion`
+      hint: did you mean `position`?
+```
+
+The same pass runs in two places:
+
+- **`flint validate <scene>`** prints the whole list, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`) beside the constraint `violations`. It needs no constraint files.
+- **Every scene load** (`flint play`, `flint-player`, `flint render`, the viewer, a scene transition, a `load_chunk`) logs one summary line and the first five, as warnings, and carries on. A scene with mistakes still plays; `flint validate` is the gate to run before playing.
+
+```
+WARN scenes/hall.scene.toml: 4 errors, 1 warning (the full list: flint validate scenes/hall.scene.toml)
+WARN   error[unknown-archetype] entity 'hero' field 'archetype': no archetype named `playr`, so the entity gets no defaults (did you mean `player`?)
+```
+
+### Diagnostic codes
+
+The codes are stable: a code keeps its meaning, and a new kind of problem gets a new code.
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `unknown-field` | warning | a component table has a field its schema does not declare; the hint is the nearest declared field |
+| `bad-type` | error | a value of the wrong type for its field: a string where the schema says `f32`, a `vec3` of two numbers, a component that is not a table |
+| `bad-enum-value` | error | a string that is none of an enum field's `values`; the hint lists them |
+| `out-of-range` | error | a number below the field's `min` or above its `max` |
+| `missing-field` | error | a `required` field that neither the entity, its archetype's defaults nor the field's `default` supplies |
+| `unknown-component` | error | a component table that no loaded schema directory declares; the hint is the nearest component name |
+| `unknown-archetype` | error | an `archetype = "..."` that no loaded schema directory declares, so the entity gets no defaults |
+| `toml-parse` | error | the file is not valid TOML, or not a scene; the message has the line and column |
+| `file-unreadable` | error | the scene file could not be read |
+| `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
+| `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
+
+A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
+
+### Unknown fields and `strict`
+
+An unknown field is a warning because games add fields to components and read them from scripts. To make it an error:
+
+```bash
+flint validate scenes/hall.scene.toml --strict     # for one run
+```
+
+```toml
+# flint.toml: for every run in this project
+[project]
+strict = true
+```
+
+To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field.
+
+### A component only scripts read
+
+A component that a scene writes and only a script reads still needs to be declared, or it is an `unknown-component`. Declare it by name in the game's schema directory. With fields it is checked; with none it is open:
+
+```toml
+# schemas/components/inventory.toml
+[component.inventory]
+description = "Read by scripts/inventory.rhai"
+```
+
+A component a script attaches at run time, which no scene file writes, is never seen by this pass and needs no schema.
+
+Not checked yet: that an entity a field names exists, that an asset a field names is there, and the scene-level tables (`[camera]`, `[environment]`, `[post_process]` has its own check). The readers in the engine that fall back to a default on a wrong value are being moved to report through the same list.
 
 ## Built-in Components
 
