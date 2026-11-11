@@ -52,6 +52,12 @@ use std::path::Path;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+/// A scope and the `scene_dir` it was made for.
+type AssetScopeFor = (
+    Option<std::path::PathBuf>,
+    Arc<flint_core::project::AssetScope>,
+);
+
 /// Default main-pass clear colour (linear RGBA), matching the historical
 /// dark slate background.
 pub const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.1, 0.1, 0.15, 1.0];
@@ -852,8 +858,13 @@ pub struct SceneRenderer {
     /// `ui_text` fonts by what the component named, each uploaded once
     /// (`load_ui_font`); `None` for one that failed, warned about once.
     bitmap_font_cache: HashMap<String, Option<BitmapFont>>,
-    /// Scene directory for resolving relative font/texture paths
+    /// Scene directory for resolving relative font/texture paths. A host
+    /// that holds the scene's project sets it through
+    /// [`set_asset_scope`](Self::set_asset_scope).
     pub scene_dir: Option<std::path::PathBuf>,
+    /// The project and folder styles search from, with the `scene_dir` it
+    /// was made for: found once a scene, not once a lookup.
+    asset_scope: std::sync::Mutex<Option<AssetScopeFor>>,
     /// Physical pixels per logical point of the window it draws into: the
     /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
     /// it. Hosts with a window set it; 1 headless.
@@ -1158,6 +1169,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            asset_scope: std::sync::Mutex::new(None),
             pixels_per_point: 1.0,
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
@@ -2704,6 +2716,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            asset_scope: std::sync::Mutex::new(None),
             pixels_per_point: 1.0,
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
@@ -3061,6 +3074,32 @@ impl SceneRenderer {
         self.skinned_bone_binds.clear();
     }
 
+    /// Tell the renderer the scene's project and folder: where its styles
+    /// find palettes, glyph sets, papers and strokes (ADR 0114). Sets
+    /// `scene_dir` too. A host that only sets `scene_dir` gets the project
+    /// found from that folder, once.
+    pub fn set_asset_scope(&mut self, scope: flint_core::project::AssetScope) {
+        self.scene_dir = Some(scope.scene_dir.clone());
+        *self.asset_scope.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((self.scene_dir.clone(), Arc::new(scope)));
+    }
+
+    /// The project and folder the styles' files are searched from: the
+    /// scope the host set, else the project found from `scene_dir`, else
+    /// (no scene) the working directory's.
+    pub fn asset_scope(&self) -> Arc<flint_core::project::AssetScope> {
+        let mut kept = self.asset_scope.lock().unwrap_or_else(|e| e.into_inner());
+        match &*kept {
+            Some((dir, scope)) if *dir == self.scene_dir => scope.clone(),
+            _ => {
+                let dir = self.scene_dir.as_deref().unwrap_or(Path::new("."));
+                let scope = Arc::new(flint_core::project::AssetScope::for_dir(dir));
+                *kept = Some((self.scene_dir.clone(), scope.clone()));
+                scope
+            }
+        }
+    }
+
     /// Load the font a `ui_text.font` names (`builtin`, a glyph set, or a
     /// `.font.toml`; ADR 0113) and upload its atlas to the texture cache,
     /// once per name. Returns whether the font is ready to draw.
@@ -3069,12 +3108,12 @@ impl SceneRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         spec: &str,
-        scene_dir: &Path,
+        scope: &flint_core::project::AssetScope,
     ) -> bool {
         if let Some(found) = self.bitmap_font_cache.get(spec) {
             return found.is_some();
         }
-        let font = match BitmapFont::resolve(spec, scene_dir) {
+        let font = match BitmapFont::resolve(spec, scope) {
             Ok(font) => match &mut self.texture_cache {
                 Some(cache) => {
                     let (rgba, [w, h]) = font.rgba();

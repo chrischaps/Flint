@@ -709,11 +709,13 @@ impl ViewerApp {
         // Load models and update meshes from world
         {
             let mut state = self.state.lock().unwrap();
-            // Fonts and glyph sets (ASCII's `font`, #265) resolve beside the scene
-            scene_renderer.scene_dir = Path::new(&state.scene_path)
-                .parent()
-                .map(|p| p.to_path_buf());
             let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+            // Glyph sets, palettes and papers (ASCII's `font`, #265) are
+            // found from the scene's project and folder (ADR 0114)
+            scene_renderer.set_asset_scope(flint_core::project::AssetScope::new(
+                config.project.clone(),
+                config.scene_dir.clone(),
+            ));
             model_loader::load_models_from_world(
                 &mut state.world,
                 &mut scene_renderer,
@@ -2108,7 +2110,11 @@ impl ViewerApp {
         // scene, which reads its settings for the style again.
         self.user_style_polls = self.user_style_polls.wrapping_add(1);
         if needs_reload || self.user_style_polls % 15 == 0 {
-            let reload = flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path));
+            // From the project the renderer was given at load, not found anew
+            let reload = match self.scene_renderer.as_ref().map(|r| r.asset_scope()) {
+                Some(scope) => flint_render::stylize::custom::reload_changed_for(&scope),
+                None => flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path)),
+            };
             for message in &reload.messages {
                 eprintln!("Warning: {message}");
             }

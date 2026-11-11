@@ -277,3 +277,100 @@ fn help_and_a_bad_kind_list_the_kinds() {
     assert!(err.contains("particles/<name>.particles.toml"), "{err}");
     assert!(stdout(&o).is_empty());
 }
+
+/// The look and style kinds (palettes, glyph sets, fonts, looks, papers,
+/// strokes, user styles) answer from the same search, two folders down;
+/// and a name the engine has built in says so instead of failing.
+#[test]
+fn the_style_kinds_are_found_from_a_nested_scene_and_built_ins_are_named() {
+    let dir = project("styles");
+    for (path, text) in [
+        ("palettes/dusk.palette.toml", "colors = [\"#101010\"]\n"),
+        (
+            "scenes/palettes/dusk.palette.toml",
+            "colors = [\"#202020\"]\n",
+        ),
+        ("fonts/terminal.glyphs.toml", "[ramps.r]\nglyphs = \" #\"\n"),
+        ("fonts/ui.font.toml", "[font]\nglyphs = \"builtin\"\n"),
+        ("fonts/Body.ttf", ""),
+        ("styles/noir.look.toml", "[post_process]\nexposure = 0.5\n"),
+        ("styles/glow.shader.toml", "version = 1\nname = \"glow\"\n"),
+        ("papers/cotton.png", ""),
+        ("strokes/hb.png", ""),
+    ] {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let found = |kind: &str, name: &str| -> serde_json::Value {
+        let o = flint(
+            &dir,
+            &["asset", "where", kind, name, "--scene", SCENE, "--json"],
+        );
+        assert!(stderr(&o).is_empty(), "{kind} {name}: {}", stderr(&o));
+        json(&o)
+    };
+    for (kind, name, want) in [
+        // The nearer of two, in scenes/, not the project's
+        ("palettes", "dusk", "scenes/palettes/dusk.palette.toml"),
+        ("glyph-sets", "terminal", "fonts/terminal.glyphs.toml"),
+        ("fonts", "fonts/ui.font.toml", "fonts/ui.font.toml"),
+        ("font-faces", "Body.ttf", "fonts/Body.ttf"),
+        ("looks", "noir", "styles/noir.look.toml"),
+        ("papers", "cotton", "papers/cotton.png"),
+        ("strokes", "hb", "strokes/hb.png"),
+        ("styles", "glow", "styles/glow.shader.toml"),
+    ] {
+        let answer = found(kind, name);
+        assert_eq!(
+            slashes(answer["found"].as_str().unwrap_or_default()),
+            want,
+            "{kind} {name}: {answer}"
+        );
+        assert_eq!(answer["built_in"], false);
+        let tried = paths(&answer["tried"]);
+        assert!(
+            tried[0].starts_with("scenes/act1/cave/"),
+            "{kind} {name}: nearest first: {tried:?}"
+        );
+    }
+
+    // No file of the name, but one built in: said, with the places tried,
+    // and not a failure
+    for (kind, name) in [
+        ("palettes", "amber"),
+        ("looks", "graphite"),
+        ("glyph-sets", "builtin"),
+    ] {
+        let o = flint(&dir, &["asset", "where", kind, name, "--scene", SCENE]);
+        assert!(o.status.success(), "{kind} {name}: {}", stderr(&o));
+        let text = slashes(&stdout(&o));
+        assert!(text.contains("loads    the built-in"), "{text}");
+        assert!(text.contains("scenes/act1/cave/"), "{text}");
+        let answer = found(kind, name);
+        assert_eq!(answer["built_in"], true, "{answer}");
+        assert!(answer["found"].is_null());
+    }
+    // Neither a file nor built in still fails, listing where it looked
+    let o = flint(
+        &dir,
+        &["asset", "where", "palettes", "plaid", "--scene", SCENE],
+    );
+    assert!(!o.status.success());
+    assert!(slashes(&stdout(&o)).contains("palettes/plaid.palette.toml"));
+
+    let help = stdout(&flint(&dir, &["asset", "where", "--help"]));
+    for line in [
+        "palettes/<name> | <name>.palette.toml",
+        "fonts/<name> | <name>.glyphs.toml",
+        "<name> | fonts/<name>.font.toml",
+        "font-faces",
+        "styles/<name> | <name>.look.toml",
+        "papers/<name> | <name>.png | .jpg | .jpeg",
+        "strokes/<name> | <name>.png | .jpg | .jpeg",
+        "styles/<name>.shader.toml",
+        "Built in",
+    ] {
+        assert!(help.contains(line), "{line}: {help}");
+    }
+}

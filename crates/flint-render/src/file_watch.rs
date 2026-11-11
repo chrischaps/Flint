@@ -28,6 +28,13 @@ impl FileStamps {
         let _ = path;
     }
 
+    /// Record each of `paths` as it is now.
+    pub(crate) fn watch_all<P: AsRef<Path>>(&mut self, paths: impl IntoIterator<Item = P>) {
+        for path in paths {
+            self.watch(path.as_ref());
+        }
+    }
+
     /// Whether any recorded path appeared, vanished or was modified since.
     pub(crate) fn changed(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]

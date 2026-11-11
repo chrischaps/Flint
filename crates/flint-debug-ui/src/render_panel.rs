@@ -178,6 +178,12 @@ impl RenderDebugPanel {
         self.styles_editor.set_scene_dir(scene_dir);
     }
 
+    /// [`set_scene_dir`](Self::set_scene_dir) for a host that holds the
+    /// scene's project (ADR 0114): the choices are searched from `assets`.
+    pub fn set_asset_scope(&mut self, assets: Option<flint_core::project::AssetScope>) {
+        self.styles_editor.set_asset_scope(assets);
+    }
+
     /// The looks to offer (#356; `flint_render::look::list` of the
     /// scene) and the one in use, set by the host on scene load and after
     /// a script or the picker changes it.

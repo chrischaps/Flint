@@ -1789,11 +1789,8 @@ impl PlayerApp {
             if FRAMES.fetch_add(1, Ordering::Relaxed) % 15 != 0 {
                 return;
             }
-            let scene_dir = std::path::Path::new(&self.scene_path)
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf();
-            let reload = flint_render::stylize::custom::reload_changed(&scene_dir);
+            let reload =
+                flint_render::stylize::custom::reload_changed_for(&self.kept_asset_scope());
             for message in &reload.messages {
                 tracing::warn!("{message}");
             }

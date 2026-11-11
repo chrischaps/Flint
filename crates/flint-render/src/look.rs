@@ -18,6 +18,7 @@
 //! Every read goes through `flint_core::vfs`, so a game bundle's looks work
 //! on the web; the engine's own looks are compiled in.
 
+use flint_core::project::{shown, AssetKind, AssetScope, OrderChange};
 use flint_core::vfs;
 use flint_scene::PostProcessDef;
 use std::path::{Path, PathBuf};
@@ -214,6 +215,28 @@ pub fn resolve(
     look: Option<&str>,
     scene_path: impl AsRef<Path>,
 ) -> Result<PostProcessDef, String> {
+    // No look to find, no project to find either
+    if look.is_none_or(|name| name.trim().is_empty()) {
+        return resolve_with(def, None, &mut |_| unreachable!("no look is named"));
+    }
+    resolve_in(def, look, &AssetScope::for_scene(scene_path.as_ref()))
+}
+
+/// [`resolve`] for a host that holds the scene's project: the look is
+/// searched for from `scope`.
+pub fn resolve_in(
+    def: &PostProcessDef,
+    look: Option<&str>,
+    scope: &AssetScope,
+) -> Result<PostProcessDef, String> {
+    resolve_with(def, look, &mut |name| find_in(name, scope))
+}
+
+fn resolve_with(
+    def: &PostProcessDef,
+    look: Option<&str>,
+    find: &mut dyn FnMut(&str) -> Result<Look, String>,
+) -> Result<PostProcessDef, String> {
     let authored = def.authored.as_ref().map(|t| {
         let mut t = t.clone();
         t.remove("look");
@@ -224,11 +247,11 @@ pub fn resolve(
         (None, Some(keys)) => overlay(None, keys)?,
         (None, None) => def.clone(),
         (Some(name), Some(keys)) => {
-            let found = find(name, scene_path)?;
+            let found = find(name)?;
             overlay(Some(&found.apply(None)?), keys)?
         }
         (Some(name), None) => {
-            let found = find(name, scene_path)?;
+            let found = find(name)?;
             let mut base = def.clone();
             base.look = None;
             found.apply(Some(&base))?
@@ -243,71 +266,94 @@ pub fn resolve(
 /// warning) when that look can't be found or doesn't fit: a scene still
 /// plays without its look.
 pub fn resolve_scene(def: &PostProcessDef, scene_path: impl AsRef<Path>) -> PostProcessDef {
+    if def.look.is_none() {
+        return def.clone();
+    }
+    let scene_path = scene_path.as_ref();
+    resolve_scene_in(def, scene_path, &AssetScope::for_scene(scene_path))
+}
+
+/// [`resolve_scene`] for a host that holds the scene's project.
+pub fn resolve_scene_in(
+    def: &PostProcessDef,
+    scene_path: &Path,
+    scope: &AssetScope,
+) -> PostProcessDef {
     let Some(name) = def.look.as_deref() else {
         return def.clone();
     };
-    let scene_path = scene_path.as_ref();
-    match resolve(def, Some(name), scene_path) {
+    match resolve_in(def, Some(name), scope) {
         Ok(out) => out,
         Err(e) => {
             tracing::warn!(
                 "{}: [post_process] look = \"{name}\": {e} (drawn without it)",
                 scene_path.display()
             );
-            let mut out = resolve(def, None, scene_path).unwrap_or_else(|_| def.clone());
+            let mut out = resolve_in(def, None, scope).unwrap_or_else(|_| def.clone());
             out.look = None;
             out
         }
     }
 }
 
-/// The folders searched for `<name>.look.toml`, nearest first: the scene's
-/// `styles/`, its parent's (a game's `levels/` sits beside `styles/`), and
-/// the working directory's. A file found there wins over a built-in look of
-/// the same name.
-fn search_dirs(scene: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let mut push = |dir: PathBuf| {
-        if !dirs.contains(&dir) {
-            dirs.push(dir);
-        }
-    };
-    if let Some(dir) = scene.parent() {
-        push(dir.join("styles"));
-        if let Some(parent) = dir.parent() {
-            push(parent.join("styles"));
-        }
-    }
-    push(PathBuf::from("styles"));
-    dirs
+/// Find a look by name or path for the scene at `scene_path`, in its
+/// project. See [`find_in`].
+pub fn find(name_or_path: &str, scene_path: impl AsRef<Path>) -> Result<Look, String> {
+    find_in(name_or_path, &AssetScope::for_scene(scene_path.as_ref()))
 }
 
-/// Find a look by name or path, from `scene_path`'s folders.
-pub fn find(name_or_path: &str, scene_path: impl AsRef<Path>) -> Result<Look, String> {
-    let scene_path = scene_path.as_ref();
-    let as_path = Path::new(name_or_path);
-    if name_or_path.ends_with(".toml") {
-        let text = vfs::read_to_string(as_path)
-            .map_err(|e| format!("reading look {}: {e}", as_path.display()))?;
-        return Look::parse(&file_stem(as_path), &text, &as_path.display().to_string());
+/// Find a look by name or path, by the project's one asset search from
+/// `scope` (ADR 0114; [`AssetKind::Looks`]): `styles/<name>.look.toml`, or
+/// the name as a path, in the scene's directory, each directory above it up
+/// to the project root, then the mounted engine. A file the search finds
+/// wins over a built-in look of the same name; the built-ins come after.
+/// A path ending `.toml` that is not a `.look.toml` is a file named by a
+/// path of its own ([`AssetKind::Files`]), searched the same way.
+pub fn find_in(name_or_path: &str, scope: &AssetScope) -> Result<Look, String> {
+    let by_path = name_or_path.ends_with(".toml") && !name_or_path.ends_with(LOOK_SUFFIX);
+    let answer = if by_path {
+        let mut answer = scope.explain(AssetKind::Files, name_or_path);
+        // TEMPORARY, with the resolver's order-change warning (#765): such
+        // a path was read from the working directory and nowhere else
+        let as_written = PathBuf::from(name_or_path);
+        answer.order_change = (vfs::is_file(&as_written)
+            && answer.found.as_deref() != Some(as_written.as_path()))
+        .then(|| OrderChange {
+            kind: AssetKind::Looks,
+            name: name_or_path.to_string(),
+            old: as_written,
+            new: answer.found.clone(),
+        });
+        answer
+    } else {
+        scope.explain(AssetKind::Looks, name_or_path)
+    };
+    if let Some(change) = &answer.order_change {
+        change.log();
     }
-    for dir in search_dirs(scene_path) {
-        let path = dir.join(format!("{name_or_path}.look.toml"));
-        if vfs::is_file(&path) {
-            let text = vfs::read_to_string(&path)
-                .map_err(|e| format!("reading look {}: {e}", path.display()))?;
-            return Look::parse(name_or_path, &text, &path.display().to_string());
-        }
+    if let Some(path) = &answer.found {
+        let text = vfs::read_to_string(path)
+            .map_err(|e| format!("reading look {}: {e}", path.display()))?;
+        return Look::parse(&file_stem(path), &text, &shown(path));
     }
     if let Some((name, text)) = BUILTIN.iter().find(|(n, _)| *n == name_or_path) {
         return Look::parse(name, text, "built-in");
     }
-    let names: Vec<String> = list(scene_path).into_iter().map(|l| l.name).collect();
-    Err(format!(
-        "unknown look '{name_or_path}'; known: {} (`flint render --look help` describes them)",
+    let names: Vec<String> = list_in(scope).into_iter().map(|l| l.name).collect();
+    let mut message = format!(
+        "unknown look '{name_or_path}'; known: {} (`flint render --look help` describes \
+         them). Not built in, and no file. Tried:",
         names.join(", ")
-    ))
+    );
+    for path in &answer.tried {
+        message.push_str("\n  ");
+        message.push_str(&shown(path));
+    }
+    Err(message)
 }
+
+/// How a look file's name ends.
+const LOOK_SUFFIX: &str = ".look.toml";
 
 fn file_stem(path: &Path) -> String {
     let name = path
@@ -324,26 +370,24 @@ fn file_stem(path: &Path) -> String {
 /// the built-ins they don't shadow, sorted by name; and a message for each
 /// file that doesn't parse (and is skipped).
 pub fn list_checked(scene_path: impl AsRef<Path>) -> (Vec<Look>, Vec<String>) {
+    list_checked_in(&AssetScope::for_scene(scene_path.as_ref()))
+}
+
+/// [`list_checked`] from `scope`: every look file the project's search
+/// sees ([`Project::list`](flint_core::project::Project::list): a nearer
+/// file hides a farther one of its name), then the built-ins no file
+/// shadows.
+pub fn list_checked_in(scope: &AssetScope) -> (Vec<Look>, Vec<String>) {
     let mut looks: Vec<Look> = Vec::new();
     let mut skipped = Vec::new();
-    for dir in search_dirs(scene_path.as_ref()) {
-        let Ok(mut paths) = vfs::read_dir(&dir) else {
-            continue;
-        };
-        paths.retain(|p| p.to_string_lossy().ends_with(".look.toml"));
-        paths.sort();
-        for path in paths {
-            let stem = file_stem(&path);
-            if looks.iter().any(|l| l.name == stem) {
-                continue;
-            }
-            match vfs::read_to_string(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|t| Look::parse(&stem, &t, &path.display().to_string()))
-            {
-                Ok(look) => looks.push(look),
-                Err(e) => skipped.push(format!("skipping {}: {e}", path.display())),
-            }
+    for listed in scope.list(AssetKind::Looks) {
+        let path = listed.path;
+        match vfs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|t| Look::parse(&listed.name, &t, &shown(&path)))
+        {
+            Ok(look) => looks.push(look),
+            Err(e) => skipped.push(format!("skipping {}: {e}", shown(&path))),
         }
     }
     for (name, text) in BUILTIN {
@@ -359,7 +403,12 @@ pub fn list_checked(scene_path: impl AsRef<Path>) -> (Vec<Look>, Vec<String>) {
 
 /// [`list_checked`], logging the skipped files.
 pub fn list(scene_path: impl AsRef<Path>) -> Vec<Look> {
-    let (looks, skipped) = list_checked(scene_path);
+    list_in(&AssetScope::for_scene(scene_path.as_ref()))
+}
+
+/// [`list_checked_in`], logging the skipped files.
+pub fn list_in(scope: &AssetScope) -> Vec<Look> {
+    let (looks, skipped) = list_checked_in(scope);
     for message in skipped {
         tracing::warn!("{message}");
     }
@@ -560,6 +609,99 @@ mod tests {
             assert!(names.contains(&"dusk".to_string()));
             assert!(names.contains(&"graphite".to_string()), "built-ins too");
             assert_eq!(names.iter().filter(|n| *n == "matrix").count(), 1);
+        });
+    }
+
+    /// ADR 0114: a scene two folders down finds the project's look and the
+    /// mounted engine's; the nearest of a name wins, a file before a
+    /// built-in; and a miss lists the paths tried.
+    #[test]
+    fn a_nested_scene_finds_the_projects_looks_by_the_one_rule() {
+        let look = |exposure: f32| format!("[post_process]\nexposure = {exposure}\n").into_bytes();
+        let source: MemorySource = [
+            ("game/flint.toml", Vec::new()),
+            ("game/styles/dusk.look.toml", look(0.6)),
+            ("game/styles/matrix.look.toml", look(3.0)),
+            ("game/levels/act1/styles/dusk.look.toml", look(0.25)),
+            ("game/levels/act1/cave/a.scene.toml", Vec::new()),
+            ("game/levels/b.scene.toml", Vec::new()),
+            ("game/engine/styles/stock.look.toml", look(1.5)),
+            ("game/out/tuned.look.toml", look(2.25)),
+            ("game/out/plain.toml", look(2.5)),
+        ]
+        .into_iter()
+        .collect();
+        vfs::scoped(Arc::new(source), || {
+            let deep = "game/levels/act1/cave/a.scene.toml";
+            let exposure = |name: &str, scene: &str| {
+                find(name, scene).unwrap().post_process["exposure"].as_float()
+            };
+            // The nearest dusk from the cave; the project's from levels/
+            assert_eq!(exposure("dusk", deep), Some(0.25));
+            assert_eq!(exposure("dusk", "game/levels/b.scene.toml"), Some(0.6));
+            // The project's file, three folders up, before the built-in
+            let matrix = find("matrix", deep).unwrap();
+            assert_eq!(matrix.source, "game/styles/matrix.look.toml");
+            // The mounted engine's, last of the files
+            assert_eq!(exposure("stock", deep), Some(1.5));
+            // No file: the built-in
+            assert!(find("graphite", deep).unwrap().is_builtin());
+            // A path, from each directory of the walk
+            assert_eq!(exposure("out/tuned.look.toml", deep), Some(2.25));
+            assert_eq!(exposure("out/plain.toml", deep), Some(2.5));
+            assert_eq!(find("out/tuned.look.toml", deep).unwrap().name, "tuned");
+
+            let names: Vec<String> = list(deep).into_iter().map(|l| l.name).collect();
+            for name in ["dusk", "matrix", "stock", "graphite"] {
+                assert_eq!(names.iter().filter(|n| *n == name).count(), 1, "{name}");
+            }
+
+            let err = find("nope", deep).unwrap_err();
+            assert!(err.starts_with("unknown look 'nope'; known: "), "{err}");
+            let tried: Vec<&str> = err.lines().skip(1).map(str::trim).collect();
+            assert_eq!(
+                tried,
+                [
+                    "game/levels/act1/cave/styles/nope.look.toml",
+                    "game/levels/act1/cave/nope.look.toml",
+                    "game/levels/act1/styles/nope.look.toml",
+                    "game/levels/act1/nope.look.toml",
+                    "game/levels/styles/nope.look.toml",
+                    "game/levels/nope.look.toml",
+                    "game/styles/nope.look.toml",
+                    "game/nope.look.toml",
+                    "game/engine/styles/nope.look.toml",
+                    "game/engine/nope.look.toml",
+                ]
+            );
+        });
+    }
+
+    /// The working directory's `styles/` is no longer searched (ADR 0114):
+    /// a look there, outside the scene's project, is not found.
+    #[test]
+    fn the_working_directorys_styles_are_not_searched() {
+        let source: MemorySource = [
+            ("game/flint.toml", Vec::new()),
+            ("game/levels/a.scene.toml", Vec::new()),
+            (
+                "styles/dusk.look.toml",
+                b"[post_process]\nexposure = 0.6\n".to_vec(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        vfs::scoped(Arc::new(source), || {
+            let scope = AssetScope::for_scene(Path::new("game/levels/a.scene.toml"));
+            let err = find_in("dusk", &scope).unwrap_err();
+            assert!(!err.contains("\n  styles/dusk.look.toml"), "{err}");
+            // The one-release warning names the file the old search read
+            let change = scope
+                .explain(AssetKind::Looks, "dusk")
+                .order_change
+                .expect("the old search found it");
+            assert_eq!(change.old, Path::new("styles/dusk.look.toml"));
+            assert_eq!(change.new, None);
         });
     }
 }

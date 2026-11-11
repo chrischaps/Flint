@@ -6,6 +6,7 @@
 //! no change here.
 
 use super::{is_builtin, registry, ChoiceScope, StyleDescriptor, StyleStage};
+use flint_core::project::AssetScope;
 use serde::Serialize;
 use std::path::Path;
 
@@ -86,12 +87,20 @@ pub fn catalog() -> Vec<StyleListing> {
     catalog_for(None)
 }
 
-/// [`catalog`] with the choices found beside the scene in `scene_dir`
-/// (its palettes and glyph sets, #322).
+/// [`catalog`] with the choices a scene in `scene_dir` can see (its
+/// palettes and glyph sets, #322), by its project's search; with no scene,
+/// the working directory's, as a renderer with no scene searches.
 pub fn catalog_for(scene_dir: Option<&Path>) -> Vec<StyleListing> {
+    let assets = AssetScope::for_dir(scene_dir.unwrap_or(Path::new(".")));
+    catalog_in(&assets)
+}
+
+/// [`catalog`] with the choices found from `assets`, for a host that holds
+/// the scene's project.
+pub fn catalog_in(assets: &AssetScope) -> Vec<StyleListing> {
     registry()
         .iter()
-        .map(|d| listing_in(d, scene_dir))
+        .map(|d| listing_in(d, Some(assets)))
         .collect()
 }
 
@@ -100,9 +109,9 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
     listing_in(d, None)
 }
 
-/// One style's listing, its found choices looked for beside `scene_dir`.
-pub fn listing_in(d: &StyleDescriptor, scene_dir: Option<&Path>) -> StyleListing {
-    let scope = ChoiceScope::defaults(scene_dir);
+/// One style's listing, its found choices searched for from `assets`.
+pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleListing {
+    let scope = ChoiceScope::defaults(assets);
     let help = |name: &str| d.hint(name).map(|h| h.help.to_string()).unwrap_or_default();
     StyleListing {
         name: d.name.to_string(),
@@ -168,8 +177,17 @@ pub fn catalog_text() -> String {
 
 /// [`catalog_for`] for a terminal.
 pub fn catalog_text_for(scene_dir: Option<&Path>) -> String {
+    catalog_text_of(catalog_for(scene_dir))
+}
+
+/// [`catalog_in`] for a terminal.
+pub fn catalog_text_in(assets: &AssetScope) -> String {
+    catalog_text_of(catalog_in(assets))
+}
+
+fn catalog_text_of(listings: Vec<StyleListing>) -> String {
     let mut out = String::new();
-    for s in catalog_for(scene_dir) {
+    for s in listings {
         let mut tags = vec![s.stage.to_string(), s.source.to_string()];
         if let Some(c) = &s.component {
             tags.push(format!("per-entity: {c}"));

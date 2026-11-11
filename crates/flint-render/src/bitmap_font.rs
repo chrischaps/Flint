@@ -21,6 +21,7 @@
 
 use crate::glyph_atlas::{GlyphAtlas, GlyphError, GlyphSetCache, BUILTIN_SET};
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
+use flint_core::project::{shown, AssetKind, AssetScope};
 use flint_core::toml_util::toml_f32;
 use flint_core::vfs;
 use std::path::{Path, PathBuf};
@@ -53,22 +54,27 @@ impl BitmapFont {
         }
     }
 
-    /// Resolve what a `ui_text.font` names, against the scene's folder (then
-    /// its parent): `builtin`, a glyph set name or `.glyphs.toml` path, or a
-    /// `.font.toml`. Everything is read through the vfs.
-    pub fn resolve(spec: &str, scene_dir: &Path) -> Result<Self, GlyphError> {
+    /// Resolve what a `ui_text.font` names, by the project's one asset
+    /// search from `scope` (ADR 0114): `builtin`, a glyph set name or
+    /// `.glyphs.toml` path ([`AssetKind::GlyphSets`]), or a `.font.toml`
+    /// ([`AssetKind::Fonts`]: the path from the scene's directory, from
+    /// each directory above it up to the project root, then in the mounted
+    /// engine). Everything is read through the vfs.
+    pub fn resolve(spec: &str, scope: &AssetScope) -> Result<Self, GlyphError> {
         if spec.ends_with(FONT_TOML_SUFFIX) {
-            return Self::load_font_toml(spec, &scene_dir.join(spec), scene_dir);
+            let path = scope
+                .resolve(AssetKind::Fonts, spec)
+                .map_err(|missing| GlyphError::Read(missing.to_string()))?;
+            return Self::load_font_toml(spec, &path, scope);
         }
-        let atlas = glyph_set_atlas(spec, scene_dir)?;
+        let atlas = glyph_set_atlas(spec, scope)?;
         Ok(Self::new(spec, atlas, 1.0))
     }
 
     /// Load a `.font.toml` (`name` is what `ui_text.font` said). Its PNG
-    /// resolves as an image texture does: beside the scene, in its
-    /// `textures/`, then the parent and its `textures/`, then beside the
-    /// font file.
-    pub fn load_font_toml(name: &str, path: &Path, scene_dir: &Path) -> Result<Self, GlyphError> {
+    /// is found as an image texture is ([`AssetKind::Textures`], from the
+    /// scene), and failing that beside the font file.
+    pub fn load_font_toml(name: &str, path: &Path, scope: &AssetScope) -> Result<Self, GlyphError> {
         let text = vfs::read_to_string(path)
             .map_err(|e| GlyphError::Read(format!("{}: {e}", path.display())))?;
         let table: toml::Value = text
@@ -80,7 +86,7 @@ impl BitmapFont {
         let spacing = font.get("spacing").and_then(toml_f32).unwrap_or(1.0);
 
         if let Some(set) = font.get("glyphs").and_then(|v| v.as_str()) {
-            let atlas = glyph_set_atlas(set, scene_dir)?;
+            let atlas = glyph_set_atlas(set, scope)?;
             return Ok(Self::new(name, atlas, spacing));
         }
 
@@ -100,11 +106,13 @@ impl BitmapFont {
         let first_char = int("first_char").unwrap_or(32).max(0) as u32;
         let char_count = int("char_count").unwrap_or(95).max(0) as u32;
 
-        let image_path = font_image_path(texture, path, scene_dir).ok_or_else(|| {
-            GlyphError::Read(format!(
-                "{}: no image `{texture}` beside the scene or the font",
-                path.display()
-            ))
+        let image_path = font_image_path(texture, path, scope).map_err(|tried| {
+            let mut text = format!("{}: no image `{texture}`. Tried:", shown(path));
+            for place in tried {
+                text.push_str("\n  ");
+                text.push_str(&shown(&place));
+            }
+            GlyphError::Read(text)
         })?;
         let image = crate::open_image(&image_path)
             .map_err(|e| GlyphError::Read(format!("{}: {e}", image_path.display())))?;
@@ -206,33 +214,39 @@ impl BitmapFont {
 }
 
 /// The atlas of the glyph set `spec` names (`builtin`, a set name or a
-/// `.glyphs.toml` path), searched for beside the scene and then its parent.
-fn glyph_set_atlas(spec: &str, scene_dir: &Path) -> Result<Arc<GlyphAtlas>, GlyphError> {
+/// `.glyphs.toml` path), found by the project's search from `scope`.
+fn glyph_set_atlas(spec: &str, scope: &AssetScope) -> Result<Arc<GlyphAtlas>, GlyphError> {
     if spec.is_empty() || spec == BUILTIN_SET {
         return Ok(crate::glyph_atlas::GlyphSet::builtin().atlas().clone());
     }
-    let mut search = vec![scene_dir.to_path_buf()];
-    if let Some(parent) = scene_dir.parent() {
-        search.push(parent.to_path_buf());
-    }
-    let set = GlyphSetCache::new(search).get(spec)?;
+    let set = GlyphSetCache::new(scope.clone()).get(spec)?;
     Ok(set.atlas().clone())
 }
 
-/// Where a `.font.toml`'s `texture` is: the texture search (scene, its
-/// `textures/`, parent, its `textures/`), then beside the font file.
-fn font_image_path(texture: &str, font_path: &Path, scene_dir: &Path) -> Option<PathBuf> {
-    let mut dirs = vec![scene_dir.to_path_buf(), scene_dir.join("textures")];
-    if let Some(parent) = scene_dir.parent() {
-        dirs.push(parent.to_path_buf());
-        dirs.push(parent.join("textures"));
+/// Where a `.font.toml`'s `texture` is: where a texture of that name is
+/// (the project's search from the scene), then beside the font file, which
+/// is a file the description names relative to itself and no search. `Err`
+/// is every path tried.
+fn font_image_path(
+    texture: &str,
+    font_path: &Path,
+    scope: &AssetScope,
+) -> Result<PathBuf, Vec<PathBuf>> {
+    let mut tried = match scope.resolve(AssetKind::Textures, texture) {
+        Ok(path) => return Ok(path),
+        Err(missing) => missing.tried,
+    };
+    let beside = font_path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(texture);
+    if vfs::is_file(&beside) {
+        return Ok(beside);
     }
-    if let Some(dir) = font_path.parent() {
-        dirs.push(dir.to_path_buf());
+    if !tried.contains(&beside) {
+        tried.push(beside);
     }
-    dirs.into_iter()
-        .map(|d| d.join(texture))
-        .find(|p| vfs::is_file(p))
+    Err(tried)
 }
 
 fn parse_error(path: &Path, message: &str) -> GlyphError {
@@ -280,10 +294,71 @@ mod tests {
         Arc::new(src)
     }
 
+    /// The scope of a scene in `dir` of the file source in use.
+    fn scope(dir: &str) -> AssetScope {
+        AssetScope::for_dir(Path::new(dir))
+    }
+
     fn test_font() -> BitmapFont {
         vfs::scoped(scene_files(), || {
-            BitmapFont::resolve("fonts/default.font.toml", Path::new("game/levels")).unwrap()
+            BitmapFont::resolve("fonts/default.font.toml", &scope("game/levels")).unwrap()
         })
+    }
+
+    /// ADR 0114: from a scene two folders down, the font description, the
+    /// image it names and a glyph set are all found in the project.
+    #[test]
+    fn a_scene_two_folders_down_finds_the_projects_fonts() {
+        let mut src = MemorySource::new();
+        src.insert("game/flint.toml", "");
+        src.insert("game/fonts/default.font.toml", LEGACY);
+        src.insert("game/fonts/default_font.png", grid_png());
+        src.insert(
+            "game/fonts/dots.glyphs.toml",
+            "[ramps.dots]\nglyphs = \" .:\"\n",
+        );
+        src.insert("game/levels/act1/cave/a.scene.toml", "");
+        vfs::scoped(Arc::new(src), || {
+            let deep = scope("game/levels/act1/cave");
+            let font = BitmapFont::resolve("fonts/default.font.toml", &deep).unwrap();
+            assert_eq!(font.atlas().cell_size(), [8, 16]);
+            assert!(BitmapFont::resolve("dots", &deep).is_ok());
+            // A missing one lists every place tried, nearest first
+            let gone = BitmapFont::resolve("fonts/gone.font.toml", &deep).unwrap_err();
+            let text = gone.to_string();
+            let tried: Vec<&str> = text.lines().skip(1).map(str::trim).collect();
+            assert_eq!(
+                tried[0], "game/levels/act1/cave/fonts/gone.font.toml",
+                "{text}"
+            );
+            assert!(tried.contains(&"game/fonts/gone.font.toml"), "{text}");
+        });
+    }
+
+    /// A font's image that is nowhere says where it was looked for: the
+    /// texture search from the scene, then beside the font file.
+    #[test]
+    fn a_missing_font_image_lists_the_paths_tried() {
+        let mut src = MemorySource::new();
+        src.insert("game/flint.toml", "");
+        src.insert(
+            "game/fonts/ui.font.toml",
+            "[font]\ntexture = \"ui.png\"\nglyph_width = 8\nglyph_height = 8\ncolumns = 16\n",
+        );
+        src.insert("game/levels/a.scene.toml", "");
+        vfs::scoped(Arc::new(src.clone()), || {
+            let err = BitmapFont::resolve("fonts/ui.font.toml", &scope("game/levels")).unwrap_err();
+            let text = err.to_string();
+            let tried: Vec<&str> = text.lines().skip(1).map(str::trim).collect();
+            assert_eq!(tried[0], "game/levels/ui.png", "{text}");
+            assert!(tried.contains(&"game/textures/ui.png"), "{text}");
+            assert_eq!(tried.last(), Some(&"game/fonts/ui.png"), "{text}");
+        });
+        // Beside the font file it is found, as before
+        src.insert("game/fonts/ui.png", grid_png());
+        vfs::scoped(Arc::new(src), || {
+            assert!(BitmapFont::resolve("fonts/ui.font.toml", &scope("game/levels")).is_ok());
+        });
     }
 
     #[test]
@@ -322,7 +397,7 @@ mod tests {
     #[test]
     fn builtin_and_glyph_sets_resolve_like_the_ascii_styles() {
         vfs::scoped(scene_files(), || {
-            let dir = Path::new("game/levels");
+            let dir = &scope("game/levels");
             let builtin = BitmapFont::resolve("builtin", dir).unwrap();
             assert_eq!(builtin.atlas().cell_size(), [8, 8]);
             assert_eq!(builtin.spacing, 1.0);
@@ -341,7 +416,7 @@ mod tests {
     #[test]
     fn bad_fonts_say_why() {
         vfs::scoped(scene_files(), || {
-            let dir = Path::new("game/levels");
+            let dir = &scope("game/levels");
             assert!(matches!(
                 BitmapFont::resolve("fonts/gone.font.toml", dir),
                 Err(GlyphError::Read(_))
@@ -352,9 +427,9 @@ mod tests {
         src.insert("s/a.font.toml", "[font]\ntexture = \"x.png\"\n");
         src.insert("s/b.font.toml", "[font]\nglyph_width = 8\n");
         vfs::scoped(Arc::new(src), || {
-            let a = BitmapFont::resolve("a.font.toml", Path::new("s")).unwrap_err();
+            let a = BitmapFont::resolve("a.font.toml", &scope("s")).unwrap_err();
             assert!(a.to_string().contains("glyph_width"), "{a}");
-            let b = BitmapFont::resolve("b.font.toml", Path::new("s")).unwrap_err();
+            let b = BitmapFont::resolve("b.font.toml", &scope("s")).unwrap_err();
             assert!(b.to_string().contains("texture"), "{b}");
         });
     }

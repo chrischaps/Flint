@@ -598,7 +598,11 @@ pub fn load_textures_from_world(
             if let Some(ui_text) = comps.get(comp::UI_TEXT) {
                 if let Some(font) = ui_text.get("font").and_then(|v| v.as_str()) {
                     if !font.is_empty() {
-                        renderer.load_ui_font(device, queue, font, &config.scene_dir);
+                        let scope = flint_core::project::AssetScope::new(
+                            config.project.clone(),
+                            config.scene_dir.clone(),
+                        );
+                        renderer.load_ui_font(device, queue, font, &scope);
                     }
                 }
             }

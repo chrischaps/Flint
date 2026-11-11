@@ -107,6 +107,31 @@ pub enum AssetKind {
     /// The scene a transition names (`load_scene("level2.scene.toml")`): a
     /// path from the current scene's directory, then from each above.
     Scenes,
+    /// Colour palettes a style names: `palettes/<name>.palette.toml`, or a
+    /// path from the scene. The built-in palettes come after the search.
+    Palettes,
+    /// Glyph sets (the ASCII style's `font`, a `ui_text` font):
+    /// `fonts/<name>.glyphs.toml`, or a path from the scene. `builtin` is
+    /// never searched for.
+    GlyphSets,
+    /// Bitmap font descriptions a `ui_text.font` names by path
+    /// (`fonts/ui.font.toml`): that path from the scene's directory and
+    /// each above, then in `fonts/`.
+    Fonts,
+    /// The HUD's font files: every `.ttf` and `.otf` in `fonts/`, by file
+    /// name, which is what a `fonts/fonts.toml` alias names.
+    FontFaces,
+    /// Looks (`[post_process] look`, `--look`): `styles/<name>.look.toml`,
+    /// or a path from the scene. The built-in looks come after the search.
+    Looks,
+    /// Paper images (`paper_image`): `papers/<name>.png`, or a path from
+    /// the scene.
+    Papers,
+    /// Stroke strips (`stroke_image`): `strokes/<name>.png`, or a path from
+    /// the scene.
+    Strokes,
+    /// User-authored styles: every `styles/<name>.shader.toml`.
+    Styles,
 }
 
 /// Everything that tells one kind from another: where its files sit under
@@ -368,6 +393,239 @@ static SCENES: KindInfo = KindInfo {
     old_list: None,
 };
 
+static PALETTES: KindInfo = KindInfo {
+    label: "palettes",
+    noun: "palette",
+    folders: &["palettes", ""],
+    extensions: &[".palette.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_palettes),
+    old_list: None,
+};
+
+static GLYPH_SETS: KindInfo = KindInfo {
+    label: "glyph-sets",
+    noun: "glyph set",
+    folders: &["fonts", ""],
+    extensions: &[".glyphs.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_glyph_sets),
+    old_list: None,
+};
+
+static FONTS: KindInfo = KindInfo {
+    label: "fonts",
+    noun: "bitmap font",
+    folders: &["", "fonts"],
+    extensions: &[".font.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_fonts),
+    old_list: None,
+};
+
+static FONT_FACES: KindInfo = KindInfo {
+    label: "font-faces",
+    noun: "font file",
+    folders: &["fonts"],
+    // Both cases, as the one-folder scan took them (extensions match as
+    // spelled, and a font copied from Windows is `ARIAL.TTF`)
+    extensions: &[".ttf", ".otf", ".TTF", ".OTF"],
+    named_by_file: true,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_font_faces),
+    old_list: Some(old_font_face_list),
+};
+
+static LOOKS: KindInfo = KindInfo {
+    label: "looks",
+    noun: "look",
+    folders: &["styles", ""],
+    extensions: &[".look.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_looks),
+    old_list: None,
+};
+
+static PAPERS: KindInfo = KindInfo {
+    label: "papers",
+    noun: "paper image",
+    folders: &["papers", ""],
+    extensions: &[".png", ".jpg", ".jpeg"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_papers),
+    old_list: None,
+};
+
+static STROKES: KindInfo = KindInfo {
+    label: "strokes",
+    noun: "stroke image",
+    folders: &["strokes", ""],
+    extensions: &[".png", ".jpg", ".jpeg"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_strokes),
+    old_list: None,
+};
+
+static STYLES: KindInfo = KindInfo {
+    label: "styles",
+    noun: "user style",
+    folders: &["styles"],
+    extensions: &[".shader.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_styles),
+    old_list: Some(old_style_list),
+};
+
+/// TEMPORARY. Where the style assets were looked for before ADR 0114: the
+/// scene's directory, the one above, then the working directory (`.`), the
+/// one old search besides a transition's that looked there
+/// (`ChoiceScope::search`, the ASCII and palette styles' `search_for` as
+/// they were).
+fn old_style_search(scene_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = old_two_levels(scene_dir);
+    // Spelled as nothing, so a file there is `palettes/x`, not `./palettes/x`
+    dirs.push(PathBuf::new());
+    dirs
+}
+
+/// TEMPORARY. A palette or glyph set before ADR 0114 (`PaletteCache` and
+/// `GlyphSetCache::candidates` as they were): a name ending in the kind's
+/// extension as a path from each directory of [`old_style_search`] and then
+/// as written; any other as `<folder>/<name><extension>` in each.
+fn old_set_file(name: &str, scene_dir: &Path, folder: &str, extension: &str) -> Option<PathBuf> {
+    let search = old_style_search(scene_dir);
+    let candidates: Vec<PathBuf> = if name.ends_with(extension) {
+        let mut c: Vec<PathBuf> = search.iter().map(|d| d.join(name)).collect();
+        c.push(PathBuf::from(name));
+        c
+    } else {
+        search
+            .iter()
+            .map(|d| d.join(folder).join(format!("{name}{extension}")))
+            .collect()
+    };
+    candidates.into_iter().find(|p| vfs::is_file(p))
+}
+
+fn old_palettes(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_set_file(name, scene_dir, "palettes", ".palette.toml")
+}
+
+/// TEMPORARY. As the ASCII style found a glyph set. (A `ui_text` font and
+/// the look measurer searched the same two directories and not the working
+/// directory, so for them this old rule can name a file they never read.)
+fn old_glyph_sets(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_set_file(name, scene_dir, "fonts", ".glyphs.toml")
+}
+
+/// TEMPORARY. A `.font.toml` before ADR 0114: the path `ui_text.font` gave,
+/// from the scene's directory and nowhere else (`BitmapFont::resolve` as it
+/// was).
+fn old_fonts(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let file = scene_dir.join(name);
+    vfs::is_file(&file).then_some(file)
+}
+
+/// TEMPORARY. The HUD's fonts before ADR 0114: every `.ttf` / `.otf` in the
+/// one `fonts/` that existed, beside the scene or else one level up
+/// (`find_fonts_dir` as it was), by name.
+fn old_font_face_list(scene_dir: &Path) -> Vec<PathBuf> {
+    let Some(dir) = old_first_dir(scene_dir, "fonts") else {
+        return Vec::new();
+    };
+    let mut files = vfs::read_dir(&dir).unwrap_or_default();
+    files.retain(|p| FONT_FACES.name_of(p).is_some());
+    files.sort();
+    files
+}
+
+fn old_font_faces(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let file = old_first_dir(scene_dir, "fonts")?.join(name);
+    vfs::is_file(&file).then_some(file)
+}
+
+/// TEMPORARY. A look before ADR 0114 (`flint_render::look::find` as it
+/// was): `<name>.look.toml` in `styles/` beside the scene, one level up,
+/// then in the working directory's `styles/`; a name ending `.toml` was a
+/// path from the working directory and nothing else.
+fn old_looks(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    if name.ends_with(".toml") {
+        let as_written = PathBuf::from(name);
+        return vfs::is_file(&as_written).then_some(as_written);
+    }
+    let mut dirs: Vec<PathBuf> = old_two_levels(scene_dir)
+        .into_iter()
+        .map(|d| d.join("styles"))
+        .collect();
+    dirs.push(PathBuf::from("styles"));
+    dirs.into_iter()
+        .map(|dir| dir.join(format!("{name}.look.toml")))
+        .find(|p| vfs::is_file(p))
+}
+
+/// TEMPORARY. A paper or stroke image before ADR 0114
+/// (`stylize::images::candidates` as it was): the name as a path from each
+/// directory of [`old_style_search`]; then, for a bare name (no folder, no
+/// extension), `<folder>/<name>.png` in each. An absolute name was itself.
+fn old_style_image(name: &str, scene_dir: &Path, folder: &str) -> Option<PathBuf> {
+    let path = Path::new(name);
+    if path.is_absolute() {
+        return vfs::is_file(path).then(|| path.to_path_buf());
+    }
+    let search = old_style_search(scene_dir);
+    let mut candidates: Vec<PathBuf> = search.iter().map(|d| d.join(path)).collect();
+    if !name.contains(['/', '\\']) && path.extension().is_none() {
+        let file = format!("{name}.png");
+        candidates.extend(search.iter().map(|d| d.join(folder).join(&file)));
+    }
+    candidates.into_iter().find(|p| vfs::is_file(p))
+}
+
+fn old_papers(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_style_image(name, scene_dir, "papers")
+}
+
+fn old_strokes(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_style_image(name, scene_dir, "strokes")
+}
+
+/// TEMPORARY. User styles before ADR 0114: every `*.shader.toml` in
+/// `styles/` beside the scene, then in `styles/` one level up, by name in
+/// each; of two of one name the first read was kept
+/// (`stylize::custom::load_dir` as it was, for one scene: across scenes the
+/// first scene loaded decided, #426).
+fn old_style_list(scene_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in old_two_levels(scene_dir) {
+        let mut files = vfs::read_dir(dir.join("styles")).unwrap_or_default();
+        files.retain(|p| STYLES.name_of(p).is_some());
+        files.sort();
+        out.extend(files);
+    }
+    out
+}
+
+fn old_styles(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_style_list(scene_dir)
+        .into_iter()
+        .find(|file| STYLES.name_of(file).as_deref() == Some(name))
+}
+
 /// TEMPORARY. A particle texture before ADR 0114: in the one `particles/`
 /// effects were read from (beside the scene, else one level up), then
 /// beside the scene, then one level up
@@ -627,6 +885,14 @@ impl AssetKind {
         AssetKind::Files,
         AssetKind::ParticleTextures,
         AssetKind::Scenes,
+        AssetKind::Palettes,
+        AssetKind::GlyphSets,
+        AssetKind::Fonts,
+        AssetKind::FontFaces,
+        AssetKind::Looks,
+        AssetKind::Papers,
+        AssetKind::Strokes,
+        AssetKind::Styles,
     ];
 
     pub fn info(self) -> &'static KindInfo {
@@ -646,6 +912,14 @@ impl AssetKind {
             AssetKind::Files => &FILES,
             AssetKind::ParticleTextures => &PARTICLE_TEXTURES,
             AssetKind::Scenes => &SCENES,
+            AssetKind::Palettes => &PALETTES,
+            AssetKind::GlyphSets => &GLYPH_SETS,
+            AssetKind::Fonts => &FONTS,
+            AssetKind::FontFaces => &FONT_FACES,
+            AssetKind::Looks => &LOOKS,
+            AssetKind::Papers => &PAPERS,
+            AssetKind::Strokes => &STROKES,
+            AssetKind::Styles => &STYLES,
         }
     }
 
@@ -1139,6 +1413,78 @@ impl Project {
     }
 }
 
+/// A project and the directory its searches start from: what a loader that
+/// outlives one lookup holds (the renderer's styles, a debug panel's lists),
+/// so the project is discovered once a scene and not once a lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetScope {
+    pub project: Project,
+    pub scene_dir: PathBuf,
+}
+
+impl AssetScope {
+    pub fn new(project: Project, scene_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            project,
+            scene_dir: scene_dir.into(),
+        }
+    }
+
+    /// The scope of the scene at `scene`: its project
+    /// ([`Project::for_scene`]) and its directory.
+    pub fn for_scene(scene: &Path) -> Self {
+        let dir = scene.parent().filter(|p| !p.as_os_str().is_empty());
+        Self::new(
+            Project::for_scene(scene),
+            dir.unwrap_or_else(|| Path::new(".")),
+        )
+    }
+
+    /// The scope of a scene in `scene_dir`, for a host that kept only the
+    /// directory.
+    pub fn for_dir(scene_dir: &Path) -> Self {
+        let dir = if scene_dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            scene_dir
+        };
+        let project = Project::for_path(dir).unwrap_or_else(|e| {
+            tracing::warn!("{e}; searching for assets as if there were no manifest");
+            Project::bare(dir.to_path_buf())
+        });
+        Self::new(project, dir)
+    }
+
+    /// [`Project::resolve`] from this scope's directory.
+    pub fn resolve(&self, kind: AssetKind, name: &str) -> Result<PathBuf, NotFound> {
+        self.project.resolve(kind, name, &self.scene_dir)
+    }
+
+    /// [`Project::explain`] from this scope's directory.
+    pub fn explain(&self, kind: AssetKind, name: &str) -> Resolution {
+        self.project.explain(kind, name, &self.scene_dir)
+    }
+
+    /// [`Project::list`] from this scope's directory.
+    pub fn list(&self, kind: AssetKind) -> Vec<Listed> {
+        self.project.list(kind, &self.scene_dir)
+    }
+
+    /// [`Project::search_dirs`] from this scope's directory.
+    pub fn search_dirs(&self, kind: AssetKind) -> Vec<PathBuf> {
+        self.project.search_dirs(kind, &self.scene_dir)
+    }
+}
+
+impl Resolution {
+    /// Every path the answer depends on, for hot reload: the ones tried
+    /// before the file found (one appearing there takes over) and the file
+    /// itself; every candidate when nothing was found.
+    pub fn watched(&self) -> impl Iterator<Item = &PathBuf> {
+        self.tried.iter().chain(&self.found)
+    }
+}
+
 /// A path for a message or a report: with forward slashes on every platform,
 /// so a walk begun from `scenes/act1` is not spelled `scenes/act1\particles`
 /// on Windows, and a report reads the same everywhere.
@@ -1245,6 +1591,10 @@ fn order_change(
 #[cfg(test)]
 #[path = "assets_kinds_tests.rs"]
 mod kinds_tests;
+
+#[cfg(test)]
+#[path = "assets_style_tests.rs"]
+mod style_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1391,7 +1741,7 @@ mod tests {
                 let p = project("flint/examples/a.scene.toml");
                 assert_eq!(p.found, Found::Engine);
                 assert_eq!(p.engine_mount(), None);
-                assert!(fire(&p, "flint/demo").is_err());
+                assert!(fire(&p, "flint/examples").is_err());
             },
         );
     }

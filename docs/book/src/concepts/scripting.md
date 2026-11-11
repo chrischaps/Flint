@@ -1113,7 +1113,7 @@ A picture can be no wider or taller than the GPU's largest texture (8192 pixels 
 
 *`examples/hud_glow.scene.toml`: left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
 
-**Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found the same way as `sprites/`: the scene file's directory, then its parent). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folder is scanned non-recursively once at startup and again on scene change when the project root changes. An optional `fonts/fonts.toml` adds aliases that point at the same files:
+**Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found by [the one asset search](assets.md#where-the-engine-looks-for-a-file), kind `font-faces`: every `fonts/` beside the scene, in each directory above it up to the project root, then in the mounted engine, a nearer file hiding a farther one of its name). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folders are read (not their subfolders) once at startup and again on a scene change when the new scene sees other files. An optional `fonts/fonts.toml` (the nearest one) adds aliases that point at the same files:
 
 ```toml
 [[font]]

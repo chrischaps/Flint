@@ -3,11 +3,13 @@
 //! pencil samples along each dash.
 //!
 //! A style names an image with a string option (`paper_image =
-//! "papers/cold_press.png"`, or just `"cold_press"`). It is looked for the
-//! way glyph sets and palettes are: beside the scene, then in the scene's
-//! parent, then in `.`; a bare name also tries `<folder>/<name>.png` in
-//! each. The file is read through the vfs ([`open_image`]), so a game
-//! bundle carries it to the web.
+//! "papers/cold_press.png"`, or just `"cold_press"`). It is found the way
+//! glyph sets and palettes are, by the project's one asset search (ADR
+//! 0114; [`AssetKind::Papers`] / [`AssetKind::Strokes`]): `papers/<name>.png`
+//! (then `.jpg`, `.jpeg`), or the name as a path, in the scene's directory,
+//! each directory above it up to the project root, then the mounted engine.
+//! The file is read through the vfs ([`open_image`]), so a game bundle
+//! carries it to the web.
 //!
 //! The image is kept with the style ([`ImageSlot`]) as an `Rgba8Unorm`
 //! texture of display values with a mip chain made on the CPU, so a
@@ -24,7 +26,7 @@
 
 use crate::file_watch::FileStamps;
 use crate::texture_cache::open_image;
-use std::path::{Path, PathBuf};
+use flint_core::project::{shown, AssetKind, AssetScope};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -54,10 +56,11 @@ pub enum ImageUse {
 }
 
 impl ImageUse {
-    fn folder(self) -> &'static str {
+    /// The asset kind an image of this use is searched as.
+    pub fn kind(self) -> AssetKind {
         match self {
-            Self::Paper => PAPERS,
-            Self::Stroke => STROKES,
+            Self::Paper => AssetKind::Papers,
+            Self::Stroke => AssetKind::Strokes,
         }
     }
 }
@@ -140,23 +143,6 @@ pub fn neutralize(img: &mut image::RgbaImage) {
             p[c] = (p[c] as f64 * gain[c]).round().clamp(0.0, 255.0) as u8;
         }
     }
-}
-
-/// The paths `name` may be at, in order: `name` itself under each search
-/// directory (or as given when absolute), then, for a bare name,
-/// `<folder>/<name>.png` under each.
-pub fn candidates(search: &[PathBuf], name: &str, use_: ImageUse) -> Vec<PathBuf> {
-    let path = Path::new(name);
-    if path.is_absolute() {
-        return vec![path.to_path_buf()];
-    }
-    let mut out: Vec<PathBuf> = search.iter().map(|d| d.join(path)).collect();
-    let bare = !name.contains('/') && !name.contains('\\') && path.extension().is_none();
-    if bare {
-        let file = format!("{name}.png");
-        out.extend(search.iter().map(|d| d.join(use_.folder()).join(&file)));
-    }
-    out
 }
 
 /// The mip chain of `img`: level 0 at most [`MAX_SIDE`] on its longer
@@ -262,8 +248,8 @@ fn upload(
 pub struct ImageSlot {
     use_: ImageUse,
     label: &'static str,
-    /// What the current image was loaded for: the search path and name.
-    key: Option<(Vec<PathBuf>, String)>,
+    /// What the current image was loaded for: where from, and the name.
+    key: Option<(AssetScope, String)>,
     current: Option<Arc<StyleImage>>,
     blank: Option<Arc<StyleImage>>,
     stamps: FileStamps,
@@ -293,26 +279,30 @@ impl ImageSlot {
             .clone()
     }
 
-    /// The image `name` names, looked for from `search` (see
-    /// [`candidates`]); the blank stand-in for "" or a file that won't
-    /// load. With `poll` set, a watched file that changed is read again.
+    /// The image `name` names, found by the project's search from `scope`;
+    /// the blank stand-in for "" or a file that won't load. With `poll`
+    /// set, a watched file that changed (the image, or a nearer place one
+    /// has appeared at) is read again.
     pub fn get(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        search: &[PathBuf],
+        scope: &AssetScope,
         name: &str,
         poll: bool,
     ) -> Arc<StyleImage> {
         if name.is_empty() {
             return self.blank(device, queue);
         }
-        let key = (search.to_vec(), name.to_string());
-        let stale = self.key.as_ref() != Some(&key) || (poll && self.stamps.changed());
+        let same = self
+            .key
+            .as_ref()
+            .is_some_and(|(s, n)| s == scope && n == name);
+        let stale = !same || (poll && self.stamps.changed());
         if stale || self.current.is_none() {
             self.stamps.clear();
-            self.key = Some(key);
-            self.current = Some(self.load(device, queue, search, name));
+            self.key = Some((scope.clone(), name.to_string()));
+            self.current = Some(self.load(device, queue, scope, name));
         }
         self.current.clone().unwrap()
     }
@@ -321,16 +311,15 @@ impl ImageSlot {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        search: &[PathBuf],
+        scope: &AssetScope,
         name: &str,
     ) -> Arc<StyleImage> {
-        let mut tried = Vec::new();
-        for path in candidates(search, name, self.use_) {
-            self.stamps.watch(&path);
-            if !flint_core::vfs::is_file(&path) {
-                tried.push(path);
-                continue;
-            }
+        let answer = scope.explain(self.use_.kind(), name);
+        if let Some(change) = &answer.order_change {
+            change.log();
+        }
+        self.stamps.watch_all(answer.watched());
+        if let Some(path) = answer.found {
             match open_image(&path) {
                 Ok(img) => {
                     let mut img = img.to_rgba8();
@@ -357,8 +346,7 @@ impl ImageSlot {
                 }
             }
         }
-        let list: Vec<String> = tried.iter().map(|p| p.display().to_string()).collect();
-        self.warn(name, &format!("not found (looked at {})", list.join(", ")));
+        self.warn(name, &not_found_text(&answer.tried));
         self.blank(device, queue)
     }
 
@@ -373,27 +361,63 @@ impl ImageSlot {
     }
 }
 
+/// What a missing image's warning says: that there is no built-in image
+/// (the style draws its procedural one), and every path tried.
+fn not_found_text(tried: &[std::path::PathBuf]) -> String {
+    let mut text = String::from("not found (no image is built in). Tried:");
+    for path in tried {
+        text.push_str("\n  ");
+        text.push_str(&shown(path));
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::vfs::{self, MemorySource};
+    use std::path::{Path, PathBuf};
 
+    /// ADR 0114: a bare name is `papers/<name>.png` in the scene's folder
+    /// and each above it up to the project root, a path is taken from each
+    /// of them, and a miss says every place tried.
     #[test]
-    fn a_bare_name_also_tries_the_folder() {
-        let search = vec![PathBuf::from("examples"), PathBuf::from(".")];
-        let c = candidates(&search, "cold_press", ImageUse::Paper);
-        assert_eq!(
-            c,
-            vec![
-                PathBuf::from("examples").join("cold_press"),
-                PathBuf::from(".").join("cold_press"),
-                PathBuf::from("examples")
-                    .join("papers")
-                    .join("cold_press.png"),
-                PathBuf::from(".").join("papers").join("cold_press.png"),
-            ]
-        );
-        let c = candidates(&search, "strokes/hb.png", ImageUse::Stroke);
-        assert_eq!(c.len(), 2, "a path is taken as written");
+    fn an_image_is_found_from_a_nested_scene_and_a_miss_says_where_it_looked() {
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        files.insert("game/papers/cold_press.png", "");
+        files.insert("game/strokes/hb.png", "");
+        files.insert("game/scans/linen.jpg", "");
+        files.insert("game/levels/act1/cave/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let scope = AssetScope::for_dir(Path::new("game/levels/act1/cave"));
+            let found = |use_: ImageUse, name: &str| scope.explain(use_.kind(), name).found;
+            assert_eq!(
+                found(ImageUse::Paper, "cold_press"),
+                Some(PathBuf::from("game/papers/cold_press.png"))
+            );
+            assert_eq!(
+                found(ImageUse::Paper, "papers/cold_press.png"),
+                Some(PathBuf::from("game/papers/cold_press.png"))
+            );
+            assert_eq!(
+                found(ImageUse::Paper, "scans/linen.jpg"),
+                Some(PathBuf::from("game/scans/linen.jpg"))
+            );
+            assert_eq!(
+                found(ImageUse::Stroke, "hb"),
+                Some(PathBuf::from("game/strokes/hb.png"))
+            );
+            // A paper is not a stroke
+            assert_eq!(found(ImageUse::Stroke, "cold_press"), None);
+            let missing = scope.explain(AssetKind::Papers, "vellum");
+            let text = not_found_text(&missing.tried);
+            let lines: Vec<&str> = text.lines().map(str::trim).collect();
+            assert_eq!(lines[0], "not found (no image is built in). Tried:");
+            assert_eq!(lines[1], "game/levels/act1/cave/papers/vellum.png");
+            assert!(lines.contains(&"game/papers/vellum.png"), "{text}");
+            assert!(lines.contains(&"game/vellum.jpg"), "{text}");
+        });
     }
 
     #[test]

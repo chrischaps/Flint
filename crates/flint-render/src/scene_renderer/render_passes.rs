@@ -1456,6 +1456,7 @@ impl SceneRenderer {
         } else {
             crate::style_mask::StyleBounds::default()
         };
+        let style_assets = self.asset_scope();
         let mut style_frame = (!hdr_styles.is_empty() || !display_styles.is_empty()).then(|| {
             crate::stylize::StyleFrame {
                 device,
@@ -1489,6 +1490,7 @@ impl SceneRenderer {
                 history_epoch: self.style_history_epoch,
                 pixels_per_point: self.pixels_per_point,
                 scene_dir: self.scene_dir.as_deref(),
+                assets: &style_assets,
                 debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,

@@ -751,20 +751,24 @@ fn parse_frame_step(text: &str) -> Result<f64, String> {
 fn list_styles(args: &RenderArgs) -> Result<()> {
     use flint_render::stylize::{catalog, custom};
     // The scene's user styles, and its palettes and fonts as choices (#322)
-    let scene_dir =
-        (!args.scene.is_empty()).then(|| Path::new(&args.scene).parent().unwrap_or(Path::new(".")));
-    if let Some(dir) = scene_dir {
-        for message in custom::load_dir(dir) {
+    // found from the scene's project by the one asset search (ADR 0114);
+    // with no scene, from the working directory
+    let assets = match args.scene.is_empty() {
+        true => flint_core::project::AssetScope::for_dir(Path::new(".")),
+        false => flint_core::project::AssetScope::for_scene(Path::new(&args.scene)),
+    };
+    if !args.scene.is_empty() {
+        for message in custom::load_for(&assets) {
             eprintln!("warning: {message}");
         }
     }
     if args.json {
         say!(
             "{}",
-            serde_json::to_string_pretty(&catalog::catalog_for(scene_dir))?
+            serde_json::to_string_pretty(&catalog::catalog_in(&assets))?
         );
     } else {
-        print!("{}", catalog::catalog_text_for(scene_dir));
+        print!("{}", catalog::catalog_text_in(&assets));
     }
     Ok(())
 }
@@ -883,11 +887,10 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         .transpose()?;
     // User-authored styles (#274): registered before anything reads a
     // `[post_process.styles]` table, a look or a --style that names one
-    let scene_dir = Path::new(&args.scene)
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
-    for message in flint_render::stylize::custom::load_dir(&scene_dir) {
+    // The scene's project, found once: its user styles, looks, palettes,
+    // glyph sets and papers are all searched from it (ADR 0114)
+    let assets = flint_core::project::AssetScope::for_scene(Path::new(&args.scene));
+    for message in flint_render::stylize::custom::load_for(&assets) {
         eprintln!("warning: {message}");
     }
     args.style
@@ -896,7 +899,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     let look = args
         .look
         .as_deref()
-        .map(|name| super::look::find(name, &args.scene))
+        .map(|name| flint_render::look::find_in(name, &assets).map_err(anyhow::Error::msg))
         .transpose()?;
     let (width, height) = match grid {
         Some(_) => view.render_size(args.width, args.height),
@@ -963,7 +966,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     let scene_pp = scene_file
         .post_process
         .as_ref()
-        .map(|def| flint_render::look::resolve_scene(def, &args.scene));
+        .map(|def| flint_render::look::resolve_scene_in(def, Path::new(&args.scene), &assets));
     let scene_pp = scene_pp.as_ref();
     if let Some(name) = scene_pp.and_then(|d| d.look.as_deref()) {
         say!("Scene look: {name}");
@@ -1128,7 +1131,7 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
 
     // Load models and textures from the scene
-    let config = ModelLoadConfig::from_scene_path(&args.scene);
+    let config = ModelLoadConfig::in_project(assets.project.clone(), &args.scene);
     model_loader::load_models_from_world(
         &mut world,
         &mut renderer,
@@ -1228,8 +1231,9 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     // Load terrain (if any)
     load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
 
-    // Set scene_dir for font/texture resolution and viewport params for screen anchoring
-    renderer.scene_dir = Path::new(&args.scene).parent().map(|p| p.to_path_buf());
+    // Where fonts, glyph sets, palettes and papers are found, and viewport
+    // params for screen anchoring
+    renderer.set_asset_scope(assets.clone());
     renderer.ortho_height = camera.ortho_height;
     renderer.aspect_ratio = camera.aspect;
 
@@ -3495,8 +3499,15 @@ impl Stage {
         // Load terrain (if any)
         load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
 
-        // Set scene_dir for font/texture resolution and viewport params for screen anchoring
-        renderer.scene_dir = Path::new(&args.scene).parent().map(|p| p.to_path_buf());
+        // Where fonts, glyph sets, palettes and papers are found, and
+        // viewport params for screen anchoring
+        renderer.set_asset_scope(flint_core::project::AssetScope::new(
+            config.project.clone(),
+            Path::new(&args.scene)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        ));
         renderer.ortho_height = camera.ortho_height;
         renderer.aspect_ratio = camera.aspect;
 

@@ -416,9 +416,14 @@ impl PlayerApp {
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            renderer.scene_dir = Path::new(&self.scene_path)
+            let scene_dir = Path::new(&self.scene_path)
                 .parent()
-                .map(|p| p.to_path_buf());
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            renderer.set_asset_scope(flint_core::project::AssetScope::new(
+                self.project.clone(),
+                scene_dir,
+            ));
 
             let config = build_model_load_config(
                 &self.project,

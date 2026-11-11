@@ -120,12 +120,14 @@ On the GPU the ASCII style packs each step's band start beside its glyph in the 
 `GlyphSetCache::get(name)` resolves:
 
 - `builtin` (or an empty name) to the built-in set;
-- a path ending `.glyphs.toml` against each search directory, then as given;
-- a bare name such as `terminal` to `<dir>/fonts/terminal.glyphs.toml`, searching the scene's folder and then its parent, the same rule the player uses to find `fonts/`.
+- a bare name such as `terminal` to `fonts/terminal.glyphs.toml`, found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `glyph-sets`): beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/fonts/`);
+- a path ending `.glyphs.toml` (`art/terminal.glyphs.toml`) from each of those same directories.
 
-Failures are cached too, so a bad name warns once rather than every frame.
+`builtin` is never searched for, so no file can take its place. The working directory is not searched (it was, before ADR 0114): from a project's root it is the root, which the search reaches. The font file a set names (`[font] file`) is read from beside the set, wherever the set was found. `flint asset where glyph-sets terminal --scene <scene>` prints the file and the places tried before it.
 
-**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and the candidates searched ahead of it (absent ones too). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. A set that loaded and then breaks (a half-typed table, a font file deleted) keeps drawing its last good glyphs, with one warning that ends `keeping the previous glyphs`, until the next save that changes the files (#286). On the web the bundle is fixed and nothing is polled. `examples/ascii_tidepool.scene.toml` names `examples/fonts/tidepool.glyphs.toml` to try it on.
+Failures are cached too, so a bad name warns once rather than every frame, and the warning lists every path tried.
+
+**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and every place searched ahead of it (absent ones too: a set that appears beside the scene takes over from the project's at the next poll). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. A set that loaded and then breaks (a half-typed table, a font file deleted) keeps drawing its last good glyphs, with one warning that ends `keeping the previous glyphs`, until the next save that changes the files (#286). On the web the bundle is fixed and nothing is polled. `examples/ascii_tidepool.scene.toml` names `examples/fonts/tidepool.glyphs.toml` to try it on.
 
 ## Sprite text
 
@@ -137,7 +139,7 @@ Failures are cached too, so a bad name warns once rather than every frame.
 
 ```toml
 [font]
-texture = "fonts/default_font.png"  # a PNG grid, found as an image texture is
+texture = "fonts/default_font.png"  # a PNG grid, found as an image texture is, then beside this file
 glyph_width = 8
 glyph_height = 16
 columns = 16

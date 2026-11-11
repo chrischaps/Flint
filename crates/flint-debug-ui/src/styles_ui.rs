@@ -102,6 +102,10 @@ pub struct StylesEditor {
     /// The scene's folder, where options find their run-time choices (its
     /// palettes and glyph sets, #322); set by the host on scene load.
     scene_dir: Option<PathBuf>,
+    /// The scene's project and folder, which the choices are searched from
+    /// by the one asset rule (ADR 0114): found when the folder is set, or
+    /// handed over by a host that holds the project.
+    assets: Option<flint_core::project::AssetScope>,
     /// Each option's run-time choices, by (style, option) and the other
     /// options' values they were found under, so a combo lists the folder
     /// once rather than every frame. Dropped when the scene changes.
@@ -122,7 +126,19 @@ impl StylesEditor {
     /// sets (#322); `None` offers the built-ins only. Calling it again (a
     /// scene load or reload) finds new files.
     pub fn set_scene_dir(&mut self, scene_dir: Option<PathBuf>) {
+        self.assets = scene_dir
+            .as_deref()
+            .map(flint_core::project::AssetScope::for_dir);
         self.scene_dir = scene_dir;
+        self.choices.clear();
+    }
+
+    /// [`set_scene_dir`](Self::set_scene_dir) for a host that holds the
+    /// scene's project: the choices are searched from `assets` and no
+    /// project is looked for.
+    pub fn set_asset_scope(&mut self, assets: Option<flint_core::project::AssetScope>) {
+        self.scene_dir = assets.as_ref().map(|a| a.scene_dir.clone());
+        self.assets = assets;
         self.choices.clear();
     }
 
@@ -189,7 +205,7 @@ impl StylesEditor {
         }
         let option = |name: &str| style.option(pp, name).to_string();
         let scope = ChoiceScope {
-            scene_dir: self.scene_dir.as_deref(),
+            assets: self.assets.as_ref(),
             option: &option,
         };
         let found = o.choices_in(&scope);

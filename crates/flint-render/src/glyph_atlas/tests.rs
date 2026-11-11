@@ -1,5 +1,6 @@
 use super::*;
 use flint_core::bundle::{Bundle, BundleManifest};
+use flint_core::project::AssetScope;
 use flint_core::vfs::{self, MemorySource};
 use std::path::Path;
 use std::sync::Arc;
@@ -687,6 +688,28 @@ fn the_cache_finds_sets_by_name_and_remembers_failures() {
         let err = cache.get("nowhere").unwrap_err();
         assert!(err.to_string().contains("nowhere"));
         assert_eq!(cache.get("nowhere").unwrap_err(), err);
+        // The miss names every place it looked, and what is built in
+        let text = err.to_string();
+        assert!(text.contains("only `builtin` is built in"), "{text}");
+        let tried: Vec<&str> = text.lines().skip(1).map(str::trim).collect();
+        assert_eq!(tried[0], "game/scenes/fonts/nowhere.glyphs.toml", "{text}");
+        assert!(tried.contains(&"game/fonts/nowhere.glyphs.toml"), "{text}");
+    });
+}
+
+/// ADR 0114: a scene two folders below the project root finds the
+/// project's `fonts/`, which the scene-then-parent search never reached.
+#[test]
+fn a_scene_two_folders_down_finds_the_projects_set() {
+    let mut files = game_files();
+    files.insert("game/flint.toml", "");
+    files.insert("game/scenes/act1/cave/deep.scene.toml", "");
+    vfs::scoped(Arc::new(files), || {
+        let mut cache =
+            GlyphSetCache::for_scene(Path::new("game/scenes/act1/cave/deep.scene.toml"));
+        assert_eq!(cache.get("terminal").unwrap().name(), "terminal");
+        // And the path spelling, from the project's root
+        assert!(cache.get("fonts/terminal.glyphs.toml").is_ok());
     });
 }
 
@@ -779,7 +802,8 @@ fn the_cache_reloads_what_changes_on_disk() {
     std::fs::create_dir_all(dir.join("fonts")).unwrap();
     let plain = dir.join("fonts/plain.glyphs.toml");
     std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
-    let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+    std::fs::write(dir.join("flint.toml"), "").unwrap();
+    let mut cache = GlyphSetCache::new(AssetScope::for_dir(&dir));
     let before = cache.get("plain").unwrap();
     assert!(!cache.poll(), "nothing changed yet");
     assert!(Arc::ptr_eq(&before, &cache.get("plain").unwrap()));
@@ -826,6 +850,38 @@ fn the_cache_reloads_what_changes_on_disk() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// ADR 0114: every place nearer than the set that loaded is watched, so a
+/// set that appears beside the scene later takes over from the project's.
+#[test]
+fn a_nearer_set_that_appears_later_takes_over() {
+    let root = std::env::temp_dir().join(format!("flint-glyphs-near-{}", std::process::id()));
+    let scene_dir = root.join("scenes/act1");
+    std::fs::create_dir_all(&scene_dir).unwrap();
+    std::fs::create_dir_all(root.join("fonts")).unwrap();
+    std::fs::write(root.join("flint.toml"), "").unwrap();
+    std::fs::write(
+        root.join("fonts/plain.glyphs.toml"),
+        "[ramps.dots]\nglyphs = \" .:\"\n",
+    )
+    .unwrap();
+    let mut cache = GlyphSetCache::new(AssetScope::for_dir(&scene_dir));
+    let far = cache.get("plain").unwrap();
+    assert_eq!(far.default_ramp().glyphs(), &[' ', '.', ':']);
+    assert!(!cache.poll());
+
+    std::fs::create_dir_all(scene_dir.join("fonts")).unwrap();
+    std::fs::write(
+        scene_dir.join("fonts/plain.glyphs.toml"),
+        "[ramps.dots]\nglyphs = \" #\"\n",
+    )
+    .unwrap();
+    assert!(cache.poll(), "a nearer file appeared");
+    let near = cache.get("plain").unwrap();
+    assert_eq!(near.default_ramp().glyphs(), &[' ', '#']);
+    assert!(!cache.poll());
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// Counts WARN events on this thread, so a test can hold "said once".
 struct WarnCount(Arc<std::sync::atomic::AtomicUsize>);
 
@@ -858,8 +914,9 @@ fn a_broken_edit_keeps_the_last_good_glyphs() {
     std::fs::write(&plain, "[ramps.dots]\nglyphs = \" .:\"\n").unwrap();
     let warns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = || warns.load(std::sync::atomic::Ordering::SeqCst);
+    std::fs::write(dir.join("flint.toml"), "").unwrap();
     tracing::subscriber::with_default(WarnCount(warns.clone()), || {
-        let mut cache = GlyphSetCache::new(vec![dir.clone()]);
+        let mut cache = GlyphSetCache::new(AssetScope::for_dir(&dir));
         let good = cache.get("plain").unwrap();
         assert_eq!(count(), 0);
 

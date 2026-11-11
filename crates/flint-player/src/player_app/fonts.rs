@@ -1,10 +1,11 @@
 //! Project fonts for the script HUD.
 //!
-//! Scans `<project>/fonts/*.ttf|*.otf` (non-recursive; the project root is
-//! the scene file's parent directory, or its parent — the same rule
-//! `load_ui_texture` uses for `sprites/`) and registers every file with egui
-//! under its file stem as a named `FontFamily`. An optional
-//! `<project>/fonts/fonts.toml` manifest adds aliases:
+//! Every `fonts/*.ttf|*.otf` the scene can see by the project's one asset
+//! search (ADR 0114; `AssetKind::FontFaces`: `fonts/` in the scene's
+//! directory, in each directory above it up to the project root, then in
+//! the mounted engine, a nearer file hiding a farther one of its name) is
+//! registered with egui under its file stem as a named `FontFamily`. The
+//! nearest `fonts/fonts.toml` (optional) adds aliases:
 //!
 //! ```toml
 //! [[font]]
@@ -30,6 +31,7 @@
 //! build their layout jobs through [`text_layout_job`] so measurement and
 //! drawing can never disagree.
 
+use flint_core::project::{AssetKind, Listed, Project};
 use flint_core::vfs;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -139,56 +141,67 @@ pub fn resolve_families(stems: &[String], aliases: &[FontAlias]) -> BTreeMap<Str
     families
 }
 
-/// The project root for a scene path: `scene_dir/fonts` if it exists,
-/// else `scene_dir/../fonts`. Returns the `fonts/` directory candidate that
-/// exists, or `None`.
-pub fn find_fonts_dir(scene_path: &str) -> Option<PathBuf> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let mut candidates = vec![scene_dir.join("fonts")];
-    if let Some(parent) = scene_dir.parent() {
-        candidates.push(parent.join("fonts"));
-    }
-    candidates.into_iter().find(|p| vfs::is_dir(p))
+/// The path a scene names its font manifest by: a file found like any
+/// file a scene names by a path of its own (`AssetKind::Files`).
+pub const FONT_MANIFEST: &str = "fonts/fonts.toml";
+
+/// The font files and the manifest a scene sees, by the project's one
+/// asset search (ADR 0114).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectFonts {
+    /// Every `.ttf` / `.otf` in a `fonts/` the scene can see, nearest
+    /// first, a nearer file hiding a farther one of its name.
+    pub faces: Vec<Listed>,
+    /// The nearest `fonts/fonts.toml`, if there is one.
+    pub manifest: Option<PathBuf>,
 }
 
-/// Scan a `fonts/` directory: read every `.ttf`/`.otf` (non-recursive) and
-/// the optional manifest. Returns `(stem → bytes, aliases, egui defaults)`.
-fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, EguiDefaults) {
-    let mut data = BTreeMap::new();
-    let entries = match vfs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!("fonts: cannot read {}: {e}", dir.display());
-            return (data, Vec::new(), EguiDefaults::default());
-        }
-    };
-    for path in entries {
-        if !vfs::is_file(&path) {
-            continue;
-        }
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        if ext != "ttf" && ext != "otf" {
-            continue;
-        }
-        let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
-            continue;
-        };
-        match vfs::read(&path) {
-            Ok(bytes) => {
-                data.insert(stem, bytes);
-            }
-            Err(e) => tracing::warn!("fonts: failed to read {}: {e}", path.display()),
+impl ProjectFonts {
+    /// What a scene in `scene_dir` of `project` sees.
+    pub fn find(project: &Project, scene_dir: &Path) -> Self {
+        Self {
+            faces: project.list(AssetKind::FontFaces, scene_dir),
+            manifest: project
+                .resolve(AssetKind::Files, FONT_MANIFEST, scene_dir)
+                .ok(),
         }
     }
-    let manifest = dir.join("fonts.toml");
-    match vfs::read_to_string(&manifest) {
-        Ok(text) => (data, parse_manifest(&text), parse_egui_defaults(&text)),
-        Err(_) => (data, Vec::new(), EguiDefaults::default()),
+
+    /// What the scene at `scene_path` sees, in the project found from it.
+    pub fn for_scene(scene_path: &str) -> Self {
+        let scene = Path::new(scene_path);
+        let dir = scene.parent().filter(|p| !p.as_os_str().is_empty());
+        Self::find(
+            &Project::for_scene(scene),
+            dir.unwrap_or_else(|| Path::new(".")),
+        )
+    }
+
+    /// Read the files: `(stem -> bytes, aliases, egui defaults)`. Of two
+    /// files of one stem (`Body.ttf` near, `Body.otf` far) the nearer is
+    /// kept.
+    fn read(&self) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, EguiDefaults) {
+        let mut data = BTreeMap::new();
+        for face in &self.faces {
+            let Some(stem) = face.path.file_stem() else {
+                continue;
+            };
+            let stem = stem.to_string_lossy().into_owned();
+            if data.contains_key(&stem) {
+                continue;
+            }
+            match vfs::read(&face.path) {
+                Ok(bytes) => {
+                    data.insert(stem, bytes);
+                }
+                Err(e) => tracing::warn!("fonts: failed to read {}: {e}", face.path.display()),
+            }
+        }
+        let manifest = self.manifest.as_ref().map(vfs::read_to_string);
+        match manifest {
+            Some(Ok(text)) => (data, parse_manifest(&text), parse_egui_defaults(&text)),
+            _ => (data, Vec::new(), EguiDefaults::default()),
+        }
     }
 }
 
@@ -245,20 +258,32 @@ pub fn build_definitions(
 /// With no `fonts/` directory these are egui's defaults, so a scene change
 /// to a font-less project drops stale families.
 pub fn project_font_definitions(scene_path: &str) -> egui::FontDefinitions {
-    let Some(dir) = find_fonts_dir(scene_path) else {
+    font_definitions(&ProjectFonts::for_scene(scene_path))
+}
+
+/// The font definitions for what a scene sees (see `build_definitions`):
+/// egui's defaults when it sees no font file.
+pub fn font_definitions(fonts: &ProjectFonts) -> egui::FontDefinitions {
+    if fonts.faces.is_empty() {
         return egui::FontDefinitions::default();
-    };
-    let (data, aliases, defaults) = scan_fonts_dir(&dir);
+    }
+    let (data, aliases, defaults) = fonts.read();
     let stems: Vec<String> = data.keys().cloned().collect();
     let families = resolve_families(&stems, &aliases);
-    if families.is_empty() {
-        tracing::info!("fonts: {} contains no .ttf/.otf files", dir.display());
-    } else {
+    if !families.is_empty() {
+        let mut folders: Vec<String> = Vec::new();
+        for face in &fonts.faces {
+            let folder = face.path.parent().unwrap_or(Path::new(""));
+            let folder = flint_core::project::shown(folder);
+            if !folders.contains(&folder) {
+                folders.push(folder);
+            }
+        }
         tracing::info!(
             "fonts: loaded {} famil{} from {}: {}",
             families.len(),
             if families.len() == 1 { "y" } else { "ies" },
-            dir.display(),
+            folders.join(", "),
             families
                 .keys()
                 .map(|s| s.as_str())
@@ -329,6 +354,59 @@ pub fn text_layout_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0114: a scene two folders down sees the project's fonts and its
+    /// manifest; a `fonts/` nearer the scene adds to them, and hides only
+    /// the files it has a namesake for, where the one-folder scan read the
+    /// first `fonts/` and nothing else.
+    #[test]
+    fn a_nested_scene_sees_the_projects_fonts_and_the_nearest_of_a_name() {
+        use flint_core::vfs::MemorySource;
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        files.insert("game/fonts/Body.ttf", "project body");
+        files.insert("game/fonts/Display.otf", "project display");
+        files.insert("game/fonts/SHOUT.TTF", "capitals");
+        files.insert(
+            "game/fonts/fonts.toml",
+            "[[font]]\nname = \"title\"\nfile = \"Display.otf\"\n",
+        );
+        files.insert("game/levels/act1/fonts/Display.otf", "act display");
+        files.insert("game/levels/act1/cave/a.scene.toml", "");
+        files.insert("game/levels/b.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let deep = ProjectFonts::for_scene("game/levels/act1/cave/a.scene.toml");
+            let paths: Vec<String> = deep
+                .faces
+                .iter()
+                .map(|f| flint_core::project::shown(&f.path))
+                .collect();
+            assert_eq!(
+                paths,
+                [
+                    "game/levels/act1/fonts/Display.otf",
+                    "game/fonts/Body.ttf",
+                    "game/fonts/SHOUT.TTF",
+                ]
+            );
+            assert_eq!(
+                deep.manifest.as_deref(),
+                Some(Path::new("game/fonts/fonts.toml"))
+            );
+            let (data, aliases, _) = deep.read();
+            assert_eq!(data["Display"], b"act display");
+            assert_eq!(data["Body"], b"project body");
+            assert_eq!(data["SHOUT"], b"capitals");
+            let stems: Vec<String> = data.keys().cloned().collect();
+            let families = resolve_families(&stems, &aliases);
+            assert_eq!(families["title"], "Display", "the alias names the file");
+
+            // From levels/ the project's own Display
+            let shallow = ProjectFonts::for_scene("game/levels/b.scene.toml");
+            assert_eq!(shallow.read().0["Display"], b"project display");
+            assert_ne!(deep, shallow, "another set: the player reads it again");
+        });
+    }
 
     #[test]
     fn manifest_parses_aliases_and_skips_incomplete_entries() {

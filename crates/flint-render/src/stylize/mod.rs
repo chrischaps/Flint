@@ -243,57 +243,37 @@ impl StyleOption {
 }
 
 /// What an option's run-time choices may depend on (#322): the scene's
-/// folder, and the style's other options as the menu shows them (the ramps
-/// a font has depend on the font).
+/// project and folder, and the style's other options as the menu shows
+/// them (the ramps a font has depend on the font).
 pub struct ChoiceScope<'a> {
-    pub scene_dir: Option<&'a std::path::Path>,
+    /// Where the scene's files are searched from (ADR 0114); `None` when
+    /// there is no scene, and then only what is built in is offered.
+    pub assets: Option<&'a flint_core::project::AssetScope>,
     /// Another option's current value (its default when unset).
     pub option: &'a dyn Fn(&str) -> String,
 }
 
 impl<'a> ChoiceScope<'a> {
-    /// A scope for `scene_dir` with every other option at its default.
-    pub fn defaults(scene_dir: Option<&'a std::path::Path>) -> Self {
+    /// A scope for `assets` with every other option at its default.
+    pub fn defaults(assets: Option<&'a flint_core::project::AssetScope>) -> Self {
         Self {
-            scene_dir,
+            assets,
             option: &|_| String::new(),
         }
     }
 
-    /// The directories a scene's assets are found in, in order: the scene's
-    /// folder, its parent (as the player finds `fonts/`), then `.`.
-    pub fn search(&self) -> Vec<std::path::PathBuf> {
-        let mut search = Vec::new();
-        if let Some(dir) = self.scene_dir {
-            search.push(dir.to_path_buf());
-            if let Some(parent) = dir.parent() {
-                search.push(parent.to_path_buf());
-            }
-        }
-        search.push(std::path::PathBuf::from("."));
-        search
-    }
-
-    /// The names of the files `<dir>/<folder>/<name><suffix>` in every
-    /// search directory, sorted, each once. Read through the vfs, so a
-    /// bundle on the web lists the same files.
-    pub fn files(&self, folder: &str, suffix: &str) -> Vec<String> {
-        let mut names: Vec<String> = Vec::new();
-        for dir in self.search() {
-            let Ok(entries) = flint_core::vfs::read_dir(dir.join(folder)) else {
-                continue;
-            };
-            for path in entries {
-                let Some(file) = path.file_name().and_then(|f| f.to_str()) else {
-                    continue;
-                };
-                if let Some(stem) = file.strip_suffix(suffix) {
-                    if !stem.is_empty() && !names.iter().any(|n| n == stem) {
-                        names.push(stem.to_string());
-                    }
-                }
-            }
-        }
+    /// The names of every file of `kind` the scene can see, sorted: exactly
+    /// the files the project's one search finds
+    /// ([`Project::list`](flint_core::project::Project::list): the kind's
+    /// folder beside the scene, in each directory above it up to the
+    /// project root, then in the mounted engine; a nearer name hides a
+    /// farther one). Read through the vfs, so a bundle on the web lists the
+    /// same files.
+    pub fn files(&self, kind: flint_core::project::AssetKind) -> Vec<String> {
+        let Some(assets) = self.assets else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = assets.list(kind).into_iter().map(|l| l.name).collect();
         names.sort();
         names
     }
@@ -1124,9 +1104,13 @@ pub struct StyleFrame<'a> {
     /// factor). A style sized in points multiplies by it, so its cells keep
     /// their size on a high-DPI display. 1 headless unless asked.
     pub pixels_per_point: f32,
-    /// The scene's folder, for styles that load files (a glyph set from
-    /// `fonts/`), when the host knows it.
+    /// The scene's folder, when the host knows it.
     pub scene_dir: Option<&'a std::path::Path>,
+    /// Where a style finds the files it loads (a glyph set, a palette, a
+    /// paper): the scene's project and folder, searched by the one rule
+    /// (ADR 0114). With no scene, the working directory stands in for the
+    /// scene's folder.
+    pub assets: &'a flint_core::project::AssetScope,
     /// The renderer's debug shading mode: a style with a debug view of its
     /// own draws it under its mode (ASCII's edges under
     /// [`DebugMode::StyleEdges`](crate::DebugMode::StyleEdges), #349).
