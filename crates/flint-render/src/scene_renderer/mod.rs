@@ -858,6 +858,10 @@ pub struct SceneRenderer {
     /// `ui_text` fonts by what the component named, each uploaded once
     /// (`load_ui_font`); `None` for one that failed, warned about once.
     bitmap_font_cache: HashMap<String, Option<BitmapFont>>,
+    /// The scope `bitmap_font_cache` was filled from. A name means another
+    /// font in another scene's folder (#312), so a load from a different
+    /// scope forgets them all first.
+    bitmap_font_scope: Option<flint_core::project::AssetScope>,
     /// Scene directory for resolving relative font/texture paths. A host
     /// that holds the scene's project sets it through
     /// [`set_asset_scope`](Self::set_asset_scope).
@@ -1168,6 +1172,7 @@ impl SceneRenderer {
             ortho_height: 10.0,
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
+            bitmap_font_scope: None,
             scene_dir: None,
             asset_scope: std::sync::Mutex::new(None),
             pixels_per_point: 1.0,
@@ -2463,6 +2468,7 @@ impl SceneRenderer {
         self.particle_draws.clear();
         self.particle_texture_bind_groups.clear();
         self.bitmap_font_cache.clear();
+        self.bitmap_font_scope = None;
     }
 
     /// Create a renderer for headless (offscreen) use with explicit device and format
@@ -2725,6 +2731,7 @@ impl SceneRenderer {
             ortho_height: 10.0,
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
+            bitmap_font_scope: None,
             scene_dir: None,
             asset_scope: std::sync::Mutex::new(None),
             pixels_per_point: 1.0,
@@ -3112,7 +3119,12 @@ impl SceneRenderer {
 
     /// Load the font a `ui_text.font` names (`builtin`, a glyph set, or a
     /// `.font.toml`; ADR 0113) and upload its atlas to the texture cache,
-    /// once per name. Returns whether the font is ready to draw.
+    /// once per name and scope. Returns whether the font is ready to draw.
+    ///
+    /// A name is only a name within one scope: after a transition into
+    /// another folder, `pixel` is that folder's `fonts/pixel.glyphs.toml`.
+    /// So a load from a scope other than the last one's forgets every font
+    /// loaded before it, their atlases too (#312).
     pub fn load_ui_font(
         &mut self,
         device: &wgpu::Device,
@@ -3120,6 +3132,10 @@ impl SceneRenderer {
         spec: &str,
         scope: &flint_core::project::AssetScope,
     ) -> bool {
+        if self.bitmap_font_scope.as_ref() != Some(scope) {
+            self.forget_ui_fonts();
+            self.bitmap_font_scope = Some(scope.clone());
+        }
         if let Some(found) = self.bitmap_font_cache.get(spec) {
             return found.is_some();
         }
@@ -3145,6 +3161,24 @@ impl SceneRenderer {
         let ready = font.is_some();
         self.bitmap_font_cache.insert(spec.to_string(), font);
         ready
+    }
+
+    /// Drop every loaded `ui_text` font and its uploaded atlas, so the next
+    /// [`load_ui_font`](Self::load_ui_font) reads and uploads afresh (the
+    /// texture cache keeps a name's first upload otherwise).
+    fn forget_ui_fonts(&mut self) {
+        for font in self.bitmap_font_cache.drain().filter_map(|(_, f)| f) {
+            if let Some(cache) = &mut self.texture_cache {
+                cache.remove_texture(&font.texture);
+            }
+        }
+        self.bitmap_font_scope = None;
+    }
+
+    /// The `ui_text` font `spec` names, if it loaded and its atlas is
+    /// uploaded: what the scene's `ui_text` draws with.
+    pub fn loaded_ui_font(&self, spec: &str) -> Option<&BitmapFont> {
+        self.ui_font(self.texture_cache.as_ref()?, spec)
     }
 
     /// A loaded `ui_text` font whose atlas is in `tex_cache`.

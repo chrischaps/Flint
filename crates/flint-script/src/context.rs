@@ -239,8 +239,9 @@ pub enum ScriptCommand {
         level: LogLevel,
         message: String,
     },
+    /// A live entity: `emit_burst` resolves the id before queuing.
     EmitBurst {
-        entity_id: i64,
+        entity: EntityId,
         count: i64,
     },
     /// Spawn a detached one-shot instance of a registered particle effect
@@ -261,15 +262,16 @@ pub enum ScriptCommand {
         value: f64,
     },
     /// Draw an entity (and its descendants) in a per-entity style such as
-    /// `ascii` (#269). The player adds the style's component.
+    /// `ascii` (#269). The player adds the style's component. A live
+    /// entity, as in every style command: the id was resolved before queuing.
     SetEntityStyle {
-        entity_id: i64,
+        entity: EntityId,
         style: String,
     },
     /// Change one setting of an entity's style: a parameter (number), an
     /// option (string), `enabled` (bool) or a 3-array such as `tint`.
     SetStyleParam {
-        entity_id: i64,
+        entity: EntityId,
         param: String,
         value: toml::Value,
     },
@@ -278,7 +280,7 @@ pub enum ScriptCommand {
     /// writes the field each frame and fires `style_tween_done` at the end;
     /// a new tween of the same setting replaces the old one.
     TweenStyleParam {
-        entity_id: i64,
+        entity: EntityId,
         param: String,
         target: toml::Value,
         seconds: f64,
@@ -288,7 +290,7 @@ pub enum ScriptCommand {
     },
     /// Take an entity's own style off again.
     ClearEntityStyle {
-        entity_id: i64,
+        entity: EntityId,
     },
     /// Switch a style on or off for the whole frame (#369): its
     /// `[post_process.styles.<name>]` table, any registered style.
@@ -984,44 +986,31 @@ impl ScriptCallContext {
         std::mem::take(&mut self.draw_commands)
     }
 
-    /// Get a reference to the world. Panics if called outside a valid scope.
-    ///
-    /// # Safety
-    /// Caller must ensure the world pointer was set and is still valid
-    /// (i.e., called within the scope of `call_update` or `process_events`).
-    pub unsafe fn world_ref(&self) -> &FlintWorld {
-        assert!(
-            !self.world.is_null(),
-            "ScriptCallContext: world pointer is null (called outside scope)"
-        );
-        unsafe { &*self.world }
+    /// The game state machine, when the host has lent one for this scope
+    /// (`StateScope`).
+    pub fn try_state_machine(&self) -> Option<&GameStateMachine> {
+        // SAFETY: as `try_world`: set by `StateScope` for its scope, nulled
+        // on drop
+        (!self.state_machine.is_null()).then(|| unsafe { &*self.state_machine })
     }
 
-    /// Get a mutable reference to the world. Panics if called outside a valid scope.
-    ///
-    /// # Safety
-    /// Caller must ensure the world pointer was set, is still valid, and no other
-    /// references to the world exist (i.e., called within the scope of
-    /// `call_update` or `process_events`).
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn world_mut(&self) -> &mut FlintWorld {
-        assert!(
-            !self.world.is_null(),
-            "ScriptCallContext: world pointer is null (called outside scope)"
-        );
-        unsafe { &mut *self.world }
+    /// [`Self::try_state_machine`], mutably.
+    pub fn try_state_machine_mut(&mut self) -> Option<&mut GameStateMachine> {
+        // SAFETY: as `try_world_mut`
+        (!self.state_machine.is_null()).then(|| unsafe { &mut *self.state_machine })
     }
 
-    /// Get a reference to the physics system. Returns None if not set.
-    ///
-    /// # Safety
-    /// Caller must ensure the physics pointer was set and is still valid.
-    pub unsafe fn physics_ref(&self) -> Option<&PhysicsSystem> {
-        if self.physics.is_null() {
-            None
-        } else {
-            Some(unsafe { &*self.physics })
-        }
+    /// The persistent store, when the host has lent one for this scope
+    /// (`StateScope`).
+    pub fn try_persistent_store(&self) -> Option<&PersistentStore> {
+        // SAFETY: as `try_state_machine`
+        (!self.persistent_store.is_null()).then(|| unsafe { &*self.persistent_store })
+    }
+
+    /// [`Self::try_persistent_store`], mutably.
+    pub fn try_persistent_store_mut(&mut self) -> Option<&mut PersistentStore> {
+        // SAFETY: as `try_world_mut`
+        (!self.persistent_store.is_null()).then(|| unsafe { &mut *self.persistent_store })
     }
 }
 

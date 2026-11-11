@@ -247,7 +247,7 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
     let mut config = PostProcessConfig::default();
     config.styles.set_param("ascii", "cell", 10.0);
     let tween = |param: &str, target: f64, seconds: f64| ScriptCommand::TweenStyleParam {
-        entity_id: id,
+        entity: barrel,
         param: param.into(),
         target: target.into(),
         seconds,
@@ -261,7 +261,7 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
         &mut tweens,
         &mut world,
         ScriptCommand::SetEntityStyle {
-            entity_id: id,
+            entity: barrel,
             style: "ascii".into(),
         },
     );
@@ -281,12 +281,12 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
         &mut tweens,
         &mut world,
         ScriptCommand::SetStyleParam {
-            entity_id: id,
+            entity: barrel,
             param: "cell".into(),
             value: 30.0.into(),
         },
     );
-    assert!(!tweens.is_tweening(id, "cell"));
+    assert!(!tweens.is_tweening(barrel, "cell"));
     tweens.step(&mut world, 0.5);
     assert_eq!(number(&world, barrel, "cell"), 30.0);
 
@@ -304,7 +304,7 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
     apply(
         &mut tweens,
         &mut world,
-        ScriptCommand::ClearEntityStyle { entity_id: id },
+        ScriptCommand::ClearEntityStyle { entity: barrel },
     );
     assert!(tweens.is_empty());
 }
@@ -313,11 +313,10 @@ fn a_tween_starts_from_the_scene_table_and_gives_way_to_the_script() {
 fn a_tween_refuses_what_cannot_ease() {
     let mut world = FlintWorld::new();
     let barrel = world.spawn("barrel").unwrap();
-    let id = barrel.0 as i64;
     let mut tweens = StyleTweens::default();
     let config = PostProcessConfig::default();
     let tween = |param: &str, target: toml::Value, easing: &str| ScriptCommand::TweenStyleParam {
-        entity_id: id,
+        entity: barrel,
         param: param.into(),
         target,
         seconds: 1.0,
@@ -333,7 +332,7 @@ fn a_tween_refuses_what_cannot_ease() {
         &mut world,
         &config,
         &ScriptCommand::SetEntityStyle {
-            entity_id: id,
+            entity: barrel,
             style: "ascii".into(),
         },
     );

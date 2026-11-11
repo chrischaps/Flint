@@ -316,6 +316,17 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "camera_follow",
         "move_character",
         "get_collider_extents",
+        "emit_burst",
+        "start_emitter",
+        "set_emission_rate",
+        "set_entity_style",
+        "set_style_param",
+        "tween_style_param",
+        "clear_entity_style",
+        "get_entity_style",
+        "get_style_param",
+        "spline_closest_point",
+        "spline_sample_at",
     ] {
         assert!(checked.contains(&name), "{name} not checked");
     }
@@ -407,19 +418,168 @@ fn every_callback_is_listed_at_its_arity() {
     }
 }
 
+/// ADR 0116 step 2 is done: the engine registers nothing outside the
+/// builder, so the undeclared part is what an extension adds raw, and a
+/// deterministic run's `timestamp()` is declared too.
 #[cfg(feature = "metadata")]
 #[test]
-fn the_listing_names_the_undeclared_functions_too() {
-    let system = crate::ScriptSystem::new();
+fn only_an_extensions_raw_registration_is_undeclared() {
+    let mut system = crate::ScriptSystem::new();
+    system.make_deterministic(7);
+    system.make_deterministic(8);
     let listing = system.api_listing();
     assert!(listing.undeclared_listed);
+    let undeclared: Vec<&str> = listing
+        .undeclared
+        .iter()
+        .map(|f| f.signature.as_str())
+        .collect();
+    assert!(undeclared.is_empty(), "{undeclared:?}");
+    let stamps = listing
+        .declared
+        .iter()
+        .filter(|e| e.name == "timestamp")
+        .count();
+    assert_eq!(stamps, 1, "declared once, however often it's asked for");
+
+    system
+        .rhai_engine_mut()
+        .register_fn("game_raw", |n: i64| n + 1);
+    let listing = system.api_listing();
     let undeclared: Vec<&str> = listing.undeclared.iter().map(|f| f.name.as_str()).collect();
-    assert!(undeclared.contains(&"set_quality"), "{undeclared:?}");
-    assert!(!undeclared.contains(&"draw_rect"), "declared in step 2");
-    assert!(
-        !undeclared.contains(&"set_position"),
-        "declared, not undeclared"
+    assert_eq!(undeclared, ["game_raw"]);
+}
+
+/// Batch 3's modules (#696): ints where numbers are wanted, whole floats
+/// where ints are, the same commands either way.
+#[test]
+fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
+    use crate::context::ScriptCommand;
+    let (engine, mut world, id) = engine_and_world();
+    let commands = |world: &mut FlintWorld, src: &str| -> Vec<String> {
+        let _: Dynamic = eval(&engine, world, src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        let mut c = crate::lock_or_recover(&engine.ctx);
+        c.commands.drain(..).map(|c| format!("{c:?}")).collect()
+    };
+    let ints = commands(
+        &mut world,
+        &format!(
+            "set_wooze(#{{ step: 1 }}, 2); set_wooze_zone(\"z\", #{{}}, 3); \
+             remove_wooze_zone(\"z\", 1); tween_style_param({id}, \"cell\", 8, 1); \
+             tween_style_param({id}, \"cell\", 8, 1, \"linear\"); emit_burst({id}, 3.0); \
+             set_effect_param(1.0, \"scale\", 2); load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
+        ),
     );
+    let floats = commands(
+        &mut world,
+        &format!(
+            "set_wooze(#{{ step: 1 }}, 2.0); set_wooze_zone(\"z\", #{{}}, 3.0); \
+             remove_wooze_zone(\"z\", 1.0); tween_style_param({id}, \"cell\", 8, 1.0); \
+             tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); emit_burst({id}, 3); \
+             set_effect_param(1, \"scale\", 2.0); load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
+        ),
+    );
+    assert_eq!(ints.len(), 8, "{ints:?}");
+    assert_eq!(ints, floats);
+    let eid = flint_core::EntityId::from_raw(id as u64);
+    assert_eq!(
+        ints[5],
+        format!(
+            "{:?}",
+            ScriptCommand::EmitBurst {
+                entity: eid,
+                count: 3
+            }
+        )
+    );
+    // Pure reads take ints too
+    let h: f64 = eval(
+        &engine,
+        &mut world,
+        "terrain_height(1, 2) + ocean_height(0, 0)",
+    )
+    .unwrap();
+    assert_eq!(h, 0.0);
+    let gap: bool = eval(&engine, &mut world, &format!("spline_is_gap({id}, 0)")).unwrap();
+    assert!(!gap, "no spline_data: no gap");
+    // A fractional float is not an int
+    let err = eval::<()>(&engine, &mut world, &format!("emit_burst({id}, 2.5)")).unwrap_err();
+    assert!(
+        err.contains("`count`") && err.contains("an integer"),
+        "{err}"
+    );
+    // A tween's seconds must be a number: an error now, not a warning queued
+    let err = eval::<()>(
+        &engine,
+        &mut world,
+        &format!("tween_style_param({id}, \"cell\", 8, \"soon\")"),
+    )
+    .unwrap_err();
+    assert!(err.contains("`seconds`"), "{err}");
+}
+
+/// Rhai hands a raw function its first argument by reference when the
+/// script passed a variable there, so a kind that takes its value (a
+/// string, map, array, any or fn) must leave that one in place: the
+/// script's variable is still there after the call. `showcase_hud.rhai`
+/// drew `()` for a string it had measured the line before.
+#[test]
+fn a_variable_passed_first_is_left_as_it_was() {
+    let (engine, mut world, _) = engine_and_world();
+    let kept: rhai::Map = eval(
+        &engine,
+        &mut world,
+        "let s = \"SPARKS: 3\"; let w = measure_text(s, 16.0); \
+         let n = \"cube\"; get_entity(n); \
+         let k = #{ msaa: 1 }; set_quality(k); \
+         let f = \"x.toml\"; load_data(f); \
+         let m = \"hello\"; log(m); \
+         let a = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]; draw_polygon(a, 1, 1, 1, 1, 0); \
+         #{ s: s, w: w, n: n, k: k, f: f, m: m, a: a }",
+    )
+    .unwrap();
+    assert_eq!(kept["s"].clone().into_string().unwrap(), "SPARKS: 3");
+    assert!(kept["w"].is_map());
+    assert_eq!(kept["n"].clone().into_string().unwrap(), "cube");
+    assert_eq!(kept["k"].clone().cast::<rhai::Map>().len(), 1);
+    assert_eq!(kept["f"].clone().into_string().unwrap(), "x.toml");
+    assert_eq!(kept["m"].clone().into_string().unwrap(), "hello");
+    assert_eq!(kept["a"].clone().into_array().unwrap().len(), 3);
+}
+
+#[test]
+fn the_last_modules_are_declared_under_their_subsystems() {
+    let engine = ScriptEngine::new();
+    let reg = engine.api_registry();
+    for (module, name, arity) in [
+        ("quality", "set_quality", 1),
+        ("quality", "set_quality", 2),
+        ("conducted", "conducted_cues", 0),
+        ("ocean", "ocean_normal", 2),
+        ("spline", "spline_sample_at", 2),
+        ("particle", "play_effect", 4),
+        ("style", "tween_style_param", 5),
+        ("style", "set_look", 1),
+        ("expression", "expression", 0),
+        ("state", "register_state", 2),
+        ("scene", "quit_game", 0),
+        ("wooze", "remove_wooze_zone", 2),
+        ("living", "tune_living", 1),
+        ("living", "clear_living", 2),
+        ("debug", "compare_living", 2),
+        ("debug", "stop_comparing_living", 0),
+        ("persistence", "persist_slot", 1),
+        ("data", "load_data", 2),
+        ("terrain", "terrain_height", 2),
+        ("chunk", "is_chunk_loaded", 1),
+    ] {
+        let e = reg
+            .entries()
+            .iter()
+            .find(|e| e.name == name && e.params.len() == arity)
+            .unwrap_or_else(|| panic!("{name}/{arity} not declared"));
+        assert_eq!(e.module, module, "{name}");
+    }
 }
 
 /// The draw module: an all-int call, a float call and a mixed call of the

@@ -149,7 +149,7 @@ spacing = 1.0                       # advance as a multiple of the cell width
 # glyphs = "terminal"               # or a glyph set in place of the grid, keeping spacing
 ```
 
-`flint_render::BitmapFont` is the layout over the atlas. `BitmapFont::resolve(spec, scene_dir)` builds it, the grid PNG going through `GlyphAtlas::from_grid_image`. The scene loader calls `SceneRenderer::load_ui_font` once per name, which uploads the atlas as white RGBA with the coverage as alpha (`font:<name>` in the texture cache). After that each `ui_text` is just sprites in the sprite2d pipeline. A font that fails warns once and draws nothing. Every grid now has the atlas's one-pixel gutter, so a linearly filtered glyph no longer picks up its neighbour's edge.
+`flint_render::BitmapFont` is the layout over the atlas. `BitmapFont::resolve(spec, scope)` builds it, the grid PNG going through `GlyphAtlas::from_grid_image`. The scene loader calls `SceneRenderer::load_ui_font` once per name, which uploads the atlas as white RGBA with the coverage as alpha (`font:<name>` in the texture cache). A name is searched from the scene that names it: after a transition into a scene in another folder, `pixel` is that folder's `fonts/pixel.glyphs.toml`, and the last scene's fonts and their textures are dropped first (#312). After that each `ui_text` is just sprites in the sprite2d pipeline. A font that fails warns once and draws nothing. Every grid now has the atlas's one-pixel gutter, so a linearly filtered glyph no longer picks up its neighbour's edge.
 
 ![The ui_text demo, its HUD text in three fonts](../images/glyph-atlas-sprite-text.png)
 
