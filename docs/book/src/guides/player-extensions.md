@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
 | Method | When it runs | Use it for |
 |---|---|---|
 | `register_script_api(&mut rhai::Engine)` | Once, inside `add_extension` | Native functions and types for scripts |
+| `declare_script_api(&mut ScriptApi)` | Once, inside `add_extension`, after `register_script_api` | Functions declared through Flint's API builder: listed with the engine's, integers taken for numbers |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
@@ -73,6 +74,27 @@ Extensions run in the order they were added.
 `register_script_api` gets the player's Rhai engine. Flint's own API is already registered, so a function with the same name and parameter types replaces Flint's. The engine outlives scene transitions, so registrations last the whole run.
 
 The engine uses rhai's `sync` feature, so a registered closure and everything it captures must be `Send + Sync`. Share state between the extension and its functions with `Arc<Mutex<_>>` or atomics.
+
+### Declaring functions
+
+`declare_script_api` declares functions through the builder Flint's own API uses (ADR 0116). Each gets a module, a one-line doc and a kind for each parameter, which converts the script's value before your code runs: `Num` takes an int or a float, `Entity` a live entity (given `-1` or a despawned id it warns once and returns the empty value), `Str`, `Map`, `Array`, `Color` (`[r, g, b]` or `"#rrggbb"`), `Any` and more (`flint_script::api::builder::kind`). The body reaches the world through `call.world()` / `call.world_mut()`, which are a script error, not a panic, when there is no world:
+
+```rust
+fn declare_script_api(&mut self, api: &mut flint_script::api::ScriptApi) {
+    use flint_script::api::builder::kind::{Entity, Num};
+    let mut m = api.module("kart");
+    m.func("boost", "Push the kart forward by this many m/s.")
+        .arg("kart", Entity)
+        .arg("speed", Num)
+        .run(|call, (kart, speed)| {
+            let world = call.world_mut()?;
+            // ... write the kart's velocity
+            Ok(())
+        });
+}
+```
+
+A declared function is listed with its parameters and doc by `app.script.api_listing()`, the data behind `flint script api`; a game binary prints its own listing from it. Functions from `register_script_api` keep working and are listed with their types only.
 
 ### The frame
 
