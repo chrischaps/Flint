@@ -171,3 +171,25 @@ jobs:
           name: stylize-goldens-warp
           path: target/tmp/stylize-goldens/
           if-no-files-found: warn
+
+  # A change a game can notice needs an entry in CHANGELOG.md (#765): games
+  # carry the engine as a squashed subtree, so the changelog is how they learn
+  # what an update changed. Fails a pull request that touches the schemas, the
+  # script API or the scene format with no entry and no `Changelog: none
+  # (reason)` line in a commit message. Run it locally with
+  # `bash scripts/changelog-check.sh`.
+  changelog:
+    name: changelog
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The branch's own commits, with history, so the script can read their
+      # messages and find where the branch left the base.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: scripts/changelog-check.sh
+        run: bash scripts/changelog-check.sh "origin/${{ github.base_ref }}"

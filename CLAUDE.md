@@ -379,6 +379,8 @@ folder at load; every option is closed, so #318 warns); options are `u32` indice
 
 ## Documentation Pipeline
 
+`CHANGELOG.md` is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no entry; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
+
 The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 
 ```bash
