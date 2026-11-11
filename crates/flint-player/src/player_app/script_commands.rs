@@ -17,7 +17,6 @@ use flint_core::Vec3 as FlintVec3;
 use flint_input_capture::pad::Gilrs;
 use flint_runtime::GameEvent;
 use flint_script::context::{LogLevel, ScriptCommand};
-use std::path::Path;
 
 impl PlayerApp {
     /// A script's `quit_game()` (#659): the run ends as closing the window
@@ -441,17 +440,13 @@ impl PlayerApp {
             }
         }
         let Some(comp) = found else { return };
-        let Some(base_dir) = Path::new(&self.scene_path)
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-        else {
-            tracing::warn!(
-                "music_session: cannot derive base dir from scene path `{}`",
-                self.scene_path
-            );
-            return;
-        };
+        // The suite's paths are from the project root (ADR 0114). For one
+        // release a manifest that is only where the root used to be guessed
+        // is still read from there, with a warning.
+        let manifest = comp.get("manifest").and_then(|v| v.as_str()).unwrap_or("");
+        let base_dir =
+            self.project
+                .root_holding("music_session", manifest.trim(), &self.scene_dir());
         match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
             Ok(Some(session)) => {
                 self.music_session = Some(session);

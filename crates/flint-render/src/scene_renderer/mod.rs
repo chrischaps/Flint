@@ -6,7 +6,7 @@ mod particles;
 mod render_passes;
 mod selection;
 
-pub use particles::{load_particle_textures, load_scene_particle_textures};
+pub use particles::load_scene_particle_textures;
 use render_passes::RenderPhase;
 
 use helpers::{identity_matrix, mat4_inv_transpose};
@@ -1409,6 +1409,18 @@ impl SceneRenderer {
         layer_paths: &[String; 4],
         scene_dir: &Path,
     ) {
+        // The splat map and the layers are paths the scene names: found by
+        // the project's one search (`AssetKind::Files`, ADR 0114), and a
+        // missing one is a warning listing every path tried.
+        let scope = self.asset_scope();
+        let find = |what: &str, name: &str| -> Option<std::path::PathBuf> {
+            scope
+                .project
+                .resolve(flint_core::project::AssetKind::Files, name, scene_dir)
+                .map_err(|not_found| tracing::warn!("{what}: {not_found}"))
+                .ok()
+        };
+
         let tp = match &self.terrain_pipeline {
             Some(tp) => tp,
             None => return,
@@ -1422,8 +1434,7 @@ impl SceneRenderer {
 
         // Load splat map
         if !splat_path.is_empty() {
-            let path = scene_dir.join(splat_path);
-            if vfs::exists(&path) {
+            if let Some(path) = find("terrain splat map", splat_path) {
                 let _ = tc.load_file(device, queue, "terrain_splat", &path);
             }
         }
@@ -1431,8 +1442,7 @@ impl SceneRenderer {
         // Load layer textures
         for (i, layer_path) in layer_paths.iter().enumerate() {
             if !layer_path.is_empty() {
-                let path = scene_dir.join(layer_path);
-                if vfs::exists(&path) {
+                if let Some(path) = find("terrain layer texture", layer_path) {
                     let name = format!("terrain_layer{}", i);
                     let _ = tc.load_file(device, queue, &name, &path);
                 }

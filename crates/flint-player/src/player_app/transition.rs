@@ -76,11 +76,11 @@ impl PlayerApp {
             return;
         }
 
-        // Resolve path relative to scene directory
-        let scene_dir = Path::new(&self.scene_path)
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
-        let chunk_path = scene_dir.join(path);
+        // A path the script names: found by the project's one search
+        // (`AssetKind::Files`), from the scene's directory first. A miss is
+        // warned about with every path tried.
+        let scene_dir = self.scene_dir();
+        let chunk_path = self.project.file_or_beside("chunk", path, &scene_dir);
 
         // Parse chunk as a scene file
         let content = match vfs::read_to_string(&chunk_path) {
@@ -628,7 +628,8 @@ impl PlayerApp {
             .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
 
         // Call on_scene_enter on new scripts
-        self.script.set_current_scene(&self.scene_path);
+        self.script
+            .set_current_scene(&self.scene_path, &self.project);
         {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,

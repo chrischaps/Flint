@@ -148,8 +148,11 @@ impl PreviewSim {
         renderer.update_particles_from(device, queue, &self.system.sync);
     }
 
-    /// Load referenced textures from the effect's directory, its parent and
-    /// grandparent (game root when effects live in `scenes/particles/`).
+    /// Load referenced textures by the project's one search
+    /// (`AssetKind::ParticleTextures`, ADR 0114), with the effect's folder
+    /// standing in for a scene's: beside the effect, then from each folder
+    /// above it up to its project's root, then the engine. So the editor
+    /// finds what a scene anywhere in the project would.
     pub fn load_textures(
         &self,
         renderer: &mut SceneRenderer,
@@ -157,13 +160,14 @@ impl PreviewSim {
         queue: &wgpu::Queue,
         effect_dir: &Path,
     ) {
-        let mut dirs = vec![effect_dir.to_path_buf()];
-        if let Some(p) = effect_dir.parent() {
-            dirs.push(p.to_path_buf());
-            if let Some(gp) = p.parent() {
-                dirs.push(gp.to_path_buf());
-            }
-        }
-        flint_render::load_particle_textures(renderer, device, queue, &self.system.sync, &dirs);
+        let scope = flint_core::project::AssetScope::for_dir(effect_dir);
+        flint_render::load_scene_particle_textures(
+            renderer,
+            device,
+            queue,
+            &self.system.sync,
+            &scope.project,
+            &scope.scene_dir,
+        );
     }
 }

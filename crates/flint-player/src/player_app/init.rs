@@ -559,7 +559,7 @@ impl PlayerApp {
                 .unwrap_or(Path::new("."));
             if let Some(disk) = self
                 .procgen_disk_cache
-                .then(|| procgen_disk_config(scene_dir))
+                .then(|| procgen_disk_config(&self.project, scene_dir))
                 .flatten()
             {
                 println!("[procgen] disk cache: {}", disk.dir.display());
@@ -776,7 +776,8 @@ impl PlayerApp {
 
         // Initialize scripting (state_scope required so on_init can access persist store)
         load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
-        self.script.set_current_scene(&self.scene_path);
+        self.script
+            .set_current_scene(&self.scene_path, &self.project);
         {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,
@@ -911,8 +912,11 @@ impl PlayerApp {
 
         // Now the game default has set the game id, find the player's own
         // rebinds: they're saved under it.
-        paths.user_override =
-            resolve_user_override(Path::new(&self.scene_path), &self.input.config().game_id);
+        paths.user_override = resolve_user_override(
+            &self.project,
+            Path::new(&self.scene_path),
+            &self.input.config().game_id,
+        );
         // The player's copy (crate::user_files, localStorage on the web), else
         // one the game ships in its vfs bundle.
         if let Some(path) = &paths.user_override {
@@ -1131,22 +1135,22 @@ impl PlayerApp {
 
 /// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
 /// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off` or empty: no disk tier),
-/// else `.flint/procgen-cache/` in the project, the scene folder's parent
-/// when that holds `schemas/` or `specs/` (a `levels/` layout, as in
-/// `showcase_game`), otherwise the scene folder itself. Until projects have
-/// a root marker and a config file (#179), that guess is the project.
-fn procgen_disk_config(scene_dir: &Path) -> Option<flint_procgen::DiskCacheConfig> {
+/// else `.flint/procgen-cache/` at the scene's project root
+/// (`Project::root_for`, ADR 0114), so every scene of a project shares one
+/// cache and the `.flint/` it makes marks the root that was already in use.
+fn procgen_disk_config(
+    project: &flint_core::project::Project,
+    scene_dir: &Path,
+) -> Option<flint_procgen::DiskCacheConfig> {
     if let Ok(value) = std::env::var("FLINT_PROCGEN_CACHE") {
         return match value.trim() {
             "" | "0" | "off" | "false" => None,
             dir => Some(flint_procgen::DiskCacheConfig::new(dir)),
         };
     }
-    let project = scene_dir
-        .parent()
-        .filter(|p| vfs::is_dir(p.join("schemas")) || vfs::is_dir(p.join("specs")))
-        .unwrap_or(scene_dir);
-    Some(flint_procgen::DiskCacheConfig::in_project(project))
+    Some(flint_procgen::DiskCacheConfig::in_project(
+        &project.root_for(scene_dir),
+    ))
 }
 
 #[cfg(test)]

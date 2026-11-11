@@ -63,7 +63,8 @@ pub struct WebArgs {
     pub engine: Option<PathBuf>,
 
     /// The game's id: its bundle name and its ?game= value (default:
-    /// bundle.toml's name, or the folder's, lowercased)
+    /// bundle.toml's name, else flint.toml's `[project] id`, else the
+    /// folder's name, lowercased)
     #[arg(long)]
     pub name: Option<String>,
 
@@ -97,7 +98,9 @@ fn web(args: WebArgs) -> Result<()> {
         bail!("{} is not a folder", root.display());
     }
     let config = bundle::read_config(root)?;
-    let id = match args.name.clone().or(config.name.clone()) {
+    // bundle.toml's name, else the project manifest's id (ADR 0114)
+    let project = bundle::read_project(root)?;
+    let id = match args.name.clone().or(config.name.clone()).or(project.id) {
         Some(name) => {
             if !valid_id(&name) {
                 bail!("the game's id {name:?} must be lowercase letters, digits, - and _");

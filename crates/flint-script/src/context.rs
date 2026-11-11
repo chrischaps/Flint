@@ -703,6 +703,10 @@ pub struct ScriptCallContext {
     pub transition_phase: String,
     /// Path of the currently loaded scene
     pub current_scene_path: String,
+    /// The project the current scene belongs to (ADR 0114), handed in with
+    /// the scene path (`ScriptSystem::set_current_scene`). `None` until a
+    /// host says: then it is found from the scene path when asked for.
+    pub project: Option<flint_core::project::Project>,
     /// Data-driven UI system
     pub ui_system: UiSystem,
     /// Parsed TOML data files, keyed by resolved path (`load_data`)
@@ -762,6 +766,30 @@ impl Default for ScriptCallContext {
 }
 
 impl ScriptCallContext {
+    /// The directory a script's path "from the project root" (`load_ui`,
+    /// `load_data`) is read under: the current scene's project's root
+    /// (`Project::root_for`, ADR 0114). TEMPORARY, for one release: when
+    /// `rel` is only where the root used to be guessed, that place, with a
+    /// warning (`Project::root_holding`). With no scene yet, the working
+    /// directory.
+    pub fn project_root_holding(&self, what: &str, rel: &str) -> std::path::PathBuf {
+        use std::path::{Path, PathBuf};
+        if self.current_scene_path.is_empty() {
+            return PathBuf::from(".");
+        }
+        let scene = Path::new(&self.current_scene_path);
+        let scene_dir = scene
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        match &self.project {
+            Some(project) => project.root_holding(what, rel, scene_dir),
+            None => {
+                flint_core::project::Project::for_scene(scene).root_holding(what, rel, scene_dir)
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             world: std::ptr::null_mut(),
@@ -824,6 +852,7 @@ impl ScriptCallContext {
             transition_progress: -1.0,
             transition_phase: String::from("idle"),
             current_scene_path: String::new(),
+            project: None,
             ui_system: UiSystem::new(),
             data_cache: std::collections::HashMap::new(),
             terrain_height_fn: None,

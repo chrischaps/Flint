@@ -225,26 +225,7 @@ impl SceneRenderer {
 
 /// Load every texture referenced by the live particle instances and
 /// registered effects into the renderer's texture cache. Names are cache
-/// keys verbatim; files are searched in `search_dirs` in order. For a tool
-/// with a layout of its own (the effect editor); a scene's textures go
-/// through [`load_scene_particle_textures`].
-pub fn load_particle_textures(
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    sync: &ParticleSync,
-    search_dirs: &[PathBuf],
-) {
-    load_textures_found(renderer, device, queue, sync, |name| {
-        search_dirs
-            .iter()
-            .map(|dir| dir.join(name))
-            .find(|path| flint_core::vfs::exists(path))
-            .ok_or_else(|| format!("Particle texture not found: {name}"))
-    });
-}
-
-/// [`load_particle_textures`] for a scene: each texture is found by the
+/// keys verbatim. Each texture is found by the
 /// project's one asset search (`AssetKind::ParticleTextures`, ADR 0114):
 /// `particles/<name>`, then `<name>` beside the scene, the same at each
 /// directory above it up to the project root, then in the engine. A miss

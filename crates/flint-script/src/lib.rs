@@ -247,10 +247,18 @@ impl ScriptSystem {
         c.transition_phase = phase.to_string();
     }
 
-    /// Set the current scene path for script access
-    pub fn set_current_scene(&mut self, path: &str) {
+    /// Set the current scene's path and the project it belongs to, for
+    /// script access: `load_ui` and `load_data` paths are from the
+    /// project's root (ADR 0114).
+    pub fn set_current_scene(&mut self, path: &str, project: &flint_core::project::Project) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.current_scene_path = path.to_string();
+        // Called every frame: nothing is copied while the scene stays
+        if c.current_scene_path != path {
+            c.current_scene_path = path.to_string();
+        }
+        if c.project.as_ref() != Some(project) {
+            c.project = Some(project.clone());
+        }
     }
 
     /// Set camera position and direction for weapon aiming

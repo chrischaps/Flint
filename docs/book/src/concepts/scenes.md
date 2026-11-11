@@ -289,11 +289,7 @@ Overrides are merged at the field level, not the component level. If a prefab te
 
 ### Path Resolution
 
-The loader searches for prefab templates in:
-1. `<scene_directory>/prefabs/`
-2. `<scene_directory>/../prefabs/`
-
-This means a `prefabs/` directory at the project root is found when loading scenes from `scenes/`.
+The loader finds a prefab template by [the engine's one search](assets.md#where-the-engine-looks-for-a-file) (kind `prefabs`): `prefabs/` beside the scene, then beside each directory above it up to the project root, then the engine's. A `prefabs/` directory at the project root is found from a scene at any depth.
 
 ### Previewing Prefabs
 

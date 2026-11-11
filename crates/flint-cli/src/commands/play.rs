@@ -6,8 +6,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 #[derive(clap::Args)]
 pub struct PlayArgs {
-    /// Path to scene file
-    #[arg(required_unless_present = "list_gpus", default_value = "")]
+    /// Path to scene file. Without it: the project's default scene,
+    /// flint.toml's `[project] scene`
+    #[arg(default_value = "")]
     pub scene: String,
 
     /// Schema directories, later ones overriding earlier (repeatable).
@@ -71,7 +72,7 @@ pub struct PlayArgs {
     pub no_hot_reload: bool,
 }
 
-pub fn run(args: PlayArgs) -> Result<()> {
+pub fn run(mut args: PlayArgs) -> Result<()> {
     if args.list_gpus {
         let adapters = flint_render::list_adapters();
         if adapters.is_empty() {
@@ -85,6 +86,18 @@ pub fn run(args: PlayArgs) -> Result<()> {
     flint_render::set_gpu_override(args.gpu.clone());
     if args.no_hot_reload {
         flint_core::file_watch::disable();
+    }
+    // No scene named: the manifest's default (ADR 0114), or an error that
+    // says what to pass
+    if args.scene.is_empty() {
+        let project = flint_core::project::Project::current()?;
+        let scene = project.default_scene()?;
+        args.scene = flint_core::project::shown(&scene);
+        println!(
+            "Opening the project's default scene: {} (`[project] scene` in {})",
+            args.scene,
+            flint_core::project::shown(&project.manifest_path())
+        );
     }
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let (registry, schema_dirs) =

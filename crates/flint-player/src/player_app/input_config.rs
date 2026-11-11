@@ -70,22 +70,46 @@ pub(super) fn resolve_input_paths(
 }
 
 /// The user override to load: the project-local `.flint/input.user.toml`
-/// if there is one, else this game's own `<config>/flint/input_<game_id>.toml`
-/// (where rebinds are saved), else the shared `<config>/flint/input.user.toml`
+/// at the project root if there is one (`Project::root_for`, ADR 0114),
+/// else this game's own `<config>/flint/input_<game_id>.toml` (where
+/// rebinds are saved), else the shared `<config>/flint/input.user.toml`
 /// that games without an id use, and older builds read for every game.
 /// On the web `<config>` is `/config` in `localStorage` ([`user_files`]).
-pub(super) fn resolve_user_override(scene_path: &Path, game_id: &str) -> Option<PathBuf> {
-    resolve_user_override_in(scene_path, game_id, user_files::config_dir().as_deref())
+///
+/// TEMPORARY, for one release: the project-local file used to be looked for
+/// in a `.flint/` beside the scene, and is still read there when the root
+/// has none ([`old_local_override`]).
+pub(super) fn resolve_user_override(
+    project: &Project,
+    scene_path: &Path,
+    game_id: &str,
+) -> Option<PathBuf> {
+    resolve_user_override_in(
+        project,
+        scene_path,
+        game_id,
+        user_files::config_dir().as_deref(),
+    )
 }
 
 fn resolve_user_override_in(
+    project: &Project,
     scene_path: &Path,
     game_id: &str,
     config_dir: Option<&Path>,
 ) -> Option<PathBuf> {
-    let local = project_local_override(scene_path);
+    let local = project_local_override(project, scene_path);
     if override_exists(&local) {
         return Some(local);
+    }
+    if let Some(old) = old_local_override(project, scene_path).filter(|old| override_exists(old)) {
+        tracing::warn!(
+            "input: {} is read from beside the scene; the project-local override belongs \
+             at the project root, {}. The old place is read for one release",
+            old.display(),
+            local.display()
+        );
+        return Some(old);
     }
     let config_dir = config_dir?;
     let game = user_override_in(config_dir, game_id);
@@ -127,11 +151,13 @@ pub(super) fn read_user_override_file(path: &Path) -> Result<Option<InputConfig>
 /// override loaded from the shared file moves to the game's on its first
 /// rebind, carrying what it held.
 pub(super) fn user_override_save_path(
+    project: &Project,
     scene_path: &Path,
     game_id: &str,
     loaded: Option<&Path>,
 ) -> PathBuf {
     user_override_save_path_in(
+        project,
         scene_path,
         game_id,
         loaded,
@@ -140,30 +166,48 @@ pub(super) fn user_override_save_path(
 }
 
 fn user_override_save_path_in(
+    project: &Project,
     scene_path: &Path,
     game_id: &str,
     loaded: Option<&Path>,
     config_dir: Option<&Path>,
 ) -> PathBuf {
-    let local = project_local_override(scene_path);
+    let local = project_local_override(project, scene_path);
     if loaded == Some(local.as_path()) {
         return local;
     }
-    fallback_user_override_path_in(scene_path, game_id, config_dir)
+    // TEMPORARY, for one release: one loaded from beside the scene is saved
+    // back there
+    if let Some(old) = old_local_override(project, scene_path) {
+        if loaded == Some(old.as_path()) {
+            return old;
+        }
+    }
+    fallback_user_override_path_in(project, scene_path, game_id, config_dir)
 }
 
-pub(super) fn fallback_user_override_path(scene_path: &Path, game_id: &str) -> PathBuf {
-    fallback_user_override_path_in(scene_path, game_id, user_files::config_dir().as_deref())
+pub(super) fn fallback_user_override_path(
+    project: &Project,
+    scene_path: &Path,
+    game_id: &str,
+) -> PathBuf {
+    fallback_user_override_path_in(
+        project,
+        scene_path,
+        game_id,
+        user_files::config_dir().as_deref(),
+    )
 }
 
 fn fallback_user_override_path_in(
+    project: &Project,
     scene_path: &Path,
     game_id: &str,
     config_dir: Option<&Path>,
 ) -> PathBuf {
     match config_dir {
         Some(dir) => user_override_in(dir, game_id),
-        None => project_local_override(scene_path),
+        None => project_local_override(project, scene_path),
     }
 }
 
@@ -179,9 +223,36 @@ fn user_override_in(config_dir: &Path, game_id: &str) -> PathBuf {
     config_dir.join("flint").join(filename)
 }
 
-fn project_local_override(scene_path: &Path) -> PathBuf {
-    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
-    scene_dir.join(".flint").join("input.user.toml")
+/// The scene's own directory.
+fn dir_of(scene_path: &Path) -> &Path {
+    scene_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+const LOCAL_OVERRIDE: &str = ".flint/input.user.toml";
+
+/// The project-local override: `.flint/input.user.toml` at the project
+/// root.
+fn project_local_override(project: &Project, scene_path: &Path) -> PathBuf {
+    project
+        .root_for(dir_of(scene_path))
+        .join(".flint")
+        .join("input.user.toml")
+}
+
+/// TEMPORARY, for one release: where the project-local override was looked
+/// for before the project was asked, a `.flint/` beside the scene, when
+/// that is another place than the root's. (A `.flint/` beside a scene marks
+/// its folder as a project root, so the two differ only under `--project`
+/// or a marker `Project::discover` passes over.)
+fn old_local_override(project: &Project, scene_path: &Path) -> Option<PathBuf> {
+    let scene_dir = dir_of(scene_path);
+    let old = scene_dir.join(LOCAL_OVERRIDE);
+    let new = project.root_for(scene_dir).join(LOCAL_OVERRIDE);
+    (!flint_core::project::same_path(&old, &new))
+        .then(|| scene_dir.join(".flint").join("input.user.toml"))
 }
 
 pub(super) fn write_user_override_file(path: &Path, config: &InputConfig) -> Result<()> {
@@ -315,7 +386,12 @@ mod tests {
             .load_bindings(InputConfig::built_in_defaults())
             .unwrap();
         input.merge_bindings(game_config(game_id)).unwrap();
-        let path = resolve_user_override_in(scene, &input.config().game_id, Some(config_dir));
+        let path = resolve_user_override_in(
+            &Project::for_scene(scene),
+            scene,
+            &input.config().game_id,
+            Some(config_dir),
+        );
         if let Some(path) = &path {
             input
                 .merge_bindings(read_user_override_file(path).unwrap().unwrap())
@@ -354,7 +430,13 @@ mod tests {
         };
         user.actions
             .insert("interact".into(), input.action_config("interact").unwrap());
-        let saved = user_override_save_path_in(&scene, "capitol", None, Some(&config_dir));
+        let saved = user_override_save_path_in(
+            &Project::for_scene(&scene),
+            &scene,
+            "capitol",
+            None,
+            Some(&config_dir),
+        );
         assert_eq!(saved, config_dir.join("flint").join("input_capitol.toml"));
         write_user_override_file(&saved, &user).unwrap();
 
@@ -384,7 +466,13 @@ mod tests {
         assert_eq!(loaded.as_deref(), Some(local.as_path()));
         assert_eq!(interact_bindings(&input), vec![key("KeyG")]);
         assert_eq!(
-            user_override_save_path_in(&scene, "capitol", Some(&local), Some(&config_dir)),
+            user_override_save_path_in(
+                &Project::for_scene(&scene),
+                &scene,
+                "capitol",
+                Some(&local),
+                Some(&config_dir)
+            ),
             local
         );
     }
@@ -403,7 +491,13 @@ mod tests {
         assert_eq!(loaded.as_deref(), Some(shared.as_path()));
         assert_eq!(interact_bindings(&input), vec![key("KeyH")]);
         assert_eq!(
-            user_override_save_path_in(&scene, "capitol", Some(&shared), Some(&config_dir)),
+            user_override_save_path_in(
+                &Project::for_scene(&scene),
+                &scene,
+                "capitol",
+                Some(&shared),
+                Some(&config_dir)
+            ),
             config_dir.join("flint").join("input_capitol.toml")
         );
 
@@ -411,7 +505,13 @@ mod tests {
         let (_, loaded) = start(&scene, &config_dir, "flint");
         assert_eq!(loaded.as_deref(), Some(shared.as_path()));
         assert_eq!(
-            user_override_save_path_in(&scene, "flint", Some(&shared), Some(&config_dir)),
+            user_override_save_path_in(
+                &Project::for_scene(&scene),
+                &scene,
+                "flint",
+                Some(&shared),
+                Some(&config_dir)
+            ),
             shared
         );
     }
@@ -421,7 +521,7 @@ mod tests {
         let tmp = TempDir::new("bundled");
         let scene = tmp.0.join("scenes").join("main.scene.toml");
         let config_dir = tmp.0.join("config");
-        let local = project_local_override(&scene);
+        let local = project_local_override(&Project::for_scene(&scene), &scene);
         let mut user = game_config("capitol");
         user.actions.get_mut("interact").unwrap().bindings = vec![key("KeyJ")];
         let mut bundle = flint_core::vfs::MemorySource::new();

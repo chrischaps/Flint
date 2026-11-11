@@ -1092,7 +1092,8 @@ impl PlayerApp {
                 &mut self.persistent_store,
                 &self.physics,
             );
-            self.script.set_current_scene(&self.scene_path);
+            self.script
+                .set_current_scene(&self.scene_path, &self.project);
 
             // Script context (transition state, camera, input/events, conducted
             // parameters — session tick above precedes set_conducted, which

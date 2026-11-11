@@ -28,7 +28,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset job status` | Check status of an async generation job |
 | `flint asset job list` | List all generation jobs |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
-| `flint play <scene>` | Play a scene with first-person controls and physics |
+| `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
@@ -51,6 +51,8 @@ Launch a scene as an interactive first-person experience with physics:
 ```bash
 flint play examples/phase4_runtime.scene.toml
 flint play levels/tavern.scene.toml --schemas schemas --fullscreen
+# in a game whose flint.toml names `scene = "scenes/main.scene.toml"`: no argument
+flint play
 # a small companion window in a corner that stays up and leaves the keyboard alone
 flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560   --borderless --always-on-top --no-activate
 ```

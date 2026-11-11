@@ -16,12 +16,17 @@
 //! scene, prefab, particle effect, glyph set or script names must be packed. A missing
 //! file fails here rather than as a pink texture deep in play.
 //!
-//! `bundle.toml` in the game root (every key optional):
+//! `bundle.toml` in the game root holds the packing rules (every key
+//! optional). What the project already says in its manifest it need not
+//! say again (ADR 0114, decision 1): `name`, `scene` and `schemas` default
+//! to `flint.toml`'s `[project] id`, `scene` and `schemas`. The manifest is
+//! packed like any file, so the player finds the same project in the
+//! bundle that a command finds on the disk.
 //!
 //! ```toml
-//! name = "float"
-//! scene = "scenes/float.scene.toml"
-//! schemas = ["engine/schemas", "schemas"]
+//! name = "float"                           # else flint.toml's id, else the folder's name
+//! scene = "scenes/float.scene.toml"        # else flint.toml's scene, else the only scene
+//! schemas = ["engine/schemas", "schemas"]  # else flint.toml's, else these two
 //! exclude = ["scenes/snap_*.scene.toml"]   # added to the defaults
 //! include = []                             # wins over any exclude
 //! [late]                                   # replaces the default { audio = [...] }
@@ -66,11 +71,13 @@ pub struct BundleArgs {
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 
-    /// The scene the player starts (overrides bundle.toml)
+    /// The scene the player starts (overrides bundle.toml, which overrides
+    /// flint.toml's `[project] scene`)
     #[arg(long)]
     pub scene: Option<String>,
 
-    /// The bundle's name (overrides bundle.toml; default: the folder's name)
+    /// The bundle's name (overrides bundle.toml, which overrides
+    /// flint.toml's `[project] id`; default: the folder's name)
     #[arg(long)]
     pub name: Option<String>,
 
@@ -133,8 +140,8 @@ const ASSET_EXTENSIONS: &[&str] = &[
     "otf", "toml", "wgsl",
 ];
 
-/// The folders the runtime looks a bare name up in, beside a scene and one
-/// level above it (`scene_loading.rs`, `model_loader.rs`, `sync.rs`).
+/// The folders the runtime looks a bare name up in, at each step of the
+/// project's walk (the kinds' folders, `flint_core::project::AssetKind`).
 const ASSET_DIRS: &[&str] = &[
     "",
     "models",
@@ -428,19 +435,25 @@ fn looks_like_file(s: &str) -> bool {
     }
 }
 
-/// Where the runtime would look for `name` named from a file in `from_dir`.
+/// Where the runtime would look for `name` named from a file in `from_dir`:
+/// the project's one walk (ADR 0114), from the naming file's folder through
+/// every folder above it to the bundle's root, then the mounted engine. The
+/// reference is a bare string, so every asset folder is tried at each step
+/// where the runtime tries only the kind's.
 fn candidates(name: &str, from_dirs: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for dir in from_dirs {
-        let dir = Path::new(dir);
-        for base in [Some(dir), dir.parent()].into_iter().flatten() {
+        // `scenes/act1` -> `scenes` -> `` (the root), each once
+        for base in Path::new(dir).ancestors() {
             for sub in ASSET_DIRS {
                 out.push(normalize(&base.join(sub).join(name)));
             }
         }
     }
-    for sub in ASSET_DIRS {
-        out.push(normalize(&Path::new(sub).join(name)));
+    for root in ["", "engine"] {
+        for sub in ASSET_DIRS {
+            out.push(normalize(&Path::new(root).join(sub).join(name)));
+        }
     }
     out
 }
@@ -681,6 +694,14 @@ pub fn read_config(root: &Path) -> Result<BundleConfig> {
     }
 }
 
+/// The project manifest of the game at `root` (`flint.toml`, ADR 0114):
+/// what `bundle.toml` may leave unsaid. A game with no manifest has none of
+/// it; a manifest that doesn't read is an error naming the file and key.
+pub fn read_project(root: &Path) -> Result<flint_core::project::Project> {
+    flint_core::project::Project::at(root)
+        .map_err(|e| anyhow::anyhow!("reading the project manifest: {e}"))
+}
+
 /// What a pack wrote (or, in a dry run, would have).
 pub struct Packed {
     /// The scene the player starts.
@@ -709,11 +730,14 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
     }
     let config = read_config(root)?;
     let rules = Rules::from_config(&config);
+    // flint.toml says what bundle.toml leaves out (ADR 0114, decision 1)
+    let project = read_project(root)?;
 
     let name = args
         .name
         .clone()
         .or(config.name.clone())
+        .or(project.id.clone())
         .or_else(|| {
             std::fs::canonicalize(root)
                 .ok()?
@@ -749,11 +773,21 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
         .filter(|p| p.ends_with(".scene.toml"))
         .cloned()
         .collect();
-    let scene = match args.scene.clone().or(config.scene.clone()) {
+    let manifest_scene = project
+        .scene
+        .as_ref()
+        .map(|s| s.to_string_lossy().into_owned());
+    let scene = match args
+        .scene
+        .clone()
+        .or(config.scene.clone())
+        .or(manifest_scene)
+    {
         Some(s) => normalize(Path::new(&s)),
         None if scenes.len() == 1 => scenes[0].clone(),
         None => bail!(
-            "{} scenes are packed; name the one to start with --scene or `scene =` in bundle.toml:\n  {}",
+            "{} scenes are packed; name the one to start with --scene, `scene =` in \
+             bundle.toml or `[project] scene` in flint.toml:\n  {}",
             scenes.len(),
             scenes.join("\n  ")
         ),
@@ -763,22 +797,16 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
     }
     // bundle.toml's list, else the project manifest's (ADR 0114), else the
     // game-repo layout; as bundle paths, and only those that were packed
-    let manifest_schemas = || -> Result<Option<Vec<String>>> {
-        let project = flint_core::project::Project::at(root)
-            .map_err(|e| anyhow::anyhow!("reading the project manifest: {e}"))?;
-        Ok((!project.schemas.is_empty()).then(|| {
-            project
-                .schemas
-                .iter()
-                .map(|s| s.to_string_lossy().into_owned())
-                .collect()
-        }))
-    };
+    let manifest_schemas: Option<Vec<String>> = (!project.schemas.is_empty()).then(|| {
+        project
+            .schemas
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect()
+    });
     let schemas: Vec<String> = match config.schemas.clone() {
         Some(listed) => listed,
-        None => {
-            manifest_schemas()?.unwrap_or_else(|| vec!["engine/schemas".into(), "schemas".into()])
-        }
+        None => manifest_schemas.unwrap_or_else(|| vec!["engine/schemas".into(), "schemas".into()]),
     }
     .into_iter()
     .map(|s| normalize(Path::new(&s)))
@@ -1021,6 +1049,45 @@ mod tests {
                     what: "logo.png".into()
                 },
             ]
+        );
+    }
+
+    /// The check walks as the runtime does (ADR 0114): from the naming
+    /// file's folder through every folder above it to the root, then the
+    /// engine. It used to stop one level above the scene.
+    #[test]
+    fn references_from_a_nested_scene_resolve_up_to_the_root_and_the_engine() {
+        let files = pack(&[
+            (
+                "scenes/act1/cave/deep.scene.toml",
+                r#"
+                [scene]
+                name = "Deep"
+                [entities.raft.model]
+                asset = "raft"
+                [entities.raft.script]
+                source = "raft.rhai"
+                [entities.wall.material]
+                texture = "textures/wall.png"
+                [entities.near.material]
+                texture = "textures/near.png"
+                [entities.lost.material]
+                texture = "textures/lost.png"
+                "#,
+            ),
+            ("models/raft.glb", ""),
+            ("scripts/raft.rhai", ""),
+            ("engine/textures/wall.png", ""),
+            ("scenes/act1/textures/near.png", ""),
+            // A sibling branch is not on the way up
+            ("scenes/act2/textures/lost.png", ""),
+        ]);
+        assert_eq!(
+            check_references(&files),
+            [Missing {
+                from: "scenes/act1/cave/deep.scene.toml".into(),
+                what: "textures/lost.png".into()
+            }]
         );
     }
 

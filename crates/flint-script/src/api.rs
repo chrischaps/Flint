@@ -4350,9 +4350,9 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         let ctx = ctx.clone();
         engine.register_fn("load_ui", move |layout_path: &str| -> i64 {
             let mut c = crate::lock_or_recover(&ctx);
-            // Resolve relative to project root (scene's parent's parent)
-            let scene_dir = project_root_for(&c.current_scene_path);
-            c.ui_system.load(layout_path, &scene_dir)
+            // A path from the project root (ADR 0114)
+            let root = c.project_root_holding("load_ui", layout_path);
+            c.ui_system.load(layout_path, &root)
         });
     }
 
@@ -5156,29 +5156,10 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
 
 // ─── Data files API ──────────────────────────────────────
 
-/// Project root for a scene path: the scene directory's parent, or "." when
-/// the path is empty or has no such parent. The same rule `load_ui` and the
-/// player's `save/persist.toml` use.
-pub fn project_root_for(scene_path: &str) -> std::path::PathBuf {
-    if scene_path.is_empty() {
-        return std::path::PathBuf::from(".");
-    }
-    // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
-    let root = std::path::Path::new(scene_path)
-        .parent()
-        .and_then(|dir| dir.parent())
-        .unwrap_or(std::path::Path::new("."));
-    if root.as_os_str().is_empty() {
-        std::path::PathBuf::from(".")
-    } else {
-        root.to_path_buf()
-    }
-}
-
 /// Read and cache a TOML file relative to the project root, returning the
 /// whole document as a Rhai map (`()` on failure, which is also logged).
 fn load_data_impl(c: &mut ScriptCallContext, path: &str, reload: bool) -> Dynamic {
-    let full = project_root_for(&c.current_scene_path).join(path);
+    let full = c.project_root_holding("load_data", path).join(path);
     let key = full.to_string_lossy().to_string();
     if reload {
         c.data_cache.remove(&key);
@@ -6514,17 +6495,60 @@ mod tests {
         assert_eq!(name, "Mali-G715");
     }
 
+    /// `load_data` and `load_ui` paths are from the project root (ADR
+    /// 0114): the same file from a scene in `scenes/` and from one two
+    /// folders deep, which used to look under `scenes/`.
     #[test]
-    fn test_project_root_for() {
-        assert_eq!(project_root_for(""), std::path::PathBuf::from("."));
-        assert_eq!(
-            project_root_for("scenes/a.scene.toml"),
-            std::path::PathBuf::from(".")
-        );
-        assert_eq!(
-            project_root_for("C:/games/trike/scenes/a.scene.toml"),
-            std::path::PathBuf::from("C:/games/trike")
-        );
+    fn test_root_paths_are_from_the_project_root_at_any_depth() {
+        use flint_core::project::Project;
+        use flint_core::vfs::{self, MemorySource};
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "[project]\nid = \"g\"\n");
+        files.insert("game/data/x.toml", "n = 7\n");
+        files.insert("game/scenes/a.scene.toml", "");
+        files.insert("game/scenes/act1/deep/b.scene.toml", "");
+        // TEMPORARY (one release): a file only where the root used to be
+        // guessed for the deep scene is still read
+        files.insert("game/scenes/act1/data/old.toml", "n = 3\n");
+        // No marker: the scene folder's parent, as before
+        files.insert("loose/levels/c.scene.toml", "");
+        files.insert("loose/data/x.toml", "n = 9\n");
+        vfs::scoped(Arc::new(files), || {
+            let n = |scene: &str, handed: bool, file: &str| -> Option<i64> {
+                let mut c = ScriptCallContext::new();
+                c.current_scene_path = scene.to_string();
+                // With the project handed in by the host, and found from
+                // the scene path when it wasn't
+                if handed {
+                    c.project = Some(Project::for_scene(std::path::Path::new(scene)));
+                }
+                let d = load_data_impl(&mut c, file, false);
+                d.is_map().then(|| d.cast::<Map>()["n"].as_int().unwrap())
+            };
+            for handed in [true, false] {
+                assert_eq!(
+                    n("game/scenes/a.scene.toml", handed, "data/x.toml"),
+                    Some(7)
+                );
+                assert_eq!(
+                    n("game/scenes/act1/deep/b.scene.toml", handed, "data/x.toml"),
+                    Some(7)
+                );
+                assert_eq!(
+                    n(
+                        "game/scenes/act1/deep/b.scene.toml",
+                        handed,
+                        "data/old.toml"
+                    ),
+                    Some(3)
+                );
+                assert_eq!(n("game/scenes/a.scene.toml", handed, "data/old.toml"), None);
+                assert_eq!(
+                    n("loose/levels/c.scene.toml", handed, "data/x.toml"),
+                    Some(9)
+                );
+            }
+        });
     }
 
     #[test]
