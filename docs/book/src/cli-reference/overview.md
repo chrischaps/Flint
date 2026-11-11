@@ -14,7 +14,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Check a scene against its schemas (every unknown archetype, component and field and every value of the wrong type, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format json` |
+| `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
+| `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type and every entity reference to nothing, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
@@ -32,7 +33,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
-| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, checking every reference first |
+| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first |
 | `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
 | `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
 | `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
@@ -64,6 +65,73 @@ It writes a game project from templates compiled into the binary: `flint.toml` (
 | `--force` | Write into a directory that already holds files. A file already there is kept; nothing is overwritten or deleted |
 
 No engine schema is copied into the game. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
+
+## The `check` Command
+
+```bash
+flint check                          # the project in the working directory
+flint check examples/                # every scene under a folder
+flint check scenes/dock.scene.toml   # one scene, and the files it names
+flint check . --json                 # one JSON document on stdout
+```
+
+`flint check` is the gate to run before playing, rendering or bundling. It reads the project and reports **every** problem it finds in one run; it never stops at the first. Each problem is a [diagnostic](../concepts/schemas.md#scene-diagnostics): a severity, a code, the file, the entity and the field when there is one, a message, a hint, and for a missing file every path the engine tried.
+
+```
+$ flint check
+scenes/dock.scene.toml: 4 errors, 1 warning
+  error[unknown-component] entity 'buoy' component 'lihgt': no component named `lihgt`, so nothing checks it
+      hint: a component a game adds is declared in its schema layer, as components/lihgt.toml
+  error[unknown-archetype] entity 'crate' field 'archetype': no archetype named `porp`, so the entity gets no defaults
+      hint: did you mean `prop`?
+  error[dangling-entity] entity 'gate' joint.parent: names the entity `frame`, and the scene has none of that name
+  error[missing-asset] entity 'boat' model.asset: model `boat` is not found (also named by 'spare')
+      hint: `flint asset where models boat --scene scenes/dock.scene.toml` shows the search; the asset catalog and a procgen spec named `boat` were asked first
+      tried:
+        scenes/models/boat.glb
+        scenes/models/boat.gltf
+        models/boat.glb
+        models/boat.gltf
+  warning[constraint] entity 'lantern': Lamp 'lantern' is too bright (constraint `lamps_are_not_blinding`)
+
+schemas/constraints/rules.toml: 1 error
+  error[bad-constraint] field 'query': constraint `lit_props_have_a_place`: `entities where archetype == 'prop' and lamp.brightness > 0` can't be evaluated: Parse error: ...
+      hint: a query is one resource and at most one condition: `entities where archetype == 'door'`; the constraint is not checked until it parses
+
+scenes/torn.scene.toml: 1 error
+  error[toml-parse]: TOML parse error at line 4, column 15
+
+checked 2 scenes and 3 files: 6 errors, 1 warning
+```
+
+| What it checks | Codes |
+|---|---|
+| Each scene reads, parses and expands its prefabs | `file-unreadable` `toml-parse` `bad-prefab` |
+| Archetypes, components and fields against the schemas | `unknown-archetype` `unknown-component` `unknown-field` `bad-type` `bad-enum-value` `out-of-range` `missing-field` `no-schemas` |
+| Entity references: `parent`, `joint.parent`, `ik_two_bone.target` / `pole` / `tip` | `dangling-entity` |
+| The scene builds | `scene-load` |
+| The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
+| The procgen spec behind a model or texture parses | `bad-spec` |
+| The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
+| Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
+| User styles load and compile; `[post_process.styles]`; the look | `bad-user-style` `bad-style-setting` `bad-look` |
+| `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
+| Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |
+| `flint.toml` reads, its schema directories exist, its start scene is there | `bad-manifest` `bad-schemas` `missing-asset` |
+
+A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name and no further.
+
+For a folder, every `*.scene.toml` under it is checked, and every prefab, particle effect, glyph set, chunk, user style and script there is read for the files it names. `target/`, `dist/`, dot-folders, `docs/` and an `engine/` subtree are skipped (the folders `flint bundle` never packs); what a game's `bundle.toml` excludes from the web build is still checked, since it is still part of the game on disk. For one scene, the scene and the scripts and prefabs it names are checked.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print one JSON document on stdout and nothing else: `valid`, `summary`, `errors`, `warnings`, `scenes`, `files` and `diagnostics`, each diagnostic with `severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint` and `tried` |
+| `--strict` | A field no schema declares is an error, not a warning (as `[project] strict = true` does for every run) |
+| `--schemas <dir>` | Schema directories, repeatable; without it the project's `flint.toml` names them |
+
+The exit code is 1 when there is an error and 0 otherwise. A warning does not fail it.
+
+`flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything.
 
 ## The `play` Command
 
@@ -713,7 +781,7 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | `--schemas <path>` | Schema directory, repeatable on every command that loads schemas (`play`, `render`, `validate`, `query`, `entity`, `schema`, `edit`, `prefab view`, `flint-player`); later paths override earlier. When given, the flags are the whole list. Without it: the `schemas` list of the project's `flint.toml`; else `schemas/` in the working directory, beside the scene and one level up. A directory named by a flag or the manifest that doesn't exist is an error naming it |
 | `--project <dir>` | The project root, instead of the one found by walking up; its `flint.toml` is the manifest read |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
-| `--fix` | Apply auto-fixes (with `validate`) |
+| `--fix` | Apply auto-fixes (with `validate`). The exit code is 1 if an error is left afterwards |
 | `--strict` | With `validate`: a field no schema declares is an error, not a warning (`[project] strict = true` in `flint.toml` does it for every run) |
 | `--dry-run` | Preview changes without applying |
 

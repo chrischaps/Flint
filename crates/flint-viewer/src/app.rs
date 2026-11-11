@@ -76,15 +76,58 @@ pub fn load_schemas(
     }
     let mut constraints = ConstraintRegistry::new();
     for dir in &dirs.dirs {
-        // A directory with no constraints, or with one that doesn't read,
-        // leaves the viewer without them, as it always has
-        if let Ok(loaded) = ConstraintRegistry::load_from_directory(dir) {
-            for constraint in loaded.all() {
-                constraints.register(constraint.clone());
-            }
+        // A file that doesn't read leaves the viewer without that
+        // directory's constraints, and says so (#687); a constraint whose
+        // query doesn't parse is kept with its file, and the evaluator
+        // shows it in the status panel as an error
+        match ConstraintRegistry::load_from_directory(dir) {
+            Ok(loaded) => constraints.extend(loaded),
+            Err(e) => eprintln!("Warning: constraints not loaded: {e}"),
         }
     }
     Ok((registry, constraints, dirs))
+}
+
+/// What the status panel lists: one line a violation, and one for each
+/// constraint that can't be evaluated (a query that doesn't parse), which
+/// the evaluator reports as an error naming the constraint and its file
+/// (#687). It used to show nothing for those, so a typo read as a pass.
+fn violation_lines(
+    world: &FlintWorld,
+    registry: &SchemaRegistry,
+    constraints: &ConstraintRegistry,
+) -> Vec<String> {
+    ConstraintEvaluator::new(world, registry, constraints)
+        .validate()
+        .violations
+        .iter()
+        .map(|v| format!("[{:?}] {}: {}", v.severity, v.entity_name, v.message))
+        .collect()
+}
+
+#[cfg(test)]
+mod constraint_tests {
+    use super::*;
+
+    #[test]
+    fn a_constraint_with_a_bad_query_is_listed_as_an_error() {
+        let mut constraints = ConstraintRegistry::new();
+        constraints
+            .load_string(
+                "[[constraint]]\nname = \"doors_shut\"\n\
+                 query = \"entities where archetype == 'door' and door.locked == true\"\n\
+                 severity = \"warning\"\nmessage = \"m\"\n\
+                 [constraint.kind]\ntype = \"required_child\"\nchild_archetype = \"handle\"\n",
+            )
+            .unwrap();
+        let lines = violation_lines(&FlintWorld::new(), &SchemaRegistry::new(), &constraints);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("[Error] [constraint]: constraint 'doors_shut': its query"),
+            "{lines:?}"
+        );
+        assert!(lines[0].contains("can't be evaluated"), "{lines:?}");
+    }
 }
 
 /// Run the viewer application (standard viewer mode). `schemas` are the
@@ -807,15 +850,9 @@ impl ViewerApp {
 
     fn update_constraints(&mut self) {
         let state = self.state.lock().unwrap();
-        let evaluator =
-            ConstraintEvaluator::new(&state.world, &state.registry, &state.constraint_registry);
-        let report = evaluator.validate();
-        self.violation_count = report.violations.len();
-        self.violation_messages = report
-            .violations
-            .iter()
-            .map(|v| format!("[{:?}] {}: {}", v.severity, v.entity_name, v.message))
-            .collect();
+        self.violation_messages =
+            violation_lines(&state.world, &state.registry, &state.constraint_registry);
+        self.violation_count = self.violation_messages.len();
     }
 
     fn render(&mut self) {

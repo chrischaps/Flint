@@ -2,11 +2,16 @@
 
 use crate::registry::ConstraintRegistry;
 use crate::report::{ValidationReport, Violation};
-use crate::types::{ConstraintDef, ConstraintKind};
+use crate::types::{ConstraintDef, ConstraintKind, Severity};
 use flint_core::toml_util::toml_f64;
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_query::{execute_query, parse_query, QueryResult};
 use flint_schema::SchemaRegistry;
+
+/// The `entity_name` of the violation that reports a constraint which can't
+/// be evaluated ([`crate::BadConstraint`]): it is about no entity.
+pub const BAD_CONSTRAINT: &str = "[constraint]";
 
 /// Evaluates constraints against a world
 #[allow(dead_code)]
@@ -34,24 +39,36 @@ impl<'a> ConstraintEvaluator<'a> {
     pub fn validate(&self) -> ValidationReport {
         let mut report = ValidationReport::new();
 
+        // A constraint that can't be evaluated is an error naming it (#687):
+        // it used to be skipped, so a typo in a query passed forever
+        for problem in self.constraint_registry.problems() {
+            report.violations.push(Violation {
+                constraint_name: problem.name.clone(),
+                entity_name: BAD_CONSTRAINT.to_string(),
+                entity_id: EntityId::from_raw(0),
+                severity: Severity::Error,
+                message: problem.to_string(),
+                has_auto_fix: false,
+            });
+        }
+
         for constraint in self.constraint_registry.all() {
-            self.evaluate_constraint(constraint, &mut report);
+            if constraint.problems().is_empty() {
+                self.evaluate_constraint(constraint, &mut report);
+            }
         }
 
         report
     }
 
     fn evaluate_constraint(&self, constraint: &ConstraintDef, report: &mut ValidationReport) {
-        // Parse and execute the query to get matching entities
-        let query = match parse_query(&constraint.query) {
-            Ok(q) => q,
-            Err(_) => return, // Skip malformed queries silently
+        // `validate` has reported a constraint whose query doesn't parse or
+        // doesn't select entities, and doesn't come here with one
+        let Ok(query) = parse_query(&constraint.query) else {
+            return;
         };
-
-        let result = execute_query(self.world, &query);
-        let entities = match result {
-            QueryResult::Entities(entities) => entities,
-            _ => return, // Only entity queries make sense for constraints
+        let QueryResult::Entities(entities) = execute_query(self.world, &query) else {
+            return;
         };
 
         // Check each matched entity against the constraint kind
@@ -233,7 +250,53 @@ fn expand_message(template: &str, entity_name: &str, archetype: &str) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ConstraintKind, Severity};
+    use crate::types::ConstraintKind;
+
+    /// #687: a constraint whose query doesn't parse fails, naming it, and
+    /// the constraints beside it are still evaluated.
+    #[test]
+    fn a_constraint_with_a_bad_query_is_an_error_violation() {
+        let world = setup_world();
+        let schemas = SchemaRegistry::new();
+        let mut constraints = constraint_registry_with_required_child();
+        constraints.register(ConstraintDef {
+            name: "doors_are_shut".to_string(),
+            description: None,
+            query: "entities where archetype == 'door' and door.locked == true".to_string(),
+            kind: ConstraintKind::ValueRange {
+                field: "door.open_angle".to_string(),
+                min: 0.0,
+                max: 0.0,
+            },
+            severity: Severity::Warning,
+            message: "Door '{name}' is open".to_string(),
+            auto_fix: None,
+        });
+
+        let report = ConstraintEvaluator::new(&world, &schemas, &constraints).validate();
+        assert!(!report.is_valid(), "a bad query is an error");
+        let bad: Vec<&Violation> = report
+            .violations
+            .iter()
+            .filter(|v| v.entity_name == BAD_CONSTRAINT)
+            .collect();
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].constraint_name, "doors_are_shut");
+        assert_eq!(bad[0].severity, Severity::Error);
+        assert!(
+            bad[0].message.starts_with(
+                "constraint 'doors_are_shut': its query `entities where archetype == 'door' \
+                 and door.locked == true` can't be evaluated: Parse error"
+            ),
+            "{}",
+            bad[0].message
+        );
+        // The good constraint beside it still ran
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.constraint_name == "doors_have_handles"));
+    }
 
     fn setup_world() -> FlintWorld {
         let mut world = FlintWorld::new();

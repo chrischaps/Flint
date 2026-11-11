@@ -78,6 +78,44 @@ pub mod codes {
     /// No schema was loaded, so nothing could be checked.
     pub const NO_SCHEMAS: &str = "no-schemas";
 
+    // What `flint check` adds (#687): the project around the scene.
+
+    /// An asset of a known kind (a model, a texture, a sound, a script...)
+    /// that the project's one search does not find. `tried` has the paths.
+    pub const MISSING_ASSET: &str = "missing-asset";
+    /// A file a scene, prefab, effect, glyph set, style or script names by
+    /// path that is in none of the asset folders. `tried` has the paths.
+    pub const MISSING_FILE: &str = "missing-file";
+    /// An entity named by another (`parent`, `joint.parent`,
+    /// `ik_two_bone.target`) that the scene does not have.
+    pub const DANGLING_ENTITY: &str = "dangling-entity";
+    /// The scene parses and its load still fails.
+    pub const SCENE_LOAD: &str = "scene-load";
+    /// `flint.toml` does not read.
+    pub const BAD_MANIFEST: &str = "bad-manifest";
+    /// A schema directory is missing, or a schema file does not read.
+    pub const BAD_SCHEMAS: &str = "bad-schemas";
+    /// A constraint file does not read, or a constraint's query does not
+    /// parse or does not select entities.
+    pub const BAD_CONSTRAINT: &str = "bad-constraint";
+    /// A constraint the scene breaks, at the constraint's own severity.
+    pub const CONSTRAINT: &str = "constraint";
+    /// A user style (`styles/*.shader.toml`) that does not load or compile.
+    pub const BAD_USER_STYLE: &str = "bad-user-style";
+    /// `[post_process.styles]` names a style, key or value there is not.
+    pub const BAD_STYLE_SETTING: &str = "bad-style-setting";
+    /// The look a scene names is not found, or does not fit.
+    pub const BAD_LOOK: &str = "bad-look";
+    /// The scene's `[wooze]` table, or its preset, is wrong.
+    pub const BAD_WOOZE: &str = "bad-wooze";
+    /// A `[living.species.<spec>]` table is wrong, or no living prop grows
+    /// from that spec.
+    pub const BAD_SPECIES: &str = "bad-species";
+    /// An input config a scene or the manifest names does not parse.
+    pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
+    /// A procgen spec a scene's model or texture is made from does not parse.
+    pub const BAD_SPEC: &str = "bad-spec";
+
     /// Every code, the severity it is raised with, and what it means.
     pub const ALL: &[(&str, Severity, &str)] = &[
         (
@@ -135,6 +173,77 @@ pub mod codes {
             Severity::Warning,
             "no schema was loaded, so components were not checked",
         ),
+        (
+            MISSING_ASSET,
+            Severity::Error,
+            "a model, texture, sound, script or other asset the project's search does not find",
+        ),
+        (
+            MISSING_FILE,
+            Severity::Error,
+            "a file named by path that is in none of the asset folders",
+        ),
+        (
+            DANGLING_ENTITY,
+            Severity::Error,
+            "an entity reference to an entity the scene does not have",
+        ),
+        (
+            SCENE_LOAD,
+            Severity::Error,
+            "the scene parses and its load still fails",
+        ),
+        (BAD_MANIFEST, Severity::Error, "flint.toml does not read"),
+        (
+            BAD_SCHEMAS,
+            Severity::Error,
+            "a schema directory is missing, or a schema file does not read",
+        ),
+        (
+            BAD_CONSTRAINT,
+            Severity::Error,
+            "a constraint file does not read, or a constraint's query does not parse",
+        ),
+        (
+            CONSTRAINT,
+            Severity::Error,
+            "a constraint the scene breaks (at the constraint's own severity)",
+        ),
+        (
+            BAD_USER_STYLE,
+            Severity::Error,
+            "a user style that does not load or compile",
+        ),
+        (
+            BAD_STYLE_SETTING,
+            Severity::Warning,
+            "a style, key or value [post_process.styles] names that there is not",
+        ),
+        (
+            BAD_LOOK,
+            Severity::Error,
+            "the look a scene names is not found, or does not fit",
+        ),
+        (
+            BAD_WOOZE,
+            Severity::Error,
+            "the scene's [wooze] table or its preset is wrong",
+        ),
+        (
+            BAD_SPECIES,
+            Severity::Error,
+            "a [living.species] table is wrong, or names a spec no living prop grows from",
+        ),
+        (
+            BAD_INPUT_CONFIG,
+            Severity::Error,
+            "an input config the scene or the manifest names does not parse",
+        ),
+        (
+            BAD_SPEC,
+            Severity::Error,
+            "a procgen spec a scene's model or texture is made from does not parse",
+        ),
     ];
 }
 
@@ -152,6 +261,10 @@ pub struct Diagnostic {
     pub message: String,
     /// What to do about it: "did you mean `light`?", the allowed values.
     pub hint: Option<String>,
+    /// Every path the engine looked at for a file that is not there, in the
+    /// order tried (the project's one search, ADR 0114). Empty for a
+    /// diagnostic that is not about a missing file.
+    pub tried: Vec<PathBuf>,
 }
 
 impl Diagnostic {
@@ -165,6 +278,7 @@ impl Diagnostic {
             field: None,
             message: message.into(),
             hint: None,
+            tried: Vec::new(),
         }
     }
 
@@ -198,6 +312,12 @@ impl Diagnostic {
 
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
+        self
+    }
+
+    /// Where the engine looked for the file that is missing.
+    pub fn tried(mut self, tried: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.tried = tried.into_iter().collect();
         self
     }
 
@@ -447,6 +567,11 @@ mod tests {
         assert!(text.contains("severity = \"error\""), "{text}");
         assert!(text.contains("code = \"bad-type\""), "{text}");
         assert!(text.contains("field = \"friction\""), "{text}");
+        assert!(text.contains("tried = []"), "{text}");
+        let missing = Diagnostic::error(codes::MISSING_ASSET, "model 'whale' not found")
+            .tried([PathBuf::from("models/whale.glb")]);
+        let text = toml::to_string(&missing).unwrap();
+        assert!(text.contains("tried = [\"models/whale.glb\"]"), "{text}");
     }
 
     #[test]
@@ -460,7 +585,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 11);
+        assert_eq!(seen.len(), 26);
     }
 
     #[test]

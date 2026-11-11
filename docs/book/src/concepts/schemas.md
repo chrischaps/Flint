@@ -57,7 +57,7 @@ A component schema with a name and **no fields** is open: the component is known
 
 ## Scene Diagnostics
 
-Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint.
+Every scene is checked against the loaded schemas in one pass that never stops at the first problem. Each problem is a **diagnostic**: a severity, a stable code, the file, the entity, the component, the field (a dotted path such as `position[1]`), a message and, where there is one, a hint. A diagnostic about a file that is not there also lists every path the engine `tried`.
 
 ```
 $ flint validate scenes/hall.scene.toml
@@ -74,9 +74,10 @@ scenes/hall.scene.toml: 4 errors, 1 warning
       hint: did you mean `position`?
 ```
 
-The same pass runs in two places:
+The same pass runs in three places:
 
-- **`flint validate <scene>`** prints the whole list, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`) beside the constraint `violations`. It needs no constraint files.
+- **`flint check [dir|scene]`** runs it over every scene of a project, with the checks of the project around the scenes (assets, files, styles, constraints), and exits 1 if any diagnostic is an error. See [The `check` Command](../cli-reference/overview.md#the-check-command).
+- **`flint validate <scene>`** prints the whole list for one scene, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`, `tried`) beside the constraint `violations`. It needs no constraint files.
 - **Every scene load** (`flint play`, `flint-player`, `flint render`, the viewer, a scene transition, a `load_chunk`) logs one summary line and the first five, as warnings, and carries on. A scene with mistakes still plays; `flint validate` is the gate to run before playing.
 
 ```
@@ -101,6 +102,28 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `file-unreadable` | error | the scene file could not be read |
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
+| `dangling-entity` | error | an entity names another the scene does not have: its `parent` (the scene then does not load), `joint.parent`, or `ik_two_bone.target` / `pole` / `tip` (a `tip` must also be a child of the entity that names it). An empty string is "none" |
+
+`flint check` adds the codes of the project around the scene:
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `missing-asset` | error | a model, texture, sound, script, heightmap or other asset of a known kind is not where the project's [one search](assets.md) looks; `tried` lists the paths |
+| `missing-file` | error | a file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path is in none of the asset folders; `tried` lists the paths |
+| `scene-load` | error | the scene parses and the engine still cannot build it |
+| `bad-spec` | error | the procgen spec a model or texture is made from does not parse |
+| `bad-input-config` | error | the input config the scene or the manifest names does not parse |
+| `bad-user-style` | error | a user style does not load or its shader does not compile (a warning for what the style's own check only warns about) |
+| `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not |
+| `bad-look` | error | the look a scene names is not found, or does not fit under the scene's keys |
+| `bad-wooze` | error | the scene's `[wooze]` table, or the preset it names, is wrong |
+| `bad-species` | error | a `[living.species.<spec>]` table is wrong, or no living prop grows from that spec |
+| `constraint` | the constraint's | a [constraint](constraints.md) the scene breaks (`info` reads as a warning) |
+| `bad-constraint` | error | a constraint file does not read, or a constraint's query does not parse or does not select entities |
+| `bad-manifest` | error | `flint.toml` does not read |
+| `bad-schemas` | error | a schema directory is missing, or a schema file does not read |
+
+Entity references are found by component name for now (`joint`, `ik_two_bone`); a schema field type that says "this names an entity" will check a game's own components the same way.
 
 A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
 

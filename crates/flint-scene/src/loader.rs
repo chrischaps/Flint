@@ -1,6 +1,6 @@
 //! Scene loading from TOML files
 
-use crate::diagnose::diagnose_scene;
+use crate::diagnose::{diagnose_references, diagnose_scene};
 use crate::format::{PostProcessDef, SceneFile};
 use crate::prefab;
 use flint_core::diagnostic::{self, Diagnostic};
@@ -67,7 +67,8 @@ fn load_text_diagnosed(
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
 
-    let found = diagnose_scene(&scene_file, Some(path), registry);
+    let mut found = diagnose_scene(&scene_file, Some(path), registry);
+    found.extend(diagnose_references(&scene_file, Some(path)));
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file, found))
 }
@@ -174,7 +175,8 @@ pub fn reload_scene<P: AsRef<Path>>(
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
-    let found = diagnose_scene(&scene_file, Some(path), registry);
+    let mut found = diagnose_scene(&scene_file, Some(path), registry);
+    found.extend(diagnose_references(&scene_file, Some(path)));
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
 
     // Clear existing world

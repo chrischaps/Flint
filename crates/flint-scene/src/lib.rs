@@ -12,7 +12,7 @@ mod saver;
 mod wooze;
 
 pub use commit::{commit_look, look_edits, CommitReport, SceneEdit, SceneScalar};
-pub use diagnose::{diagnose, diagnose_scene};
+pub use diagnose::{diagnose, diagnose_references, diagnose_scene, ENTITY_REFERENCES};
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use format::{
     fold_legacy_style_keys, BoilDef, CameraDef, EntityDef, LivingDef, LivingEchoesDef,

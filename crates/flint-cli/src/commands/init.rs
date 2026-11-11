@@ -432,7 +432,7 @@ fn report(args: &InitArgs, name: &str, engine: Option<&str>, written: &[&str], k
         println!("  git remote add flint-engine https://github.com/chrischaps/Flint.git");
         println!("  git subtree add --prefix=engine flint-engine main --squash");
     }
-    println!("  flint validate {scene}");
+    println!("  flint check");
     println!("  flint render {scene} --output renders/main.png");
     if args.engine != EngineMode::None {
         println!("  flint play");

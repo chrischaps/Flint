@@ -16,6 +16,10 @@
 //! scene, prefab, particle effect, glyph set or script names must be packed. A missing
 //! file fails here rather than as a pink texture deep in play.
 //!
+//! The checks are `flint check`'s (#687): `crate::check` run over the files
+//! about to be packed, as a `MemorySource`, with `Checks::BUNDLE`. Nothing
+//! here checks anything; [`check_packed`] is the one call.
+//!
 //! `bundle.toml` in the game root holds the packing rules (every key
 //! optional). What the project already says in its manifest it need not
 //! say again (ADR 0114, decision 1): `name`, `scene` and `schemas` default
@@ -52,12 +56,13 @@
 //! engine's schemas from the Flint tree this CLI was built from, so a scene
 //! an agent wrote in an empty folder packs as it plays.
 
+use crate::check::{self, Checks, Schemas, Subject};
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use flint_core::bundle::{Bundle, BundleManifest, LateBundle, EXTENSION};
 use flint_core::vfs::{self, normalize, MemorySource};
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -133,32 +138,6 @@ const DEFAULT_INCLUDE: &[&str] = &["engine/schemas/**"];
 
 /// Audio: fetched after the first frame.
 const DEFAULT_LATE_AUDIO: &[&str] = &["**/*.ogg", "**/*.wav", "**/*.mp3", "**/*.flac"];
-
-/// Extensions that mark a string in a scene or script as a file to pack.
-const ASSET_EXTENSIONS: &[&str] = &[
-    "glb", "gltf", "png", "jpg", "jpeg", "hdr", "ktx2", "ogg", "wav", "mp3", "flac", "rhai", "ttf",
-    "otf", "toml", "wgsl",
-];
-
-/// The folders the runtime looks a bare name up in, at each step of the
-/// project's walk (the kinds' folders, `flint_core::project::AssetKind`).
-const ASSET_DIRS: &[&str] = &[
-    "",
-    "models",
-    "scripts",
-    "audio",
-    "textures",
-    "sprites",
-    "particles",
-    "wooze",
-    "animations",
-    "prefabs",
-    "fonts",
-    "terrain",
-    "specs",
-    "levels",
-    "scenes",
-];
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -415,268 +394,26 @@ fn collect_under(root: &Path, rules: &Rules) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Whether a string names a file: a known extension after a non-empty stem,
-/// and nothing that can't be in a path. `".ogg"` (a suffix a script appends
-/// to) and URLs don't count.
-fn looks_like_file(s: &str) -> bool {
-    if s.contains("://") || s.contains(char::is_whitespace) || s.contains(['{', '}', '"', '*']) {
-        return false;
-    }
-    let name = s.rsplit(['/', '\\']).next().unwrap_or(s);
-    // ".scene.toml" names a suffix (a script stripping it), not a file
-    if name.starts_with('.') {
-        return false;
-    }
-    match name.rsplit_once('.') {
-        Some((stem, ext)) => {
-            !stem.is_empty() && ASSET_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
-        }
-        None => false,
-    }
+/// What `flint check` finds in the files about to be packed, read as the
+/// player will read them: every scene loads from the bundle with its
+/// prefabs and its archetypes known, every file and asset a scene, prefab,
+/// particle effect, glyph set, chunk, user style or script names is packed,
+/// and the user styles and looks load ([`Checks::BUNDLE`]).
+pub fn check_packed(files: &BTreeMap<String, Vec<u8>>, schemas: &[String]) -> check::Report {
+    let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
+    let subject = Subject::packed(
+        files.keys().cloned().collect(),
+        Schemas::Listed(schemas.to_vec()),
+    );
+    vfs::scoped(Arc::new(source), || check::run(&subject, Checks::BUNDLE))
 }
 
-/// Where the runtime would look for `name` named from a file in `from_dir`:
-/// the project's one walk (ADR 0114), from the naming file's folder through
-/// every folder above it to the bundle's root, then the mounted engine. The
-/// reference is a bare string, so every asset folder is tried at each step
-/// where the runtime tries only the kind's.
-fn candidates(name: &str, from_dirs: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for dir in from_dirs {
-        // `scenes/act1` -> `scenes` -> `` (the root), each once
-        for base in Path::new(dir).ancestors() {
-            for sub in ASSET_DIRS {
-                out.push(normalize(&base.join(sub).join(name)));
-            }
-        }
-    }
-    for root in ["", "engine"] {
-        for sub in ASSET_DIRS {
-            out.push(normalize(&Path::new(root).join(sub).join(name)));
-        }
-    }
-    out
-}
-
-/// One unresolved reference: who names what.
-#[derive(Debug, PartialEq)]
-struct Missing {
-    from: String,
-    what: String,
-}
-
-/// Collect every string in a TOML value that names a file, plus each
-/// `model.asset` (a bare model name).
-fn toml_refs(value: &toml::Value, key: &str, out: &mut Vec<String>) {
-    match value {
-        toml::Value::String(s) if looks_like_file(s) => out.push(s.clone()),
-        toml::Value::Table(t) => {
-            for (k, v) in t {
-                if key == "model" && k == "asset" {
-                    if let Some(name) = v.as_str() {
-                        if !looks_like_file(name) {
-                            out.push(format!("{name}.glb"));
-                            continue;
-                        }
-                    }
-                }
-                toml_refs(v, k, out);
-            }
-        }
-        toml::Value::Array(a) => a.iter().for_each(|v| toml_refs(v, key, out)),
-        _ => {}
-    }
-}
-
-/// String literals in a Rhai script that name files.
-fn rhai_refs(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = source;
-    while let Some(start) = rest.find('"') {
-        let after = &rest[start + 1..];
-        let Some(end) = after.find(['"', '\n']) else {
-            break;
-        };
-        let literal = &after[..end];
-        if looks_like_file(literal) {
-            out.push(literal.to_string());
-        }
-        rest = &after[(end + 1).min(after.len())..];
-    }
-    // `// "foo.png"` in a comment is still worth packing; no need to skip.
-    out
-}
-
-/// Every reference in the packed files that names nothing packed.
-fn check_references(files: &BTreeMap<String, Vec<u8>>) -> Vec<Missing> {
-    let scene_dirs: Vec<String> = files
-        .keys()
-        .filter(|p| p.ends_with(".scene.toml"))
-        .map(|p| parent_of(p))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let model_ok = |name: &str| {
-        // A bare model name may be a glTF, or a procgen spec the player builds.
-        let stem = name.trim_end_matches(".glb");
-        files.keys().any(|p| {
-            p.ends_with(&format!("/{stem}.gltf"))
-                || p.ends_with(&format!("/{stem}.procgen.toml"))
-                || p == &format!("{stem}.procgen.toml")
-        })
-    };
-
-    let mut missing = Vec::new();
-    for (path, bytes) in files {
-        let refs = if path.ends_with(".scene.toml")
-            || path.ends_with(".prefab.toml")
-            || path.ends_with(".particles.toml")
-            || path.ends_with(".glyphs.toml")
-            || path.ends_with(".chunk.toml")
-            || path.ends_with(flint_render::stylize::custom::SUFFIX)
-        {
-            let Ok(text) = std::str::from_utf8(bytes) else {
-                continue;
-            };
-            let Ok(value) = text.parse::<toml::Value>() else {
-                missing.push(Missing {
-                    from: path.clone(),
-                    what: "(not valid TOML)".into(),
-                });
-                continue;
-            };
-            let mut refs = Vec::new();
-            toml_refs(&value, "", &mut refs);
-            refs
-        } else if path.ends_with(".rhai") {
-            rhai_refs(&String::from_utf8_lossy(bytes))
-        } else {
-            continue;
-        };
-
-        let mut from_dirs = vec![parent_of(path)];
-        if path.ends_with(".rhai") {
-            from_dirs.extend(scene_dirs.iter().cloned());
-        }
-        for name in refs.into_iter().collect::<BTreeSet<_>>() {
-            let found = candidates(&name, &from_dirs)
-                .iter()
-                .any(|c| files.contains_key(c));
-            if !found && !(name.ends_with(".glb") && model_ok(&name)) {
-                missing.push(Missing {
-                    from: path.clone(),
-                    what: name,
-                });
-            }
-        }
-    }
-    missing
-}
-
-fn parent_of(path: &str) -> String {
-    path.rsplit_once('/')
-        .map(|(dir, _)| dir.to_string())
-        .unwrap_or_default()
-}
-
-/// Load each scene from the packed files the way the player would: schemas
-/// from the bundle, prefabs expanded through the vfs, every archetype known.
-fn check_scenes(source: Arc<MemorySource>, scenes: &[String], schemas: &[String]) -> Vec<Missing> {
-    vfs::scoped(source, || {
-        let mut problems = Vec::new();
-        let mut registry = match flint_schema::SchemaRegistry::load_from_directories(schemas) {
-            Ok(r) => r,
-            Err(e) => {
-                problems.push(Missing {
-                    from: schemas.join(", "),
-                    what: format!("(schemas don't load: {e})"),
-                });
-                return problems;
-            }
-        };
-        // `flint-player` merges a scene's own schemas/ beside it too: the
-        // list the player will hold for each scene, from the same resolver.
-        for scene in scenes {
-            let dirs = flint_core::project::host_schema_dirs(schemas, Some(Path::new(scene)));
-            if dirs.dirs.len() > schemas.len() {
-                if let Ok(r) = flint_schema::SchemaRegistry::load_from_directories(&dirs.dirs) {
-                    registry = r;
-                }
-            }
-        }
-        let mut looks = Vec::new();
-        for scene in scenes {
-            match flint_scene::load_scene(scene, &registry) {
-                Ok((_, file)) => {
-                    if let Some(post) = file.post_process.as_ref().filter(|p| p.look.is_some()) {
-                        looks.push((scene.clone(), post.clone()));
-                    }
-                    let mut unknown: BTreeSet<&str> = BTreeSet::new();
-                    for def in file.entities.values() {
-                        if let Some(arch) = &def.archetype {
-                            if registry.get_archetype(arch).is_none() {
-                                unknown.insert(arch);
-                            }
-                        }
-                    }
-                    for arch in unknown {
-                        problems.push(Missing {
-                            from: scene.clone(),
-                            what: format!("archetype \"{arch}\" (in no bundled schema)"),
-                        });
-                    }
-                }
-                Err(e) => problems.push(Missing {
-                    from: scene.clone(),
-                    what: format!("(doesn't load: {e})"),
-                }),
-            }
-        }
-        problems.extend(check_user_styles(scenes));
-        // A look a scene names (#356) is read from the packed files on the
-        // web, after its user styles: one left out (or one that no longer
-        // fits) would quietly draw the scene without it
-        for (scene, post) in looks {
-            let name = post.look.clone().unwrap_or_default();
-            if let Err(e) = flint_render::look::resolve(&post, Some(&name), &scene) {
-                problems.push(Missing {
-                    from: scene,
-                    what: format!("(look \"{name}\" doesn't load: {e})"),
-                });
-            }
-        }
-        problems
-    })
-}
-
-/// Load the user styles (ADR 0112) each scene sees from the packed files,
-/// as the web player will: a description that doesn't read, a shader that
-/// isn't packed or doesn't compile (naga, natively) is a problem now
-/// rather than a passthrough in the browser (#275). Runs inside the
-/// bundle's vfs scope.
-fn check_user_styles(scenes: &[String]) -> Vec<Missing> {
-    let dirs: BTreeSet<String> = scenes.iter().map(|s| parent_of(s)).collect();
-    let mut problems = Vec::new();
-    for dir in dirs {
-        for message in flint_render::stylize::custom::load_dir(Path::new(&dir)) {
-            // Check warnings (loop counts, texture reads) are for the author,
-            // not reasons to refuse a bundle
-            if message.contains(": warning: ") {
-                continue;
-            }
-            // Messages lead with the file they're about (bundle paths are
-            // relative, so the first ": " ends it)
-            let (from, what) = message
-                .split_once(": ")
-                .map(|(f, w)| (normalize(Path::new(f)), w.to_string()))
-                .unwrap_or_else(|| (format!("{dir}/styles"), message.clone()));
-            problems.push(Missing {
-                from,
-                what: format!("(user style doesn't load: {})", what.trim_end()),
-            });
-        }
-    }
-    problems
+/// The files of the project at `root` that `flint check` reads: what the
+/// default rules would pack (no `target/`, `dist/`, dotfiles, docs or
+/// engine subtree), whatever `bundle.toml` leaves out of the bundle. A file
+/// kept off the web is still part of the game on the disk.
+pub fn project_files(root: &Path) -> Result<Vec<String>> {
+    collect_under(root, &Rules::from_config(&BundleConfig::default()))
 }
 
 fn mb(bytes: u64) -> String {
@@ -813,18 +550,27 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
     .filter(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))))
     .collect();
 
-    // Check before writing: a bundle with a hole in it fails here.
-    let mut problems = check_references(&files);
-    let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-    problems.extend(check_scenes(Arc::new(source), &scenes, &schemas));
-    if !problems.is_empty() {
+    // Check before writing: a bundle with a hole in it fails here. The
+    // checks are `flint check`'s, over the packed files (#687).
+    let report = check_packed(&files, &schemas);
+    for warning in report.diagnostics.iter().filter(|d| !d.is_error()) {
+        eprintln!("warning: {}", warning.one_line());
+    }
+    if report.has_errors() {
+        let errors: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.is_error())
+            .cloned()
+            .collect();
         let mut msg = format!(
             "{} unresolved reference(s); nothing written:\n",
-            problems.len()
+            errors.len()
         );
-        for m in &problems {
-            msg.push_str(&format!("  {}  ->  {}\n", m.from, m.what));
-        }
+        msg.push_str(&check::text(&check::Report {
+            diagnostics: errors,
+            ..report
+        }));
         msg.push_str("Pack the missing files, or leave the file that names them out with `exclude` in bundle.toml.");
         bail!(msg);
     }
@@ -974,33 +720,6 @@ mod tests {
         assert_eq!(rules.part_of("audio/music_day.ogg"), Some("audio"));
     }
 
-    #[test]
-    fn file_strings() {
-        assert!(looks_like_file("audio/wash_loop_1.ogg"));
-        assert!(looks_like_file("raft.rhai"));
-        assert!(looks_like_file("textures\\rain_drop.png"));
-        assert!(!looks_like_file(".ogg"));
-        assert!(!looks_like_file(".scene.toml"));
-        assert!(!looks_like_file("audio/music_"));
-        assert!(!looks_like_file("https://x.com/a.png"));
-        assert!(!looks_like_file("Press any key.png now"));
-        assert!(!looks_like_file("1.5"));
-    }
-
-    #[test]
-    fn rhai_literals() {
-        let src = r#"
-            play_sound("audio/splash_" + n + ".ogg");
-            let t = "textures/rain_drop.png"; // "c.png"
-            draw_sprite("title_setdrift.png", 0.0);
-            let s = "no newline
-        "#;
-        assert_eq!(
-            rhai_refs(src),
-            ["textures/rain_drop.png", "c.png", "title_setdrift.png"]
-        );
-    }
-
     fn pack(files: &[(&str, &str)]) -> BTreeMap<String, Vec<u8>> {
         files
             .iter()
@@ -1008,12 +727,32 @@ mod tests {
             .collect()
     }
 
+    /// What the bundle's check says of `files`: `(file, code, message)`.
+    fn problems(
+        files: &BTreeMap<String, Vec<u8>>,
+        schemas: &[&str],
+    ) -> Vec<(String, &'static str, String)> {
+        let schemas: Vec<String> = schemas.iter().map(|s| s.to_string()).collect();
+        check_packed(files, &schemas)
+            .diagnostics
+            .into_iter()
+            .filter(|d| d.is_error())
+            .map(|d| {
+                let file = d.file.as_ref().map(|f| f.to_string_lossy().into_owned());
+                (file.unwrap_or_default(), d.code, d.message)
+            })
+            .collect()
+    }
+
+    /// The reference checks are `flint check`'s (`check::references` has
+    /// their own tests): a scene's assets by kind, a script's by literal.
     #[test]
     fn references_resolve_like_the_runtime() {
-        let files = pack(&[
-            (
-                "scenes/float.scene.toml",
-                r#"
+        let found = problems(
+            &pack(&[
+                (
+                    "scenes/float.scene.toml",
+                    r#"
                 [scene]
                 name = "Float"
                 [entities.raft.model]
@@ -1027,90 +766,33 @@ mod tests {
                 [entities.lost.model]
                 asset = "whale"
                 "#,
-            ),
-            ("models/raft.glb", ""),
-            ("specs/tree.procgen.toml", ""),
-            (
-                "scripts/raft.rhai",
-                r#"play_sound("audio/creak_1.ogg"); draw_sprite("logo.png")"#,
-            ),
-            ("audio/rain_loop.ogg", ""),
-            ("audio/creak_1.ogg", ""),
-        ]);
+                ),
+                ("models/raft.glb", ""),
+                (
+                    "specs/tree.procgen.toml",
+                    "generator = \"tree_v1\"\n[meta]\nname = \"tree\"\nversion = \"1.0.0\"\n\
+                     [seed]\nmode = \"fixed\"\nvalue = 7\n[params]\n",
+                ),
+                (
+                    "scripts/raft.rhai",
+                    r#"play_sound("audio/creak_1.ogg"); draw_sprite("logo.png")"#,
+                ),
+                ("audio/rain_loop.ogg", ""),
+                ("audio/creak_1.ogg", ""),
+            ]),
+            &[],
+        );
+        let said: Vec<(&str, &str)> = found.iter().map(|(f, c, _)| (f.as_str(), *c)).collect();
         assert_eq!(
-            check_references(&files),
+            said,
             [
-                Missing {
-                    from: "scenes/float.scene.toml".into(),
-                    what: "whale.glb".into()
-                },
-                Missing {
-                    from: "scripts/raft.rhai".into(),
-                    what: "logo.png".into()
-                },
-            ]
+                ("scenes/float.scene.toml", "missing-asset"),
+                ("scripts/raft.rhai", "missing-file"),
+            ],
+            "{found:?}"
         );
-    }
-
-    /// The check walks as the runtime does (ADR 0114): from the naming
-    /// file's folder through every folder above it to the root, then the
-    /// engine. It used to stop one level above the scene.
-    #[test]
-    fn references_from_a_nested_scene_resolve_up_to_the_root_and_the_engine() {
-        let files = pack(&[
-            (
-                "scenes/act1/cave/deep.scene.toml",
-                r#"
-                [scene]
-                name = "Deep"
-                [entities.raft.model]
-                asset = "raft"
-                [entities.raft.script]
-                source = "raft.rhai"
-                [entities.wall.material]
-                texture = "textures/wall.png"
-                [entities.near.material]
-                texture = "textures/near.png"
-                [entities.lost.material]
-                texture = "textures/lost.png"
-                "#,
-            ),
-            ("models/raft.glb", ""),
-            ("scripts/raft.rhai", ""),
-            ("engine/textures/wall.png", ""),
-            ("scenes/act1/textures/near.png", ""),
-            // A sibling branch is not on the way up
-            ("scenes/act2/textures/lost.png", ""),
-        ]);
-        assert_eq!(
-            check_references(&files),
-            [Missing {
-                from: "scenes/act1/cave/deep.scene.toml".into(),
-                what: "textures/lost.png".into()
-            }]
-        );
-    }
-
-    #[test]
-    fn a_glyph_set_must_pack_its_font() {
-        let files = pack(&[
-            (
-                "fonts/terminal.glyphs.toml",
-                "[font]\nfile = \"Mono.ttf\"\n[ramps.a]\nglyphs = \" .\"\n",
-            ),
-            (
-                "fonts/crt.glyphs.toml",
-                "[font]\nfile = \"crt.png\"\ncell = [8, 8]\n",
-            ),
-            ("fonts/Mono.ttf", ""),
-        ]);
-        assert_eq!(
-            check_references(&files),
-            [Missing {
-                from: "fonts/crt.glyphs.toml".into(),
-                what: "crt.png".into()
-            }]
-        );
+        assert!(found[0].2.contains("`whale`"), "{found:?}");
+        assert!(found[1].2.contains("`logo.png`"), "{found:?}");
     }
 
     #[test]
@@ -1126,15 +808,12 @@ mod tests {
                 "[scene]\nname = \"b\"\n[prefabs.k]\ntemplate = \"kart\"\nprefix = \"k\"\n",
             ),
         ]);
-        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-        let problems = check_scenes(
-            Arc::new(source),
-            &["levels/a.scene.toml".into(), "levels/b.scene.toml".into()],
-            &["schemas".into()],
-        );
+        let problems = problems(&files, &["schemas"]);
         assert_eq!(problems.len(), 2, "{problems:?}");
-        assert!(problems[0].what.contains("\"ghost\""));
-        assert_eq!(problems[1].from, "levels/b.scene.toml");
+        assert_eq!(problems[0].1, "unknown-archetype");
+        assert!(problems[0].2.contains("`ghost`"));
+        assert_eq!(problems[1].0, "levels/b.scene.toml");
+        assert_eq!(problems[1].1, "bad-prefab");
     }
 
     /// #356: a scene's look is found in the packed files or among the
@@ -1159,19 +838,11 @@ mod tests {
                 "[scene]\nname = \"c\"\n[post_process]\nlook = \"gone\"\n",
             ),
         ]);
-        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-        let problems = check_scenes(
-            Arc::new(source),
-            &[
-                "levels/a.scene.toml".into(),
-                "levels/b.scene.toml".into(),
-                "levels/c.scene.toml".into(),
-            ],
-            &["schemas".into()],
-        );
+        let problems = problems(&files, &["schemas"]);
         assert_eq!(problems.len(), 1, "{problems:?}");
-        assert_eq!(problems[0].from, "levels/c.scene.toml");
-        assert!(problems[0].what.contains("look \"gone\""), "{problems:?}");
+        assert_eq!(problems[0].0, "levels/c.scene.toml");
+        assert_eq!(problems[0].1, "bad-look");
+        assert!(problems[0].2.contains("look = \"gone\""), "{problems:?}");
     }
 
     /// #275: a user style must pack its shader, and the shader must
@@ -1201,27 +872,26 @@ mod tests {
             ),
             ("levels/a.scene.toml", "[scene]\nname = \"a\"\n"),
         ]);
+        let problems = problems(&files, &[]);
         // The description names its shader: a missing one is a reference
-        assert_eq!(
-            check_references(&files),
-            [Missing {
-                from: "styles/bundle_unpacked.shader.toml".into(),
-                what: "gone.wgsl".into()
-            }]
-        );
-        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-        let problems = vfs::scoped(Arc::new(source), || {
-            check_user_styles(&["levels/a.scene.toml".into()])
-        });
-        assert_eq!(problems.len(), 2, "{problems:?}");
+        let references: Vec<_> = problems.iter().filter(|p| p.1 == "missing-file").collect();
+        assert_eq!(references.len(), 1, "{problems:?}");
+        assert_eq!(references[0].0, "styles/bundle_unpacked.shader.toml");
+        assert!(references[0].2.contains("`gone.wgsl`"), "{problems:?}");
+        // ...and loading the styles from the bundle says what else is wrong
+        let styles: Vec<_> = problems
+            .iter()
+            .filter(|p| p.1 == "bad-user-style")
+            .collect();
+        assert_eq!(styles.len(), 2, "{problems:?}");
         assert!(
-            problems
-                .iter()
-                .any(|p| p.from.starts_with("styles/broken.wgsl:2:") && p.what.contains("colour")),
+            styles.iter().any(|p| p.0 == "styles/broken.wgsl"
+                && p.2.contains("line 2, ")
+                && p.2.contains("colour")),
             "{problems:?}"
         );
         assert!(
-            problems.iter().any(|p| p.from.contains("gone.wgsl")),
+            styles.iter().any(|p| p.0.contains("gone.wgsl")),
             "{problems:?}"
         );
     }
@@ -1245,14 +915,14 @@ mod tests {
             ("styles/luts/a.png", "png bytes"),
             ("levels/a.scene.toml", "[scene]\nname = \"a\"\n"),
         ]);
-        let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-        let problems = vfs::scoped(Arc::new(source), || {
-            check_user_styles(&["levels/a.scene.toml".into()])
-        });
-        assert_eq!(problems.len(), 1, "{problems:?}");
+        let problems = problems(&files, &[]);
+        let styles: Vec<_> = problems
+            .iter()
+            .filter(|p| p.1 == "bad-user-style")
+            .collect();
+        assert_eq!(styles.len(), 1, "{problems:?}");
         assert!(
-            problems[0].from.ends_with("papers/gone.png")
-                && problems[0].what.contains("image not found"),
+            styles[0].0.ends_with("papers/gone.png") && styles[0].2.contains("image not found"),
             "{problems:?}"
         );
     }

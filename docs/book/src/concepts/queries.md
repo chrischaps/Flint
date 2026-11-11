@@ -1,13 +1,13 @@
 # Queries
 
-Flint's query system provides a SQL-inspired language for filtering and inspecting entities. Queries are parsed by a PEG grammar (pest) and executed against the ECS world.
+Flint's query language is a simple filter: one resource, and at most one condition on it. `entities where archetype == 'door'` is a whole query. It is parsed by a PEG grammar (pest) and run against the ECS world. Three things use it: `flint query`, the `query` of a [constraint](constraints.md), and the viewer, which evaluates the same constraints.
 
 ## Grammar
 
 The query language is defined in `crates/flint-query/src/grammar.pest`:
 
 ```
-query     = { resource ~ (where_clause)? }
+query     = { SOI ~ resource ~ (where_clause)? ~ EOI }
 resource  = { "entities" | "components" }
 where_clause = { "where" ~ condition }
 condition = { field ~ operator ~ value }
@@ -17,6 +17,8 @@ value     = { string | number | boolean }
 ```
 
 Whitespace is ignored between tokens. The `where` keyword is case-insensitive.
+
+A query is the whole string: anything after the one condition is a parse error. `entities where archetype == 'door' and door.locked == true` does not parse, where it used to be read as its first condition alone with the rest dropped.
 
 ## Resources
 
@@ -109,12 +111,18 @@ flint query "entities where door.locked == true" --scene levels/tavern.scene.tom
 flint query "entities" --scene levels/tavern.scene.toml --schemas engine/schemas --schemas schemas
 ```
 
-## Limitations
+## What it does not do
 
-- Conditions are currently single-clause (one field-operator-value comparison per query at the parser level)
-- Boolean combinators (`and`, `or`, `not`) are part of the grammar design but not yet implemented in the parser
-- Queries operate on in-memory ECS state, not directly on TOML files
-- Performance is linear in entity count (queries scan all entities matching the resource type)
+The language is one resource and one `field operator value` comparison. It has:
+
+- no `and`, `or` or `not`: a query with one is a parse error, not a query that checks half of what it says;
+- no `has <component>` test, though comparing any field of a component selects only entities that carry it;
+- no way to reach a parent or a child (`parent.archetype`, "any child where ...");
+- no comparison between two fields, and no arithmetic.
+
+A constraint that needs two conditions is written as two constraints, or as a `query` that selects by one and a `kind` that checks the other. A constraint whose query does not parse is an error from `flint validate`, `flint check` and the viewer, naming the constraint, its file and the parse error; it is never skipped.
+
+Queries run on the loaded world, not on TOML text, and scan every entity.
 
 ## Further Reading
 

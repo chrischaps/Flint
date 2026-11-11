@@ -22,7 +22,7 @@ Next steps:
   git commit -m "Start my_game"
   git remote add flint-engine https://github.com/chrischaps/Flint.git
   git subtree add --prefix=engine flint-engine main --squash
-  flint validate scenes/main.scene.toml
+  flint check
   flint render scenes/main.scene.toml --output renders/main.png
   flint play
 ```

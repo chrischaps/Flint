@@ -160,6 +160,52 @@ fn run_line(dir: &Path, line: &str) -> Option<()> {
     Some(())
 }
 
+// ── The pre-flight (#687): what init writes has nothing wrong with it ──
+
+/// Every template passes `flint check` as written: no error and no
+/// warning, for the project and for its scene alone. The check reads the
+/// scene, its script, its input config and the manifest.
+#[test]
+fn each_template_passes_flint_check() {
+    for template in TEMPLATES {
+        let dir = scratch(&format!("check_{template}"));
+        let (game, _) = init(&dir, &["--template", template]);
+        for args in [vec!["check", "--json"], vec!["check", SCENE, "--json"]] {
+            let o = flint(&game, &args);
+            let out = stdout(&o);
+            assert!(
+                o.status.success(),
+                "{template} {args:?}:\n{out}{}",
+                stderr(&o)
+            );
+            let doc: serde_json::Value = serde_json::from_str(&out).expect("one JSON document");
+            assert_eq!(doc["valid"], true, "{template}: {out}");
+            assert_eq!(
+                doc["diagnostics"].as_array().map(Vec::len),
+                Some(0),
+                "{template} {args:?}: {out}"
+            );
+            assert_eq!(doc["scenes"].as_array().map(Vec::len), Some(1), "{out}");
+            assert!(
+                doc["files"].as_u64().unwrap() >= 2,
+                "scene and script: {out}"
+            );
+        }
+        // ...and it is not passing by looking at nothing: break the scene
+        let scene = game.join(SCENE);
+        let text = std::fs::read_to_string(&scene).unwrap();
+        std::fs::write(&scene, text.replace("hud.rhai", "hdu.rhai")).unwrap();
+        let o = flint(&game, &["check"]);
+        assert_eq!(o.status.code(), Some(1), "{template}: {}", stdout(&o));
+        assert!(
+            stdout(&o).contains("error[missing-asset]"),
+            "{}",
+            stdout(&o)
+        );
+        assert!(stdout(&o).contains("scripts/hdu.rhai"), "{}", stdout(&o));
+    }
+}
+
 // ── Box 1: the printed commands render a lit frame and reach play ───
 
 #[test]
@@ -173,7 +219,7 @@ fn each_template_runs_the_commands_it_prints() {
         // The steps, as printed, from the directory they say to be in
         let steps = next_steps(&said);
         assert_eq!(steps[0], "cd game", "{said}");
-        assert!(steps.contains(&format!("flint validate {SCENE}")), "{said}");
+        assert!(steps.contains(&"flint check".to_string()), "{said}");
         assert!(steps.contains(&"flint play".to_string()), "{said}");
         let mut rendered = true;
         for step in &steps[1..] {

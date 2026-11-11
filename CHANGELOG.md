@@ -34,6 +34,64 @@ to do.
 
 ## 2026-11-11
 
+### `flint check`: one pre-flight for a project; `flint validate` and `flint bundle` share its checks, and a constraint with a bad query now fails (#687)
+**What changed.** There is a new command, and several things that used to
+pass in silence now fail.
+
+**New: `flint check [dir|scene] [--json] [--strict]`.** Everything wrong with
+a project (or with one scene) in one run, each problem with its file, entity,
+field, a hint and, for a missing file, every path the engine tried. It checks
+what `flint validate` checks of every scene, what `flint bundle` checks before
+it packs, and more: entity references, the assets a scene names by kind
+through the project's one search, the input config, the procgen spec behind a
+model. Exit 1 on any error, 0 otherwise; warnings do not fail it. `flint init`
+now prints `flint check` as its first next step, and the generated `CLAUDE.md`
+names it as the pre-flight.
+
+**What now exits non-zero that did not.**
+
+| Command | Was | Now |
+|---|---|---|
+| `flint validate`, `flint check`, the viewer: a constraint whose `query` (or a `query_rule`'s `rule`) does not parse, or selects `components` | the constraint was skipped, so it passed every scene | an error naming the constraint, its file and the parse error; `flint validate` exits 1 |
+| any query with text after its one condition: `entities where a == 1 and b == 2` | parsed as `entities where a == 1`, the rest dropped (in `flint query` too) | a parse error. The language is one resource and one condition; it has no `and`, `or` or `not` |
+| `flint validate` on a scene where a `joint.parent` or an `ik_two_bone.target` / `pole` / `tip` names an entity the scene does not have, or a `tip` is not a child of its entity | exit 0; the joint or the IK chain did nothing at run time | `error[dangling-entity]`, exit 1 |
+| `flint validate` when a constraint file is not valid TOML | exit 1 with `Failed to parse constraint TOML`, no file named | exit 1 with `error[bad-constraint]` naming the file |
+| `flint validate --fix` when an error-level violation is left that no fix covers | exit 0 | exit 1, and the violations left are listed |
+| `flint validate --dry-run` on a scene with an error-level violation | exit 0 | exit 1: a dry run writes nothing, so it exits as `flint validate` alone does |
+| `flint validate --format <anything but text or json>` | printed text | refused by the argument parser (exit 2) |
+| `flint bundle`: a `model.asset` whose only source was an empty or unparseable `<name>.procgen.toml` | packed (the file's name was enough) | `error[bad-spec]` or `error[missing-asset]`: the player skips a spec that does not parse, so the model was never made |
+
+A scene that passed `flint validate` before and has none of the above still
+passes, with the same exit code.
+
+**What else is different.**
+- `flint validate --fix` and `--dry-run` honour `--format json`: the same
+  document as a plain run, with a `fix` object (`dry_run`, `iterations`,
+  `actions`, `remaining_violations`, `cycle_detected`, `saved`, `not_written`,
+  `diff`). They used to print text whatever the format.
+- Each diagnostic in `flint validate --format json` has a new `tried` array
+  (empty unless it is about a missing file). Nothing was removed.
+- A scene load (`flint play`, `flint render`, the viewer) lists a dangling
+  `joint.parent` or IK reference in its diagnostics summary. It still loads.
+- A table named `directional_light`, `point_light` or `spot_light` is still
+  `unknown-component`; its hint now says what a light is.
+- `flint bundle`'s refusal lists each problem as `flint check` prints it
+  (file, `error[code]`, entity and field, the paths tried) in place of
+  `file -> name` lines. The first line (`N unresolved reference(s); nothing
+  written:`) and the exit code are the same. A user style's check warnings
+  and an unknown `[post_process.styles]` key are now printed on stderr; they
+  still do not stop the bundle.
+
+**What to do.** Run `flint check` in your game. For each `bad-constraint`,
+rewrite the query as one condition (split a rule with `and` into two
+constraints, or select by one condition and let the constraint's `kind` check
+the other); until now that constraint was not being checked at all, so expect
+it to find real violations once it runs. Fix or empty (`""`) each dangling
+`joint.parent` and IK field. If a script or CI step runs `flint validate
+--fix` or `--dry-run` and reads the exit code, it now means "the scene still
+has an error". Use `flint check` where you used `flint validate` as the gate
+before playing or bundling; keep `flint validate --fix` for the fixes.
+
 ### Save data moves to the OS user directory for a game with an id; saves are atomic, a corrupt file is kept as `.bak`, and there are slots and a version (#726)
 **What changed.** Where the `persist_*` store is saved, how it is written, and
 what a script can ask of it.

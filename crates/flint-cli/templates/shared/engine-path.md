@@ -4,7 +4,7 @@ The engine is the Flint checkout at `{{engine}}`. `flint.toml` and `bundle.toml`
 cargo build --release --manifest-path {{engine}}/Cargo.toml
 ```
 
-**Taking an engine update.** Pull that checkout and rebuild. Then read `{{engine}}/CHANGELOG.md` from the top down to the date of your last pull: it lists every change a game can notice (scene and schema keys, script functions, command flags, changes in look or behaviour) and what to do about each. Then run `flint validate` on your scenes and play once, watching the log.
+**Taking an engine update.** Pull that checkout and rebuild. Then read `{{engine}}/CHANGELOG.md` from the top down to the date of your last pull: it lists every change a game can notice (scene and schema keys, script functions, command flags, changes in look or behaviour) and what to do about each. Then run `flint check` and play once, watching the log.
 
 **Carrying the engine in the game.** Flint's games keep the engine inside their own repository as a git subtree, so a clone builds anywhere. To move this project to that pattern:
 

@@ -3,8 +3,10 @@
 //! [`diagnose`] reads a scene file and returns a [`Diagnostic`] for each
 //! problem it has, never stopping at the first: a file that is not TOML, a
 //! prefab that doesn't expand, an archetype or a component no loaded schema
-//! declares, and what [`flint_schema::validate_component`] finds in each
-//! component table. Every one names its file, entity, component and field.
+//! declares, what [`flint_schema::validate_component`] finds in each
+//! component table, and an entity that names another the scene doesn't have
+//! ([`diagnose_references`]). Every one names its file, entity, component
+//! and field.
 //!
 //! The loaders run the same pass ([`diagnose_scene`]) over what they parsed
 //! and log a summary, so a scene that plays has still said what is wrong with
@@ -49,7 +51,13 @@ pub fn diagnose(
                 .hint("the entities of the prefabs that did expand are checked below"),
         );
     }
+    let expanded = found.is_empty();
     found.extend(diagnose_scene(&scene, Some(scene_file), registry));
+    // With a prefab missing, an entity that names one of its entities
+    // would be called dangling: the prefab is the one thing wrong there
+    if expanded {
+        found.extend(diagnose_references(&scene, Some(scene_file)));
+    }
     if project.strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -102,6 +110,110 @@ pub fn diagnose_scene(
     found
 }
 
+/// The fields that name another entity of the scene, by component. An empty
+/// string is "none" for each of them (a joint then uses the transform
+/// parent; an IK chain waits for a script to name its target).
+///
+/// Hard-coded until the schema language has an `entity` field type (#684,
+/// ADR 0115 decision 4), which will say this in the schema files and check
+/// it for a game's own components too.
+pub const ENTITY_REFERENCES: &[(&str, &[&str])] = &[
+    (flint_core::components::JOINT, &["parent"]),
+    (
+        flint_core::components::IK_TWO_BONE,
+        &["target", "pole", "tip"],
+    ),
+];
+
+/// Every entity of a whole scene (prefabs expanded) that names an entity the
+/// scene doesn't have: its `parent`, which fails the load, and the fields of
+/// [`ENTITY_REFERENCES`], which the runtime skips with a warning at best. An
+/// `ik_two_bone.tip` must also be a child of the entity that names it.
+///
+/// Not for a chunk, whose entities may name the base scene's.
+pub fn diagnose_references(scene: &SceneFile, file: Option<&Path>) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    let mut names: Vec<&String> = scene.entities.keys().collect();
+    names.sort_unstable();
+    let dangling = |entity: &str, named: &str| {
+        Diagnostic::error(
+            codes::DANGLING_ENTITY,
+            format!("names the entity `{named}`, and the scene has none of that name"),
+        )
+        .entity(entity)
+        .hint_opt(diagnostic::did_you_mean(
+            named,
+            names.iter().map(|n| n.as_str()),
+        ))
+    };
+    for name in &names {
+        let entity = &scene.entities[*name];
+        if let Some(parent) = entity.parent.as_deref() {
+            if !scene.entities.contains_key(parent) {
+                let d = dangling(name, parent).field("parent");
+                found.push(Diagnostic {
+                    message: format!("{}; the scene does not load", d.message),
+                    ..d
+                });
+            }
+        }
+        for (component, fields) in ENTITY_REFERENCES {
+            let Some(data) = entity.components.get(*component) else {
+                continue;
+            };
+            for field in *fields {
+                let Some(named) = data.get(field).and_then(|v| v.as_str()) else {
+                    continue; // unset, or of a type the schema pass names
+                };
+                if named.is_empty() {
+                    continue;
+                }
+                match scene.entities.get(named) {
+                    None => found.push(dangling(name, named).component(*component).field(*field)),
+                    Some(tip)
+                        if *component == flint_core::components::IK_TWO_BONE
+                            && *field == "tip"
+                            && tip.parent.as_deref() != Some(name.as_str()) =>
+                    {
+                        found.push(
+                            Diagnostic::error(
+                                codes::DANGLING_ENTITY,
+                                format!(
+                                    "`{named}` is not a child of this entity, so the chain is \
+                                     never solved"
+                                ),
+                            )
+                            .entity(*name)
+                            .component(*component)
+                            .field(*field)
+                            .hint(format!("give `{named}` parent = \"{name}\"")),
+                        );
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    if let Some(file) = file {
+        for d in &mut found {
+            d.file = Some(file.to_path_buf());
+        }
+    }
+    found
+}
+
+/// What to do about a table named after a kind of light: nothing reads it,
+/// and until #681 nothing said so.
+fn light_table_hint(component: &str) -> Option<String> {
+    let kind = component.strip_suffix("_light")?;
+    ["directional", "point", "spot"].contains(&kind).then(|| {
+        format!(
+            "no system reads a `{component}` table: a light is a `light` component with \
+             type = \"{kind}\" (`flint schema light` lists its fields)"
+        )
+    })
+}
+
 fn diagnose_entity(
     name: &str,
     entity: &EntityDef,
@@ -144,14 +256,14 @@ fn diagnose_entity(
                 .entity(name)
                 .component(component.clone())
                 .hint(
-                    diagnostic::did_you_mean(component, registry.component_names()).unwrap_or_else(
-                        || {
+                    light_table_hint(component)
+                        .or_else(|| diagnostic::did_you_mean(component, registry.component_names()))
+                        .unwrap_or_else(|| {
                             format!(
                                 "a component a game adds is declared in its schema layer, \
                                  as components/{component}.toml"
                             )
-                        },
-                    ),
+                        }),
                 ),
             );
             continue;
@@ -493,6 +605,92 @@ intensity = 1.0
         );
         let codes_found: Vec<&str> = missing.iter().map(|d| d.code).collect();
         assert_eq!(codes_found, [codes::BAD_PREFAB, codes::UNKNOWN_COMPONENT]);
+    }
+
+    /// #687: an entity that names another the scene doesn't have. The
+    /// fields are the ones [`ENTITY_REFERENCES`] lists, plus `parent`.
+    #[test]
+    fn an_entity_reference_to_nothing_is_an_error_naming_the_field() {
+        let scene = r#"
+[scene]
+name = "refs"
+
+[entities.anchor]
+[entities.lid]
+parent = "ancor"
+[entities.door.joint]
+parent = "frame"
+[entities.gate.joint]
+parent = ""
+[entities.hinge.joint]
+parent = "anchor"
+
+[entities.shoulder]
+[entities.elbow]
+parent = "shoulder"
+[entities.elbow.ik_two_bone]
+target = "reach"
+pole = "anchor"
+tip = "hand"
+[entities.hand]
+"#;
+        let found: Vec<Diagnostic> = toml::from_str::<SceneFile>(scene)
+            .map(|scene| diagnose_references(&scene, Some(Path::new("a.scene.toml"))))
+            .unwrap();
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[dangling-entity] entity 'door' joint.parent: names the entity `frame`, \
+                 and the scene has none of that name",
+                "error[dangling-entity] entity 'elbow' ik_two_bone.target: names the entity \
+                 `reach`, and the scene has none of that name",
+                "error[dangling-entity] entity 'elbow' ik_two_bone.tip: `hand` is not a child \
+                 of this entity, so the chain is never solved",
+                "error[dangling-entity] entity 'lid' field 'parent': names the entity `ancor`, \
+                 and the scene has none of that name; the scene does not load",
+            ]
+        );
+        assert_eq!(found[3].hint.as_deref(), Some("did you mean `anchor`?"));
+        assert!(found
+            .iter()
+            .all(|d| d.file.as_deref() == Some(Path::new("a.scene.toml"))));
+    }
+
+    /// A reference into a prefab's entities is found once the prefab is
+    /// expanded, and `diagnose` is where a whole scene's are checked.
+    #[test]
+    fn references_are_checked_after_prefabs_expand() {
+        let prefab = "[prefab]\nname = \"gate\"\n\n[entities.leaf.door]\nstyle = \"hinged\"\n";
+        let scene =
+            "[scene]\nname = \"s\"\n[prefabs.one]\ntemplate = \"gate\"\nprefix = \"north\"\n\
+                     [entities.latch.joint]\nparent = \"north_leaf\"\n\
+                     [entities.bolt.joint]\nparent = \"south_leaf\"\n";
+        let found = with_scene(
+            &[
+                ("scenes/a.scene.toml", scene),
+                ("prefabs/gate.prefab.toml", prefab),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<(&str, Option<&str>)> = found
+            .iter()
+            .filter(|d| d.code != codes::UNKNOWN_COMPONENT)
+            .map(|d| (d.code, d.entity.as_deref()))
+            .collect();
+        assert_eq!(said, [(codes::DANGLING_ENTITY, Some("bolt"))]);
+    }
+
+    /// A table named after a kind of light is an unknown component whose
+    /// hint says what a light is.
+    #[test]
+    fn a_stale_light_table_says_what_a_light_is() {
+        let found =
+            found_in("[scene]\nname = \"s\"\n[entities.sun.directional_light]\nintensity = 2.0\n");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
+        let hint = found[0].hint.as_deref().unwrap();
+        assert!(hint.contains("type = \"directional\""), "{hint}");
     }
 
     #[test]
