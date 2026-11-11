@@ -560,7 +560,7 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Space | Return to the scene's authored `[camera]` framing (viewer default if the scene has none) |
 | O | Toggle auto-orbit |
 | `[` / `]` | Slow down / speed up auto-orbit |
-| Ctrl+S | Save scene to disk |
+| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
 | Ctrl+Z | Undo position change |
 | Ctrl+Shift+Z | Redo position change |
 | Escape | Cancel gizmo drag / exit |

@@ -32,6 +32,31 @@ to do.
 
 ---
 
+## 2026-11-11
+
+### Viewer Ctrl+S and `flint validate --fix` keep the rest of the scene file (#677)
+**What changed.** Both used to rewrite an existing scene from its entities
+alone, which deleted `[camera]`, `[environment]`, `[post_process]`,
+`[living]`, `[wooze]`, `[prefabs]`, the `[scene]` description and
+`input_config`, and every comment; `--fix` also renamed the scene "scene" and
+baked prefab entities into the file. Now:
+
+- **Ctrl+S in `flint edit`** writes only the fields you edited, each in place
+  with its comment. With nothing edited it writes nothing, so saving an
+  untouched scene leaves it byte for byte as it was. A file with CRLF line
+  endings keeps them.
+- **`flint validate --fix`** writes only what its fixes changed
+  (`SceneDocument::apply_world_diff`). A fix to an entity that comes from a
+  prefab is printed as `not written` rather than baked in. `--output-diff` is
+  the diff of the file.
+- **`flint_scene::save_scene` refuses a path that already exists** and
+  returns an error saying so. It is for new scenes only.
+
+**What to do.** A scene that lost its tables to an earlier save needs them put
+back by hand (git has them). Rust code calling `save_scene` on an existing
+file: load a `SceneDocument` and call `patch_field`, `remove_field`,
+`add_entity` or `apply_world_diff`, then `save`.
+
 ## 2026-11-10
 
 ### `flint play` and `flint bundle` read `flint.toml`; saves, `load_ui`, `load_data` and the procgen cache use the project root (#706)
