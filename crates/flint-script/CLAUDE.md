@@ -6,3 +6,4 @@ The root file keeps the callback list and the Rhai version gotcha. Script UI dra
 - `ScriptCallContext` uses raw `*mut FlintWorld` -- only valid during `call_update()`/`process_events()` scope
 - `on_update()` is parameterless -- use `delta_time()` API; `on_interact` checks `interactable.range` + `.enabled`
 - `on_draw_ui()` ALWAYS runs even when scripts paused (pause menus need it)
+- `random()` / `random_range()` / `seed_random(n)` (#580) are one SplitMix64 per engine, `random::ScriptRandom`, seeded from the clock once in `ScriptEngine::new`; `ScriptSystem::seed_random` (the player's `--seed` / `--frame-step`, `flint render --scripts`) reseeds that same state, so one seed gives one sequence however it arrives. Top-level statements run again before every callback, so a script seeds in `on_init`, never at the top
