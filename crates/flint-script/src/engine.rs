@@ -200,13 +200,11 @@ impl ScriptEngine {
 
         // Register all API functions
         let mut registry = api::ApiRegistry::default();
-        api::register_all(&mut api::ScriptApi::new(
-            &mut engine,
-            ctx.clone(),
-            &mut registry,
-        ));
         let random = crate::random::ScriptRandom::from_clock();
-        random.register(&mut engine);
+        api::register_all(
+            &mut api::ScriptApi::new(&mut engine, ctx.clone(), &mut registry),
+            &random,
+        );
 
         Self {
             engine,

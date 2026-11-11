@@ -77,6 +77,35 @@ mod native {
         }
     }
 
+    /// The rules every declared function follows, by name, as `flint
+    /// script api` states them above the functions (#696, #701).
+    pub const CONVENTIONS: &[(&str, &str)] = &[
+        (
+            "numbers",
+            "A num parameter takes an int or a float; an int parameter takes an int or a \
+             float with nothing after the point. A function marked [typed] takes exactly \
+             the types listed.",
+        ),
+        (
+            "missing_entity",
+            "An entity parameter given -1 (what get_entity returns for a name it can't \
+             find) or a despawned id skips the call and warns once per script and \
+             function. A setter or command then does nothing and queues nothing; a getter \
+             returns the empty value of what it returns ((), #{}, [], false, 0, \"\") \
+             unless its returns line names another: -1 for an id, -1.0 for a time, the \
+             largest float for a distance. entity_exists(id) never warns: ask it where \
+             an entity may be missing.",
+        ),
+        (
+            "nothing_found",
+            "A query of a live entity or the world that finds nothing (no hit, no such \
+             component or body, no physics) returns () where the answer would be a map \
+             or a value, -1 where it would be an id and -1.0 where it would be a time; \
+             each function's returns line says which. The entity module's transform \
+             getters return #{} for an entity without a transform.",
+        ),
+    ];
+
     /// A callback the engine calls on a script that defines it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct CallbackDoc {

@@ -8,7 +8,8 @@
 //! script from Rhai with `seed_random(n)`. The same seed, whichever way it
 //! arrives, gives the same numbers.
 
-use rhai::Engine;
+use crate::api::builder::kind::{Int, Num};
+use crate::api::ScriptApi;
 use std::sync::{Arc, Mutex};
 
 /// SplitMix64's increment (the golden ratio in 64 bits).
@@ -53,19 +54,35 @@ impl ScriptRandom {
         (z >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// Register `random()`, `random_range(min, max)` and `seed_random(n)`
-    /// over this sequence.
-    pub fn register(&self, engine: &mut Engine) {
+    /// Declare `random()`, `random_range(min, max)` and `seed_random(n)`
+    /// over this sequence, in the `math` module (ADR 0116).
+    pub(crate) fn declare(&self, api: &mut ScriptApi) {
+        let mut m = api.module("math");
         let random = self.clone();
-        engine.register_fn("random", move || -> f64 { random.next_f64() });
+        m.func(
+            "random",
+            "The next number of the engine's one random sequence, every script's draws in turn.",
+        )
+        .returns(Num, "in [0, 1)")
+        .run_pure(move |()| random.next_f64());
         let random = self.clone();
-        engine.register_fn("random_range", move |min: f64, max: f64| -> f64 {
-            min + (max - min) * random.next_f64()
-        });
+        m.func(
+            "random_range",
+            "A random number between two, from the same sequence.",
+        )
+        .arg("min", Num)
+        .arg("max", Num)
+        .returns(Num, "in [min, max)")
+        .run_pure(move |(min, max)| min + (max - min) * random.next_f64());
         // An i64 seed's bits, as the host's u64 has them: seed_random(-1) is
         // --seed 18446744073709551615
         let random = self.clone();
-        engine.register_fn("seed_random", move |seed: i64| random.seed(seed as u64));
+        m.func(
+            "seed_random",
+            "Restart every script's random sequence at a seed, as --seed does; call it in on_init, not at the top.",
+        )
+        .arg("seed", Int)
+        .run_pure(move |(seed,)| random.seed(seed as u64));
     }
 }
 

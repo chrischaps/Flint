@@ -14,7 +14,7 @@
 //! prints its own from `ScriptSystem::api_listing`.
 
 use anyhow::Result;
-use flint_script::api::registry::{ApiEntry, ApiListing, UndeclaredFn};
+use flint_script::api::registry::{ApiEntry, ApiListing, UndeclaredFn, CONVENTIONS};
 use serde_json::{json, Value};
 
 #[derive(clap::Subcommand)]
@@ -109,6 +109,10 @@ fn to_json(listing: &ApiListing) -> Value {
             "callbacks": listing.callbacks.len(),
         },
         "undeclared_listed": listing.undeclared_listed,
+        "conventions": CONVENTIONS
+            .iter()
+            .map(|(k, v)| (k.to_string(), Value::from(*v)))
+            .collect::<serde_json::Map<_, _>>(),
         "functions": functions,
         "callbacks": listing.callbacks.iter().map(|c| json!({
             "name": c.name,
@@ -121,6 +125,11 @@ fn to_json(listing: &ApiListing) -> Value {
 fn to_text(listing: &ApiListing) -> String {
     use std::fmt::Write;
     let mut out = String::new();
+    out.push_str("conventions\n");
+    for (name, rule) in CONVENTIONS {
+        let _ = writeln!(out, "  {name}: {rule}");
+    }
+    out.push('\n');
     let mut modules: Vec<&str> = Vec::new();
     for e in &listing.declared {
         if !modules.contains(&e.module) {
@@ -216,6 +225,12 @@ mod tests {
             json["callbacks"].as_array().unwrap().len(),
             l.callbacks.len()
         );
+        // The missing-entity rule is stated in the listing itself (#701)
+        assert!(json["conventions"]["missing_entity"]
+            .as_str()
+            .unwrap()
+            .contains("warns once"));
+        assert!(to_text(&l).starts_with("conventions\n"));
     }
 
     #[test]

@@ -296,9 +296,8 @@ impl PlayerApp {
                         tracing::warn!("Unknown state template: '{}'", name);
                     }
                 }
-                ScriptCommand::SetVelocity2D { entity_id, vx, vy } => {
-                    let eid = flint_core::EntityId::from_raw(entity_id as u64);
-                    self.physics.set_velocity_2d(eid, vx as f32, vy as f32);
+                ScriptCommand::SetVelocity2D { entity, vx, vy } => {
+                    self.physics.set_velocity_2d(entity, vx as f32, vy as f32);
                 }
                 ScriptCommand::LoadChunk {
                     path,

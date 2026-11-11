@@ -180,3 +180,47 @@ pub fn declare_set_position(api: &mut ScriptApi, path: Path) {
         _ => f.run(body),
     }
 }
+
+/// How a pure math subject is registered (the follow-up to step 2's port
+/// of the math module).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathPath {
+    /// A typed closure that touches nothing: the math module before ADR 0116
+    Today,
+    /// The builder's `.run()`, which locks the call context for every call
+    Locking,
+    /// The builder's `.run_pure()`, which doesn't
+    Pure,
+}
+
+/// Register `bench_lerp(a, b, t)` and `bench_sin(x)` by `path`, with the
+/// math module's bodies.
+pub fn declare_math(api: &mut ScriptApi, path: MathPath) {
+    if path == MathPath::Today {
+        let engine = api.engine_mut();
+        engine.register_fn("bench_lerp", |a: f64, b: f64, t: f64| -> f64 {
+            a + (b - a) * t
+        });
+        engine.register_fn("bench_sin", |x: f64| -> f64 { x.sin() });
+        return;
+    }
+    let mut m = api.module("math");
+    let lerp = m
+        .func("bench_lerp", "lerp, for the measurement.")
+        .arg("a", Num)
+        .arg("b", Num)
+        .arg("t", Num)
+        .returns(Num, "");
+    match path {
+        MathPath::Locking => lerp.run(|_, (a, b, t)| a + (b - a) * t),
+        _ => lerp.run_pure(|(a, b, t)| a + (b - a) * t),
+    }
+    let sin = m
+        .func("bench_sin", "sin, for the measurement.")
+        .arg("x", Num)
+        .returns(Num, "");
+    match path {
+        MathPath::Locking => sin.run(|_, (x,)| x.sin()),
+        _ => sin.run_pure(|(x,)| x.sin()),
+    }
+}
