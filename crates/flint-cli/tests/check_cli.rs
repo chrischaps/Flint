@@ -35,7 +35,7 @@ const SCHEMAS: &[(&str, &str)] = &[
     (
         "schemas/components/joint.toml",
         "[component.joint]\n\n[component.joint.fields]\n\
-         parent = { type = \"string\", default = \"\" }\n",
+         parent = { type = \"entity\", default = \"\" }\n",
     ),
     (
         "schemas/components/script.toml",
@@ -227,7 +227,7 @@ fn every_problem_of_a_project_is_listed_in_one_run() {
     for line in [
         "error[unknown-archetype] entity 'crate' field 'archetype': no archetype named `porp`",
         "error[unknown-component] entity 'buoy' component 'lihgt': no component named `lihgt`",
-        "error[dangling-entity] entity 'gate' joint.parent: names the entity `frame`",
+        "error[unknown-entity] entity 'gate' joint.parent: no entity named `frame`",
         "error[missing-asset] entity 'boat' model.asset: model `boat` is not found (also named by 'spare')",
         "warning[constraint] entity 'lantern': Lamp 'lantern' is too bright (constraint `lamps_are_not_blinding`)",
         "error[toml-parse]: TOML parse error at line 4",
@@ -284,7 +284,7 @@ fn the_same_list_is_one_json_document() {
         .unwrap()
         .starts_with("`flint asset where models boat --scene scenes/dock.scene.toml`"));
 
-    let joint = diagnostic(&doc, "dangling-entity", Some("gate"));
+    let joint = diagnostic(&doc, "unknown-entity", Some("gate"));
     assert_eq!(joint["component"], "joint");
     assert_eq!(joint["field"], "parent");
     assert_eq!(joint["tried"], serde_json::json!([]));
@@ -424,7 +424,7 @@ fn validate_with_no_constraints_still_loads_and_checks_the_scene() {
     assert_eq!(o.status.code(), Some(1), "{out}{}", stderr(&o));
     assert!(
         out.contains(
-            "error[dangling-entity] entity 'lid' field 'parent': names the entity `chest`"
+            "error[unknown-entity] entity 'lid' field 'parent': no entity named `chest`, so the scene does not load"
         ),
         "{out}"
     );
@@ -437,7 +437,7 @@ fn validate_with_no_constraints_still_loads_and_checks_the_scene() {
     assert_eq!(o.status.code(), Some(1));
     let doc = json(&o);
     assert_eq!(doc["valid"], false);
-    assert_eq!(doc["diagnostics"][0]["code"], "dangling-entity");
+    assert_eq!(doc["diagnostics"][0]["code"], "unknown-entity");
 
     let o = flint(&dir, &["validate", "scenes/torn.scene.toml"]);
     assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));

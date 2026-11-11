@@ -11,7 +11,7 @@ What now exits non-zero that did not:
 |---|---|---|
 | A constraint whose `query` (or `query_rule` `rule`) does not parse, or selects `components` | skipped: it passed every scene | an error naming the constraint, its file and the parse error, in `flint validate`, `flint check` and the viewer |
 | A query with text after its one condition (`entities where a == 1 and b == 2`), in `flint query` too | read as `a == 1`, the rest dropped | a parse error: there is no `and`, `or` or `not` |
-| `flint validate`: a `joint.parent` or `ik_two_bone.target` / `pole` / `tip` naming no entity, or a `tip` that is not a child | exit 0 | `error[dangling-entity]`, exit 1 |
+| A `joint.parent` naming no entity (the schema now types it `entity`, as #684 typed `ik_two_bone`'s); an `ik_two_bone.tip` that is not a child of its entity | exit 0 | `error[unknown-entity]` / `error[not-a-child]`, exit 1 |
 | `flint validate --fix` with an error-level violation no fix covers; `--dry-run` on a scene with one | exit 0 | exit 1: the exit code says whether the file, as the run left it, has an error |
 | `flint validate --format` other than `text` or `json` | printed text | refused (exit 2) |
 | `flint bundle`: a model whose only source is a `<name>.procgen.toml` that is empty or does not parse | packed | `error[bad-spec]` or `error[missing-asset]` |

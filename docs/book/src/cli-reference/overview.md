@@ -13,9 +13,9 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
-| `flint schema <name>` | Inspect a component or archetype schema |
+| `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
-| `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type and every entity reference to nothing, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
+| `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
@@ -84,7 +84,8 @@ scenes/dock.scene.toml: 4 errors, 1 warning
       hint: a component a game adds is declared in its schema layer, as components/lihgt.toml
   error[unknown-archetype] entity 'crate' field 'archetype': no archetype named `porp`, so the entity gets no defaults
       hint: did you mean `prop`?
-  error[dangling-entity] entity 'gate' joint.parent: names the entity `frame`, and the scene has none of that name
+  error[unknown-entity] entity 'gate' joint.parent: no entity named `frame`
+      hint: it names an entity of this scene (a prefab's are `<prefix>_<name>`); leave it "" when a script fills it at run time
   error[missing-asset] entity 'boat' model.asset: model `boat` is not found (also named by 'spare')
       hint: `flint asset where models boat --scene scenes/dock.scene.toml` shows the search; the asset catalog and a procgen spec named `boat` were asked first
       tried:
@@ -108,7 +109,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 |---|---|
 | Each scene reads, parses and expands its prefabs | `file-unreadable` `toml-parse` `bad-prefab` |
 | Archetypes, components and fields against the schemas | `unknown-archetype` `unknown-component` `unknown-field` `bad-type` `bad-enum-value` `out-of-range` `missing-field` `no-schemas` |
-| Entity references: `parent`, `joint.parent`, `ik_two_bone.target` / `pole` / `tip` | `dangling-entity` |
+| References: every `parent`, every field a schema types `entity` (`joint.parent`, `ik_two_bone.target` / `pole` / `tip`, a game's own) or `asset`; an `ik_two_bone.tip` must be a child of the entity naming it | `unknown-entity` `missing-asset` `not-a-child` |
 | The scene builds | `scene-load` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |

@@ -74,7 +74,7 @@ id = "my_tavern"
 schemas = ["/path/to/Flint/schemas", "/path/to/Flint/schemas/examples", "schemas"]
 ```
 
-`flint schema room` now prints the archetype; before the edit it said `Schema 'room' not found`. A game of your own would more likely define its own archetypes in `schemas/archetypes/` ([Schemas](../concepts/schemas.md#creating-custom-schemas)); the layer is the quick way to follow along here.
+`flint schema room` now prints the archetype; before the edit it failed with ``no component or archetype named `room` ``. A game of your own would more likely define its own archetypes in `schemas/archetypes/` ([Schemas](../concepts/schemas.md#creating-custom-schemas)); the layer is the quick way to follow along here.
 
 ## Add Rooms
 

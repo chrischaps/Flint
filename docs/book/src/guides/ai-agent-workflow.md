@@ -25,8 +25,8 @@ An agent building a scene follows a create-validate-query-render cycle:
 Before creating entities, the agent learns what's available:
 
 ```bash
-# List available archetypes
-flint schema --list-archetypes --schemas schemas
+# List every component and archetype (--json for data)
+flint schema --list --schemas schemas
 
 # Inspect a specific archetype
 flint schema player --schemas schemas

@@ -12,16 +12,24 @@
 //!   exceptions)
 //! - the engine's set holds none of the examples' room-builder vocabulary,
 //!   which lives in the `schemas/examples` layer
-//! - the scenes in this repository write nothing the `model`, `light`,
-//!   `spline` and `spline_mesh` schemas don't describe, and no example
+//! - the scenes in this repository write nothing the schemas in
+//!   [`CHECKED_AGAINST_SCENES`] don't describe, and no example
 //!   carries a light table that nothing reads
+//!
+//! And the schema files themselves say what the loader reads (#684):
+//!
+//! - every type is written in its one spelling (`f32`, not `float`)
+//! - no file holds a key the loader ignores (the eleven that once held
+//!   their fields beside `description` were repaired by #792, and the loader
+//!   now refuses such a file)
 //!
 //! "Read by code" is a search of `crates/*/src` with the test modules cut
 //! off: the constant used as `comp::NAME` / `components::NAME`, or the name
 //! as a string literal. It can't tell a reader from a writer, so it catches
 //! a schema nobody mentions, not one nobody honours.
 
-use flint_schema::{validate_component_data, SchemaRegistry};
+use flint_schema::diagnostic::codes;
+use flint_schema::{validate_component_data, SchemaRegistry, OLD_TYPE_NAMES, TYPE_NAMES};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -39,12 +47,9 @@ const NO_SCHEMA: &[(&str, &str)] = &[
 ];
 
 /// Schemas no code outside tests mentions, and why they stay.
-const NO_READER: &[(&str, &str)] = &[(
-    "audio_listener",
-    "nothing reads it: the listener is the camera. The `player` archetype lists it, and its \
-     file declares `active` outside a `fields` table, so the schema has no fields either. \
-     Left for the audio pass of ADR 0115 step 4 (#685) to give a reader or delete",
-)];
+/// (`audio_listener` was the last: nothing read it, the listener is the
+/// camera, and #792 deleted it.)
+const NO_READER: &[(&str, &str)] = &[];
 
 /// The examples' room-builder vocabulary (#681): in `schemas/examples`,
 /// never in the engine's set.
@@ -59,9 +64,25 @@ const EXAMPLE_ARCHETYPES: &[&str] = &[
 ];
 const EXAMPLE_COMPONENTS: &[&str] = &["door"];
 
-/// The components written first (#681), checked field by field against
-/// every scene in the repository.
-const CHECKED_AGAINST_SCENES: &[&str] = &["model", "light", "spline", "spline_mesh"];
+/// The components written first (#681) and the ten whose fields once sat
+/// outside `fields` (#792), checked field by field against every scene in
+/// the repository.
+const CHECKED_AGAINST_SCENES: &[&str] = &[
+    "model",
+    "light",
+    "spline",
+    "spline_mesh",
+    "collider",
+    "rigidbody",
+    "character_controller",
+    "audio_source",
+    "audio_trigger",
+    "joint",
+    "parallax",
+    "screen_anchor",
+    "ui_fill",
+    "ui_text",
+];
 
 /// Tables that look like a light and that nothing reads.
 const STALE_LIGHT_TABLES: &[&str] = &["directional_light", "point_light", "spot_light"];
@@ -523,4 +544,176 @@ fn the_four_schemas_say_what_their_readers_take() {
     for name in ["model", "spline", "spline_mesh"] {
         assert_eq!(with_default(name), set(&[]), "{name}");
     }
+}
+
+/// Every `.toml` under a schema directory's `components/`, engine layer and
+/// examples layer: `(path from the repository root, parsed)`.
+fn component_files() -> Vec<(String, toml::Table)> {
+    let mut out = Vec::new();
+    for dir in ["schemas/components", "schemas/examples/components"] {
+        for entry in std::fs::read_dir(repo().join(dir)).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                let doc: toml::Table = read(&path)
+                    .parse()
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                let name = entry.file_name().to_string_lossy().into_owned();
+                out.push((format!("{dir}/{name}"), doc));
+            }
+        }
+    }
+    assert!(out.len() > 40, "the schema files were not found");
+    out
+}
+
+/// One spelling per type (ADR 0115 decision 4): every `type` and `element`
+/// written anywhere in `schemas/`, loaded or not, is a name of
+/// `flint_schema::TYPE_NAMES`. The old spellings still load, for a game's
+/// files; the engine's are rewritten.
+#[test]
+fn every_type_in_schemas_is_written_in_its_one_spelling() {
+    fn walk(value: &toml::Value, at: &str, bad: &mut Vec<String>) {
+        let Some(table) = value.as_table() else {
+            return;
+        };
+        for (key, value) in table {
+            let here = format!("{at}.{key}");
+            match value {
+                toml::Value::String(name) if key == "type" || key == "element" => {
+                    if !TYPE_NAMES.iter().any(|(known, _)| known == name) {
+                        let instead = OLD_TYPE_NAMES
+                            .iter()
+                            .find(|(old, _)| old == name)
+                            .map(|(_, new)| format!(": write \"{new}\""))
+                            .unwrap_or_else(|| ": no such type".to_string());
+                        bad.push(format!("{here} = \"{name}\"{instead}"));
+                    }
+                }
+                other => walk(other, &here, bad),
+            }
+        }
+    }
+    let mut bad = Vec::new();
+    let mut seen = 0;
+    for (file, doc) in component_files() {
+        for (name, def) in doc
+            .get("component")
+            .and_then(|c| c.as_table())
+            .into_iter()
+            .flatten()
+        {
+            seen += 1;
+            walk(def, &format!("{file}: {name}"), &mut bad);
+        }
+    }
+    assert!(seen > 40, "only {seen} components were walked");
+    assert!(
+        bad.is_empty(),
+        "one spelling per type (`flint_schema::TYPE_NAMES`):\n  {}",
+        bad.join("\n  ")
+    );
+
+    // ...and the loader agrees about the fields it does read
+    let registry = SchemaRegistry::load_from_directories(&[
+        repo().join("schemas"),
+        repo().join("schemas/examples"),
+    ])
+    .unwrap();
+    let said: Vec<String> = registry
+        .lints()
+        .iter()
+        .filter(|d| d.code != codes::IGNORED_SCHEMA_KEY)
+        .map(|d| d.one_line())
+        .collect();
+    assert!(said.is_empty(), "{}", said.join("\n"));
+}
+
+/// A key the loader ignores is a check that silently doesn't happen: a
+/// field written beside `description` instead of under `fields`, a
+/// misspelled key of a field. None is allowed: the eleven files that once
+/// held their fields in the wrong table were repaired by #792, and the
+/// loader now refuses a component key other than `description` and
+/// `fields` outright.
+#[test]
+fn no_schema_file_holds_a_key_the_loader_ignores() {
+    let registry = SchemaRegistry::load_from_directories(&[
+        repo().join("schemas"),
+        repo().join("schemas/examples"),
+    ])
+    .unwrap();
+    let mut ignored: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for d in registry.lints() {
+        if d.code == codes::IGNORED_SCHEMA_KEY {
+            ignored
+                .entry(d.component.clone().unwrap_or_default())
+                .or_default()
+                .push(d.one_line());
+        }
+    }
+    let unexpected: Vec<String> = ignored.into_values().flatten().collect();
+    assert!(
+        unexpected.is_empty(),
+        "the loader ignores these keys, so they check nothing and their defaults are never \
+         applied:\n  {}",
+        unexpected.join("\n  ")
+    );
+    // The eleven #792 repaired (less `audio_listener`, deleted) have fields
+    for component in [
+        "audio_source",
+        "audio_trigger",
+        "character_controller",
+        "collider",
+        "joint",
+        "parallax",
+        "rigidbody",
+        "screen_anchor",
+        "ui_fill",
+        "ui_text",
+    ] {
+        let schema = registry
+            .get_component(component)
+            .unwrap_or_else(|| panic!("no schema for `{component}`"));
+        assert!(!schema.is_open(), "`{component}` loads with no fields");
+    }
+}
+
+/// The types #684 added are in use where the readers agree: a reference
+/// the schema types is one `flint validate` follows.
+#[test]
+fn engine_schemas_type_their_references() {
+    use flint_schema::FieldType;
+    let registry = SchemaRegistry::load_from_directory(repo().join("schemas")).unwrap();
+    let field = |component: &str, field: &str| -> String {
+        registry
+            .get_component(component)
+            .and_then(|c| c.get_field(field))
+            .unwrap_or_else(|| panic!("no field {component}.{field}"))
+            .field_type
+            .describe()
+    };
+    for name in ["target", "pole", "tip"] {
+        assert_eq!(field("ik_two_bone", name), "entity");
+    }
+    assert_eq!(field("spline_mesh", "spline"), "entity");
+    assert_eq!(field("joint", "parent"), "entity");
+    assert_eq!(field("model", "asset"), "asset<models|specs>");
+    assert_eq!(field("script", "source"), "asset<scripts>");
+    assert_eq!(field("material", "texture"), "asset<textures|specs>");
+    assert_eq!(field("spline", "file"), "asset<files>");
+    assert_eq!(field("terrain", "heightmap"), "asset<files>");
+    assert_eq!(
+        field("material", "blend_mode"),
+        "enum[alpha, additive, multiply]"
+    );
+    assert_eq!(field("material", "color"), "color");
+    assert_eq!(field("sky", "ambient_sky"), "color");
+    assert!(matches!(
+        registry
+            .get_component("transform")
+            .unwrap()
+            .get_field("shear")
+            .unwrap()
+            .field_type,
+        FieldType::Fields { .. }
+    ));
 }

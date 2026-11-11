@@ -217,7 +217,7 @@ fn edit_field(
             }
         }
 
-        FieldType::String => {
+        FieldType::String | FieldType::Entity | FieldType::Asset { .. } => {
             let mut s = value.as_str().unwrap_or("").to_string();
             let original = s.clone();
             ui.horizontal(|ui| {
@@ -284,8 +284,12 @@ fn edit_field(
             None // Transform fields are handled by the top-level Transform section
         }
 
-        FieldType::Array { .. } | FieldType::Table => {
-            // Read-only for arrays and free-form tables
+        FieldType::Array { .. }
+        | FieldType::Table
+        | FieldType::Fields { .. }
+        | FieldType::Vec2
+        | FieldType::Vec4 => {
+            // Read-only for arrays, tables and the 2- and 4-vectors
             ui.horizontal(|ui| {
                 ui.label(format!("{}:", name));
                 ui.monospace(format_toml_leaf(value));

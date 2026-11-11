@@ -25,7 +25,7 @@
 //! |---|---|---|
 //! | the scene reads, parses, expands its prefabs | `flint_scene::diagnose` (#683) | `file-unreadable` `toml-parse` `bad-prefab` |
 //! | archetypes, components and fields fit the schemas | the same | `unknown-archetype` `unknown-component` `unknown-field` `bad-type` `bad-enum-value` `out-of-range` `missing-field` `no-schemas` |
-//! | entity references (`parent`, `joint.parent`, `ik_two_bone.target/pole/tip`) | new, in `flint_scene::diagnose` | `dangling-entity` |
+//! | entity and asset references (every `parent`, every field a schema types `entity` or `asset`; an `ik_two_bone.tip` that is not a child) | `flint_scene::diagnose` (#684; the tip, #687) | `unknown-entity` `missing-asset` `not-a-child` |
 //! | the scene builds | new | `scene-load` |
 //! | the assets a scene names by kind, through the resolver | new ([`scene::ASSET_FIELDS`]) | `missing-asset` |
 //! | the procgen spec behind a model or texture parses | new | `bad-spec` |
@@ -124,8 +124,11 @@ pub struct SceneSchemas {
     pub registry: SchemaRegistry,
     pub dirs: SchemaDirs,
     pub constraints: ConstraintRegistry,
-    /// What is wrong with the constraint files themselves: one that doesn't
-    /// read, a query that doesn't parse (`bad-constraint`).
+    /// What is wrong with the schema files themselves: a game's schema
+    /// lints (#684: an old type spelling, an unknown type, a key the loader
+    /// ignores; warnings, and never about an engine checkout's files), then
+    /// a constraint file that doesn't read or a query that doesn't parse
+    /// (`bad-constraint`).
     pub problems: Vec<Diagnostic>,
 }
 
@@ -157,7 +160,7 @@ impl SceneSchemas {
 
     fn with_constraints(registry: SchemaRegistry, dirs: SchemaDirs) -> Self {
         let mut constraints = ConstraintRegistry::new();
-        let mut problems = Vec::new();
+        let mut problems = registry.game_lints();
         for dir in &dirs.dirs {
             // Spelled from here, so a constraint's file reads as the
             // scene's does in a report

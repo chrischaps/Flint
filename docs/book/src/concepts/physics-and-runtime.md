@@ -32,7 +32,7 @@ The `flint-physics` crate wraps Rapier 3D and bridges it to Flint's TOML-based c
 Four component schemas define physics properties:
 
 **Rigidbody** (`rigidbody.toml`) --- determines how an entity participates in physics:
-- `body_type`: `"static"` (immovable world geometry), `"dynamic"` (simulated), or `"kinematic"` (script-controlled)
+- `body_type`: `"static"` (immovable world geometry, the default), `"dynamic"` (simulated), or `"kinematic"` (script-controlled; `"kinematic_velocity"` for a velocity-based one). A misspelt value fails `flint validate`
 - `mass`, `gravity_scale`, `linear_damping`, `angular_damping`
 - `mode_2d`: lock to the XY plane (Z = 0, Z rotation only)
 

@@ -166,7 +166,7 @@ field_name = { type = "<type>", default = <value>, description = "..." }
 
 Supported field types: `bool`, `i32`, `i64`, `f32`, `f64`, `string`, `vec2`, `vec3`, `vec4`, `color`, `transform`, `enum`, `entity_ref`, `array`. `vec2` and `vec4` are validated as float arrays. Schema `default` values are applied at scene load for every listed component that omits the field (see [Schemas](../concepts/schemas.md)).
 
-Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_listener`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
+Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
 
 ## Archetype Schemas (`schemas/archetypes/*.toml`)
 

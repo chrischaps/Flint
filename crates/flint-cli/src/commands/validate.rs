@@ -361,12 +361,18 @@ fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic]) -> String {
     diagnostic::sort_errors_first(&mut ordered);
     let mut out = format!("{scene}: {}\n\n", diagnostic::counts_line(diagnostics));
     for d in &ordered {
-        // A diagnostic about another file (a constraint file) names it
-        if let Some(file) = d.file.as_deref().filter(|f| *f != Path::new(scene)) {
-            out.push_str(&format!("  in {}:\n", flint_core::project::shown(file)));
-        }
+        // One about another file (a schema file's lint) names it
+        let elsewhere = d
+            .file
+            .as_deref()
+            .filter(|file| !flint_core::project::same_path(file, std::path::Path::new(scene)))
+            .map(|file| format!("{}: ", flint_core::project::shown(file)))
+            .unwrap_or_default();
         // A parse error's message runs over several lines
-        out.push_str(&format!("  {}\n", d.to_string().replace('\n', "\n    ")));
+        out.push_str(&format!(
+            "  {elsewhere}{}\n",
+            d.to_string().replace('\n', "\n    ")
+        ));
         if let Some(hint) = &d.hint {
             out.push_str(&format!("      hint: {hint}\n"));
         }

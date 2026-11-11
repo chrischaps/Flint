@@ -2,6 +2,7 @@
 
 use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
 use crate::component::{ComponentSchema, ComponentSchemaFile};
+use flint_core::diagnostic::Diagnostic;
 use flint_core::project::SchemaDirs;
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
@@ -21,6 +22,9 @@ pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
 pub struct SchemaRegistry {
     components: HashMap<String, ComponentSchema>,
     archetypes: HashMap<String, ArchetypeSchema>,
+    /// What [`crate::lint`] found in each component file loaded, in load
+    /// order.
+    lints: Vec<Diagnostic>,
 }
 
 impl SchemaRegistry {
@@ -117,11 +121,38 @@ impl SchemaRegistry {
         let path = path.as_ref();
         let content = vfs::read_to_string(path)?;
         let file: ComponentSchemaFile = toml::from_str(&content)?;
-        self.insert_components(file, &path.display().to_string());
-        Ok(())
+        self.lints
+            .extend(crate::lint::lint_component_file(&content, Some(path)));
+        self.insert_components(file, &path.display().to_string())
     }
 
-    fn insert_components(&mut self, file: ComponentSchemaFile, source: &str) {
+    /// A component's fields are declared under `[component.<name>.fields]`;
+    /// any key under `[component.<name>]` but `description` and `fields` is
+    /// an error naming the file and the keys (#792). Eleven engine files
+    /// once put their fields there and loaded with none, so nothing in them
+    /// was validated and no default applied.
+    fn insert_components(&mut self, file: ComponentSchemaFile, source: &str) -> Result<()> {
+        let mut stray: Vec<String> = file
+            .component
+            .iter()
+            .filter(|(_, def)| !def.stray.is_empty())
+            .map(|(name, def)| {
+                let keys: Vec<&str> = def.stray.keys().map(String::as_str).collect();
+                format!(
+                    "component '{name}' has {} outside its `fields` table ({}); fields are \
+                     declared under [component.{name}.fields]",
+                    if keys.len() == 1 { "a key" } else { "keys" },
+                    keys.join(", ")
+                )
+            })
+            .collect();
+        if !stray.is_empty() {
+            stray.sort();
+            return Err(FlintError::ParseError(format!(
+                "{source}: {}",
+                stray.join("; ")
+            )));
+        }
         for (name, def) in file.component {
             let mut fields = HashMap::new();
             for (field_name, field_def) in def.fields {
@@ -140,6 +171,7 @@ impl SchemaRegistry {
             };
             self.components.insert(name, schema);
         }
+        Ok(())
     }
 
     /// Load an archetype schema from a TOML file
@@ -158,8 +190,9 @@ impl SchemaRegistry {
     /// Load a component schema from a TOML string
     pub fn load_component_string(&mut self, content: &str) -> Result<()> {
         let file: ComponentSchemaFile = toml::from_str(content)?;
-        self.insert_components(file, "<string>");
-        Ok(())
+        self.lints
+            .extend(crate::lint::lint_component_file(content, None));
+        self.insert_components(file, "<string>")
     }
 
     /// Load an archetype schema from a TOML string
@@ -192,6 +225,47 @@ impl SchemaRegistry {
     /// Get an archetype schema by name
     pub fn get_archetype(&self, name: &str) -> Option<&ArchetypeSchema> {
         self.archetypes.get(name)
+    }
+
+    /// What is wrong with the component schema files themselves
+    /// ([`crate::lint`]): an old type spelling, an unknown type, a key the
+    /// loader ignores. Every file loaded, the engine's included, in load
+    /// order; each names its file.
+    pub fn lints(&self) -> &[Diagnostic] {
+        &self.lints
+    }
+
+    /// [`lints`](Self::lints) about a game's files: those of a file outside
+    /// any Flint engine checkout
+    /// ([`flint_core::project::in_engine_checkout`]: the engine's
+    /// repository, or the `engine/` subtree a game carries). The engine's own
+    /// files are rewritten rather than warned about (ADR 0115 decision 3)
+    /// and a test holds them, so a game is told only about what it can fix.
+    /// What `flint validate` prints.
+    pub fn game_lints(&self) -> Vec<Diagnostic> {
+        self.lints
+            .iter()
+            .filter(|d| {
+                d.file
+                    .as_deref()
+                    .is_none_or(|file| !flint_core::project::in_engine_checkout(file))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Every component schema, by name.
+    pub fn components(&self) -> Vec<&ComponentSchema> {
+        let mut all: Vec<&ComponentSchema> = self.components.values().collect();
+        all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        all
+    }
+
+    /// Every archetype schema, by name.
+    pub fn archetypes(&self) -> Vec<&ArchetypeSchema> {
+        let mut all: Vec<&ArchetypeSchema> = self.archetypes.values().collect();
+        all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        all
     }
 
     /// List all component names
@@ -340,6 +414,46 @@ mod tests {
         );
     }
 
+    /// A file's lints are kept with the file's name, and only a game's are
+    /// what a game is told: a file inside an engine checkout is the
+    /// engine's, however its directory was named.
+    #[test]
+    fn lints_are_kept_and_the_engines_are_not_the_games() {
+        let old = "[component.lamp.fields]\nwatts = { type = \"float\" }\n";
+        let mut files = MemorySource::new();
+        files.insert("game/engine/crates/flint-core/Cargo.toml", "");
+        files.insert("game/engine/schemas/components/lamp.toml", old);
+        files.insert("game/schemas/components/lamp.toml", old);
+        files.insert(
+            "game/schemas/components/door.toml",
+            // A field written beside `description` fails the load now
+            // (#792); a misspelled key of a field still loads, and lints
+            "[component.door.fields]\nlocked = { type = \"bool\", defualt = false }\n",
+        );
+        vfs::scoped(Arc::new(files), || {
+            let registry =
+                SchemaRegistry::load_from_directories(&["game/engine/schemas", "game/schemas"])
+                    .unwrap();
+            assert_eq!(registry.lints().len(), 3);
+            let said: Vec<String> = registry
+                .game_lints()
+                .iter()
+                .map(|d| d.one_line().replace('\\', "/"))
+                .collect();
+            assert_eq!(
+                said,
+                [
+                    "game/schemas/components/door.toml: warning[ignored-schema-key] \
+                     door.locked.defualt: `defualt` is ignored: it is no key of a field \
+                     definition (did you mean `default`?)",
+                    "game/schemas/components/lamp.toml: warning[old-type-name] lamp.watts: \
+                     `float` is an old spelling of `f32` (write type = \"f32\"; `float` still \
+                     loads)",
+                ]
+            );
+        });
+    }
+
     #[test]
     fn test_load_component_string() {
         let toml = r#"
@@ -397,5 +511,57 @@ locked = false
         assert_eq!(door.name, "door");
         assert!(door.has_component("transform"));
         assert!(door.has_component("door"));
+    }
+
+    /// #792: fields written under `[component.x]` instead of
+    /// `[component.x.fields]` loaded as a schema with no fields. Now the
+    /// file is refused, naming it, the component and the keys.
+    #[test]
+    fn fields_outside_the_fields_table_are_an_error() {
+        let toml = r#"
+[component.collider]
+description = "fields in the wrong place"
+shape = { type = "enum", values = ["box", "sphere"], default = "box" }
+size = { type = "vec3", default = [1, 1, 1] }
+"#;
+        let mut registry = SchemaRegistry::new();
+        let err = registry
+            .load_component_string(toml)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("<string>"), "{err}");
+        assert!(err.contains("component 'collider'"), "{err}");
+        assert!(err.contains("(shape, size)"), "{err}");
+        assert!(err.contains("[component.collider.fields]"), "{err}");
+        assert!(registry.get_component("collider").is_none());
+
+        // `description` beside `fields` is the shape every file has
+        let good = "[component.collider]\ndescription = \"ok\"\n\n\
+                    [component.collider.fields]\nshape = \"string\"\n";
+        registry.load_component_string(good).unwrap();
+        assert!(registry
+            .get_component("collider")
+            .unwrap()
+            .fields
+            .contains_key("shape"));
+    }
+
+    #[test]
+    fn a_stray_key_fails_the_directory_load_naming_the_file() {
+        let mut files = MemorySource::new();
+        files.insert(
+            "schemas/components/lamp.toml",
+            "[component.lamp]\non = { type = \"bool\", default = true }\n",
+        );
+        vfs::scoped(Arc::new(files), || {
+            let err = SchemaRegistry::load_from_directory("schemas")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("lamp.toml"), "{err}");
+            assert!(
+                err.contains("a key outside its `fields` table (on)"),
+                "{err}"
+            );
+        });
     }
 }

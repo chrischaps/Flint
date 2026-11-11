@@ -19,9 +19,10 @@ use std::path::{Path, PathBuf};
 /// The component fields that name an asset, and the kind the engine looks
 /// for: what the loaders ask the project's one resolver (ADR 0114).
 ///
-/// Hard-coded until the schema language has an `asset` field type with a
-/// kind (#684, ADR 0115 decision 4), which will say this in the schema
-/// files and cover a game's own components.
+/// `flint_scene::diagnose` follows the fields a schema types `asset` (#684);
+/// this pass asks more of these, as the player does (the asset catalog and a
+/// procgen spec first, `model.runtime`, one diagnostic a name), so the
+/// scene pass's `missing-asset` for one of them is left to it.
 pub(super) const ASSET_FIELDS: &[(&str, &str, AssetKind)] = &[
     ("model", "asset", AssetKind::Models),
     ("material", "texture", AssetKind::Textures),
@@ -50,6 +51,16 @@ pub(super) fn is_asset_field(at: &[String]) -> bool {
     }
 }
 
+/// Whether a diagnostic is about one of [`ASSET_FIELDS`].
+fn is_entity_asset_field(d: &Diagnostic) -> bool {
+    let (Some(component), Some(field)) = (d.component.as_deref(), d.field.as_deref()) else {
+        return false;
+    };
+    ASSET_FIELDS
+        .iter()
+        .any(|(c, f, _)| *c == component && *f == field)
+}
+
 /// The codes of `flint_scene::diagnose` that mean a scene does not load, or
 /// loads without something a bundle must hold: what `flint bundle` has
 /// always refused to pack.
@@ -65,7 +76,7 @@ fn stops_a_load(d: &Diagnostic) -> bool {
 }
 
 fn dangling_parent(d: &Diagnostic) -> bool {
-    d.code == codes::DANGLING_ENTITY && d.component.is_none()
+    d.code == codes::UNKNOWN_ENTITY && d.component.is_none()
 }
 
 /// Whether the scene can't be read at all, so there is nothing more to ask.
@@ -141,6 +152,10 @@ pub fn check(
     }
     if !checks.schema {
         found.retain(stops_a_load);
+    }
+    // This pass's own asset check asks the catalog and the specs first
+    if checks.files {
+        found.retain(|d| !(d.code == codes::MISSING_ASSET && is_entity_asset_field(d)));
     }
     let unreadable = cannot_load(&found);
     let no_parent = found.iter().any(dangling_parent);

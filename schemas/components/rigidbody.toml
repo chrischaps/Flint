@@ -1,7 +1,13 @@
+# Physics body (flint-physics `sync.rs`). Every default below is the value
+# the reader falls back to (#792): `angular_damping` was stated as 0.05, but
+# the reader has always used 0.0, so 0.0 it is.
 [component.rigidbody]
-body_type = { type = "enum", values = ["static", "dynamic", "kinematic"], default = "static", description = "Physics body type" }
+description = "Rapier rigid body: static, dynamic or kinematic"
+
+[component.rigidbody.fields]
+body_type = { type = "enum", values = ["static", "dynamic", "kinematic", "kinematic_position", "kinematic_velocity"], default = "static", description = "Physics body type ('kinematic' is position-based, the same as 'kinematic_position')" }
 mass = { type = "f32", default = 1.0, min = 0.0, description = "Mass in kilograms" }
 linear_damping = { type = "f32", default = 0.0, min = 0.0, description = "Linear velocity damping" }
-angular_damping = { type = "f32", default = 0.05, min = 0.0, description = "Angular velocity damping" }
+angular_damping = { type = "f32", default = 0.0, min = 0.0, description = "Angular velocity damping" }
 gravity_scale = { type = "f32", default = 1.0, description = "Gravity multiplier (0 = no gravity)" }
 mode_2d = { type = "bool", default = false, description = "Constrain to XY plane (Z=0, Z-rotation only)" }

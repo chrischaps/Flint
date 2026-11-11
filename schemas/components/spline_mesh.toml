@@ -7,17 +7,17 @@
 description = "Geometry swept along a spline: a rectangular cross-section, `width` across and `height` tall, following the `spline` entity's path, with a triangle-mesh collider. One spline can feed several meshes (a road, its walls, a verge), each offset from the path. The mesh and its collider are built in world space when the scene loads, so leave the entity's transform at the origin: a transform would move the drawn mesh away from its collider. Without `spline`, `width` and `height` the component is skipped with a warning. Texture u runs 0..1 across each face and v along the sweep, one repeat per `texture_length` metres."
 
 [component.spline_mesh.fields]
-spline = { type = "string", required = true, description = "Name of the entity whose `spline` this follows." }
+spline = { type = "entity", required = true, description = "Name of the entity whose `spline` this follows." }
 width = { type = "f32", required = true, min = 0.0, description = "Width of the cross-section in metres, across the path." }
 height = { type = "f32", required = true, min = 0.0, description = "Height of the cross-section in metres." }
 offset = { type = "vec2", description = "[right, up] in metres: where the cross-section's centre sits relative to the path, in the path's own frame. Unset: [0, 0]." }
-color = { type = "vec4", description = "Base colour, [r, g, b] or [r, g, b, a]. Unset: [0.5, 0.5, 0.5, 1]." }
-stripe_color = { type = "vec4", description = "[r, g, b] or [r, g, b, a]: alternates bands of `color` and this colour along the sweep, as vertex colour (a kerb). Unset: no stripes." }
+color = { type = "color", description = "Base colour, [r, g, b] or [r, g, b, a]. Unset: [0.5, 0.5, 0.5, 1]." }
+stripe_color = { type = "color", description = "[r, g, b] or [r, g, b, a]: alternates bands of `color` and this colour along the sweep, as vertex colour (a kerb). Unset: no stripes." }
 stripe_width = { type = "f32", min = 0.0, description = "Length of one stripe band in metres along the sweep. Unset: 2." }
 metallic = { type = "f32", min = 0.0, max = 1.0, description = "PBR metallic. Unset: 0." }
 roughness = { type = "f32", min = 0.0, max = 1.0, description = "PBR roughness. Unset: 0.5." }
-texture = { type = "string", description = "Base colour image, a file path found like any named file (beside the scene, then up to the project root). Loaded with mipmaps; tiles along the sweep. Unset or empty: `color` alone." }
-normal_texture = { type = "string", description = "Tangent-space normal map, mapped as `texture` is. Unset or empty: none." }
+texture = { type = "asset", kind = "files", description = "Base colour image, a file path found like any named file (beside the scene, then up to the project root). Loaded with mipmaps; tiles along the sweep. Unset or empty: `color` alone." }
+normal_texture = { type = "asset", kind = "files", description = "Tangent-space normal map, mapped as `texture` is. Unset or empty: none." }
 texture_length = { type = "f32", min = 0.0, description = "Metres of sweep per texture repeat. On a closed spline it is nudged so a whole number of repeats meets at the seam. Unset or 0: `width`, a square tile." }
 collider = { type = "bool", description = "False draws the mesh with no physics collider, for scenery nothing should hit (a verge). Unset: true." }
 friction = { type = "f32", min = 0.0, description = "Friction of the collider. Unset: 0.5." }

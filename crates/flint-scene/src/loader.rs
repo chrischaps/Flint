@@ -1,9 +1,10 @@
 //! Scene loading from TOML files
 
-use crate::diagnose::{diagnose_references, diagnose_scene};
+use crate::diagnose::{diagnose_scene, diagnose_scene_in};
 use crate::format::{PostProcessDef, SceneFile};
 use crate::prefab;
 use flint_core::diagnostic::{self, Diagnostic};
+use flint_core::project::Project;
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use flint_ecs::FlintWorld;
@@ -13,8 +14,9 @@ use std::path::Path;
 /// Load a scene from a TOML file (with prefab expansion).
 ///
 /// What is wrong with its entities (an unknown archetype or component, a
-/// field of the wrong type: [`diagnose_scene`]) doesn't stop the load: it is
-/// logged once, as a summary line and the first few (ADR 0115).
+/// field of the wrong type, a reference to an entity or an asset that isn't
+/// there: [`diagnose_scene_in`]) doesn't stop the load: it is logged once, as
+/// a summary line and the first few (ADR 0115).
 /// [`load_scene_diagnosed`] returns the list instead.
 pub fn load_scene<P: AsRef<Path>>(
     path: P,
@@ -26,7 +28,7 @@ pub fn load_scene<P: AsRef<Path>>(
     Ok((world, scene_file))
 }
 
-/// [`load_scene`] that hands back what [`diagnose_scene`] found and logs
+/// [`load_scene`] that hands back what [`diagnose_scene_in`] found and logs
 /// nothing about it, for a host that reports diagnostics its own way
 /// (`flint validate`).
 pub fn load_scene_diagnosed<P: AsRef<Path>>(
@@ -67,8 +69,7 @@ fn load_text_diagnosed(
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
 
-    let mut found = diagnose_scene(&scene_file, Some(path), registry);
-    found.extend(diagnose_references(&scene_file, Some(path)));
+    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file, found))
 }
@@ -175,8 +176,7 @@ pub fn reload_scene<P: AsRef<Path>>(
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
     fill_in_preset(&mut scene_file, path);
-    let mut found = diagnose_scene(&scene_file, Some(path), registry);
-    found.extend(diagnose_references(&scene_file, Some(path)));
+    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
 
     // Clear existing world

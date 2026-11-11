@@ -2,29 +2,29 @@
 description = "Compute grass on mesh ground: a grayscale density mask over a world rectangle, level at the entity's y (ADR 0089). The entity's x and z are the rectangle's minimum corner. One grass field per scene; it replaces a terrain's grass."
 
 [component.grass_ground.fields]
-mask = { type = "string", description = "Path to a grayscale PNG: black no grass, white full density. Pixel (0,0) is at the minimum corner; rows run toward +Z" }
-width = { type = "float", description = "World X extent the mask covers", default = 64.0 }
-depth = { type = "float", description = "World Z extent the mask covers", default = 64.0 }
-scale_by_mask = { type = "boolean", description = "Grey thins the field in proportion (true), or grows it at full density above the threshold (false, the terrain splat rule)", default = true }
+mask = { type = "asset", kind = "files", description = "Path to a grayscale PNG: black no grass, white full density. Pixel (0,0) is at the minimum corner; rows run toward +Z" }
+width = { type = "f32", description = "World X extent the mask covers", default = 64.0 }
+depth = { type = "f32", description = "World Z extent the mask covers", default = 64.0 }
+scale_by_mask = { type = "bool", description = "Grey thins the field in proportion (true), or grows it at full density above the threshold (false, the terrain splat rule)", default = true }
 
 # Grass rendering: as the terrain component's grass.* fields
-"grass.enabled" = { type = "boolean", description = "Enable grass rendering", default = true }
-"grass.density" = { type = "float", description = "Blades per square meter", default = 8.0 }
-"grass.max_distance" = { type = "float", description = "Grass fade-out distance in meters", default = 80.0 }
-"grass.fade_start" = { type = "float", description = "Distance where density falloff begins", default = 60.0 }
-"grass.blade_width" = { type = "float", description = "Base blade width in meters", default = 0.08 }
-"grass.blade_height" = { type = "float", description = "Base blade height in meters", default = 0.4 }
-"grass.height_variation" = { type = "float", description = "Random height scale variation 0..1", default = 0.3 }
+"grass.enabled" = { type = "bool", description = "Enable grass rendering", default = true }
+"grass.density" = { type = "f32", description = "Blades per square meter", default = 8.0 }
+"grass.max_distance" = { type = "f32", description = "Grass fade-out distance in meters", default = 80.0 }
+"grass.fade_start" = { type = "f32", description = "Distance where density falloff begins", default = 60.0 }
+"grass.blade_width" = { type = "f32", description = "Base blade width in meters", default = 0.08 }
+"grass.blade_height" = { type = "f32", description = "Base blade height in meters", default = 0.4 }
+"grass.height_variation" = { type = "f32", description = "Random height scale variation 0..1", default = 0.3 }
 "grass.color_base" = { type = "vec3", description = "Dark base color (RGB linear)", default = [0.15, 0.45, 0.1] }
 "grass.color_tip" = { type = "vec3", description = "Bright tip color (RGB linear)", default = [0.3, 0.7, 0.15] }
 "grass.color_dry" = { type = "vec3", description = "Dry/dead tint (RGB linear)", default = [0.55, 0.5, 0.2] }
-"grass.dry_amount" = { type = "float", description = "Dry grass mix amount 0..1", default = 0.15 }
+"grass.dry_amount" = { type = "f32", description = "Dry grass mix amount 0..1", default = 0.15 }
 "grass.wind_direction" = { type = "vec3", description = "Wind direction (XZ plane)", default = [1.0, 0.0, 0.3] }
-"grass.wind_speed" = { type = "float", description = "Wind sway frequency multiplier", default = 1.0 }
-"grass.wind_strength" = { type = "float", description = "Max sway displacement in meters", default = 0.15 }
-"grass.bend_radius" = { type = "float", description = "Entity bend influence radius in meters", default = 2.0 }
-"grass.bend_strength" = { type = "float", description = "Entity bend amount 0..1", default = 0.8 }
-"grass.density_threshold" = { type = "float", description = "Min splat weight to spawn grass 0..1", default = 0.1 }
-"grass.wooze" = { type = "boolean", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252)", default = false }
-"grass.wooze_amplitude" = { type = "float", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock", default = 0.12 }
-"grass.wooze_wavelength" = { type = "float", description = "Metres from one combed patch of grass to the next", default = 2.5 }
+"grass.wind_speed" = { type = "f32", description = "Wind sway frequency multiplier", default = 1.0 }
+"grass.wind_strength" = { type = "f32", description = "Max sway displacement in meters", default = 0.15 }
+"grass.bend_radius" = { type = "f32", description = "Entity bend influence radius in meters", default = 2.0 }
+"grass.bend_strength" = { type = "f32", description = "Entity bend amount 0..1", default = 0.8 }
+"grass.density_threshold" = { type = "f32", description = "Min splat weight to spawn grass 0..1", default = 0.1 }
+"grass.wooze" = { type = "bool", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252)", default = false }
+"grass.wooze_amplitude" = { type = "f32", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock", default = 0.12 }
+"grass.wooze_wavelength" = { type = "f32", description = "Metres from one combed patch of grass to the next", default = 2.5 }
