@@ -4,6 +4,8 @@
 //! flint script api                  # by module: signature, return, one-line doc
 //! flint script api --filter draw    # names (or modules) containing "draw"
 //! flint script api --json           # one JSON document, for agents and the book
+//! flint script api --book           # write the book's generated reference and tables
+//! flint script api --check-book     # exit 1 if they're stale or a chapter calls a ghost (CI)
 //! ```
 //!
 //! Every engine function is declared through the builder
@@ -15,9 +17,12 @@
 //! game binary with extensions prints its own from
 //! `ScriptSystem::api_listing`.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use flint_script::api::registry::{ApiEntry, ApiListing, UndeclaredFn, CONVENTIONS};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+
+pub mod book;
 
 #[derive(clap::Subcommand)]
 pub enum ScriptCommands {
@@ -37,6 +42,20 @@ pub struct ApiArgs {
     /// ignoring case
     #[arg(long, value_name = "TEXT")]
     pub filter: Option<String>,
+
+    /// Write the book's generated script API reference
+    /// (`src/reference/script-api.md`) and every `script-api` region in its
+    /// chapters, then report calls in the chapters that name no function.
+    /// DIR is the book (the folder holding `src/`); default `docs/book`
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "docs/book",
+          conflicts_with_all = ["json", "filter", "check_book"])]
+    pub book: Option<PathBuf>,
+
+    /// As --book, but write nothing: exit 1 when a generated page or region
+    /// is stale or a chapter calls a function that isn't there (CI)
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "docs/book",
+          conflicts_with_all = ["json", "filter"])]
+    pub check_book: Option<PathBuf>,
 }
 
 pub fn run(cmd: ScriptCommands) -> Result<()> {
@@ -46,6 +65,12 @@ pub fn run(cmd: ScriptCommands) -> Result<()> {
 }
 
 fn api(args: &ApiArgs) -> Result<()> {
+    if let Some(dir) = args.check_book.as_deref() {
+        return book_cmd(dir, true);
+    }
+    if let Some(dir) = args.book.as_deref() {
+        return book_cmd(dir, false);
+    }
     let listing = flint_script::ScriptSystem::new().api_listing();
     let filter = args.filter.as_deref().map(str::to_lowercase);
     let listing = filtered(listing, filter.as_deref());
@@ -62,6 +87,76 @@ fn api(args: &ApiArgs) -> Result<()> {
         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.into()),
         _ => Ok(()),
     }
+}
+
+/// The engine's listing, and the signatures Rhai's own packages register.
+fn listing_and_packages() -> (ApiListing, Vec<String>) {
+    let mut system = flint_script::ScriptSystem::new();
+    let listing = system.api_listing();
+    let engine = system.rhai_engine_mut();
+    let packages = book::package_signatures(
+        engine.gen_fn_signatures(true),
+        engine.gen_fn_signatures(false),
+    );
+    (listing, packages)
+}
+
+/// `--book` / `--check-book`.
+fn book_cmd(dir: &Path, check: bool) -> Result<()> {
+    if !dir.join("src").is_dir() {
+        bail!(
+            "{} has no src/: give the book's folder (the one holding book.toml)",
+            dir.display()
+        );
+    }
+    let (listing, packages) = listing_and_packages();
+    let outcome = book::run(dir, &listing, &packages, check).map_err(anyhow::Error::msg)?;
+    // `docs/book/src/...` with `/` on every platform, as CI prints it
+    let shown = |p: &Path| p.display().to_string().replace('\\', "/");
+    for path in &outcome.stale {
+        if check {
+            eprintln!("stale: {}", shown(path));
+        } else {
+            println!("wrote {}", shown(path));
+        }
+    }
+    for g in &outcome.ghosts {
+        eprintln!(
+            "{}:{}: `{}(`: {}",
+            shown(&dir.join("src").join(&g.file)),
+            g.line,
+            g.name,
+            g.problem
+        );
+    }
+    let stale = check && !outcome.stale.is_empty();
+    if stale {
+        eprintln!(
+            "the book's script API text is stale: run `flint script api --book` and \
+             commit the pages"
+        );
+    }
+    if !outcome.ghosts.is_empty() {
+        eprintln!(
+            "{} call(s) in the book name no script function: fix the page, or, for a \
+             name that isn't a script call, add it to {} with a reason",
+            outcome.ghosts.len(),
+            shown(&dir.join(book::ALLOW))
+        );
+    }
+    if stale || !outcome.ghosts.is_empty() {
+        std::process::exit(1);
+    }
+    if check {
+        println!(
+            "the book matches the script API ({} functions, {} callbacks)",
+            listing.declared.len(),
+            listing.callbacks.len()
+        );
+    } else if outcome.stale.is_empty() {
+        println!("the book's script API text was already up to date");
+    }
+    Ok(())
 }
 
 /// The listing with only what matches `filter` (lowercase).
