@@ -31,6 +31,81 @@ Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)
 
 `flint asset resolve` uses the project of the scene it is given.
 
+## Where the Engine Looks for a File
+
+A scene names most of its assets by a short name: `effect = "campfire"`, not a path. The engine turns a name into a file with **one search rule, the same for every kind of asset** that has moved onto it (the table below; the rest still have searches of their own and move over kind by kind, [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)). It looks, in this order, and takes the first file it finds:
+
+1. **beside the scene**: the kind's folder in the scene's own directory;
+2. **beside each directory above the scene**, one at a time, up to and including the [project root](#the-project-root);
+3. **in the mounted engine**: the kind's folder under `<root>/engine/`, where a game keeps the engine as a subtree.
+
+So a file near a scene overrides one of the same name further up, a scene any number of folders deep finds what the project keeps at its root, and the engine's own assets are a last resort a game can always override.
+
+```
+my_game/                       flint.toml here: the project root
+├── particles/                 3rd   the project's effects
+├── engine/particles/          4th   the engine's, last
+└── scenes/
+    ├── particles/             2nd
+    └── act1/
+        ├── particles/         1st   beside the scene: overrides everything
+        └── cave.scene.toml
+```
+
+At each of those directories `D`, the file tried is `D/<folder>/<name><extension>`:
+
+| Kind | Folder | Extension | A scene writes |
+|------|--------|-----------|----------------|
+| `particles` | `particles/` | `.particles.toml` | `particle_effect.effect = "campfire"`, `play_effect("campfire", ...)` |
+
+A name that already ends in the kind's extension is taken as written (`campfire.particles.toml`), and a name may carry a subfolder (`fx/campfire` is `particles/fx/campfire.particles.toml`). Two details at the edges, the same for every kind:
+
+- **No project marker.** A scene in a folder with no `flint.toml`, no `.flint/` and no `schemas/` + `scenes/` layout above it is its own project root. The engine then also looks one level above the scene, as every search did before there were projects.
+- **A scene outside the root** (`--project` naming another folder) is searched beside itself, then at the root, then in the engine.
+
+Inside an engine checkout the root already is the engine, so there is no third place. In a web bundle the rule is the same over the bundle's files, where `bundle.toml`'s `[mount]` puts the engine's files under `engine/`.
+
+### `flint asset where`
+
+Ask the engine which file it would load, and where it looked first:
+
+```
+$ flint asset where particles campfire --scene scenes/act1/cave/deep.scene.toml
+particle effect 'campfire'
+  project  C:/games/ember-game (flint.toml)
+  scene    scenes/act1/cave
+  loads    particles/campfire.particles.toml
+  tried before it:
+    scenes/act1/cave/particles/campfire.particles.toml
+    scenes/act1/particles/campfire.particles.toml
+    scenes/particles/campfire.particles.toml
+```
+
+When there is no such file it lists every path it tried and exits with status 1. A loader that can't find an asset prints the same list in its warning:
+
+```
+$ flint asset where particles ice --scene scenes/act1/cave/deep.scene.toml
+particle effect 'ice'
+  project  C:/games/ember-game (flint.toml)
+  scene    scenes/act1/cave
+  loads    nothing: no such file. Tried:
+    scenes/act1/cave/particles/ice.particles.toml
+    scenes/act1/particles/ice.particles.toml
+    scenes/particles/ice.particles.toml
+    particles/ice.particles.toml
+    engine/particles/ice.particles.toml
+Error: particle effect 'ice' not found (5 places tried)
+```
+
+| Argument | Meaning |
+|----------|---------|
+| `<kind>` | A kind from the table above. `flint asset where --help` lists them |
+| `<name>` | The name a scene would use |
+| `--scene <file>` | The scene that names it. Without one, a scene in the working directory is assumed |
+| `--json` | One JSON document on stdout: `kind`, `name`, `scene_dir`, `project { root, found }`, `found` (a path or `null`), `tried` (the paths missed, in order) and `order_change`. Paths use forward slashes on every platform. The exit status is still 1 when nothing was found |
+
+For one release, where a kind's old search would have picked a **different file** than the one rule does, the engine says so: a `note` line here (and `order_change` in the JSON), and a warning on stderr when a scene loads, once for each such file.
+
 ## Asset Catalog
 
 The asset catalog is a searchable index of all imported assets. Each entry tracks:

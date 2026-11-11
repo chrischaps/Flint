@@ -66,6 +66,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use thiserror::Error;
 
+mod assets;
+pub use assets::{shown, AssetKind, KindInfo, Listed, NotFound, OrderChange, Resolution};
+
 /// The manifest's file name, at the project root.
 pub const MANIFEST_FILE: &str = "flint.toml";
 
@@ -250,15 +253,23 @@ impl Project {
         }
     }
 
-    /// The project at `root`, with whatever `root/flint.toml` says.
-    fn read(root: PathBuf, found: Found) -> Result<Self, ProjectError> {
-        let mut project = Self {
+    /// A project at `root` with no marker and no manifest read.
+    fn bare(root: PathBuf) -> Self {
+        Self {
             root,
-            found,
+            found: Found::Fallback,
             id: None,
             schemas: Vec::new(),
             scene: None,
             input: None,
+        }
+    }
+
+    /// The project at `root`, with whatever `root/flint.toml` says.
+    fn read(root: PathBuf, found: Found) -> Result<Self, ProjectError> {
+        let mut project = Self {
+            found,
+            ..Self::bare(root)
         };
         let file = project.manifest_path();
         if !vfs::is_file(&file) {

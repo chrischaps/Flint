@@ -19,6 +19,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
 | `flint asset resolve` | Check asset references in a scene |
+| `flint asset where <kind> <name> [--scene x] [--json]` | Print the file the engine would load for an asset name and the paths it tried first; exits 1 with the list when there is none. See [Assets](../concepts/assets.md#where-the-engine-looks-for-a-file) |
 | `flint asset generate` | Generate an asset using AI providers |
 | `flint asset validate` | Validate a generated model against style constraints |
 | `flint asset manifest` | Generate a build manifest of all generated assets |
