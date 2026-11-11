@@ -61,9 +61,6 @@ height = 1.8
 radius = 0.3
 camera_mode = "first_person"
 
-[entities.player.audio_listener]
-active = true
-
 
 # ============================================================
 #  LIGHTING — the heart of the Phase 3 showcase

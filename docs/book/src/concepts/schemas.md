@@ -286,7 +286,7 @@ The engine's own set, `schemas/archetypes/`:
 | Archetype | Components | Description |
 |-----------|------------|-------------|
 | `character` | transform | A character or NPC |
-| `player` | transform, collider, rigidbody, character_controller, audio_listener | Player-controlled character with physics and a first-person camera |
+| `player` | transform, collider, rigidbody, character_controller | Player-controlled character with physics and a first-person camera |
 | `sprite` | transform, sprite | A flat 2D sprite |
 | `animated_sprite` | transform, sprite, sprite_animator | A 2D sprite with sheet animation |
 | `terrain` | transform, terrain | Heightmap terrain |

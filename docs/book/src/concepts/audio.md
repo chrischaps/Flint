@@ -103,11 +103,7 @@ Three component schemas define audio behavior:
 > play/stop API — scripts can only fade their volume. If you need a sound that
 > starts on cue, use a one-shot instead.
 
-**audio_listener** (`audio_listener.toml`) --- marks which entity receives audio:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `active` | bool | true | Whether this listener is active |
+**The listener is the camera.** The player moves it to the camera's position and facing every frame, so there is no listener component. (An `audio_listener` component used to be declared and nothing read it; #792 removed it, and a scene that still writes one gets an `unknown-component` warning. Delete the table.)
 
 **audio_trigger** (`audio_trigger.toml`) --- event-driven sounds:
 

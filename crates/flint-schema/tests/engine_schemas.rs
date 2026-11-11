@@ -12,8 +12,8 @@
 //!   exceptions)
 //! - the engine's set holds none of the examples' room-builder vocabulary,
 //!   which lives in the `schemas/examples` layer
-//! - the scenes in this repository write nothing the `model`, `light`,
-//!   `spline` and `spline_mesh` schemas don't describe, and no example
+//! - the scenes in this repository write nothing the schemas in
+//!   [`CHECKED_AGAINST_SCENES`] don't describe, and no example
 //!   carries a light table that nothing reads
 //!
 //! "Read by code" is a search of `crates/*/src` with the test modules cut
@@ -39,12 +39,9 @@ const NO_SCHEMA: &[(&str, &str)] = &[
 ];
 
 /// Schemas no code outside tests mentions, and why they stay.
-const NO_READER: &[(&str, &str)] = &[(
-    "audio_listener",
-    "nothing reads it: the listener is the camera. The `player` archetype lists it, and its \
-     file declares `active` outside a `fields` table, so the schema has no fields either. \
-     Left for the audio pass of ADR 0115 step 4 (#685) to give a reader or delete",
-)];
+/// (`audio_listener` was the last: nothing read it, the listener is the
+/// camera, and #792 deleted it.)
+const NO_READER: &[(&str, &str)] = &[];
 
 /// The examples' room-builder vocabulary (#681): in `schemas/examples`,
 /// never in the engine's set.
@@ -59,9 +56,25 @@ const EXAMPLE_ARCHETYPES: &[&str] = &[
 ];
 const EXAMPLE_COMPONENTS: &[&str] = &["door"];
 
-/// The components written first (#681), checked field by field against
-/// every scene in the repository.
-const CHECKED_AGAINST_SCENES: &[&str] = &["model", "light", "spline", "spline_mesh"];
+/// The components written first (#681) and the ten whose fields once sat
+/// outside `fields` (#792), checked field by field against every scene in
+/// the repository.
+const CHECKED_AGAINST_SCENES: &[&str] = &[
+    "model",
+    "light",
+    "spline",
+    "spline_mesh",
+    "collider",
+    "rigidbody",
+    "character_controller",
+    "audio_source",
+    "audio_trigger",
+    "joint",
+    "parallax",
+    "screen_anchor",
+    "ui_fill",
+    "ui_text",
+];
 
 /// Tables that look like a light and that nothing reads.
 const STALE_LIGHT_TABLES: &[&str] = &["directional_light", "point_light", "spot_light"];

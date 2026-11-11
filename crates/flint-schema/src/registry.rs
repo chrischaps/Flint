@@ -117,11 +117,36 @@ impl SchemaRegistry {
         let path = path.as_ref();
         let content = vfs::read_to_string(path)?;
         let file: ComponentSchemaFile = toml::from_str(&content)?;
-        self.insert_components(file, &path.display().to_string());
-        Ok(())
+        self.insert_components(file, &path.display().to_string())
     }
 
-    fn insert_components(&mut self, file: ComponentSchemaFile, source: &str) {
+    /// A component's fields are declared under `[component.<name>.fields]`;
+    /// any key under `[component.<name>]` but `description` and `fields` is
+    /// an error naming the file and the keys (#792). Eleven engine files
+    /// once put their fields there and loaded with none, so nothing in them
+    /// was validated and no default applied.
+    fn insert_components(&mut self, file: ComponentSchemaFile, source: &str) -> Result<()> {
+        let mut stray: Vec<String> = file
+            .component
+            .iter()
+            .filter(|(_, def)| !def.stray.is_empty())
+            .map(|(name, def)| {
+                let keys: Vec<&str> = def.stray.keys().map(String::as_str).collect();
+                format!(
+                    "component '{name}' has {} outside its `fields` table ({}); fields are \
+                     declared under [component.{name}.fields]",
+                    if keys.len() == 1 { "a key" } else { "keys" },
+                    keys.join(", ")
+                )
+            })
+            .collect();
+        if !stray.is_empty() {
+            stray.sort();
+            return Err(FlintError::ParseError(format!(
+                "{source}: {}",
+                stray.join("; ")
+            )));
+        }
         for (name, def) in file.component {
             let mut fields = HashMap::new();
             for (field_name, field_def) in def.fields {
@@ -140,6 +165,7 @@ impl SchemaRegistry {
             };
             self.components.insert(name, schema);
         }
+        Ok(())
     }
 
     /// Load an archetype schema from a TOML file
@@ -158,8 +184,7 @@ impl SchemaRegistry {
     /// Load a component schema from a TOML string
     pub fn load_component_string(&mut self, content: &str) -> Result<()> {
         let file: ComponentSchemaFile = toml::from_str(content)?;
-        self.insert_components(file, "<string>");
-        Ok(())
+        self.insert_components(file, "<string>")
     }
 
     /// Load an archetype schema from a TOML string
@@ -397,5 +422,57 @@ locked = false
         assert_eq!(door.name, "door");
         assert!(door.has_component("transform"));
         assert!(door.has_component("door"));
+    }
+
+    /// #792: fields written under `[component.x]` instead of
+    /// `[component.x.fields]` loaded as a schema with no fields. Now the
+    /// file is refused, naming it, the component and the keys.
+    #[test]
+    fn fields_outside_the_fields_table_are_an_error() {
+        let toml = r#"
+[component.collider]
+description = "fields in the wrong place"
+shape = { type = "enum", values = ["box", "sphere"], default = "box" }
+size = { type = "vec3", default = [1, 1, 1] }
+"#;
+        let mut registry = SchemaRegistry::new();
+        let err = registry
+            .load_component_string(toml)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("<string>"), "{err}");
+        assert!(err.contains("component 'collider'"), "{err}");
+        assert!(err.contains("(shape, size)"), "{err}");
+        assert!(err.contains("[component.collider.fields]"), "{err}");
+        assert!(registry.get_component("collider").is_none());
+
+        // `description` beside `fields` is the shape every file has
+        let good = "[component.collider]\ndescription = \"ok\"\n\n\
+                    [component.collider.fields]\nshape = \"string\"\n";
+        registry.load_component_string(good).unwrap();
+        assert!(registry
+            .get_component("collider")
+            .unwrap()
+            .fields
+            .contains_key("shape"));
+    }
+
+    #[test]
+    fn a_stray_key_fails_the_directory_load_naming_the_file() {
+        let mut files = MemorySource::new();
+        files.insert(
+            "schemas/components/lamp.toml",
+            "[component.lamp]\non = { type = \"bool\", default = true }\n",
+        );
+        vfs::scoped(Arc::new(files), || {
+            let err = SchemaRegistry::load_from_directory("schemas")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("lamp.toml"), "{err}");
+            assert!(
+                err.contains("a key outside its `fields` table (on)"),
+                "{err}"
+            );
+        });
     }
 }

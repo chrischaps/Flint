@@ -1,4 +1,10 @@
+# 2D parallax layer (flint-render `extract.rs`). Defaults are the reader's
+# fallbacks (#792): `scroll_rate` was stated as 0.5, but a parallax table
+# without one has always moved with the world (1.0), so 1.0 it is.
 [component.parallax]
-scroll_rate = { type = "f32", default = 0.5, description = "Parallax scroll rate: 0 = fixed to camera (skybox), 1 = moves with world (no parallax)" }
+description = "2D sprite that scrolls slower or faster than the world, optionally tiled"
+
+[component.parallax.fields]
+scroll_rate = { type = "f32", default = 1.0, description = "Parallax scroll rate: 0 = fixed to camera (skybox), 1 = moves with world (no parallax)" }
 repeat_x = { type = "bool", default = false, description = "Tile horizontally to fill viewport" }
 repeat_y = { type = "bool", default = false, description = "Tile vertically to fill viewport" }

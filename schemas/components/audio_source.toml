@@ -1,4 +1,9 @@
+# A sound on an entity (flint-audio `sync.rs`). Every default below is the
+# value the reader falls back to (#792).
 [component.audio_source]
+description = "A sound that plays from the entity, spatial or not"
+
+[component.audio_source.fields]
 file = { type = "string", description = "Path to audio file (relative to scene directory)" }
 volume = { type = "f32", default = 1.0, min = 0.0, max = 2.0, description = "Volume multiplier" }
 pitch = { type = "f32", default = 1.0, min = 0.1, max = 4.0, description = "Playback rate multiplier" }
