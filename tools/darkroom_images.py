@@ -2,7 +2,7 @@
 tileable papers. Deterministic (fixed seeds), so a rerun writes the same
 bytes.
 
-    python tools/darkroom_images.py            # writes demo/styles/luts, papers
+    python tools/darkroom_images.py            # writes examples/styles/luts, papers
 
 A strip is N slices of N x N side by side (N*N wide, N high): blue picks
 the slice left to right, red runs across a slice, green down it. That is
@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 N = 16
-OUT = Path(__file__).resolve().parent.parent / "demo" / "styles"
+OUT = Path(__file__).resolve().parent.parent / "examples" / "styles"
 
 
 def lut_grid(n=N):

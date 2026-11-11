@@ -1,6 +1,6 @@
 //! `flint render --mesh` (#222): a frame a mesh file on one renderer. These run
-//! the real binary on `demo/mesh_sequence.scene.toml` with models from
-//! `demo/models`; those that draw skip themselves on a machine without a GPU.
+//! the real binary on `tests/fixtures/scenes/mesh_sequence.scene.toml` with models from
+//! `tests/fixtures/scenes/models`; those that draw skip themselves on a machine without a GPU.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,7 +12,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scene() -> PathBuf {
-    repo_root().join("demo/mesh_sequence.scene.toml")
+    repo_root().join("tests/fixtures/scenes/mesh_sequence.scene.toml")
 }
 
 /// A folder of mesh files, named so that only a natural sort orders them right.
@@ -20,7 +20,7 @@ fn meshes(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("flint-mesh-cli-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("seq")).unwrap();
-    let models = repo_root().join("demo/models");
+    let models = repo_root().join("tests/fixtures/scenes/models");
     for (from, to) in [
         ("Box.glb", "m2.glb"),
         ("Sphere.glb", "m10.glb"),

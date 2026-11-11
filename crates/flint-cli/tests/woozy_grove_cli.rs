@@ -13,7 +13,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scene_path() -> PathBuf {
-    repo_root().join("demo/woozy_grove.scene.toml")
+    repo_root().join("examples/woozy_grove.scene.toml")
 }
 
 fn scene() -> toml::Value {
@@ -83,7 +83,7 @@ fn every_species_is_a_living_spec_with_no_lods() {
         .collect();
     for name in species {
         let path = repo_root()
-            .join("demo/specs")
+            .join("examples/specs")
             .join(format!("{name}.procgen.toml"));
         let spec: toml::Value =
             toml::from_str(&std::fs::read_to_string(&path).expect("read the spec")).unwrap();

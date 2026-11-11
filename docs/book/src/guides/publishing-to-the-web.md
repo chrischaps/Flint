@@ -3,8 +3,8 @@
 A Flint game can be put on the web with one command, whether it's a finished game, a FlintBench run, or a scene an agent wrote this afternoon:
 
 ```bash
-flint export web demo/
-python -m http.server -d demo/dist/web      # any static server will do
+flint export web examples/
+python -m http.server -d examples/dist/web      # any static server will do
 # open http://localhost:8000/
 ```
 
@@ -23,7 +23,7 @@ dist/web/
   manifest.webmanifest, icons/  for adding the page to a home screen
   scenes/                       First Light, what a page with no game plays
   games.json                    the games here, with the words the page shows
-  games/demo/
+  games/examples/
     demo.flintpack              the game: scenes, models, scripts, schemas
     demo.audio.flintpack        its sound, fetched once play has begun
 ```

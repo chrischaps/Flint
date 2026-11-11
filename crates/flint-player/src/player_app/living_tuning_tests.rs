@@ -1221,7 +1221,7 @@ mod scopes {
     /// Woozy Grove's living props as the scene commits them, with no window:
     /// its four species, every tree, and its field with its zones.
     pub(super) fn woozy_grove(folder: &Path) -> PlayerApp {
-        let text = std::fs::read_to_string(repo().join("demo/woozy_grove.scene.toml")).unwrap();
+        let text = std::fs::read_to_string(repo().join("examples/woozy_grove.scene.toml")).unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
         let mut app = app_with(0, folder);
         app.procgen_resolver
@@ -1229,7 +1229,7 @@ mod scopes {
                 scene.living.as_ref(),
             ));
         for spec in ["grove_birch", "grove_cypress", "grove_oak", "grove_thorn"] {
-            let path = repo().join(format!("demo/specs/{spec}.procgen.toml"));
+            let path = repo().join(format!("examples/specs/{spec}.procgen.toml"));
             let text = std::fs::read_to_string(path).unwrap();
             app.procgen_resolver
                 .index_spec(ProcGenSpec::parse(&text).unwrap());

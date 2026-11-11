@@ -1,0 +1,109 @@
+# ================================================================
+#  AUDIO CLOCK (#658)
+# ================================================================
+#
+#  A looping click track (120 bpm, four beats to a two-second loop,
+#  the one higher) and four pads that light on its beats. The script
+#  reads where the sound is with audio_position(), the mixer's own
+#  clock, rather than adding up delta_time(): Space stalls a frame for
+#  half a second and E pauses, and the pads stay on the clicks through
+#  both, while the summed clock shown above them falls behind.
+#
+#  Click track: python examples/tools/click_track.py
+#  Play:        cargo run --bin flint -- play examples/audio_clock.scene.toml
+# ================================================================
+
+[scene]
+name = "Audio Clock"
+version = "1.0"
+description = "Pads lit by audio_position() on a looping click track"
+
+[camera]
+position = [0.0, 2.2, 7.5]
+target = [0.0, 0.6, 0.0]
+fov = 50.0
+
+[environment]
+default_lights = false
+shadows = false
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.12
+bloom_threshold = 0.9
+vignette_enabled = true
+vignette_intensity = 0.35
+
+# A dark room for the pads to light
+[entities.sky_dome]
+[entities.sky_dome.sky]
+zenith_color = [0.010, 0.010, 0.018, 1.0]
+horizon_color = [0.035, 0.030, 0.050, 1.0]
+haze_color = [0.05, 0.04, 0.07, 0.3]
+cloud_coverage = 0.0
+star_opacity = 0.0
+ambient_sky = [0.06, 0.06, 0.09]
+ambient_ground = [0.03, 0.03, 0.04]
+
+[entities.click_track]
+[entities.click_track.audio_source]
+file = "audio/click_120.wav"
+spatial = false
+loop = true
+autoplay = true
+volume = 0.8
+bus = "music"
+
+[entities.clock]
+[entities.clock.script]
+source = "audio_clock.rhai"
+
+[entities.floor]
+[entities.floor.transform]
+position = [0, -0.05, 0]
+[entities.floor.bounds]
+min = [-6, -0.05, -3]
+max = [6, 0.0, 3]
+[entities.floor.material]
+color = [0.05, 0.05, 0.07, 1.0]
+unlit = true
+
+[entities.pad_1]
+[entities.pad_1.transform]
+position = [-2.4, 0.5, 0]
+[entities.pad_1.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.pad_1.material]
+color = [0.08, 0.044, 0.02, 1.0]
+unlit = true
+
+[entities.pad_2]
+[entities.pad_2.transform]
+position = [-0.8, 0.5, 0]
+[entities.pad_2.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.pad_2.material]
+color = [0.028, 0.06, 0.08, 1.0]
+unlit = true
+
+[entities.pad_3]
+[entities.pad_3.transform]
+position = [0.8, 0.5, 0]
+[entities.pad_3.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.pad_3.material]
+color = [0.028, 0.06, 0.08, 1.0]
+unlit = true
+
+[entities.pad_4]
+[entities.pad_4.transform]
+position = [2.4, 0.5, 0]
+[entities.pad_4.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.pad_4.material]
+color = [0.028, 0.06, 0.08, 1.0]
+unlit = true

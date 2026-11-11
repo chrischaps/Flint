@@ -1,5 +1,5 @@
 # The showcase film (#434, #435): one beat per stylize feature, each a
-# scene in demo/film/ played by flint-player with no hand on the controls
+# scene in examples/film/ played by flint-player with no hand on the controls
 # and captured frame by frame. The storyboard (what each beat shows, why it
 # is cut the way it is) is docs/design/showcase-film.md.
 #

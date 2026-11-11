@@ -6,7 +6,7 @@ mod file_dialog;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, edit_router, entity, export, gen, gen_preview, init, play,
+    asset, bundle, calibrate, edit_router, entity, examples, export, gen, gen_preview, init, play,
     play_chart, play_suite, prefab, preview, query, render, render_suite, replay_chart, scene,
     schema, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate, validate_suite,
 };
@@ -104,6 +104,10 @@ enum Commands {
 
     /// Validate a scene against constraints
     Validate(validate::ValidateArgs),
+
+    /// The curated example scenes, from examples/index.toml: list them by
+    /// topic, or --check that every one is indexed and validates
+    Examples(examples::ExamplesArgs),
 
     /// Pack a game folder into .flintpack bundles for the web player
     Bundle(bundle::BundleArgs),
@@ -209,6 +213,7 @@ fn main() -> Result<()> {
         } => query::run(&query, scene.as_deref(), &format, &schemas),
         Commands::Schema { name, schemas } => schema::run(&name, &schemas),
         Commands::Validate(args) => validate::run(args),
+        Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
         Commands::ValidateSuite(args) => validate_suite::run(args),

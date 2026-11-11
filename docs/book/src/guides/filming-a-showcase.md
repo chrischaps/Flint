@@ -37,7 +37,7 @@ won't fit. Frames go outside the repo on purpose.
 One run of the player on one scene:
 
 ```bash
-flint-player demo/film/02_type.scene.toml --schemas schemas \
+flint-player examples/film/02_type.scene.toml --schemas schemas \
   --width 3840 --height 2160 --pixels-per-point 2 \
   --frame-step 0.0166667 --screenshot out/frame.png --screenshot-every 0.0166667 \
   --exit-after 13.9917 --music-volume 0 --sfx-volume 0
@@ -65,8 +65,8 @@ flint-player demo/film/02_type.scene.toml --schemas schemas \
 ## A beat
 
 A beat is a scene whose script drives the camera and the styles on game
-time. The film's beats share one set, `demo/film/set.toml`; each adds a
-fragment (`demo/film/beats/<beat>.toml`: its `[scene]`, `[camera]`, styles
+time. The film's beats share one set, `examples/film/set.toml`; each adds a
+fragment (`examples/film/beats/<beat>.toml`: its `[scene]`, `[camera]`, styles
 and script entity) and `python tools/showcase/build_scenes.py` writes the
 scene from the two (`--check` says whether any is stale; the capture runs
 it first). The fragment may add components to the set's props
@@ -78,7 +78,7 @@ Scripts change whole-frame styles with `set_post_style(style, on)` and
 `set_entity_style` and `set_style_param`
 ([Scripting → Style API](../concepts/scripting.md#style-api)). Shared moves
 (`orbit`, `dolly`, `ease`, `ramp`, `pulse`) are in
-`demo/film/scripts/lib/film.rhai`:
+`examples/film/scripts/lib/film.rhai`:
 
 ```rust
 import "film" as film;
@@ -92,7 +92,7 @@ fn on_update() {
 
 A one-shot change (a style switched on at 5 s) goes through a step number
 kept in a component on the script's entity, so it is applied on the frame
-the step starts and not again; see `demo/film/scripts/02_type.rhai`.
+the step starts and not again; see `examples/film/scripts/02_type.rhai`.
 
 Everything a beat does comes from game time. Never wall time, never an
 entity id (ids differ between runs; seed from names), and one directional

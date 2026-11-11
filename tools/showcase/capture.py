@@ -135,7 +135,7 @@ def take_args(film, beat, take, width, height, folder, points_wide=POINTS_WIDE,
     seconds = beat["seconds"] if seconds is None else seconds
     args = [
         str(player_path()),
-        str(Path("demo") / "film" / f"{beat['id']}.scene.toml"),
+        str(Path("examples") / "film" / f"{beat['id']}.scene.toml"),
         "--schemas", "schemas",
         "--width", str(width),
         "--height", str(height),
@@ -151,7 +151,7 @@ def take_args(film, beat, take, width, height, folder, points_wide=POINTS_WIDE,
     ]
     script = take.get("input") or beat.get("input")
     if script:
-        source = ROOT / "demo" / "film" / "beats" / script
+        source = ROOT / "examples" / "film" / "beats" / script
         scaled = scaled_input(source, width / points_wide, folder / "input.txt")
         args += ["--input-script", str(scaled)]
     args += take.get("args", []) + beat.get("args", [])

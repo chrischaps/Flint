@@ -1,0 +1,78 @@
+# ================================================================
+#  DOUBLE-SIDED CARDS (#623)
+# ================================================================
+#
+#  Two palms built the same way: a crown of fronds, each frond one
+#  strip of cards wound once with its face up. The left palm's frond
+#  material is glTF "doubleSided": true, the right one's is not.
+#  Looking up into the crowns, every frond shows its underside:
+#  the left palm draws them, lit as the side you see, and casts
+#  shadows from both; the right palm's are culled, as glTF says a
+#  single-sided material's back faces are.
+#
+#  Models: python tools/test-models/double_sided_palm.py
+#  Render: cargo run --bin flint -- render examples/double_sided.scene.toml \
+#            --output renders/double_sided.png --schemas schemas
+# ================================================================
+
+[scene]
+name = "Double-Sided Cards"
+version = "1.0"
+description = "A palm with doubleSided fronds beside one without, seen from below"
+
+[camera]
+position = [0.0, 1.0, 8.4]
+target = [0.0, 2.9, 0.0]
+fov = 55.0
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+vignette_enabled = true
+vignette_intensity = 0.3
+
+# An evening sky, warm at the horizon
+[entities.sky_dome]
+[entities.sky_dome.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.96, 0.70, 0.50, 1.0]
+haze_color = [1.0, 0.80, 0.62, 0.5]
+cloud_coverage = 0.22
+star_opacity = 0.0
+# Warm light off the sand is what lights a frond's underside
+ambient_sky = [0.40, 0.46, 0.60]
+ambient_ground = [0.52, 0.40, 0.27]
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.05, 0]
+[entities.ground.bounds]
+min = [-14, -0.05, -10]
+max = [14, 0.0, 10]
+[entities.ground.material]
+color = [0.74, 0.62, 0.45, 1.0]
+roughness = 0.95
+
+# A low evening sun from the camera's side and the left (it points at the sun)
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [-0.45, 0.55, 0.7]
+color = [1.0, 0.82, 0.62]
+intensity = 2.6
+
+[entities.palm_two_sided]
+[entities.palm_two_sided.transform]
+position = [-2.6, 0, 0]
+rotation = [0, 20, 0]
+[entities.palm_two_sided.model]
+asset = "palm_two_sided"
+
+[entities.palm_one_sided]
+[entities.palm_one_sided.transform]
+position = [2.6, 0, 0]
+rotation = [0, 20, 0]
+[entities.palm_one_sided.model]
+asset = "palm_one_sided"

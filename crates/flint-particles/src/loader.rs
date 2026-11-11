@@ -143,9 +143,9 @@ mod tests {
 
     fn demo_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../demo")
+            .join("../../examples")
             .canonicalize()
-            .expect("demo dir")
+            .expect("examples dir")
     }
 
     #[test]

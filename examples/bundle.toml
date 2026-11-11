@@ -1,0 +1,44 @@
+# Flint's demo scenes as a web game (#106):
+#
+#   flint export web examples/                 # examples/dist/web, then serve it
+#   python -m http.server -d examples/dist/web # http://localhost:8000/
+#
+# It starts in the Phase 4 tavern; any other packed scene plays with
+# ?scene=<file>, e.g. ?scene=pencil_sketch.scene.toml. Format and keys:
+# crates/flint-cli/src/commands/bundle.rs.
+
+name = "demo"
+scene = "phase4_runtime.scene.toml"
+
+exclude = [
+    # scenes that play only from the repo root, naming models or scenes by
+    # paths outside examples/ (or models nobody committed)
+    "collision_2d_test/**",
+    "scrolling_test/**",
+    "ui_test/**",
+    "phase5_ai_demo.scene.toml",
+    "living_props.scene.toml",
+    "living_sweep.scene.toml",
+    "shallow_wooze.scene.toml",
+    "wooze_field.scene.toml",
+    "showcase_crucible.scene.toml",
+    "showcase_tavern.scene.toml",
+    "scripts/showcase_ambience.rhai",
+    "scripts/showcase_hud.rhai",
+    "scripts/showcase_passage.rhai",
+    # the showcase film's capture sets (tools/showcase), and source art no
+    # scene reads
+    "film/**",
+    "luminarium_preview.png",
+    "textures/worn_planks_diff_4k.jpg",
+    "**/*.tiff",
+]
+
+# examples/ has no engine subtree: its schemas are the repo's.
+[mount]
+"engine/schemas" = "../schemas"
+
+[web]
+title = "Flint demos"
+line = "The Rusty Flint Tavern: walk in, open the doors, listen to the room. Every other demo is a ?scene= away."
+controls = "sound on · WASD to walk, mouse to look · E to interact · Esc frees the pointer"

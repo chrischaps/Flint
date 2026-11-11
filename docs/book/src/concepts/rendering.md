@@ -201,7 +201,7 @@ A glTF material with `"doubleSided": true` is drawn from both sides (#623). That
 
 ![Two palms built alike, their fronds single cards seen from below: the left palm's material is doubleSided](../images/double-sided-palms.png)
 
-*`demo/double_sided.scene.toml`: the same palm twice, each frond one strip of cards wound with its face up, seen from under the crowns. The left palm's frond material is `doubleSided`, so every underside draws. The right palm's isn't, so only the fronds that face the camera are left.*
+*`examples/double_sided.scene.toml`: the same palm twice, each frond one strip of cards wound with its face up, seen from under the crowns. The left palm's frond material is `doubleSided`, so every underside draws. The right palm's isn't, so only the fronds that face the camera are left.*
 
 A double-sided material:
 
@@ -302,7 +302,7 @@ fn on_update() {
 }
 ```
 
-`demo/emissive_recolor.scene.toml` is five figures of one skinned GLB, whose joints have no emission of their own, and two lanterns whose glass glows through a texture, all walking one palette a stage every 2.5 s under a moon that still lights them (`flint render demo/emissive_recolor.scene.toml --scripts --time 0..10 --fps 12 -o glow.gif`).
+`examples/emissive_recolor.scene.toml` is five figures of one skinned GLB, whose joints have no emission of their own, and two lanterns whose glass glows through a texture, all walking one palette a stage every 2.5 s under a moon that still lights them (`flint render examples/emissive_recolor.scene.toml --scripts --time 0..10 --fps 12 -o glow.gif`).
 
 ![Five figures from one GLB, their joints glowing magenta to cyan along the row, under moonlight](../images/emissive-recolor.png)
 

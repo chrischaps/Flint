@@ -5,7 +5,7 @@
 ![The campfire effect in the editor's viewport](../images/particle-editor-campfire.png)
 
 ```bash
-flint edit demo/particles/campfire.particles.toml          # open an effect
+flint edit examples/particles/campfire.particles.toml          # open an effect
 flint edit fx/torch.particles.toml --preset fire            # create from a preset, then open
 flint edit fx/torch.particles.toml --render out.png --anim-time 1.5   # headless snapshot
 ```

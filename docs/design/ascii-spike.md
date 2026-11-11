@@ -46,8 +46,8 @@ which stay.
 
 ## Scenes
 
-`demo/phase4_runtime` (the tavern), `demo/mesh_meadow` (barrel, bench,
-lantern), `demo/campfire` (stones, with particles) and `demo/pbr_test`.
+`examples/phase4_runtime` (the tavern), `examples/mesh_meadow` (barrel, bench,
+lantern), `examples/campfire` (stones, with particles) and `examples/pbr_test`.
 Woozy Grove (#217) isn't on main yet, so the meadow stands in for it.
 
 ## Findings

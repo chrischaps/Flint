@@ -249,7 +249,7 @@ fade = 26.0
 
 Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `flint render --contour` and the `--contour-*` flags still work, as shorthands for its keys.
 
-Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `demo/shading_boil.scene.toml` renders the same bytes in either spelling.
+Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `examples/shading_boil.scene.toml` renders the same bytes in either spelling.
 
 Its pipeline is built the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
 
@@ -259,7 +259,7 @@ In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink c
 
 ![One drawing](../images/shading-boil-a.png)
 
-*`demo/shading_boil.scene.toml`, in which nothing moves.*
+*`examples/shading_boil.scene.toml`, in which nothing moves.*
 
 ![The next drawing](../images/shading-boil-b.png)
 
@@ -285,7 +285,7 @@ Each style's `boil` is its own amount; how long each drawing is held is one `[po
 |-------|------|---------|-------------|
 | `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
 
-A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `demo/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
+A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `examples/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
 The field's `jitter` sets how hard it boils: both styles' `boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
 
@@ -294,7 +294,7 @@ With either `boil` at 0, or no `[wooze]` table, that pass renders byte for byte 
 To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
 
 ```bash
-flint-player demo/shading_boil.scene.toml --schemas schemas \
+flint-player examples/shading_boil.scene.toml --schemas schemas \
   --frame-step 0.0416666666666667 --screenshot out/f.png --screenshot-every 0.0416666666666667 --exit-after 2
 ```
 

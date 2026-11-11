@@ -15,10 +15,10 @@ cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, g
                                #   so no ALSA/libudev headers on Linux (#221; features audio/gamepad/dialogs;
                                #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
 cargo run --bin flint -- <cmd> # Run CLI
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene
-cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
-cargo run --bin flint -- export web demo/  # any game as a folder a static server plays (#106):
-                               #   demo/dist/web = player + games/<id>/ bundles + games.json;
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml  # Play a scene
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas  # Standalone player
+cargo run --bin flint -- export web examples/  # any game as a folder a static server plays (#106):
+                               #   examples/dist/web = player + games/<id>/ bundles + games.json;
                                #   --out, --player <trunk dist> (else trunk builds it), --meta k=v, --clean
 cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
@@ -58,8 +58,8 @@ Flint uses an **edit -> validate -> play** loop:
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
    ```bash
-   flint play demo/phase4_runtime.scene.toml
-   flint play demo/phase4_runtime.scene.toml --width 1920 --height 1080
+   flint play examples/phase4_runtime.scene.toml
+   flint play examples/phase4_runtime.scene.toml --width 1920 --height 1080
    ```
    More: `crates/flint-player/CLAUDE.md`.
 
@@ -166,7 +166,8 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 - `crates/` -- All workspace crates
 - `schemas/` -- Engine component and archetype TOML definitions
 - `styles/` -- Style guide TOML definitions for AI generation
-- `demo/` -- Showcase scenes, scripts, audio, animations, `particles/` effect assets
+- `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
+- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with their assets. No golden may load from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test
 - `testGame/` -- Test project (levels/, schemas/)
 - `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it
 - `docs/design/flint-design-doc.md` -- Full design document for remaining phases

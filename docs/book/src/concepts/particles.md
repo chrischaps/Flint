@@ -44,7 +44,7 @@ shape_radius = 0.15
 
 ### Effect asset
 
-`demo/particles/campfire.particles.toml`, trimmed:
+`examples/particles/campfire.particles.toml`, trimmed:
 
 ```toml
 name = "campfire"

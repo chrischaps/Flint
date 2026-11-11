@@ -15,6 +15,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint query "<query>"` | Query entities with the Flint query language |
 | `flint schema <name>` | Inspect a component or archetype schema |
 | `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
+| `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
@@ -48,7 +49,7 @@ The seven music commands are documented on their own page: [Music Commands](musi
 Launch a scene as an interactive first-person experience with physics:
 
 ```bash
-flint play demo/phase4_runtime.scene.toml
+flint play examples/phase4_runtime.scene.toml
 flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 # a small companion window in a corner that stays up and leaves the keyboard alone
 flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560   --borderless --always-on-top --no-activate
@@ -123,12 +124,12 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
 
-A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `demo/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
+A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
 ```bash
-flint-player demo/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 \
+flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 \
   --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
-flint-player demo/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 --seed 2 \
+flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 --seed 2 \
   --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
 ```
 
@@ -293,7 +294,7 @@ This loads the engine's built-in components (transform, material, rigidbody, etc
 The player is also available as a standalone binary for distribution:
 
 ```bash
-cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas
 
 # From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
@@ -305,7 +306,7 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render demo/phase3_showcase.scene.toml --output hero.png --schemas schemas
+flint render examples/phase3_showcase.scene.toml --output hero.png --schemas schemas
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 

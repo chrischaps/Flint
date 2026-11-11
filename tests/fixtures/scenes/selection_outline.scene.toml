@@ -1,0 +1,194 @@
+# Selection outline bench (#602): one of each kind of thing a person picks
+# in `flint edit`, laid out so each can be selected and its outline judged.
+#
+#   static mesh ........ barrel           (glTF, one primitive)
+#   multi-primitive .... lantern          (glTF, several primitives)
+#   skinned ............ ybot             (bind pose in a still render)
+#   transparent ........ glass            (alpha-blended box)
+#   billboard .......... wisp             (camera-facing sprite, alpha cut-out)
+#   off-centre pivot ... beam             (box whose pivot is one end)
+#   flat ............... rug              (a thin box lying on the ground)
+#   mesh-less parent ... cart             (children: cart_bed, cart_wheel_l, cart_wheel_r)
+#   occluded ........... crate            (half behind the glass and the barrel)
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/selection_outline.scene.toml --no-grid --select cart -o cart.png
+#
+# The goldens in crates/flint-cli/tests/golden/selection.goldens.toml pin the
+# outline on several of these.
+
+[scene]
+name = "Selection Outline"
+version = "1.0"
+description = "One of each kind of selectable entity, for the editor's selection outline (#602)"
+
+[camera]
+position = [0.0, 3.6, 8.0]
+target = [0.0, 0.8, 0.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.15
+bloom_enabled = true
+bloom_intensity = 0.04
+bloom_threshold = 1.3
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 0.6
+fog_enabled = true
+fog_density = 0.008
+fog_color = [0.62, 0.66, 0.72]
+
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.45, 0.8, 0.35]
+color = [1.0, 0.95, 0.88]
+intensity = 2.6
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.05, 0]
+[entities.ground.bounds]
+min = [-14, 0, -14]
+max = [14, 0.05, 14]
+[entities.ground.material]
+base_color_r = 0.42
+base_color_g = 0.44
+base_color_b = 0.4
+roughness = 0.95
+
+# ── Back row ──────────────────────────────────────────────────
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [-3.4, 0, -1.2]
+[entities.barrel.model]
+asset = "barrel"
+
+[entities.crate]
+[entities.crate.transform]
+position = [-1.6, 0, -2.4]
+[entities.crate.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 1.2, 0.6]
+[entities.crate.material]
+texture = "wood_planks.png"
+base_color_r = 0.55
+base_color_g = 0.38
+base_color_b = 0.22
+roughness = 0.8
+
+[entities.glass]
+[entities.glass.transform]
+position = [-1.4, 0.9, -0.6]
+[entities.glass.bounds]
+min = [-0.9, -0.9, -0.05]
+max = [0.9, 0.9, 0.05]
+[entities.glass.material]
+base_color_r = 0.35
+base_color_g = 0.7
+base_color_b = 0.95
+opacity = 0.35
+roughness = 0.05
+
+[entities.ybot]
+archetype = "character"
+[entities.ybot.transform]
+position = [0.5, 0, -1.0]
+rotation = [0, -15, 0]
+scale = [0.9, 0.9, 0.9]
+[entities.ybot.model]
+asset = "YBotWithIdle"
+[entities.ybot.skeleton]
+skin = "Armature"
+
+[entities.lantern]
+archetype = "furniture"
+[entities.lantern.transform]
+position = [2.2, 0, -1.4]
+scale = [0.07, 0.07, 0.07]
+[entities.lantern.model]
+asset = "Lantern"
+
+[entities.wisp]
+[entities.wisp.transform]
+position = [3.7, 0.2, -0.8]
+[entities.wisp.sprite]
+texture = "wisp_sprite.png"
+width = 0.8
+height = 1.2
+
+# ── Front row ─────────────────────────────────────────────────
+
+[entities.beam]
+[entities.beam.transform]
+position = [-3.8, 0, 1.6]
+rotation = [0, -18, 0]
+[entities.beam.bounds]
+min = [0, 0, -0.18]
+max = [3.0, 0.36, 0.18]
+[entities.beam.material]
+texture = "stone_wall.png"
+base_color_r = 0.36
+base_color_g = 0.3
+base_color_b = 0.42
+roughness = 0.7
+
+[entities.rug]
+[entities.rug.transform]
+position = [0.2, 0, 2.0]
+[entities.rug.bounds]
+min = [-1.0, 0, -0.7]
+max = [1.0, 0.02, 0.7]
+[entities.rug.material]
+texture = "floor_tiles.png"
+base_color_r = 0.62
+base_color_g = 0.18
+base_color_b = 0.2
+roughness = 0.9
+
+[entities.cart]
+[entities.cart.transform]
+position = [2.8, 0, 1.6]
+rotation = [0, 25, 0]
+
+[entities.cart_bed]
+parent = "cart"
+[entities.cart_bed.transform]
+position = [0, 0.45, 0]
+[entities.cart_bed.bounds]
+min = [-0.8, 0, -0.45]
+max = [0.8, 0.3, 0.45]
+[entities.cart_bed.material]
+texture = "wood_planks_old.png"
+base_color_r = 0.5
+base_color_g = 0.42
+base_color_b = 0.3
+roughness = 0.8
+
+[entities.cart_wheel_l]
+parent = "cart"
+[entities.cart_wheel_l.transform]
+position = [-0.4, 0.3, 0.5]
+[entities.cart_wheel_l.bounds]
+min = [-0.3, -0.3, -0.06]
+max = [0.3, 0.3, 0.06]
+[entities.cart_wheel_l.material]
+texture = "wood_planks.png"
+base_color_r = 0.25
+base_color_g = 0.22
+base_color_b = 0.2
+
+[entities.cart_wheel_r]
+parent = "cart"
+[entities.cart_wheel_r.transform]
+position = [0.4, 0.3, 0.5]
+[entities.cart_wheel_r.bounds]
+min = [-0.3, -0.3, -0.06]
+max = [0.3, 0.3, 0.06]
+[entities.cart_wheel_r.material]
+texture = "wood_planks.png"
+base_color_r = 0.25
+base_color_g = 0.22
+base_color_b = 0.2

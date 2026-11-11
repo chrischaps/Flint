@@ -2,11 +2,11 @@
 //! serve (#106, epic #94).
 //!
 //! ```bash
-//! flint export web demo/                       # demo/dist/web: index.html, the player, games/demo/
+//! flint export web examples/                   # examples/dist/web: index.html, the player, games/demo/
 //! flint export web ../Float --out site         # into site/, beside any game already exported there
 //! flint export web . --player play-dist        # a player trunk already built, instead of building one
 //! flint export web . --meta title="My Game" --meta line="One sentence."
-//! python -m http.server -d demo/dist/web       # then open http://localhost:8000/
+//! python -m http.server -d examples/dist/web   # then open http://localhost:8000/
 //! ```
 //!
 //! Three steps, the same ones play.chaps.dev's deploy takes:

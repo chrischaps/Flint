@@ -1002,11 +1002,11 @@ mod tests {
     fn the_scene_folder_adds_its_palettes_fonts_and_ramps() {
         let mut src = flint_core::vfs::MemorySource::new();
         src.insert(
-            "demo/palettes/tidepool.palette.toml",
+            "examples/palettes/tidepool.palette.toml",
             "colors = [\"#0a3d62\", \"#3c6382\"]\n",
         );
         src.insert(
-            "demo/fonts/plain.glyphs.toml",
+            "examples/fonts/plain.glyphs.toml",
             "[ramps.dots]\nglyphs = \" .:\"\n",
         );
         flint_core::vfs::scoped(std::sync::Arc::new(src), || {
@@ -1017,7 +1017,7 @@ mod tests {
             // No scene: the built-ins
             let palettes = editor.choices(ascii, option("palette"), &pp);
             assert!(!palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
-            editor.set_scene_dir(Some(PathBuf::from("demo")));
+            editor.set_scene_dir(Some(PathBuf::from("examples")));
             let palettes = editor.choices(ascii, option("palette"), &pp);
             assert!(palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
             assert!(palettes.iter().any(|p| p == "phosphor"), "built-ins stay");
