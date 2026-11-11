@@ -128,7 +128,7 @@ emissive_scale = 3.0
 
 ![An ambient-only scene with unlit bars](../images/unlit-ambient.png)
 
-*`demo/unlit_ambient.scene.toml`: props lit by the ambient alone, no shadow pass, and three unlit bars, two of them blooming.*
+*`examples/unlit_ambient.scene.toml`: props lit by the ambient alone, no shadow pass, and three unlit bars, two of them blooming.*
 
 How they combine in the shader: hemisphere ambient interpolates between the two colors by the surface normal's Y. Diffuse wrap replaces the raw `n·l` term; Oren-Nayar scales the diffuse magnitude; the Charlie sheen adds a rim lobe on top. The three are orthogonal, and when all are zero the shader takes the original code path. The wrap and Oren-Nayar values ride the `w` components of the ambient uniforms encoded as `1 + value`, which is why a stale or default uniform (w = 0) still means "off".
 

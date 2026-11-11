@@ -244,7 +244,7 @@ mod tests {
     use super::*;
     use flint_core::vfs::MemorySource;
 
-    /// A 16-column, 6-row grid of 8x16 cells, like `demo/ui_test`'s font:
+    /// A 16-column, 6-row grid of 8x16 cells, like `examples/ui_test`'s font:
     /// each glyph's cell has a solid column at `x = index % 8`, so which cell
     /// a character came from can be read back off the atlas.
     fn grid_png() -> Vec<u8> {

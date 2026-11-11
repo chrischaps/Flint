@@ -1,9 +1,9 @@
-"""Writes demo/models/palm_two_sided.glb and palm_one_sided.glb (#623).
+"""Writes examples/models/palm_two_sided.glb and palm_one_sided.glb (#623).
 
 The same palm twice: a crown of drooping fronds, each one strip of cards
 wound once with its face up, as a game's generator would make them. One
 GLB's frond material is glTF `"doubleSided": true`, the other's is left at
-glTF's default. `demo/double_sided.scene.toml` stands them side by side and
+glTF's default. `examples/double_sided.scene.toml` stands them side by side and
 looks up into the crowns, where every frond shows its underside.
 
 Standard library only; run from anywhere:
@@ -171,7 +171,7 @@ def write_glb(path: Path, double_sided: bool) -> None:
 
 
 def main() -> None:
-    models = Path(__file__).resolve().parents[2] / "demo" / "models"
+    models = Path(__file__).resolve().parents[2] / "examples" / "models"
     write_glb(models / "palm_two_sided.glb", True)
     write_glb(models / "palm_one_sided.glb", False)
 

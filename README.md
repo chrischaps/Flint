@@ -14,9 +14,9 @@ You need a stable Rust toolchain. On Windows that is all; Android and the web ne
 
 ```bash
 cargo build --release
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml   # play a demo scene
-cargo run --bin flint -- render demo/phase4_runtime.scene.toml --output shot.png --schemas schemas
-cargo run --bin flint -- edit demo/phase4_runtime.scene.toml    # scene viewer with live inspector
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml   # play a demo scene
+cargo run --bin flint -- render examples/phase4_runtime.scene.toml --output shot.png --schemas schemas
+cargo run --bin flint -- edit examples/phase4_runtime.scene.toml    # scene viewer with live inspector
 cargo test
 ```
 
@@ -34,6 +34,6 @@ trunk serve
 
 - `crates/` holds the 26-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
 - `schemas/` defines the engine's components and archetypes in TOML
-- `demo/` has showcase scenes, scripts and effects
+- `examples/` has showcase scenes, scripts and effects
 - `docs/book/` is the mdBook source for [docs.chaps.dev/flint](https://docs.chaps.dev/flint)
 - `tools/` holds the docs checker, the play.chaps.dev site builder and other helpers

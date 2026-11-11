@@ -3,7 +3,7 @@
 # unchanged (the passthrough, which still runs the prelude's sRGB round
 # trip at the display stage) and name the file, line and column.
 #
-# It lives here, not in demo/styles/, so no demo scene shows its error.
+# It lives here, not in examples/styles/, so no demo scene shows its error.
 version = 1
 name = "broken"
 label = "Broken (test fixture)"

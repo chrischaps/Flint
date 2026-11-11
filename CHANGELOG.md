@@ -34,6 +34,26 @@ to do.
 
 ## 2026-11-10
 
+### `demo/` is now `examples/`, with an index and `flint examples` (#763)
+**What changed.** The engine's example scenes moved from `demo/` to
+`examples/`, and four scenes that only the render goldens used
+(`stylize_props_ascii`, `stylize_props_pencil`, `stylize_props_plain`,
+`stylize_blend`) left it for `tests/fixtures/scenes/`, where frozen copies of
+every scene a golden or CLI test loads now live. The stray `build-tavern.ps1`,
+`explore-tavern.ps1`, `view-showcase.ps1` and `luminarium_preview.png` are
+gone. `examples/index.toml` gives every example a topic and a one-line
+purpose; the new `flint examples` lists them (`--topic`, `--json`), and
+`flint examples --check` fails when the index and the folder disagree or a
+scene fails `flint validate`. In a game, `flint examples` finds
+`engine/examples/` on its own. The rooms of `phase4_runtime` and
+`showcase_tavern` lost `archetype = "room"`: they have no `bounds`, so they
+failed the engine's `rooms_have_bounds` constraint; they draw the same.
+**What to do.** Change any path your game, scripts or docs spell as
+`engine/demo/...` to `engine/examples/...`. The asset search never looked in
+`engine/demo/`, so models, textures and sounds your scenes name resolve as
+before. The web export's game id stays `demo` (`examples/bundle.toml`), so
+`?game=demo` links keep working.
+
 ### Models, textures, UI sprites, animations and sounds are found by the one search rule (#706)
 **What changed.** These kinds join particle effects (the next entry) on the
 engine's one asset search: beside the scene, then beside each directory above

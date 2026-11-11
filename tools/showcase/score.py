@@ -183,7 +183,7 @@ def _phrase(bar: int) -> tuple[str, int]:
 
 def _clicks(beat_id: str) -> list[float]:
     """Mouse clicks and key taps of a beat's input script, in take seconds."""
-    path = Path(__file__).resolve().parents[2] / "demo/film/beats" / f"{beat_id}.input.txt"
+    path = Path(__file__).resolve().parents[2] / "examples/film/beats" / f"{beat_id}.input.txt"
     out = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():

@@ -1,0 +1,196 @@
+# Wooze props (#252): what else gets the wooze, beside a living oak.
+#
+# The experiment pass after #251's shortlist (docs/design/living-props-beyond-trees.md).
+# Each target stands on the left with the wooze and on the right without it, on the
+# grove's linklater field, so a still twin shows what "pasted in" looks like:
+#
+#   the vine      `garden_vine` with a [living] table and no code (examples/specs/grove_vine).
+#                 Left it lives, right it's the same lineage baked once.
+#   the beetle    `creature_v1`'s beetle under `shallow_wooze`, no code
+#                 (examples/specs/grove_beetle). Left it swells and settles, right it holds.
+#
+# The oak behind them is the grove's, for the look the props have to belong beside.
+# The experiment also plays the beetles with the showcase creatures' wall-clock bob
+# (examples/scripts/beetle_idle.rhai) to see whether it fights the beat. The fourth
+# target, a noise pose for pine, isn't in the engine: it's a prototype in
+# `living_spike`. examples/wooze_props/README.md has the verdicts.
+#
+#   python examples/wooze_props/experiment.py          # every capture, GIFs and the measure
+#   cargo run --release --bin flint -- render examples/wooze_props.scene.toml --time 0..4 --fps 12 --output strip.gif
+#   cargo run --release --bin flint -- play examples/wooze_props.scene.toml
+
+[scene]
+name = "Wooze Props"
+version = "1.0"
+description = "A living vine and a beetle on shallow wooze, each beside a still twin, under a living oak"
+
+[wooze]
+preset = "linklater"
+
+[camera]
+position = [0.0, 1.55, -5.6]
+target = [0.0, 1.35, 1.0]
+fov = 52.0
+
+[environment]
+ambient_sky = [0.34, 0.40, 0.52]
+ambient_ground = [0.13, 0.10, 0.09]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.07
+bloom_threshold = 1.15
+vignette_enabled = true
+vignette_intensity = 0.32
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+ssao_samples = 16
+fog_enabled = true
+fog_color = [0.90, 0.70, 0.56]
+fog_density = 0.012
+fog_start = 14.0
+fog_end = 150.0
+boil_on = 1
+grade_lift = [0.012, 0.018, 0.03]
+grade_gain = [1.05, 1.0, 0.95]
+
+[post_process.styles.kuwahara]
+radius = 3
+sharpness = 8.0
+hardness = 6.0
+boil = 0.5
+
+[post_process.styles.contour]
+width = 1.25
+boil = 1.0
+fade = 26.0
+
+# --- The grove's light: the last hour, low from the north-east ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.10, 0.22, 0.44, 1.0]
+horizon_color = [0.92, 0.68, 0.50, 1.0]
+haze_color = [0.98, 0.72, 0.52, 0.75]
+cloud_tint = [1.0, 0.82, 0.72, 0.8]
+cloud_coverage = 0.32
+sun_glow = 1.6
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.66, 0.40, -0.48]
+color = [1.0, 0.80, 0.58]
+intensity = 2.9
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.4]
+color = [0.52, 0.62, 0.88]
+intensity = 0.42
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-40, -0.4, -40]
+max = [40, 0, 40]
+[entities.ground.material]
+texture = "grove_floor"
+texture_scale = 0.0125
+roughness = 0.95
+metallic = 0.0
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [80, 0.4, 80]
+friction = 0.8
+
+[entities.player]
+archetype = "player"
+[entities.player.transform]
+position = [0.0, 1.0, -6.5]
+[entities.player.character_controller]
+move_speed = 3.0
+jump_force = 5.0
+camera_mode = "first_person"
+
+# --- Behind: the grove's oak, living, for the look to belong beside ---
+
+[entities.oak.transform]
+position = [0.3, 0.0, 19.0]
+rotation = [0.0, 40.0, 0.0]
+scale = [0.9, 0.9, 0.9]
+[entities.oak.model]
+asset = "grove_oak"
+[entities.oak.living_prop]
+lineage_seed = 11
+
+# --- The vine, on two stone pillars: living on the left, baked on the right ---
+
+[entities.pillar_left]
+archetype = "furniture"
+[entities.pillar_left.transform]
+position = [1.9, 0.0, 1.6]
+[entities.pillar_left.bounds]
+min = [-0.2, 0, -0.2]
+max = [0.2, 2.6, 0.2]
+[entities.pillar_left.material]
+color = [0.50, 0.46, 0.40, 1.0]
+roughness = 0.9
+
+[entities.vine_left.transform]
+position = [1.9, 0.0, 1.34]
+rotation = [0.0, 20.0, 0.0]
+scale = [0.9, 0.9, 0.9]
+[entities.vine_left.model]
+asset = "grove_vine"
+[entities.vine_left.living_prop]
+lineage_seed = 7
+
+[entities.pillar_right]
+archetype = "furniture"
+[entities.pillar_right.transform]
+position = [-1.9, 0.0, 1.6]
+[entities.pillar_right.bounds]
+min = [-0.2, 0, -0.2]
+max = [0.2, 2.6, 0.2]
+[entities.pillar_right.material]
+color = [0.50, 0.46, 0.40, 1.0]
+roughness = 0.9
+
+[entities.vine_right.transform]
+position = [-1.9, 0.0, 1.34]
+rotation = [0.0, 20.0, 0.0]
+scale = [0.9, 0.9, 0.9]
+[entities.vine_right.model]
+asset = "grove_vine"
+
+# --- The beetle, in front: shallow wooze on the left, still on the right ---
+# A wavelength near the bug's size makes it change shape rather than move whole (#251).
+
+[entities.beetle_left.transform]
+position = [0.75, 0.0, -1.6]
+rotation = [0.0, 210.0, 0.0]
+scale = [0.55, 0.55, 0.55]
+[entities.beetle_left.model]
+asset = "grove_beetle"
+[entities.beetle_left.shallow_wooze]
+amplitude = 0.04
+wavelength = 0.35
+
+[entities.beetle_right.transform]
+position = [-0.75, 0.0, -1.6]
+rotation = [0.0, 150.0, 0.0]
+scale = [0.55, 0.55, 0.55]
+[entities.beetle_right.model]
+asset = "grove_beetle"

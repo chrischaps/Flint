@@ -1,0 +1,459 @@
+# The examples (#763): every scene under examples/, what it is for, and
+# which part of the engine it shows. `flint examples` lists them,
+# `flint examples --topic stylize` narrows the list, and
+# `flint examples --check` fails when a scene here is missing, a scene on
+# disk isn't here, or any of them fails `flint validate`. CI runs the check.
+#
+# These are curated: improve one freely. Nothing pins their pixels. The
+# goldens and CLI tests load frozen copies under tests/fixtures/scenes/,
+# so a change here never re-blesses a golden (and a change there is a
+# change to a test, made on purpose).
+#
+# A new example gets an entry; a scene that only a test needs goes in
+# tests/fixtures/scenes/ instead. Topics are free text, but keep to the
+# ones below so the list groups well:
+#
+#   showcase   whole scenes to look at or play first
+#   rendering  lighting, materials, post-processing, the editor's own views
+#   stylize    ASCII, pencil, watercolor, looks and user styles
+#   living     living props, the wooze field and the Woozy Grove
+#   world      terrain, grass, water and particles
+#   runtime    scripting, physics, audio, HUD and input
+#   2d         sprites, 2D cameras and 2D collision
+#   film       the showcase film's set (tools/showcase, #722)
+
+# --- showcase ---------------------------------------------------------------
+
+[[example]]
+scene = "showcase_tavern.scene.toml"
+topic = "showcase"
+purpose = "The Rusty Flint tavern, painted and playable: pause menu, HUD, a watchful stranger and a hidden passage"
+
+[[example]]
+scene = "showcase.scene.toml"
+topic = "showcase"
+purpose = "The tavern as the CLI builds it: the scene the book's tavern guide queries and edits"
+
+[[example]]
+scene = "showcase_crucible.scene.toml"
+topic = "showcase"
+purpose = "An underground forge: heavy post-processing, particles, a persistent store and a forge-spirit NPC"
+
+[[example]]
+scene = "phase3_showcase.scene.toml"
+topic = "showcase"
+purpose = "The Luminarium (Phase 3): PBR, procedural textures, imported models, many lights and cascaded shadows"
+
+[[example]]
+scene = "phase4_runtime.scene.toml"
+topic = "showcase"
+purpose = "The Phase 4 tavern: physics, audio, animation, scripting and NPCs to talk to; the book's first `flint play`"
+
+[[example]]
+scene = "phase5_ai_demo.scene.toml"
+topic = "showcase"
+purpose = "Semantic asset definitions for `flint asset resolve`: what AI generation would fill in (Phase 5)"
+
+# --- rendering --------------------------------------------------------------
+
+[[example]]
+scene = "pbr_test.scene.toml"
+topic = "rendering"
+purpose = "Imported glTF under PBR: a box, the YBot and a procedural cube; the book's default render target"
+
+[[example]]
+scene = "lighting_test.scene.toml"
+topic = "rendering"
+purpose = "Directional, point and spot lights together"
+
+[[example]]
+scene = "transparency_test.scene.toml"
+topic = "rendering"
+purpose = "Transparent materials beside opaque ones"
+
+[[example]]
+scene = "double_sided.scene.toml"
+topic = "rendering"
+purpose = "A palm with double-sided fronds beside one without, seen from below"
+
+[[example]]
+scene = "unlit_ambient.scene.toml"
+topic = "rendering"
+purpose = "Ambient-only lighting, no shadows, and unlit neon bars (#627)"
+
+[[example]]
+scene = "emissive_recolor.scene.toml"
+topic = "rendering"
+purpose = "A script recolours imported models' glow per named material, under real light (#624)"
+
+[[example]]
+scene = "neon_bloom.scene.toml"
+topic = "rendering"
+purpose = "An HDR style that feeds bloom, so the glow follows the style's own lines (#300)"
+
+[[example]]
+scene = "volumetric_test.scene.toml"
+topic = "rendering"
+purpose = "God rays streaming through columns and obstacles"
+
+[[example]]
+scene = "volumetric_dungeon.scene.toml"
+topic = "rendering"
+purpose = "God rays through a barred dungeon window"
+
+[[example]]
+scene = "visibility.scene.toml"
+topic = "rendering"
+purpose = "Hidden entities, hidden subtrees and hidden lights (#628)"
+
+[[example]]
+scene = "selection_outline.scene.toml"
+topic = "rendering"
+purpose = "One of each kind of thing `flint edit` can select, to judge its selection outline (#602)"
+
+[[example]]
+scene = "mesh_sequence.scene.toml"
+topic = "rendering"
+purpose = "Slots for `flint render --mesh`: a frame per generated mesh (#222)"
+
+[[example]]
+scene = "shear_road.scene.toml"
+topic = "rendering"
+purpose = "A scanline road of sheared tiles, one entity a tile, its edges unbroken through the curve (#625)"
+
+[[example]]
+scene = "shear_road_yawed.scene.toml"
+topic = "rendering"
+purpose = "The sheared road seen from a yawed camera (#625)"
+
+# --- stylize ----------------------------------------------------------------
+
+[[example]]
+scene = "stylize_props.scene.toml"
+topic = "stylize"
+purpose = "A small clearing of props in ASCII and pencil at once: the quickest place to try a style"
+
+[[example]]
+scene = "ascii_entities.scene.toml"
+topic = "stylize"
+purpose = "Some props drawn as ASCII glyphs, the meadow left smooth (#266)"
+
+[[example]]
+scene = "ascii_edges.scene.toml"
+topic = "stylize"
+purpose = "A styled sphere and box under ASCII's edge glyphs (#267)"
+
+[[example]]
+scene = "ascii_lantern.scene.toml"
+topic = "stylize"
+purpose = "A dusk set piece lit for value contrast, for the full-screen ASCII look (#316)"
+
+[[example]]
+scene = "ascii_tidepool.scene.toml"
+topic = "stylize"
+purpose = "The lantern set piece in the tidepool palette and glyph set, to tune both live (#323)"
+
+[[example]]
+scene = "ascii_dark_props.scene.toml"
+topic = "stylize"
+purpose = "Dark props kept legible in glyphs by exposure and per-entity normalisation (#289)"
+
+[[example]]
+scene = "ascii_silhouette.scene.toml"
+topic = "stylize"
+purpose = "The meadow bench in per-entity glyphs, its thin legs kept at the silhouette (#288)"
+
+[[example]]
+scene = "ascii_fonts.scene.toml"
+topic = "stylize"
+purpose = "Two glyph sets in one frame: built-in letters and halftone dots (#335)"
+
+[[example]]
+scene = "ascii_crowd.scene.toml"
+topic = "stylize"
+purpose = "500 pillars, each in ASCII on its own object grid (#336)"
+
+[[example]]
+scene = "ascii_motion.scene.toml"
+topic = "stylize"
+purpose = "The meadow in ASCII under a slow orbit, to measure glyph shimmer (#277)"
+
+[[example]]
+scene = "ascii_cuts.scene.toml"
+topic = "stylize"
+purpose = "ASCII cutting between two shots, its style history reset at each cut (#343)"
+
+[[example]]
+scene = "ascii_reveal.scene.toml"
+topic = "stylize"
+purpose = "Props fade and dissolve into ASCII and back on a blend a script ramps (#278)"
+
+[[example]]
+scene = "ascii_story.scene.toml"
+topic = "stylize"
+purpose = "A script flips props between smooth and ASCII at story beats (#269)"
+
+[[example]]
+scene = "dream_story.scene.toml"
+topic = "stylize"
+purpose = "A script cross-fades the whole frame into Kuwahara and back at story beats (#369)"
+
+[[example]]
+scene = "pencil_sketch.scene.toml"
+topic = "stylize"
+purpose = "Pencil on chosen props: hatching, contours and paper (#273)"
+
+[[example]]
+scene = "watercolor.scene.toml"
+topic = "stylize"
+purpose = "Some props painted in watercolor, the meadow left as it is (#272)"
+
+[[example]]
+scene = "style_mask.scene.toml"
+topic = "stylize"
+purpose = "Props under several per-entity styles, to see the style mask they share (#263)"
+
+[[example]]
+scene = "style_terrain.scene.toml"
+topic = "stylize"
+purpose = "ASCII terrain under smooth props, and a styled glass lens (#310)"
+
+[[example]]
+scene = "style_veil.scene.toml"
+topic = "stylize"
+purpose = "A glyph stone behind a campfire and a glyph crate behind glass: what's in front unmasks (#290)"
+
+[[example]]
+scene = "looks.scene.toml"
+topic = "stylize"
+purpose = "A scene that names a look, and a script that tours the built-in ones (#356)"
+
+[[example]]
+scene = "user_styles.scene.toml"
+topic = "stylize"
+purpose = "Styles a game writes itself: WGSL beside a .shader.toml, loaded at run time (#274)"
+
+# --- living -----------------------------------------------------------------
+
+[[example]]
+scene = "woozy_grove.scene.toml"
+topic = "living"
+purpose = "A walkable clearing of living trees, a bench and lantern on shallow wooze, and three pockets of different wooze"
+
+[[example]]
+scene = "woozy_grove_grass.scene.toml"
+topic = "living"
+purpose = "The Woozy Grove grown over with grass, combed by the wooze field's noise each beat"
+
+[[example]]
+scene = "living_props.scene.toml"
+topic = "living"
+purpose = "Forty living oaks, to check their pose rings stay full"
+
+[[example]]
+scene = "living_sweep.scene.toml"
+topic = "living"
+purpose = "Forty living oaks with every knob moving, to check no frame goes without a pose"
+
+[[example]]
+scene = "living_compare.scene.toml"
+topic = "living"
+purpose = "One tree under two settings, twice: a spec beside a twin with species values of its own"
+
+[[example]]
+scene = "soft_form.scene.toml"
+topic = "living"
+purpose = "A pale living form whose silhouette feathers at rest (#582)"
+
+[[example]]
+scene = "wooze_field.scene.toml"
+topic = "living"
+purpose = "Living oaks through a dreamy sphere and a calm box, with a script changing the step"
+
+[[example]]
+scene = "wooze_props.scene.toml"
+topic = "living"
+purpose = "A living vine and a beetle on shallow wooze, each beside a still twin, under a living oak"
+
+[[example]]
+scene = "shallow_wooze.scene.toml"
+topic = "living"
+purpose = "Hand-made and imported props on the wooze field's clock, beside still twins"
+
+[[example]]
+scene = "shading_boil.scene.toml"
+topic = "living"
+purpose = "A still life whose paint and ink re-decide themselves on the wooze field's beat"
+
+# --- world ------------------------------------------------------------------
+
+[[example]]
+scene = "terrain_test.scene.toml"
+topic = "world"
+purpose = "Heightmap terrain with splat-map texture blending"
+
+[[example]]
+scene = "rolling_meadow.scene.toml"
+topic = "world"
+purpose = "Rolling hills of stylized grass in golden-hour light"
+
+[[example]]
+scene = "mesh_meadow.scene.toml"
+topic = "world"
+purpose = "Compute grass on a mesh plane under a painted density mask, with no terrain"
+
+[[example]]
+scene = "water_bodies.scene.toml"
+topic = "world"
+purpose = "Water on any mesh: a tarn, a river falling into it and its outflow to the sea, each its own level and tint"
+
+[[example]]
+scene = "shoreline.scene.toml"
+topic = "world"
+purpose = "The ocean's shoreline foam round a quay, a slipway and piers; tune it live with F3"
+
+[[example]]
+scene = "particles_demo.scene.toml"
+topic = "world"
+purpose = "Particles: fire, smoke, sparks and dust motes"
+
+[[example]]
+scene = "campfire.scene.toml"
+topic = "world"
+purpose = "A particle effect asset beside an inline sparks emitter, for comparison"
+
+# --- runtime ----------------------------------------------------------------
+
+[[example]]
+scene = "joint_test.scene.toml"
+topic = "runtime"
+purpose = "Physics joints: a hinge pendulum, a sprung slider, a gimballed pod and a wheel"
+
+[[example]]
+scene = "skeletal_test.scene.toml"
+topic = "runtime"
+purpose = "The YBot on a looping idle: skeletal animation"
+
+[[example]]
+scene = "audio_clock.scene.toml"
+topic = "runtime"
+purpose = "Pads lit by audio_position() on a looping click track"
+
+[[example]]
+scene = "seeded_stars.scene.toml"
+topic = "runtime"
+purpose = "random() under --frame-step and --seed: the same skies every run (#635)"
+
+[[example]]
+scene = "hud_glow.scene.toml"
+topic = "runtime"
+purpose = "Round wide strokes and glows on HUD text, beside eight stamped copies (#626)"
+
+[[example]]
+scene = "safe_area_hud.scene.toml"
+topic = "runtime"
+purpose = "A HUD inside the safe-area insets, worded for the device in hand (#660)"
+
+[[example]]
+scene = "ui_test/ui_test.scene.toml"
+topic = "runtime"
+purpose = "Screen anchors, UI fills, UI text and bitmap fonts"
+
+[[example]]
+scene = "ui_test/ui_fonts.scene.toml"
+topic = "runtime"
+purpose = "ui_text in every glyph source: a PNG grid font, the built-in 8x8 set and a hand-drawn set (#283)"
+
+[[example]]
+scene = "touch_test/touch_test.scene.toml"
+topic = "runtime"
+purpose = "Touch zones, tap detection and mouse emulation"
+
+# --- 2d ---------------------------------------------------------------------
+
+[[example]]
+scene = "test_sprite2d.scene.toml"
+topic = "2d"
+purpose = "An orthographic camera and 2D sprites"
+
+[[example]]
+scene = "sprite_anim_test/sprite_anim_test.scene.toml"
+topic = "2d"
+purpose = "Sprite-sheet animation from TOML clips, driven from Rhai"
+
+[[example]]
+scene = "scrolling_test/scrolling_test.scene.toml"
+topic = "2d"
+purpose = "Camera follow, parallax backgrounds, screen shake and chunk streaming"
+
+[[example]]
+scene = "collision_2d_test/collision_2d_test.scene.toml"
+topic = "2d"
+purpose = "2D collision helpers: solids, trigger volumes and sprite colliders"
+
+# --- film -------------------------------------------------------------------
+
+[[example]]
+scene = "film/01_plain.scene.toml"
+topic = "film"
+purpose = "The showcase film's set, unstyled: the frame every style redraws (#435)"
+
+[[example]]
+scene = "film/02_type.scene.toml"
+topic = "film"
+purpose = "Full-screen ASCII through its colour modes and palettes, orbiting"
+
+[[example]]
+scene = "film/03_edges.scene.toml"
+topic = "film"
+purpose = "ASCII from tone alone, then with edge glyphs along every silhouette"
+
+[[example]]
+scene = "film/04_entities.scene.toml"
+topic = "film"
+purpose = "Chosen props in ASCII, each its own way, the world left smooth"
+
+[[example]]
+scene = "film/05_mask.scene.toml"
+topic = "film"
+purpose = "Props under three styles, and the debug view of the style mask they share"
+
+[[example]]
+scene = "film/06_story.scene.toml"
+topic = "film"
+purpose = "A Rhai script styles props at story beats and animates their params"
+
+[[example]]
+scene = "film/07_reveal.scene.toml"
+topic = "film"
+purpose = "Props fade and dissolve into ASCII and back, a blend a script ramps"
+
+[[example]]
+scene = "film/08_pencil.scene.toml"
+topic = "film"
+purpose = "Per-entity pencil with boil, then the whole frame as one sketch"
+
+[[example]]
+scene = "film/09_watercolor.scene.toml"
+topic = "film"
+purpose = "A painted clearing with one figure left real, then paint on the props alone"
+
+[[example]]
+scene = "film/10_looks.scene.toml"
+topic = "film"
+purpose = "One move under each built-in look, for match cuts between them"
+
+[[example]]
+scene = "film/11_user.scene.toml"
+topic = "film"
+purpose = "User-authored WGSL styles: hologram props, then risograph and contour frames"
+
+[[example]]
+scene = "film/12_menu.scene.toml"
+topic = "film"
+purpose = "The F4 Styles editor tuning whole-frame ASCII live"
+
+[[example]]
+scene = "film/13_hands.scene.toml"
+topic = "film"
+purpose = "Every prop in a different style at once, pulling back into the evening"

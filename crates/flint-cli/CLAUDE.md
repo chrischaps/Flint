@@ -43,7 +43,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #   --gpu-time 240         (draw N frames with GPU timing, print ms per pass)
    #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
    #                          (#222: a frame per GLB on that entity, one renderer; natural order;
-   #                           multi-node GLBs baked flat, mesh_seq.rs; demo/mesh_sequence.scene.toml)
+   #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)
    #   --frames 181 --frame-dt 0.0166667 --orbit 6.8755 | --camera-path cam.toml
    #                          (#345: N frames on one renderer as out_0000.png...; temporal
    #                           styles see consecutive frames; --flip-stats / --flip-json f.json
@@ -78,7 +78,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          against its descriptor; repeatable; `--style help`;
    #                          also on `flint edit <model|effect> --render`)
    #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
-   #                          direction surface|screen|tensor, seed, boil; demo/pencil_sketch)
+   #                          direction surface|screen|tensor, seed, boil; examples/pencil_sketch)
    #   --style-time 1.5       (post time animated styles read; default 0)
    #                          (#328: --style/--style-time also on flint play, flint-player and
    #                           flint edit scene.toml, kept through transitions and hot reloads;
@@ -93,7 +93,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          `--look help` lists them with their tune sweeps. #356: a scene's
    #                          `[post_process] look = "<name>"` goes UNDER its keys (loader records
    #                          them in PostProcessDef::authored; flint_render::look::resolve, vfs reads);
-   #                          F4 -> Look and Rhai set_look/clear_look re-resolve; demo/looks.scene.toml)
+   #                          F4 -> Look and Rhai set_look/clear_look re-resolve; examples/looks.scene.toml)
    #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
    #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b,
    #                          wooze.<knob> (#216; one Sweep type in commands/sweep.rs,
@@ -110,7 +110,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          (#291: any flags side by side: each variant = this command line + its
    #                           flags (args_override_self; --style adds), one labelled sheet at -o,
    #                           <out>-<label>.png each, nearest crops <out>-zoom.png; one process and
-   #                           GPU (RenderHost, imports memoized); commands/variants.rs; demo/variants/.
+   #                           GPU (RenderHost, imports memoized); commands/variants.rs; examples/variants/.
    #                           main.rs / render_goldens fill RenderArgs::command_line for it)
    #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
    #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
@@ -197,7 +197,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
 ## Goldens and `flint render-suite`
 
-   **Goldens (#271):** `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
+   **Goldens (#271):** every case loads a frozen scene under `tests/fixtures/scenes/` (#763; its README),
+   never `examples/` (test `no_golden_case_loads_an_example`): copy a scene there, with its assets, to pin it.
+   `flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact
    sheet of golden | render | diff, failures first, #329; `--case` with an exact name picks that case
@@ -225,13 +227,17 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and
    `fract(theta - base)` on a ±ε knife edge. A `.suite.toml` there is still music to WAV.
 
+## `flint examples`
+
+- `flint examples [--topic t] [--json] [--check] [--dir d] [--schemas s]` (#763, `commands/examples.rs`): lists `examples/index.toml` (`[[example]] scene/topic/purpose`, unknown keys refused) grouped by topic in index order; `--dir` defaults to `examples/`, else `engine/examples/`. `--check` fails (exit 1, a `FAIL` line each) on a scene on disk with no entry (`dist/` skipped), an entry with no file, an empty topic or purpose, a duplicate, or a scene failing `validate::check` -- everything `flint validate` checks, but the scene is loaded even with no constraints, and style warnings count as failures. CI's headless job runs it. Test: `tests/examples_cli.rs`
+
 ## `flint export web`
 
-- `flint export web <game> [--out dir]` (#106, `commands/export.rs`): copies a trunk build of the player (`--player`, or builds one from the CLI's own tree so packer and player share `bundle::FORMAT_VERSION`), packs `games/<id>/` with the game's `bundle.toml` rules, copies a local `video`/`poster`, and merges this game's entry into `games.json` (id kept in place); one listed game plays at the bare address (the doorway sets `?game=`). Writes only into an empty folder or a past export. `bundle.toml` gained `[web]` (the games.json keys) and `[mount]` (`"engine/schemas" = "../schemas"`, as `demo/bundle.toml` does); a game with no `engine/schemas` packs the engine's own
+- `flint export web <game> [--out dir]` (#106, `commands/export.rs`): copies a trunk build of the player (`--player`, or builds one from the CLI's own tree so packer and player share `bundle::FORMAT_VERSION`), packs `games/<id>/` with the game's `bundle.toml` rules, copies a local `video`/`poster`, and merges this game's entry into `games.json` (id kept in place); one listed game plays at the bare address (the doorway sets `?game=`). Writes only into an empty folder or a past export. `bundle.toml` gained `[web]` (the games.json keys) and `[mount]` (`"engine/schemas" = "../schemas"`, as `examples/bundle.toml` does); a game with no `engine/schemas` packs the engine's own
 
 ## `--schemas` and the project manifest
 
-- **One schema resolver** (ADR 0114 step 2, #706) -- every command that loads schemas calls `commands::common_args::load_schemas(scene, &flags)` (`flint_schema::SchemaRegistry::resolve` -> `flint_core::project::schema_dirs`): `--schemas` flags if any (the whole list; nothing discovered is added), else `[project] schemas` in the scene's project's `flint.toml`, else `schemas/` in the working directory, beside the scene and one level up. `--schemas` is `Vec<String>` with NO clap default on every command (`play`, `render`, `validate`, `query`, `entity *`, `schema`, `edit`, `serve`, `spline-edit`, `prefab view`), so an empty vec means "not given"; a default would read as a flag and hide the manifest. A named directory that isn't there is an error naming it and who named it (`schema directory not found: nope (named by --schemas)`), printed bare, on stderr. A game repo with `schemas = ["engine/schemas", "schemas"]` needs no flags; in the engine checkout a `demo/` scene resolves by discovery to `./schemas`, as it always did. `flint edit <scene>` passes every flag to `flint_viewer::app::load_schemas` (#704 was `.first()` in `edit_router.rs`; its test parses the real command line on a 16 MB thread). `flint bundle` takes the manifest's `schemas` when `bundle.toml` names none. Test: `tests/project_schemas_cli.rs` (a fixture project, every windowless command plus a render). Book: guides/building-a-game-project.md, concepts/schemas.md
+- **One schema resolver** (ADR 0114 step 2, #706) -- every command that loads schemas calls `commands::common_args::load_schemas(scene, &flags)` (`flint_schema::SchemaRegistry::resolve` -> `flint_core::project::schema_dirs`): `--schemas` flags if any (the whole list; nothing discovered is added), else `[project] schemas` in the scene's project's `flint.toml`, else `schemas/` in the working directory, beside the scene and one level up. `--schemas` is `Vec<String>` with NO clap default on every command (`play`, `render`, `validate`, `query`, `entity *`, `schema`, `edit`, `serve`, `spline-edit`, `prefab view`), so an empty vec means "not given"; a default would read as a flag and hide the manifest. A named directory that isn't there is an error naming it and who named it (`schema directory not found: nope (named by --schemas)`), printed bare, on stderr. A game repo with `schemas = ["engine/schemas", "schemas"]` needs no flags; in the engine checkout an `examples/` scene resolves by discovery to `./schemas`, as it always did. `flint edit <scene>` passes every flag to `flint_viewer::app::load_schemas` (#704 was `.first()` in `edit_router.rs`; its test parses the real command line on a 16 MB thread). `flint bundle` takes the manifest's `schemas` when `bundle.toml` names none. Test: `tests/project_schemas_cli.rs` (a fixture project, every windowless command plus a render). Book: guides/building-a-game-project.md, concepts/schemas.md
 - **`flint asset where <kind> <name> [--scene x] [--json]`** (ADR 0114 step 3, #706; `commands/asset_where.rs`, a variant of `AssetCommands`, not of `Commands`) -- prints `Project::explain`: the file the engine would load, the paths tried before it and any order-change note; with nothing found it lists every path and exits 1 (`--json`: one document on stdout, then `process::exit(1)`). The project is the scene's (`Project::for_path`), or the working directory's with no `--scene`, when the scene directory is `.`. The kind argument parses through `AssetKind::from_label`, and both `--help` (`after_help`) and a bad kind print `kinds_help()`, built from `AssetKind::ALL`, so a new kind shows up with no change here. Paths print through `project::shown`. Test: `tests/asset_where_cli.rs`
 
 ## Linux

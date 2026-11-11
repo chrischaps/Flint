@@ -955,10 +955,10 @@ input = "config/input.toml"
         with_files(
             &[
                 ("flint/crates/flint-core/Cargo.toml", ""),
-                ("flint/demo/a.scene.toml", ""),
+                ("flint/examples/a.scene.toml", ""),
             ],
             || {
-                let p = discover("flint/demo/a.scene.toml").unwrap();
+                let p = discover("flint/examples/a.scene.toml").unwrap();
                 assert_eq!(p.root, Path::new("flint"));
                 assert_eq!(p.found, Found::Engine);
                 assert_eq!(p.id, None);
@@ -1164,12 +1164,12 @@ input = "config/input.toml"
                 ("engine/schemas/", ""),
                 ("schemas/", ""),
                 ("scenes/a.scene.toml", ""),
-                ("demo/b.scene.toml", ""),
+                ("examples/b.scene.toml", ""),
             ],
             || {
                 assert!(dropped("scenes/a.scene.toml", &["engine/schemas", "schemas"]).is_empty());
-                assert!(dropped("demo/b.scene.toml", &["schemas"]).is_empty());
-                assert!(dropped("demo/b.scene.toml", &["./schemas"]).is_empty());
+                assert!(dropped("examples/b.scene.toml", &["schemas"]).is_empty());
+                assert!(dropped("examples/b.scene.toml", &["./schemas"]).is_empty());
                 // No scene, no flags, a manifest, a host: never
                 assert!(schema_dirs(None, &["engine/schemas"])
                     .unwrap()
@@ -1321,10 +1321,10 @@ input = "config/input.toml"
             &[
                 ("crates/flint-core/Cargo.toml", ""),
                 ("schemas/", ""),
-                ("demo/a.scene.toml", ""),
+                ("examples/a.scene.toml", ""),
             ],
             || {
-                let dirs = schema_dirs(Some("demo/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                let dirs = schema_dirs(Some("examples/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
                 assert_eq!(dirs.source, SchemaSource::Discovery);
                 assert_eq!(paths(&dirs), ["schemas"]);
             },

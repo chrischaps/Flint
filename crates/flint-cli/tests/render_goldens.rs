@@ -79,7 +79,7 @@ fn style_flag_rejects_what_it_cannot_do() {
     let run = Command::new(FLINT)
         .args([
             "render",
-            "demo/pbr_test.scene.toml",
+            "tests/fixtures/scenes/pbr_test.scene.toml",
             "--style",
             "ascii:colour=tint",
         ])

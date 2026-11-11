@@ -1,0 +1,83 @@
+# Soft without busy (#582): one pale living form at dusk, whose silhouette can
+# feather at rest. `[living] softness` (0 to 1) fades the body where its surface
+# turns away from the eye; its cards keep their edges, and nothing about how it
+# moves changes. 0 is a hard edge, drawn exactly as before.
+#
+#   cargo run --bin flint -- render examples/soft_form.scene.toml --schemas schemas \
+#     --time 2 --sweep wooze.preset=hard,soft,softest -o soft.png
+#   cargo run --bin flint-player -- examples/soft_form.scene.toml --schemas schemas
+#
+# The presets are examples/wooze/{hard,soft,softest}.wooze.toml. In the player, F3's
+# Living Props panel has it under Silhouette, and a script turns it with
+# `tune_living(#{ living: #{ softness: 0.6 } })`, or for one species with
+# `tune_living(#{ species: "soft_form", softness: 0.6 })`.
+#
+# The spec is examples/specs/soft_form.procgen.toml.
+
+[scene]
+name = "Soft Form"
+version = "1.0"
+description = "A pale living form whose silhouette feathers at rest"
+
+[camera]
+position = [0.0, 0.7, 2.6]
+target = [0.0, 0.64, 0.0]
+fov = 34.0
+
+[environment]
+ambient_sky = [0.30, 0.34, 0.46]
+ambient_ground = [0.10, 0.08, 0.08]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+vignette_enabled = true
+vignette_intensity = 0.35
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.05, 0.07, 0.14, 1.0]
+horizon_color = [0.10, 0.09, 0.13, 1.0]
+haze_color = [0.14, 0.11, 0.14, 0.4]
+cloud_tint = [0.5, 0.45, 0.5, 0.5]
+cloud_coverage = 0.2
+sun_glow = 0.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 30, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.45, 0.6, 0.66]    # toward the light, over the camera's left shoulder
+color = [1.0, 0.84, 0.66]
+intensity = 2.4
+
+[entities.rim]
+[entities.rim.transform]
+position = [0, 30, 0]
+[entities.rim.light]
+type = "directional"
+direction = [-0.6, 0.35, -0.7]
+color = [0.55, 0.62, 0.95]
+intensity = 0.6
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.2, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.05, 0.045, 0.06, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.form]
+[entities.form.transform]
+position = [0.0, 0.0, 0.0]
+[entities.form.model]
+asset = "soft_form"
+[entities.form.living_prop]
+phase_offset = 0.25

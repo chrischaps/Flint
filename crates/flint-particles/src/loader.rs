@@ -184,9 +184,9 @@ mod tests {
 
     fn demo_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../demo")
+            .join("../../examples")
             .canonicalize()
-            .expect("demo dir")
+            .expect("examples dir")
     }
 
     #[test]
@@ -201,7 +201,8 @@ mod tests {
     #[test]
     fn resolves_particles_dir_next_to_demo_scene() {
         let scene = demo_dir().join("particles_demo.scene.toml");
-        let dir = resolve_particles_dir(scene.to_str().unwrap()).expect("demo/particles exists");
+        let dir =
+            resolve_particles_dir(scene.to_str().unwrap()).expect("examples/particles exists");
         assert!(dir.ends_with("particles"));
         let project = Project::for_scene(&scene);
         let dirs = texture_search_dirs(&project, scene.to_str().unwrap());

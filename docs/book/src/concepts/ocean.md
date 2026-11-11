@@ -260,7 +260,7 @@ it likes, with or without an `ocean`.
 
 ![A tarn above the sea, a river falling into it, its outflow falling on](../images/water-bodies.png)
 
-*`demo/water_bodies.scene.toml`: the tarn sits 6 m up, the river off the
+*`examples/water_bodies.scene.toml`: the tarn sits 6 m up, the river off the
 plateau falls into it, and the outflow falls on to the sea. Fast water foams
 white along its flow.*
 

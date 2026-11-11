@@ -379,14 +379,16 @@ mod tests {
 
     #[test]
     fn a_bare_name_also_tries_the_folder() {
-        let search = vec![PathBuf::from("demo"), PathBuf::from(".")];
+        let search = vec![PathBuf::from("examples"), PathBuf::from(".")];
         let c = candidates(&search, "cold_press", ImageUse::Paper);
         assert_eq!(
             c,
             vec![
-                PathBuf::from("demo").join("cold_press"),
+                PathBuf::from("examples").join("cold_press"),
                 PathBuf::from(".").join("cold_press"),
-                PathBuf::from("demo").join("papers").join("cold_press.png"),
+                PathBuf::from("examples")
+                    .join("papers")
+                    .join("cold_press.png"),
                 PathBuf::from(".").join("papers").join("cold_press.png"),
             ]
         );

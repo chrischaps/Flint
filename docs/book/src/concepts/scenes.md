@@ -86,9 +86,9 @@ curve without turning: `{ xz = s }` slides its far end sideways by `s`
 metres per metre while its near and far edges stay square to the road, so
 neighbouring strips meet edge to edge however wide they are. Turning
 (yawing) each strip instead swings its far corners through its
-neighbours. `demo/shear_road.scene.toml` is a scanline road of 22 such
+neighbours. `examples/shear_road.scene.toml` is a scanline road of 22 such
 tiles, each one entity with `{ xz, yz }` for the bend and the hill, and
-`demo/shear_road_yawed.scene.toml` is the same road laid with yaw:
+`examples/shear_road_yawed.scene.toml` is the same road laid with yaw:
 
 ![A sunset road of sheared tiles, curving right then left, edges and lane line continuous](../images/shear-road.png)
 
@@ -170,7 +170,7 @@ The CLI commands (`entity create`, `entity delete`) modify the scene file, and t
 
 ## Example: The Showcase Scene
 
-The demo scene `demo/showcase.scene.toml` demonstrates the full format:
+The demo scene `examples/showcase.scene.toml` demonstrates the full format:
 
 ```toml
 [scene]

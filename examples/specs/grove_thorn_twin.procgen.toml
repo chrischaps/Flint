@@ -1,0 +1,64 @@
+# grove_thorn under another name, for examples/living_compare.scene.toml (#246).
+#
+# Everything below is examples/specs/grove_thorn.procgen.toml, unchanged but for meta.name. A species is a spec,
+# so this is a second species that grows the very same tree: the same lineage
+# seed gives the same skeleton (living_props.rs tests that). A scene can then
+# give it values of its own in [living.species.grove_thorn_twin] and stand it beside
+# the original. Change the original and copy it again.
+
+generator = "tree_v1"
+
+[meta]
+name = "grove_thorn_twin"
+description = "A gnarled L-system shrub, thick limbed and thin leaved, low enough to look down into"
+version = "1.0.0"
+tags = ["shrub", "vegetation", "thorn", "gnarled", "living", "woozy-grove"]
+
+[seed]
+mode = "fixed"
+value = 53
+
+[params]
+trunk_height = 0.55
+trunk_radius_base = 0.15
+trunk_radius_top = 0.09
+trunk_segments = 6
+radial_segments = 6
+trunk_curve_noise = 0.14
+
+bark_color_base = "#3A2A20"
+bark_roughness = 0.95
+bark_normal_strength = 1.6
+
+branch_method = "lsystem"
+lsystem_iterations = 4
+branch_start = 0.1
+crown_radius = 1.5
+branch_angle_min = 38.0
+branch_angle_max = 74.0
+lsystem_angle_variation = 36.0           # nothing here agrees with anything
+branch_length_falloff = 0.8
+branch_radius_falloff = 0.68             # limbs stay thick out to their ends
+
+leaf_style = "billboard"
+leaf_density = 0.55
+leaves_per_tip = 3
+leaf_spread_radius = 0.2
+leaf_along_branch_density = 0.2
+leaf_along_branch_min_depth = 3
+leaf_size = 0.11
+leaf_size_variation = 0.35
+leaf_color_base = "#7A4326"
+leaf_shades = 3
+leaf_color_variation = 0.08
+leaf_season = 0.55
+leaf_season_variation = 0.1
+
+[living]
+lineage_seed = 53
+pose_ring = 8
+stagger = "per_branch"
+drift = { amplitude = 0.45, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
+jitter = { amplitude = 0.09, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
+variance = { amount = 0.5, steady = 0.6, keep_size = true }
+echoes = { count = 2, spread = 0.7, alpha = 0.22 }

@@ -1,0 +1,51 @@
+# An hdr user style whose own shapes glow (#300): the scene dimmed to
+# night and traced with bright neon isolines of world height. The lines are
+# linear light well above 1, and `feeds_bloom = true` hands the styled
+# picture to bloom, so the halo follows the lines. Turn it off and bloom
+# reads the scene under the style: the lines go flat and the halo sits
+# where the original bright pixels were.
+#
+#   flint render examples/neon_bloom.scene.toml --output neon.png
+#   flint render examples/neon_bloom.scene.toml --style neon:feeds_bloom=0
+#
+# A scene overrides the choice with `feeds_bloom` in its
+# [post_process.styles.neon] table; F4 -> Styles -> Neon has the checkbox.
+version = 1
+name = "neon"
+label = "Neon isolines"
+stage = "hdr"
+shader = "neon.wgsl"
+inputs = ["depth"]
+feeds_bloom = true
+
+[params.spacing]
+default = 0.25
+min = 0.02
+max = 2.0
+label = "Line step (m)"
+help = "World height between two lines"
+
+[params.glow]
+default = 6.0
+min = 0.0
+max = 20.0
+help = "The lines' brightness in linear light; past the bloom threshold they halo"
+
+[params.dim]
+default = 0.22
+min = 0.0
+max = 1.0
+help = "How much of the scene's own light stays under the lines"
+
+[params.ink_r]
+default = 0.25
+min = 0.0
+max = 1.0
+[params.ink_g]
+default = 0.95
+min = 0.0
+max = 1.0
+[params.ink_b]
+default = 1.0
+min = 0.0
+max = 1.0

@@ -161,7 +161,7 @@ Rules that follow from the implementation:
 - `flint render` and the scene viewer do not simulate physics; a `joint`
   component is inert there and the authored rest pose is what renders.
 
-`demo/joint_test.scene.toml` is the reference bench: a hinged pendulum, a
+`examples/joint_test.scene.toml` is the reference bench: a hinged pendulum, a
 sprung prismatic slider on a yawing kinematic base, a gimballed pod with a
 driven spherical motor, and a cylinder wheel.
 
@@ -293,7 +293,7 @@ type = "key"
 code = "Escape"
 ```
 
-`demo/showcase_crucible.scene.toml` binds it this way through `demo/input_showcase.toml`, and Escape opens its pause screen. An Escape from `--input-script` never quits the player, bound or not.
+`examples/showcase_crucible.scene.toml` binds it this way through `examples/input_showcase.toml`, and Escape opens its pause screen. An Escape from `--input-script` never quits the player, bound or not.
 
 A game that takes Escape takes its player's way out with it, so it offers its own: an EXIT row on the title screen and the pause menu that calls `quit_game()` (#659). The run ends as closing the window ends it, with saves flushed and exit code 0. The crucible's pause screen reads Q for it:
 

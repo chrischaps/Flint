@@ -1,0 +1,103 @@
+# The template for a user-authored style (ADR 0112, #275). Copy this file
+# and template.wgsl into your game's styles/ folder, rename both (the
+# `name` below must match the file name), and edit. No engine change, no
+# rebuild: `flint render`, `flint edit` and `flint-player` load every
+# styles/*.shader.toml beside the scene (or one folder up, beside levels/),
+# and natively reload it while they run: save the .wgsl and the next frames
+# draw it; save this file and its parameters change in place.
+#
+# Try it:
+#   flint render examples/user_styles.scene.toml --style template
+#   flint render examples/user_styles.scene.toml --sweep template.split=0,0.5,1
+#   flint edit examples/user_styles.scene.toml          (F4 -> Styles -> Template)
+#
+# Or switch it on from a scene:
+#   [post_process.styles.template]
+#   split = 0.8
+
+# The format's version; this engine reads 1.
+version = 1
+# Lowercase letters, digits and _; the file is <name>.shader.toml.
+name = "template"
+# What the F4 menu and --gpu-time call it.
+label = "Template (split tone)"
+# "display": the finished picture, after tonemapping, at output resolution
+# (glyphs, inks, paper). "hdr": linear light before fog, bloom and the
+# grade, at the scene's resolution (painterly filters that bloom should see).
+stage = "display"
+# The WGSL beside this file. It holds one function, `style`.
+shader = "template.wgsl"
+# Colour is always there. Add "depth" for flint_depth / flint_view_depth /
+# flint_world_pos, "mask" for flint_mask_id / flint_style_blend (entities
+# with `style_mask { style = "template" }`).
+inputs = ["depth"]
+
+# Each [params.<name>] becomes `params.<name>` (an f32) in the shader and a
+# slider in F4. default/min/max are required; label, help and integer are
+# optional. Values from a scene or --style are clamped to min..max.
+[params.split]
+default = 0.6
+min = 0.0
+max = 1.0
+label = "Split"
+help = "How far shadows and highlights take their tints"
+
+[params.balance]
+default = 0.45
+min = 0.1
+max = 0.9
+help = "The luma where shadow becomes highlight"
+
+# Three params named <base>_r/_g/_b fold into one colour picker in F4.
+# Values are display colours (what the eye sees).
+[params.shadow_r]
+default = 0.10
+min = 0.0
+max = 1.0
+[params.shadow_g]
+default = 0.22
+min = 0.0
+max = 1.0
+[params.shadow_b]
+default = 0.42
+min = 0.0
+max = 1.0
+
+[params.light_r]
+default = 1.0
+min = 0.0
+max = 1.0
+[params.light_g]
+default = 0.80
+min = 0.0
+max = 1.0
+[params.light_b]
+default = 0.56
+min = 0.0
+max = 1.0
+
+[params.haze]
+default = 0.35
+min = 0.0
+max = 1.0
+help = "Distance fades toward the shadow tint (reads depth)"
+
+[params.haze_start]
+default = 12.0
+min = 0.0
+max = 200.0
+label = "Haze start (m)"
+
+# Strings and images (#413; examples/styles/darkroom.* uses them):
+#
+# [options.finish]              # params.finish: a u32 index into choices,
+# default = "matte"             # with FLINT_FINISH_MATTE / FLINT_FINISH_GLOSS
+# choices = ["matte", "gloss"]  # defined; F4 draws a combo box
+#
+# [options.paper]               # the scene picks a file: flint_image_paper(uv),
+# kind = "image"                # flint_image_tiled_paper(uv), flint_image_size_paper();
+# default = "papers/cotton.png" # no choices = every image in papers/
+#
+# [images.grade]                # a fixed file beside this one: flint_lut_grade(rgb)
+# file = "luts/warm_print.png"  # reads it as a 3D LUT strip; srgb = true decodes
+#                               # sRGB to linear as it's read

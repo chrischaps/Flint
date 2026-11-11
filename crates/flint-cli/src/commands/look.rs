@@ -8,9 +8,9 @@
 //! everything else replaces), so a look changes only what it names.
 //!
 //! ```text
-//! flint render demo/pbr_test.scene.toml --look ascii_noir -o noir.png
-//! flint render demo/pbr_test.scene.toml --look ascii_noir --sweep ascii.cell=6,9,14 -o cells.png
-//! flint render demo/pbr_test.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
+//! flint render examples/pbr_test.scene.toml --look ascii_noir -o noir.png
+//! flint render examples/pbr_test.scene.toml --look ascii_noir --sweep ascii.cell=6,9,14 -o cells.png
+//! flint render examples/pbr_test.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
 //! flint render --look help
 //! ```
 

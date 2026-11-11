@@ -37,7 +37,7 @@
 //!
 //! ```toml
 //! [mount]                                  # a folder outside the game, packed at a path inside it
-//! "engine/schemas" = "../schemas"          # (Flint's demo/, whose schemas are the repo's)
+//! "engine/schemas" = "../schemas"          # (Flint's examples/, whose schemas are the repo's)
 //! [web]                                    # what `flint export web` puts on the page
 //! title = "Flint demos"
 //! line = "One sentence under the title."

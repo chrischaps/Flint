@@ -434,7 +434,7 @@ mod tests {
     fn case(name: &str, status: &'static str, changed: usize) -> CaseReport {
         CaseReport {
             name: name.into(),
-            scene: "demo/x.scene.toml".into(),
+            scene: "examples/x.scene.toml".into(),
             args: vec!["--style".into(), "ascii".into()],
             status,
             drift: status == "pass" && changed > 0,

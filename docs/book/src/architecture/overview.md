@@ -37,7 +37,7 @@ flint/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
 ├── schemas/                # Default component, archetype, and constraint definitions
-├── demo/                   # Showcase scenes and build scripts
+├── examples/                   # Showcase scenes and build scripts
 └── docs/                   # This documentation (mdBook)
 ```
 
