@@ -171,6 +171,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    A `*.sequence.toml` lists timestamped animator events (`blend`/`layer`/`speed`/`cue`); the previewer gets a Sequence panel (seek slider + event markers, R = restart), the player auto-loads them from `animations/` and scripts use `play_sequence` / `on_sequence_cue`. Layer weights can ramp via `fade_target`/`fade_duration` (`fade_anim_layer`).
    The model previewer has a Layers stack (clip/weight/Add-Over/mask/solo-mute per row), a "Skeleton colour" combo that paints the armature by last writer / layer weight / mask / keyed joints, and "Pose a bone" sliders (posed joints and everything past them draw orange).
    Scene flags: `--spline` (opens spline/track editor).
+   **Spec saves patch, never rewrite** (#194, `commands/spec_save.rs`): the procgen previewer (`spec_text_for_save`) and the texture node editor build the whole document as values, and `patch_document` edits only what differs into the file's `toml_edit` document, keeping comments, order and CRLF. Never write a spec with `toml::to_string_pretty`. The node editor's ops go through `pipeline_ops_for_save` first, which drops the defaults `from_toml` filled in and the `id`/`inputs` the graph added when the file had none. Tests: `spec_save::tests`, `gen_preview::tests`.
    Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
 
 ## `flint gen`
