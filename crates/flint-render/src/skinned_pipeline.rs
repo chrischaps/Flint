@@ -21,6 +21,9 @@ pub struct SkinnedPipeline {
     /// Living props' echoes that may only add light (`[living] echo_blend =
     /// "lighten"`): front faces, no depth write, a max blend.
     pub echo_lighten_pipeline: wgpu::RenderPipeline,
+    /// A body translucent only for its soft edge (#582): front faces, alpha
+    /// blended, depth written.
+    pub soft_edge_pipeline: wgpu::RenderPipeline,
     pub bone_bind_group_layout: wgpu::BindGroupLayout,
     /// What shallow wooze's skinned pipelines build on (#215).
     pub(crate) shader: wgpu::ShaderModule,
@@ -134,7 +137,8 @@ impl SkinnedPipeline {
         let make_transparent = |label: &str,
                                 cull_mode: Option<wgpu::Face>,
                                 fragment: &str,
-                                blend: wgpu::BlendState| {
+                                blend: wgpu::BlendState,
+                                depth_write: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -165,7 +169,7 @@ impl SkinnedPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
+                    depth_write_enabled: depth_write,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
@@ -184,18 +188,31 @@ impl SkinnedPipeline {
             Some(wgpu::Face::Front),
             "fs_skinned",
             alpha,
+            false,
         );
         let transparent_alpha_pipeline = make_transparent(
             "Skinned Transparent Alpha Pipeline (front faces)",
             Some(wgpu::Face::Back),
             "fs_skinned",
             alpha,
+            false,
         );
         let echo_lighten_pipeline = make_transparent(
             "Skinned Echo Lighten Pipeline",
             Some(wgpu::Face::Back),
             "fs_skinned_lighten",
             crate::pipeline::LIGHTEN_BLEND,
+            false,
+        );
+        // A body translucent only for its soft edge (#582): front faces, blended,
+        // and writing depth, since the body is really there. Without the depth,
+        // SSAO, fog and depth of field read the cards behind it through it.
+        let soft_edge_pipeline = make_transparent(
+            "Skinned Soft Edge Pipeline",
+            Some(wgpu::Face::Back),
+            "fs_skinned",
+            alpha,
+            true,
         );
 
         // Transparent additive pipeline for skinned meshes
@@ -343,6 +360,7 @@ impl SkinnedPipeline {
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
             echo_lighten_pipeline,
+            soft_edge_pipeline,
             bone_bind_group_layout,
             shader,
             pipeline_layout,

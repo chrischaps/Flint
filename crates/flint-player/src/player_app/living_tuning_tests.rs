@@ -172,6 +172,7 @@ glide = 0.7
 jitter = 3.0
 [living]
 stagger = "per_branch"
+softness = 0.3
 echoes = { count = 4, spread = 1.5, alpha = 0.3 }
 variance = { amount = 0.9, steady = 0.1, keep_size = false }
 "#,
@@ -257,6 +258,7 @@ glide = 0.7
 jitter = 3.0
 [living]
 stagger = "none"
+softness = 0.45
 echoes = { count = 4, spread = 1.5, alpha = 0.3 }
 variance = { amount = 0.9, steady = 0.1, keep_size = false }
 "#,
@@ -1104,6 +1106,48 @@ fn a_global_change_from_a_script_leaves_a_species_value_standing() {
         .contains("glyde"));
 }
 
+/// Softness (#582) through every way in: a scene's `[living]`, a script's grove
+/// and species tables, the panel's view of what's mixed, a clear, and a bad value.
+#[test]
+fn softness_comes_in_every_way_the_other_knobs_do() {
+    let folder = Folder::new("softness");
+    let mut app = two_species_under(&folder.0, true, Some("softness = 0.2"));
+    let soft = |app: &PlayerApp, i: usize| {
+        app.procgen_resolver
+            .living_props()
+            .softness(LivingPropId(i))
+    };
+    assert_eq!((soft(&app, 0), soft(&app, 2)), (0.2, 0.2), "the scene's");
+    assert_eq!(app.living_look().living.softness, Some(0.2));
+
+    let thorn: toml::Value = toml::from_str("species = \"thorn\"\nsoftness = 0.9\n").unwrap();
+    app.tune_living_from_script(thorn).unwrap();
+    let grove: toml::Value = toml::from_str("[living]\nsoftness = 0.5\n").unwrap();
+    app.tune_living_from_script(grove).unwrap();
+    assert_eq!((soft(&app, 0), soft(&app, 2)), (0.5, 0.9));
+    let view = app.living_view(None);
+    assert_eq!(view.softness.value, 0.5);
+    assert!(
+        !view.softness.mixed,
+        "a species' own isn't the grove disagreeing"
+    );
+    assert_eq!(app.living_view(Some("thorn")).softness.layers, ["species"]);
+    assert_eq!(
+        app.living_look().living.species["thorn"].softness,
+        Some(0.9),
+        "what a commit or a saved preset writes"
+    );
+
+    app.clear_living_species("thorn", &["softness".to_string()])
+        .unwrap();
+    assert_eq!(soft(&app, 2), 0.5, "cleared, the grove's");
+
+    let bad: toml::Value = toml::from_str("[living]\nsoftness = 2.0\n").unwrap();
+    let said = app.tune_living_from_script(bad).unwrap_err();
+    assert!(said.contains("softness = 2"), "{said}");
+    assert_eq!(soft(&app, 0), 0.5, "left as it was");
+}
+
 #[test]
 fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
     let living: flint_scene::LivingDef = toml::from_str(
@@ -1329,6 +1373,7 @@ mod scopes {
                         Knob::VarianceAmount => prop.variance_amount.layer.label(),
                         Knob::VarianceSteady => prop.variance_steady.layer.label(),
                         Knob::KeepSize => prop.keep_size.layer.label(),
+                        Knob::Softness => prop.softness.layer.label(),
                     };
                     if !report.contains(&label) {
                         report.push(label);
@@ -1623,6 +1668,11 @@ mod picks {
                 prop.keep_size.value.to_string(),
                 prop.keep_size.layer.label(),
             ),
+            (
+                Knob::Softness,
+                n(prop.softness.value),
+                prop.softness.layer.label(),
+            ),
         ]
     }
 
@@ -1644,6 +1694,7 @@ mod picks {
             Knob::VarianceAmount => n(knobs.variance_amount),
             Knob::VarianceSteady => n(knobs.variance_steady),
             Knob::KeepSize => knobs.keep_size.to_string(),
+            Knob::Softness => n(knobs.softness),
         };
         Knob::ALL
             .iter()

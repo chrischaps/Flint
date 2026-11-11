@@ -154,7 +154,10 @@ pub struct MaterialUniforms {
     /// Unlit (#627: the entity's `material.unlit`). `x` is 1 when the
     /// material skips lighting and draws its base colour (texture and
     /// vertex colour included) times `y`, its `emissive_scale`, plus its
-    /// emission, straight to the HDR target; 0 is lit. `zw` unused.
+    /// emission, straight to the HDR target; 0 is lit. `z` is the edge
+    /// softness (#582, a living prop's `softness`, skinned shader only): above
+    /// 0 the surface's alpha falls toward its silhouette, where it turns away
+    /// from the eye; 0 is a hard edge. `w` unused.
     pub unlit: [f32; 4],
 }
 
@@ -242,7 +245,19 @@ impl MaterialUniforms {
     /// Draw unlit (#627): base colour times `scale` plus emission, no
     /// lights, ambient or shadows. `scale` below 0 counts as 0.
     pub fn set_unlit(&mut self, scale: f32) {
-        self.unlit = [1.0, scale.max(0.0), 0.0, 0.0];
+        self.unlit[0] = 1.0;
+        self.unlit[1] = scale.max(0.0);
+    }
+
+    /// How far the surface's alpha feathers toward its silhouette (#582), 0 to
+    /// 1; 0 is a hard edge. Only the skinned shader reads it.
+    pub fn set_edge_softness(&mut self, softness: f32) {
+        self.unlit[2] = softness.clamp(0.0, 1.0);
+    }
+
+    /// The edge softness [`set_edge_softness`](Self::set_edge_softness) gave.
+    pub fn edge_softness(&self) -> f32 {
+        self.unlit[2]
     }
 
     /// Multiplies all of the emission, the material's own and per-vertex,
