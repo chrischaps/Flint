@@ -254,7 +254,7 @@ Configs are loaded with deterministic precedence (later layers override earlier)
 1. **Engine built-in defaults** --- hardcoded WASD + mouse baseline (always present)
 2. **Game default config** --- the first of: the scene's `[scene] input_config`; the file `flint.toml`'s `[project] input` names, from the project root; `config/input.toml`. The first and the last are paths found by the engine's [one search](assets.md#where-the-engine-looks-for-a-file): from the scene's directory, then each directory above it up to the project root. A scene's `input_config` that isn't found is a warning with every path tried
 3. **User overrides** --- per-player remapping, written at runtime. The first that exists of:
-   - `<scene_dir>/.flint/input.user.toml` (project-local, for development)
+   - `<project root>/.flint/input.user.toml` (project-local, for development; for one release a `.flint/input.user.toml` beside the scene is still read when the root has none)
    - `<config>/flint/input_{game_id}.toml`, where `<config>` is the OS config directory (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.config` on Linux)
    - `<config>/flint/input.user.toml`, shared by games with no `game_id` of their own (or `game_id = "flint"`)
 4. **CLI override** --- `--input-config <path>` flag (one-off testing/debugging)

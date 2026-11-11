@@ -890,9 +890,10 @@ Key-value store that survives scene transitions:
 #### Persistence
 
 The store is also kept on disk without any script involvement. The player
-reads `<project>/save/persist.toml` at startup (the project root is the scene
-directory's parent, the same rule as `fonts/` and `sprites/`; on Android it is
-the app's internal files directory) and, if the file exists, every
+reads `<project>/save/persist.toml` at startup (under the
+[project root](assets.md#paths-from-the-project-root), the same file for every
+scene of the project; on Android it is the app's internal files directory)
+and, if the file exists, every
 `persist_get` sees last session's values from the first `on_init` onward. A
 missing file is a fresh, empty store --- nothing is created until something is
 stored.
@@ -916,7 +917,7 @@ TOML under the project root:
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `load_data(path)` | `Map` or `()` | Parse a TOML file relative to the project root (the scene directory's parent) and return the whole document as a map; parsed once per path and cached for the session |
+| `load_data(path)` | `Map` or `()` | Parse a TOML file relative to the [project root](assets.md#paths-from-the-project-root) and return the whole document as a map; parsed once per path and cached for the session |
 | `load_data(path, reload)` | `Map` or `()` | Same, but `reload = true` drops the cached parse first (hot iteration) |
 
 Types are preserved exactly: a TOML integer arrives as `INT`, a float as

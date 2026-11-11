@@ -901,7 +901,7 @@ A scene can name a look in its own block (#356). The look goes **under** the sce
 
 ```toml
 [post_process]
-look = "graphite"       # a styles/<name>.look.toml beside the scene (or its parent's), or a built-in
+look = "graphite"       # a styles/<name>.look.toml the scene can see, or a built-in
 exposure = 1.25         # the scene's key wins over graphite's 1.15
 vignette_enabled = true
 

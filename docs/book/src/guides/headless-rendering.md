@@ -34,7 +34,7 @@ flint render levels/tavern.scene.toml \
 | `--target <x,y,z>` | scene `[camera]` or auto | Camera look-at point (comma-separated) |
 | `--fov <degrees>` | scene `[camera]` or auto | Field of view in degrees |
 | `--no-grid` | `false` | Disable ground grid |
-| `--schemas <path>` | `schemas` | Path to schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schema directories (repeatable). Without it: the project's `flint.toml` `schemas`, else discovery ([the rule](../concepts/assets.md#schemas-the-rule-beside-it)) |
 | `--msaa <1\|4>` | `1` | Scene-pass MSAA sample count |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
 | `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |

@@ -262,11 +262,15 @@ impl PlayerApp {
 
         let scene_path = Path::new(&self.scene_path);
         let game_id = &self.input.config().game_id;
-        let mut target =
-            user_override_save_path(scene_path, game_id, paths.user_override.as_deref());
+        let mut target = user_override_save_path(
+            &self.project,
+            scene_path,
+            game_id,
+            paths.user_override.as_deref(),
+        );
 
         if let Err(err) = write_user_override_file(&target, &self.user_override_config) {
-            let fallback = fallback_user_override_path(scene_path, game_id);
+            let fallback = fallback_user_override_path(&self.project, scene_path, game_id);
             if fallback != target {
                 write_user_override_file(&fallback, &self.user_override_config)?;
                 target = fallback;

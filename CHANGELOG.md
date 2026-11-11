@@ -34,6 +34,63 @@ to do.
 
 ## 2026-11-10
 
+### `flint play` and `flint bundle` read `flint.toml`; saves, `load_ui`, `load_data` and the procgen cache use the project root (#706)
+**What changed.** The last pieces of the project manifest (ADR 0114). Every
+key of `flint.toml`'s `[project]` table now has a reader, and nothing in the
+engine guesses the project root any more.
+
+- **`flint play` and `flint-player` with no scene argument** open the
+  manifest's `scene`. With no such key the error says what to pass and that
+  `[project] scene` can name a default.
+- **`flint bundle` and `flint export web`** take the bundle's name from
+  `[project] id` and its start scene from `[project] scene` when `bundle.toml`
+  doesn't say (`--name` / `--scene`, then `bundle.toml`, then `flint.toml`,
+  then the folder's name and the only scene). `bundle.toml` is still the
+  packing rules, and may now hold nothing else. `flint.toml` is packed with
+  the game, and the player reads it from the bundle.
+- **Paths written "from the project root"** are joined to the project's root,
+  the folder with the `flint.toml` (or the `.flint/`, or the `schemas/` +
+  `scenes/` layout), whichever scene is playing: `load_ui("ui/hud.ui.toml")`
+  and a style sheet's `tokens`, `load_data("data/x.toml")`, a
+  `music_session`'s `manifest` and `chart`, the save file
+  `save/persist.toml`, the procgen disk cache `.flint/procgen-cache/` and the
+  project-local input override `.flint/input.user.toml`. Each used to guess
+  the root as "the scene folder's parent", in its own copy.
+- A terrain's `splat_map` and `layer*_texture`, and the path
+  `load_chunk(path)` takes, are found by the one search (from the scene's
+  directory, then each directory above it), as the heightmap already was. The
+  particle editor finds an effect's textures the same way, from the effect's
+  folder. `flint bundle`'s reference check walks to the root and the engine
+  too, so a nested scene's references pass where the runtime finds them.
+
+**Nothing moves for a scene directly in `scenes/` or `levels/`**: the scene
+folder's parent *is* the project root there, by every marker, and a game with
+no marker at all keeps the old guess. Two layouts differ:
+
+| Layout | Was | Now |
+|---|---|---|
+| a scene two or more folders deep, `scenes/act1/a.scene.toml` | `scenes/save/persist.toml`, `scenes/ui/...`, and a cache at `scenes/act1/.flint/procgen-cache/` | `save/persist.toml`, `ui/...`, `.flint/procgen-cache/` at the root: the same files a scene in `scenes/` uses |
+| a `.flint/` folder beside the scenes (an old procgen cache, a shipped `input.user.toml`), which marks that folder as a root | the parent of the scenes' folder | the scenes' folder |
+
+So a save no longer moves when a transition enters a deeper scene (the first
+half of #726).
+
+**For one release the old place is still read.** When a UI document, a data
+file, a music session's manifest or the save file is not at the root and is
+at the old guessed place, it is read from there, with a warning on stderr
+naming both paths. The save is written at the root from then on; the old file
+is left where it is. A `.flint/input.user.toml` beside the scene is still read
+(and saved back to) when the root has none. The procgen cache is not carried
+over: it regenerates once.
+
+**What to do.** Nothing for a game whose scenes sit directly in `scenes/` or
+`levels/`. If a warning names an old place, move the file to the path it
+gives. To use the new defaults, give `flint.toml` a `scene` (and an `id`),
+and drop `name` / `scene` / `schemas` from `bundle.toml` if they only repeated
+them. A stray `.flint/` folder beside your scenes makes that folder a project
+root of its own (the nearest marker wins, hiding a `flint.toml` above it):
+delete it if it holds only an old `procgen-cache/`.
+
 ### Looks, palettes, glyph sets, fonts, paper and stroke images and user styles are found by the one search rule; the working directory is no longer searched (#706)
 **What changed.** The last kinds join the engine's one asset search: beside
 the scene, then beside each directory above it up to the project root, then

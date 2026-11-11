@@ -93,17 +93,28 @@ flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene,
 flint.toml: `project.schemas` must be a list of strings, found a string
 ```
 
-**What reads it today.** The manifest is new, and its keys are arriving ahead of the code that will use them:
+**What reads each key.**
 
-| Key | Today | Planned |
-|-----|-------|---------|
-| the file itself | Marks the project root for the content store and catalog (`flint asset`, `flint gen --register`; see [Assets: The Project Root](../concepts/assets.md#the-project-root)), and for the [asset search](../concepts/assets.md#where-the-engine-looks-for-a-file), which climbs from a scene to this folder (particle effects so far) | The root every command, the player and the web build agree on, for every kind of asset |
-| `id` | Parsed and checked | Keys saves and user files; the web bundle's id |
-| `schemas` | **Read by every command, the viewer and the player**: the schema directories, in override order, whenever no `--schemas` flag is given. See [Multi-Schema Layering](#multi-schema-layering) | The same |
-| `scene` | Parsed and checked | What `flint play` opens with no argument |
-| `input` | Parsed and checked | The input config the player loads |
+| Key | Read by |
+|-----|---------|
+| the file itself | Marks the **project root**: where the [asset search](../concepts/assets.md#where-the-engine-looks-for-a-file) for every kind of asset ends, where [paths from the root](../concepts/assets.md#paths-from-the-project-root) start (`load_ui`, `load_data`, the save file, the procgen cache), and where the content store and catalog live (`flint asset`, `flint gen --register`). Every command, the viewer, the player and the web build find the same one |
+| `id` | `flint bundle` and `flint export web`: the bundle's name and the game's `?game=` id, when `bundle.toml` has no `name` (`--name` wins over both). Saves and user files will be keyed on it when they move to the OS user directory (#726); until then the input config's `game_id` names a game's user files |
+| `schemas` | Every command, the viewer and the player: the schema directories, in override order, whenever no `--schemas` flag is given. `flint bundle` writes the same list into the bundle. See [Multi-Schema Layering](#multi-schema-layering) |
+| `scene` | `flint play` and `flint-player` with no scene argument open it. `flint bundle` starts the bundle there when `bundle.toml` has no `scene` |
+| `input` | The player: the game layer of the [input config](../concepts/physics-and-runtime.md#config-layering), unless the scene names its own with `[scene] input_config` |
 
-"Parsed and checked" means a bad manifest is refused and nothing acts on the value yet. `flint init` does not write a `flint.toml` yet. The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
+```bash
+flint play                 # opens [project] scene
+flint bundle .             # named for [project] id, starting at [project] scene
+```
+
+With no `scene` key, `flint play` with no argument says what to do:
+
+```
+Error: no scene given: pass one (a path to a .scene.toml), or name the project's default with `scene = "scenes/main.scene.toml"` under [project] in C:/games/my_game/flint.toml
+```
+
+`bundle.toml` stays a separate file: it holds the packing rules (`exclude`, `include`, `[late]`, `[mount]`, `[web]`), and its `name`, `scene` and `schemas` are needed only to say something other than the manifest does. The manifest itself is packed into the bundle, so the web player finds the same project there. `flint init` does not write a `flint.toml` yet (#707). The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
 
 ## Multi-Schema Layering
 
@@ -287,10 +298,7 @@ cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
 
 ## Asset Resolution
 
-Scripts, audio, and sprite paths are resolved relative to the game project root. When a scene lives in `scenes/`, the engine looks for:
-- Scripts in `scripts/`
-- Audio in `audio/`
-- Sprites in `sprites/`
+A game keeps each kind of asset in its folder at the project root: `scripts/`, `audio/`, `sprites/`, `models/` and the rest.
 
 Everything in those folders (models, textures, sounds, scripts, specs, prefabs, particle effects, wooze presets, the input config) is found by the engine's one search rule: the kind's folder beside the scene, then beside each directory above it up to the project root, then under `engine/`. A scene any number of folders below `scenes/` finds the project's assets, and `flint asset where <kind> <name> --scene <scene>` prints the file chosen and every path tried. See [Assets: Where the Engine Looks for a File](../concepts/assets.md#where-the-engine-looks-for-a-file).
 

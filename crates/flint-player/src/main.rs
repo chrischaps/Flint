@@ -30,8 +30,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
 struct Args {
-    /// Path to scene file (with --bundle: optional, a path inside the bundle)
-    #[arg(required_unless_present_any = ["list_gpus", "bundle"], default_value = "")]
+    /// Path to scene file. Without it: the project's default scene,
+    /// flint.toml's `[project] scene` (with --bundle: the bundle's start
+    /// scene; a path given is one inside the bundle)
+    #[arg(default_value = "")]
     scene: String,
 
     /// Play a game bundle made by `flint bundle` (#98) instead of the disk.
@@ -252,6 +254,18 @@ fn main() -> Result<()> {
         Some(path) => Some(open_bundle(&path, &mut args)?),
         None => None,
     };
+    // No scene named: the manifest's default (ADR 0114), or an error that
+    // says what to pass
+    if args.scene.is_empty() {
+        let project = flint_core::project::Project::current()?;
+        let scene = project.default_scene()?;
+        args.scene = flint_core::project::shown(&scene);
+        println!(
+            "Opening the project's default scene: {} (`[project] scene` in {})",
+            args.scene,
+            flint_core::project::shown(&project.manifest_path())
+        );
+    }
 
     // The one resolver (ADR 0114): --schemas, else the manifest, else
     // discovery. A bundle settled its list when it was packed

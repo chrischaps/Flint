@@ -1139,3 +1139,46 @@ fn a_transition_target_written_from_the_working_directory_is_seen_by_the_old_rul
         },
     );
 }
+
+/// #706's done-when, over `AssetKind::ALL` itself, so a kind added later is
+/// held to it without anyone remembering: a miss lists the paths tried, and
+/// the message prints every one of them.
+#[test]
+fn every_kind_there_is_says_where_it_looked_when_nothing_is_found() {
+    for &kind in AssetKind::ALL {
+        with_files(
+            &["game/flint.toml", "game/scenes/act1/a.scene.toml"],
+            || {
+                let dir = Path::new("game/scenes/act1");
+                let p = project("game/scenes/act1/a.scene.toml");
+                let err = p.resolve(kind, "no_such_thing", dir).unwrap_err();
+                assert!(!err.tried.is_empty(), "{kind}: nothing tried");
+                let text = err.to_string();
+                for tried in &err.tried {
+                    assert!(text.contains(&shown(tried)), "{kind}: {text}");
+                }
+                // From the scene's own folder up to the root
+                assert!(err.tried[0].starts_with(dir), "{kind}: {:?}", err.tried);
+                assert!(
+                    err.tried.iter().any(|t| !t.starts_with("game/scenes")),
+                    "{kind}: the root was not tried: {:?}",
+                    err.tried
+                );
+            },
+        );
+    }
+}
+
+/// The table the every-kind tests above walk names every kind there is, so
+/// "a scene two folders deep finds the same assets as one at `scenes/`"
+/// holds for all of them. (A kind whose files name themselves, a spec, has
+/// the same test of its own below.)
+#[test]
+fn the_every_kind_tests_cover_every_kind() {
+    for &kind in AssetKind::ALL {
+        assert!(
+            NAMED.iter().any(|&(named, _, _)| named == kind) || kind.info().named_inside.is_some(),
+            "{kind} has no row in NAMED"
+        );
+    }
+}

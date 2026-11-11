@@ -45,7 +45,7 @@ The command writes only into an empty folder or an earlier export (one with a `g
 
 ## What gets packed: `bundle.toml`
 
-Every key is optional. Without the file, the folder's name (lowercased) is the id, the single scene is the start scene, and tooling, docs, source art and the engine's source tree are left out.
+Every key is optional. `bundle.toml` holds the packing rules; what the project's [manifest](building-a-game-project.md#the-project-manifest) already says it need not repeat: `name`, `scene` and `schemas` default to `flint.toml`'s `[project] id`, `scene` and `schemas`. With neither file, the folder's name (lowercased) is the id, the single scene is the start scene, and tooling, docs, source art and the engine's source tree are left out. `flint.toml` is packed with the game, so the player finds the same project in the bundle.
 
 ```toml
 name = "demo"                              # the id: games/<id>/, ?game=<id>
@@ -80,8 +80,8 @@ A game with no `engine/schemas` folder of its own (no engine subtree) and no `[m
 | `--out <dir>` | `<game>/dist/web` | the folder to write |
 | `--player <dir>` | build one | a trunk build of `crates/flint-player` to copy |
 | `--engine <dir>` | the CLI's own tree | the Flint checkout trunk builds the player from |
-| `--name <id>` | `bundle.toml`'s, or the folder's | lowercase letters, digits, `-` and `_` |
-| `--scene <file>` | `bundle.toml`'s | the start scene |
+| `--name <id>` | `bundle.toml`'s, else `flint.toml`'s `id`, else the folder's | lowercase letters, digits, `-` and `_` |
+| `--scene <file>` | `bundle.toml`'s, else `flint.toml`'s `scene` | the start scene |
 | `--meta key=value` | | a `[web]` key, repeatable |
 | `--clean` | | empty an earlier export first |
 

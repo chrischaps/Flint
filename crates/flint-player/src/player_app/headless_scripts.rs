@@ -100,7 +100,7 @@ impl HeadlessScripts {
         let mut system = ScriptSystem::new();
         system.make_deterministic(SCRIPT_SEED);
         system.load_scripts_from_scene(scene_path, project);
-        system.set_current_scene(scene_path);
+        system.set_current_scene(scene_path, project);
         system.set_screen_size(screen.0, screen.1);
         let mut run = Self {
             system,

@@ -17,7 +17,9 @@ This means:
 
 ## The Project Root
 
-The content store (`.flint/assets`), the procgen provenance index (`.flint/procgen`), the job store (`.flint/jobs`), the project config (`.flint/config.toml`) and the sidecar catalog (`assets/`) all live at the **project root**, whichever folder of the project a command runs from. Flint finds the root the way cargo finds a workspace: it walks up from the working directory to the nearest directory holding
+A project is a folder: a game's repository, with its scenes, schemas and assets under it. Its top is the **project root**, and everything on this page is stated from it. The asset search below ends there. The schema directories a `flint.toml` names are paths from it. The content store (`.flint/assets`), the procgen provenance index (`.flint/procgen`), the job store (`.flint/jobs`), the project config (`.flint/config.toml`) and the sidecar catalog (`assets/`) live there, whichever folder of the project a command runs from.
+
+Flint finds the root the way cargo finds a workspace: it walks up **from the scene** a command or the player is given (from the working directory when there is no scene) to the nearest directory holding
 
 1. a `flint.toml` file (the [project manifest](../guides/building-a-game-project.md#the-project-manifest)),
 2. a `.flint/` directory (not the one in your home directory, which holds the global config), or
@@ -30,6 +32,8 @@ Store:      .flint\assets (project ., by schemas/ + scenes/ or levels/)
 ```
 
 `flint asset resolve` uses the project of the scene it is given.
+
+The player asks once a scene, and again after a transition, since the next scene may belong to another project. A web bundle is searched the same way: `flint.toml` is packed with the game, and the player reads it out of the bundle.
 
 ## Where the Engine Looks for a File
 
@@ -54,33 +58,65 @@ my_game/                       flint.toml here: the project root
 
 At each of those directories `D`, the file tried is `D/<folder>/<name><extension>`, for each of the kind's folders in turn and then each of its extensions. A kind is only that: its folders and its extensions.
 
-| Kind | Folder | Extension | A scene writes |
-|------|--------|-----------|----------------|
-| `particles` | `particles/` | `.particles.toml` | `particle_effect.effect = "campfire"`, `play_effect("campfire", ...)` |
-| `models` | `models/` | `.glb`, then `.gltf` | `model.asset = "barrel"` |
-| `textures` | `D` itself, then `textures/` | a file name as written; a name with no extension is tried bare, then `.png`, then `_color.png` | `material.texture = "wall.png"` or `"wall"`, `sprite.texture = "hero.png"` |
-| `sprites` | `sprites/`, then `D` itself | a file name as written | `draw_sprite(x, y, w, h, "heart.png")` |
-| `animations` | `animations/` | `.anim.toml` | every clip is loaded; `animator.clip = "door_swing"` names one by the `name` inside its file |
-| `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one |
-| `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` |
-| `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound` |
-| `scripts` | `scripts/` | a file name as written (`.rhai`) | `script.source = "hud.rhai"` or `"ui/menu.rhai"`; `import "ui_kit"` is the script `lib/ui_kit.rhai` |
-| `specs` | `specs/`, then `models/`, each with its subfolders | `.procgen.toml`; found by the `[meta] name` inside, not the file's name | every spec the scene can see is indexed; `model.asset = "oak_tree"`, `material.texture = "stone_wall"` ask for one |
-| `prefabs` | `prefabs/` | `.prefab.toml` | `[prefabs.player] template = "kart"` |
-| `wooze` | `wooze/` | `.wooze.toml` | `[wooze] preset = "misty"`, `load_living_preset("misty")`, the Living Props panel |
-| `files` | `D` itself | a path as written | `terrain.heightmap`, `terrain.splat_map`, `grass_ground.mask`, `spline.file`, `[environment] skybox`, `[scene] input_config` (and `config/input.toml` when a scene names none) |
-| `particle-textures` | `particles/`, then `D` itself | a file name as written | an effect's or a `particle_emitter`'s `texture = "spark.png"` |
-| `scenes` | `D` itself | a path as written | `load_scene("levels/two.scene.toml")`: the target of a transition, from the current scene |
-| `palettes` | `palettes/`, then `D` itself | `.palette.toml` | `[post_process.styles.ascii] palette = "dusk"` (or a path, `"art/dusk.palette.toml"`), `--ascii-palette`, a per-entity style's `palette` |
-| `glyph-sets` | `fonts/`, then `D` itself | `.glyphs.toml` | a style's `font = "terminal"`, `--ascii-font`, `ui_text.font = "terminal"`, a `.font.toml`'s `glyphs` |
-| `fonts` | `D` itself, then `fonts/` | `.font.toml` | `ui_text.font = "fonts/ui.font.toml"` |
-| `font-faces` | `fonts/` | a file name as written (`.ttf`, `.otf`) | every one is loaded for the script HUD, under its file stem; a `fonts/fonts.toml` alias names one by `file` |
-| `looks` | `styles/`, then `D` itself | `.look.toml` | `[post_process] look = "dusk"`, `--look dusk`, `set_look("dusk")`, or a path, `--look out/tuned.look.toml` |
-| `papers` | `papers/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `paper_image = "cold_press"` or `"scans/linen.jpg"` (pencil, watercolor) |
-| `strokes` | `strokes/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `stroke_image = "graphite"` (pencil) |
-| `styles` | `styles/` | `.shader.toml` | every user style the scene can see is registered; `[post_process.styles.glow]` names one |
+| Kind | Folder | Extension | A scene writes | Built in |
+|------|--------|-----------|----------------|----------|
+| `particles` | `particles/` | `.particles.toml` | `particle_effect.effect = "campfire"`, `play_effect("campfire", ...)` | |
+| `models` | `models/` | `.glb`, then `.gltf` | `model.asset = "barrel"` | |
+| `textures` | `D` itself, then `textures/` | a file name as written; a name with no extension is tried bare, then `.png`, then `_color.png` | `material.texture = "wall.png"` or `"wall"`, `sprite.texture = "hero.png"` | |
+| `sprites` | `sprites/`, then `D` itself | a file name as written | `draw_sprite(x, y, w, h, "heart.png")` | |
+| `animations` | `animations/` | `.anim.toml` | every clip is loaded; `animator.clip = "door_swing"` names one by the `name` inside its file | |
+| `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one | |
+| `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` | |
+| `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound` | |
+| `scripts` | `scripts/` | a file name as written (`.rhai`) | `script.source = "hud.rhai"` or `"ui/menu.rhai"`; `import "ui_kit"` is the script `lib/ui_kit.rhai` | |
+| `specs` | `specs/`, then `models/`, each with its subfolders | `.procgen.toml`; found by the `[meta] name` inside, not the file's name | every spec the scene can see is indexed; `model.asset = "oak_tree"`, `material.texture = "stone_wall"` ask for one | |
+| `prefabs` | `prefabs/` | `.prefab.toml` | `[prefabs.player] template = "kart"` | |
+| `wooze` | `wooze/` | `.wooze.toml` | `[wooze] preset = "misty"`, `load_living_preset("misty")`, the Living Props panel | |
+| `files` | `D` itself | a path as written | `terrain.heightmap`, `terrain.splat_map`, `grass_ground.mask`, `spline.file`, `[environment] skybox`, `[scene] input_config` (and `config/input.toml` when a scene names none) | |
+| `particle-textures` | `particles/`, then `D` itself | a file name as written | an effect's or a `particle_emitter`'s `texture = "spark.png"` | |
+| `scenes` | `D` itself | a path as written | `load_scene("levels/two.scene.toml")`: the target of a transition, from the current scene | |
+| `palettes` | `palettes/`, then `D` itself | `.palette.toml` | `[post_process.styles.ascii] palette = "dusk"` (or a path, `"art/dusk.palette.toml"`), `--ascii-palette`, a per-entity style's `palette` | `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, `paper`; a file of the name wins |
+| `glyph-sets` | `fonts/`, then `D` itself | `.glyphs.toml` | a style's `font = "terminal"`, `--ascii-font`, `ui_text.font = "terminal"`, a `.font.toml`'s `glyphs` | `builtin`, which is never searched for |
+| `fonts` | `D` itself, then `fonts/` | `.font.toml` | `ui_text.font = "fonts/ui.font.toml"` | |
+| `font-faces` | `fonts/` | a file name as written (`.ttf`, `.otf`) | every one is loaded for the script HUD, under its file stem; a `fonts/fonts.toml` alias names one by `file` | |
+| `looks` | `styles/`, then `D` itself | `.look.toml` | `[post_process] look = "dusk"`, `--look dusk`, `set_look("dusk")`, or a path, `--look out/tuned.look.toml` | `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`; a file of the name wins |
+| `papers` | `papers/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `paper_image = "cold_press"` or `"scans/linen.jpg"` (pencil, watercolor) | |
+| `strokes` | `strokes/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `stroke_image = "graphite"` (pencil) | |
+| `styles` | `styles/` | `.shader.toml` | every user style the scene can see is registered; `[post_process.styles.glow]` names one | |
 
-`flint asset where --help` prints this table from the engine's own.
+`flint asset where --help` prints this table from the engine's own, and the first column is the word `flint asset where <kind>` takes. This is the only statement of the rule in the book: every other page that mentions where a file is found points here.
+
+### Schemas: the rule beside it
+
+Schemas are not searched for by name; a run loads whole directories of them, a later one overriding an earlier. Which directories is decided once, the same way by `flint render`, `edit`, `play`, `validate`, `query`, `entity`, `schema`, the viewer and `flint-player`:
+
+| Asked | The directories | A directory that isn't there |
+|-------|-----------------|------------------------------|
+| `--schemas <dir>` flags, if any | exactly those, in the order given; nothing is added | an error naming it |
+| else `flint.toml`'s `[project] schemas` | each one under the project root, in the order listed | an error naming it and the manifest |
+| else discovery | `schemas/` in the working directory, beside the scene, and one level above the scene, whichever exist | not an error: the list may be empty |
+
+So a game whose manifest says `schemas = ["engine/schemas", "schemas"]` needs no flag on any command. [Schemas: Which directories load](schemas.md#which-directories-load) has the details.
+
+### Paths from the project root
+
+A few things are one path under the root and no search:
+
+| What | Where |
+|------|-------|
+| `load_ui("ui/hud.ui.toml")`, a style sheet's `tokens = "ui/theme.toml"` | `<root>/ui/hud.ui.toml` |
+| `load_data("data/karts.toml")` | `<root>/data/karts.toml` |
+| a `music_session`'s `manifest`, `chart` and configs | `<root>/<path>` |
+| the save file | `<root>/save/persist.toml` |
+| the procgen disk cache | `<root>/.flint/procgen-cache/` |
+| the project-local input override | `<root>/.flint/input.user.toml` |
+| `flint.toml`'s `scene`, `input` and `schemas` | `<root>/<path>` |
+
+The root is the same for every scene of the project, so a scene two folders deep reads the same `ui/` and saves to the same file as one in `scenes/`.
+
+**No project marker.** A scene with no `flint.toml`, no `.flint/` and no `schemas/` + `scenes/` layout above it takes its folder's parent for these paths (`loose/levels/a.scene.toml` reads `loose/ui/`), which is what the engine did for every scene before there were projects.
+
+**For one release.** Before the project was asked, the root for these paths was guessed as the scene folder's parent, for every scene. The two are the same folder for a scene directly in `scenes/` or `levels/`. Where they differ (a scene two folders deep, or a `.flint/` folder beside the scenes) a file that exists only at the old place is still read from there, with a warning that says where it belongs: UI documents, data files, a music session's manifest, and the save file, which is written at the root from then on. The project-local input override is likewise still read from a `.flint/` beside the scene.
 
 **Names.** A name that already ends in one of the kind's extensions is taken as written (`campfire.particles.toml`, `barrel.gltf`), and a name may carry a subfolder (`fx/campfire` is `particles/fx/campfire.particles.toml`). Textures, sprites and sounds are named by **file name**: a name with a dot in its last part is that file, whatever follows the dot (`sky.hdr`, `wall.jpg`). Extensions are matched as they are spelled, for every kind: `hit.OGG` is not found by the preload, and `barrel.GLB` in `model.asset` becomes `barrel.GLB.glb`.
 
@@ -118,7 +154,7 @@ Two details at the edges, the same for every kind:
 - **No project marker.** A scene in a folder with no `flint.toml`, no `.flint/` and no `schemas/` + `scenes/` layout above it is its own project root. The engine then also looks one level above the scene, as every search did before there were projects.
 - **A scene outside the root** (`--project` naming another folder) is searched beside itself, then at the root, then in the engine.
 
-Inside an engine checkout the root already is the engine, so there is no third place. In a web bundle the rule is the same over the bundle's files, where `bundle.toml`'s `[mount]` puts the engine's files under `engine/`.
+**The mounted engine.** A game keeps the engine as a subtree at `<root>/engine/`, and that folder is the search's last place: `engine/models/`, `engine/scripts/`, and so on. It is a fixed place, not a setting. Inside an engine checkout the root already is the engine, so there is no third place. In a web bundle the rule is the same over the bundle's files, where `bundle.toml`'s `[mount]` puts the engine's files under `engine/`.
 
 ### `flint asset where`
 

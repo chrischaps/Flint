@@ -70,6 +70,8 @@ mod assets;
 pub use assets::{
     shown, AssetKind, AssetScope, KindInfo, Listed, NotFound, OrderChange, Resolution,
 };
+mod root;
+pub use root::guessed_root;
 
 /// The manifest's file name, at the project root.
 pub const MANIFEST_FILE: &str = "flint.toml";
@@ -369,7 +371,74 @@ impl Project {
     pub fn input_path(&self) -> Option<PathBuf> {
         self.input.as_ref().map(|s| self.root.join(s))
     }
+
+    /// The scene to open when none was named (`flint play` with no
+    /// argument): the manifest's `[project] scene`, spelled from the
+    /// working directory where it lies under it. With no such key, or a
+    /// key naming a file that isn't there, the error says what to pass and
+    /// where a default can be named.
+    pub fn default_scene(&self) -> Result<PathBuf, NoDefaultScene> {
+        // A root of `.` (a bundle's) adds nothing to the path
+        let path = match &self.scene {
+            Some(scene) if self.root == Path::new(".") => Some(scene.clone()),
+            _ => self.scene_path(),
+        };
+        let Some(path) = path else {
+            return Err(NoDefaultScene {
+                manifest: self.manifest_path(),
+                has_manifest: vfs::is_file(self.manifest_path()),
+                names: None,
+            });
+        };
+        if !vfs::is_file(&path) {
+            return Err(NoDefaultScene {
+                manifest: self.manifest_path(),
+                has_manifest: true,
+                names: Some(path),
+            });
+        }
+        let from_here = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf));
+        Ok(from_here.unwrap_or(path))
+    }
 }
+
+/// No scene was named and the project names no default (or names one that
+/// isn't there). Its message is the whole of what to do about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoDefaultScene {
+    /// Where the manifest is, or would be.
+    pub manifest: PathBuf,
+    pub has_manifest: bool,
+    /// The file `[project] scene` names, when it names one that is missing.
+    pub names: Option<PathBuf>,
+}
+
+impl std::fmt::Display for NoDefaultScene {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let manifest = shown(&self.manifest);
+        if let Some(scene) = &self.names {
+            return write!(
+                f,
+                "no scene given, and the default scene is not a file: {} (named by \
+                 `[project] scene` in {manifest}). Pass a scene, or fix the key",
+                shown(scene)
+            );
+        }
+        write!(
+            f,
+            "no scene given: pass one (a path to a .scene.toml), or name the project's \
+             default with `scene = \"scenes/main.scene.toml\"` under [project] in {manifest}"
+        )?;
+        if !self.has_manifest {
+            write!(f, " (there is no such file yet)")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for NoDefaultScene {}
 
 /// Where a list of schema directories came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -798,6 +867,47 @@ input = "config/input.toml"
                 assert_eq!(discover(".").unwrap(), p);
             },
         );
+    }
+
+    #[test]
+    fn the_default_scene_is_the_manifests_or_an_error_that_says_what_to_do() {
+        with_files(
+            &[
+                ("game/flint.toml", FULL),
+                ("game/scenes/main.scene.toml", ""),
+            ],
+            || {
+                let p = discover("game").unwrap();
+                assert_eq!(
+                    p.default_scene().unwrap(),
+                    Path::new("game").join("scenes/main.scene.toml")
+                );
+            },
+        );
+        // Named, and not there
+        with_files(&[("game/flint.toml", FULL)], || {
+            let err = discover("game").unwrap().default_scene().unwrap_err();
+            let said = err.to_string();
+            assert!(said.contains("game/scenes/main.scene.toml"), "{said}");
+            assert!(said.contains("`[project] scene`"), "{said}");
+            assert!(said.contains("game/flint.toml"), "{said}");
+        });
+        // A manifest with no scene key; and no manifest at all
+        for (files, has) in [
+            (&[("game/flint.toml", "[project]\nid = \"x\"\n")][..], true),
+            (&[("game/scenes/a.scene.toml", "")][..], false),
+        ] {
+            with_files(files, || {
+                let err = discover("game").unwrap().default_scene().unwrap_err();
+                assert_eq!(err.has_manifest, has);
+                let said = err.to_string();
+                assert!(said.contains("pass one"), "{said}");
+                assert!(said.contains("scene = \""), "{said}");
+                assert!(said.contains("[project]"), "{said}");
+                assert!(said.contains("game/flint.toml"), "{said}");
+                assert_eq!(said.contains("no such file yet"), !has, "{said}");
+            });
+        }
     }
 
     #[test]
