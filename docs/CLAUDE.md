@@ -4,12 +4,14 @@ The root file keeps the rule: a change that alters what the book describes updat
 
 ```bash
 mdbook build docs/book                                   # must be clean before any docs commit; output in docs/book/book/ (gitignored)
-powershell -ExecutionPolicy Bypass -File docs/build.ps1 -SkipRustdoc -Serve  # preview at http://localhost:3000 (drop -SkipRustdoc for the API docs)
-powershell -ExecutionPolicy Bypass -File docs/build.ps1 -Publish            # mdBook + rustdoc into ~/dev/docs.chaps.dev/flint, committed and pushed
-bash docs/publish.sh --publish                           # the same in bash (--skip-rustdoc, --serve, --docs-repo <dir>)
+bash docs/publish.sh --skip-rustdoc --serve              # preview at http://localhost:3000 (drop --skip-rustdoc for the API docs)
+bash docs/publish.sh --publish                           # mdBook + rustdoc into ~/dev/docs.chaps.dev/flint, committed and pushed
+cargo run -p flint-arch-analyzer -- --book               # rewrite the crate table in architecture/crate-graph.md (CI checks it)
 ```
 
-Without `-Publish` / `--publish` the scripts build and copy into the docs repo but don't commit. `docs/publish.bat` is `build.ps1 -Publish`. Windows PowerShell 5.1 (`powershell`) runs `build.ps1`; `pwsh` may not be installed.
+Without `--publish` the script builds and copies into the docs repo but doesn't commit. `publish.sh` is the only implementation (#764): `docs/build.ps1` (`-SkipRustdoc`, `-Publish`, `-Serve`, `-DocsRepo`) and `docs/publish.bat` (`publish.sh --publish`) hand their switches to it through `scripts/sh.cmd`, which finds Git for Windows' bash rather than WSL's. Change the script, not the shims.
+
+The table between the `crate-table` markers in `architecture/crate-graph.md` is generated from every `Cargo.toml`; CI's `crate table` job fails when a dependency changes and the page doesn't. The ASCII diagram above it is still drawn by hand.
 
 - Publishing pushes to the separate `docs.chaps.dev` repo (default `~/dev/docs.chaps.dev`; `-DocsRepo` / `--docs-repo` to change it). It is outward-facing: only on request.
 - Renders for the book are made locally with `flint render` (no GPU in CI) and land in `docs/book/src/images/` in kebab-case.

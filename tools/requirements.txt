@@ -1,0 +1,15 @@
+# Everything the Python tools under tools/ (and scripts/goldens-summary.py)
+# import beyond the standard library (#764). Python 3.11 or newer: several read
+# TOML with tomllib.
+#
+#   python -m pip install -r tools/requirements.txt
+#
+# Floors are the oldest versions with the APIs the tools call
+# (numpy.random.default_rng; Pillow's ImageFont.load_default(size=), which
+# living_strip.py uses, arrived in 10.1); tested with numpy 2.5, Pillow 12.0 and 13.0, scipy 1.18,
+# matplotlib 3.11 on Python 3.12. tools/README.md says which tool needs what,
+# and which other programs (ffmpeg, Node, adb, a flint build) some of them run.
+numpy>=1.22
+Pillow>=10.1
+scipy>=1.8
+matplotlib>=3.5
