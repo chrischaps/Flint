@@ -90,6 +90,12 @@ Open issues #339, #282 and #556 each cover a corner of this.
 
 ## Steps
 
+One agent owns #683 and carries out step 2 under its one claim, a PR a
+step (or several, where a step says so): `Part of #683` on each PR but the
+last, `Closes #683` on the last. The ticket's note has the details. A step
+that names another ticket is that ticket's work, and waits its turn through
+the tickets' blocked-by links. The steps get no sub-issues.
+
 1. Schemas for the four missing components and the constants test (#681).
    Independent of the rest; can start now.
 2. `Diagnostic`, `diagnose`, field names in errors, unknown archetype and
