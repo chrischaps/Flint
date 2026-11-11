@@ -17,6 +17,11 @@ pub enum FlintError {
     #[error("Schema not found: {0}")]
     SchemaNotFound(String),
 
+    /// The schema directories could not be named (a missing one, or a
+    /// manifest that doesn't read): [`crate::project::schema_dirs`].
+    #[error(transparent)]
+    SchemaDirs(#[from] crate::project::SchemaDirsError),
+
     #[error("Validation error: {0}")]
     ValidationError(String),
 
@@ -93,6 +98,9 @@ pub enum FlintError {
 
     #[error("Generation error: {0}")]
     GenerationError(String),
+
+    #[error("Project error: {0}")]
+    ProjectError(#[from] crate::project::ProjectError),
 }
 
 /// Result type alias for Flint operations

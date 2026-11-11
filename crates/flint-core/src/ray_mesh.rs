@@ -95,7 +95,11 @@ impl RayMesh {
             .map(|(t, k)| {
                 let [a, b, c] = t.map(|i| positions[i as usize]);
                 let centroid = std::array::from_fn(|i| (a[i] + b[i] + c[i]) / 3.0);
-                Item { tri: t, index: k, centroid }
+                Item {
+                    tri: t,
+                    index: k,
+                    centroid,
+                }
             })
             .collect();
         let mut nodes = Vec::new();
@@ -202,7 +206,13 @@ struct Item {
 
 /// Build the node for `items` at the end of `nodes`, and its children after
 /// it. `offset` is where `items` starts in the whole list.
-fn build(positions: &[[f32; 3]], items: &mut [Item], offset: usize, nodes: &mut Vec<Node>, depth: usize) {
+fn build(
+    positions: &[[f32; 3]],
+    items: &mut [Item],
+    offset: usize,
+    nodes: &mut Vec<Node>,
+    depth: usize,
+) {
     let (mut min, mut max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
     let (mut cmin, mut cmax) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
     for it in items.iter() {
@@ -263,7 +273,14 @@ fn slab(min: [f32; 3], max: [f32; 3], o: [f32; 3], inv: [f32; 3], best: f32) -> 
 
 /// Where the ray meets the triangle (a, b, c), from either face, if it does
 /// in `0..best`: Möller–Trumbore.
-fn triangle(o: [f32; 3], d: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3], best: f32) -> Option<f32> {
+fn triangle(
+    o: [f32; 3],
+    d: [f32; 3],
+    a: [f32; 3],
+    b: [f32; 3],
+    c: [f32; 3],
+    best: f32,
+) -> Option<f32> {
     let e1 = sub(b, a);
     let e2 = sub(c, a);
     let p = cross(d, e2);
@@ -483,8 +500,18 @@ mod tests {
                 ]
             })
             .collect();
-        let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
-        let i = quads.iter().flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]]).collect();
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let i = quads
+            .iter()
+            .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
+            .collect();
         (p, i)
     }
 
@@ -500,17 +527,26 @@ mod tests {
     #[test]
     fn a_ray_meets_the_near_face_with_its_normal_toward_the_origin() {
         let m = mesh([1.0, -1.0, -1.0], [2.0, 2.0, 2.0]);
-        let hit = m.cast([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], f32::INFINITY).unwrap();
+        let hit = m
+            .cast([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], f32::INFINITY)
+            .unwrap();
         assert!((hit.distance - 1.0).abs() < 1e-5, "{hit:?}");
         assert!(close(hit.normal, [-1.0, 0.0, 0.0]), "{hit:?}");
-        assert!(m.cast([0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], f32::INFINITY).is_none());
-        assert!(m.cast([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.5).is_none(), "past max");
+        assert!(m
+            .cast([0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], f32::INFINITY)
+            .is_none());
+        assert!(
+            m.cast([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.5).is_none(),
+            "past max"
+        );
     }
 
     #[test]
     fn from_inside_the_far_face_is_met() {
         let m = mesh([-1.0, -1.0, -1.0], [2.0, 2.0, 2.0]);
-        let hit = m.cast([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], f32::INFINITY).unwrap();
+        let hit = m
+            .cast([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], f32::INFINITY)
+            .unwrap();
         assert!((hit.distance - 1.0).abs() < 1e-5);
         assert!(close(hit.normal, [0.0, 0.0, -1.0]), "{hit:?}");
     }
@@ -520,7 +556,10 @@ mod tests {
         // A street of 200 boxes, which forces many levels.
         let (mut p, mut idx) = (Vec::new(), Vec::new());
         for k in 0..200 {
-            let (cp, ci) = cube([k as f32 * 3.0, 0.0, (k % 7) as f32], [2.0, 1.0 + (k % 5) as f32, 2.0]);
+            let (cp, ci) = cube(
+                [k as f32 * 3.0, 0.0, (k % 7) as f32],
+                [2.0, 1.0 + (k % 5) as f32, 2.0],
+            );
             let base = p.len() as u32;
             p.extend(cp);
             idx.extend(ci.into_iter().map(|i| i + base));
@@ -540,8 +579,19 @@ mod tests {
                 .as_chunks::<3>()
                 .0
                 .iter()
-                .filter_map(|t| triangle(o, d, p[t[0] as usize], p[t[1] as usize], p[t[2] as usize], f32::INFINITY))
-                .fold(None, |acc: Option<f32>, t| Some(acc.map_or(t, |a| a.min(t))));
+                .filter_map(|t| {
+                    triangle(
+                        o,
+                        d,
+                        p[t[0] as usize],
+                        p[t[1] as usize],
+                        p[t[2] as usize],
+                        f32::INFINITY,
+                    )
+                })
+                .fold(None, |acc: Option<f32>, t| {
+                    Some(acc.map_or(t, |a| a.min(t)))
+                });
             let got = m.cast(o, d, f32::INFINITY).map(|h| h.distance);
             match (brute, got) {
                 (None, None) => {}
@@ -557,11 +607,18 @@ mod tests {
 
     #[test]
     fn bad_triangles_are_left_out() {
-        let p = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [f32::NAN, 0.0, 0.0]];
+        let p = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [f32::NAN, 0.0, 0.0],
+        ];
         let m = RayMesh::new(&p, &[0, 1, 2, 0, 1, 9, 0, 1, 3, 2]);
         assert_eq!(m.triangle_count(), 1);
         assert!(RayMesh::new(&p, &[]).is_empty());
-        assert!(RayMesh::new(&p, &[]).cast([0.0; 3], [0.0, 0.0, 1.0], 9.0).is_none());
+        assert!(RayMesh::new(&p, &[])
+            .cast([0.0; 3], [0.0, 0.0, 1.0], 9.0)
+            .is_none());
     }
 
     #[test]
@@ -576,7 +633,9 @@ mod tests {
             [0.0, 1.0, 2.0],
         ];
         let m = RayMesh::new(&p, &[0, 1, 2, 3, 4, 5]);
-        let hit = m.cast([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], f32::INFINITY).unwrap();
+        let hit = m
+            .cast([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], f32::INFINITY)
+            .unwrap();
         assert_eq!(hit.triangle, 1);
         assert!((hit.distance - 2.0).abs() < 1e-5);
     }
@@ -587,11 +646,18 @@ mod tests {
         let (near, far) = (EntityId::from_raw(7), EntityId::from_raw(8));
         scene.add(far, mesh([10.0, -1.0, -1.0], [1.0, 2.0, 2.0]), IDENTITY);
         scene.add(near, mesh([4.0, -1.0, -1.0], [1.0, 2.0, 2.0]), IDENTITY);
-        let hit = scene.cast([0.0, 0.0, 0.0], [2.0, 0.0, 0.0], f32::INFINITY).unwrap();
+        let hit = scene
+            .cast([0.0, 0.0, 0.0], [2.0, 0.0, 0.0], f32::INFINITY)
+            .unwrap();
         assert_eq!(hit.entity, near);
-        assert!((hit.distance - 4.0).abs() < 1e-5, "distance is in world units: {hit:?}");
+        assert!(
+            (hit.distance - 4.0).abs() < 1e-5,
+            "distance is in world units: {hit:?}"
+        );
         assert!(close(hit.point, [4.0, 0.0, 0.0]));
-        let past = scene.cast_filtered([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], f32::INFINITY, |e| e != near);
+        let past = scene.cast_filtered([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], f32::INFINITY, |e| {
+            e != near
+        });
         assert_eq!(past.unwrap().entity, far);
         assert!(scene.cast([0.0, 0.0, 0.0], [0.0; 3], 9.0).is_none());
     }
@@ -610,11 +676,15 @@ mod tests {
         let mut scene = RayScene::new();
         scene.add(EntityId::from_raw(1), m, model);
         // Along -z from the origin: the box spans z -11..-9.
-        let hit = scene.cast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], f32::INFINITY).unwrap();
+        let hit = scene
+            .cast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], f32::INFINITY)
+            .unwrap();
         assert!((hit.distance - 9.0).abs() < 1e-4, "{hit:?}");
         assert!(close(hit.normal, [0.0, 0.0, 1.0]), "{hit:?}");
         // Across x at z = -10: it spans x -0.5..0.5.
-        let hit = scene.cast([-5.0, 0.0, -10.0], [1.0, 0.0, 0.0], f32::INFINITY).unwrap();
+        let hit = scene
+            .cast([-5.0, 0.0, -10.0], [1.0, 0.0, 0.0], f32::INFINITY)
+            .unwrap();
         assert!((hit.distance - 4.5).abs() < 1e-4, "{hit:?}");
         assert!(close(hit.normal, [-1.0, 0.0, 0.0]), "{hit:?}");
         // A zero scale has no inverse: nothing is placed.
@@ -628,11 +698,21 @@ mod tests {
     #[test]
     fn a_segment_stops_at_the_wall_or_runs_clear() {
         let mut scene = RayScene::new();
-        scene.add(EntityId::from_raw(1), mesh([1.0, 0.0, -5.0], [1.0, 3.0, 10.0]), IDENTITY);
+        scene.add(
+            EntityId::from_raw(1),
+            mesh([1.0, 0.0, -5.0], [1.0, 3.0, 10.0]),
+            IDENTITY,
+        );
         let hit = scene.segment([0.0, 1.5, 0.0], [4.0, 1.5, 0.0]).unwrap();
         assert!((hit.distance - 1.0).abs() < 1e-5);
-        assert!(scene.segment([0.0, 3.5, 0.0], [4.0, 3.6, 0.0]).is_none(), "over it");
-        assert!(scene.segment([0.0, 1.5, 0.0], [0.9, 1.5, 0.0]).is_none(), "short of it");
+        assert!(
+            scene.segment([0.0, 3.5, 0.0], [4.0, 3.6, 0.0]).is_none(),
+            "over it"
+        );
+        assert!(
+            scene.segment([0.0, 1.5, 0.0], [0.9, 1.5, 0.0]).is_none(),
+            "short of it"
+        );
         assert!(scene.segment([0.0, 1.5, 0.0], [0.0, 1.5, 0.0]).is_none());
     }
 }

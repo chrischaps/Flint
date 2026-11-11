@@ -327,7 +327,10 @@ mod tests {
     fn from_two_vectors_maps_a_onto_b() {
         let q = quat_from_two_vectors([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
         let v = quat_rotate_vec3(&q, [1.0, 0.0, 0.0]);
-        assert!(close(v[0], 0.0) && close(v[1], 0.0) && close(v[2], 1.0), "{v:?}");
+        assert!(
+            close(v[0], 0.0) && close(v[1], 0.0) && close(v[2], 1.0),
+            "{v:?}"
+        );
         // Opposite vectors: still a valid half turn.
         let q = quat_from_two_vectors([0.0, 1.0, 0.0], [0.0, -2.0, 0.0]);
         let v = quat_rotate_vec3(&q, [0.0, 1.0, 0.0]);

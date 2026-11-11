@@ -281,21 +281,21 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
         let metallic = pbr.metallic_factor();
         let roughness = pbr.roughness_factor();
 
-        let base_color_texture = pbr.base_color_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let base_color_texture = pbr
+            .base_color_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let normal_texture = material.normal_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let normal_texture = material
+            .normal_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let metallic_roughness_texture = pbr
+            .metallic_roughness_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let emissive_texture = material.emissive_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let emissive_texture = material
+            .emissive_texture()
+            .map(|info| texture_name(info.texture()));
 
         let alpha_mode = match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
@@ -943,7 +943,10 @@ mod tests {
     /// `tools/test-models/double_sided_card.py`'s.
     #[test]
     fn double_sided_is_read() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testModels/DoubleSidedCard.glb");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testModels/DoubleSidedCard.glb"
+        );
         let model = import_gltf(path).unwrap();
         let sides: Vec<_> = model
             .materials

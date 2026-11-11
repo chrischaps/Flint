@@ -1521,14 +1521,7 @@ impl SceneRenderer {
         if config.enabled && config.ssao_enabled {
             scoped("SSAO", encoder, &mut |encoder| {
                 pp.run_ssao(
-                    queue,
-                    encoder,
-                    device,
-                    resources,
-                    config,
-                    depth_view,
-                    depth_key,
-                    camera,
+                    queue, encoder, device, resources, config, depth_view, depth_key, camera,
                 )
             });
         }

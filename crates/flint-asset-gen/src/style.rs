@@ -102,7 +102,7 @@ impl StyleGuide {
     pub fn find(name: &str) -> Result<Self> {
         // The working directory first (as before), then the project root,
         // so a style is found from any folder of the project (#179).
-        let root = flint_asset::Project::current().root;
+        let root = flint_asset::Project::current()?.root;
         let mut candidates = vec![
             format!("styles/{}.style.toml", name),
             format!(".flint/styles/{}.style.toml", name),

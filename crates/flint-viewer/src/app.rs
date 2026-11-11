@@ -19,7 +19,7 @@ use flint_render::{
     SceneRenderer,
 };
 use flint_scene::{load_scene, save_scene, CameraDef, PostProcessDef, SceneDocument};
-use flint_schema::SchemaRegistry;
+use flint_schema::{SchemaDirs, SchemaRegistry};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
 use std::sync::mpsc;
@@ -61,24 +61,43 @@ pub struct ViewerStyle {
     pub time: Option<f32>,
 }
 
-/// Run the viewer application (standard viewer mode)
+/// What the viewer loads for a scene: the schemas and constraints of every
+/// directory the one resolver names (ADR 0114: `--schemas` flags if given,
+/// else the project manifest's list, else `schemas/` in the working
+/// directory, beside the scene and one level up), and those directories, to
+/// watch. Every flag counts (#704: the viewer used to take the first).
+pub fn load_schemas(
+    scene_path: &str,
+    schemas: &[String],
+) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
+    let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
+    if dirs.dirs.is_empty() {
+        println!("Warning: No schemas directories found");
+    }
+    let mut constraints = ConstraintRegistry::new();
+    for dir in &dirs.dirs {
+        // A directory with no constraints, or with one that doesn't read,
+        // leaves the viewer without them, as it always has
+        if let Ok(loaded) = ConstraintRegistry::load_from_directory(dir) {
+            for constraint in loaded.all() {
+                constraints.register(constraint.clone());
+            }
+        }
+    }
+    Ok((registry, constraints, dirs))
+}
+
+/// Run the viewer application (standard viewer mode). `schemas` are the
+/// `--schemas` flags, empty when none were given.
 pub fn run(
     scene_path: &str,
     watch: bool,
-    schemas_path: &str,
+    schemas: &[String],
     inspector: bool,
     auto_orbit: bool,
     style: ViewerStyle,
 ) -> Result<()> {
-    let registry = if Path::new(schemas_path).exists() {
-        SchemaRegistry::load_from_directory(schemas_path)?
-    } else {
-        println!("Warning: Schemas directory not found: {}", schemas_path);
-        SchemaRegistry::new()
-    };
-
-    let constraint_registry =
-        ConstraintRegistry::load_from_directory(schemas_path).unwrap_or_default();
+    let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     load_user_styles(scene_path);
     // A word may name one of the scene's styles, registered just now
@@ -121,8 +140,7 @@ pub fn run(
             .watcher()
             .watch(scene_dir, RecursiveMode::Recursive)?;
 
-        let schemas_dir = Path::new(schemas_path);
-        if schemas_dir.exists() {
+        for schemas_dir in &schema_dirs.dirs {
             debouncer
                 .watcher()
                 .watch(schemas_dir, RecursiveMode::Recursive)?;
@@ -195,28 +213,14 @@ pub fn run_with_world(
 }
 
 /// Run the viewer in editor mode with a spline editor configuration.
+/// `schemas` are the `--schemas` flags, empty when none were given.
 pub fn run_editor(
     scene_path: &str,
     watch: bool,
-    schemas_paths: &[&str],
+    schemas: &[String],
     editor_config: SplineEditorConfig,
 ) -> Result<()> {
-    let existing: Vec<&str> = schemas_paths
-        .iter()
-        .copied()
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing)?
-    } else {
-        println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
-
-    let constraint_registry = existing
-        .first()
-        .and_then(|p| ConstraintRegistry::load_from_directory(p).ok())
-        .unwrap_or_default();
+    let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     load_user_styles(scene_path);
     let (world, scene_file) = load_scene(scene_path, &registry)?;
@@ -255,13 +259,10 @@ pub fn run_editor(
             .watcher()
             .watch(scene_dir, RecursiveMode::Recursive)?;
 
-        for sp in schemas_paths {
-            let schemas_dir = Path::new(sp);
-            if schemas_dir.exists() {
-                debouncer
-                    .watcher()
-                    .watch(schemas_dir, RecursiveMode::Recursive)?;
-            }
+        for schemas_dir in &schema_dirs.dirs {
+            debouncer
+                .watcher()
+                .watch(schemas_dir, RecursiveMode::Recursive)?;
         }
 
         std::thread::spawn(move || {
@@ -2137,9 +2138,8 @@ impl ViewerApp {
                             .and_then(|id| state.world.get_name(id))
                             .map(str::to_owned);
                         state.world = new_world;
-                        self.scene_tree.select(
-                            selected_name.and_then(|name| state.world.get_id(&name)),
-                        );
+                        self.scene_tree
+                            .select(selected_name.and_then(|name| state.world.get_id(&name)));
                         state.scene_post = with_look(
                             scene_file.post_process.clone(),
                             &state.scene_path,

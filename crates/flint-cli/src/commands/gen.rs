@@ -297,7 +297,11 @@ pub fn run(args: GenArgs) -> Result<()> {
             args.since.as_deref(),
         );
     }
-    if args.spec.as_deref().is_some_and(super::glyph_preview::is_glyph_set) {
+    if args
+        .spec
+        .as_deref()
+        .is_some_and(super::glyph_preview::is_glyph_set)
+    {
         return super::glyph_preview::run(&args);
     }
     let json = args.report == Some(ReportFormat::Json);
@@ -500,8 +504,9 @@ pub fn run(args: GenArgs) -> Result<()> {
     let batch_total = args.batch;
 
     // The project's store, wherever in the project this runs from (#179).
-    let store = args.register.then(|| {
-        let project = flint_asset::Project::current();
+    let store = if args.register {
+        use flint_asset::ProjectStore;
+        let project = flint_asset::Project::current()?;
         let store = gen_store::Store::open_project(&project);
         say!(
             "Store:      {} (project {}, by {})",
@@ -509,8 +514,10 @@ pub fn run(args: GenArgs) -> Result<()> {
             flint_asset::Project::display(&project.root),
             project.found.describe()
         );
-        store
-    });
+        Some(store)
+    } else {
+        None
+    };
     let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
         (false, _, _) => None,
         (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),

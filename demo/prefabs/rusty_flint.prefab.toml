@@ -1,0 +1,492 @@
+# The Rusty Flint Tavern's room (#295): the hall itself, its hearth, bar
+# and furniture, its doors, lights and sounds. Both tavern scenes place it
+# once, so the room is written once:
+#
+#   demo/phase4_runtime.scene.toml    the integration demo (and the web demo's front door)
+#   demo/showcase_tavern.scene.toml   the showcase, painterly, with its hidden passage
+#
+#   [prefabs.room]
+#   template = "rusty_flint"
+#   prefix = "tavern"
+#
+# so the entities are tavern_shell, tavern_fireplace, tavern_front_entrance...
+# The people (player, bartender, patrons, stranger) and the scripts that run
+# the night belong to each scene.
+#
+# Every model and texture here comes from demo/tools/tavern_build.py (the
+# textures from demo/specs/tavern_*.procgen.toml); rebuild with
+#
+#   python demo/tools/tavern_build.py --textures
+#
+# The hall: x -6.85..6.85, z -4.85..9.85 inside, floor at 0, ceiling at 4.2,
+# all in the hall's own frame (the scenes' main_hall sits at the origin).
+# The front door is in the south wall (z = 10), the kitchen door in the north
+# (z = -5), the hearth on the west wall, the bar along the east. Moonlight
+# comes in through the two west windows; everything else is fire and candle.
+# Point lights cast no shadows, so the moon is the one light that draws them.
+
+[prefab]
+name = "rusty_flint"
+description = "The Rusty Flint Tavern's hall: architecture, furniture, lights and sounds (#295)"
+
+
+# ============================================================
+#  THE HALL
+# ============================================================
+
+# Floor, walls (stone below the chair rail, lime plaster above, oak framing),
+# windows with diamond leading, beamed ceiling, posts, roof and chimney.
+[entities.shell]
+transform = { position = [0, 0, 0] }
+model = { asset = "tavern_shell" }
+
+# The ground outside, under the hall's own floor.
+[entities.ground]
+archetype = "floor"
+transform = { position = [0, -0.1, 0] }
+bounds = { min = [-20, -0.1, -20], max = [20, 0.0, 20] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [40, 0.2, 40], friction = 0.8 }
+material = { texture = "textures/tavern/tavern_fieldstone_color.jpg", roughness = 0.9, texture_scale = 18.0 }
+
+# The shell draws; these hold the player in. The doorways are 1.5 m wide
+# and 2.5 m high, in the middle of the north and south walls.
+[entities.wall_north_left]
+transform = { position = [-3.875, 2.1, -5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [6.25, 4.2, 0.3] }
+
+[entities.wall_north_right]
+transform = { position = [3.875, 2.1, -5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [6.25, 4.2, 0.3] }
+
+[entities.wall_north_header]
+transform = { position = [0, 3.35, -5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.5, 1.7, 0.3] }
+
+[entities.wall_south_left]
+transform = { position = [-3.875, 2.1, 10] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [6.25, 4.2, 0.3] }
+
+[entities.wall_south_right]
+transform = { position = [3.875, 2.1, 10] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [6.25, 4.2, 0.3] }
+
+[entities.wall_south_header]
+transform = { position = [0, 3.35, 10] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.5, 1.7, 0.3] }
+
+[entities.wall_west]
+transform = { position = [-7, 2.1, 2.5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.3, 4.2, 15.3] }
+
+[entities.wall_east]
+transform = { position = [7, 2.1, 2.5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.3, 4.2, 15.3] }
+
+[entities.ceiling]
+transform = { position = [0, 4.27, 2.5] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [14, 0.15, 15] }
+
+[entities.post_north]
+transform = { position = [2.0, 1.9, 0.9] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.3, 3.8, 0.3] }
+
+[entities.post_south]
+transform = { position = [2.0, 1.9, 7.9] }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.3, 3.8, 0.3] }
+
+
+# ============================================================
+#  THE HEARTH
+# ============================================================
+
+[entities.fireplace]
+transform = { position = [-6.5, 0, -3] }
+model = { asset = "tavern_hearth" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.9, 4.2, 2.8], offset = [0.1, 2.1, 0] }
+
+[entities.hearth_flames]
+transform = { position = [-6.36, 0.1, -3] }
+particle_effect = { effect = "hearth_fire" }
+
+# The fire itself, flickering; it stands a little proud of the logs so it
+# reaches the room rather than the back of the firebox.
+[entities.fire_light]
+transform = { position = [-5.95, 0.6, -3] }
+light = { type = "point", color = [1.0, 0.55, 0.18], intensity = 18.0, radius = 11.0, source_radius = 0.3 }
+script = { source = "torch_flicker.rhai" }
+
+# The embers' glow along the floor before the hearth.
+[entities.hearth_glow]
+transform = { position = [-5.55, 0.15, -3] }
+light = { type = "point", color = [1.0, 0.36, 0.08], intensity = 5.0, radius = 3.5 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.fire_sound]
+transform = { position = [-6.3, 1, -3] }
+audio_source = { file = "audio/fire_crackle.ogg", volume = 0.9, spatial = true, loop = true, autoplay = true, min_distance = 1.0, max_distance = 12.0 }
+
+
+# ============================================================
+#  THE BAR
+# ============================================================
+
+[entities.bar_counter]
+transform = { position = [5, 0, 0] }
+model = { asset = "tavern_bar" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.17, 1.1, 6.16], offset = [-0.035, 0.55, 0] }
+
+[entities.backbar]
+transform = { position = [6.6, 0, 0] }
+model = { asset = "tavern_backbar" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [0.45, 2.94, 5.9], offset = [0.025, 1.47, 0] }
+
+[entities.bar_sound]
+transform = { position = [5.6, 1, 0] }
+audio_source = { file = "audio/glasses_clink.ogg", volume = 0.5, spatial = true, loop = true, autoplay = true, min_distance = 1.0, max_distance = 8.0 }
+
+[entities.barrel_1]
+transform = { position = [5.5, 0, -3.8], rotation = [0, 20, 0] }
+model = { asset = "tavern_barrel" }
+rigidbody = { body_type = "static" }
+collider = { shape = "cylinder", size = [0.6, 0.9, 0.6], offset = [0, 0.45, 0] }
+
+[entities.barrel_2]
+transform = { position = [6.2, 0, -4.3], rotation = [0, 75, 0] }
+model = { asset = "tavern_barrel" }
+rigidbody = { body_type = "static" }
+collider = { shape = "cylinder", size = [0.6, 0.9, 0.6], offset = [0, 0.45, 0] }
+
+[entities.barrel_3]
+transform = { position = [6.3, 0, -3.4], rotation = [0, 140, 0] }
+model = { asset = "tavern_barrel" }
+rigidbody = { body_type = "static" }
+collider = { shape = "cylinder", size = [0.6, 0.9, 0.6], offset = [0, 0.45, 0] }
+
+[entities.bar_stool_1]
+transform = { position = [4.05, 0, -1.9], rotation = [0, 30, 0] }
+model = { asset = "tavern_stool_tall" }
+
+[entities.bar_stool_2]
+transform = { position = [4.0, 0, 0.3], rotation = [0, 75, 0] }
+model = { asset = "tavern_stool_tall" }
+
+[entities.bar_stool_3]
+transform = { position = [4.1, 0, 2.15], rotation = [0, 10, 0] }
+model = { asset = "tavern_stool_tall" }
+
+# Lanterns over the bar, hung from the beams at z = -2.6 and 0.9.
+[entities.bar_lantern]
+transform = { position = [4.3, 3.82, 0.9] }
+model = { asset = "tavern_lantern" }
+
+[entities.bar_lamp]
+parent = "bar_lantern"
+transform = { position = [0, -1.1, 0] }
+light = { type = "point", color = [1.0, 0.72, 0.38], intensity = 9.0, radius = 7.0, source_radius = 0.1 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.bar_lantern_north]
+transform = { position = [4.3, 3.82, -2.6] }
+model = { asset = "tavern_lantern" }
+
+[entities.bar_lamp_north]
+parent = "bar_lantern_north"
+transform = { position = [0, -1.1, 0] }
+light = { type = "point", color = [1.0, 0.7, 0.36], intensity = 7.0, radius = 6.0, source_radius = 0.1 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.candle_bar]
+transform = { position = [4.85, 1.1, 0.6] }
+model = { asset = "tavern_candle" }
+
+[entities.bar_candle]
+parent = "candle_bar"
+transform = { position = [0, 0.16, 0] }
+light = { type = "point", color = [1.0, 0.78, 0.3], intensity = 3.0, radius = 3.5 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.mug_bar_1]
+transform = { position = [4.75, 1.1, -0.5], rotation = [0, 15, 0] }
+model = { asset = "tavern_tankard" }
+
+[entities.mug_bar_2]
+transform = { position = [4.7, 1.1, 1.25], rotation = [0, 140, 0] }
+model = { asset = "tavern_tankard_wood" }
+
+[entities.mug_bar_3]
+transform = { position = [4.8, 1.1, 2.4], rotation = [0, 265, 0] }
+model = { asset = "tavern_tankard" }
+
+
+# ============================================================
+#  THE ROOM
+# ============================================================
+
+# The great wheel of candles over the tables, swaying on its chain.
+[entities.chandelier]
+transform = { position = [-1.0, 3.82, 4.4] }
+model = { asset = "tavern_chandelier" }
+animator = { clip = "chandelier_sway", autoplay = true, loop = true, speed = 1.0 }
+
+[entities.chandelier_light]
+parent = "chandelier"
+transform = { position = [0, -1.02, 0] }
+light = { type = "point", color = [1.0, 0.72, 0.4], intensity = 12.0, radius = 10.0, source_radius = 0.6 }
+script = { source = "candle_flicker.rhai" }
+
+# Table 1: the patrons face each other across it.
+[entities.table_1]
+transform = { position = [-2, 0, 4.5], rotation = [0, 8, 0] }
+model = { asset = "tavern_table" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.2, 0.75, 1.2], offset = [0, 0.375, 0] }
+
+[entities.candle_table_1]
+transform = { position = [-2.05, 0.75, 4.55] }
+model = { asset = "tavern_candle" }
+
+[entities.table_1_candle]
+parent = "candle_table_1"
+transform = { position = [0, 0.16, 0] }
+light = { type = "point", color = [1.0, 0.76, 0.32], intensity = 2.5, radius = 3.0 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.mug_patron_1]
+transform = { position = [-1.7, 0.75, 4.3], rotation = [0, 50, 0] }
+model = { asset = "tavern_tankard" }
+
+[entities.mug_patron_2]
+transform = { position = [-2.3, 0.75, 4.8], rotation = [0, 195, 0] }
+model = { asset = "tavern_tankard_wood" }
+
+[entities.stool_1]
+transform = { position = [-1.25, 0, 5.25], rotation = [0, 40, 0] }
+model = { asset = "tavern_stool" }
+
+[entities.stool_2]
+transform = { position = [-2.8, 0, 3.8], rotation = [0, 100, 0] }
+model = { asset = "tavern_stool" }
+
+# Table 2, nearest the stranger's corner.
+[entities.table_2]
+transform = { position = [-3.4, 0, 7.3], rotation = [0, -12, 0] }
+model = { asset = "tavern_table" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.2, 0.75, 1.2], offset = [0, 0.375, 0] }
+
+[entities.candle_table_2]
+transform = { position = [-3.55, 0.75, 7.15] }
+model = { asset = "tavern_candle" }
+
+[entities.table_2_candle]
+parent = "candle_table_2"
+transform = { position = [0, 0.16, 0] }
+light = { type = "point", color = [1.0, 0.74, 0.3], intensity = 1.5, radius = 2.5 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.mug_table_2]
+transform = { position = [-3.1, 0.75, 7.45], rotation = [0, 310, 0] }
+model = { asset = "tavern_tankard" }
+
+[entities.stool_3]
+transform = { position = [-2.5, 0, 7.9], rotation = [0, 15, 0] }
+model = { asset = "tavern_stool" }
+
+[entities.stool_4]
+transform = { position = [-4.25, 0, 6.8], rotation = [0, 70, 0] }
+model = { asset = "tavern_stool" }
+
+# Table 3: the long trestle in the middle of the room.
+[entities.table_3]
+transform = { position = [0, 0, 5] }
+model = { asset = "tavern_table_long" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.6, 0.75, 0.8], offset = [0, 0.375, 0] }
+
+[entities.candle_table_3]
+transform = { position = [0.15, 0.75, 4.98] }
+model = { asset = "tavern_candle" }
+
+[entities.table_3_candle]
+parent = "candle_table_3"
+transform = { position = [0, 0.16, 0] }
+light = { type = "point", color = [1.0, 0.76, 0.32], intensity = 2.5, radius = 3.0 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.mug_table_3a]
+transform = { position = [0.45, 0.75, 5.15], rotation = [0, 80, 0] }
+model = { asset = "tavern_tankard_wood" }
+
+[entities.mug_table_3b]
+transform = { position = [-0.4, 0.75, 4.85], rotation = [0, 225, 0] }
+model = { asset = "tavern_tankard" }
+
+[entities.bench_long]
+transform = { position = [0, 0, 5.75] }
+model = { asset = "tavern_bench" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.5, 0.46, 0.32], offset = [0, 0.23, 0] }
+
+[entities.stool_5]
+transform = { position = [0.55, 0, 4.2], rotation = [0, 25, 0] }
+model = { asset = "tavern_stool" }
+
+# Before the hearth, and under the windows.
+[entities.bench_fireplace]
+transform = { position = [-4.75, 0, -3], rotation = [0, 90, 0] }
+model = { asset = "tavern_bench" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.5, 0.46, 0.32], offset = [0, 0.23, 0] }
+
+# Abandoned mid-drink by the fire.
+[entities.mug_fireplace]
+transform = { position = [-4.3, 0.012, -2.35], rotation = [0, 170, 0] }
+model = { asset = "tavern_tankard_wood" }
+
+[entities.bench_wall]
+transform = { position = [-6.6, 0, 3.75], rotation = [0, 90, 0] }
+model = { asset = "tavern_bench" }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [1.5, 0.46, 0.32], offset = [0, 0.23, 0] }
+
+# Dust turning in the moonlight.
+[entities.dust]
+transform = { position = [-3.6, 1.7, 3.6] }
+
+[entities.dust.particle_emitter]
+autoplay = true
+playing = true
+blend_mode = "additive"
+shape = "box"
+shape_extents = [2.6, 1.3, 2.8]
+emission_rate = 4.0
+max_particles = 60
+lifetime_min = 5.0
+lifetime_max = 9.0
+speed_min = 0.03
+speed_max = 0.1
+direction = [0, -1, 0]
+spread = 90.0
+gravity = [0, -0.01, 0]
+damping = 0.8
+size_start = 0.012
+size_end = 0.008
+color_start = [0.85, 0.9, 1.0, 0.5]
+color_end = [0.8, 0.85, 1.0, 0.0]
+
+
+# ============================================================
+#  LIGHT
+# ============================================================
+
+# The moon, low in the west: the only light that casts shadows, so the
+# window leading draws itself across the floor and tables. Its light in
+# the air is the god rays.
+[entities.moon]
+transform = { position = [-40, 30, 15] }
+light = { type = "directional", direction = [-0.74, 0.52, 0.3], color = [0.46, 0.6, 1.0], intensity = 11.0, angular_size = 0.8, volumetric_intensity = 2.5, volumetric_color = [0.5, 0.62, 0.95] }
+
+# Wall sconces: each is the candle's model, the light a child at its flame.
+[entities.sconce_east]
+transform = { position = [6.85, 2.0, 4.6], rotation = [0, 180, 0] }
+model = { asset = "tavern_sconce" }
+
+[entities.east_torch]
+parent = "sconce_east"
+transform = { position = [0.18, 0.1, 0] }
+light = { type = "point", color = [1.0, 0.6, 0.2], intensity = 7.0, radius = 7.0 }
+script = { source = "torch_flicker.rhai" }
+
+[entities.sconce_west]
+transform = { position = [-6.85, 2.0, 3.75] }
+model = { asset = "tavern_sconce" }
+
+[entities.west_sconce_light]
+parent = "sconce_west"
+transform = { position = [0.18, 0.1, 0] }
+light = { type = "point", color = [1.0, 0.66, 0.26], intensity = 4.0, radius = 5.0 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.sconce_north]
+transform = { position = [2.6, 2.0, -4.85], rotation = [0, -90, 0] }
+model = { asset = "tavern_sconce" }
+
+[entities.north_sconce_light]
+parent = "sconce_north"
+transform = { position = [0.18, 0.1, 0] }
+light = { type = "point", color = [1.0, 0.66, 0.26], intensity = 5.0, radius = 6.0 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.sconce_door_west]
+transform = { position = [-1.55, 2.0, 9.85], rotation = [0, 90, 0] }
+model = { asset = "tavern_sconce" }
+
+[entities.door_west_light]
+parent = "sconce_door_west"
+transform = { position = [0.18, 0.1, 0] }
+light = { type = "point", color = [1.0, 0.66, 0.26], intensity = 4.0, radius = 5.0 }
+script = { source = "candle_flicker.rhai" }
+
+[entities.sconce_door_east]
+transform = { position = [1.55, 2.0, 9.85], rotation = [0, 90, 0] }
+model = { asset = "tavern_sconce" }
+
+[entities.door_east_light]
+parent = "sconce_door_east"
+transform = { position = [0.18, 0.1, 0] }
+light = { type = "point", color = [1.0, 0.66, 0.26], intensity = 4.0, radius = 5.0 }
+script = { source = "candle_flicker.rhai" }
+
+
+# ============================================================
+#  DOORS — interactive, with animation clips
+# ============================================================
+
+[entities.front_entrance]
+archetype = "door"
+transform = { position = [-0.75, 0, 10] }
+model = { asset = "tavern_door" }
+bounds = { min = [0, 0, -0.07], max = [1.5, 2.5, 0.07] }
+rigidbody = { body_type = "kinematic" }
+collider = { shape = "box", size = [1.5, 2.5, 0.1] }
+door = { style = "hinged", locked = false, open_angle = 90.0 }
+interactable = { prompt_text = "Open Door", range = 2.5, interaction_type = "use", enabled = true }
+animator = { clip = "door_swing", autoplay = false, loop = false, speed = 1.0 }
+script = { source = "door_interact_v2.rhai" }
+
+[entities.kitchen_door]
+archetype = "door"
+transform = { position = [-0.75, 0, -5] }
+model = { asset = "tavern_door" }
+bounds = { min = [0, 0, -0.07], max = [1.5, 2.5, 0.07] }
+rigidbody = { body_type = "kinematic" }
+collider = { shape = "box", size = [1.5, 2.5, 0.1] }
+door = { style = "hinged", locked = true, open_angle = 75.0 }
+interactable = { prompt_text = "Kitchen Door", range = 2.5, interaction_type = "use", enabled = true }
+animator = { clip = "door_swing", autoplay = false, loop = false, speed = 1.0 }
+script = { source = "door_interact_v2.rhai" }
+
+
+# ============================================================
+#  SOUND
+# ============================================================
+
+# The room's murmur, heard everywhere.
+[entities.ambient_sound]
+transform = { position = [0, 2, 2.5] }
+audio_source = { file = "audio/ambient_tavern.ogg", volume = 0.3, spatial = false, loop = true, autoplay = true }

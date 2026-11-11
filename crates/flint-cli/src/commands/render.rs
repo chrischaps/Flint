@@ -107,6 +107,36 @@ pub struct RenderArgs {
     #[arg(long, value_parser = ["cell", "full"])]
     pub sweep_scale: Option<String>,
 
+    /// Render the scene again under other flags, at the same camera, and
+    /// write one labelled sheet to -o (#291): `"label: --flag value ..."`,
+    /// repeatable. Each variant is this command line with its flags after
+    /// it (a flag in both takes the variant's; --style adds), and its own
+    /// frame is written beside the sheet as `<out>-<label>.png`. All in one
+    /// process on one GPU device
+    #[arg(long, value_parser = super::variants::parse_variant,
+          action = clap::ArgAction::Append, allow_hyphen_values = true,
+          conflicts_with_all = ["ai_refine", "frames", "mesh"])]
+    pub variant: Vec<super::variants::Variant>,
+
+    /// A file of variants (#291): `[[variant]]` tables of `label` and
+    /// `flags` (a line, or an array of words), with an optional `title` and
+    /// `zoom = ["X0,Y0,X1,Y1@N"]`. Its variants come before any --variant
+    #[arg(long, value_name = "FILE.toml", conflicts_with_all = ["ai_refine", "frames", "mesh"])]
+    pub variants: Option<String>,
+
+    /// With --variant(s): also crop this region of every variant's frame,
+    /// X0,Y0,X1,Y1 in its pixels, drawn N times larger with nearest
+    /// neighbour (`@N`; default as large as fits 640 across). Writes
+    /// `<out>-zoom.png` (labelled) and `<out>-<label>-zoom.png` a variant,
+    /// and outlines the region on the main sheet. Repeatable
+    #[arg(long, value_parser = super::variants::parse_zoom, action = clap::ArgAction::Append)]
+    pub zoom: Vec<super::variants::Zoom>,
+
+    /// The words after `render` on the command line, for --variant to
+    /// build each variant's own on. Set by whoever parsed them.
+    #[arg(skip)]
+    pub command_line: Vec<std::ffi::OsString>,
+
     /// Write the frame's (or each --sweep column's) measures as JSON
     /// (#357): mean luminance, near-black / near-white shares, edge
     /// density, the ASCII grid's ramp-step histogram when it drew, and the
@@ -158,8 +188,10 @@ pub struct RenderArgs {
     #[arg(long)]
     pub max_cost: Option<f64>,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
     /// Camera orbit distance
@@ -807,6 +839,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
     }
+    if !args.variant.is_empty() || args.variants.is_some() {
+        return super::variants::run(&args, host);
+    }
+    if !args.zoom.is_empty() {
+        anyhow::bail!("--zoom crops each variant's frame: add --variant or --variants");
+    }
     let report_json = args.report.as_deref() == Some(REPORT_TO_STDOUT);
     HUMAN_TO_STDERR.store(report_json, Ordering::Relaxed);
     // A mesh sequence (#222) is its own span: its files are the frames
@@ -901,27 +939,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         }
     }
     flint_render::set_gpu_override(args.gpu.clone());
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
-
-    // Load schemas from all directories
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
-    } else {
+    // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
+    let (registry, schema_dirs) =
+        super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    super::common_args::warn_dropped_schemas(&schema_dirs);
+    if schema_dirs.dirs.is_empty() {
         say!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
+    }
 
     // Load scene
     let (mut world, scene_file) =
@@ -2515,10 +2539,12 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                         let state = scripts.expression().get("state")?.clone();
                         state.into_string().ok()
                     }),
-                    props: stage
-                        .living
-                        .as_ref()
-                        .map_or_else(Vec::new, render_report::props_report),
+                    props: stage.living.as_ref().map_or_else(Vec::new, |run| {
+                        render_report::props_report(
+                            run,
+                            stage.wooze.as_ref().map(|clocks| clocks.reading()),
+                        )
+                    }),
                 });
             }
         }
@@ -2761,7 +2787,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     }
 
     if report_json {
-        let field = stages[0].living.as_ref().and_then(|l| l.field());
+        let field = stages[0].wooze.as_ref().map(|clocks| clocks.field());
         let report = render_report::RenderReport {
             scene: scene_name,
             output: args.output.clone(),
@@ -3307,7 +3333,6 @@ impl Stage {
             LivingRun::load(
                 &args.scene,
                 scene_file.living.as_ref(),
-                scene_file.wooze.as_ref(),
                 &mut world,
                 GpuSink {
                     renderer: &mut renderer,
@@ -3321,23 +3346,20 @@ impl Stage {
         // as the player's Load does (#249), and the file's [living] tables, species
         // and all, go over the scene's as they do there.
         let (column_preset, column_knobs) = cell_knobs(args, grid, cell)?;
-        if let (Some(run), Some(knobs)) = (&mut living, &column_knobs) {
-            run.change_field(knobs)
-                .map_err(|reason| anyhow!("--sweep: {reason}"))?;
-        }
         if let (Some(run), Some(preset)) = (&mut living, &column_preset) {
             for problem in run.apply_preset(&preset.living) {
                 eprintln!("Warning: --sweep preset: {problem}");
             }
         }
-        // What else reads the field: the shading boil always, and shallow wooze in a
+        // The stage's one wooze field (#581), with the column's knobs over the scene's:
+        // the living props read it, the shading boil always, and shallow wooze in a
         // capture of a moment. A plain render shows those meshes at rest (#215).
         let mut wooze =
             WoozeClocks::of_scene(scene_file.wooze.as_ref(), column_knobs.as_ref(), moment)
                 .map_err(|reason| anyhow!("--sweep: {reason}"))?;
         // As the player's first frame: no time passes, and the field is read.
         if let Some(run) = &mut living {
-            run.step(0.0);
+            run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));
         }
 
         model_loader::load_models_from_world(
@@ -3505,7 +3527,7 @@ impl Stage {
             );
             follow_script_camera(&mut camera, scripts);
             if let Some(run) = &mut living {
-                run.step(0.0);
+                run.step(0.0, wooze.as_ref().map(WoozeClocks::reading));
             }
         }
 
@@ -3697,7 +3719,7 @@ impl Stage {
             );
         }
         if let Some(run) = &mut self.living {
-            run.step(dt);
+            run.step(dt, self.wooze.as_ref().map(WoozeClocks::reading));
         }
     }
 

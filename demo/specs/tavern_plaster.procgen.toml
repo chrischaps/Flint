@@ -1,0 +1,40 @@
+# The Rusty Flint's upper walls and ceiling: lime plaster, hand-trowelled,
+# washed ochre long ago and yellowed by smoke. Faint strata are the trowel's
+# passes.
+#
+#   flint gen demo/specs/tavern_plaster.procgen.toml -o demo/textures/tavern/tavern_plaster.png
+
+generator = "texture_v1"
+
+[meta]
+name = "tavern_plaster"
+description = "Smoke-yellowed lime plaster with soft trowel marks"
+version = "1.0.0"
+tags = ["texture", "plaster", "wall", "ceiling", "tavern"]
+
+[seed]
+mode = "fixed"
+value = 1733
+
+[params]
+width = 1024
+height = 1024
+output_maps = ["albedo", "normal", "roughness"]
+seamless = true
+pattern = "perlin_organic"
+noise_type = "simplex"
+octaves = 6
+frequency = 3.0
+persistence = 0.55
+height_bands = 6
+base_color = "#B49A74"
+color_variation = 0.05
+mortar_color = "#9C8462"
+mortar_threshold = 0.02
+roughness_base = 0.92
+roughness_variation = 0.03
+roughness_mortar = 0.95
+normal_strength = 0.8
+detail_scale = 24.0
+detail_octaves = 5
+detail_strength = 0.07

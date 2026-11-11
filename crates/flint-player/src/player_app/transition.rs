@@ -12,10 +12,10 @@ use super::scene_loading::{
 };
 use super::PlayerApp;
 use flint_core::components as comp;
+use flint_core::vfs;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader;
 use flint_runtime::RuntimeSystem;
-use flint_core::vfs;
 use std::path::Path;
 
 /// Scene transition lifecycle phase
@@ -99,23 +99,8 @@ impl PlayerApp {
         };
 
         // Load schema registry for archetype defaults
-        let registry = if self.schema_paths.is_empty() {
-            flint_schema::SchemaRegistry::load_from_directory("schemas")
-                .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
-        } else {
-            let existing: Vec<&str> = self
-                .schema_paths
-                .iter()
-                .map(|s| s.as_str())
-                .filter(|p| vfs::exists(p))
-                .collect();
-            if existing.is_empty() {
-                flint_schema::SchemaRegistry::new()
-            } else {
-                flint_schema::SchemaRegistry::load_from_directories(&existing)
-                    .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
-            }
-        };
+        let scene_path = self.scene_path.clone();
+        let registry = self.schemas_for_scene(&scene_path);
 
         let mut spawned_ids = Vec::new();
 
@@ -311,39 +296,33 @@ impl PlayerApp {
         self.loaded_chunks.clear();
     }
 
+    /// The registry for `scene`, after asking the one resolver (ADR 0114)
+    /// what the directories are now: flags stay, a manifest's list is read
+    /// again (the scene may belong to another project), a discovered or
+    /// host list gains what lies beside the scene. A list that can't be
+    /// named (a manifest naming a missing directory) is logged, and the
+    /// directories already held are kept.
+    fn schemas_for_scene(&mut self, scene: &str) -> flint_schema::SchemaRegistry {
+        match self.schema_dirs.for_scene(Path::new(scene)) {
+            Ok(dirs) => self.schema_dirs = dirs,
+            Err(e) => tracing::error!("{e}; keeping the schema directories already loaded"),
+        }
+        flint_schema::SchemaRegistry::load_from_directories(&self.schema_dirs.dirs).unwrap_or_else(
+            |e| {
+                tracing::error!("Failed to load schemas: {e}");
+                flint_schema::SchemaRegistry::new()
+            },
+        )
+    }
+
     fn load_target_scene(&mut self, target_scene: &str) -> bool {
         println!("[transition] Loading scene: {}", target_scene);
 
         // Resolve scene path relative to current scene
         let new_scene_path = resolve_scene_path(&self.scene_path, target_scene);
 
-        // Auto-discover schema dirs from the new scene path and merge
-        for dir in flint_schema::discover_schema_dirs(&new_scene_path) {
-            let s = dir.to_string_lossy().into_owned();
-            if !self.schema_paths.contains(&s) {
-                self.schema_paths.push(s);
-            }
-        }
-
-        // Load schema registry
-        let registry = if self.schema_paths.is_empty() {
-            // Try default schemas/ dir
-            flint_schema::SchemaRegistry::load_from_directory("schemas")
-                .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
-        } else {
-            let existing: Vec<&str> = self
-                .schema_paths
-                .iter()
-                .map(|s| s.as_str())
-                .filter(|p| vfs::exists(p))
-                .collect();
-            if existing.is_empty() {
-                flint_schema::SchemaRegistry::new()
-            } else {
-                flint_schema::SchemaRegistry::load_from_directories(&existing)
-                    .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
-            }
-        };
+        // The new scene's schema directories and its registry
+        let registry = self.schemas_for_scene(&new_scene_path);
 
         // Parse and load scene
         match flint_scene::load_scene(&new_scene_path, &registry) {

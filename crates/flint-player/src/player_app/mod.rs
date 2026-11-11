@@ -3,59 +3,59 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 mod camera_cut;
+#[cfg(test)]
+mod capture_gate_tests;
+#[cfg(test)]
+mod debug_key_tests;
 mod debug_panels;
 mod egui_input;
 mod events;
 pub mod expression_feed;
 #[cfg(test)]
-mod capture_gate_tests;
-#[cfg(test)]
-mod touch_controls_tests;
-#[cfg(test)]
-mod debug_key_tests;
-#[cfg(test)]
 mod extension_tests;
-#[cfg(test)]
-mod hold_tests;
-#[cfg(test)]
-mod vfs_tests;
 pub mod fonts;
 mod frame;
 pub mod frame_rate;
 pub mod headless_scripts;
+#[cfg(test)]
+mod hold_tests;
 mod hud_render;
 mod init;
 mod input_config;
 pub mod input_script;
+mod living_ab;
+pub mod living_props;
+pub(crate) mod living_tuning;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
 mod pacing;
 mod perf;
-mod living_ab;
-pub mod living_props;
-pub(crate) mod living_tuning;
-mod shallow_wooze;
 mod persist;
+pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
-mod touch_overlay;
 pub(crate) mod scene_loading;
-pub mod procgen_assets;
 mod script_commands;
+mod shallow_wooze;
 pub mod style_commands;
+mod text_halo;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
+#[cfg(test)]
+mod touch_controls_tests;
+mod touch_overlay;
 mod transition;
-#[cfg(target_arch = "wasm32")]
-pub mod web_page;
+#[cfg(test)]
+mod vfs_tests;
 #[cfg(target_arch = "wasm32")]
 pub mod web_pacing;
+#[cfg(target_arch = "wasm32")]
+pub mod web_page;
 #[cfg(target_arch = "wasm32")]
 mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
-mod text_halo;
 mod world_text;
 
 #[cfg(target_os = "android")]
@@ -64,6 +64,7 @@ use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_ecs::FlintWorld;
+use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
@@ -72,7 +73,6 @@ use flint_runtime::{
 };
 use flint_script::context::DrawItem;
 use flint_script::ScriptSystem;
-use flint_input_capture::pad::Gilrs;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use transition::TransitionPhase;
@@ -521,8 +521,9 @@ pub struct PlayerApp {
     // Scene transition lifecycle
     transition_phase: TransitionPhase,
 
-    // Schema paths preserved across transitions
-    schema_paths: Vec<String>,
+    // Schema directories and where the list came from (ADR 0114), kept for
+    // transitions and chunks
+    schema_dirs: flint_core::project::SchemaDirs,
 
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,

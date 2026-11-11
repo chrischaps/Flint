@@ -103,8 +103,10 @@ flint query "entities" --scene levels/tavern.scene.toml --format json
 # TOML output
 flint query "entities where door.locked == true" --scene levels/tavern.scene.toml --format toml
 
-# Specify schemas directory
-flint query "entities" --scene levels/tavern.scene.toml --schemas schemas
+# Name the schema directories yourself (repeatable). Without the flag, the
+# project's flint.toml `schemas`, else schemas/ in the working directory,
+# beside the scene and one level up
+flint query "entities" --scene levels/tavern.scene.toml --schemas engine/schemas --schemas schemas
 ```
 
 ## Limitations

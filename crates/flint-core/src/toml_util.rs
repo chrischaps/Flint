@@ -91,8 +91,8 @@ mod tests {
 
     #[test]
     fn f64_from_float() {
-        let v: Value = 3.14.into();
-        assert_eq!(toml_f64(&v), Some(3.14));
+        let v: Value = 3.25.into();
+        assert_eq!(toml_f64(&v), Some(3.25));
     }
 
     #[test]
