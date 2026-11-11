@@ -19,6 +19,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
 | `flint asset resolve` | Check asset references in a scene |
+| `flint asset where <kind> <name> [--scene x] [--json]` | Print the file the engine would load for an asset name and the paths it tried first; exits 1 with the list when there is none. See [Assets](../concepts/assets.md#where-the-engine-looks-for-a-file) |
 | `flint asset generate` | Generate an asset using AI providers |
 | `flint asset validate` | Validate a generated model against style constraints |
 | `flint asset manifest` | Generate a build manifest of all generated assets |
@@ -55,7 +56,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 
 | Flag | Description |
 |------|-------------|
-| `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
+| `--schemas <path>` | Schema directory (repeatable; later paths override earlier). Without it: the project's `flint.toml` `schemas`, else `schemas/` in the working directory, beside the scene and one level up ([Common Flags](#common-flags)) |
 | `--fullscreen` | Launch in fullscreen mode |
 | `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`). A narrow or square window keeps the camera's aspect: it shows less to the sides, never a stretched scene |
 | `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one; write them with `=` (`--position=-1920,0`). Default: wherever the system puts it |
@@ -90,7 +91,7 @@ actually presents — scene *and* egui overlay — and exit on its own, which
 makes it the tool for verifying `on_draw_ui` output:
 
 ```bash
-flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
+flint-player scenes/race.scene.toml   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
 ```
 
 With `--screenshot`, `--exit-after` or `--input-script`, the run is a capture
@@ -114,7 +115,7 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
 | `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time. With `--screenshot-every` the same build on the same machine writes byte-identical frames run after run (grass included since #341). egui's clock steps with it, so a menu opening animates the same on every run. It seeds scripts' `random()` too (below) |
-| `--seed <n>` | Seed scripts' `random()` and `random_range()`: one sequence, shared by every script in the order they run, the same every run. `--frame-step` seeds it on its own with the seed `flint render --scripts` uses, so a stepped player run and a scripted render draw the same numbers; `--seed` names another. Without either they draw from the wall clock. The web page takes `?seed=` |
+| `--seed <n>` | Seed scripts' `random()` and `random_range()`: one sequence, shared by every script in the order they run, the same every run. `--frame-step` seeds it on its own with the seed `flint render --scripts` uses, so a stepped player run and a scripted render draw the same numbers; `--seed` names another. Without either the sequence starts from the clock, once, so runs differ but no two draws repeat (#580). A script can reseed it itself with `seed_random(n)`. The web page takes `?seed=` |
 | `--pixels-per-point <f32>` | Draw point-sized things (ASCII cells, egui panels, the HUD) at this scale instead of the window's, so a capture is the same on any display. `2` at 3840x2160 lays the frame out as 1920x1080 points |
 | `--look <name\|path>` | Play every scene under a look, merged over its `[post_process]` (and over the look the scene names) as `flint render --look` merges it: a built-in (`flint render --look help` lists them) or a `styles/<name>.look.toml` |
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
@@ -271,10 +272,14 @@ The `play` command requires the scene to have a `player` archetype entity with a
 
 ### Game Project Pattern
 
-Games that define their own schemas, scripts, and assets use multiple `--schemas` paths. Game projects typically live in their own repositories with the engine included as a git subtree at `engine/`. The engine schemas come first, then the game-specific schemas overlay on top:
+Games that define their own schemas, scripts, and assets load several schema directories. Game projects typically live in their own repositories with the engine included as a git subtree at `engine/`. The engine schemas come first, then the game-specific schemas overlay on top. The game's `flint.toml` says so (`[project] schemas = ["engine/schemas", "schemas"]`), and then no command needs a flag:
 
 ```bash
-# From a game project root (engine at engine/)
+# From anywhere in a game project (engine at engine/)
+cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
+  scenes/level_1.scene.toml
+
+# Without a manifest, or to override it: the flags, in override order
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml \
   --schemas engine/schemas \
@@ -290,9 +295,9 @@ The player is also available as a standalone binary for distribution:
 ```bash
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
 
-# With game project schemas (from a game repo with engine subtree)
+# From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
-  scenes/level_1.scene.toml --schemas engine/schemas --schemas schemas
+  scenes/level_1.scene.toml
 ```
 
 ## The `render` Command
@@ -415,7 +420,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
 | `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
@@ -485,7 +490,7 @@ integrated GPU.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 | `--width <px>` | (auto) | Window width |
 | `--height <px>` | (auto) | Window height |
 | `--no-grid` | `false` | Disable ground grid |
@@ -665,13 +670,13 @@ flint gen --cost-report --since 2026-10-01
 Preview a prefab template in the interactive viewer:
 
 ```bash
-flint prefab view prefabs/kart.prefab.toml --schemas engine/schemas --schemas schemas
+flint prefab view prefabs/kart.prefab.toml
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--prefix <string>` | `"preview"` | Prefix for `${PREFIX}` substitution |
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
 This command loads the `.prefab.toml` template, performs variable substitution, builds a synthetic scene from the expanded entities, and launches the viewer for visual inspection. Useful for verifying prefab structure and appearance without creating a full scene.
 
@@ -680,7 +685,8 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | Flag | Description |
 |------|-------------|
 | `--scene <path>` | Path to scene file |
-| `--schemas <path>` | Path to schemas directory (repeatable for multi-schema layering; default: `schemas`) |
+| `--schemas <path>` | Schema directory, repeatable on every command that loads schemas (`play`, `render`, `validate`, `query`, `entity`, `schema`, `edit`, `prefab view`, `flint-player`); later paths override earlier. When given, the flags are the whole list. Without it: the `schemas` list of the project's `flint.toml`; else `schemas/` in the working directory, beside the scene and one level up. A directory named by a flag or the manifest that doesn't exist is an error naming it |
+| `--project <dir>` | The project root, instead of the one found by walking up; its `flint.toml` is the manifest read |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
 | `--fix` | Apply auto-fixes (with `validate`) |
 | `--dry-run` | Preview changes without applying |

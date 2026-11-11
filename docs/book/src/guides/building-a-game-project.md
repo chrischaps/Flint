@@ -65,13 +65,78 @@ my_game/                         (your git repo)
 │   └── level_1.scene.toml
 ├── sprites/                     # Billboard sprite textures
 ├── audio/                       # Sound effects and music
+├── flint.toml                   # Project manifest (marks the root)
 ├── play.bat                     # Convenience launcher
 └── build.bat                    # Engine build script
 ```
 
+## The Project Manifest
+
+A `flint.toml` at the top of the repo marks it as the **project root** and says what the project is:
+
+```toml
+[project]
+id = "my_game"                            # saves, web bundle id, user files
+schemas = ["engine/schemas", "schemas"]   # in override order: a later one wins
+scene = "scenes/level_1.scene.toml"       # the scene to open by default
+input = "config/input.toml"               # the game's input config
+```
+
+Every key is optional, and so is the `[project]` table: an empty `flint.toml` is still a root marker. Paths are relative to the folder the file is in. Other tables in the file are left alone.
+
+Flint finds the manifest by walking up from a scene or from the working directory, so it is found from any folder of the project, and from inside `engine/` too (an engine checkout is passed through to the game above it). Without a `flint.toml`, a `.flint/` directory or `schemas/` beside `scenes/` or `levels/` marks the root, as before. `--project <dir>` on any `flint` command names the root outright and reads that folder's `flint.toml`.
+
+The file is checked when it is read. A value of the wrong type, or a key in `[project]` that Flint doesn't know, is an error that names the file and the key, so a typo doesn't pass silently:
+
+```
+flint.toml: unknown key `shcemas` in [project] (the keys are id, schemas, scene, input)
+flint.toml: `project.schemas` must be a list of strings, found a string
+```
+
+**What reads it today.** The manifest is new, and its keys are arriving ahead of the code that will use them:
+
+| Key | Today | Planned |
+|-----|-------|---------|
+| the file itself | Marks the project root for the content store and catalog (`flint asset`, `flint gen --register`; see [Assets: The Project Root](../concepts/assets.md#the-project-root)), and for the [asset search](../concepts/assets.md#where-the-engine-looks-for-a-file), which climbs from a scene to this folder (particle effects so far) | The root every command, the player and the web build agree on, for every kind of asset |
+| `id` | Parsed and checked | Keys saves and user files; the web bundle's id |
+| `schemas` | **Read by every command, the viewer and the player**: the schema directories, in override order, whenever no `--schemas` flag is given. See [Multi-Schema Layering](#multi-schema-layering) | The same |
+| `scene` | Parsed and checked | What `flint play` opens with no argument |
+| `input` | Parsed and checked | The input config the player loads |
+
+"Parsed and checked" means a bad manifest is refused and nothing acts on the value yet. `flint init` does not write a `flint.toml` yet. The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
+
 ## Multi-Schema Layering
 
-The key to the game project pattern is the `--schemas` flag, which accepts multiple paths. Schemas load in order, with later paths overriding earlier ones:
+A game loads two schema directories, in order, with the later one overriding the earlier:
+
+1. **Engine schemas** from `engine/schemas/` --- built-in components like `transform`, `material`, `rigidbody`, `collider`, `character_controller`, `sprite`, etc.
+2. **Game schemas** from `schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
+
+If both directories define a component with the same name, the game's version takes priority.
+
+Say so once, in the manifest:
+
+```toml
+# flint.toml
+[project]
+schemas = ["engine/schemas", "schemas"]
+```
+
+and every command that loads schemas reads it, from any folder of the project, with no flags: `flint play`, `flint-player`, `flint render`, `flint validate`, `flint query`, `flint entity`, `flint schema`, `flint edit` and `flint prefab view`.
+
+```bash
+flint render scenes/level_1.scene.toml -o shot.png
+flint query "entities where archetype == 'enemy'" --scene scenes/level_1.scene.toml
+flint schema health
+```
+
+One rule decides the directories, the same for every command:
+
+1. **`--schemas` flags**, if any were given. They are the whole list, in the order given; nothing is added to it.
+2. Else **the manifest's `schemas`** of the project the scene belongs to (the working directory's project for a command with no scene, such as `flint schema`).
+3. Else, with no manifest or no `schemas` key in it, **discovery**, as before there were manifests: `schemas/` in the working directory, beside the scene, and one level up from the scene, whichever exist. This never finds `engine/schemas`.
+
+So the flags still work, and are how you override the manifest for one run:
 
 ```bash
 cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
@@ -80,11 +145,14 @@ cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
   --schemas schemas
 ```
 
-This loads:
-1. **Engine schemas** from `engine/schemas/` --- built-in components like `transform`, `material`, `rigidbody`, `collider`, `character_controller`, `sprite`, etc.
-2. **Game schemas** from `schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
+A directory that a flag or the manifest names and that isn't there is an error, in every command, saying which directory and who named it:
 
-If both directories define a component with the same name, the game's version takes priority.
+```
+Error: schema directory not found: nope (named by --schemas)
+Error: schema directory not found: C:\games\my_game\engine/schemas (named by `schemas` in C:\games\my_game\flint.toml)
+```
+
+The second is what a manifest listing `engine/schemas` says in a checkout with no engine subtree. Discovery only ever returns directories that exist, so it has no such error; when it finds none, the commands warn and load the scene without archetype defaults (and `flint schema` stops).
 
 ## Defining Game Components
 
@@ -212,9 +280,9 @@ fn on_draw_ui() {
 # Via convenience script
 .\play.bat level_1
 
-# Via the standalone player directly
+# Via the standalone player directly (schemas from flint.toml)
 cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
-  scenes\level_1.scene.toml --schemas engine\schemas --schemas schemas
+  scenes\level_1.scene.toml
 ```
 
 ## Asset Resolution
@@ -223,6 +291,8 @@ Scripts, audio, and sprite paths are resolved relative to the game project root.
 - Scripts in `scripts/`
 - Audio in `audio/`
 - Sprites in `sprites/`
+
+Particle effects are the first kind on the engine's one search rule: `particles/` beside the scene, then beside each directory above it up to the project root, then `engine/particles/`. A scene any number of folders below `scenes/` finds the project's effects, and `flint asset where particles <name> --scene <scene>` prints the file chosen and every path tried. See [Assets: Where the Engine Looks for a File](../concepts/assets.md#where-the-engine-looks-for-a-file).
 
 ## Engine Subtree Workflow
 
@@ -237,6 +307,10 @@ git subtree push --prefix=engine flint-engine main
 ```
 
 Engine edits are normal commits in your game repo. The subtree commands handle splitting and merging the `engine/` prefix.
+
+### After a pull: read the changelog
+
+`--squash` folds the engine's commits into one, so their subjects are gone from your history. `engine/CHANGELOG.md` is where to read what changed: it lists, newest first, every change a game can notice (scene and schema keys, script functions, CLI flags, formats, Cargo features, and changes in how something looks, sounds or behaves), each with what to do about it. Read from the top down to the date of your last pull. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 
 ## Further Reading
 

@@ -22,6 +22,7 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
+use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader;
@@ -31,7 +32,6 @@ use flint_runtime::{
 };
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
-use flint_input_capture::pad::Gilrs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -64,6 +64,9 @@ impl PlayerApp {
         // harmless.
         #[cfg(feature = "profile")]
         profiling::tracy_client::Client::start();
+        // Before the file source may be final (the web installs its bundle
+        // later): `refresh_project` asks again when the scene loads.
+        let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
         Self {
             world,
             scene_path,
@@ -182,7 +185,8 @@ impl PlayerApp {
             persistent_store: PersistentStore::new(),
             persist_debounce: flint_runtime::SaveDebounce::default(),
             transition_phase: TransitionPhase::Idle,
-            schema_paths: Vec::new(),
+            schema_dirs: Default::default(),
+            project,
             terrain: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
@@ -318,9 +322,21 @@ impl PlayerApp {
         Ok(())
     }
 
-    /// Set the schema paths used for scene loading (preserved across transitions).
+    /// Set the schema directories transitions and chunks load from, as a
+    /// list the host settled itself: those that exist are kept, and a scene
+    /// a transition leads to adds any `schemas/` beside it or one level up.
+    /// A host that resolved them (`SchemaRegistry::resolve`) hands the
+    /// answer to [`set_schema_dirs`](Self::set_schema_dirs) instead.
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
-        self.schema_paths = paths;
+        self.schema_dirs = flint_core::project::host_schema_dirs(&paths, None);
+    }
+
+    /// Set the schema directories as the one resolver named them (ADR
+    /// 0114), with where the list came from: `--schemas` flags stay as they
+    /// are across transitions, a manifest's list is read again for the new
+    /// scene's project, and a discovered one grows as it always did.
+    pub fn set_schema_dirs(&mut self, dirs: flint_core::project::SchemaDirs) {
+        self.schema_dirs = dirs;
     }
 
     /// Register a function that reads gamepad trigger/right-stick axes from the
@@ -741,7 +757,12 @@ impl PlayerApp {
 
         // Initialize particles: register `particles/*.particles.toml` first so
         // `particle_effect` components resolve on the first sync.
-        flint_particles::load_particle_effects_from_world(&self.scene_path, &mut self.particles);
+        self.refresh_project();
+        flint_particles::load_particle_effects_from_world(
+            &self.project,
+            &self.scene_path,
+            &mut self.particles,
+        );
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
@@ -921,6 +942,27 @@ impl PlayerApp {
         Ok(())
     }
 
+    /// The project the current scene belongs to (ADR 0114).
+    pub fn project(&self) -> &flint_core::project::Project {
+        &self.project
+    }
+
+    /// Ask again which project the current scene belongs to, and take the
+    /// answer when it differs: at the first load, and after a transition,
+    /// which may cross into another project's root (or a `flint.toml` may
+    /// have changed under a long session). `--project` pins one answer.
+    pub(super) fn refresh_project(&mut self) {
+        let next = flint_core::project::Project::for_scene(Path::new(&self.scene_path));
+        if next != self.project {
+            tracing::info!(
+                "project root: {} ({})",
+                next.root.display(),
+                next.found.describe()
+            );
+            self.project = next;
+        }
+    }
+
     /// Load image files referenced by particle_emitter texture fields into
     /// the renderer's texture cache (no-op until renderer/context exist).
     pub(super) fn load_particle_textures(&mut self) {
@@ -934,6 +976,7 @@ impl PlayerApp {
             renderer,
             &context.device,
             &context.queue,
+            &self.project,
             &self.scene_path,
         );
     }

@@ -74,8 +74,10 @@ pub struct EditArgs {
     /// Path to file (.scene.toml, .procgen.toml, .terrain.toml, .particles.toml, .glb, .gltf)
     pub file: String,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
     /// Window width in pixels
@@ -205,15 +207,10 @@ pub fn run(args: EditArgs) -> Result<()> {
                     schemas: args.schemas,
                 })
             } else {
-                let schemas_path = args
-                    .schemas
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("schemas");
                 flint_viewer::app::run(
                     &args.file,
                     args.watch,
-                    schemas_path,
+                    &args.schemas,
                     !args.no_inspector,
                     args.auto_orbit,
                     flint_viewer::app::ViewerStyle {
@@ -304,5 +301,78 @@ pub fn run(args: EditArgs) -> Result<()> {
                 show_skeleton: args.show_skeleton,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+    use std::path::{Path, PathBuf};
+
+    fn fixture(name: &str) -> PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp/edit_router")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (schemas, component) in [("a", "alpha"), ("b", "beta")] {
+            let components = dir.join(schemas).join("components");
+            std::fs::create_dir_all(&components).unwrap();
+            std::fs::write(
+                components.join(format!("{component}.toml")),
+                format!(
+                    "[component.{component}]
+[component.{component}.fields]
+on = {{ type = \"bool\", default = true }}
+"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.join("x.scene.toml"),
+            "[scene]
+name = \"x\"
+",
+        )
+        .unwrap();
+        dir
+    }
+
+    /// #704: `flint edit <scene> --schemas a --schemas b` gave the viewer
+    /// `a` alone. Parsed through the real command line, on a thread with
+    /// the main thread's stack (debug clap is hungry on Windows), then
+    /// loaded as `flint_viewer::app::run` loads, short of the window.
+    #[test]
+    fn the_scene_viewer_gets_every_schemas_flag() {
+        std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn(|| {
+                let dir = fixture("every_flag");
+                let cli = crate::Cli::try_parse_from([
+                    "flint".as_ref(),
+                    "edit".as_ref(),
+                    dir.join("x.scene.toml").as_os_str(),
+                    "--schemas".as_ref(),
+                    dir.join("a").as_os_str(),
+                    "--schemas".as_ref(),
+                    dir.join("b").as_os_str(),
+                ])
+                .unwrap_or_else(|e| panic!("{e}"));
+                let crate::Commands::Edit(args) = cli.command else {
+                    panic!("not an edit command");
+                };
+                let (registry, _, dirs) =
+                    flint_viewer::app::load_schemas(&args.file, &args.schemas).unwrap();
+                assert!(registry.get_component("alpha").is_some(), "a's component");
+                assert!(
+                    registry.get_component("beta").is_some(),
+                    "b's component: the viewer was given only {:?}",
+                    dirs.dirs
+                );
+                assert_eq!(dirs.source, flint_schema::SchemaSource::Flags);
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
     }
 }

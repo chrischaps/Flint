@@ -54,7 +54,7 @@ The controls are declared in the game's input config; see [On-Screen Touch Contr
 To try a layout on the desktop, show the controls from the start and drive them with the mouse:
 
 ```bash
-flint-player levels/demo.scene.toml --schemas engine/schemas --schemas schemas --touch-controls always
+flint-player levels/demo.scene.toml --touch-controls always
 ```
 
 On the web the same switch is `?touch=always`. `--touch-device` makes `is_touch_device()` true on the desktop, and `--safe-area 47,0,47,21` (left, top, right, bottom, in points) stands in for a phone held sideways, notch and home bar; the controls and `safe_area()` both take it.

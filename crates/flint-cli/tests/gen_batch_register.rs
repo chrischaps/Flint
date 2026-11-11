@@ -437,7 +437,14 @@ fn every_folder_of_a_project_shares_one_store() {
     let outside = scratch("one_store_outside");
     let fourth = ok(gen_in(
         &outside,
-        &[s(&spec), "-o", "tree.glb", "--register", "--project", s(&game)],
+        &[
+            s(&spec),
+            "-o",
+            "tree.glb",
+            "--register",
+            "--project",
+            s(&game),
+        ],
     ));
     assert!(fourth.contains("Cached: "), "with --project:\n{fourth}");
     assert!(fourth.contains("by --project"), "{fourth}");
@@ -451,4 +458,35 @@ fn every_folder_of_a_project_shares_one_store() {
             d.display()
         );
     }
+}
+
+#[test]
+fn a_bad_manifest_is_refused_naming_the_file_and_the_key() {
+    // #706: [project] is parsed wherever the project root is looked for.
+    let game = project("bad_manifest");
+    std::fs::write(game.join("flint.toml"), "[project]\nshcemas = []\n").unwrap();
+    let outside = scratch("bad_manifest_outside");
+    let spec = oak_spec();
+    for (dir, extra) in [(&game, None), (&outside, Some(s(&game)))] {
+        let mut args = vec![s(&spec), "-o", "tree.glb", "--register"];
+        if let Some(root) = extra {
+            args.extend(["--project", root]);
+        }
+        let out = gen_in(dir, &args);
+        let said = text(&out);
+        assert!(!out.status.success(), "a typo'd key passed:\n{said}");
+        assert!(said.contains("flint.toml"), "{said}");
+        assert!(said.contains("unknown key `shcemas`"), "{said}");
+    }
+    assert_eq!(store_blobs(&game), 0);
+
+    // With the key spelled right, the same project registers.
+    std::fs::write(
+        game.join("flint.toml"),
+        "[project]\nid = \"g\"\nschemas = [\"schemas\"]\n",
+    )
+    .unwrap();
+    let fine = ok(gen_in(&game, &[s(&spec), "-o", "tree.glb", "--register"]));
+    assert!(fine.contains("by flint.toml"), "{fine}");
+    assert_eq!(store_blobs(&game), 1);
 }

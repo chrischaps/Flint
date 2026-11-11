@@ -702,7 +702,12 @@ impl PlayerApp {
         );
         // A split A/B (#238): this drawing is the side being shown, so it goes
         // to the GPU now, and the other side draws over its half after it.
-        if let Some(ab) = self.living_tune.ab.as_deref_mut().filter(|ab| ab.is_split()) {
+        if let Some(ab) = self
+            .living_tune
+            .ab
+            .as_deref_mut()
+            .filter(|ab| ab.is_split())
+        {
             let first = std::mem::replace(
                 &mut encoder,
                 context
@@ -1691,10 +1696,9 @@ impl PlayerApp {
                 {
                     // Catalog names never reach the queue, so the file
                     // fallback needs only the scene's own search paths.
-                    let config =
-                        flint_render::model_loader::ModelLoadConfig::from_scene_path(
-                            &self.scene_path,
-                        );
+                    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                        &self.scene_path,
+                    );
                     let mut sink = super::procgen_assets::GpuSink {
                         renderer,
                         device: &ctx.device,
@@ -1921,11 +1925,7 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn render_hud(
-        &mut self,
-        target_view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
+    fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -2027,15 +2027,14 @@ impl PlayerApp {
             // World text is laid out here, so the glyphs it needs go up
             // with this pass's font atlas.
             if let Some(view) = &text_view {
-                laid_text =
-                    super::world_text::lay_out(
-                        ctx,
-                        &world_texts,
-                        view,
-                        ui_fonts,
-                        ui_fonts_warned,
-                        text_halos,
-                    );
+                laid_text = super::world_text::lay_out(
+                    ctx,
+                    &world_texts,
+                    view,
+                    ui_fonts,
+                    ui_fonts_warned,
+                    text_halos,
+                );
             }
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on
@@ -2083,7 +2082,11 @@ impl PlayerApp {
             flint_debug_ui::paint_style_errors(
                 ctx,
                 &style_errors,
-                if cfg!(target_arch = "wasm32") { 52.0 } else { 0.0 },
+                if cfg!(target_arch = "wasm32") {
+                    52.0
+                } else {
+                    0.0
+                },
             );
         });
 

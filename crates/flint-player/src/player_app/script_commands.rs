@@ -14,9 +14,9 @@ use super::PlayerApp;
 use super::TransitionPhase;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
+use flint_input_capture::pad::Gilrs;
 use flint_runtime::GameEvent;
 use flint_script::context::{LogLevel, ScriptCommand};
-use flint_input_capture::pad::Gilrs;
 use std::path::Path;
 
 impl PlayerApp {
@@ -166,9 +166,8 @@ impl PlayerApp {
                     if !self.particles.sync.spawn_effect(handle, &name, pos) {
                         tracing::warn!(
                             target: "script",
-                            "play_effect: unknown particle effect '{}' (expected particles/{}.particles.toml)",
-                            name,
-                            name
+                            "play_effect: {}",
+                            self.particles.sync.missing_effect_report(&name)
                         );
                     }
                 }

@@ -30,9 +30,11 @@ pub enum EntityCommands {
         #[arg(long)]
         props: Option<String>,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// List all entities
@@ -45,9 +47,11 @@ pub enum EntityCommands {
         #[arg(long, default_value = "json")]
         format: String,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// Delete an entity
@@ -59,9 +63,11 @@ pub enum EntityCommands {
         #[arg(long)]
         scene: String,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// Show entity details
@@ -77,9 +83,11 @@ pub enum EntityCommands {
         #[arg(long, default_value = "json")]
         format: String,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in
+        /// the working directory, beside the scene and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 }
 
@@ -128,9 +136,9 @@ fn create(
     scene_path: &str,
     parent: Option<&str>,
     props: Option<&str>,
-    schemas_path: &str,
+    schemas: &[String],
 ) -> Result<()> {
-    let registry = load_registry(schemas_path)?;
+    let registry = load_registry(scene_path, schemas)?;
 
     // Check archetype exists
     if registry.get_archetype(archetype).is_none() {
@@ -205,8 +213,8 @@ fn create(
     Ok(())
 }
 
-fn list(scene_path: &str, format: &str, schemas_path: &str) -> Result<()> {
-    let registry = load_registry(schemas_path)?;
+fn list(scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
+    let registry = load_registry(scene_path, schemas)?;
     let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
 
     let entities = world.all_entities();
@@ -228,8 +236,8 @@ fn list(scene_path: &str, format: &str, schemas_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete(name: &str, scene_path: &str, schemas_path: &str) -> Result<()> {
-    let registry = load_registry(schemas_path)?;
+fn delete(name: &str, scene_path: &str, schemas: &[String]) -> Result<()> {
+    let registry = load_registry(scene_path, schemas)?;
     let (mut world, mut scene_file) =
         load_scene(scene_path, &registry).context("Failed to load scene")?;
 
@@ -247,8 +255,8 @@ fn delete(name: &str, scene_path: &str, schemas_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn show(name: &str, scene_path: &str, format: &str, schemas_path: &str) -> Result<()> {
-    let registry = load_registry(schemas_path)?;
+fn show(name: &str, scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
+    let registry = load_registry(scene_path, schemas)?;
     let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
 
     let id = world
@@ -288,12 +296,10 @@ fn show(name: &str, scene_path: &str, format: &str, schemas_path: &str) -> Resul
     Ok(())
 }
 
-fn load_registry(path: &str) -> Result<SchemaRegistry> {
-    if Path::new(path).exists() {
-        SchemaRegistry::load_from_directory(path).context("Failed to load schemas")
-    } else {
-        Ok(SchemaRegistry::new())
-    }
+/// The scene's schemas from the one resolver (ADR 0114). With no directory
+/// found the registry is empty, as it was for a missing `schemas/`.
+fn load_registry(scene_path: &str, schemas: &[String]) -> Result<SchemaRegistry> {
+    Ok(super::common_args::load_schemas(Some(scene_path), schemas)?.0)
 }
 
 fn json_to_toml(json: &serde_json::Value) -> toml::Value {

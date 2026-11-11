@@ -96,7 +96,12 @@ mod tests {
         let target = Vec3::new(0.3, 0.0, 0.0);
         let up = solve_two_bone(root, target, Vec3::new(0.0, 1.0, 0.0), 0.25, 0.25).unwrap();
         let down = solve_two_bone(root, target, Vec3::new(0.0, -1.0, 0.0), 0.25, 0.25).unwrap();
-        assert!(up.mid.y > 0.1 && down.mid.y < -0.1, "{:?} {:?}", up.mid, down.mid);
+        assert!(
+            up.mid.y > 0.1 && down.mid.y < -0.1,
+            "{:?} {:?}",
+            up.mid,
+            down.mid
+        );
         assert!(close(up.mid.y, -down.mid.y));
     }
 

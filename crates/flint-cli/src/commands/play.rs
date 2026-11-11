@@ -2,8 +2,6 @@
 
 use anyhow::{Context, Result};
 use flint_scene::load_scene;
-use flint_schema::SchemaRegistry;
-use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 #[derive(clap::Args)]
@@ -12,8 +10,10 @@ pub struct PlayArgs {
     #[arg(required_unless_present = "list_gpus", default_value = "")]
     pub scene: String,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
     /// Launch in fullscreen mode
@@ -86,27 +86,13 @@ pub fn run(args: PlayArgs) -> Result<()> {
     if args.no_hot_reload {
         flint_core::file_watch::disable();
     }
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
-
-    // Load schemas from all directories
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
-    } else {
+    // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
+    let (registry, schema_dirs) =
+        super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    super::common_args::warn_dropped_schemas(&schema_dirs);
+    if schema_dirs.dirs.is_empty() {
         println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
+    }
 
     // A --style word may name one of the scene's own styles (#274): check
     // the words once those are registered
@@ -179,8 +165,8 @@ pub fn run(args: PlayArgs) -> Result<()> {
     app.scene_living = scene_file.living.clone();
     app.scene_wooze = scene_file.wooze.clone();
 
-    // Preserve schema paths for scene transitions (includes auto-discovered)
-    app.set_schema_paths(all_schemas);
+    // Kept for scene transitions and chunks
+    app.set_schema_dirs(schema_dirs);
 
     event_loop.run_app(&mut app)?;
     // A player that failed to start exits non-zero (#639).

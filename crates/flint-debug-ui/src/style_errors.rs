@@ -73,8 +73,8 @@ pub fn paint_style_errors(ctx: &egui::Context, errors: &[(String, String)], bott
                     let hint = "Its input draws unchanged. Fix the file and pack the bundle again.";
                     ui.label(
                         RichText::new(hint)
-                        .color(quiet)
-                        .font(FontId::proportional(11.5)),
+                            .color(quiet)
+                            .font(FontId::proportional(11.5)),
                     );
                 });
         });

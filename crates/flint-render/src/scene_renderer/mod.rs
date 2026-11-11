@@ -34,13 +34,13 @@ use crate::postprocess::{
 use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
-use crate::wooze_pipeline::{
-    grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms, WoozePipelineSet,
-};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::{open_image, TextureCache};
+use crate::wooze_pipeline::{
+    grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms, WoozePipelineSet,
+};
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_core::vfs;
@@ -986,11 +986,8 @@ impl SceneRenderer {
         let postprocess_config = PostProcessConfig::default();
         let postprocess_pipeline =
             PostProcessPipeline::new(&context.device, &context.queue, surface_format);
-        let postprocess_resources = PostProcessResources::new(
-            &context.device,
-            context.config.width,
-            context.config.height,
-        );
+        let postprocess_resources =
+            PostProcessResources::new(&context.device, context.config.width, context.config.height);
 
         Self {
             pipeline,
@@ -3864,7 +3861,10 @@ impl SceneRenderer {
         self.entity_children.clear();
         for entity in world.all_entities() {
             if let Some(parent) = world.get_parent(entity.id) {
-                self.entity_children.entry(parent).or_default().push(entity.id);
+                self.entity_children
+                    .entry(parent)
+                    .or_default()
+                    .push(entity.id);
             }
         }
 
@@ -4166,21 +4166,20 @@ impl SceneRenderer {
         let entry = cache.draws.entry(key).or_insert_with(|| {
             let (slot, page) = arena.alloc(device);
             arena.stage(slot, bytemuck::bytes_of(transform_uniforms));
-            let tbg =
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &pipeline.transform_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &page,
-                            offset: slot.offset(),
-                            // The whole slot: a plain draw reads its first 208
-                            // bytes, and shallow wooze's the 48 past them too.
-                            size: wgpu::BufferSize::new(crate::bind_cache::SLOT_STRIDE),
-                        }),
-                    }],
-                    label: Some("Transform Bind Group (arena)"),
-                });
+            let tbg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &pipeline.transform_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &page,
+                        offset: slot.offset(),
+                        // The whole slot: a plain draw reads its first 208
+                        // bytes, and shallow wooze's the 48 past them too.
+                        size: wgpu::BufferSize::new(crate::bind_cache::SLOT_STRIDE),
+                    }),
+                }],
+                label: Some("Transform Bind Group (arena)"),
+            });
             CachedDrawBinds {
                 transform: TransformTarget::Slot(slot),
                 transform_bind_group: Arc::new(tbg),
@@ -5369,20 +5368,17 @@ impl SceneRenderer {
                 let visible = |d: &&TerrainDrawCall| {
                     frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
                 };
-                draws.extend(
-                    self.terrain_draws
-                        .iter()
-                        .filter(visible)
-                        .map(|d| crate::style_mask::MaskDraw {
-                            vertex_buffer: &d.vertex_buffer,
-                            index_buffer: &d.index_buffer,
-                            index_count: d.index_count,
-                            transform_bind_group: &d.transform_bind_group,
-                            bones: None,
-                            id,
-                            blend,
-                        }),
-                );
+                draws.extend(self.terrain_draws.iter().filter(visible).map(|d| {
+                    crate::style_mask::MaskDraw {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        bones: None,
+                        id,
+                        blend,
+                    }
+                }));
             }
             draws.extend(
                 self.entity_draws
@@ -5765,15 +5761,19 @@ impl SceneRenderer {
             return;
         };
         let surface_format = pp.surface_format;
-        for failed in pp
-            .styles
-            .ensure(device, surface_format, &self.postprocess_config, &self.style_ids)
-        {
+        for failed in pp.styles.ensure(
+            device,
+            surface_format,
+            &self.postprocess_config,
+            &self.style_ids,
+        ) {
             if !crate::stylize::is_builtin(failed.name) {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so
                 crate::stylize::custom::report_build_panic(failed.name);
-                self.postprocess_config.styles.set_enabled(failed.name, false);
+                self.postprocess_config
+                    .styles
+                    .set_enabled(failed.name, false);
                 continue;
             }
             tracing::warn!(
@@ -5781,8 +5781,12 @@ impl SceneRenderer {
                  Try updating your graphics drivers.",
                 failed.label
             );
-            self.postprocess_config.styles.set_enabled(failed.name, false);
-            self.authored_postprocess.styles.set_enabled(failed.name, false);
+            self.postprocess_config
+                .styles
+                .set_enabled(failed.name, false);
+            self.authored_postprocess
+                .styles
+                .set_enabled(failed.name, false);
             self.device_lost = true;
         }
     }
@@ -6412,7 +6416,9 @@ impl SceneRenderer {
         let selection = self.selection_set();
         let outlining = !selection.is_empty();
         if outlining {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Selection mask"));
+            let scope = gpu_timer
+                .as_mut()
+                .map(|t| t.begin(encoder, "Selection mask"));
             self.encode_selection_mask(device, encoder, depth_view, &selection);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end(encoder, scope);
@@ -6442,7 +6448,9 @@ impl SceneRenderer {
         // The selection outline, over the finished image: after every
         // style and the tonemap, so its colour is the one asked for (#602)
         if outlining {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Selection outline"));
+            let scope = gpu_timer
+                .as_mut()
+                .map(|t| t.begin(encoder, "Selection outline"));
             self.encode_selection_outline(queue, encoder, target_view);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end(encoder, scope);

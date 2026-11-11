@@ -7,72 +7,70 @@
 
 pub mod atlas;
 pub mod billboard_pipeline;
+pub mod bind_cache;
 pub mod bitmap_font;
 mod camera;
 mod context;
 mod debug;
+pub mod entity_style;
 mod file_watch;
 pub mod frustum;
-pub mod gpu_select;
-pub mod bind_cache;
-pub mod gpu_timer;
 pub mod glyph_atlas;
-pub mod look;
 mod gpu_mesh;
+pub mod gpu_select;
+pub mod gpu_timer;
 pub mod grass_pipeline;
 pub mod ground_fog;
 mod headless;
+pub mod look;
 pub mod model_loader;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod palette;
 pub mod particle_pipeline;
 mod pipeline;
+pub mod post_style;
 pub mod postprocess;
 mod primitives;
 pub mod quality;
 pub mod render_scale;
 pub mod render_stats;
-pub mod selection_outline;
 mod scene_renderer;
+pub mod selection_outline;
 pub mod shadow;
-pub mod entity_style;
-pub mod post_style;
-pub mod style_mask;
-pub mod stylize;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod split_view;
 pub mod sprite2d_pipeline;
+pub mod style_mask;
+pub mod stylize;
 pub mod terrain_pipeline;
-pub mod water_body;
 mod texture_cache;
-pub mod world_line_pipeline;
+pub mod water_body;
 mod wooze_pipeline;
+pub mod world_line_pipeline;
 
-pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use atlas::{AtlasRegistry, TextureAtlas};
-pub use glyph_atlas::{
-    EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas,
-    RampMap,
-};
 pub use billboard_pipeline::BillboardPipeline;
+pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
-pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use context::{RenderContext, RenderError};
-pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
-pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
-pub use ground_fog::GroundFog;
 pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
-pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
-pub use grass_pipeline::{
-    check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight,
-    GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT,
-    MAX_GRASS_ENTITIES,
+pub use glyph_atlas::{
+    EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas, RampMap,
 };
+pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
+pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
+pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
+pub use grass_pipeline::{
+    check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition,
+    GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex,
+    BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+};
+pub use ground_fog::GroundFog;
 pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
@@ -101,16 +99,17 @@ pub use scene_renderer::{
     SceneRenderer, DEFAULT_CLEAR_COLOR,
 };
 pub use skinned_pipeline::SkinnedPipeline;
-pub use split_view::SplitView;
-pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
+pub use split_view::SplitView;
 pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
 };
+pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
-pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
+pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
+pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 
 #[cfg(test)]
 mod tests {
@@ -139,7 +138,9 @@ mod tests {
             let module = naga::front::wgsl::parse_str(source).expect(name);
             let mut material_sampler = None;
             for (_, var) in module.global_variables.iter() {
-                let Some(binding) = &var.binding else { continue };
+                let Some(binding) = &var.binding else {
+                    continue;
+                };
                 if !matches!(module.types[var.ty].inner, naga::TypeInner::Sampler { .. }) {
                     continue;
                 }
@@ -148,7 +149,11 @@ mod tests {
                     material_sampler = Some((binding.group, binding.binding));
                 }
             }
-            assert_eq!(material_sampler, Some((2, 4)), "{name}: material_sampler at group 2, binding 4");
+            assert_eq!(
+                material_sampler,
+                Some((2, 4)),
+                "{name}: material_sampler at group 2, binding 4"
+            );
         }
     }
 

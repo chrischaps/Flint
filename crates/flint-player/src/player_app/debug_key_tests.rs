@@ -96,8 +96,10 @@ fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
 
 #[test]
 fn a_focused_button_leaves_scripted_keys_to_the_game() {
-    let mut app = with_script("0 down KeyW
-");
+    let mut app = with_script(
+        "0 down KeyW
+",
+    );
     app.add_extension(Box::new(Bare));
     let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -106,7 +108,10 @@ fn a_focused_button_leaves_scripted_keys_to_the_game() {
     });
     assert!(app.egui_ctx.wants_keyboard_input(), "egui counts any focus");
     app.tick();
-    assert!(app.input.is_key_down(KeyCode::KeyW), "only a field takes keys");
+    assert!(
+        app.input.is_key_down(KeyCode::KeyW),
+        "only a field takes keys"
+    );
 }
 
 #[test]

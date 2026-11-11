@@ -1,8 +1,8 @@
 [component.particle_effect]
-description = "Places a reusable particle effect (a *.particles.toml asset from the scene's particles/ directory) at this entity's transform. Multi-emitter effects, curves, forces, bursts and sub-emitters are authored in the asset; this component only picks and tunes it (ADR 0068)"
+description = "Places a reusable particle effect (a *.particles.toml asset from a particles/ directory the scene can see) at this entity's transform. Multi-emitter effects, curves, forces, bursts and sub-emitters are authored in the asset; this component only picks and tunes it (ADR 0068)"
 
 [component.particle_effect.fields]
-effect = { type = "string", default = "", description = "Effect name: the `name` field (or file stem) of a particles/<name>.particles.toml next to the scene or one level up" }
+effect = { type = "string", default = "", description = "Effect name: the `name` field (or file stem) of a particles/<name>.particles.toml beside the scene, beside any directory above it up to the project root, or in the engine subtree (`flint asset where particles <name>` shows the search)" }
 playing = { type = "bool", default = false, description = "Current playback state (scripts toggle this; start_emitter / stop_emitter work on effects too)" }
 autoplay = { type = "bool", default = true, description = "Start playing on scene load" }
 scale = { type = "f32", default = 1.0, min = 0.0, max = 100.0, description = "Uniform multiplier on particle size, speed and shape distances" }

@@ -647,15 +647,17 @@ pub(super) fn load_audio_from_world(
 
 /// Load every texture referenced by live particle instances and registered
 /// effects into the renderer's texture cache. Searched in `particles/`, the
-/// scene dir, then its parent (game root) — see `flint_particles::texture_search_dirs`.
+/// scene dir, its parent (game root), then the other `particles/` folders the
+/// project's resolver searches — see `flint_particles::texture_search_dirs`.
 pub(super) fn load_particle_textures_from_world(
     particles: &flint_particles::ParticleSystem,
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    project: &flint_core::project::Project,
     scene_path: &str,
 ) {
-    let dirs = flint_particles::texture_search_dirs(scene_path);
+    let dirs = flint_particles::texture_search_dirs(project, scene_path);
     flint_render::load_particle_textures(renderer, device, queue, &particles.sync, &dirs);
 }
 
