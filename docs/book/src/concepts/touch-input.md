@@ -138,11 +138,11 @@ fn on_update() {
     let dt = delta_time();
 
     // Action-based movement works with both keyboard and touch
-    if action_held("move_left") {
+    if is_action_pressed("move_left") {
         let pos = get_position(me);
         set_position(me, pos.x - speed * dt, pos.y, pos.z);
     }
-    if action_held("move_right") {
+    if is_action_pressed("move_right") {
         let pos = get_position(me);
         set_position(me, pos.x + speed * dt, pos.y, pos.z);
     }

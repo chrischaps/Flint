@@ -180,8 +180,11 @@ The 2D overlay draws in screen-space, but there's no way to visualize 3D informa
 - Optional built-in modes: visualize physics colliders, trigger volumes, nav meshes
 
 > The skeleton overlay in the model previewer and the wireframe debug modes
-> (which now include skinned meshes) are the first pieces of this; a
-> script-driven 3D line API is still open.
+> (which now include skinned meshes) are the first pieces of this, and
+> scripts already draw world-space lines: `draw_line_3d` on the HUD and
+> `draw_world_line` in the 3D frame, depth-tested ([Lines in the
+> world](concepts/scripting.md#lines-in-the-world)). The `debug_*` shapes and
+> the built-in modes above are still open.
 
 ## Performance Profiler Overlay
 

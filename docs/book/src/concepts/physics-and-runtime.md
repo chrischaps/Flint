@@ -329,9 +329,9 @@ Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs)
 
 ### Runtime Rebinding
 
-Bindings can be remapped at runtime through the `rebind_action()` API:
+Bindings can be remapped at runtime from Rust (scripts have no rebinding function): `InputState::rebind_action` sets a binding directly, and the player captures one from the next input:
 
-1. Call `begin_rebind_capture(action, mode)` to enter capture mode
+1. Call `PlayerApp::begin_rebind_capture(action, mode)` to enter capture mode
 2. The next physical input (key press, mouse click, or gamepad button/axis) becomes the new binding
 3. The mode determines conflict resolution:
    - **Replace** --- clear all existing bindings, set the new one

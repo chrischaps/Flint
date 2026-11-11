@@ -18,7 +18,9 @@ Keys and touch don't change with the capture.
 ```rhai
 fn on_update() {
     if is_cursor_captured() {
-        turn_view(mouse_delta_x(), mouse_delta_y());
+        let me = self_entity();
+        let r = get_rotation(me);
+        set_rotation(me, r.x - mouse_delta_y() * 0.1, r.y - mouse_delta_x() * 0.1, 0.0);
     }
 }
 ```

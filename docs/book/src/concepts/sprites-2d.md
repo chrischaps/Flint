@@ -222,8 +222,8 @@ fn on_update() {
     let me = self_entity();
     let vx = 0.0;
 
-    if action_held("move_right") { vx = 1.0; }
-    if action_held("move_left")  { vx = -1.0; }
+    if is_action_pressed("move_right") { vx = 1.0; }
+    if is_action_pressed("move_left") { vx = -1.0; }
 
     if vx != 0.0 {
         sprite_play(me, "run");
