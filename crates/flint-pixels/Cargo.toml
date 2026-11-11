@@ -1,0 +1,11 @@
+[package]
+name = "flint-pixels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CPU pixel loops for texture upload (RGBA expansion, mip chains), built optimized in debug builds"
+
+# No dependencies, on purpose: the workspace's dev profile builds this crate
+# at opt-level 3 (#326), and a leaf with nothing under it rebuilds in a
+# second or two however it is optimized.
+[dependencies]
