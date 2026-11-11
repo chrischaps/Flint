@@ -49,6 +49,7 @@ pub mod terrain_edit;
 pub mod tex_edit;
 pub mod validate;
 pub mod validate_suite;
+pub mod variants;
 
 /// Write a report into `<base_dir>/logs/latency/` as
 /// `<prefix>-<host>-<epoch>.toml` — the shared naming scheme the offset

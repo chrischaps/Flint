@@ -13,25 +13,32 @@
 //! timeline, same pixels.
 //!
 //! It is not the player. What changes the picture runs: everything a script
-//! writes to the world, `tune_living`, `freeze_living`, `set_wooze`,
-//! `set_wooze_zone`, `remove_wooze_zone`, events between scripts, and the
+//! writes to the world, `tune_living` (its boil too), `freeze_living`,
+//! `step_living`, `load_living_preset`, `set_wooze`, `set_wooze_zone`,
+//! `remove_wooze_zone`, the particle commands (`play_effect`, `stop_effect`,
+//! `set_effect_param`, `emit_burst`; #579), events between scripts, and the
 //! camera and post-processing overrides. Sound has nothing to show and is
-//! dropped quietly. Anything else a script asks for (physics, particles, a
-//! scene change, the HUD) is named once in [`HeadlessScripts::notes`], so a
-//! review of the capture knows what it isn't showing.
+//! dropped quietly. Anything else a script asks for (physics, a scene change,
+//! the HUD, an A/B comparison) is named once in [`HeadlessScripts::notes`], so
+//! a review of the capture knows what it isn't showing.
 
 use std::collections::BTreeSet;
 
 use flint_core::wooze::{WoozeField, WoozeSample};
 use flint_ecs::FlintWorld;
+use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_runtime::{GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem};
+use flint_scene::{BoilDef, WoozePreset};
 use flint_script::context::{LogLevel, ScriptCommand};
 use flint_script::{CameraOverrides, PostProcessOverrides, ScriptSystem};
 
 use super::expression_feed::{json_to_map, ExpressionTimeline};
 use super::living_props::{LivingRun, WoozeClocks};
-use super::living_tuning::{tune_field, tune_global, tune_props, tune_species, ScriptTune};
+use super::living_tuning::{
+    boil_problem, find_preset, replace_species, tune_boil, tune_field, tune_global, tune_props,
+    tune_species, ScriptTune,
+};
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
@@ -51,6 +58,17 @@ pub struct HeadlessScripts {
     events: Vec<GameEvent>,
     /// `freeze_living`: the living clock stands still.
     frozen: bool,
+    /// `step_living`: whole beats to move the living clock on by, before it's next
+    /// read.
+    steps: u32,
+    /// Boil tunes not yet laid on the renderer's config, oldest first.
+    boils: Vec<BoilDef>,
+    /// While a script has switched the boil off: the amounts it comes back to.
+    boil_off: Option<(f32, f32)>,
+    /// Where `load_living_preset` looks for files.
+    scene_path: String,
+    /// The game time of the last tick.
+    time: f64,
     /// What the scripts asked for and didn't get, once each.
     notes: BTreeSet<String>,
     /// Post-processing as the scripts last left it. The renderer's config is
@@ -92,6 +110,11 @@ impl HeadlessScripts {
             input: InputState::new(),
             events: Vec::new(),
             frozen: false,
+            steps: 0,
+            boils: Vec::new(),
+            boil_off: None,
+            scene_path: scene_path.to_string(),
+            time: 0.0,
             notes: BTreeSet::new(),
             post: PostProcessOverrides::default(),
             fog_color: None,
@@ -119,6 +142,7 @@ impl HeadlessScripts {
         dt: f64,
         camera: CameraView,
     ) -> Vec<ScriptCommand> {
+        self.time = time;
         if let Some(timeline) = &mut self.timeline {
             for due in timeline.due(time) {
                 self.system.queue_expression(json_to_map(&due.state));
@@ -168,15 +192,17 @@ impl HeadlessScripts {
         self.system.drain_commands()
     }
 
-    /// Do what `commands` ask that a capture can show, to `living` and `wooze`
-    /// (the stage's, if it has them) at the time their clocks have reached,
-    /// before they step on: where the player does them. `shallow` is whether a
-    /// field the scripts give a scene that had none draws shallow wooze.
+    /// Do what `commands` ask that a capture can show, to `living`, `wooze` and
+    /// `particles` (the stage's, if it has them) at the time their clocks have
+    /// reached, before they step on: where the player does them. `shallow` is
+    /// whether a field the scripts give a scene that had none draws shallow wooze.
+    /// `particles` is `None` when the capture draws none.
     pub fn apply(
         &mut self,
         commands: Vec<ScriptCommand>,
         mut living: Option<&mut LivingRun>,
         wooze: &mut Option<WoozeClocks>,
+        mut particles: Option<&mut ParticleSystem>,
         shallow: bool,
     ) {
         for command in commands {
@@ -217,11 +243,66 @@ impl HeadlessScripts {
                     });
                 }
                 ScriptCommand::TuneLiving { knobs } => {
-                    if let Err(problem) = self.tune(knobs, living.as_deref_mut(), wooze, shallow) {
+                    let tuned = ScriptTune::of(knobs).and_then(|tune| {
+                        self.tune(tune, false, living.as_deref_mut(), wooze, shallow)
+                    });
+                    if let Err(problem) = tuned {
                         tracing::warn!(target: "script", "tune_living: {problem}");
                     }
                 }
+                ScriptCommand::LoadLivingPreset { name } => {
+                    let loaded = find_preset(std::path::Path::new(&self.scene_path), &name)
+                        .and_then(|preset| {
+                            let tune = ScriptTune::Grove(preset);
+                            self.tune(tune, true, living.as_deref_mut(), wooze, shallow)
+                        });
+                    if let Err(problem) = loaded {
+                        tracing::warn!(target: "script", "load_living_preset: {problem}");
+                    }
+                }
                 ScriptCommand::FreezeLiving { frozen } => self.frozen = frozen,
+                ScriptCommand::StepLiving => self.steps += 1,
+                ScriptCommand::EmitBurst { entity_id, count } => {
+                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
+                        let id = flint_core::EntityId(entity_id as u64);
+                        particles.sync.queue_burst(id, count.max(0) as u32);
+                    }
+                }
+                ScriptCommand::PlayEffect {
+                    handle,
+                    name,
+                    position,
+                } => {
+                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
+                        let at = [position.0 as f32, position.1 as f32, position.2 as f32];
+                        if !particles.sync.spawn_effect(handle, &name, at) {
+                            tracing::warn!(
+                                target: "script",
+                                "play_effect: unknown particle effect '{name}' (expected \
+                                 particles/{name}.particles.toml)"
+                            );
+                        }
+                    }
+                }
+                ScriptCommand::StopEffect { handle } => {
+                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
+                        particles.sync.stop_effect(handle);
+                    }
+                }
+                ScriptCommand::SetEffectParam {
+                    handle,
+                    param,
+                    value,
+                } => {
+                    if let Some(particles) = self.particles(particles.as_deref_mut()) {
+                        if !particles.sync.set_effect_param(handle, &param, value) {
+                            tracing::warn!(
+                                target: "script",
+                                "set_effect_param: unknown handle {handle} or param '{param}'"
+                            );
+                        }
+                    }
+                }
                 ScriptCommand::PlaySound { .. }
                 | ScriptCommand::PlaySoundAt { .. }
                 | ScriptCommand::StopSound { .. } => {}
@@ -240,57 +321,81 @@ impl HeadlessScripts {
         }
     }
 
-    /// A script's `tune_living`, as the player's: the field's knobs, then the
-    /// grove's, then a species'. The boil is the post-process chain's, which
-    /// this doesn't reach yet.
+    /// A script's `tune_living` or a preset it loads, as the player's: the
+    /// field's knobs, then the grove's, then a species', and the boil, which waits
+    /// for the capture's post-processing ([`Self::tune_boil_into`]). With
+    /// `replace`, as loading a preset does (#249), each species named gets exactly
+    /// its values rather than those laid over what it has.
     fn tune(
         &mut self,
-        knobs: toml::Value,
-        living: Option<&mut LivingRun>,
+        tune: ScriptTune,
+        replace: bool,
+        mut living: Option<&mut LivingRun>,
         wooze: &mut Option<WoozeClocks>,
         shallow: bool,
     ) -> Result<(), String> {
-        let Some(living) = living else {
-            return Err("this scene has no living props to tune".to_string());
-        };
         let mut problems = Vec::new();
-        match ScriptTune::of(knobs)? {
+        let no_props = |name: &str| format!("no living prop grows from '{name}'");
+        match tune {
             ScriptTune::Grove(tune) => {
-                let start = (living.props().props().first())
+                let WoozePreset {
+                    wooze: knobs,
+                    living: grove,
+                    boil,
+                } = tune;
+                let start = (living.as_deref())
+                    .and_then(|living| living.props().props().first())
                     .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
                 match wooze {
                     Some(clocks) => {
                         let (field, time) = clocks.field_mut();
-                        problems.extend(tune_global(field, time, &tune.wooze));
+                        problems.extend(tune_global(field, time, &knobs));
                     }
                     None => {
                         // A scene with no [wooze] table: the tune may give it a
-                        // field, at the time the props have reached.
-                        let time = living.time();
+                        // field, at the time the props have reached (or the
+                        // scripts', with no props).
+                        let time = living.as_deref().map_or(self.time, LivingRun::time);
                         let mut slot = None;
-                        problems.extend(tune_field(&mut slot, start, time, &tune.wooze));
+                        problems.extend(tune_field(&mut slot, start, time, &knobs));
                         if let Some(field) = slot {
                             *wooze = Some(WoozeClocks::of_field(field, time, shallow));
                         }
                     }
                 }
-                problems.extend(tune_props(living.props_mut(), &tune.living));
-                for (name, species) in &tune.living.species {
-                    let (said, grown) = tune_species(living.props_mut(), name, species);
-                    problems.extend(said);
+                if let Some(living) = living.as_deref_mut() {
+                    problems.extend(tune_props(living.props_mut(), &grove));
+                }
+                for (name, species) in &grove.species {
+                    let grown = match living.as_deref_mut() {
+                        Some(living) => {
+                            let (said, grown) = if replace {
+                                replace_species(living.props_mut(), name, species)
+                            } else {
+                                tune_species(living.props_mut(), name, species)
+                            };
+                            problems.extend(said);
+                            grown
+                        }
+                        None => false,
+                    };
                     if !grown {
-                        problems.push(format!("no living prop grows from '{name}'"));
+                        problems.push(no_props(name));
                     }
                 }
-                if tune.boil.is_some() {
-                    self.note("tune_living's boil: a headless capture keeps the scene's");
+                if let Some(boil) = boil {
+                    problems.extend(boil_problem(&boil));
+                    self.boils.push(boil);
                 }
             }
             ScriptTune::Species(name, def) => {
+                let Some(living) = living else {
+                    return Err(no_props(&name));
+                };
                 let (said, grown) = tune_species(living.props_mut(), &name, &def);
                 problems.extend(said);
                 if !grown {
-                    problems.push(format!("no living prop grows from '{name}'"));
+                    problems.push(no_props(&name));
                 }
             }
         }
@@ -299,6 +404,20 @@ impl HeadlessScripts {
         } else {
             Err(problems.join("; "))
         }
+    }
+
+    /// The particles a command goes to, or a note that the capture draws none.
+    fn particles<'a>(
+        &mut self,
+        particles: Option<&'a mut ParticleSystem>,
+    ) -> Option<&'a mut ParticleSystem> {
+        if particles.is_none() {
+            self.note(
+                "particles: a still with no --time draws none; give it --time or \
+                 --particle-time to see what the scripts emit",
+            );
+        }
+        particles
     }
 
     /// One change to the stage's field, at the time its clock has reached.
@@ -324,6 +443,23 @@ impl HeadlessScripts {
         if self.notes.insert(what.to_string()) {
             tracing::warn!("{what}");
         }
+    }
+
+    /// The whole beats `step_living` asked for since the last call, to move the
+    /// living clock on by before it's next read.
+    pub fn take_steps(&mut self) -> u32 {
+        std::mem::take(&mut self.steps)
+    }
+
+    /// Lay the boil tunes the scripts have made since the last call on `config`,
+    /// in order, as the player's `tune_boil` does to its renderer's. Returns
+    /// whether there were any.
+    pub fn tune_boil_into(&mut self, config: &mut flint_render::PostProcessConfig) -> bool {
+        let tuned = !self.boils.is_empty();
+        for boil in self.boils.drain(..) {
+            tune_boil(config, &mut self.boil_off, boil);
+        }
+        tuned
     }
 
     /// Whether a script has stopped the living clock (`freeze_living`).

@@ -1,0 +1,30 @@
+# The ASCII spike's (#261) three routes, on the shipped style: per entity on
+# one screen grid, full screen, and per entity on each object's own grid.
+# The spike's own --ascii=<mode> flags went with #293; a scene's ascii_style
+# components now say which props are glyphs, so this file is for
+# demo/ascii_entities.scene.toml (the spike's meadow, its props styled):
+#
+#   flint render demo/ascii_entities.scene.toml --no-grid --variants demo/variants/ascii_scope.variants.toml -o scope.png
+#
+# writes scope.png (the labelled sheet), scope-zoom.png (the bench and the
+# barrel at 2x, nearest neighbour) and each variant's own frame beside them.
+
+title = "ASCII: per entity, full screen, object grid"
+zoom = ["860,380,1380,620@2"]
+
+[[variant]]
+label = "smooth"
+flags = "--style ascii:blend=0"
+
+[[variant]]
+label = "per entity, screen grid"
+# The scene as authored (its barrel alone asks for grid = "object")
+flags = ""
+
+[[variant]]
+label = "full screen"
+flags = "--ascii-scope screen"
+
+[[variant]]
+label = "per entity, object grid"
+flags = "--ascii-grid object"

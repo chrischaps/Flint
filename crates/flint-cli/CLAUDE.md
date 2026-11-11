@@ -106,6 +106,12 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
    #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
    #                          two --sweep flags make a grid, first across, second down, #358)
+   #   --variant "label: --flag v ..." (repeatable) | --variants v.toml   [--zoom X0,Y0,X1,Y1@N]
+   #                          (#291: any flags side by side: each variant = this command line + its
+   #                           flags (args_override_self; --style adds), one labelled sheet at -o,
+   #                           <out>-<label>.png each, nearest crops <out>-zoom.png; one process and
+   #                           GPU (RenderHost, imports memoized); commands/variants.rs; demo/variants/.
+   #                           main.rs / render_goldens fill RenderArgs::command_line for it)
    #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
    #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
    #   --look x --reference ref.png --ai-refine [--ai-provider anthropic|mock --max-cost 0.5
@@ -120,7 +126,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           at that time. No physics. --frame-step S names the step)
    #   --scripts              (run the scene's scripts headless, a tick a step in the player's frame order:
    #                           seeded random(), no timestamp(), name-ordered; what can't be drawn is
-   #                           warned. flint_player::HeadlessScripts, #8)
+   #                           warned. flint_player::HeadlessScripts, #8; tune_living's boil, step_living,
+   #                           load_living_preset and script particles too, #579: boil tunes queue and
+   #                           land on the config at capture via living_tuning::tune_boil, the player's;
+   #                           particles made at load step on the script clock, Stage::step_particles_to)
    #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers;
    #                           frames wait on disk as deflated deltas, x.gif.frames~, so memory stays flat, #588;

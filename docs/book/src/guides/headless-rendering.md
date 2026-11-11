@@ -318,9 +318,9 @@ It's deterministic, so a review can diff two renders:
 - Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
 - There is no input.
 
-What changes the picture runs: everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material), `tune_living`, `freeze_living`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, `fire_event` between scripts, the `set_camera_*` overrides and the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...). Sound is dropped quietly. Everything else a script asks for (physics, particles, a scene change, `tune_living`'s boil, the HUD, render modes) is named once on stderr and in the report's `warnings`, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
+What changes the picture runs: everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material), `tune_living` (its `boil` too: `kuwahara`, `contour`, `on`, `enabled`), `freeze_living`, `step_living` (a whole beat for every prop, the boil and shallow wooze, frozen or not), `load_living_preset`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, `fire_event` between scripts, the `set_camera_*` overrides and the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...), and particles (#579): `play_effect`, `stop_effect`, `set_effect_param` and `emit_burst` reach the capture's particles, which step on the scripts' clock in the fixed 1/60 s steps `--time` already took. A still with no `--time` or `--particle-time` draws no particles, and says so. Sound is dropped quietly. Everything else a script asks for (physics, a scene change, `compare_living`, the HUD, render modes) is named once on stderr and in the report's `warnings`, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
 
-`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, and a tune and a freeze reach living props.
+`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, a tune, a freeze, a step and a preset reach living props, a script switches the boil off and on, and an effect it plays and stops is drawn only between the two.
 
 A scene with `living_prop` entities draws them in any `flint render`, at time 0 without `--time`. Procgen assets resolve as in the player only in those scenes. Other scenes draw exactly as they did.
 
@@ -347,6 +347,61 @@ A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or 
 - `--ai-refine` redraws the one moment under each candidate look, the clocks never rewound, so a look can be tuned on the Woozy Grove at 3.5 s. A span or a list is refused (it refines one frame), and so is `--report json` (the refine writes its own log).
 
 A sweep sets the scene's global value, the same one a `[wooze]` table would, and a scene without a table gets an empty one. Zones still apply on top. If a zone keeps any prop off the value, the column says what the props really read (`PROPS READ 0.25-0.80`). If two neighbouring columns come out pixel-identical, a warning says so: at this moment, nothing on screen is listening to that knob.
+
+## Variants Side by Side
+
+A sweep turns one key. To compare things that aren't one key (two looks against a style, MSAA on and off, three palettes at two cell sizes), give each its own flags with `--variant "label: --flag value ..."`, as often as needed, and every one is drawn at the same camera onto one labelled sheet:
+
+```bash
+flint render demo/ascii_entities.scene.toml --no-grid -o scope.png \
+  --variant "smooth: --style ascii:blend=0" \
+  --variant "per entity, screen grid:" \
+  --variant "full screen: --ascii-scope screen" \
+  --variant "per entity, object grid: --ascii-grid object" \
+  --zoom 860,380,1380,620@2
+#   [1/4] smooth: --style ascii:blend=0
+#   [2/4] per entity, screen grid: (the base command)
+#   [3/4] full screen: --ascii-scope screen
+#   [4/4] per entity, object grid: --ascii-grid object
+#   Wrote 4 variants as one 3944x842 sheet to scope.png (each variant's frame beside it as .\scope-<label>.png)
+#   Wrote zoom 860,380,1380,620@2 as a 4264x782 sheet to .\scope-zoom.png
+```
+
+![The ASCII meadow four ways: smooth, per entity on the screen grid, full screen, and per entity on each object's grid, each labelled with its flags](../images/render-variants-scope.png)
+
+![The same four at 2x nearest neighbour: the bench, the lantern on its crate and the barrel, glyph for glyph](../images/render-variants-scope-zoom.png)
+
+A per-entity style's props switch it on themselves, so `--style ascii:off` leaves them in glyphs; `ascii:blend=0` takes the style out of the chain, as the first variant does. The warning about pixel-identical neighbours (below) is what showed it.
+
+Each variant is the whole command line (every flag but `--variant`, `--variants`, `--zoom` and `--output`) with its own flags after it. A flag given in both takes the variant's value, and a repeatable one (`--style`) adds to the base's, so `--width 1280 --look graphite` before the variants applies to all of them. The label is the text before the first `:`; `"label:"` alone is the command as given, and a variant that starts with `-` is labelled with its flags. Each label's flags are written dim under it on the sheet, cut short with `~` when they don't fit the cell (the terminal prints them whole). Without `--no-grid` the editor grid is in every variant, as in a plain `flint render`.
+
+What gets written, for `-o scope.png`:
+
+- `scope.png`: the sheet, its frames shrunk to 960 wide when they're larger (the subtitle says so), each zoom's region outlined in amber.
+- `scope-<label>.png`: each variant's own frame at full size, exactly what `flint render` with those flags writes alone.
+- `scope-zoom.png` and `scope-<label>-zoom.png`: with `--zoom X0,Y0,X1,Y1@N`, the region (in pixels of the frame) of every variant, N times larger with nearest neighbour, so each pixel is an N x N block and a glyph's strokes can be counted. Without `@N` the crop is as large as fits 640 across, up to 8x. A second `--zoom` writes `-zoom2`.
+
+Lists worth keeping go in a file, `--variants file.toml`:
+
+```toml
+title = "ASCII: per entity, full screen, object grid"   # the sheet's title (default: the scene)
+zoom = ["860,380,1380,620@2"]                         # as --zoom; the command line's add to these
+
+[[variant]]
+label = "full screen"
+flags = "--ascii-scope screen"          # a line, split as a shell would, or
+# flags = ["--ascii-scope", "screen"]   # the words themselves
+```
+
+`demo/variants/` has two: `ascii_scope.variants.toml` puts the ASCII spike's (#261) three routes side by side on `demo/ascii_entities.scene.toml`, and `ascii_rounds.variants.toml` redraws the spike's two rounds of full-screen glyphs on any scene, one command a scene:
+
+```bash
+flint render demo/mesh_meadow.scene.toml --no-grid --variants demo/variants/ascii_rounds.variants.toml -o meadow.png --zoom 760,400,1160,625@2
+```
+
+![The meadow's lantern at 2x through the spike's rounds: smooth, the continuous ramp, banded tone, and banded tone with edge glyphs](../images/render-variants-rounds-zoom.png)
+
+Every variant renders in the one process on one GPU device, with glTF files decoded once and texture mip chains built once, as `render-suite` runs its cases. Each still builds its own renderer, since a variant can change what a renderer is built with (MSAA, shadows, the scene's styles). A variant is one still: one that draws `--frames`, a mesh sequence or a `--time` span is refused. Variants that come out a different size are refused too (a sheet has one cell size), and two neighbours that come out pixel-identical are named in a warning, since the flags that differ changed nothing this frame shows.
 
 ## A Span of Time as a GIF
 

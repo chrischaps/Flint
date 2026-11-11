@@ -1,0 +1,28 @@
+# Full-screen ASCII as the spike (#261) saw it in each round, on any scene:
+# the first round's continuous ramp with no edges, the second round's banded
+# tone over a wider footprint, and the second round's edges on top.
+#
+#   flint render demo/phase4_runtime.scene.toml --variants demo/variants/ascii_rounds.variants.toml -o tavern.png
+#   flint render demo/mesh_meadow.scene.toml    --variants demo/variants/ascii_rounds.variants.toml -o meadow.png
+#   flint render demo/campfire.scene.toml       --variants demo/variants/ascii_rounds.variants.toml -o campfire.png
+#   flint render demo/pbr_test.scene.toml       --variants demo/variants/ascii_rounds.variants.toml -o pbr.png
+#
+# A --zoom on the command line adds to this file's (none here: where to look
+# depends on the scene).
+
+title = "ASCII: the spike's two rounds"
+
+[[variant]]
+label = "smooth"
+
+[[variant]]
+label = "round 1: continuous ramp"
+flags = "--ascii --ascii-levels 0 --ascii-footprint 1 --ascii-no-edges"
+
+[[variant]]
+label = "round 2: banded tone"
+flags = "--ascii --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges"
+
+[[variant]]
+label = "round 2: and edges"
+flags = "--ascii --ascii-levels 4 --ascii-footprint 2"
