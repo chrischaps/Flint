@@ -1,0 +1,3 @@
+### `flint render --debug-mode wireframe-overlay` works (#308)
+**What changed.** `--debug-mode` now accepts `wireframe-overlay`, edge lines over solid PBR shading, the same image `--wireframe-overlay` draws. The render code had a branch for that name, but the argument parser refused it ("unknown debug mode"), so the branch could never run. The parser and both render paths now read one name-to-mode table, so a name can no longer be accepted in one place and refused in the other. The error for an unknown mode lists every valid name. `--wireframe-overlay` still works as before.
+**What to do.** Nothing. A script or golden that passes `--wireframe-overlay` can keep it, or use `--debug-mode wireframe-overlay` instead.

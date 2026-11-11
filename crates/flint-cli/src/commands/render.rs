@@ -223,9 +223,10 @@ pub struct RenderArgs {
     #[arg(long, value_name = "ENTITY")]
     pub select: Option<String>,
 
-    /// Debug visualization mode
+    /// Debug visualization mode: wireframe, wireframe-overlay, normals,
+    /// depth, uv, unlit, metalrough, style, edges
     #[arg(long, value_parser = crate::commands::common_args::parse_debug_mode)]
-    pub debug_mode: Option<String>,
+    pub debug_mode: Option<DebugMode>,
 
     /// Enable wireframe overlay on solid geometry
     #[arg(long)]
@@ -1169,23 +1170,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     );
 
     // Apply debug state
-    if let Some(mode_str) = &args.debug_mode {
-        let mode = match mode_str.as_str() {
-            "wireframe-overlay" => DebugMode::WireframeOverlay,
-            "wireframe" => DebugMode::WireframeOnly,
-            "normals" => DebugMode::Normals,
-            "depth" => DebugMode::Depth,
-            "uv" => DebugMode::UvChecker,
-            "unlit" => DebugMode::Unlit,
-            "metalrough" => DebugMode::MetallicRoughness,
-            "style" => DebugMode::StyleMask,
-            "edges" => DebugMode::StyleEdges,
-            _ => DebugMode::Pbr,
-        };
+    if let Some(mode) = args.debug_mode {
         if matches!(mode, DebugMode::StyleMask | DebugMode::StyleEdges) && args.no_postprocess {
             eprintln!(
-                "warning: --debug-mode {mode_str} draws through post-processing, \
-                 which --no-postprocess turns off; the image shows none of it"
+                "warning: --debug-mode {} draws through post-processing, \
+                 which --no-postprocess turns off; the image shows none of it",
+                crate::commands::common_args::debug_mode_name(mode)
             );
         }
         renderer.set_debug_mode(mode);
@@ -3515,19 +3505,7 @@ impl Stage {
         );
 
         // Apply debug state
-        if let Some(mode_str) = &args.debug_mode {
-            let mode = match mode_str.as_str() {
-                "wireframe-overlay" => DebugMode::WireframeOverlay,
-                "wireframe" => DebugMode::WireframeOnly,
-                "normals" => DebugMode::Normals,
-                "depth" => DebugMode::Depth,
-                "uv" => DebugMode::UvChecker,
-                "unlit" => DebugMode::Unlit,
-                "metalrough" => DebugMode::MetallicRoughness,
-                "style" => DebugMode::StyleMask,
-                "edges" => DebugMode::StyleEdges,
-                _ => DebugMode::Pbr,
-            };
+        if let Some(mode) = args.debug_mode {
             renderer.set_debug_mode(mode);
         }
         if args.wireframe_overlay {
