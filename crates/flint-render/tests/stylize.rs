@@ -296,6 +296,66 @@ fn display_styles_with_fxaa_hold_two_full_size_textures() {
     }
 }
 
+/// #297: FXAA switched on through the config alone, as the viewer's scene
+/// load, F11 toggle and hot reload do, is drawn on the next frame, the
+/// same as when the host builds it first; and so is FXAA turned on after
+/// frames drew without it. Before, the frame drew no FXAA until a resize.
+#[test]
+fn fxaa_set_by_the_config_alone_is_drawn() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let world = box_world();
+    // How many bytes two frames differ in
+    let differ = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    let renderer = || {
+        SceneRenderer::new_headless(
+            gpu.device,
+            gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        )
+    };
+    let with_fxaa = |renderer: &mut SceneRenderer, on: bool| {
+        let mut config = renderer.post_process_config().clone();
+        config.fxaa_enabled = on;
+        renderer.set_post_process_config(config);
+    };
+
+    let mut plain = renderer();
+    with_fxaa(&mut plain, false);
+    let without = gpu.frame(&mut plain, &world);
+    assert_eq!(plain.collect_stats().full_size_targets, 0);
+
+    // The host builds it, as F4 does: the reference
+    let mut built = renderer();
+    with_fxaa(&mut built, true);
+    built.ensure_fxaa_resources(gpu.device);
+    let reference = gpu.frame(&mut built, &world);
+    let smoothed = differ(&without, &reference);
+    assert!(smoothed > 0, "FXAA changed none of the cube's edges");
+
+    // The config alone, from the first frame (a scene load)
+    let mut loaded = renderer();
+    with_fxaa(&mut loaded, true);
+    let on_load = gpu.frame(&mut loaded, &world);
+    assert_eq!(differ(&on_load, &reference), 0, "on load");
+    assert_eq!(loaded.collect_stats().full_size_targets, 1);
+
+    // Off, then on by the config (F11, a hot reload)
+    let mut reloaded = renderer();
+    with_fxaa(&mut reloaded, false);
+    let off = gpu.frame(&mut reloaded, &world);
+    assert_eq!(differ(&off, &without), 0, "off");
+    with_fxaa(&mut reloaded, true);
+    let later = gpu.frame(&mut reloaded, &world);
+    assert_eq!(differ(&later, &reference), 0, "turned on later");
+    println!("FXAA smooths {smoothed} of {} bytes", without.len());
+}
+
 /// #299: two styles of one stage in the two orders draw two pictures, and
 /// a scene that orders nothing draws what registration order always drew.
 #[test]

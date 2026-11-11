@@ -41,7 +41,8 @@ struct ViewerState {
     scene_doc: Option<SceneDocument>,
     /// The scene's authored `[post_process]` block, if any — applied on load
     /// so the viewer shows the authored look (DoF, vignette, fog, …);
-    /// F11 toggles between it and the viewer's default config.
+    /// F4's "Authored post" button toggles between it and the viewer's
+    /// default config.
     scene_post: Option<PostProcessDef>,
     /// The scene's wooze field, if it has a `[wooze]` table. The viewer reads it
     /// for the shading boil only (#214); it doesn't run living props.
@@ -790,8 +791,8 @@ impl ViewerApp {
         }
 
         // Apply the scene's authored [post_process] block (DoF, vignette,
-        // fog, …) so the viewer shows the authored look. F11 toggles back
-        // to the viewer's default config (kept here for that).
+        // fog, …) so the viewer shows the authored look. F4's "Authored post"
+        // button toggles back to the viewer's default config (kept here for that).
         self.default_post_config = Some(scene_renderer.post_process_config().clone());
         {
             let state = self.state.lock().unwrap();
@@ -800,7 +801,7 @@ impl ViewerApp {
                     post_process_config_from_def(def),
                     &self.style_specs,
                 ));
-                println!("Scene [post_process] applied (F11 toggles scene/default)");
+                println!("Scene [post_process] applied (F4 > Authored post toggles scene/default)");
             } else if !self.style_specs.is_empty() {
                 let config = scene_renderer.post_process_config().clone();
                 scene_renderer.set_post_process_config(with_styles(config, &self.style_specs));
@@ -1059,18 +1060,17 @@ impl ViewerApp {
         renderer.set_post_process_config(config);
     }
 
-    /// Advance the shading boil and tell the renderer which drawing it's on. Also
-    /// keeps the post passes' resources in step with the config, since every way
-    /// the viewer changes it (load, F11, hot reload, F4) ends up here.
+    /// Advance the shading boil and tell the renderer which drawing it's on.
+    /// The post passes' resources (styles, FXAA) follow the config by
+    /// themselves: the renderer builds them each frame (#262, #297), however
+    /// the viewer set it (load, scene/default toggle, hot reload, F4).
     fn tick_boil(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_boil_tick).as_secs_f64().min(0.1);
         self.last_boil_tick = now;
-        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
-        else {
+        let Some(renderer) = &mut self.scene_renderer else {
             return;
         };
-        renderer.ensure_kuwahara_resources(&context.device, &context.queue);
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
