@@ -1250,12 +1250,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if let Some(seconds) = args.particle_time {
         use flint_runtime::RuntimeSystem;
         let mut particles = flint_particles::ParticleSystem::new();
-        let project = flint_core::project::Project::for_scene(Path::new(&args.scene));
-        flint_particles::load_particle_effects_from_world(&project, &args.scene, &mut particles);
+        let project = &config.project;
+        flint_particles::load_particle_effects_from_world(project, &args.scene, &mut particles);
         particles
             .initialize(&mut world)
             .context("Failed to initialize particles")?;
-        let dirs = flint_particles::texture_search_dirs(&project, &args.scene);
+        let dirs = flint_particles::texture_search_dirs(project, &args.scene);
         flint_render::load_particle_textures(
             &mut renderer,
             &ctx.device,
@@ -3179,6 +3179,9 @@ struct Stage {
     /// follows on from.
     captured: Option<f64>,
     particles: Option<flint_particles::ParticleSystem>,
+    /// The project the scene is in (ADR 0114), found once when it loads:
+    /// what every asset search of this stage asks.
+    project: flint_core::project::Project,
     /// How many fixed steps the particles have taken.
     particle_steps: u32,
     /// Whether the particles step with the other clocks, for the scripts' sake,
@@ -3514,7 +3517,13 @@ impl Stage {
         let particles_drawn = args.particle_time.is_some() || args.time.is_some();
         let mut particles = None;
         if scripts.is_some() && particles_drawn {
-            particles = Some(new_particles(&args.scene, &mut world, &mut renderer, ctx)?);
+            particles = Some(new_particles(
+                &config.project,
+                &args.scene,
+                &mut world,
+                &mut renderer,
+                ctx,
+            )?);
         }
         let particles_on_clock = particles.is_some() && args.particle_time.is_none();
         if let Some(scripts) = &mut scripts {
@@ -3557,6 +3566,7 @@ impl Stage {
             clock: 0.0,
             captured: None,
             particles,
+            project: config.project,
             particle_steps: 0,
             particles_on_clock,
             particles_said: false,
@@ -3761,7 +3771,13 @@ impl Stage {
         seconds: f32,
     ) -> Result<()> {
         if self.particles.is_none() {
-            let particles = new_particles(&args.scene, &mut self.world, &mut self.renderer, ctx)?;
+            let particles = new_particles(
+                &self.project,
+                &args.scene,
+                &mut self.world,
+                &mut self.renderer,
+                ctx,
+            )?;
             self.particles = Some(particles);
         }
         self.step_particles_to(seconds);
@@ -3791,6 +3807,7 @@ const PARTICLE_DT: f32 = 1.0 / 60.0;
 /// The scene's particle system: every effect beside it registered, the world's
 /// emitters found, and their textures uploaded.
 fn new_particles(
+    project: &flint_core::project::Project,
     scene: &str,
     world: &mut flint_ecs::FlintWorld,
     renderer: &mut SceneRenderer,
@@ -3798,12 +3815,11 @@ fn new_particles(
 ) -> Result<flint_particles::ParticleSystem> {
     use flint_runtime::RuntimeSystem;
     let mut particles = flint_particles::ParticleSystem::new();
-    let project = flint_core::project::Project::for_scene(Path::new(scene));
-    flint_particles::load_particle_effects_from_world(&project, scene, &mut particles);
+    flint_particles::load_particle_effects_from_world(project, scene, &mut particles);
     particles
         .initialize(world)
         .context("Failed to initialize particles")?;
-    let dirs = flint_particles::texture_search_dirs(&project, scene);
+    let dirs = flint_particles::texture_search_dirs(project, scene);
     flint_render::load_particle_textures(renderer, &ctx.device, &ctx.queue, &particles.sync, &dirs);
     Ok(particles)
 }

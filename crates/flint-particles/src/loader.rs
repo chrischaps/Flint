@@ -81,8 +81,9 @@ fn scene_dir_of(scene_path: &str) -> &Path {
 }
 
 /// The search effects had before the one resolver, kept only for
-/// [`texture_search_dirs`] until textures go through the resolver too:
-/// `<scene_dir>/particles/` if it exists, else `<scene_dir>/../particles/`.
+/// [`texture_search_dirs`]: `<scene_dir>/particles/` if it exists, else
+/// `<scene_dir>/../particles/`. An effect's `texture` is a path-named file
+/// and is not yet one of the resolver's kinds (materials' textures are).
 pub fn resolve_particles_dir(scene_path: &str) -> Option<PathBuf> {
     let scene_dir = Path::new(scene_path)
         .parent()

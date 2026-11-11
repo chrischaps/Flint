@@ -10,14 +10,23 @@
 //!
 //! At each directory `D` of that walk the candidates are
 //! `D/<folder>/<name><extension>`, for each of the kind's folders and then
-//! each of its extensions. A name that already ends in one of the kind's
-//! extensions is taken as written, and a name may carry subfolders
-//! (`fx/fire` is `D/particles/fx/fire.particles.toml`). The first candidate
-//! that is a file wins.
+//! each of its extensions. A folder of `""` is `D` itself. A name that
+//! already ends in one of the kind's extensions is taken as written, and a
+//! name may carry subfolders (`fx/fire` is
+//! `D/particles/fx/fire.particles.toml`). The first candidate that is a file
+//! wins.
 //!
-//! A kind is data: a label, its folders and its extensions ([`KindInfo`]).
-//! Nothing else may differ from one kind to the next, and the walk never
-//! looks at which kind it is serving.
+//! Before the walk comes one step, the same for every kind: **as written**.
+//! A name that is a path of its own, absolute or starting with `./` or
+//! `../`, is tried first from the scene's directory (an absolute one as it
+//! stands), with the kind's extensions. A relative one then goes through the
+//! walk like any name; an absolute one is tried nowhere else. No path is
+//! tried twice.
+//!
+//! A kind is data: a label, its folders, its extensions and whether its
+//! names are file names ([`KindInfo`]). Nothing else may differ from one
+//! kind to the next, and the walk never looks at which kind it is serving.
+//! Extensions are matched as spelled, capitals and all, for every kind.
 //!
 //! Two edges of the walk, the same for every kind:
 //!
@@ -62,6 +71,22 @@ use std::sync::{Mutex, OnceLock};
 pub enum AssetKind {
     /// Particle effects: `particles/<name>.particles.toml`.
     Particles,
+    /// Models: `models/<name>.glb`, then `.gltf`.
+    Models,
+    /// Textures (a material's or a `sprite` component's `texture`): beside
+    /// the scene or in `textures/`, by file name, or a bare name that also
+    /// tries `.png` and `_color.png`.
+    Textures,
+    /// UI sprites (`draw_sprite`): `sprites/<file>`, then beside the scene.
+    Sprites,
+    /// Property clips: `animations/<name>.anim.toml`.
+    Animations,
+    /// Sprite-sheet clips: `animations/<name>.sprite.toml`.
+    SpriteAnimations,
+    /// Animator sequences: `animations/<name>.sequence.toml`.
+    Sequences,
+    /// Sounds: a file named from the scene (`audio/hit.ogg`), or in `audio/`.
+    Audio,
 }
 
 /// Everything that tells one kind from another: where its files sit under
@@ -77,23 +102,111 @@ pub struct KindInfo {
     pub folders: &'static [&'static str],
     /// File endings, in the order tried, each with its dot
     /// (`.particles.toml`). A name already ending in one is taken as it is.
+    /// An empty string is the name with nothing added.
     pub extensions: &'static [&'static str],
+    /// The kind's names are file names (`wall.png`, `audio/hit.ogg`): a name
+    /// with a dot in its last part is taken as written whatever follows the
+    /// dot, and a listed file's name is its whole file name. Otherwise a
+    /// name is a stem and the kind's extensions finish it.
+    pub named_by_file: bool,
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): the search
     /// this kind had before the one rule, as the file it would have picked.
     /// `None` once the release has passed, or when the kind never differed.
     old_rule: Option<OldRule>,
+    /// TEMPORARY, with `old_rule`: for a kind whose loader takes every file
+    /// it can see, the files its old search loaded, in the order it loaded
+    /// them. [`Project::list`] compares the two lists, which also catches a
+    /// file the old search loaded and the one rule no longer sees. `None`
+    /// for a kind that is only ever asked for by name.
+    old_list: Option<OldList>,
 }
 
 /// A kind's search before the one rule: the file it would have picked for
 /// `name` from a scene in `scene_dir`, if any.
 type OldRule = fn(name: &str, scene_dir: &Path) -> Option<PathBuf>;
 
+/// A kind's listing before the one rule: every file its loader took for a
+/// scene in `scene_dir`, where two of one name the first is the one kept.
+type OldList = fn(scene_dir: &Path) -> Vec<PathBuf>;
+
 static PARTICLES: KindInfo = KindInfo {
     label: "particles",
     noun: "particle effect",
     folders: &["particles"],
     extensions: &[".particles.toml"],
+    named_by_file: false,
     old_rule: Some(old_particles),
+    old_list: None,
+};
+
+static MODELS: KindInfo = KindInfo {
+    label: "models",
+    noun: "model",
+    folders: &["models"],
+    extensions: &[".glb", ".gltf"],
+    named_by_file: false,
+    old_rule: Some(old_models),
+    old_list: None,
+};
+
+static TEXTURES: KindInfo = KindInfo {
+    label: "textures",
+    noun: "texture",
+    folders: &["", "textures"],
+    extensions: &["", ".png", "_color.png"],
+    named_by_file: true,
+    old_rule: Some(old_textures),
+    old_list: None,
+};
+
+static SPRITES: KindInfo = KindInfo {
+    label: "sprites",
+    noun: "UI sprite",
+    folders: &["sprites", ""],
+    extensions: &[],
+    named_by_file: true,
+    old_rule: Some(old_sprites),
+    old_list: None,
+};
+
+static ANIMATIONS: KindInfo = KindInfo {
+    label: "animations",
+    noun: "animation clip",
+    folders: &["animations"],
+    extensions: &[".anim.toml"],
+    named_by_file: false,
+    old_rule: Some(old_animations),
+    old_list: Some(old_animation_list),
+};
+
+static SPRITE_ANIMATIONS: KindInfo = KindInfo {
+    label: "sprite-animations",
+    noun: "sprite animation file",
+    folders: &["animations"],
+    extensions: &[".sprite.toml"],
+    named_by_file: false,
+    old_rule: Some(old_sprite_animations),
+    old_list: Some(old_sprite_animation_list),
+};
+
+static SEQUENCES: KindInfo = KindInfo {
+    label: "sequences",
+    noun: "animation sequence",
+    folders: &["animations"],
+    extensions: &[".sequence.toml"],
+    named_by_file: false,
+    old_rule: Some(old_sequences),
+    old_list: Some(old_sequence_list),
+};
+
+static AUDIO: KindInfo = KindInfo {
+    label: "audio",
+    noun: "sound",
+    folders: &["", "audio"],
+    extensions: &[".ogg", ".wav", ".mp3", ".flac"],
+    named_by_file: true,
+    old_rule: Some(old_audio),
+    old_list: Some(old_audio_list),
 };
 
 /// TEMPORARY (see [`KindInfo::old_rule`]). Particles before ADR 0114:
@@ -112,13 +225,160 @@ fn old_particles(name: &str, scene_dir: &Path) -> Option<PathBuf> {
     vfs::is_file(&file).then_some(file)
 }
 
+/// TEMPORARY. The scene's directory and the one above it, which is as far
+/// as any search went before ADR 0114.
+fn old_two_levels(scene_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![scene_dir.to_path_buf()];
+    dirs.extend(scene_dir.parent().map(Path::to_path_buf));
+    dirs
+}
+
+/// TEMPORARY. Models before ADR 0114: `models/<name>.glb` then `.gltf`
+/// beside the scene, then the same one level up; the extension was always
+/// added (`flint_render::model_loader::resolve_model_path` as it was).
+fn old_models(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_two_levels(scene_dir)
+        .into_iter()
+        .flat_map(|dir| ["glb", "gltf"].map(|ext| dir.join("models").join(format!("{name}.{ext}"))))
+        .find(|p| vfs::exists(p))
+}
+
+/// TEMPORARY. Textures before ADR 0114: the scene's directory, its
+/// `textures/`, the directory above, its `textures/`; in each a name with a
+/// dot anywhere as written, any other bare, then `.png`, then `_color.png`
+/// (`resolve_texture_path` as it was).
+fn old_textures(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let names: Vec<String> = if name.contains('.') {
+        vec![name.to_string()]
+    } else {
+        vec![
+            name.to_string(),
+            format!("{name}.png"),
+            format!("{name}_color.png"),
+        ]
+    };
+    for level in old_two_levels(scene_dir) {
+        for dir in [level.clone(), level.join("textures")] {
+            for name in &names {
+                let path = dir.join(name);
+                if vfs::exists(&path) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// TEMPORARY. UI sprites before ADR 0114: `sprites/<name>` beside the
+/// scene, `sprites/<name>` one level up, then `<name>` beside the scene
+/// (`PlayerApp::load_ui_texture` as it was).
+fn old_sprites(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let mut places = vec![scene_dir.join("sprites").join(name)];
+    places.extend(scene_dir.parent().map(|p| p.join("sprites").join(name)));
+    places.push(scene_dir.join(name));
+    places.into_iter().find(|p| vfs::exists(p))
+}
+
+/// TEMPORARY. The one `animations/` the three animation loaders read before
+/// ADR 0114: beside the scene if that directory exists, else one level up
+/// if that exists, and only that one directory.
+fn old_animations_dir(scene_dir: &Path) -> Option<PathBuf> {
+    let local = scene_dir.join("animations");
+    if vfs::is_dir(&local) {
+        return Some(local);
+    }
+    let up = scene_dir.parent()?.join("animations");
+    vfs::is_dir(&up).then_some(up)
+}
+
+/// TEMPORARY. The file named `<name><ext>` in the old `animations/`.
+fn old_animation_file(name: &str, ext: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let file = old_animations_dir(scene_dir)?.join(format!("{name}{ext}"));
+    vfs::is_file(&file).then_some(file)
+}
+
+/// TEMPORARY. Every file ending `ext` in the old `animations/`, by name.
+fn old_animation_files(ext: &str, scene_dir: &Path) -> Vec<PathBuf> {
+    let Some(dir) = old_animations_dir(scene_dir) else {
+        return Vec::new();
+    };
+    let mut files = vfs::read_dir(&dir).unwrap_or_default();
+    files.retain(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(ext))
+    });
+    files.sort();
+    files
+}
+
+fn old_animations(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_animation_file(name, ".anim.toml", scene_dir)
+}
+fn old_animation_list(scene_dir: &Path) -> Vec<PathBuf> {
+    old_animation_files(".anim.toml", scene_dir)
+}
+fn old_sprite_animations(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_animation_file(name, ".sprite.toml", scene_dir)
+}
+fn old_sprite_animation_list(scene_dir: &Path) -> Vec<PathBuf> {
+    old_animation_files(".sprite.toml", scene_dir)
+}
+fn old_sequences(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_animation_file(name, ".sequence.toml", scene_dir)
+}
+fn old_sequence_list(scene_dir: &Path) -> Vec<PathBuf> {
+    old_animation_files(".sequence.toml", scene_dir)
+}
+
+/// TEMPORARY. A sound named by an `audio_source` before ADR 0114: its
+/// `file` as a path from the scene's directory, then from the one above
+/// (`load_audio_from_world` as it was).
+fn old_audio(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_two_levels(scene_dir)
+        .into_iter()
+        .map(|dir| dir.join(name))
+        .find(|p| vfs::exists(p))
+}
+
+/// TEMPORARY. The preload before ADR 0114: every `.ogg`, `.wav`, `.mp3` and
+/// `.flac` in `audio/` beside the scene, then in `audio/` one level up; both
+/// folders, a file name in the first hiding the same one in the second.
+fn old_audio_list(scene_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in old_two_levels(scene_dir) {
+        let mut files = vfs::read_dir(dir.join("audio")).unwrap_or_default();
+        files.retain(|p| AUDIO.name_of(p).is_some());
+        files.sort();
+        out.extend(files);
+    }
+    out
+}
+
 impl AssetKind {
     /// Every kind, in the order `flint asset where --help` lists them.
-    pub const ALL: &'static [AssetKind] = &[AssetKind::Particles];
+    pub const ALL: &'static [AssetKind] = &[
+        AssetKind::Particles,
+        AssetKind::Models,
+        AssetKind::Textures,
+        AssetKind::Sprites,
+        AssetKind::Animations,
+        AssetKind::SpriteAnimations,
+        AssetKind::Sequences,
+        AssetKind::Audio,
+    ];
 
     pub fn info(self) -> &'static KindInfo {
         match self {
             AssetKind::Particles => &PARTICLES,
+            AssetKind::Models => &MODELS,
+            AssetKind::Textures => &TEXTURES,
+            AssetKind::Sprites => &SPRITES,
+            AssetKind::Animations => &ANIMATIONS,
+            AssetKind::SpriteAnimations => &SPRITE_ANIMATIONS,
+            AssetKind::Sequences => &SEQUENCES,
+            AssetKind::Audio => &AUDIO,
         }
     }
 
@@ -143,11 +403,21 @@ impl fmt::Display for AssetKind {
 }
 
 impl KindInfo {
+    /// The kind's extensions that add something to a name.
+    fn endings(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.extensions.iter().copied().filter(|e| !e.is_empty())
+    }
+
     /// The file names a name stands for: itself when it already ends in one
-    /// of the kind's extensions (or the kind has none), else the name with
+    /// of the kind's extensions (or the kind has none, or its names are file
+    /// names and this one has a dot in its last part), else the name with
     /// each extension in turn.
     pub fn file_names(&self, name: &str) -> Vec<String> {
-        if self.extensions.is_empty() || self.extensions.iter().any(|e| name.ends_with(e)) {
+        let last = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        if self.extensions.is_empty()
+            || self.endings().any(|e| name.ends_with(e))
+            || (self.named_by_file && last.contains('.'))
+        {
             return vec![name.to_string()];
         }
         self.extensions
@@ -156,18 +426,19 @@ impl KindInfo {
             .collect()
     }
 
-    /// A file's asset name: its file name less the kind's extension. `None`
-    /// for a file of another kind.
+    /// A file's asset name: its file name less the kind's extension, or the
+    /// whole file name for a kind named by file. `None` for a file of
+    /// another kind.
     pub fn name_of(&self, file: &Path) -> Option<String> {
         let file_name = file.file_name()?.to_str()?;
-        if self.extensions.is_empty() {
+        if self.endings().next().is_none() {
             return Some(file_name.to_string());
         }
-        self.extensions
-            .iter()
+        let stem = self
+            .endings()
             .find_map(|e| file_name.strip_suffix(e))
-            .filter(|stem| !stem.is_empty())
-            .map(str::to_string)
+            .filter(|stem| !stem.is_empty())?;
+        Some(if self.named_by_file { file_name } else { stem }.to_string())
     }
 }
 
@@ -313,19 +584,14 @@ impl Project {
 
     /// [`resolve`](Self::resolve) with its working shown and nothing logged.
     pub fn explain(&self, kind: AssetKind, name: &str, scene_dir: &Path) -> Resolution {
-        let info = kind.info();
-        let names = info.file_names(name);
         let mut tried = Vec::new();
         let mut found = None;
-        'search: for dir in self.search_dirs(kind, scene_dir) {
-            for file_name in &names {
-                let path = dir.join(file_name);
-                if vfs::is_file(&path) {
-                    found = Some(path);
-                    break 'search;
-                }
-                tried.push(path);
+        for path in self.candidates(kind, name, scene_dir) {
+            if vfs::is_file(&path) {
+                found = Some(path);
+                break;
             }
+            tried.push(path);
         }
         let order_change = order_change(kind, name, scene_dir, found.as_deref());
         Resolution {
@@ -337,15 +603,66 @@ impl Project {
         }
     }
 
+    /// Every path [`explain`](Self::explain) would try for `name`, in order
+    /// and each once: the as-written step, then the walk.
+    pub fn candidates(&self, kind: AssetKind, name: &str, scene_dir: &Path) -> Vec<PathBuf> {
+        let names = kind.info().file_names(name);
+        let written = as_written(name);
+        let mut out: Vec<PathBuf> = Vec::new();
+        let mut push = |path: PathBuf| {
+            if !out.contains(&path) {
+                out.push(path);
+            }
+        };
+        if written != Written::Name {
+            let from = if scene_dir.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                scene_dir
+            };
+            for file_name in &names {
+                // `join` leaves an absolute name as it stands.
+                push(under(from, file_name));
+            }
+        }
+        if written != Written::Absolute {
+            for dir in self.search_dirs(kind, scene_dir) {
+                for file_name in &names {
+                    // `under`, so a file at the root of a relative walk is
+                    // `wall.png` and not `./wall.png`.
+                    push(under(&dir, file_name));
+                }
+            }
+        }
+        out
+    }
+
     /// Every file of `kind` a scene in `scene_dir` can see, by the same
     /// rule: a nearer file hides a farther one of the same name. Nearest
     /// first, and by name within a directory. Only files directly in a
-    /// kind's folder are listed, not those in subfolders.
+    /// kind's named folders are listed: not those in subfolders, and never
+    /// the walk's own directories (a folder of `""`), which hold whatever
+    /// else is beside a scene.
     pub fn list(&self, kind: AssetKind, scene_dir: &Path) -> Vec<Listed> {
+        let (out, changes) = self.listing(kind, scene_dir);
+        for change in changes {
+            change.log();
+        }
+        out
+    }
+
+    /// TEMPORARY (see [`OrderChange`]): where a kind's old search listed
+    /// another set of files than [`list`](Self::list) does, without logging.
+    pub fn list_order_changes(&self, kind: AssetKind, scene_dir: &Path) -> Vec<OrderChange> {
+        self.listing(kind, scene_dir).1
+    }
+
+    fn listing(&self, kind: AssetKind, scene_dir: &Path) -> (Vec<Listed>, Vec<OrderChange>) {
         let info = kind.info();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        for dir in self.search_dirs(kind, scene_dir) {
+        let mut changes = Vec::new();
+        for dir in self.places(kind, scene_dir, false) {
             let Ok(mut entries) = vfs::read_dir(&dir) else {
                 continue;
             };
@@ -357,26 +674,60 @@ impl Project {
                 if !seen.insert(name.clone()) {
                     continue;
                 }
-                if let Some(change) = order_change(kind, &name, scene_dir, Some(&path)) {
-                    change.log();
+                if info.old_list.is_none() {
+                    changes.extend(order_change(kind, &name, scene_dir, Some(&path)));
                 }
                 out.push(Listed { name, path });
             }
         }
-        out
+        // A kind loaded as a whole: compare the two lists, which also sees
+        // a file the old search loaded and this one doesn't reach.
+        if let Some(old_list) = info.old_list {
+            let mut old_seen = HashSet::new();
+            for old in old_list(scene_dir) {
+                let Some(name) = info.name_of(&old) else {
+                    continue;
+                };
+                if !old_seen.insert(name.clone()) {
+                    continue; // the old search kept the first of a name too
+                }
+                let new = out.iter().find(|l| l.name == name).map(|l| l.path.clone());
+                if new
+                    .as_deref()
+                    .is_some_and(|new| same_dir_key(new) == same_dir_key(&old))
+                {
+                    continue;
+                }
+                changes.push(OrderChange {
+                    kind,
+                    name,
+                    old,
+                    new,
+                });
+            }
+        }
+        (out, changes)
     }
 
     /// The directories searched for `kind` from a scene in `scene_dir`, in
     /// order, whether or not they exist: the kind's folders under each
     /// directory of the walk, then under the engine mount.
     pub fn search_dirs(&self, kind: AssetKind, scene_dir: &Path) -> Vec<PathBuf> {
+        self.places(kind, scene_dir, true)
+    }
+
+    /// [`search_dirs`](Self::search_dirs), with or without the walk's own
+    /// directories (a kind's folder of `""`).
+    fn places(&self, kind: AssetKind, scene_dir: &Path, bare: bool) -> Vec<PathBuf> {
         let folders = kind.info().folders;
         let (mut levels, root) = self.levels(scene_dir);
         levels.extend(self.engine_under(&root));
         let mut out = Vec::with_capacity(levels.len() * folders.len());
         for level in &levels {
             for folder in folders {
-                out.push(under(level, folder));
+                if bare || !folder.is_empty() {
+                    out.push(under(level, folder));
+                }
             }
         }
         out
@@ -471,6 +822,29 @@ pub fn shown(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// How a name is spelled, for the as-written step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Written {
+    /// A plain name, maybe with subfolders: the walk finds it.
+    Name,
+    /// A path from the scene: it starts with `./` or `../`.
+    FromScene,
+    /// A path from a root or a drive: it is one file and no search.
+    Absolute,
+}
+
+fn as_written(name: &str) -> Written {
+    let path = Path::new(name);
+    if path.is_absolute() || path.has_root() || name.starts_with('/') {
+        return Written::Absolute;
+    }
+    match path.components().next() {
+        Some(Component::CurDir | Component::ParentDir) => Written::FromScene,
+        Some(Component::Prefix(_)) => Written::Absolute,
+        _ => Written::Name,
+    }
+}
+
 /// `dir/rel`, with `.` left out of the spelling.
 fn under(dir: &Path, rel: &str) -> PathBuf {
     if rel.is_empty() {
@@ -521,6 +895,10 @@ fn order_change(
         new: new.map(Path::to_path_buf),
     })
 }
+
+#[cfg(test)]
+#[path = "assets_kinds_tests.rs"]
+mod kinds_tests;
 
 #[cfg(test)]
 mod tests {

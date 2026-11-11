@@ -399,6 +399,7 @@ impl PlayerApp {
                 .map(|p| p.to_path_buf());
 
             let config = build_model_load_config(
+                &self.project,
                 &self.scene_path,
                 &self.world,
                 self.catalog.as_ref(),
@@ -568,6 +569,7 @@ impl PlayerApp {
         load_audio_from_world(
             &self.world,
             &mut self.audio,
+            &self.project,
             &self.scene_path,
             self.scene_preload_audio,
             // In the browser the audio may already be here at a scene change, and
@@ -585,9 +587,9 @@ impl PlayerApp {
         // simply dropped again by the new session's handoff.
         self.start_music_session();
 
-        load_animations_from_world(&self.scene_path, &mut self.animation);
-        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
-        load_sequences_from_world(&self.scene_path, &mut self.animation);
+        load_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
+        load_sequences_from_world(&self.project, &self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));

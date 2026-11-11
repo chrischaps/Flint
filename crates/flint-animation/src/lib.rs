@@ -105,6 +105,12 @@ impl AnimationSystem {
         self.sequence_sync.add_sequence(seq);
     }
 
+    /// The folders the host read `*.sequence.toml` files from, which the
+    /// warning about an unknown sequence then lists.
+    pub fn set_sequence_search(&mut self, dirs: Vec<std::path::PathBuf>) {
+        self.sequence_sync.set_searched(dirs);
+    }
+
     pub fn sequence(&self, name: &str) -> Option<&std::sync::Arc<AnimSequence>> {
         self.sequence_sync.get(name)
     }

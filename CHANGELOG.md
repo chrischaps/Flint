@@ -34,6 +34,96 @@ to do.
 
 ## 2026-11-10
 
+### Models, textures, UI sprites, animations and sounds are found by the one search rule (#706)
+**What changed.** These kinds join particle effects (the next entry) on the
+engine's one asset search: beside the scene, then beside each directory above
+it up to the project root (the folder with `flint.toml`, `.flint/`, or
+`schemas/` + `scenes/`), then under `engine/` at the root. Before, each
+looked beside the scene and one level up, in an order of its own. What each
+kind looks for at a directory `D` of that walk:
+
+| Kind | Named by | Tried at each `D`, in order |
+|---|---|---|
+| models | `model.asset = "barrel"` | `D/models/barrel.glb`, `D/models/barrel.gltf` |
+| textures | `material.texture`, `sprite.texture` | `D/<name>`, then `D/textures/<name>`; a name with no extension as `<name>`, `<name>.png`, `<name>_color.png` in each |
+| UI sprites | `draw_sprite(.., "heart.png")` | `D/sprites/heart.png`, `D/heart.png` |
+| animation clips | every `*.anim.toml` | `D/animations/` |
+| sprite animations | every `*.sprite.toml` | `D/animations/` |
+| sequences | every `*.sequence.toml` | `D/animations/` |
+| sounds | `audio_source.file = "audio/hit.ogg"` | `D/audio/hit.ogg` (the name as a path from `D`), then `D/audio/<name>` |
+| the sound preload | every `.ogg` `.wav` `.mp3` `.flac` | `D/audio/` |
+
+What a game can notice:
+
+- **A scene two or more folders deep finds the project's assets.**
+  `scenes/act1/cave/deep.scene.toml` now sees `models/`, `textures/`,
+  `sprites/`, `animations/` and `audio/` at the root. Before it saw nothing
+  above `scenes/act1/`, and drew grey boxes in silence.
+- **The engine's own assets are a last resort.** A name found nowhere in the
+  game is looked for under `engine/` (`engine/models/`, `engine/audio/`, ...).
+- **A missing asset's warning lists every path tried**, in order:
+  `model 'barrel' not found. Tried:` and a line a path, in place of
+  `Model file not found: barrel`. The same for a texture, a UI sprite (once,
+  not every frame) and an `audio_source`'s file. For a model or texture the
+  player adds what it asked before the files: `and before the files: the asset
+  catalog, a procgen spec of the same name`. An `animator.sequence` that no
+  loaded file gives lists the `animations/` folders that were read.
+- **A name written as a path is tried as written first.** `texture =
+  "../shared/wall.png"` and `asset = "./local/barrel"` are taken from the
+  scene's directory before the search (and then go through it, so every
+  spelling that loaded still loads); an absolute path is that one file. This
+  is new for models, which had no way to name a file outside `models/`. A
+  model name ending `.glb` or `.gltf` is now taken as written
+  (`asset = "barrel.gltf"`); it used to become `barrel.gltf.glb` and miss.
+- **Animations: a folder beside the scene no longer hides the project's.**
+  The three animation loaders read one `animations/` folder, the one beside
+  the scene if it existed. Now they read every one the scene can see, and a
+  nearer file hides a farther one of the same file name; the nearest is
+  registered last, so its clips win where two files define one clip name. A
+  clip that was silently missing may start to play.
+- **Sounds: `audio/` is one of the places a `file` is looked for.**
+  `file = "hit.ogg"` used to be found only loose beside the scene or one level
+  up; it is now also found in `audio/` at each level. The preload still keeps
+  each file as `audio/<file name>`, which is the name `play_sound` uses.
+- **`flint asset where <kind> <name> --scene <scene>`** answers for each of
+  these: `models`, `textures`, `sprites`, `animations`, `sprite-animations`,
+  `sequences`, `audio` (`--help` lists them with their folders).
+- **Where the order differs from before**, the engine says so for this
+  release, once per file, on stderr (and as a `note` in `flint asset where`):
+  `UI sprite 'heart.png': the search order changed (ADR 0114). Before, the
+  engine loaded sprites/heart.png; now it loads scenes/heart.png. ...`.
+  There are three cases:
+  1. *A scene at its project's root with assets one level above*, outside the
+     project. Every kind used to look there; the search now stops at the
+     root, so they are not loaded (`now it loads none: that file is outside
+     the project`). A folder with no project marker keeps its one level up.
+  2. *UI sprites*: a file loose beside the scene used to lose to
+     `sprites/<name>` one level up. Each level is now finished before the
+     next, so the file beside the scene wins.
+  3. *Sounds*: `file = "hit.ogg"` with one `hit.ogg` loose a level up and
+     another in `audio/` beside the scene used to take the loose one; it now
+     takes `audio/hit.ogg` beside the scene.
+
+  Models and textures looked in the same places in the same order as the
+  first two levels of the new search, so only case 1 applies to them.
+- Extensions are matched as spelled, as they were: `hit.OGG` is not
+  preloaded, and textures and sprites are named with their extension.
+- Not changed: terrain heightmaps and splat maps, grass masks, the skybox and
+  a particle effect's `texture` are still paths from the scene's directory or
+  its parent. Scripts, procgen specs, prefabs, fonts and style assets keep
+  their own searches until they move over.
+- For a game with its own binary: `flint_render::model_loader::ModelLoadConfig`
+  gains `project` and `asked_first` (build one with
+  `ModelLoadConfig::in_project(app.project().clone(), scene_path)` or
+  `from_scene_path`, not a struct literal), and `resolve_model_path` /
+  `resolve_texture_path` return `Result<PathBuf, flint_core::project::NotFound>`.
+
+**What to do.** Nothing for a game that keeps these folders at its root or
+beside its scenes. If you see the order-change warning, move or rename one of
+the two files it names (or, for case 1, move the asset into the project or put
+a `flint.toml` in the folder that holds both). If something now draws or plays
+where it didn't, a scene was naming an asset the old rule could not reach.
+
 ### Living props: `softness`, a soft silhouette at rest (#582)
 **What changed.** A living prop's body can feather at its outline without
 moving any more than it did. `softness` (0 to 1, default 0) fades the body

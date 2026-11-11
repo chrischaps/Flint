@@ -12,17 +12,46 @@ pub fn kinds_help() -> String {
     let mut text = String::from("Kinds:\n");
     for kind in AssetKind::ALL {
         let info = kind.info();
-        let folders: Vec<String> = info.folders.iter().map(|f| format!("{f}/")).collect();
+        // `models/<name>` for a folder, `<name>` for the directory itself
+        let places: Vec<String> = info
+            .folders
+            .iter()
+            .map(|f| match *f {
+                "" => "<name>".to_string(),
+                f => format!("{f}/<name>"),
+            })
+            .collect();
+        let endings: Vec<&str> = info
+            .extensions
+            .iter()
+            .copied()
+            .filter(|e| !e.is_empty())
+            .collect();
+        let names = match (info.named_by_file, endings.is_empty()) {
+            (false, _) => endings.join(" | "),
+            (true, true) => "   (<name> is a file name, as written)".to_string(),
+            (true, false) => format!(
+                "   (<name> is a file name, as written; one with no extension {} {})",
+                if info.extensions.contains(&"") {
+                    "also tries"
+                } else {
+                    "tries"
+                },
+                endings.join(" | ")
+            ),
+        };
         text.push_str(&format!(
-            "  {:<12}{}<name>{}\n",
+            "  {:<19}{}{}\n",
             info.label,
-            folders.join(" | "),
-            info.extensions.join(" | ")
+            places.join(" | "),
+            names
         ));
     }
     text.push_str(
         "\nSearched in order: beside the scene, beside each directory above it up to the \
-         project root, then in the mounted engine (<root>/engine/).",
+         project root, then in the mounted engine (<root>/engine/). A name that is a path \
+         of its own (absolute, or starting ./ or ../) is tried as written first, from the \
+         scene's directory. Extensions are matched as spelled.",
     );
     text
 }
