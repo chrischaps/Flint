@@ -140,6 +140,31 @@ pub mod codes {
     /// A procgen spec a scene's model or texture is made from does not parse.
     pub const BAD_SPEC: &str = "bad-spec";
 
+    // What `flint script check` adds (#694): the scripts, at a line and
+    // column.
+
+    /// A script does not compile.
+    pub const SCRIPT_SYNTAX: &str = "script-syntax";
+    /// A call names no script function, built-in, own function or import.
+    pub const UNKNOWN_FUNCTION: &str = "unknown-function";
+    /// A call passes a number of arguments the function is not declared at.
+    pub const WRONG_ARITY: &str = "wrong-arity";
+    /// A literal argument no declaration of the function accepts (a string
+    /// where a number goes, `0.5` where an int goes).
+    pub const BAD_ARGUMENT: &str = "bad-argument";
+    /// An `fn on_...` that is no callback, one edit from one that is.
+    pub const UNKNOWN_CALLBACK: &str = "unknown-callback";
+    /// A callback defined with a parameter count the engine does not call.
+    pub const CALLBACK_ARITY: &str = "callback-arity";
+    /// `import "name"` names no module the project's search finds.
+    pub const MISSING_MODULE: &str = "missing-module";
+    /// A call of a function the API marks deprecated (ADR 0116 decision 3).
+    pub const DEPRECATED_FUNCTION: &str = "deprecated-function";
+    /// A per-frame call of a many-number function mixing int and float
+    /// literals, which takes Rhai's slow signature search (ADR 0116
+    /// decision 5).
+    pub const MIXED_NUMBERS: &str = "mixed-numbers";
+
     /// Every code, the severity it is raised with, and what it means.
     pub const ALL: &[(&str, Severity, &str)] = &[
         (
@@ -293,6 +318,47 @@ pub mod codes {
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
         ),
+        (SCRIPT_SYNTAX, Severity::Error, "a script does not compile"),
+        (
+            UNKNOWN_FUNCTION,
+            Severity::Error,
+            "a script calls a function that is not there",
+        ),
+        (
+            WRONG_ARITY,
+            Severity::Error,
+            "a script calls a function with a number of arguments it does not take",
+        ),
+        (
+            BAD_ARGUMENT,
+            Severity::Error,
+            "a literal argument no declaration of the function accepts",
+        ),
+        (
+            UNKNOWN_CALLBACK,
+            Severity::Error,
+            "an fn on_... that is no callback, close to one that is, so it never runs",
+        ),
+        (
+            CALLBACK_ARITY,
+            Severity::Error,
+            "a callback with a parameter count the engine does not call it with",
+        ),
+        (
+            MISSING_MODULE,
+            Severity::Error,
+            "an import names a module the project's search does not find",
+        ),
+        (
+            DEPRECATED_FUNCTION,
+            Severity::Warning,
+            "a script calls a function the API marks deprecated",
+        ),
+        (
+            MIXED_NUMBERS,
+            Severity::Warning,
+            "a per-frame call mixes int and float literals where numbers go, the slow lookup",
+        ),
         (
             UNKNOWN_TABLE,
             Severity::Warning,
@@ -324,6 +390,13 @@ pub struct Diagnostic {
     /// order tried (the project's one search, ADR 0114). Empty for a
     /// diagnostic that is not about a missing file.
     pub tried: Vec<PathBuf>,
+    /// The line in `file`, from 1, for a problem at a place in a text file
+    /// (a script's call, #694).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// The column on `line`, from 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
 }
 
 impl Diagnostic {
@@ -339,6 +412,8 @@ impl Diagnostic {
             message: message.into(),
             hint: None,
             tried: Vec::new(),
+            line: None,
+            column: None,
         }
     }
 
@@ -387,6 +462,13 @@ impl Diagnostic {
         self
     }
 
+    /// The line and column in the file, each from 1.
+    pub fn at(mut self, line: usize, column: usize) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
     /// The hint, if there is something to suggest.
     pub fn hint_opt(mut self, hint: Option<String>) -> Self {
         self.hint = hint;
@@ -408,6 +490,12 @@ impl Diagnostic {
             };
         }
         let mut parts = Vec::new();
+        if let Some(line) = self.line {
+            parts.push(match self.column {
+                Some(column) => format!("{line}:{column}"),
+                None => format!("line {line}"),
+            });
+        }
         if let Some(entity) = &self.entity {
             parts.push(format!("entity '{entity}'"));
         }
@@ -660,7 +748,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 32);
+        assert_eq!(seen.len(), 41);
     }
 
     /// A problem in a scene-level table names the table as its header is
