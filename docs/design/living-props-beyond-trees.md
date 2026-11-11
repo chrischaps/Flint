@@ -14,12 +14,12 @@ So far one thing in Flint is woozy: the L-system tree. This note surveys everyth
 ## What #252 found
 
 #252 tried all four targets. Verdicts, numbers and what to watch are in
-`demo/woozy_grove_grass/README.md` (grass) and `demo/wooze_props/README.md` (the
-rest). `python demo/wooze_props/experiment.py` reproduces them.
+`examples/woozy_grove_grass/README.md` (grass) and `examples/wooze_props/README.md` (the
+rest). `python examples/wooze_props/experiment.py` reproduces them.
 
 | # | Target | Verdict | Follow-up |
 |---|---|---|---|
-| 1 | `garden_vine`, living | **keep**: the stem holds and the shoots are redrawn. `demo/specs/grove_vine` is it | none for the wooze. The vine doesn't climb, which is a procgen question |
+| 1 | `garden_vine`, living | **keep**: the stem holds and the shoots are redrawn. `examples/specs/grove_vine` is it | none for the wooze. The vine doesn't climb, which is a procgen question |
 | 2 | beetle, shallow wooze | **keep** at 0.04 m / 0.35 m; deeper and whole-body swells parked. The showcase idle bob, on the wall clock, takes away its holds | #505: Rhai reads the field's clock |
 | 3 | grass on the field's clock | **keep** (PR #259) | none |
 | 4 | noise pose | **keep**: pine (colonization) and willow (grammar) live, limbs attached, silhouette kept. At regrowth's strength it reads as wind. Colonization depth breaks per-level stagger | #506: the noise pose in the engine |

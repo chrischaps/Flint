@@ -641,7 +641,7 @@ fn on_event(name, data) {
 
 #### Tweens
 
-A tween starts where the setting is now: the entity's own value, else the scene's `[post_process.styles.<name>]` table, else the style's default (`blend`: 1). It begins to move the frame after the call and is stepped on game time, so it pauses with the scripts and a `--frame-step` capture is the same every run. The target is clamped to the setting's range, as `set_style_param` would. On its last step it writes the target exactly and fires `style_tween_done`; a script that wants a loop starts the next tween from `on_event` (`demo/scripts/ascii_story.rhai` makes the bench breathe that way).
+A tween starts where the setting is now: the entity's own value, else the scene's `[post_process.styles.<name>]` table, else the style's default (`blend`: 1). It begins to move the frame after the call and is stepped on game time, so it pauses with the scripts and a `--frame-step` capture is the same every run. The target is clamped to the setting's range, as `set_style_param` would. On its last step it writes the target exactly and fires `style_tween_done`; a script that wants a loop starts the next tween from `on_event` (`examples/scripts/ascii_story.rhai` makes the bench breathe that way).
 
 - A new tween of the same setting replaces the old one, from wherever it had got to.
 - A `set_style_param` of that setting stops it: the script took over.
@@ -651,7 +651,7 @@ A tween starts where the setting is now: the entity's own value, else the scene'
 
 `blend` is the cheapest setting to tween: it rides in the style mask beside the entity's id, so it never makes a variant. A tween of `cell` or `glow` makes a new variant row every frame it moves.
 
-`demo/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `demo/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
+`examples/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `examples/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
 
 #### Whole-frame styles
 
@@ -681,7 +681,7 @@ fn on_update() {
 }
 ```
 
-`demo/dream_story.scene.toml` tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
+`examples/dream_story.scene.toml` tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
 
 ### Post-Processing API
 
@@ -783,7 +783,7 @@ tune_living(#{ species: "grove_thorn", step: 0.125, glide: 0.0, echoes: #{ count
 clear_living("grove_thorn", ["echoes"]);   // their echoes back to the grove's
 ```
 
-Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `demo/living_sweep.scene.toml`, whose script moves every knob across its range.
+Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `examples/living_sweep.scene.toml`, whose script moves every knob across its range.
 
 ### Conducted Parameters API
 
@@ -1105,13 +1105,13 @@ draw_text_opts(40.0, 40.0, "128", 96.0, #{
 
 Array entries may mix ints and floats. Back to front: shadow, glow, stroke, text.
 
-A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best (`demo/hud_glow.scene.toml`).
+A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best (`examples/hud_glow.scene.toml`).
 
 A picture can be no wider or taller than the GPU's largest texture (8192 pixels on most desktops). Lettering whose halo would pass it has its halo drawn at a half, a third and so on of the screen's pixel size and stretched back over the same place, which a glow's softness hides; a warning says so once a run (#657).
 
 ![A 12 point translucent stroke as eight copies, the same stroke as one band, and two glows](../images/hud-glow.png)
 
-*`demo/hud_glow.scene.toml`: left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
+*`examples/hud_glow.scene.toml`: left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
 
 **Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found the same way as `sprites/`: the scene file's directory, then its parent). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folder is scanned non-recursively once at startup and again on scene change when the project root changes. An optional `fonts/fonts.toml` adds aliases that point at the same files:
 

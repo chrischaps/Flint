@@ -1244,7 +1244,7 @@ pub const MAX_BANDS: usize = 8;
 /// texels its cell shares, so they come from the texture cache, and the
 /// pre-pass (a whole screen of cells a band) cost more than it saved: at
 /// 4K on an RTX 4070, ASCII went 0.285 -> 0.326 ms on
-/// `demo/ascii_entities`. At 2 the lattice spreads over four cells' worth
+/// `examples/ascii_entities`. At 2 the lattice spreads over four cells' worth
 /// of picture and the pre-pass wins (0.485 -> 0.405 ms close up).
 const MIN_BAND_FOOTPRINT: f32 = 2.0;
 

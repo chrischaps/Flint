@@ -263,24 +263,24 @@ flint play levels/tavern.scene.toml
 
 ## 12. The Finished Result
 
-The `demo/phase4_runtime.scene.toml` in the Flint repository is a complete implementation of this tavern, with:
+The `examples/phase4_runtime.scene.toml` in the Flint repository is a complete implementation of this tavern, with:
 
 ![The Rusty Flint Tavern, as a bare `flint render` frames it from its [camera]](../images/rusty-flint-tavern.png)
 
 - A half-timbered hall: fieldstone below the chair rail, lime plaster above, a beamed ceiling, a great hearth with a particle fire, and a bar with shelves of bottles
-- Every model and texture made from code: `demo/tools/tavern_build.py` writes the glTF models, `demo/specs/tavern_*.procgen.toml` the textures (`python demo/tools/tavern_build.py --textures` rebuilds them all)
-- The room is one prefab, `demo/prefabs/rusty_flint.prefab.toml`, which `demo/showcase_tavern.scene.toml` places too
+- Every model and texture made from code: `examples/tools/tavern_build.py` writes the glTF models, `examples/specs/tavern_*.procgen.toml` the textures (`python examples/tools/tavern_build.py --textures` rebuilds them all)
+- The room is one prefab, `examples/prefabs/rusty_flint.prefab.toml`, which `examples/showcase_tavern.scene.toml` places too
 - Moonlight through leaded west windows: the scene's one shadow-casting light, with god rays (`volumetric_*`) and dust in them; every flame is a point light with its own flicker script
 - Four NPCs: bartender, two patrons, and a mysterious stranger with scripted behaviors
 - Spatial audio: fire crackle, ambient tavern noise, door sounds, glass clinks
 - Property animations: a chandelier swaying on its chain, door swings
 - Interactable doors and NPCs with HUD prompts
 - Footstep sounds synced to player movement
-- A `[camera]` inside the room, so `flint render demo/phase4_runtime.scene.toml` with no camera flags shows the interior
+- A `[camera]` inside the room, so `flint render examples/phase4_runtime.scene.toml` with no camera flags shows the interior
 
 ```bash
 # Try the finished demo
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml
 ```
 
 ## Further Reading

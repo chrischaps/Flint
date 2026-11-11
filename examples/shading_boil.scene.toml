@@ -1,0 +1,135 @@
+# The shading boil (#214): a still life that won't hold still.
+#
+# Nothing in this scene moves. The furniture is imported, the light is fixed and
+# there are no scripts. Everything that changes on screen is the two post passes,
+# paint and ink, re-deciding themselves on the field's beat: where a line runs, how
+# wide it is, where the pen lifts, and which way the brush went.
+#
+# A beat of the field's `step` is six film frames, so this scene's quarter second
+# is 24 frames a second, and `boil_on = 2` holds each drawing for two of them: 12 a
+# second, as the `linklater` preset gets from a half second on ones.
+#
+#   cargo run --release -p flint-player -- examples/shading_boil.scene.toml --schemas schemas
+#
+# F4, Contour and Shading boil, has every knob. To check the cadence, capture at
+# one film frame per frame. Consecutive pairs come out byte for byte the same, and
+# each pair differs from the next:
+#
+#   cargo run --release -p flint-player -- examples/shading_boil.scene.toml --schemas schemas \
+#     --frame-step 0.0416666666666667 --screenshot-every 0.0416666666666667 --exit-after 12
+#
+# Headless, a drawing at a time:
+#
+#   cargo run --release --bin flint -- render examples/shading_boil.scene.toml --schemas schemas \
+#     --output renders/boil.png --boil-time 0.5
+
+[scene]
+name = "The Shading Boil"
+version = "1.0"
+description = "A still life whose paint and ink re-decide themselves on the wooze field's beat"
+
+[wooze]
+preset = "linklater"
+step = 0.25
+
+[camera]
+position = [2.9, 2.0, 5.0]
+target = [0.05, 0.75, -0.3]
+fov = 38.0
+
+[post_process]
+exposure = 1.15
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.3
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 0.8
+vignette_enabled = true
+vignette_intensity = 0.3
+boil_on = 2
+
+[post_process.styles.kuwahara]
+radius = 4
+sharpness = 8.0
+hardness = 6.0
+boil = 0.5
+
+[post_process.styles.contour]
+width = 1.5
+boil = 1.0
+
+# --- Light: late afternoon through a window ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.20, 0.32, 0.55, 1.0]
+horizon_color = [0.90, 0.74, 0.54, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.25
+sun_glow = 1.2
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [-0.62, -0.58, -0.42]
+color = [1.0, 0.86, 0.66]
+intensity = 3.0
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [0.5, -0.7, 0.5]
+color = [0.55, 0.65, 0.85]
+intensity = 0.5
+
+# --- The floor: its top at y = 0 ---
+
+[entities.floor]
+archetype = "furniture"
+[entities.floor.transform]
+position = [0, 0, 0]
+[entities.floor.bounds]
+min = [-30, -0.2, -30]
+max = [30, 0, 30]
+[entities.floor.material]
+color = [0.17, 0.13, 0.10, 1.0]
+roughness = 0.9
+metallic = 0.0
+
+[entities.wall]
+archetype = "furniture"
+[entities.wall.transform]
+position = [0, 0, 0]
+[entities.wall.bounds]
+min = [-30, 0, -3.4]
+max = [30, 6, -3.2]
+[entities.wall.material]
+color = [0.38, 0.33, 0.27, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The still life: each model's origin is its middle ---
+
+[entities.table.transform]
+position = [0.0, 0.62, 0.0]
+rotation = [0.0, 18.0, 0.0]
+[entities.table.model]
+asset = "table"
+
+[entities.chair.transform]
+position = [-1.75, 0.6, 0.55]
+rotation = [0.0, 70.0, 0.0]
+scale = [0.6, 0.6, 0.6]
+[entities.chair.model]
+asset = "chair"
+
+[entities.barrel.transform]
+position = [1.9, 0.58, -0.75]
+rotation = [0.0, 40.0, 0.0]
+scale = [0.6, 0.6, 0.6]
+[entities.barrel.model]
+asset = "barrel"

@@ -81,9 +81,9 @@ flint asset generate audio --description "heavy door creaking" --name door_creak
 flint asset validate model.glb --style medieval_tavern
 
 # Batch resolve a scene
-flint asset resolve demo/phase5_ai_demo.scene.toml --strategy ai_generate --style medieval_tavern
-flint asset resolve demo/scene.toml --strategy human_task --output-dir tasks/
-flint asset resolve demo/scene.toml --strategy ai_then_human
+flint asset resolve examples/phase5_ai_demo.scene.toml --strategy ai_generate --style medieval_tavern
+flint asset resolve examples/scene.toml --strategy human_task --output-dir tasks/
+flint asset resolve examples/scene.toml --strategy ai_then_human
 
 # Build manifest
 flint asset manifest --output build/manifest.toml

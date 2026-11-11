@@ -13,7 +13,7 @@ Phase 4 transforms Flint from a scene viewer into an interactive game engine wit
 - [x] `flint-player` crate — standalone binary with full game loop: clock tick, fixed-step physics, character controller, first-person rendering
 - [x] CLI `play` command — `flint play <scene> [--schemas] [--fullscreen]`
 - [x] Physics schemas — `rigidbody.toml`, `collider.toml`, `character_controller.toml` components + `player.toml` archetype
-- [x] Demo scene — `demo/phase4_runtime.scene.toml` (walkable tavern with floor/wall/furniture colliders)
+- [x] Demo scene — `examples/phase4_runtime.scene.toml` (walkable tavern with floor/wall/furniture colliders)
 
 ### Stage 2: Audio
 - [x] `flint-audio` crate — Kira 0.11 integration: AudioEngine, AudioSync, AudioTrigger, AudioSystem (RuntimeSystem impl)
@@ -32,7 +32,7 @@ Phase 4 transforms Flint from a scene viewer into an interactive game engine wit
 - [x] `AnimationClip` — keyframe tracks targeting any transform property (position, rotation, scale) + custom float fields
 - [x] Interpolation modes — Step, Linear, CubicSpline (matching glTF spec)
 - [x] `AnimationPlayer` — drives clip playback with play/pause/stop, looping, speed control, event firing
-- [x] TOML-defined clips — `.anim.toml` files in `demo/animations/` (door swing, platform bob)
+- [x] TOML-defined clips — `.anim.toml` files in `examples/animations/` (door swing, platform bob)
 - [x] `RuntimeSystem` integration — AnimationSystem ticks each frame via GameClock delta, writes updated transforms back to ECS
 - [x] `animator` component schema — clip name, playing, autoplay, loop, speed
 - [x] `AnimationSync` — bridges ECS `animator` components to playback states, auto-discovers new entities
@@ -101,10 +101,10 @@ flint-player / flint-cli play
 
 ```bash
 # Standalone player binary
-cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas
 
 # Via CLI
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml
 
 # Controls
 #   WASD     - Move

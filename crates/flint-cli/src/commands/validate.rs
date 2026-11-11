@@ -69,6 +69,29 @@ fn style_warnings(scene: &str) -> Vec<String> {
     warnings
 }
 
+/// Everything `flint validate <scene>` checks, returned instead of printed:
+/// the style warnings, then the violations (constraints, `[wooze]`,
+/// species). Unlike `run`, the scene is loaded even when no schema
+/// directory has constraints, so a scene that doesn't load is an `Err`.
+/// `flint examples --check` (#763) runs it on every example.
+pub fn check(scene: &str, schemas: &[String]) -> Result<(Vec<String>, ValidationReport)> {
+    let warnings = style_warnings(scene);
+    let (schema_registry, schema_dirs) = super::common_args::load_schemas(Some(scene), schemas)?;
+    let mut violations = wooze_violations(scene, &schema_registry)?;
+    violations.extend(species_violations(scene, &schema_registry)?);
+    let mut constraint_registry = ConstraintRegistry::new();
+    for path in &schema_dirs.dirs {
+        for constraint in ConstraintRegistry::load_from_directory(path)?.all() {
+            constraint_registry.register(constraint.clone());
+        }
+    }
+    let (world, _) = load_scene(scene, &schema_registry)?;
+    let mut report =
+        ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry).validate();
+    report.violations.extend(violations);
+    Ok((warnings, report))
+}
+
 pub fn run(args: ValidateArgs) -> Result<()> {
     // Style tables first: they are checked whether or not any constraints
     // exist, on stderr so `--format json` stays one document

@@ -59,7 +59,7 @@ flint/
 │   └── flint-cli/            # CLI application
 │
 ├── schemas/                  # Engine component and archetype definitions
-├── demo/                     # Showcase scenes, scripts, audio, animations
+├── examples/                     # Showcase scenes, scripts, audio, animations
 └── docs/                     # Design docs and mdBook documentation
 ```
 

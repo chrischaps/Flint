@@ -64,7 +64,7 @@ fn json_parses_and_has_ranges() {
 fn a_scene_adds_its_user_styles() {
     let json: serde_json::Value = serde_json::from_str(&run(&[
         "render",
-        "demo/user_styles.scene.toml",
+        "tests/fixtures/scenes/user_styles.scene.toml",
         "--list-styles",
         "--json",
     ]))
@@ -74,6 +74,6 @@ fn a_scene_adds_its_user_styles() {
         .unwrap()
         .iter()
         .find(|s| s["name"] == "template")
-        .expect("demo/styles/template.shader.toml is listed");
+        .expect("tests/fixtures/scenes/styles/template.shader.toml is listed");
     assert_eq!(template["source"], "user");
 }

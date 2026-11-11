@@ -28,17 +28,27 @@ cargo fmt --all
 bash scripts/ci.sh        # what a PR must pass: formatting (--full adds clippy and the wasm check)
 ```
 
-## Running the Demo
+## Running the Examples
+
+`examples/` holds the curated scenes, each listed in `examples/index.toml` with a topic and a one-line purpose:
+
+```bash
+cargo run --bin flint -- examples                  # every example, by topic
+cargo run --bin flint -- examples --topic stylize   # one topic
+cargo run --bin flint -- examples --check           # what CI runs: indexed and valid
+```
+
+A new example needs an entry in the index. The examples are free to change: the render goldens load frozen copies under `tests/fixtures/scenes/`, never `examples/`, so improving one never means re-blessing a golden. A scene only a test needs goes in `tests/fixtures/scenes/`, with the assets it loads.
 
 ```bash
 # Scene viewer with hot-reload
-cargo run --bin flint -- edit demo/phase4_runtime.scene.toml --watch
+cargo run --bin flint -- edit examples/phase4_runtime.scene.toml --watch
 
 # First-person walkable scene
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml
 
 # Headless snapshot (the primary validation tool for agents)
-cargo run --release --bin flint -- render demo/showcase_tavern.scene.toml -o tavern.png --schemas schemas
+cargo run --release --bin flint -- render examples/showcase_tavern.scene.toml -o tavern.png --schemas schemas
 ```
 
 Release builds are strongly recommended for `render`, `play`, and the full test suite; debug builds of `flint-cli` need the 8 MB main-thread stack that `.cargo/config.toml` links on Windows.

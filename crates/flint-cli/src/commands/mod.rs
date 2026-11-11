@@ -7,6 +7,7 @@ pub mod calibrate;
 pub mod common_args;
 pub mod edit_router;
 pub mod entity;
+pub mod examples;
 pub mod export;
 pub mod frame_seq;
 pub mod gen;

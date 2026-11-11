@@ -1,0 +1,35 @@
+# A user-authored style that reads the entity style mask (#274): props with
+# `style_mask { style = "hologram" }` turn into a flickering projection and
+# everything else stays as it is. Reading the mask makes it per-entity
+# (#414): no [post_process.styles.hologram] table is needed, and a prop's
+# `hologram_style` component sets its own params (`params.glow` in the
+# WGSL is that prop's):
+#
+#   [entities.ybot.style_mask]
+#   style = "hologram"
+#   [entities.barrel.hologram_style]
+#   glow = 2.0
+#   blend = 0.6
+version = 1
+name = "hologram"
+label = "Hologram"
+stage = "display"
+shader = "hologram.wgsl"
+inputs = ["mask"]
+
+[params.lines]
+default = 3.0
+min = 1.0
+max = 12.0
+label = "Scanline pitch (pt)"
+
+[params.glow]
+default = 0.8
+min = 0.0
+max = 2.0
+help = "Brightness of the rim where the projection meets the room"
+
+[params.flicker]
+default = 0.15
+min = 0.0
+max = 1.0

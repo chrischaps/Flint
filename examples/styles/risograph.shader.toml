@@ -1,0 +1,66 @@
+# A user-authored style (#274, ADR 0112): two inks printed a little out of
+# register on warm paper, as a risograph does. The WGSL beside it is one
+# function; the framework writes the bindings, the params struct and the
+# entry points around it.
+#
+#   flint render examples/user_styles.scene.toml --style risograph
+#   flint render examples/user_styles.scene.toml --style risograph:dot=6,shift=3
+version = 1
+name = "risograph"
+label = "Risograph"
+stage = "display"
+shader = "risograph.wgsl"
+
+[params.dot]
+default = 4.0
+min = 2.0
+max = 16.0
+label = "Dot pitch (pt)"
+help = "Distance between halftone dots, in points"
+
+[params.shift]
+default = 1.5
+min = 0.0
+max = 8.0
+label = "Misregistration (pt)"
+help = "How far the second drum's ink lands from the first"
+
+# Three-channel params fold into one colour picker in F4, as the built-ins'
+[params.ink_a_r]
+default = 0.93
+min = 0.0
+max = 1.0
+[params.ink_a_g]
+default = 0.25
+min = 0.0
+max = 1.0
+[params.ink_a_b]
+default = 0.42
+min = 0.0
+max = 1.0
+
+[params.ink_b_r]
+default = 0.10
+min = 0.0
+max = 1.0
+[params.ink_b_g]
+default = 0.32
+min = 0.0
+max = 1.0
+[params.ink_b_b]
+default = 0.55
+min = 0.0
+max = 1.0
+
+[params.paper_r]
+default = 0.96
+min = 0.0
+max = 1.0
+[params.paper_g]
+default = 0.93
+min = 0.0
+max = 1.0
+[params.paper_b]
+default = 0.86
+min = 0.0
+max = 1.0

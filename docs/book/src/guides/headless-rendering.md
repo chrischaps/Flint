@@ -127,9 +127,9 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 An ASCII render is a real character grid, so it can also be read rather than looked at. `--ascii-text` writes the grid the frame drew: one line per cell row, one character per cell, the same cells as the PNG (part cells at the borders included). A cell the picture passes through, under `scope = "entities"` or where a later style draws its own entity, is a space.
 
 ```bash
-flint render demo/pbr_test.scene.toml --ascii --ascii-text frame.txt
+flint render examples/pbr_test.scene.toml --ascii --ascii-text frame.txt
 #   Wrote 240x135 ASCII grid to frame.txt
-flint render demo/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
+flint render examples/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
 ```
 
 The text fits in a prompt, diffs line by line between two runs, and lets a test say "the box is `#`" without pixel tolerances. The ANSI file paints each glyph in its ink over its ground, for a 24-bit terminal. The grid comes from the GPU: a pass of one fragment a cell records which glyph the glyph pass draws at the cell's centre, and the frame copies it back. It runs only while capture is on (`SceneRenderer::set_style_text_capture` / `style_text`). A cell on a styled entity's silhouette holds that glyph plus the outline ink the entity draws (#288), so there the text names the centre's glyph.
@@ -201,7 +201,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 One render is one frame, so a style that remembers the frame before (the ASCII style's per-cell history, #277) never gets to use its memory. `--frames <n>` draws a sequence on one renderer instead, `--frame-dt` apart (default 1/60 s), moving the camera between frames. The styles see consecutive frames and their history runs as it does in the player, without a window, a script or a capture tool (#345):
 
 ```bash
-flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --schemas schemas --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --output out/seq.png
 #   Sequence: 181 frames, 0.016667 s apart, orbiting 6.8755 deg/s
 #   Rendered 181 1280x720 frames to out/seq_0000.png .. out/seq_0180.png
@@ -238,13 +238,13 @@ target = [0.6, 0.6, 4.2]
 The #277 bench, with the history on and off and with and without the edge glyphs (#267):
 
 ```bash
-flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --schemas schemas --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats \
     --style ascii:temporal=off --style ascii:edges=0
 #   Flips: 181 frames, 14400 cells: 321.1 flips/frame (2.23%), 57.8 reversals/frame (0.40%)
 ```
 
-| `demo/ascii_motion`, 181 frames | flips/frame | reversals/frame |
+| `examples/ascii_motion`, 181 frames | flips/frame | reversals/frame |
 |---|---|---|
 | `temporal = "off"`, `edges = 0` | 321.1 (2.23%) | 57.8 (0.40%) |
 | `temporal = "on"`, `edges = 0` | 105.1 (0.73%) | **0.0** |
@@ -261,7 +261,7 @@ A procgen look test often has its frames already, as mesh files: one GLB per see
 
 ```bash
 for s in $(seq 1 12); do flint gen specs/oak_tree.procgen.toml --seed $s -o out/oaks/oak_seed$s.glb; done
-flint render demo/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oaks.png --no-grid
+flint render examples/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oaks.png --no-grid
 #   Sequence: 12 frames, 0.083333 s apart
 #   Rendered 12 640x360 frames as one 2664x1346 sheet to oaks.png
 ```
@@ -275,7 +275,7 @@ flint render demo/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oak
 | `-o oaks.gif` | one GIF at `--fps` (default 12; at most 50) |
 | `--sheet -o oaks.png` | one contact sheet, each cell labelled with its file's name (cells 640x360 unless `--width`/`--height`) |
 
-Repeat `--mesh` to move several entities at once, frame for frame: `--mesh tree_a=out/oaks --mesh tree_b='out/willows/w*.glb'` gives frame *n* the *n*th file of each, and refuses lists of different lengths. Frames are 1/`--fps` apart (or `--frame-dt`), so `--orbit`, `--camera-path`, post time and particles move as in any sequence. `demo/mesh_sequence.scene.toml` has three slots (`tree_a` in the middle, `tree_b` and `tree_c` either side) and a bench for scale.
+Repeat `--mesh` to move several entities at once, frame for frame: `--mesh tree_a=out/oaks --mesh tree_b='out/willows/w*.glb'` gives frame *n* the *n*th file of each, and refuses lists of different lengths. Frames are 1/`--fps` apart (or `--frame-dt`), so `--orbit`, `--camera-path`, post time and particles move as in any sequence. `examples/mesh_sequence.scene.toml` has three slots (`tree_a` in the middle, `tree_b` and `tree_c` either side) and a bench for scale.
 
 The bound entity's `model` is pointed at an asset of its own (`mesh-seq/<entity>`) and marked `runtime`, so the scene's loader leaves it alone and other entities naming the same asset keep theirs. An entity with no model gets one. A GLB of several mesh nodes, or one moved by its node, is baked into one mesh, so a swap is one upload. Skinned files draw their rest pose. A mesh sequence draws on the still path, so it refuses `--time`, `--scripts`, `--sweep` and scenes with living props or a `[wooze]` table. On a shared machine, release build, 960x540: 12 oaks in one run took 2.05 s, and 12 runs of one file each took 24.2 s (the minimum of three alternating rounds). `crates/flint-cli/tests/render_mesh_cli.rs` checks that the last frame of a sequence is byte-identical to that file rendered alone.
 ## A Chosen Moment
@@ -283,7 +283,7 @@ The bound entity's `model` is pointed at an asset of its own (`mesh-seq/<entity>
 `--time` captures a scene at a game time, so that two settings can be compared at the same instant:
 
 ```bash
-flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
+flint render examples/living_props.scene.toml --time 3.5 -o at-3.5.png
 ```
 
 [Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component), shallow wooze, the [shading boil](../concepts/post-processing.md) and the [wooze field](../concepts/procgen.md#the-wooze-field) they all read run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time), particles (`--particle-time` overrides those), and `--boil-time` holds the boil on one drawing. The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
@@ -293,12 +293,12 @@ It also matches the player. `flint render --time T` and `flint-player --frame-st
 Several moments of one run are a list, each later than the one before:
 
 ```bash
-flint render demo/living_props.scene.toml --time 2,5,9.5 -o at.png
+flint render examples/living_props.scene.toml --time 2,5,9.5 -o at.png
 ```
 
 That writes a still a moment beside `--output`, numbered as a [`--frames`](#frame-sequences) sequence is (`at_0000.png`, `at_0001.png`, `at_0002.png`). It's one run: the scene loads once and the clocks step through the moments in order, so it simulates to the last moment once, where three renders would simulate to each. A moment that falls on the step (1/60 s, or `--frame-step`) gets the same bytes it gets rendered alone. Between moments off the step, the clocks take one short step to land on each, as a span's frames do. `--report json` has a capture a moment, and a `--sweep` writes a sheet a moment.
 
-Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `examples/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `examples/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
 
 ## Scripts and an Expression Timeline
 
@@ -329,7 +329,7 @@ A scene with `living_prop` entities draws them in any `flint render`, at time 0 
 A wooze key on `--sweep` renders the same moment once per value of a wooze knob, side by side on one image:
 
 ```bash
-flint render demo/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0.25,0.5,1 -o glide.png
+flint render examples/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0.25,0.5,1 -o glide.png
 ```
 
 ![The same moment in the living oak bench at four values of glide, as labelled columns on a strip of film](../images/render-sweep-glide.png)
@@ -353,7 +353,7 @@ A sweep sets the scene's global value, the same one a `[wooze]` table would, and
 A sweep turns one key. To compare things that aren't one key (two looks against a style, MSAA on and off, three palettes at two cell sizes), give each its own flags with `--variant "label: --flag value ..."`, as often as needed, and every one is drawn at the same camera onto one labelled sheet:
 
 ```bash
-flint render demo/ascii_entities.scene.toml --no-grid -o scope.png \
+flint render examples/ascii_entities.scene.toml --no-grid -o scope.png \
   --variant "smooth: --style ascii:blend=0" \
   --variant "per entity, screen grid:" \
   --variant "full screen: --ascii-scope screen" \
@@ -393,10 +393,10 @@ flags = "--ascii-scope screen"          # a line, split as a shell would, or
 # flags = ["--ascii-scope", "screen"]   # the words themselves
 ```
 
-`demo/variants/` has two: `ascii_scope.variants.toml` puts the ASCII spike's (#261) three routes side by side on `demo/ascii_entities.scene.toml`, and `ascii_rounds.variants.toml` redraws the spike's two rounds of full-screen glyphs on any scene, one command a scene:
+`examples/variants/` has two: `ascii_scope.variants.toml` puts the ASCII spike's (#261) three routes side by side on `examples/ascii_entities.scene.toml`, and `ascii_rounds.variants.toml` redraws the spike's two rounds of full-screen glyphs on any scene, one command a scene:
 
 ```bash
-flint render demo/mesh_meadow.scene.toml --no-grid --variants demo/variants/ascii_rounds.variants.toml -o meadow.png --zoom 760,400,1160,625@2
+flint render examples/mesh_meadow.scene.toml --no-grid --variants examples/variants/ascii_rounds.variants.toml -o meadow.png --zoom 760,400,1160,625@2
 ```
 
 ![The meadow's lantern at 2x through the spike's rounds: smooth, the continuous ramp, banded tone, and banded tone with edge glyphs](../images/render-variants-rounds-zoom.png)
@@ -408,8 +408,8 @@ Every variant renders in the one process on one GPU device, with glTF files deco
 Stills can't show motion. Give `--time` a span and `--output` a `.gif`:
 
 ```bash
-flint render demo/living_props.scene.toml --time 0..4 --fps 12 -o grove.gif
-flint render demo/living_props.scene.toml --time 0..4 --sweep wooze.glide=0,1 -o glide.gif
+flint render examples/living_props.scene.toml --time 0..4 --fps 12 -o grove.gif
+flint render examples/living_props.scene.toml --time 0..4 --sweep wooze.glide=0,1 -o glide.gif
 flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o oak.gif
 ```
 
@@ -435,7 +435,7 @@ ffmpeg -framerate 8 -i frames/live-%05d.png -pix_fmt yuv420p live.mp4
 `--report json` writes one JSON object on stdout, and moves everything else to stderr:
 
 ```bash
-flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
+flint render examples/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
 ```
 
 ```json
@@ -518,7 +518,7 @@ mean = 3.0                      # ...or the mean difference passes this
 
 [[case]]
 name = "ascii-full"
-scene = "demo/pbr_test.scene.toml"
+scene = "examples/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 args = ["--style", "ascii"]     # any flint render flags
 # width, height and tolerance = { ... } override the suite's

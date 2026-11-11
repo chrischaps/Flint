@@ -16,7 +16,7 @@ Input is currently centralized and functional, but mostly hardcoded:
 - `PlayerApp` emits only `ActionPressed` events from `actions_just_pressed()` (`crates/flint-player/src/player_app.rs:279`), even though `ActionReleased` exists (`crates/flint-runtime/src/event.rs:31`).
 - Script input snapshot uses a hardcoded action-name list (`crates/flint-script/src/lib.rs:157`), which blocks arbitrary custom actions from `is_action_pressed("...")`.
 - Scenes currently have no input config metadata field (`crates/flint-scene/src/format.rs:16`).
-- UI scripts hardcode prompt keys like `[E]` (for example `demo/scripts/hud_interact.rhai` and `games/doom_fps/scripts/hud.rhai`).
+- UI scripts hardcode prompt keys like `[E]` (for example `examples/scripts/hud_interact.rhai` and `games/doom_fps/scripts/hud.rhai`).
 
 ## 2. Gaps vs Goal
 

@@ -93,7 +93,7 @@ jobs:
   headless:
     name: headless CLI (no device headers)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -115,6 +115,12 @@ jobs:
 
       - name: cargo check -p flint-cli --no-default-features
         run: bash scripts/headless-check.sh --build
+
+      # The examples (#763): every scene under examples/ is in
+      # examples/index.toml and passes what `flint validate` checks. No GPU
+      # needed; the headless CLI is the build CI already has here.
+      - name: flint examples --check
+        run: cargo run -p flint-cli --no-default-features --bin flint -- examples --check
 
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip

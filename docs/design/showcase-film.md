@@ -18,11 +18,11 @@ evening. Seeing one familiar frame change is what makes each style read:
 the viewer compares, which a reel of unrelated demo scenes never lets them
 do.
 
-The set is `demo/film/set.toml`, written once; each beat is a fragment in
-`demo/film/beats/` that adds its styles and its script, and
-`tools/showcase/build_scenes.py` joins them into `demo/film/<beat>.scene.toml`.
+The set is `examples/film/set.toml`, written once; each beat is a fragment in
+`examples/film/beats/` that adds its styles and its script, and
+`tools/showcase/build_scenes.py` joins them into `examples/film/<beat>.scene.toml`.
 All content is Flint's own (the meadow mask, the demo props, the built-in
-glyphs and palettes, the styles in `demo/styles/`).
+glyphs and palettes, the styles in `examples/styles/`).
 
 ## One scene per beat, cut together
 
@@ -40,7 +40,7 @@ its own scene and its own take, for three reasons:
   can also switch looks mid-shot with `set_look`, but a match cut wants the
   same frame under two looks, which only two takes give.)
 
-Within a beat, the change is scripted on a timeline (`demo/film/scripts/`,
+Within a beat, the change is scripted on a timeline (`examples/film/scripts/`,
 game time only), so a beat is one continuous shot with its cuts inside.
 Two engine additions made that possible: `set_post_style` /
 `set_post_style_param` (scripts edit the whole-frame style tables, as

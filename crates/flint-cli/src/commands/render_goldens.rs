@@ -19,7 +19,7 @@
 //!
 //! [[case]]
 //! name = "ascii-full-pbr"
-//! scene = "demo/pbr_test.scene.toml"
+//! scene = "examples/pbr_test.scene.toml"
 //! golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 //! args = ["--style", "ascii"]
 //! text = "ascii_pbr_test.txt"     # optional (#317): the ASCII grid, compared exactly
@@ -1293,11 +1293,11 @@ mod tests {
             "ascii-full-yields-to-pencil",
         ];
         for case in &manifest.cases {
-            if case.scene == "demo/stylize_props.scene.toml" {
+            if case.scene == "tests/fixtures/scenes/stylize_props.scene.toml" {
                 assert!(
                     mixed.contains(&case.name.as_str()),
                     "case '{}' is on the mixed props bench: use the bench of its own \
-                     style (demo/stylize_props_ascii, _pencil or _plain), so another \
+                     style (tests/fixtures/scenes/stylize_props_ascii, _pencil or _plain), so another \
                      style's change doesn't move it",
                     case.name
                 );
@@ -1307,6 +1307,26 @@ mod tests {
             assert!(
                 manifest.cases.iter().any(|c| c.name == name),
                 "the mixed case '{name}' is gone"
+            );
+        }
+    }
+
+    /// The goldens load frozen fixtures, never the curated examples (#763):
+    /// an example is free to change, and a golden on one would turn every
+    /// improvement into a re-bless. A case that needs a scene copies it to
+    /// tests/fixtures/scenes/ with the assets it loads.
+    #[test]
+    fn no_golden_case_loads_an_example() {
+        let (_, manifest) = stylize_manifest();
+        for case in &manifest.cases {
+            assert!(
+                case.scene.starts_with("tests/fixtures/scenes/")
+                    || case
+                        .scene
+                        .starts_with("crates/flint-cli/tests/golden/fixtures/"),
+                "case '{}' loads {}: goldens load copies under tests/fixtures/scenes/",
+                case.name,
+                case.scene
             );
         }
     }
