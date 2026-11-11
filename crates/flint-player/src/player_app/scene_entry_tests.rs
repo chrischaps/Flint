@@ -269,3 +269,131 @@ fn a_transition_resets_the_renderer_to_the_next_scene() {
         assert!(has_action(&app, "project_wide"));
     });
 }
+
+/// #312: a game whose levels live in folders of their own, each with its
+/// own `fonts/`. Both name their font `pixel`: the town's is the built-in
+/// 8x8 cells with a ramp of its own, the dungeon's is drawn by hand in 3x4
+/// cells, so the atlas says which file was read.
+fn two_folder_game() -> MemorySource {
+    let scene = |name: &str| {
+        format!(
+            "[scene]\nname = \"{name}\"\n\n\
+             [entities.title.transform]\nposition = [0.0, 0.0, 0.0]\n\
+             [entities.title.ui_text]\ntext = \"{name}\"\nfont = \"pixel\"\n"
+        )
+    };
+    let mut files = MemorySource::new();
+    files.insert("game/flint.toml", "");
+    files.insert("game/levels/town/town.scene.toml", scene("Town"));
+    files.insert(
+        "game/levels/town/fonts/pixel.glyphs.toml",
+        "[ramps.dots]\nglyphs = \" .:\"\n",
+    );
+    files.insert("game/levels/dungeon/dungeon.scene.toml", scene("Dungeon"));
+    files.insert(
+        "game/levels/dungeon/fonts/pixel.glyphs.toml",
+        "[font]\nfile = \"pixel.txt\"\ncell = [3, 4]\n[ramps.r]\nglyphs = \" o\"\n\
+         [edges]\nhorizontal = \"o\"\nvertical = \"o\"\ndiagonal = \"o\"\nantidiagonal = \"o\"\n",
+    );
+    files.insert(
+        "game/levels/dungeon/fonts/pixel.txt",
+        "== space\n...\n...\n...\n...\n== o\n...\n.#.\n...\n...\n",
+    );
+    files
+}
+
+/// #312: after a transition into a scene in another folder, its `ui_text`
+/// font and the styles' glyph sets (the ASCII style's `font`) are found
+/// beside the new scene, not the first one.
+#[test]
+fn fonts_resolve_beside_the_scene_a_transition_reaches() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("scene_entry font test");
+        return;
+    };
+    const TOWN: &str = "game/levels/town/town.scene.toml";
+    vfs::scoped(Arc::new(two_folder_game()), || {
+        let registry = flint_schema::SchemaRegistry::new();
+        let (world, file) = flint_scene::load_scene(TOWN, &registry).expect("town loads");
+        let mut app = PlayerApp::new(world, TOWN.into(), false, None, None);
+        app.apply_scene_settings(&file);
+        app.set_schemas(
+            registry,
+            SchemaDirs {
+                dirs: Vec::new(),
+                source: SchemaSource::Flags,
+                dropped: Vec::new(),
+            },
+        );
+        app.scene_renderer = Some(SceneRenderer::new_headless(
+            &gpu.device,
+            &gpu.queue,
+            gpu.format,
+            64,
+            64,
+            RendererConfig::default(),
+        ));
+        app.test_gpu = Some(gpu);
+        app.enter_scene(SceneEntry::Start).expect("town starts");
+
+        let town = std::path::Path::new("game/levels/town");
+        let dungeon = std::path::Path::new("game/levels/dungeon");
+        // What the scene's `ui_text` draws with, and what a style that
+        // names `pixel` (the ASCII style's `font`) gets from the scope the
+        // renderer hands it
+        let fonts = |app: &PlayerApp| {
+            let renderer = app.scene_renderer.as_ref().unwrap();
+            let ui_text = renderer
+                .loaded_ui_font("pixel")
+                .expect("the ui_text font loaded")
+                .atlas()
+                .cell_size();
+            let scope = renderer.asset_scope();
+            let styles = flint_render::glyph_atlas::GlyphSetCache::new((*scope).clone())
+                .get("pixel")
+                .expect("the styles find the glyph set")
+                .atlas()
+                .cell_size();
+            (
+                renderer.scene_dir.clone(),
+                scope.scene_dir.clone(),
+                ui_text,
+                styles,
+            )
+        };
+        assert_eq!(
+            fonts(&app),
+            (Some(town.into()), town.into(), [8, 8], [8, 8]),
+            "the town's fonts at startup"
+        );
+
+        assert!(app.execute_scene_transition("dungeon/dungeon.scene.toml"));
+        assert_eq!(
+            std::path::Path::new(&app.scene_path),
+            std::path::Path::new("game/levels/dungeon/dungeon.scene.toml")
+        );
+        assert_eq!(
+            fonts(&app),
+            (Some(dungeon.into()), dungeon.into(), [3, 4], [3, 4]),
+            "the dungeon's own fonts, not the town's"
+        );
+
+        // And back: the town's `pixel` again, its atlas uploaded afresh
+        assert!(app.execute_scene_transition("town/town.scene.toml"));
+        assert_eq!(
+            fonts(&app),
+            (Some(town.into()), town.into(), [8, 8], [8, 8])
+        );
+        let renderer = app.scene_renderer.as_ref().unwrap();
+        let uploaded = renderer
+            .texture_cache()
+            .and_then(|c| c.get_dimensions("font:pixel"))
+            .expect("the atlas is uploaded");
+        let atlas = renderer.loaded_ui_font("pixel").unwrap().atlas().size();
+        assert_eq!(
+            uploaded,
+            (atlas[0], atlas[1]),
+            "the texture is the town's atlas, not the dungeon's left over"
+        );
+    });
+}
