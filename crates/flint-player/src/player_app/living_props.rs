@@ -216,13 +216,14 @@ pub fn echoes_of(
 }
 
 /// A scene's living props with no window and no frame budget, for `flint render`
-/// (#216): the same load, the same field and the same step the player takes each
-/// frame, so a capture at a game time shows what the player shows at it.
+/// (#216): the same load and the same step the player takes each frame, so a
+/// capture at a game time shows what the player shows at it. The wooze field
+/// isn't kept here: as the player's is `PlayerApp::wooze`, a stage's is its
+/// [`WoozeClocks`]', lent to each [`Self::step`] (#581).
 pub struct LivingRun {
     resolver: ProcGenResolver,
     blend: BlendFrame,
-    field: Option<WoozeField>,
-    /// The clock the field is read on, as the player's `wooze_time`.
+    /// The props' clock, in seconds: the stage's, held still while frozen.
     time: f64,
 }
 
@@ -242,7 +243,6 @@ impl LivingRun {
     pub fn load(
         scene_path: &str,
         living: Option<&flint_scene::LivingDef>,
-        wooze: Option<&flint_scene::WoozeDef>,
         world: &mut FlintWorld,
         sink: super::procgen_assets::GpuSink<'_>,
     ) -> Self {
@@ -258,23 +258,15 @@ impl LivingRun {
         Self {
             resolver,
             blend: BlendFrame::default(),
-            field: field_of(wooze),
             time: 0.0,
         }
-    }
-
-    /// Lay `knobs` over the scene's global wooze values, before the first step. A
-    /// scene with no `[wooze]` table is treated as if it had an empty one.
-    pub fn change_field(&mut self, knobs: &toml::Table) -> Result<(), String> {
-        self.field
-            .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
-            .set_global(knobs, self.time, 0.0)
     }
 
     /// Lay a preset file's `[living]` over the scene's, as the player's Load does
     /// (#249): its stagger, echoes and variance set the global layer a field at a
     /// time, and each species it names takes exactly its values. Its `[wooze]`
-    /// knobs go through [`Self::change_field`]. What can't be used is returned.
+    /// knobs go to the stage's field, [`WoozeClocks::of_scene`]. What can't be used
+    /// is returned.
     pub fn apply_preset(&mut self, living: &flint_scene::LivingDef) -> Vec<String> {
         let mut problems = Vec::new();
         let mut say = |problem: String| problems.push(problem);
@@ -301,27 +293,17 @@ impl LivingRun {
         problems
     }
 
-    /// The field, if the scene has one or has been given one.
-    pub fn field(&self) -> Option<&WoozeField> {
-        self.field.as_ref()
-    }
-
-    /// Where the field is kept, for a script's change to it (#8). A change that
-    /// gives a scene with none a field puts it here.
-    pub(crate) fn field_slot(&mut self) -> &mut Option<WoozeField> {
-        &mut self.field
-    }
-
     /// The props, for a script's tune (#8).
     pub(crate) fn props_mut(&mut self) -> &mut LivingProps {
         self.resolver.living_props_mut()
     }
 
-    /// Move the clocks on by `dt` and make whatever poses that calls for. A step of
-    /// 0, as the player's first frame is, reads the field without moving.
-    pub fn step(&mut self, dt: f64) {
+    /// Move the clocks on by `dt` and make whatever poses that calls for, reading
+    /// `wooze`, the stage's field where its clock now stands
+    /// ([`WoozeClocks::reading`], stepped first). A step of 0, as the player's
+    /// first frame is, reads the field without moving.
+    pub fn step(&mut self, dt: f64, wooze: Option<(&WoozeField, f64)>) {
         self.time += dt;
-        let wooze = self.field.as_ref().map(|field| (field, self.time));
         // Load built every lineage, and no new ones turn up.
         self.resolver.step_living_now(dt, wooze);
     }
@@ -348,9 +330,11 @@ impl LivingRun {
     }
 }
 
-/// What reads the wooze field besides living props, with no window, for `flint
-/// render`: the shading boil (#214), and shallow wooze (#215) if asked. It steps as
-/// the player's frame does, so a capture at a game time shows what the player shows.
+/// A render stage's wooze field and what reads it, with no window, for `flint
+/// render`: the shading boil (#214), shallow wooze (#215) if asked, woozy grass
+/// (#252), and living props, which [`Self::reading`] lends it to. The one field a
+/// stage has (#581), as the player's is `PlayerApp::wooze`. It steps as the
+/// player's frame does, so a capture at a game time shows what the player shows.
 pub struct WoozeClocks {
     field: WoozeField,
     time: f64,
@@ -367,7 +351,7 @@ impl WoozeClocks {
         knobs: Option<&toml::Table>,
         shallow: bool,
     ) -> Result<Option<Self>, String> {
-        let mut field = table.map(|def| def.field().0);
+        let mut field = field_of(table);
         if let Some(knobs) = knobs {
             field
                 .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
@@ -394,15 +378,20 @@ impl WoozeClocks {
         }
     }
 
-    /// Change the field at the time its clock has reached, as a script's
-    /// command does (#8). `change` gets the field in the slot shape
-    /// [`LivingRun::field_slot`] has, so one change goes to both the same way.
-    pub(crate) fn change_field(&mut self, change: impl FnOnce(&mut Option<WoozeField>, f64)) {
-        let mut slot = Some(self.field.clone());
-        change(&mut slot, self.time);
-        if let Some(field) = slot {
-            self.field = field;
-        }
+    /// The field.
+    pub fn field(&self) -> &WoozeField {
+        &self.field
+    }
+
+    /// The field and the time its clock has reached, for a script's change to it
+    /// (#8), made where the player makes it.
+    pub(crate) fn field_mut(&mut self) -> (&mut WoozeField, f64) {
+        (&mut self.field, self.time)
+    }
+
+    /// The field where its clock stands: what living props read.
+    pub fn reading(&self) -> (&WoozeField, f64) {
+        (&self.field, self.time)
     }
 
     /// Move on by `dt`, with the viewer at `viewer`. Returns what shallow wooze draws
