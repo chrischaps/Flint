@@ -23,9 +23,10 @@ use flint_script::context::{InputSnapshot, WorldScope};
 use flint_script::engine::ScriptEngine;
 use std::time::Instant;
 
-const SIDES: [Path; 4] = [
+const SIDES: [Path; 5] = [
     Path::Today,
     Path::Typed,
+    Path::ConvertingNoIntCopy,
     Path::Converting,
     Path::DynamicOnly,
 ];
@@ -34,7 +35,8 @@ fn side_name(path: Path) -> &'static str {
     match path {
         Path::Today => "typed closure (today)",
         Path::Typed => "builder run_typed",
-        Path::Converting => "builder run",
+        Path::ConvertingNoIntCopy => "run, step 1 (no int copy)",
+        Path::Converting => "run, step 2 (all-int copy)",
         Path::DynamicOnly => "builder run, no exact twin",
     }
 }
@@ -206,7 +208,12 @@ fn main() {
             false,
         ),
         (
-            "bench_rect, 5 of 8 ints",
+            "bench_rect, 8 ints",
+            "bench_rect(1, 2, 3, 4, 0, 1, 0, 1)",
+            true,
+        ),
+        (
+            "bench_rect, mixed (5 of 8 ints)",
             "bench_rect(1, 2, 3, 4, 0.5, 0.5, 0.5, 1)",
             true,
         ),
@@ -238,7 +245,7 @@ fn main() {
         println!("{title}");
         let mut floats_base = f64::NAN;
         for (label, call, ints) in cases {
-            let mut best = [f64::MAX; 4];
+            let mut best = [f64::MAX; SIDES.len()];
             for _ in 0..rounds {
                 for (i, side) in SIDES.iter().enumerate() {
                     // Typed registrations don't take an int for a float
@@ -251,6 +258,9 @@ fn main() {
             println!("{label}");
             // An int call is compared with today's same call in floats
             let base = if ints { floats_base } else { best[0] };
+            if !ints {
+                floats_base = best[0];
+            }
             for (side, ns) in SIDES.iter().zip(best) {
                 if ns < f64::MAX {
                     print_row(side_name(*side), ns, base, "ns", "");
@@ -261,13 +271,12 @@ fn main() {
                     );
                 }
             }
-            floats_base = best[0];
         }
     }
 
     println!();
     println!("seeded_stars.rhai on_draw_ui: us per frame, best of {rounds} rounds of 600 frames");
-    let mut best = [(f64::MAX, 0usize); 4];
+    let mut best = [(f64::MAX, 0usize); SIDES.len()];
     for _ in 0..rounds {
         for (i, side) in SIDES.iter().enumerate() {
             let (ms, draws) = demo(*side, 600);

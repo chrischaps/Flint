@@ -308,6 +308,14 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "audio_position",
         "set_velocity_2d",
         "get_velocity_2d",
+        "set_sprite_tint",
+        "get_sprite_layer",
+        "sprite_play",
+        "set_text",
+        "set_text_color",
+        "camera_follow",
+        "move_character",
+        "get_collider_extents",
     ] {
         assert!(checked.contains(&name), "{name} not checked");
     }
@@ -406,9 +414,134 @@ fn the_listing_names_the_undeclared_functions_too() {
     let listing = system.api_listing();
     assert!(listing.undeclared_listed);
     let undeclared: Vec<&str> = listing.undeclared.iter().map(|f| f.name.as_str()).collect();
-    assert!(undeclared.contains(&"draw_rect"), "{undeclared:?}");
+    assert!(undeclared.contains(&"set_quality"), "{undeclared:?}");
+    assert!(!undeclared.contains(&"draw_rect"), "declared in step 2");
     assert!(
         !undeclared.contains(&"set_position"),
         "declared, not undeclared"
     );
+}
+
+/// The draw module: an all-int call, a float call and a mixed call of the
+/// same draw make the same command, and `layer` takes a whole float
+/// (#696; ADR 0116, Decisions, 2026-11-11).
+#[test]
+fn draws_take_ints_floats_and_a_whole_float_layer_alike() {
+    let (engine, mut world, _) = engine_and_world();
+    let mut draw = |src: &str| -> Vec<String> {
+        let _: () = eval(&engine, &mut world, src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        engine
+            .drain_draw_commands()
+            .into_iter()
+            .map(|item| format!("{:?}", item.cmd))
+            .collect()
+    };
+    let ints = draw("draw_rect(10, 10, 100, 50, 1, 0, 0, 1)");
+    assert_eq!(ints.len(), 1);
+    assert_eq!(
+        ints,
+        draw("draw_rect(10.0, 10.0, 100.0, 50.0, 1.0, 0.0, 0.0, 1.0)")
+    );
+    assert_eq!(ints, draw("draw_rect(10, 10.0, 100, 50.0, 1, 0.0, 0, 1.0)"));
+    let layered = draw("draw_rect_ex(1, 2, 3, 4, 1, 1, 1, 1, 0, 2)");
+    assert_eq!(
+        layered,
+        draw("draw_rect_ex(1.0, 2.0, 3.0, 4.0, 1.0, 1.0, 1.0, 1.0, 0.0, 2.0)")
+    );
+    assert!(layered[0].contains("layer: 2"), "{layered:?}");
+    assert_eq!(
+        draw("draw_text_ex(4, 5, \"hp\", 16, 1, 1, 1, 1, 3.0)"),
+        draw("draw_text_ex(4.0, 5.0, \"hp\", 16.0, 1.0, 1.0, 1.0, 1.0, 3)")
+    );
+    assert_eq!(
+        draw("draw_sprite_ex(0, 0, 8, 8, \"coin\", 0, 0, 1, 1, 1, 1, 1, 1, 1)").len(),
+        1,
+        "fourteen parameters"
+    );
+    let err = eval::<()>(
+        &engine,
+        &mut world,
+        "draw_rect_ex(1, 2, 3, 4, 1, 1, 1, 1, 0, 0.5)",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("`layer`") && err.contains("an integer"),
+        "{err}"
+    );
+}
+
+/// Only functions with four or more `Num` parameters get the all-int copy.
+#[test]
+fn the_all_int_copy_is_for_four_or_more_numbers() {
+    use super::builder::kind::Int;
+    use super::builder::{Kinds, INT_COPY_MIN_NUMS};
+    use std::any::TypeId;
+    assert_eq!(INT_COPY_MIN_NUMS, 4);
+    assert_eq!(<(Num, Num, Num) as Kinds>::int_copy_types(), None);
+    assert_eq!(
+        <(Num, Str, Num, Num, Num, Int) as Kinds>::int_copy_types(),
+        Some(vec![
+            TypeId::of::<i64>(),
+            TypeId::of::<rhai::ImmutableString>(),
+            TypeId::of::<i64>(),
+            TypeId::of::<i64>(),
+            TypeId::of::<i64>(),
+            TypeId::of::<i64>(),
+        ])
+    );
+    // An entity is an int already; four numbers after it
+    assert_eq!(
+        <(Entity, Num, Num, Num, Num) as Kinds>::int_copy_types(),
+        Some(vec![TypeId::of::<i64>(); 5])
+    );
+}
+
+#[cfg(feature = "metadata")]
+#[test]
+fn a_many_number_function_registers_its_all_int_copy() {
+    let engine = ScriptEngine::new();
+    let sigs: Vec<String> = engine
+        .rhai_engine()
+        .gen_fn_signatures(false)
+        .into_iter()
+        .filter(|s| s.starts_with("draw_rect(") || s.starts_with("set_position("))
+        .collect();
+    let rects = sigs.iter().filter(|s| s.starts_with("draw_rect(")).count();
+    assert_eq!(
+        rects, 3,
+        "the float twin, the all-int copy, Dynamic: {sigs:?}"
+    );
+    let positions = sigs
+        .iter()
+        .filter(|s| s.starts_with("set_position("))
+        .count();
+    assert_eq!(positions, 2, "three numbers: no copy: {sigs:?}");
+}
+
+#[test]
+fn the_draw_and_ui_modules_are_declared() {
+    let engine = ScriptEngine::new();
+    let reg = engine.api_registry();
+    for (module, name, arity) in [
+        ("draw", "draw_rect", 8),
+        ("draw", "draw_text_stroked_ex", 14),
+        ("draw", "draw_rect_gradient", 14),
+        ("draw", "screen_width", 0),
+        ("draw_world", "draw_world_text", 6),
+        ("view", "world_to_screen", 3),
+        ("ui", "load_ui", 1),
+        ("screen_ui", "set_text", 2),
+        ("sprite", "sprite_play", 2),
+        ("camera_2d", "camera_follow", 6),
+        ("touch", "touch_x", 1),
+        ("physics", "move_character", 4),
+        ("entity", "find_nearest_interactable", 0),
+    ] {
+        let e = reg
+            .entries()
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} not declared"));
+        assert_eq!((e.module, e.params.len()), (module, arity), "{name}");
+    }
 }

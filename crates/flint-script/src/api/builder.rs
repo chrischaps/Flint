@@ -25,9 +25,14 @@
 //! and function (#635, #701).
 //!
 //! `.run` takes the arguments as `Dynamic` and converts them, so an integer
-//! works where a number is wanted. `.run_typed` registers with Rhai's typed
-//! fast path instead (a `Num` parameter is then a float only) and still
-//! records the entry: the escape hatch for hot functions.
+//! works where a number is wanted. Beside that all-`Dynamic` signature it
+//! registers an exact-typed twin (floats for `Num`), and, for a function
+//! with four or more `Num` parameters, an all-int copy (ints for `Num`), so
+//! `draw_rect(10, 10, 100, 50, 1, 1, 1, 1)` is found on Rhai's first lookup
+//! as the float call is (ADR 0116, Decisions, 2026-11-11). `.run_typed`
+//! registers with Rhai's typed fast path instead (a `Num` parameter is then
+//! a float only) and still records the entry: the escape hatch for hot
+//! functions.
 //!
 //! The body reaches the world only through [`Call`], which returns a script
 //! error when no world is in scope. No `unsafe` outside `context.rs`.
@@ -122,6 +127,7 @@ impl Module<'_> {
             params: Vec::new(),
             fallback: None,
             preferred_signature: true,
+            int_copy: true,
             exact: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             entry: ApiEntry {
@@ -148,6 +154,7 @@ pub struct Func<'f, K> {
     params: Vec<&'static str>,
     fallback: Option<Dynamic>,
     preferred_signature: bool,
+    int_copy: bool,
     exact: Vec<Vec<TypeId>>,
     #[cfg(not(target_arch = "wasm32"))]
     entry: ApiEntry,
@@ -170,6 +177,7 @@ impl<'f, K: Kinds> Func<'f, K> {
             params,
             fallback: self.fallback,
             preferred_signature: self.preferred_signature,
+            int_copy: self.int_copy,
             exact: self.exact,
             #[cfg(not(target_arch = "wasm32"))]
             entry: self.entry,
@@ -216,11 +224,30 @@ impl<'f, K: Kinds> Func<'f, K> {
     #[doc(hidden)]
     pub fn without_preferred_signature(mut self) -> Self {
         self.preferred_signature = false;
+        self.int_copy = false;
+        self
+    }
+
+    /// Register no all-int copy (see [`Func::run`]): the converting path as
+    /// step 1 of ADR 0116 had it. For the overhead measurement only.
+    #[doc(hidden)]
+    pub fn without_int_copy(mut self) -> Self {
+        self.int_copy = false;
         self
     }
 
     /// Register it, taking each argument as a `Dynamic` and converting it
     /// by its kind. The body gets the converted arguments as a tuple.
+    ///
+    /// Up to four signatures reach the one body: the exact-typed twin
+    /// (floats for `Num`), each [`Func::also_exact`], an all-int copy when
+    /// four or more parameters are `Num` (ints for `Num`, the other kinds
+    /// as in the twin), and the all-`Dynamic` one for every other mix.
+    /// The copy is automatic: an all-int call of a many-`Num` function
+    /// (`draw_rect(10, 10, 100, 50, 1, 1, 1, 1)`) is then found on Rhai's
+    /// first lookup instead of by its search over 2^n mixes of `Dynamic`,
+    /// which costs microseconds a call where Rhai can't cache it. A call
+    /// mixing ints and floats in `Num` slots still takes the search.
     pub fn run<F, R>(self, f: F)
     where
         F: Fn(&mut Call<'_>, K::Out) -> R + Send + Sync + 'static,
@@ -284,6 +311,15 @@ impl<'f, K: Kinds> Func<'f, K> {
             let body = body.clone();
             self.engine
                 .register_raw_fn(name, preferred, move |nctx, args| body(nctx, args));
+        }
+        // A many-`Num` function's all-int call would take that search
+        // (ADR 0116, Decisions, 2026-11-11): an all-int copy finds it first.
+        if self.int_copy {
+            if let Some(ints) = K::int_copy_types() {
+                let body = body.clone();
+                self.engine
+                    .register_raw_fn(name, ints, move |nctx, args| body(nctx, args));
+            }
         }
         for types in std::mem::take(&mut self.exact) {
             let body = body.clone();
@@ -457,6 +493,8 @@ pub trait Kind: Copy + Send + Sync + 'static {
     const TYPED_NAME: &'static str;
     /// What an argument of it must be, for the error.
     const WANTS: &'static str;
+    /// Whether it is [`Num`]: an int in the all-int copy (see [`Func::run`]).
+    const NUM: bool = false;
     /// Convert a script value; it may be taken (left as `()`).
     fn convert(call: &mut Call<'_>, v: &mut Dynamic) -> Result<Self::Out, Conv>;
     /// The value from the typed path.
@@ -529,6 +567,7 @@ impl Kind for Num {
     const NAME: &'static str = "num";
     const TYPED_NAME: &'static str = "float";
     const WANTS: &'static str = "a number (an int or a float)";
+    const NUM: bool = true;
     #[inline]
     fn convert(_: &mut Call<'_>, v: &mut Dynamic) -> Result<f64, Conv> {
         <Self as PureKind>::convert_pure(v)
@@ -894,6 +933,9 @@ pub trait Kinds: 'static {
     fn kind_names(typed: bool) -> Vec<&'static str>;
     /// The exact-typed signature registered beside the `Dynamic` one.
     fn preferred_types() -> Vec<TypeId>;
+    /// The all-int copy's signature: ints for `Num`, the preferred types
+    /// for the rest; `None` under [`INT_COPY_MIN_NUMS`] `Num` parameters.
+    fn int_copy_types() -> Option<Vec<TypeId>>;
     fn convert(
         call: &mut Call<'_>,
         args: &mut [&mut Dynamic],
@@ -945,6 +987,11 @@ fn pure_one<K: PureKind>(
     })
 }
 
+/// How many `Num` parameters a function needs for [`Func::run`] to register
+/// an all-int copy (ADR 0116, Decisions, 2026-11-11). Under four, Rhai's
+/// search for an all-int call is at most 8 hashes.
+pub const INT_COPY_MIN_NUMS: usize = 4;
+
 /// A tuple of kinds with one more on the end.
 pub trait Push<N> {
     type Out;
@@ -961,6 +1008,16 @@ macro_rules! kinds_tuple {
             }
             fn preferred_types() -> Vec<TypeId> {
                 vec![$(TypeId::of::<$K::Typed>()),*]
+            }
+            fn int_copy_types() -> Option<Vec<TypeId>> {
+                let nums = 0 $(+ usize::from($K::NUM))*;
+                (nums >= INT_COPY_MIN_NUMS).then(|| {
+                    vec![$(if $K::NUM {
+                        TypeId::of::<rhai::INT>()
+                    } else {
+                        TypeId::of::<$K::Typed>()
+                    }),*]
+                })
             }
             #[inline]
             #[allow(unused_variables)]
@@ -1043,3 +1100,5 @@ kinds_tuple!(9; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7,
 kinds_tuple!(10; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7, I v8 8, J v9 9);
 kinds_tuple!(11; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7, I v8 8, J v9 9, K_ v10 10);
 kinds_tuple!(12; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7, I v8 8, J v9 9, K_ v10 10, L v11 11);
+kinds_tuple!(13; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7, I v8 8, J v9 9, K_ v10 10, L v11 11, M v12 12);
+kinds_tuple!(14; A v0 0, B v1 1, C v2 2, D v3 3, E v4 4, F_ v5 5, G v6 6, H v7 7, I v8 8, J v9 9, K_ v10 10, L v11 11, M v12 12, N v13 13);

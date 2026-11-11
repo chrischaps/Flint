@@ -1,8 +1,8 @@
 //! The ADR 0116 overhead measurement's subjects: the two draw calls the
 //! heaviest script-drawn example makes (`draw_circle` per star, `draw_rect`
 //! for the backdrop) and the 4-argument `set_position`, each registered
-//! four ways. The bodies are the ones in `register_ui_api` and the `entity`
-//! module; only the registration differs.
+//! several ways. The bodies are the ones in the `draw` and `entity`
+//! modules; only the registration differs.
 //!
 //! Used by `examples/api_overhead.rs` and, for the player A/B, by a build
 //! that calls [`declare_draw`] after `PlayerApp::new`
@@ -21,8 +21,11 @@ pub enum Path {
     Today,
     /// The builder's `.run_typed()`: the escape hatch
     Typed,
-    /// The builder's `.run()`: converting, with the exact-typed twin
+    /// The builder's `.run()`: converting, with the exact-typed twin and,
+    /// for four or more `Num` parameters, the all-int copy (step 2)
     Converting,
+    /// `.run()` as step 1 had it: the twin, no all-int copy
+    ConvertingNoIntCopy,
     /// `.run()` without the twin: every call is found by Rhai's search
     /// over the mixes of `Dynamic` in place of its arguments' types
     DynamicOnly,
@@ -31,9 +34,9 @@ pub enum Path {
 /// The names to register under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Names {
-    /// `draw_rect` / `draw_circle`, replacing the engine's (an exact-typed
-    /// registration of the same name and types replaces the old one;
-    /// `DynamicOnly` registers none, so it doesn't replace them)
+    /// `draw_rect` / `draw_circle`, over the engine's (a registration of
+    /// the same name and types replaces that one: `Today` replaces the
+    /// float twin and leaves the all-int copy and the `Dynamic` signature)
     Engine,
     /// `bench_rect` / `bench_circle`, which nothing else registers
     Bench,
@@ -71,9 +74,6 @@ pub fn declare_draw(api: &mut ScriptApi, path: Path, names: Names) {
         Names::Bench => ("bench_rect", "bench_circle"),
     };
     if path == Path::Today {
-        if names == Names::Engine {
-            return; // already so
-        }
         let ctx = api.ctx().clone();
         api.engine_mut().register_fn(
             rect_name,
@@ -111,6 +111,7 @@ pub fn declare_draw(api: &mut ScriptApi, path: Path, names: Names) {
     match path {
         Path::Typed => f.run_typed(body),
         Path::DynamicOnly => f.without_preferred_signature().run(body),
+        Path::ConvertingNoIntCopy => f.without_int_copy().run(body),
         _ => f.run(body),
     }
     let f = m
@@ -129,6 +130,7 @@ pub fn declare_draw(api: &mut ScriptApi, path: Path, names: Names) {
     match path {
         Path::Typed => f.run_typed(body),
         Path::DynamicOnly => f.without_preferred_signature().run(body),
+        Path::ConvertingNoIntCopy => f.without_int_copy().run(body),
         _ => f.run(body),
     }
 }
