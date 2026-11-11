@@ -597,7 +597,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres.",
     )
     .arg("id", Entity)
-    .returns(Num, "or () when there is no physics or no such joint")
+    .returns(
+        Num,
+        "the coordinate, or () when there is no physics or no such joint",
+    )
     .run(
         |call, (id,)| match call.physics().and_then(|p| p.joint_position(id)) {
             Some(v) => Dynamic::from(v as f64),
