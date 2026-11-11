@@ -6,7 +6,7 @@ A scannable cheat sheet for daily Flint development.
 
 | Command | Description |
 |---------|-------------|
-| `flint init <name>` | Initialize a new project |
+| `flint init <name> [--template walk\|blank\|2d] [--engine path\|subtree\|none]` | Start a game project: manifest, lit scene, HUD, input config, agent guide |
 | `flint scene create <path>` | Create a new scene file |
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata |

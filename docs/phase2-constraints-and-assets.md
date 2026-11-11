@@ -28,7 +28,7 @@ Asset references in scene files are just strings — `mesh = "tavern_chair"` in 
 
 ## Directory Structure
 
-After `flint init`, a project looks like this:
+At Phase 2 a project looked like this (`flint init` writes a different layout today, with a `flint.toml` and no copies of the engine's schemas; see the book's Your First Project):
 
 ```
 my-project/

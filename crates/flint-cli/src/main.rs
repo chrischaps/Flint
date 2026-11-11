@@ -28,11 +28,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Flint project
-    Init {
-        /// Project name/directory
-        name: String,
-    },
+    /// Start a game project: a manifest, a lit scene, a HUD script, an
+    /// input config and an agent guide, ready to render and play
+    Init(init::InitArgs),
 
     /// Entity operations
     #[command(subcommand)]
@@ -202,7 +200,7 @@ fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Init { name } => init::run(&name),
+        Commands::Init(args) => init::run(args),
         Commands::Entity(cmd) => entity::run(cmd),
         Commands::Scene(cmd) => scene::run(cmd),
         Commands::Query {
