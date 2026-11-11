@@ -1158,8 +1158,7 @@ parent = "nave"
 
 [entities.priest.transform]
 position = [0, 0.25, -6.5]
-rotation = [90, 180, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 180, 0]
 
 [entities.priest.model]
 asset = "YBotWithIdle"
@@ -1181,8 +1180,7 @@ parent = "nave"
 
 [entities.acolyte.transform]
 position = [-1.5, 0.25, -5.5]
-rotation = [90, 150, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 150, 0]
 
 [entities.acolyte.model]
 asset = "YBotWithIdle"
@@ -1204,8 +1202,6 @@ parent = "nave"
 
 [entities.congregant_1.transform]
 position = [-0.5, 0, 6]
-rotation = [90, 0, 0]
-scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_1.model]
 asset = "YBotWithIdle"
@@ -1226,8 +1222,6 @@ parent = "nave"
 
 [entities.congregant_2.transform]
 position = [0.5, 0, 6]
-rotation = [90, 0, 0]
-scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_2.model]
 asset = "YBotWithIdle"
@@ -1248,8 +1242,6 @@ parent = "nave"
 
 [entities.congregant_3.transform]
 position = [-0.3, 0, 3.5]
-rotation = [90, 0, 0]
-scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_3.model]
 asset = "YBotWithIdle"
@@ -1270,8 +1262,6 @@ parent = "nave"
 
 [entities.congregant_4.transform]
 position = [0.3, 0, 3.5]
-rotation = [90, 0, 0]
-scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_4.model]
 asset = "YBotWithIdle"
@@ -1293,8 +1283,7 @@ parent = "transept_left"
 
 [entities.pilgrim.transform]
 position = [-10, 0, -1.5]
-rotation = [90, -90, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, -90, 0]
 
 [entities.pilgrim.model]
 asset = "YBotWithIdle"
@@ -1316,8 +1305,7 @@ parent = "transept_right"
 
 [entities.visitor.transform]
 position = [10, 0, -1.5]
-rotation = [90, 90, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 90, 0]
 
 [entities.visitor.model]
 asset = "YBotWithIdle"
@@ -1339,8 +1327,6 @@ parent = "bell_tower"
 
 [entities.bell_ringer.transform]
 position = [0, 12, -3]
-rotation = [90, 0, 0]
-scale = [0.015, 0.015, 0.015]
 
 [entities.bell_ringer.model]
 asset = "YBotWithIdle"
@@ -1362,8 +1348,7 @@ parent = "narthex"
 
 [entities.stranger.transform]
 position = [-6, 0, 14]
-rotation = [90, 45, 0]
-scale = [0.015, 0.015, 0.015]
+rotation = [0, 45, 0]
 
 [entities.stranger.model]
 asset = "YBotWithIdle"

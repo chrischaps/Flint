@@ -366,6 +366,19 @@ This matters for sparse clips: a clip that keys only an arm would otherwise
 collapse every un-keyed limb onto its parent, and your character would fold up
 the moment it played.
 
+### Nodes Above the Skeleton
+
+A joint's pose includes every glTF node above it, joints or not, as the glTF
+spec says. A Mixamo export keeps its root joint under an `Armature` node that
+holds the centimetre-to-metre scale and the Z-up turn, so an animated character
+stands at the size and on the axis its mesh was modelled at: a metre-scale
+model takes `scale = 1` and no `rotation = [90, ...]`, in the player and in
+`flint render` alike. Before #294 those nodes were skipped while a clip played,
+and scenes made up for it with `rotation = [90, yaw, 0]` and a scale of about
+`0.01`; such a scene now draws its character a hundred times too small and
+lying down. Take the `90` out and multiply the scale by 100 to keep the size it
+had in the player.
+
 ### Skeleton Schema
 
 The `skeleton` component references a glTF skin:
