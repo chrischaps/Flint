@@ -60,7 +60,9 @@ The `on_interact` callback is sugar for the common pattern of proximity-based in
 
 All functions are available globally in every script. Entity IDs are passed as `i64` (Rhai's native integer type).
 
-The engine lists its own API: `flint script api` prints every function with its parameters, and `--json` gives the same as data (`--filter draw` narrows it). Functions declared through the engine's API builder (the Entity API below so far; the rest follow, ADR 0116) come with parameter names, what each accepts and a one-line doc; the others are listed with their parameter types until they are ported. A wrong argument to a declared function is a script error that names the function, the parameter and what it wanted, with the line: ``set_position: argument `x` must be a number (an int or a float), not string (line 12, position 5)``.
+The engine lists its own API: `flint script api` prints every function with its parameters, and `--json` gives the same as data (`--filter draw` narrows it). Functions declared through the engine's API builder (ADR 0116) come with parameter names, what each accepts and a one-line doc; the others are listed with their parameter types until they are ported. Declared so far: the Entity, Input (with Input and Cursor), Time, Audio (with Audio Filter), Animation, Math, Event, Log and Physics APIs (raycasts, the camera, 2D physics), and the Post-Processing table; the rest follow. A wrong argument to a declared function is a script error that names the function, the parameter and what it wanted, with the line: ``set_position: argument `x` must be a number (an int or a float), not string (line 12, position 5)``. The listing opens with the rules every declared function keeps (`conventions`): what a number parameter accepts, and what a function does with an entity that isn't there or a query that finds nothing.
+
+In every declared function a number takes an integer as well as a float (`set_position(id, 0, 1, 0)`, `set_camera_fov(60)`, `sin(1)`), and an integer parameter, such as a layer index or a mouse button, takes a float with nothing after the point (`is_mouse_pressed(0.0)`). Elsewhere a float parameter still wants a float until its module is ported.
 
 ### Entity API
 
@@ -103,11 +105,11 @@ The engine lists its own API: `flint script api` prints every function with its 
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
 | `despawn_entity(id)` | --- | Remove an entity from the world |
 
-Every number in the Entity API takes an integer as well as a float: `set_position(id, 0, 1, 0)` works, and so does an id written `3.0`. (Elsewhere in the API a float parameter still wants a float until its module is ported.)
+Every number in the Entity API takes an integer as well as a float: `set_position(id, 0, 1, 0)` works, and so does an id written `3.0`.
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
-A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every Entity API function given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected. `set_joint_target` is in the Entity API; outside it, the setters that warned before still do and the getters stay quiet until their module is ported.
+A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every declared function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d` and `get_velocity_2d`) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected. Functions not yet declared keep their old handling: the setters that warned before still do and the rest stay quiet until their module is ported.
 
 #### Hiding entities
 
@@ -202,7 +204,7 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
-| `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](audio.md#keeping-time-with-the-music) |
+| `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends, and for an entity that isn't there (with a warning, once). See [Keeping time with the music](audio.md#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
 A sound's name is its file's path from the game root, extension included: the scene preloads `audio/whoosh.ogg` as `"audio/whoosh.ogg"`. The bare stem works too: a name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, so these three play the same file:
@@ -246,7 +248,7 @@ Animation functions write directly to the `animator` component on the target ent
 | `clear_anim_layer(entity_id, index)` | Deactivate a layer (slot kept so indices stay stable) |
 | `set_field(id, "ik_two_bone", "target", name)` | Arm two-bone IK on a forearm node (also `pole`, `tip`, `weight`); the engine pins the chain every frame (ADR 0070) |
 
-Weights are floats — write `0.5`, never `0` (Rhai does not coerce ints).
+Weights and durations take an int or a float (`0` is the same as `0.0`), and a layer `index` takes a whole float (`1.0`). Given `-1` or a despawned id, each of these warns once and does nothing; a negative `index` does nothing.
 
 ### Coordinate System
 
@@ -278,13 +280,15 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `seed_random(n)` | — | Restart the sequence at `n` (an `i64`; a negative one is the `u64` with its bits, so `seed_random(-1)` is `--seed 18446744073709551615`). The numbers after it are the ones `--seed n` gives, every run. Call it in `on_init` or a callback, not at the top of the script: top-level statements run again before every callback, so it would restart the sequence each frame. It reseeds every script's draws, not only its own |
 | `sin(x)` | `f64` | Sine (radians) |
 | `cos(x)` | `f64` | Cosine (radians) |
-| `abs(x)` | `f64` | Absolute value |
+| `abs(x)` | `f64` | Absolute value (an int gives an int back) |
 | `sqrt(x)` | `f64` | Square root |
-| `floor(x)` | `f64` | Floor |
-| `ceil(x)` | `f64` | Ceiling |
-| `min(a, b)` | `f64` | Minimum of two values |
-| `max(a, b)` | `f64` | Maximum of two values |
+| `floor(x)` | `f64` | Floor, as a float |
+| `ceil(x)` | `f64` | Ceiling, as a float |
+| `min(a, b)` | `f64` | Minimum of two values (two ints give an int back) |
+| `max(a, b)` | `f64` | Maximum of two values (two ints give an int back) |
 | `atan2(y, x)` | `f64` | Two-argument arctangent (radians) |
+
+Each takes ints as well as floats (`sin(1)`, `clamp(n, 0, 10)`, `random_range(1, 6)`) and answers with a float, except `abs`, `min` and `max` given only ints, which answer with Rhai's own integer result as they always have.
 
 ### Ocean API
 
@@ -445,6 +449,8 @@ The feed logs each state it delivers at info under the `expression` target
 | `log_info(msg)` | Alias for `log()` |
 | `log_warn(msg)` | Log a warning |
 | `log_error(msg)` | Log an error |
+
+The message can be any value, printed as Rhai prints it: `log(42)` and `log(3.5)` log the number, and a map or array logs its contents. `log` with one float used to reach Rhai's own base-10 logarithm and print nothing; the logarithm is `log(x, 10.0)`.
 
 ### Physics API
 
