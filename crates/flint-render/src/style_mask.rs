@@ -489,7 +489,7 @@ pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
         world
             .get_component(root, c)?
             .get(BLEND_FIELD)
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+            .and_then(flint_core::toml_util::toml_f64)
     };
     crate::stylize::registry()
         .iter()
@@ -517,11 +517,7 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 /// style doesn't take, a value of the wrong type) is skipped: the scene
 /// loader has already warned about it against the component's schema.
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
-    let number = |v: &toml::Value| {
-        v.as_float()
-            .or_else(|| v.as_integer().map(|i| i as f64))
-            .map(|n| n as f32)
-    };
+    let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v).map(|n| n as f32);
     for (key, value) in table {
         if d.options.iter().any(|o| o.name == key) {
             if let Some(text) = value.as_str() {

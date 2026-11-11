@@ -2,6 +2,7 @@
 
 use crate::component::DynamicComponents;
 use crate::entity::EntityInfo;
+use crate::view::ReadReports;
 use bimap::BiMap;
 use flint_core::toml_util::{toml_to_vec3, toml_vec4};
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
@@ -32,6 +33,8 @@ pub struct FlintWorld {
     parents: HashMap<EntityId, EntityId>,
     /// Reverse index: component name -> set of entities that have it
     component_index: HashMap<String, HashSet<EntityId>>,
+    /// What the typed readers ([`FlintWorld::view`]) have reported, once each
+    read_reports: ReadReports,
 }
 
 impl FlintWorld {
@@ -44,7 +47,14 @@ impl FlintWorld {
             components: HashMap::new(),
             parents: HashMap::new(),
             component_index: HashMap::new(),
+            read_reports: ReadReports::new(),
         }
+    }
+
+    /// What the typed readers have found wrong so far: a wrong type or an
+    /// unknown choice, each (entity, component, field) once (ADR 0115).
+    pub fn read_reports(&self) -> &ReadReports {
+        &self.read_reports
     }
 
     /// Spawn a new entity with a name
@@ -334,6 +344,7 @@ impl FlintWorld {
         self.components.clear();
         self.parents.clear();
         self.component_index.clear();
+        self.read_reports.clear();
     }
 
     /// Get transform from an entity's components

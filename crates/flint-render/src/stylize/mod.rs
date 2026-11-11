@@ -436,8 +436,7 @@ pub fn color_from_toml(value: &toml::Value) -> Option<[f32; 3]> {
         return color_from_hex(text);
     }
     let number = |v: &toml::Value| {
-        v.as_float()
-            .or_else(|| v.as_integer().map(|i| i as f64))
+        flint_core::toml_util::toml_f64(v)
             .filter(|n| n.is_finite())
             .map(|n| n as f32)
     };
@@ -1702,10 +1701,7 @@ impl StyleSettings {
                     continue;
                 }
                 if key == "order" {
-                    let number = value
-                        .as_float()
-                        .or_else(|| value.as_integer().map(|i| i as f64))
-                        .filter(|n| n.is_finite());
+                    let number = flint_core::toml_util::toml_f64(value).filter(|n| n.is_finite());
                     match number {
                         Some(n) => setting.order = Some(n as f32),
                         None => warnings.push(format!("styles.{name}.order must be a number")),
@@ -1713,10 +1709,7 @@ impl StyleSettings {
                     continue;
                 }
                 if key == "blend" {
-                    let number = value
-                        .as_float()
-                        .or_else(|| value.as_integer().map(|i| i as f64))
-                        .filter(|n| n.is_finite());
+                    let number = flint_core::toml_util::toml_f64(value).filter(|n| n.is_finite());
                     match number {
                         Some(n) => {
                             let b = (n as f32).clamp(0.0, 1.0);
@@ -1789,9 +1782,7 @@ impl StyleSettings {
                     ));
                     continue;
                 };
-                let number = value
-                    .as_float()
-                    .or_else(|| value.as_integer().map(|i| i as f64));
+                let number = flint_core::toml_util::toml_f64(value);
                 match number {
                     Some(n) => {
                         // Kept as written, as a stray option is: F4 shows

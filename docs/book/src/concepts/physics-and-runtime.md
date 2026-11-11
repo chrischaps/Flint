@@ -57,6 +57,14 @@ Four component schemas define physics properties:
 
 The **player** archetype (`player.toml`) bundles these together with a `transform` for a ready-to-use player entity.
 
+**A collider needs a rigidbody.** Colliders are given to the physics world as part of their entity's rigidbody, so a `collider` on an entity with no `rigidbody` collides with nothing. For scenery, add `[entities.<name>.rigidbody]` with `body_type = "static"`. The player says so when it finds one:
+
+```
+WARN warning[needs-component] entity 'wall' component 'collider': a collider with no rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = "static"` for scenery, or remove the collider)
+```
+
+**A value the physics cannot read is reported, then defaulted.** An unknown `body_type` makes a static body, an unknown `shape` a box and an unknown joint `type` a hinge, each with one warning naming the entity, the allowed values and the nearest one; a value of the wrong type (`friction = "low"`) takes the field's default the same way. Whole numbers are fine wherever a number is read: `move_speed = 8` is 8. See [Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs).
+
 ## Adding Physics to a Scene
 
 To make a scene playable, add physics components to entities:
