@@ -90,13 +90,13 @@ impl<'a> ScriptApi<'a> {
         }
     }
 
-    /// The Rhai engine, for registrations not yet declared through the
-    /// builder (ADR 0116 step 2 ports them). They are listed as undeclared.
+    /// The Rhai engine, for a raw registration (the overhead measurement's
+    /// typed baselines). What is registered here is listed as undeclared.
     pub fn engine_mut(&mut self) -> &mut Engine {
         self.engine
     }
 
-    /// The call context, for registrations not yet declared.
+    /// The call context, for a raw registration's closure.
     pub fn ctx(&self) -> &Arc<Mutex<ScriptCallContext>> {
         &self.ctx
     }
