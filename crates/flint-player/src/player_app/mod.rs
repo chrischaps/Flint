@@ -38,6 +38,7 @@ pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
 pub(crate) mod scene_loading;
+mod schemas;
 mod script_commands;
 mod shallow_wooze;
 pub mod style_commands;
@@ -529,6 +530,10 @@ pub struct PlayerApp {
     // Schema directories and where the list came from (ADR 0114), kept for
     // transitions and chunks
     schema_dirs: flint_core::project::SchemaDirs,
+    // The registry itself, read once and kept (ADR 0115, #683): a chunk
+    // uses it as it is, a transition re-reads only for other directories,
+    // and a failed read keeps it
+    schemas: schemas::HeldSchemas,
 
     // The project the current scene belongs to (ADR 0114): what every asset
     // search starts from. Found when the first scene loads and again at each

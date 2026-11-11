@@ -187,6 +187,7 @@ impl PlayerApp {
             persist_debounce: flint_runtime::SaveDebounce::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
+            schemas: Default::default(),
             project,
             terrain: None,
             #[cfg(feature = "debug-hud")]
@@ -333,17 +334,37 @@ impl PlayerApp {
     /// list the host settled itself: those that exist are kept, and a scene
     /// a transition leads to adds any `schemas/` beside it or one level up.
     /// A host that resolved them (`SchemaRegistry::resolve`) hands the
-    /// answer to [`set_schema_dirs`](Self::set_schema_dirs) instead.
+    /// answer to [`set_schemas`](Self::set_schemas) instead. The
+    /// directories are read once, at the first transition or chunk.
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
         self.schema_dirs = flint_core::project::host_schema_dirs(&paths, None);
+        self.schemas.forget();
+    }
+
+    /// Hand over the schema registry the first scene was loaded with, and
+    /// the directories it was read from as the one resolver named them
+    /// (`SchemaRegistry::resolve`'s two answers). The player keeps the
+    /// registry (ADR 0115, #683): chunks use it, a transition reads the
+    /// disk again only when the next scene's directories differ, and a read
+    /// that fails keeps this one, so a scene never loads with none.
+    pub fn set_schemas(
+        &mut self,
+        registry: flint_schema::SchemaRegistry,
+        dirs: flint_core::project::SchemaDirs,
+    ) {
+        self.schemas.set(registry, &dirs.dirs);
+        self.schema_dirs = dirs;
     }
 
     /// Set the schema directories as the one resolver named them (ADR
     /// 0114), with where the list came from: `--schemas` flags stay as they
     /// are across transitions, a manifest's list is read again for the new
     /// scene's project, and a discovered one grows as it always did.
+    /// With no registry handed over ([`set_schemas`](Self::set_schemas)),
+    /// they are read once, at the first transition or chunk.
     pub fn set_schema_dirs(&mut self, dirs: flint_core::project::SchemaDirs) {
         self.schema_dirs = dirs;
+        self.schemas.forget();
     }
 
     /// Register a function that reads gamepad trigger/right-stick axes from the
