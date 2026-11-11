@@ -53,17 +53,7 @@ pub fn load_user_styles_in(scope: &flint_core::project::AssetScope) {
 /// that won't apply leaves the scene's own, with a warning (the player
 /// checked the name at startup). The result keeps the scene's authored
 /// keys, so a later `set_look` or F4 Look re-resolves from the scene.
-pub fn scene_post_process(
-    look: Option<&str>,
-    scene_path: &str,
-    pp: Option<flint_scene::PostProcessDef>,
-) -> Option<flint_scene::PostProcessDef> {
-    let scope = flint_core::project::AssetScope::for_scene(Path::new(scene_path));
-    scene_post_process_in(look, scene_path, &scope, pp)
-}
-
-/// [`scene_post_process`] for a host that holds the scene's project: looks
-/// are searched for from `scope`.
+/// Looks are searched for from `scope`, the scene's project and folder.
 pub fn scene_post_process_in(
     look: Option<&str>,
     scene_path: &str,

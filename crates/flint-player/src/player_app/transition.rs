@@ -4,18 +4,11 @@
 //! transition executor (teardown ordering per ADR 0017: music session
 //! stops before `audio.clear()`).
 
-use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_scripts_from_world, load_sequences_from_world, load_sprite_animations_from_world,
-    load_terrain_from_world_inner, register_node_animation_data, register_skeletal_data,
-    resolve_scene_path,
-};
+use super::scene_loading::resolve_scene_path;
 use super::PlayerApp;
 use flint_core::components as comp;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
-use flint_render::model_loader;
-use flint_runtime::RuntimeSystem;
 use std::path::Path;
 
 /// Scene transition lifecycle phase
@@ -57,6 +50,8 @@ impl PlayerApp {
             }
             TransitionPhase::Loading { target_scene } => {
                 let target = target_scene.clone();
+                // Either way the scripts fade back in: over the new scene,
+                // or over this one when the next didn't load (#723)
                 self.execute_scene_transition(&target);
                 self.transition_phase = TransitionPhase::Entering { elapsed: 0.0 };
             }
@@ -254,8 +249,22 @@ impl PlayerApp {
         }
     }
 
-    /// Unload the current scene and load a new one.
-    pub(super) fn execute_scene_transition(&mut self, target_scene: &str) {
+    /// Leave the current scene for `target_scene`. The target is read first:
+    /// a scene that can't be loaded leaves this one playing, logs the path
+    /// it was read from and why, and makes the run end non-zero
+    /// (`run_failure`, #723). Returns whether the new scene was entered.
+    pub(super) fn execute_scene_transition(&mut self, target_scene: &str) -> bool {
+        let next = match self.read_scene(target_scene) {
+            Ok(next) => next,
+            Err(e) => {
+                tracing::error!("[transition] {e}; staying in {}", self.scene_path);
+                if self.scene_failure.is_none() {
+                    self.scene_failure = Some(e);
+                }
+                return false;
+            }
+        };
+
         // Teardown: scripts told, music session stopped BEFORE audio.clear()
         // (ADR 0017 producer→handles→device order), systems/world/terrain/
         // transient render state cleared.
@@ -265,17 +274,14 @@ impl PlayerApp {
         // (and the scene before it) stored, before the path changes.
         self.flush_persistent_store(true, "scene transition");
 
-        // Load: resolve + schema discovery + scene parse; on failure the
-        // transition aborts here (world already cleared, same as before).
-        if !self.load_target_scene(target_scene) {
-            return;
-        }
+        self.install_scene(next);
 
-        // Bring-up: camera, models, terrain, system re-init (audio before
-        // the scene-declared music session, session before script init so
-        // the conducted context exists from the scripts' first frame),
-        // on_scene_enter, cursor.
-        self.bring_up_scene();
+        // The one bring-up startup uses too (`scene_entry.rs`)
+        if let Err(e) = self.enter_scene(super::scene_entry::SceneEntry::Transition) {
+            tracing::warn!("[transition] {e:#}");
+        }
+        println!("[transition] Scene loaded: {}", self.scene_path);
+        true
     }
 
     fn teardown_current_scene(&mut self) {
@@ -294,6 +300,13 @@ impl PlayerApp {
         // Music session first: capture guard drops and stems stop BEFORE the
         // audio system clears (ADR 0017 producer→handles→device order).
         self.stop_music_session();
+        // The session's post restore belongs to this scene: the next one's
+        // config replaces the renderer's whole (`stage_scene`), and a restore
+        // landing after it would stamp this scene's values over it
+        self.music_pp_restore = None;
+        // ...as does a render mode a script held on: the next frame would
+        // otherwise switch the new scene's authored mode off
+        self.pp_mode_was_active = false;
 
         // Clear all systems
         self.script.clear();
@@ -320,7 +333,10 @@ impl PlayerApp {
         self.skeletal_entity_assets.clear();
         self.ui_textures.clear();
         self.draw_commands.clear();
+        self.world_texts.clear();
         self.loaded_chunks.clear();
+        // Style tweens name the old scene's entities (#370)
+        self.style_tweens.clear();
     }
 
     /// The registry for `scene`, after asking the one resolver (ADR 0114)
@@ -341,313 +357,50 @@ impl PlayerApp {
         self.schemas.for_dirs(&self.schema_dirs.dirs)
     }
 
-    fn load_target_scene(&mut self, target_scene: &str) -> bool {
+    /// Resolve and load `target_scene` without touching the scene playing.
+    /// The error names the target as written, the path it was read from
+    /// and why it failed.
+    fn read_scene(&mut self, target_scene: &str) -> Result<NextScene, String> {
         println!("[transition] Loading scene: {}", target_scene);
 
         // Resolve scene path relative to current scene
-        let new_scene_path = resolve_scene_path(&self.project, &self.scene_path, target_scene);
+        let path = resolve_scene_path(&self.project, &self.scene_path, target_scene);
 
-        // The new scene's schema directories and its registry
-        let registry = self.schemas_for_scene(&new_scene_path);
+        // The new scene's schema directories and its registry; kept as they
+        // were when the scene doesn't load
+        let schema_dirs = self.schema_dirs.clone();
+        let registry = self.schemas_for_scene(&path);
 
-        // Parse and load scene
-        match flint_scene::load_scene(&new_scene_path, &registry) {
-            Ok((world, scene_file)) => {
-                self.world = world;
-                self.scene_path = new_scene_path.clone();
-                // The new scene may belong to another project (ADR 0114)
-                self.refresh_project();
-                // A slow-motion moment never outlives the scene that asked for it
-                self.clock.time_scale = 1.0;
-                self.skybox_path = scene_file
-                    .environment
-                    .as_ref()
-                    .and_then(|env| env.skybox.clone());
-                self.scene_ambient = scene_file.environment.as_ref().and_then(|env| {
-                    (env.ambient_sky.is_some() || env.ambient_ground.is_some()).then(|| {
-                        (
-                            env.ambient_sky
-                                .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
-                            env.ambient_ground
-                                .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
-                        )
-                    })
-                });
-                let env = scene_file.environment.as_ref();
-                self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
-                self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
-                self.scene_diffuse_wrap = scene_file
-                    .environment
-                    .as_ref()
-                    .and_then(|env| env.diffuse_wrap);
-                self.scene_oren_nayar = scene_file
-                    .environment
-                    .as_ref()
-                    .and_then(|env| env.oren_nayar);
-                self.scene_sheen = scene_file.environment.as_ref().and_then(|env| {
-                    env.sheen_strength
-                        .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s))
-                });
-                self.scene_camera = scene_file.camera.clone();
-                super::scene_loading::load_user_styles(&new_scene_path);
-                self.scene_post_process = super::scene_loading::scene_post_process(
-                    self.look.as_deref(),
-                    &new_scene_path,
-                    scene_file.post_process.clone(),
-                );
-                self.scene_living = scene_file.living.clone();
-                self.scene_wooze = scene_file.wooze.clone();
-                self.scene_input_config = scene_file.scene.input_config.clone();
-                self.scene_preload_audio = scene_file.scene.preload_audio;
-            }
+        match flint_scene::load_scene(&path, &registry) {
+            Ok((world, file)) => Ok(NextScene { path, world, file }),
             Err(e) => {
-                tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
-                return false;
+                self.schema_dirs = schema_dirs;
+                Err(format!(
+                    "scene '{target_scene}' failed to load from {}: {e}",
+                    flint_core::project::shown(Path::new(&path))
+                ))
             }
         }
-
-        // Rebuild component index after loading new scene
-        self.world.rebuild_component_index();
-
-        true
     }
 
-    fn bring_up_scene(&mut self) {
-        // Apply camera config before borrowing renderer
-        self.apply_camera_def();
-        // The new scene's [post_process] with --style over it (#328)
-        let scene_post_config = self.scene_post_config();
-
-        // Reload models
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            let scene_dir = Path::new(&self.scene_path)
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            renderer.set_asset_scope(flint_core::project::AssetScope::new(
-                self.project.clone(),
-                scene_dir,
-            ));
-
-            let config = build_model_load_config(
-                &self.project,
-                &self.scene_path,
-                &self.world,
-                self.catalog.as_ref(),
-                self.content_store.as_ref(),
-            );
-
-            // Procgen before the model loader: catalog > procgen > file (#32).
-            self.procgen_resolver
-                .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
-            self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
-            self.wooze_time = 0.0;
-            self.shallow_wooze.clear();
-            renderer.set_shallow_wooze(std::iter::empty());
-            super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
-            self.boil_clock = Default::default();
-            self.grass_wooze = Default::default();
-            self.living_tune.for_new_scene();
-            super::procgen_assets::resolve_scene(
-                &self.scene_path,
-                &mut self.world,
-                &mut self.procgen_resolver,
-                self.procgen_mode,
-                super::procgen_assets::GpuSink {
-                    renderer,
-                    device: &context.device,
-                    queue: &context.queue,
-                    config: &config,
-                },
-            );
-
-            let load_result = model_loader::load_models_from_world(
-                &mut self.world,
-                renderer,
-                &context.device,
-                &context.queue,
-                &config,
-            );
-            register_skeletal_data(&load_result, &mut self.animation);
-            register_node_animation_data(&load_result, &mut self.animation);
-            self.skeletal_entity_assets = load_result.skinned_entities;
-            renderer.update_from_world(&self.world, &context.device);
-
-            // Reload splines
-            crate::spline_gen::load_splines(
-                &self.scene_path,
-                &mut self.world,
-                renderer,
-                Some(&mut self.physics),
-                &context.device,
-                &context.queue,
-            );
-            renderer.update_from_world(&self.world, &context.device);
-            // The new scene's first frame has no past: styles that keep
-            // history (ASCII's temporal stability, #277) start over
-            renderer.reset_style_history();
-            // ...and the new scene's first camera is no cut from the old one's
-            self.camera_cut.forget();
-
-            // Scene-authored hemisphere ambient + wrap; reset first so the
-            // previous scene's values never leak into one that doesn't
-            // author them (reset clears both ambient and wrap)
-            renderer.reset_ambient();
-            renderer.set_scene_shadows(self.scene_shadows);
-            renderer.set_default_lights(self.scene_default_lights);
-            if let Some((sky, ground)) = self.scene_ambient {
-                renderer.set_ambient(sky, ground);
-            }
-            if let Some(wrap) = self.scene_diffuse_wrap {
-                renderer.set_diffuse_wrap(wrap);
-            }
-            if let Some(oren) = self.scene_oren_nayar {
-                renderer.set_oren_nayar(oren);
-            }
-            if let Some((color, strength)) = self.scene_sheen {
-                renderer.set_sheen(color, strength);
-            }
-
-            // Reload skybox
-            if let Some(skybox_rel) = &self.skybox_path {
-                let scene_dir = Path::new(&self.scene_path)
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."));
-                let skybox_path = self.project.file_or_beside("skybox", skybox_rel, scene_dir);
-                if vfs::exists(&skybox_path) {
-                    renderer.load_skybox(&context.device, &context.queue, &skybox_path);
-                }
-            }
-
-            // Apply post-process config
-            if let Some(config) = scene_post_config {
-                renderer.set_post_process_config(config);
-                renderer.ensure_style_resources(&context.device);
-                renderer.ensure_fxaa_resources(&context.device);
-            }
-        }
-
-        // Reload terrain
-        // The scene panels go with the scene. Rendering & Effects (F4) and
-        // the game's own panels belong to the player and are kept (open or
-        // closed as they were); before #268 they were dropped here and
-        // never made again, so F4 went dead after the first transition.
-        #[cfg(feature = "debug-hud")]
-        self.drop_scene_debug_panels();
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            let mut grass_info = None;
-            load_terrain_from_world_inner(
-                &self.world,
-                &self.scene_path,
-                &context.device,
-                &context.queue,
-                renderer,
-                &mut self.physics,
-                &mut self.terrain,
-                &mut grass_info,
-            );
-
-            // Create grass debug panel if grass was loaded
-            #[cfg(feature = "debug-hud")]
-            if let Some(info) = grass_info {
-                let panel = flint_debug_ui::GrassDebugPanel::new(
-                    info.config,
-                    std::path::PathBuf::from(&self.scene_path),
-                    info.terrain_entity_name,
-                )
-                .with_component(info.component);
-                self.debug_panels.push(Box::new(panel));
-            }
-            #[cfg(not(feature = "debug-hud"))]
-            let _ = grass_info;
-        }
-        #[cfg(feature = "debug-hud")]
-        {
-            self.create_ocean_debug_panel();
-            self.create_tod_debug_panel();
-            self.create_weather_debug_panel();
-            self.create_reality_debug_panel();
-            self.create_visitor_debug_panel();
-            self.create_dead_calm_debug_panel();
-            self.create_camera_debug_panel();
-            self.create_particles_debug_panel();
-            self.create_styles_debug_panel();
-            self.create_render_debug_panel();
-            self.create_extension_debug_panels();
-        }
-        self.apply_camera_tuning();
-
-        // Update terrain height callback for scripts
-        self.update_terrain_height_fn();
-
-        // Project fonts may differ when the new scene lives in another project
-        self.refresh_project_fonts();
-
-        // Re-initialize systems
-        self.physics
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Physics init failed: {:?}", e));
-
-        load_audio_from_world(
-            &self.world,
-            &mut self.audio,
-            &self.project,
-            &self.scene_path,
-            self.scene_preload_audio,
-            // In the browser the audio may already be here at a scene change, and
-            // decoding it all in one frame is the stall #124 removed:
-            // queue it. The desktop decodes up front, as a load can afford.
-            cfg!(target_arch = "wasm32"),
-        );
-        self.audio
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
-
-        // Scene-declared music session on the freshly initialized audio
-        // (before scripts, so a conducted context exists from their first
-        // frame — F4). Music→music transitions: the fresh gilrs above is
-        // simply dropped again by the new session's handoff.
-        self.start_music_session();
-
-        load_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sprite_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sequences_from_world(&self.project, &self.scene_path, &mut self.animation);
-        self.animation
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
-
-        flint_particles::load_particle_effects_from_world(
-            &self.project,
-            &self.scene_path,
-            &mut self.particles,
-        );
-        self.particles
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
-        self.load_particle_textures();
-
-        load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
-        self.script
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
-
-        // Call on_scene_enter on new scripts
-        self.script
-            .set_current_scene(&self.scene_path, &self.project);
-        {
-            let _state_scope = self.script.state_scope(
-                &mut self.state_machine,
-                &mut self.persistent_store,
-                &self.physics,
-            );
-            self.script.call_scene_enters(&mut self.world);
-        }
-
-        // Recapture cursor if player exists
-        if self.physics.has_player_entity() && !self.cursor_captured {
-            self.capture_cursor();
-        }
-
-        println!("[transition] Scene loaded: {}", self.scene_path);
+    /// Make `next` the current scene: its world and path, its project, and
+    /// every setting its file carries (`apply_scene_settings`, the same call
+    /// the hosts make for the first scene).
+    fn install_scene(&mut self, next: NextScene) {
+        self.world = next.world;
+        self.scene_path = next.path;
+        // The new scene may belong to another project (ADR 0114)
+        self.refresh_project();
+        // A slow-motion moment never outlives the scene that asked for it
+        self.clock.time_scale = 1.0;
+        self.apply_scene_settings(&next.file);
     }
+}
+
+/// A scene read for a transition, not yet entered.
+struct NextScene {
+    /// Resolved: where it was read from
+    path: String,
+    world: FlintWorld,
+    file: flint_scene::SceneFile,
 }
