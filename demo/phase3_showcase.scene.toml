@@ -27,6 +27,13 @@ name = "The Luminarium"
 version = "2.0"
 description = "A cathedral of light — showcasing Flint Phase 3 rendering: PBR shading, procedural textures, imported models, dynamic multi-light, cascaded shadows, and tone mapping"
 
+# Down the nave from behind the pews to the altar, so a bare flint render
+# shows the hall (#295); the old exterior shot is still the Render line above.
+[camera]
+position = [3.4, 2.4, 9.2]
+target = [0.0, 2.4, -7.0]
+fov = 60.0
+
 
 # ============================================================
 #  PLAYER — first-person walkthrough (play command)

@@ -1,0 +1,45 @@
+# Chandelier sway: a slow wander of a degree or two about its hook, as if
+# the door had just let a draught in. Loops over 7 seconds.
+# Attach to an entity whose origin is the hook:
+#   [entities.X.animator] clip = "chandelier_sway", autoplay = true, loop = true
+
+name = "chandelier_sway"
+duration = 7.0
+
+[[tracks]]
+interpolation = "Linear"
+
+[tracks.target]
+type = "Rotation"
+
+[[tracks.keyframes]]
+time = 0.0
+value = [1.4, 0.0, 0.0]
+
+[[tracks.keyframes]]
+time = 1.0
+value = [1.1, 0.0, 0.9]
+
+[[tracks.keyframes]]
+time = 2.0
+value = [0.2, 0.0, 1.5]
+
+[[tracks.keyframes]]
+time = 3.0
+value = [-0.8, 0.0, 1.0]
+
+[[tracks.keyframes]]
+time = 4.0
+value = [-1.3, 0.0, 0.0]
+
+[[tracks.keyframes]]
+time = 5.0
+value = [-0.9, 0.0, -1.0]
+
+[[tracks.keyframes]]
+time = 6.0
+value = [0.3, 0.0, -1.2]
+
+[[tracks.keyframes]]
+time = 7.0
+value = [1.4, 0.0, 0.0]

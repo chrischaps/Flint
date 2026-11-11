@@ -1,0 +1,185 @@
+# The Rusty Flint's single boards: one long, joint-free oak plank with its
+# grain along x. demo/tools/tavern_build.py makes doors, tabletops, the bar
+# and barrel staves out of separate planks of it, each its own slice of the
+# texture, where the floor texture would put butt joints in the middle of a
+# door.
+#
+#   flint gen demo/specs/tavern_plank.procgen.toml -o demo/textures/tavern/tavern_plank.png
+
+generator = "texture_v1"
+
+[meta]
+name = "tavern_plank"
+description = "Long, joint-free boards of honey oak, grain along x"
+version = "1.0.0"
+tags = ["texture", "wood", "plank", "board", "tavern"]
+
+[seed]
+mode = "fixed"
+value = 1760
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Four strips, no seam: a shade between them only.
+[[params.ops]]
+type = "brick_grid"
+columns = 1
+rows = 4
+stagger = 0.0
+gap_width = 0.0
+width_variation = 0.0
+
+[[params.ops]]
+type = "wave_texture"
+output = "rings"
+direction = "y"
+wave_type = "sine"
+scale = 42.0
+
+[[params.ops]]
+type = "noise_layer"
+output = "wander"
+noise_type = "perlin"
+frequency = 2.0
+octaves = 3
+scale_x = 1.0
+scale_y = 2.5
+cell_offset = true
+
+[[params.ops]]
+type = "domain_warp"
+input = "rings"
+output = "grain"
+warp_x = "wander"
+warp_y = "wander"
+strength = 0.06
+
+[[params.ops]]
+type = "map_range"
+input = "grain"
+output = "ring_lines"
+from_min = 0.76
+from_max = 1.0
+to_min = 1.0
+to_max = 0.6
+interpolation = "smoothstep"
+
+[[params.ops]]
+type = "noise_layer"
+output = "streaks"
+noise_type = "perlin"
+frequency = 6.0
+octaves = 4
+scale_x = 1.0
+scale_y = 12.0
+
+[[params.ops]]
+type = "noise_layer"
+output = "grime"
+noise_type = "simplex"
+frequency = 3.0
+octaves = 5
+scale_x = 1.0
+scale_y = 1.0
+
+[[params.ops]]
+type = "map_range"
+input = "grime"
+output = "grime_shade"
+from_min = 0.2
+from_max = 0.8
+to_min = 0.75
+to_max = 1.05
+interpolation = "smoothstep"
+
+# variation is in linear lightness; this oak's is about 0.13.
+[[params.ops]]
+type = "cell_color"
+base_color = "#8C6240"
+variation = 0.03
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "r"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "g"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "b"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "r"
+mode = "multiply"
+strength = 0.35
+
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "g"
+mode = "multiply"
+strength = 0.35
+
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "b"
+mode = "multiply"
+strength = 0.35
+
+[[params.ops]]
+type = "blend"
+source = "grime_shade"
+target = "r"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "grime_shade"
+target = "g"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "grime_shade"
+target = "b"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "height"
+mode = "add"
+strength = 0.1
+
+[[params.ops]]
+type = "derive_normal"
+strength = 1.3
+
+[[params.ops]]
+type = "cell_roughness"
+base = 0.58
+variation = 0.05
+mortar = 0.6
+mortar_threshold = 0.0
