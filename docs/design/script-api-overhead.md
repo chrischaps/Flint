@@ -105,6 +105,14 @@ call, or a function with many `Num` parameters could register a few more
 twins (all ints, say). `.run_typed()` is there if a function must refuse
 ints instead.
 
+## The web build
+
+The registry is native-only and the builder drops docs and return notes on
+wasm. A `web-release` build of `flint-web.wasm` (17.5 MB, this branch) has
+none of the entity module's doc strings or return notes in it (searched for
+several, e.g. "Move the entity to a position", "its id, or -1 when no entity
+has that name"); the parameter names and the argument errors stay, by design.
+
 ## Not measured
 
 - **The phone** (Pixel 8 Pro, web build). Rhai's search and the conversions
