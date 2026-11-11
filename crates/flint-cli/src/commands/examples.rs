@@ -231,7 +231,7 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
         let scene = path.to_string_lossy().replace('\\', "/");
         match super::validate::check(&scene, schemas) {
             Err(err) => failures.push(format!("{scene}: {err:#}")),
-            Ok((warnings, report)) => {
+            Ok((warnings, report, _diagnostics)) => {
                 for warning in warnings {
                     failures.push(format!("{scene}: warning: {warning}"));
                 }
