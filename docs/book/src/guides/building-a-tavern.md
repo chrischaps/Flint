@@ -13,6 +13,8 @@ cd tavern-game
 
 This creates a game project: a `flint.toml` manifest that names the engine's schemas (so no command below needs a `--schemas` flag), a first scene of its own at `scenes/main.scene.toml`, and an empty `schemas/` for components of your own. See [Your First Project](../getting-started/first-project.md).
 
+The tavern is built from `room`, `door` and `furniture`, archetypes of the examples' room-builder layer and not of the engine's own set. Add the layer to `flint.toml` before going on, as [Your First Project](../getting-started/first-project.md#add-the-room-builder-layer) shows: the Flint checkout's `schemas/examples`, after its `schemas`.
+
 ## 2. Create the Scene
 
 ```bash

@@ -76,6 +76,9 @@ fn project(name: &str) -> PathBuf {
     dir
 }
 
+/// The engine's set. The scenes here are written in the examples'
+/// room-builder archetypes (`floor`), so each render also names
+/// `schemas/examples`: a `--schemas` flag is the whole list (#681).
 fn schemas() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas")
 }
@@ -86,6 +89,8 @@ fn render(dir: &Path, out: &str, args: &[&str]) -> Output {
         .arg(dir.join("floor.scene.toml"))
         .arg("--schemas")
         .arg(schemas())
+        .arg("--schemas")
+        .arg(schemas().join("examples"))
         .arg("--width")
         .arg("64")
         .arg("--height")
@@ -345,6 +350,8 @@ fn render_grove(dir: &Path, out: &str, args: &[&str]) -> Output {
         .arg(dir.join("grove.scene.toml"))
         .arg("--schemas")
         .arg(schemas())
+        .arg("--schemas")
+        .arg(schemas().join("examples"))
         .args([
             "--width", "96", "--height", "72", "--time", "0..2", "--fps", "4",
         ])
@@ -517,6 +524,8 @@ fn render_block(dir: &Path, out: &str, args: &[&str]) -> Output {
         .arg(dir.join("block.scene.toml"))
         .arg("--schemas")
         .arg(schemas())
+        .arg("--schemas")
+        .arg(schemas().join("examples"))
         .args([
             "--width", "96", "--height", "72", "--time", "0..2", "--fps", "4",
         ])

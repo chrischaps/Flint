@@ -46,7 +46,9 @@ Point and spot lights sit at their entity's world position, so they follow trans
 | `volumetric_intensity` | directional | f32 | `0.0` | God-ray strength for this light; see [Post-Processing](post-processing.md#volumetric-lighting-god-rays) |
 | `volumetric_color` | directional | [f32; 3] | light color | Tint of the shafts |
 
-There is no `light.toml` in `schemas/components`; the renderer reads these keys straight from the component table, so `flint validate` will not catch a typo in a light field. Scenes that need a schema can add one in their own `schemas/` layer.
+The same fields are the engine's `light` schema (`schemas/components/light.toml`), so `flint schema light` prints them from a terminal, with each fallback in its description. Only `type`, `color` and `intensity` carry a schema default: a default is written into the component at load, and `range` given one would beat an authored `radius`.
+
+**A light is the `light` table and no other.** Nothing reads `[entities.sun.directional_light]` or `[entities.lamp.point_light]`: a scene whose only lights are spelled that way is lit by the built-in key and fill described below, and looks plausible enough that the mistake can live for a long time (about forty of the engine's own examples carried it until #681). To turn one into a real light, name the table `light`, add `type = "directional"`, and check `direction`: it points *toward* the light, so a sun written as the way its rays travel, `[-0.5, -0.6, -0.3]`, becomes `[0.5, 0.6, 0.3]`.
 
 Limits: the shader takes a fixed number of directional, point and spot lights. Only one directional light casts cascaded shadows: the one with the highest `intensity`, with entity-name order breaking ties (ADR 0045), so a fill light can never steal the sun's shadows because of how it was named. If no scene light exists at all, the renderer falls back to a built-in warm key light and cool fill, unless the scene says `default_lights = false` in [`[environment]`](#the-environment-block).
 

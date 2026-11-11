@@ -20,7 +20,7 @@
 #
 #  Launch:  cargo run --bin flint -- play examples/joint_test.scene.toml
 #  Render:  cargo run --bin flint -- render examples/joint_test.scene.toml \
-#             --output renders/joint_test.png --schemas schemas
+#             --output renders/joint_test.png
 # ================================================================
 
 [scene]

@@ -48,7 +48,7 @@ cargo run --bin flint -- edit examples/phase4_runtime.scene.toml --watch
 cargo run --bin flint -- play examples/phase4_runtime.scene.toml
 
 # Headless snapshot (the primary validation tool for agents)
-cargo run --release --bin flint -- render examples/showcase_tavern.scene.toml -o tavern.png --schemas schemas
+cargo run --release --bin flint -- render examples/showcase_tavern.scene.toml -o tavern.png
 ```
 
 Release builds are strongly recommended for `render`, `play`, and the full test suite; debug builds of `flint-cli` need the 8 MB main-thread stack that `.cargo/config.toml` links on Windows.

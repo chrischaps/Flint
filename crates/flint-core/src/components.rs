@@ -21,7 +21,6 @@ pub const VISIBILITY: &str = "visibility";
 // --- Scripting & interaction ---
 pub const SCRIPT: &str = "script";
 pub const INTERACTABLE: &str = "interactable";
-pub const HEALTH: &str = "health";
 
 // --- Animation ---
 pub const ANIMATOR: &str = "animator";
@@ -36,7 +35,6 @@ pub const RIGIDBODY: &str = "rigidbody";
 pub const COLLIDER: &str = "collider";
 pub const JOINT: &str = "joint";
 pub const CHARACTER_CONTROLLER: &str = "character_controller";
-pub const PLAYER: &str = "player";
 
 // --- Audio ---
 pub const AUDIO_SOURCE: &str = "audio_source";

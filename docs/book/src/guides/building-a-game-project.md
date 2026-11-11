@@ -141,6 +141,8 @@ A game loads two schema directories, in order, with the later one overriding the
 
 If both directories define a component with the same name, the game's version takes priority.
 
+The engine's set has no room-builder vocabulary in it: `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room` and `door` are the layer the engine's example scenes are written in, `engine/schemas/examples`. A game that wants them lists that directory between the two (`["engine/schemas", "engine/schemas/examples", "schemas"]`); most games define archetypes of their own instead. See [Schemas: The Examples Layer](../concepts/schemas.md#the-examples-layer).
+
 Say so once, in the manifest:
 
 ```toml

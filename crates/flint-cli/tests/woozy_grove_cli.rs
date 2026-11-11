@@ -47,6 +47,9 @@ fn the_grove_passes_flint_validate() {
         .arg(scene_path())
         .arg("--schemas")
         .arg(repo_root().join("schemas"))
+        // the grove's ground is a `furniture` box: the examples' layer (#681)
+        .arg("--schemas")
+        .arg(repo_root().join("schemas/examples"))
         .output()
         .expect("run flint");
     assert!(out.status.success(), "{}", text(&out));

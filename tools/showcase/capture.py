@@ -136,7 +136,7 @@ def take_args(film, beat, take, width, height, folder, points_wide=POINTS_WIDE,
     args = [
         str(player_path()),
         str(Path("examples") / "film" / f"{beat['id']}.scene.toml"),
-        "--schemas", "schemas",
+        "--schemas", "schemas", "--schemas", "schemas/examples",
         "--width", str(width),
         "--height", str(height),
         "--pixels-per-point", f"{width / points_wide:.6g}",

@@ -201,7 +201,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 One render is one frame, so a style that remembers the frame before (the ASCII style's per-cell history, #277) never gets to use its memory. `--frames <n>` draws a sequence on one renderer instead, `--frame-dt` apart (default 1/60 s), moving the camera between frames. The styles see consecutive frames and their history runs as it does in the player, without a window, a script or a capture tool (#345):
 
 ```bash
-flint render examples/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --output out/seq.png
 #   Sequence: 181 frames, 0.016667 s apart, orbiting 6.8755 deg/s
 #   Rendered 181 1280x720 frames to out/seq_0000.png .. out/seq_0180.png
@@ -238,7 +238,7 @@ target = [0.6, 0.6, 4.2]
 The #277 bench, with the history on and off and with and without the edge glyphs (#267):
 
 ```bash
-flint render examples/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats \
     --style ascii:temporal=off --style ascii:edges=0
 #   Flips: 181 frames, 14400 cells: 321.1 flips/frame (2.23%), 57.8 reversals/frame (0.40%)

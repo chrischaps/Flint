@@ -2,7 +2,7 @@
 # whole world into a painted dream and wakes it again (#369). Nothing here
 # is styled until scripts/dream_story.rhai says so:
 #
-#   cargo run --bin flint-player -- examples/dream_story.scene.toml --schemas schemas
+#   cargo run --bin flint-player -- examples/dream_story.scene.toml
 #
 #   0 s  awake: the clearing as it is
 #   2 s  falling asleep: Kuwahara fades in (blend 0 -> 1) as its brush grows
@@ -53,16 +53,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.75, -0.38, 0.35]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
 color = [1.0, 0.86, 0.66]
 intensity = 2.4
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, -0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.35
 

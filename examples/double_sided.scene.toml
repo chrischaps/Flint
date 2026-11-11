@@ -12,7 +12,7 @@
 #
 #  Models: python tools/test-models/double_sided_palm.py
 #  Render: cargo run --bin flint -- render examples/double_sided.scene.toml \
-#            --output renders/double_sided.png --schemas schemas
+#            --output renders/double_sided.png
 # ================================================================
 
 [scene]
