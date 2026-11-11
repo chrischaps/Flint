@@ -380,7 +380,10 @@ pub fn load_models_from_world(
             // Nor for a skinned model: the first entity to load it drew it
             // skinned, and so does every other one (below). Expanding the
             // second into nodes took its model away, so of five figures one
-            // drew, in its bind pose (#624).
+            // drew, in its bind pose (#624). A scene reload (`flint edit
+            // --watch`) is the same case for a lone figure: the cache keeps
+            // the GLB from the first load, and expanding it there made the
+            // figure vanish (#331).
             let file = if renderer.mesh_cache().is_procedural(asset_name)
                 || renderer.mesh_cache().contains_skinned(asset_name)
             {

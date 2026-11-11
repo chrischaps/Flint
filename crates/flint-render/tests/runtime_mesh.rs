@@ -1999,3 +1999,43 @@ fn every_instance_of_a_skinned_model_stays_skinned() {
     }
     assert!(loaded.models.iter().all(|m| !m.was_expanded));
 }
+
+/// A scene reload (`flint edit --watch`) spawns every entity again under a
+/// new id into a fresh world and loads its models into the same renderer,
+/// whose mesh cache still holds the skinned GLB. The figure draws skinned
+/// after the reload as before it (#331).
+#[test]
+fn a_skinned_model_still_draws_after_a_reload() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let demo = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/x.scene.toml");
+    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(demo);
+    let camera = Camera::default();
+    let mut skinned_draws = Vec::new();
+    for _load in 0..2 {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("ybot").unwrap();
+        let mut model = toml::Table::new();
+        model.insert("asset".into(), "YBotWithIdle".into());
+        world.set_component(id, "model", model.into()).unwrap();
+        let mut skeleton = toml::Table::new();
+        skeleton.insert("skin".into(), "Armature".into());
+        world
+            .set_component(id, "skeleton", skeleton.into())
+            .unwrap();
+        flint_render::model_loader::load_models_from_world(
+            &mut world,
+            &mut renderer,
+            gpu.device,
+            gpu.queue,
+            &config,
+        );
+        gpu.frame(&mut renderer, &world, &camera);
+        skinned_draws.push(renderer.collect_stats().skinned_draws);
+    }
+    assert!(skinned_draws[0] > 0, "the first load drew it skinned");
+    assert_eq!(
+        skinned_draws[1], skinned_draws[0],
+        "the reload drew it as the first load did"
+    );
+}
