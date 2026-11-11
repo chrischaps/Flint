@@ -106,6 +106,12 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
    #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
    #                          two --sweep flags make a grid, first across, second down, #358)
+   #   --variant "label: --flag v ..." (repeatable) | --variants v.toml   [--zoom X0,Y0,X1,Y1@N]
+   #                          (#291: any flags side by side: each variant = this command line + its
+   #                           flags (args_override_self; --style adds), one labelled sheet at -o,
+   #                           <out>-<label>.png each, nearest crops <out>-zoom.png; one process and
+   #                           GPU (RenderHost, imports memoized); commands/variants.rs; demo/variants/.
+   #                           main.rs / render_goldens fill RenderArgs::command_line for it)
    #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
    #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
    #   --look x --reference ref.png --ai-refine [--ai-provider anthropic|mock --max-cost 0.5

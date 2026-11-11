@@ -107,6 +107,36 @@ pub struct RenderArgs {
     #[arg(long, value_parser = ["cell", "full"])]
     pub sweep_scale: Option<String>,
 
+    /// Render the scene again under other flags, at the same camera, and
+    /// write one labelled sheet to -o (#291): `"label: --flag value ..."`,
+    /// repeatable. Each variant is this command line with its flags after
+    /// it (a flag in both takes the variant's; --style adds), and its own
+    /// frame is written beside the sheet as `<out>-<label>.png`. All in one
+    /// process on one GPU device
+    #[arg(long, value_parser = super::variants::parse_variant,
+          action = clap::ArgAction::Append, allow_hyphen_values = true,
+          conflicts_with_all = ["ai_refine", "frames", "mesh"])]
+    pub variant: Vec<super::variants::Variant>,
+
+    /// A file of variants (#291): `[[variant]]` tables of `label` and
+    /// `flags` (a line, or an array of words), with an optional `title` and
+    /// `zoom = ["X0,Y0,X1,Y1@N"]`. Its variants come before any --variant
+    #[arg(long, value_name = "FILE.toml", conflicts_with_all = ["ai_refine", "frames", "mesh"])]
+    pub variants: Option<String>,
+
+    /// With --variant(s): also crop this region of every variant's frame,
+    /// X0,Y0,X1,Y1 in its pixels, drawn N times larger with nearest
+    /// neighbour (`@N`; default as large as fits 640 across). Writes
+    /// `<out>-zoom.png` (labelled) and `<out>-<label>-zoom.png` a variant,
+    /// and outlines the region on the main sheet. Repeatable
+    #[arg(long, value_parser = super::variants::parse_zoom, action = clap::ArgAction::Append)]
+    pub zoom: Vec<super::variants::Zoom>,
+
+    /// The words after `render` on the command line, for --variant to
+    /// build each variant's own on. Set by whoever parsed them.
+    #[arg(skip)]
+    pub command_line: Vec<std::ffi::OsString>,
+
     /// Write the frame's (or each --sweep column's) measures as JSON
     /// (#357): mean luminance, near-black / near-white shares, edge
     /// density, the ASCII grid's ramp-step histogram when it drew, and the
@@ -808,6 +838,12 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     }
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
+    }
+    if !args.variant.is_empty() || args.variants.is_some() {
+        return super::variants::run(&args, host);
+    }
+    if !args.zoom.is_empty() {
+        anyhow::bail!("--zoom crops each variant's frame: add --variant or --variants");
     }
     let report_json = args.report.as_deref() == Some(REPORT_TO_STDOUT);
     HUMAN_TO_STDERR.store(report_json, Ordering::Relaxed);
