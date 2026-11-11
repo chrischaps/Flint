@@ -25,9 +25,9 @@
 #  examples/prefabs/rusty_flint.prefab.toml, shared with showcase_tavern; its
 #  models and textures are built by examples/tools/tavern_build.py (#295).
 #
-#  Launch:  cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas
+#  Launch:  cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 #     or:   cargo run --bin flint -- play examples/phase4_runtime.scene.toml
-#  Look:    flint render examples/phase4_runtime.scene.toml -o tavern.png --schemas schemas
+#  Look:    flint render examples/phase4_runtime.scene.toml -o tavern.png
 #           (the [camera] below frames the room from beside the front door)
 #
 #  Controls:

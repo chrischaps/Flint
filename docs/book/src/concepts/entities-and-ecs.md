@@ -87,7 +87,7 @@ The ECS layer tracks these relationships, enabling:
 An archetype is a named bundle of components that defines an entity "type":
 
 ```toml
-# schemas/archetypes/door.toml
+# schemas/examples/archetypes/door.toml (the examples' layer)
 [archetype.door]
 description = "A door entity"
 components = ["transform", "door"]

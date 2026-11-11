@@ -10,7 +10,7 @@
 # A script changes the global step from 0.5 to 0.25 at 12 s, and every tree
 # follows without a jump. See examples/scripts/wooze_director.rhai.
 #
-#   cargo run --release -p flint-player -- examples/wooze_field.scene.toml --schemas schemas --exit-after 20
+#   cargo run --release -p flint-player -- examples/wooze_field.scene.toml --exit-after 20
 #
 # prints a [wooze] line saying how far apart the field has put the props.
 #
@@ -80,16 +80,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.62, -0.52, -0.45]
+[entities.sun.light]
+type = "directional"
+direction = [-0.62, 0.52, 0.45]
 color = [1.0, 0.86, 0.66]
 intensity = 2.6
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, 0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.4
 

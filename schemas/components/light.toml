@@ -1,0 +1,23 @@
+# The renderer reads this table every frame (`extract_lights_from_world`).
+# Only `type`, `color` and `intensity` carry a `default`: a default is
+# written into the component at load, and the others either apply to one
+# type only or mean something by being absent (`range` over `radius`,
+# `volumetric_color` following `color`). Their fallbacks are in the
+# descriptions.
+
+[component.light]
+description = "A light: `[entities.sun.light]` with a `type`. Point and spot lights sit at the entity's world position and follow its parents; a directional light ignores position. A hidden entity's light is off (`visibility`). The shader takes a fixed number of each type; the directional light with the highest intensity casts the cascaded shadows. A scene with no light at all is lit by a built-in key and fill unless `[environment] default_lights = false`. No other table is a light: nothing reads `directional_light`, `point_light` or `spot_light`."
+
+[component.light.fields]
+type = { type = "enum", values = ["directional", "point", "spot"], default = "directional", description = "Which kind of light. Any other value lights nothing." }
+color = { type = "vec3", default = [1.0, 1.0, 1.0], description = "Linear RGB." }
+intensity = { type = "f32", default = 1.0, description = "Radiance multiplier. A sun is about 3; a point light a few metres from what it lights, 5 to 30." }
+direction = { type = "vec3", description = "Directional: the direction TOWARD the light, so a sun overhead is [0, 1, 0] and [0.5, 1.0, 0.3] is high and to one side. Spot: the cone's axis, the way the light shines ([0, -1, 0] is straight down). Not normalized for you. Unset reads as [0, -1, 0], which for a directional light is a sun below the ground: always set it." }
+angular_size = { type = "f32", min = 0.0, description = "Directional. Apparent size of the source in degrees (the sun is about 0.5, a softbox 2 to 5): shadows sharpen where things touch and soften with distance (PCSS). Unset or 0: hard 3x3 PCF shadows." }
+range = { type = "f32", min = 0.0, description = "Point, spot. Distance in metres at which the light has faded to nothing. Unset: `radius` if that is set, else 10." }
+radius = { type = "f32", min = 0.0, description = "Point, spot. An older name for `range`, read only when `range` is unset." }
+source_radius = { type = "f32", min = 0.0, description = "Point, spot. Physical radius of the emitter in metres: widens the specular highlight into a disc (an area light). Unset or 0: a point." }
+inner_angle = { type = "f32", min = 0.0, description = "Spot. Half-angle of the full-intensity cone, in radians. Unset: 0.3." }
+outer_angle = { type = "f32", min = 0.0, description = "Spot. Half-angle at which the cone has faded to nothing, in radians. Unset: 0.5." }
+volumetric_intensity = { type = "f32", min = 0.0, description = "Directional. God-ray strength for this light (needs `[post_process]` volumetrics). Unset or 0: none." }
+volumetric_color = { type = "vec3", description = "Directional. Tint of the god rays. Unset: the light's `color`." }

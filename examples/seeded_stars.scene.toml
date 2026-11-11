@@ -2,7 +2,7 @@
 # scripts/seeded_stars.rhai scatters a sky with random(). A stepped run
 # draws the same skies every time; add --seed N for another sequence:
 #
-#   cargo run --bin flint-player -- examples/seeded_stars.scene.toml --schemas schemas \
+#   cargo run --bin flint-player -- examples/seeded_stars.scene.toml \
 #     --frame-step 0.0166667 --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6
 #
 # Its on_init also moves an entity the scene doesn't have ("comet"): the log

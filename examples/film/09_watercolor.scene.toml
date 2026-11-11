@@ -83,16 +83,22 @@ sun_glow = 2.2
 ambient_sky = [0.20, 0.24, 0.36, 1.0]
 ambient_ground = [0.10, 0.075, 0.05, 1.0]
 
+# The film was shot under the engine's built-in key and fill. The sun below
+# was written as a `directional_light` table, which nothing reads (#681), so
+# it never lit a frame. It stays a comment so a re-capture matches the takes
+# already cut; to light the set as first meant, uncomment it (`direction`
+# points toward the sun) and look at every beat again.
+#
+# One directional light only: the sky's sun disc follows "the first", and
+# entities load in no fixed order. The cool fill is the sky's ambient.
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [-0.62, -0.30, -0.72]
-color = [1.0, 0.74, 0.50]
-intensity = 2.8
-
-# One directional light only: the sky's sun disc follows "the first", and
-# entities load in no fixed order. The cool fill is the sky's ambient.
+# [entities.sun.light]
+# type = "directional"
+# direction = [0.62, 0.30, 0.72]
+# color = [1.0, 0.74, 0.50]
+# intensity = 2.8
 
 # --- Ground --------------------------------------------------------------
 

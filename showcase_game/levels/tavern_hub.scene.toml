@@ -10,8 +10,8 @@
 #  generated via texture_v1 specs (tavern_brick, cracked_plaster).
 #
 #  Launch:
-#    cargo run --bin flint -- play showcase_game/levels/tavern_hub.scene.toml \
-#      --schemas schemas --schemas showcase_game/schemas
+#    cargo run --bin flint -- play showcase_game/levels/tavern_hub.scene.toml
+#  (its schemas are named by showcase_game/flint.toml)
 #
 #  Controls:
 #    WASD - Move       Space - Jump      Shift - Sprint

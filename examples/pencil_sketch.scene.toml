@@ -10,14 +10,14 @@
 #   block    hatching pinned to the block (grid = "object"): strokes travel with it
 #   ybot     blue pencil, heavy doubled outline (a skinned mesh)
 #
-#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --schemas schemas --no-grid -o sketch.png
-#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --schemas schemas --no-grid --style pencil:scope=screen -o page.png
+#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --no-grid -o sketch.png
+#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --no-grid --style pencil:scope=screen -o page.png
 #
 # The second command draws the whole frame in pencil, the props keeping
 # their own settings as variants. With grid=world (#389) the strokes lie on
 # the surfaces and hold as the camera moves:
 #
-#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --schemas schemas --no-grid --style pencil:grid=world,scope=screen --frames 72 --frame-dt 0.0333 --orbit 25 -o orbit.png
+#   cargo run --bin flint -- render examples/pencil_sketch.scene.toml --no-grid --style pencil:grid=world,scope=screen --frames 72 --frame-dt 0.0333 --orbit 25 -o orbit.png
 #
 # Book: concepts/stylize-passes.md
 
@@ -61,16 +61,18 @@ sun_glow = 1.4
 [entities.sun]
 [entities.sun.transform]
 position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.75, -0.38, 0.35]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
 color = [1.0, 0.86, 0.66]
 intensity = 2.4
 
 [entities.fill]
 [entities.fill.transform]
 position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, -0.4]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
 color = [0.55, 0.65, 0.85]
 intensity = 0.35
 

@@ -55,7 +55,7 @@ def capture(player: Path, scene: Path, schemas: Path, frames: Path) -> list:
     frames.mkdir(parents=True)
     every = f"{STEP:.10f}"
     subprocess.run(
-        [str(player), str(scene), "--schemas", str(schemas),
+        [str(player), str(scene), "--schemas", str(schemas), "--schemas", str(schemas / "examples"),
          "--width", str(WIDTH), "--height", str(HEIGHT), "--frame-step", every,
          "--screenshot", str(frames / "f.png"), "--screenshot-at", str(START),
          "--screenshot-every", every, "--exit-after", str(START + SECONDS)],

@@ -150,9 +150,9 @@ adapter, no window) also exits 1 now, from `flint play` too.
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
 ```bash
-flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 \
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 \
   --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
-flint-player examples/seeded_stars.scene.toml --schemas schemas --frame-step 0.0166667 --seed 2 \
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 --seed 2 \
   --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
 ```
 
@@ -317,7 +317,7 @@ This loads the engine's built-in components (transform, material, rigidbody, etc
 The player is also available as a standalone binary for distribution:
 
 ```bash
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml --schemas schemas
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 
 # From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
@@ -329,7 +329,7 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render examples/phase3_showcase.scene.toml --output hero.png --schemas schemas
+flint render examples/phase3_showcase.scene.toml --output hero.png
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 

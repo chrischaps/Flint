@@ -1,6 +1,6 @@
 # A pale form on a dusk ground, for judging its silhouette's softness (#582).
 #
-#   flint render examples/soft_form.scene.toml --schemas schemas --time 2 \
+#   flint render examples/soft_form.scene.toml --time 2 \
 #     --sweep wooze.preset=hard,soft,softest -o soft.png
 #
 # The held flame of specs/examples/form_living.procgen.toml, lit pale against a
