@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a twenty-seven-member Cargo workspace (twenty-six crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a twenty-nine-member Cargo workspace (twenty-eight crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -26,6 +26,7 @@ flint/
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
 │   ├── flint-import/       # File importers (glTF/GLB with skeleton/skin extraction)
+│   ├── flint-pixels/       # Texel loops on load (RGBA widening, mip chains), optimized in debug builds
 │   ├── flint-asset/        # Content-addressed asset storage and catalog
 │   ├── flint-constraint/   # Constraint definitions and validation engine
 │   ├── flint-query/        # PEG query language (pest parser)
@@ -170,6 +171,10 @@ Content-addressed asset storage with SHA-256 hashing. Manages an asset catalog w
 ### flint-import
 
 File importers for bringing external assets into the content-addressed store. Supports glTF/GLB with mesh, material, and texture extraction.
+
+### flint-pixels
+
+The loops that touch every texel of a texture on its way to the GPU: widening a decoded image to RGBA8 and box-filtering its mip chain (colour averaged in linear light). They live outside `flint-render` so the workspace's dev profile can build them at `opt-level = 3` with the image decoders, glTF and SHA-256, while the renderer stays unoptimized and quick to rebuild. A debug `flint render` of a scene with a 32 MB model went from 19 s to 2.6 s, its pixels unchanged (#326). No dependencies.
 
 ### flint-render
 
