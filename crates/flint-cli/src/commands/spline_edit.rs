@@ -47,22 +47,9 @@ pub fn run(args: EditArgs) -> Result<()> {
             .and_then(|s| s.get("file").and_then(|v| v.as_str().map(String::from)));
 
         if let Some(file_rel) = spline_file {
-            // Resolve path: scene dir, then parent
-            let full_path = {
-                let p = scene_dir.join(&file_rel);
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    let pp = parent.join(&file_rel);
-                    if pp.exists() {
-                        pp
-                    } else {
-                        p
-                    }
-                } else {
-                    p
-                }
-            };
+            // A path found by the project's one search (`AssetKind::Files`)
+            let full_path = flint_core::project::Project::for_scene(Path::new(&args.scene))
+                .file_or_beside("spline file", &file_rel, scene_dir);
 
             if full_path.exists() {
                 spline_file_path = Some(full_path.to_string_lossy().to_string());

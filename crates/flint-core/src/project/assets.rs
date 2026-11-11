@@ -87,6 +87,26 @@ pub enum AssetKind {
     Sequences,
     /// Sounds: a file named from the scene (`audio/hit.ogg`), or in `audio/`.
     Audio,
+    /// Rhai scripts: `scripts/<file>.rhai`; an `import "m"` is
+    /// `scripts/lib/m.rhai`.
+    Scripts,
+    /// Procgen specs: any `*.procgen.toml` under `specs/` or `models/`,
+    /// found by its `[meta] name`.
+    Specs,
+    /// Prefabs: `prefabs/<name>.prefab.toml`.
+    Prefabs,
+    /// Wooze presets (a scene's `[wooze] preset`, the Living Props panel):
+    /// `wooze/<name>.wooze.toml`.
+    WoozePresets,
+    /// A file a scene names by a path of its own (`config/input.toml`):
+    /// that path from the scene's directory, then from each directory above.
+    Files,
+    /// A particle effect's or emitter's `texture`: a file name in
+    /// `particles/`, then beside the scene.
+    ParticleTextures,
+    /// The scene a transition names (`load_scene("level2.scene.toml")`): a
+    /// path from the current scene's directory, then from each above.
+    Scenes,
 }
 
 /// Everything that tells one kind from another: where its files sit under
@@ -109,6 +129,15 @@ pub struct KindInfo {
     /// dot, and a listed file's name is its whole file name. Otherwise a
     /// name is a stem and the kind's extensions finish it.
     pub named_by_file: bool,
+    /// [`Project::list`] also lists the files in subfolders of the kind's
+    /// folders, each named with its subfolder (`lib/util.rhai`), which is
+    /// the name [`Project::resolve`] takes for it.
+    pub deep: bool,
+    /// The kind's files say their own name inside (a procgen spec's
+    /// `[meta] name`): this reads it from a file's text. A file is then
+    /// found by that name whatever it is called on disk, in the same places
+    /// and the same order, and a file that states no name is not listed.
+    pub named_inside: Option<InnerName>,
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): the search
     /// this kind had before the one rule, as the file it would have picked.
     /// `None` once the release has passed, or when the kind never differed.
@@ -129,12 +158,17 @@ type OldRule = fn(name: &str, scene_dir: &Path) -> Option<PathBuf>;
 /// scene in `scene_dir`, where two of one name the first is the one kept.
 type OldList = fn(scene_dir: &Path) -> Vec<PathBuf>;
 
+/// The name a file gives itself, read from its text ([`KindInfo::named_inside`]).
+pub type InnerName = fn(text: &str) -> Option<String>;
+
 static PARTICLES: KindInfo = KindInfo {
     label: "particles",
     noun: "particle effect",
     folders: &["particles"],
     extensions: &[".particles.toml"],
     named_by_file: false,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_particles),
     old_list: None,
 };
@@ -145,6 +179,8 @@ static MODELS: KindInfo = KindInfo {
     folders: &["models"],
     extensions: &[".glb", ".gltf"],
     named_by_file: false,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_models),
     old_list: None,
 };
@@ -155,6 +191,8 @@ static TEXTURES: KindInfo = KindInfo {
     folders: &["", "textures"],
     extensions: &["", ".png", "_color.png"],
     named_by_file: true,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_textures),
     old_list: None,
 };
@@ -165,6 +203,8 @@ static SPRITES: KindInfo = KindInfo {
     folders: &["sprites", ""],
     extensions: &[],
     named_by_file: true,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_sprites),
     old_list: None,
 };
@@ -175,6 +215,8 @@ static ANIMATIONS: KindInfo = KindInfo {
     folders: &["animations"],
     extensions: &[".anim.toml"],
     named_by_file: false,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_animations),
     old_list: Some(old_animation_list),
 };
@@ -185,6 +227,8 @@ static SPRITE_ANIMATIONS: KindInfo = KindInfo {
     folders: &["animations"],
     extensions: &[".sprite.toml"],
     named_by_file: false,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_sprite_animations),
     old_list: Some(old_sprite_animation_list),
 };
@@ -195,6 +239,8 @@ static SEQUENCES: KindInfo = KindInfo {
     folders: &["animations"],
     extensions: &[".sequence.toml"],
     named_by_file: false,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_sequences),
     old_list: Some(old_sequence_list),
 };
@@ -205,9 +251,216 @@ static AUDIO: KindInfo = KindInfo {
     folders: &["", "audio"],
     extensions: &[".ogg", ".wav", ".mp3", ".flac"],
     named_by_file: true,
+    deep: false,
+    named_inside: None,
     old_rule: Some(old_audio),
     old_list: Some(old_audio_list),
 };
+
+static SCRIPTS: KindInfo = KindInfo {
+    label: "scripts",
+    noun: "script",
+    folders: &["scripts"],
+    extensions: &[".rhai"],
+    named_by_file: true,
+    deep: true,
+    named_inside: None,
+    old_rule: Some(old_scripts),
+    old_list: None,
+};
+
+static SPECS: KindInfo = KindInfo {
+    label: "specs",
+    noun: "procgen spec",
+    folders: &["specs", "models"],
+    extensions: &[".procgen.toml"],
+    named_by_file: false,
+    deep: true,
+    named_inside: Some(spec_name),
+    old_rule: Some(old_specs),
+    old_list: Some(old_spec_list),
+};
+
+static PREFABS: KindInfo = KindInfo {
+    label: "prefabs",
+    noun: "prefab",
+    folders: &["prefabs"],
+    extensions: &[".prefab.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_prefabs),
+    old_list: None,
+};
+
+static WOOZE_PRESETS: KindInfo = KindInfo {
+    label: "wooze",
+    noun: "wooze preset",
+    folders: &["wooze"],
+    extensions: &[".wooze.toml"],
+    named_by_file: false,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_wooze_presets),
+    old_list: None,
+};
+
+/// TEMPORARY. Wooze presets before ADR 0114: `wooze/<name>.wooze.toml`
+/// beside the scene, then in `../wooze/` (`flint_scene::wooze::preset_dirs`
+/// as it was, which spelled the level above as `<scene dir>/..`).
+fn old_wooze_presets(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    // The same folder, spelled without the `..` where the path has a parent
+    let above = match scene_dir.file_name() {
+        Some(_) if scene_dir != Path::new(".") => scene_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default(),
+        _ => scene_dir.join(".."),
+    };
+    [scene_dir.join("wooze"), above.join("wooze")]
+        .into_iter()
+        .map(|dir| dir.join(format!("{name}.wooze.toml")))
+        .find(|p| vfs::is_file(p))
+}
+
+static FILES: KindInfo = KindInfo {
+    label: "files",
+    noun: "file",
+    folders: &[""],
+    extensions: &[],
+    named_by_file: true,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_from_scene),
+    old_list: None,
+};
+
+/// TEMPORARY. A file named by a path before ADR 0114: that path from the
+/// scene's directory, then from the one above.
+fn old_from_scene(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_two_levels(scene_dir)
+        .into_iter()
+        .map(|dir| dir.join(name))
+        .find(|p| vfs::exists(p))
+}
+
+static PARTICLE_TEXTURES: KindInfo = KindInfo {
+    label: "particle-textures",
+    noun: "particle texture",
+    folders: &["particles", ""],
+    extensions: &[],
+    named_by_file: true,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_particle_textures),
+    old_list: None,
+};
+
+static SCENES: KindInfo = KindInfo {
+    label: "scenes",
+    noun: "scene",
+    folders: &[""],
+    extensions: &[],
+    named_by_file: true,
+    deep: false,
+    named_inside: None,
+    old_rule: Some(old_scenes),
+    old_list: None,
+};
+
+/// TEMPORARY. A particle texture before ADR 0114: in the one `particles/`
+/// effects were read from (beside the scene, else one level up), then
+/// beside the scene, then one level up
+/// (`flint_particles::texture_search_dirs` as it was).
+fn old_particle_textures(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = old_first_dir(scene_dir, "particles").into_iter().collect();
+    dirs.extend(old_two_levels(scene_dir));
+    dirs.into_iter()
+        .map(|dir| dir.join(name))
+        .find(|p| vfs::exists(p))
+}
+
+/// TEMPORARY. A transition's target before ADR 0114: the path as written,
+/// which is from the working directory, if that exists; then from the
+/// scene's directory; then from the one above (`resolve_scene_path` as it
+/// was). The one old search that looked at the working directory.
+fn old_scenes(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let as_written = PathBuf::from(name);
+    if vfs::exists(&as_written) {
+        return Some(as_written);
+    }
+    old_from_scene(name, scene_dir)
+}
+
+/// A procgen spec's own name: `[meta] name`, which is what a scene's
+/// `model.asset` or `texture` asks for.
+fn spec_name(text: &str) -> Option<String> {
+    let doc = text.parse::<toml::Table>().ok()?;
+    Some(doc.get("meta")?.get("name")?.as_str()?.to_string())
+}
+
+/// TEMPORARY. The first of `<folder>/` beside the scene or one level up
+/// that is a directory: several kinds read that one folder and no other.
+fn old_first_dir(scene_dir: &Path, folder: &str) -> Option<PathBuf> {
+    let local = scene_dir.join(folder);
+    if vfs::is_dir(&local) {
+        return Some(local);
+    }
+    let up = scene_dir.parent()?.join(folder);
+    vfs::is_dir(&up).then_some(up)
+}
+
+/// TEMPORARY. Scripts before ADR 0114: `scripts/` beside the scene if that
+/// directory exists, else `scripts/` one level up if that exists, and only
+/// that one directory, so a `scripts/` beside a scene hid the project's
+/// (`flint_script::sync::load_scripts_from_scene` as it was). An `import`
+/// was `lib/<module>.rhai` in the same one directory.
+fn old_scripts(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    let file = old_first_dir(scene_dir, "scripts")?.join(name);
+    vfs::is_file(&file).then_some(file)
+}
+
+/// TEMPORARY. Specs before ADR 0114, most wanted first: `models/` beside
+/// the scene, `specs/` beside it, `specs/` one level up, each with its
+/// subfolders; of two specs of one name in a folder the one read later won
+/// (`spec_dirs` and `ProcGenResolver::discover_and_index` as they were:
+/// the parent was read first and overwritten by what was nearer).
+fn old_spec_list(scene_dir: &Path) -> Vec<PathBuf> {
+    fn visit(dir: &Path, out: &mut Vec<PathBuf>) {
+        for path in vfs::read_dir(dir).unwrap_or_default() {
+            if vfs::is_dir(&path) {
+                visit(&path, out);
+            } else if SPECS.name_of(&path).is_some() {
+                out.push(path);
+            }
+        }
+    }
+    let mut dirs = vec![scene_dir.join("models"), scene_dir.join("specs")];
+    dirs.extend(scene_dir.parent().map(|p| p.join("specs")));
+    let mut out = Vec::new();
+    for dir in dirs {
+        let mut files = Vec::new();
+        visit(&dir, &mut files);
+        files.reverse();
+        out.extend(files);
+    }
+    out
+}
+
+fn old_specs(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_spec_list(scene_dir)
+        .into_iter()
+        .find(|file| SPECS.name_at(file).as_deref() == Some(name))
+}
+
+/// TEMPORARY. Prefabs before ADR 0114: `prefabs/<name>.prefab.toml` beside
+/// the scene, then one level up (`resolve_prefab_path` as it was).
+fn old_prefabs(name: &str, scene_dir: &Path) -> Option<PathBuf> {
+    old_two_levels(scene_dir)
+        .into_iter()
+        .map(|dir| dir.join("prefabs").join(format!("{name}.prefab.toml")))
+        .find(|p| vfs::exists(p))
+}
 
 /// TEMPORARY (see [`KindInfo::old_rule`]). Particles before ADR 0114:
 /// `particles/` beside the scene if that directory exists, else `particles/`
@@ -367,6 +620,13 @@ impl AssetKind {
         AssetKind::SpriteAnimations,
         AssetKind::Sequences,
         AssetKind::Audio,
+        AssetKind::Scripts,
+        AssetKind::Specs,
+        AssetKind::Prefabs,
+        AssetKind::WoozePresets,
+        AssetKind::Files,
+        AssetKind::ParticleTextures,
+        AssetKind::Scenes,
     ];
 
     pub fn info(self) -> &'static KindInfo {
@@ -379,6 +639,13 @@ impl AssetKind {
             AssetKind::SpriteAnimations => &SPRITE_ANIMATIONS,
             AssetKind::Sequences => &SEQUENCES,
             AssetKind::Audio => &AUDIO,
+            AssetKind::Scripts => &SCRIPTS,
+            AssetKind::Specs => &SPECS,
+            AssetKind::Prefabs => &PREFABS,
+            AssetKind::WoozePresets => &WOOZE_PRESETS,
+            AssetKind::Files => &FILES,
+            AssetKind::ParticleTextures => &PARTICLE_TEXTURES,
+            AssetKind::Scenes => &SCENES,
         }
     }
 
@@ -439,6 +706,20 @@ impl KindInfo {
             .find_map(|e| file_name.strip_suffix(e))
             .filter(|stem| !stem.is_empty())?;
         Some(if self.named_by_file { file_name } else { stem }.to_string())
+    }
+
+    /// A file's asset name wherever the kind keeps it: the one written in
+    /// the file for a kind [named inside](Self::named_inside), else
+    /// [`name_of`](Self::name_of). `None` for a file of another kind, or
+    /// one that states no name.
+    pub fn name_at(&self, file: &Path) -> Option<String> {
+        match self.named_inside {
+            Some(read) => {
+                self.name_of(file)?;
+                read(&vfs::read_to_string(file).ok()?)
+            }
+            None => self.name_of(file),
+        }
     }
 }
 
@@ -527,8 +808,9 @@ impl OrderChange {
 
     /// Warn about it, once a process for each distinct change. Through
     /// `tracing`, which every host sends to stderr or the browser console:
-    /// never stdout, which `flint render --report json` owns.
-    fn log(&self) {
+    /// never stdout, which `flint render --report json` owns. For a loader
+    /// that works from [`Project::explain`], which logs nothing itself.
+    pub fn log(&self) {
         if self.first_time() {
             tracing::warn!("{self}");
         }
@@ -586,12 +868,28 @@ impl Project {
     pub fn explain(&self, kind: AssetKind, name: &str, scene_dir: &Path) -> Resolution {
         let mut tried = Vec::new();
         let mut found = None;
-        for path in self.candidates(kind, name, scene_dir) {
-            if vfs::is_file(&path) {
-                found = Some(path);
-                break;
+        if kind.info().named_inside.is_some() && as_written(name) == Written::Name {
+            // Found by the name its file states: the nearest visible file
+            // that states this one. What was tried is the folders read
+            // before it, or all of them.
+            found = self
+                .visible(kind, scene_dir)
+                .into_iter()
+                .find(|listed| listed.name == name)
+                .map(|listed| listed.path);
+            tried = self.places(kind, scene_dir, false);
+            if let Some(found) = &found {
+                let before = tried.iter().position(|dir| found.starts_with(dir));
+                tried.truncate(before.unwrap_or(0));
             }
-            tried.push(path);
+        } else {
+            for path in self.candidates(kind, name, scene_dir) {
+                if vfs::is_file(&path) {
+                    found = Some(path);
+                    break;
+                }
+                tried.push(path);
+            }
         }
         let order_change = order_change(kind, name, scene_dir, found.as_deref());
         Resolution {
@@ -604,7 +902,9 @@ impl Project {
     }
 
     /// Every path [`explain`](Self::explain) would try for `name`, in order
-    /// and each once: the as-written step, then the walk.
+    /// and each once: the as-written step, then the walk. (A kind named
+    /// inside its files is not found by path: `explain` reads the folders
+    /// of [`search_dirs`](Self::search_dirs) for it instead.)
     pub fn candidates(&self, kind: AssetKind, name: &str, scene_dir: &Path) -> Vec<PathBuf> {
         let names = kind.info().file_names(name);
         let written = as_written(name);
@@ -640,9 +940,10 @@ impl Project {
     /// Every file of `kind` a scene in `scene_dir` can see, by the same
     /// rule: a nearer file hides a farther one of the same name. Nearest
     /// first, and by name within a directory. Only files directly in a
-    /// kind's named folders are listed: not those in subfolders, and never
-    /// the walk's own directories (a folder of `""`), which hold whatever
-    /// else is beside a scene.
+    /// kind's named folders are listed (and in their subfolders for a
+    /// [deep](KindInfo::deep) kind, a folder's own files before its
+    /// subfolders'), never the walk's own directories (a folder of `""`),
+    /// which hold whatever else is beside a scene.
     pub fn list(&self, kind: AssetKind, scene_dir: &Path) -> Vec<Listed> {
         let (out, changes) = self.listing(kind, scene_dir);
         for change in changes {
@@ -657,27 +958,37 @@ impl Project {
         self.listing(kind, scene_dir).1
     }
 
-    fn listing(&self, kind: AssetKind, scene_dir: &Path) -> (Vec<Listed>, Vec<OrderChange>) {
+    /// [`list`](Self::list) alone, with nothing compared or logged.
+    fn visible(&self, kind: AssetKind, scene_dir: &Path) -> Vec<Listed> {
         let info = kind.info();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        let mut changes = Vec::new();
         for dir in self.places(kind, scene_dir, false) {
-            let Ok(mut entries) = vfs::read_dir(&dir) else {
-                continue;
-            };
-            entries.sort();
-            for path in entries {
-                let Some(name) = info.name_of(&path) else {
+            let mut files = Vec::new();
+            files_under(&dir, "", info.deep, &mut files);
+            for (subfolder, path) in files {
+                let name = match info.named_inside {
+                    Some(_) => info.name_at(&path),
+                    None => info.name_of(&path).map(|n| format!("{subfolder}{n}")),
+                };
+                let Some(name) = name else {
                     continue;
                 };
-                if !seen.insert(name.clone()) {
-                    continue;
+                if seen.insert(name.clone()) {
+                    out.push(Listed { name, path });
                 }
-                if info.old_list.is_none() {
-                    changes.extend(order_change(kind, &name, scene_dir, Some(&path)));
-                }
-                out.push(Listed { name, path });
+            }
+        }
+        out
+    }
+
+    fn listing(&self, kind: AssetKind, scene_dir: &Path) -> (Vec<Listed>, Vec<OrderChange>) {
+        let info = kind.info();
+        let out = self.visible(kind, scene_dir);
+        let mut changes = Vec::new();
+        if info.old_list.is_none() {
+            for Listed { name, path } in &out {
+                changes.extend(order_change(kind, name, scene_dir, Some(path)));
             }
         }
         // A kind loaded as a whole: compare the two lists, which also sees
@@ -685,7 +996,7 @@ impl Project {
         if let Some(old_list) = info.old_list {
             let mut old_seen = HashSet::new();
             for old in old_list(scene_dir) {
-                let Some(name) = info.name_of(&old) else {
+                let Some(name) = info.name_at(&old) else {
                     continue;
                 };
                 if !old_seen.insert(name.clone()) {
@@ -800,6 +1111,19 @@ impl Project {
         (out, root)
     }
 
+    /// The file a scene names by a path of its own ([`AssetKind::Files`]: a
+    /// heightmap, a skybox, a spline), for a loader that carries on: the
+    /// file found, or a warning that says `what` was asked for and lists
+    /// every path tried, and the path beside the scene for the loader's own
+    /// error to name.
+    pub fn file_or_beside(&self, what: &str, name: &str, scene_dir: &Path) -> PathBuf {
+        self.resolve(AssetKind::Files, name, scene_dir)
+            .unwrap_or_else(|not_found| {
+                tracing::warn!("{what}: {not_found}");
+                scene_dir.join(name)
+            })
+    }
+
     /// The project a scene belongs to, for a loader that has to carry on
     /// whatever the manifest says: as [`for_path`](Self::for_path), and when
     /// the manifest can't be read, a warning and the project without it.
@@ -842,6 +1166,28 @@ fn as_written(name: &str) -> Written {
         Some(Component::CurDir | Component::ParentDir) => Written::FromScene,
         Some(Component::Prefix(_)) => Written::Absolute,
         _ => Written::Name,
+    }
+}
+
+/// The files in `dir` by name, each with the subfolder it is in (`""`, or
+/// `lib/`); with `deep`, then those of each subfolder, by name.
+fn files_under(dir: &Path, subfolder: &str, deep: bool, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(mut entries) = vfs::read_dir(dir) else {
+        return;
+    };
+    entries.sort();
+    let mut folders = Vec::new();
+    for path in entries {
+        if deep && vfs::is_dir(&path) {
+            folders.push(path);
+        } else {
+            out.push((subfolder.to_string(), path));
+        }
+    }
+    for folder in folders {
+        if let Some(name) = folder.file_name().and_then(|n| n.to_str()) {
+            files_under(&folder, &format!("{subfolder}{name}/"), deep, out);
+        }
     }
 }
 

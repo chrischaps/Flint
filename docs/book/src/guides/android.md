@@ -44,7 +44,9 @@ cd android
 ./gradlew assembleDebug -PgameDir=/path/to/your/game
 ```
 
-The `-PgameDir` parameter points to your game project directory (the one containing scene files, schemas, scripts, etc.).
+The `-PgameDir` parameter points to your game project directory (the one containing scene files, schemas, scripts, etc.). Without it, both the script and Gradle take the directory above the engine, the layout a game with the engine at `engine/` has.
+
+On Windows, `scripts\android-build.bat` runs the same script in Git for Windows' bash; there is one implementation. Without adb on PATH the script builds the APK and prints its path instead of installing it.
 
 ### What the Build Does
 

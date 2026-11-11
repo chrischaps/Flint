@@ -50,6 +50,26 @@ const NAMED: &[(AssetKind, &str, &str)] = &[
     (AssetKind::Audio, "audio/hit.ogg", "audio/hit.ogg"),
     (AssetKind::Audio, "hit.ogg", "audio/hit.ogg"),
     (AssetKind::Audio, "music/theme.flac", "music/theme.flac"),
+    (AssetKind::Scripts, "hud.rhai", "scripts/hud.rhai"),
+    (AssetKind::Scripts, "hud", "scripts/hud.rhai"),
+    (AssetKind::Scripts, "ui/menu.rhai", "scripts/ui/menu.rhai"),
+    // What `import "util"` asks for.
+    (AssetKind::Scripts, "lib/util.rhai", "scripts/lib/util.rhai"),
+    (AssetKind::Prefabs, "lamp", "prefabs/lamp.prefab.toml"),
+    (AssetKind::WoozePresets, "misty", "wooze/misty.wooze.toml"),
+    (AssetKind::Files, "config/input.toml", "config/input.toml"),
+    (AssetKind::Files, "terrain/height.png", "terrain/height.png"),
+    (
+        AssetKind::ParticleTextures,
+        "spark.png",
+        "particles/spark.png",
+    ),
+    (AssetKind::ParticleTextures, "fx/smoke.png", "fx/smoke.png"),
+    (
+        AssetKind::Scenes,
+        "levels/two.scene.toml",
+        "levels/two.scene.toml",
+    ),
 ];
 
 #[test]
@@ -94,8 +114,9 @@ fn every_kind_is_found_in_the_mounted_engine_last() {
                 assert_eq!(r.found, Some(PathBuf::from(&in_engine)), "{kind} {name}");
                 // The project's own places were tried before the engine's.
                 assert!(r.tried[0].starts_with("game/scenes"), "{:?}", r.tried);
-                assert!(r.tried.iter().any(|t| t.parent() == Some(Path::new("game"))
-                    || t.parent().and_then(Path::parent) == Some(Path::new("game"))));
+                assert!(r.tried.iter().any(|t| t.starts_with("game")
+                    && !t.starts_with("game/scenes")
+                    && !t.starts_with("game/engine")));
             },
         );
     }
@@ -393,7 +414,11 @@ fn every_kinds_order_change_fires_when_its_old_search_reached_outside_the_projec
     for &(kind, name, file) in NAMED {
         // `hit.ogg` was only ever found as a path from the scene, never
         // in `audio/`: the one name here the old searches could not find.
-        let old_found_it = !matches!((kind, name), (AssetKind::Audio, "hit.ogg"));
+        // And a script was only ever found by its whole file name.
+        let old_found_it = !matches!(
+            (kind, name),
+            (AssetKind::Audio, "hit.ogg") | (AssetKind::Scripts, "hud")
+        );
         let r = above_the_root(kind, name, file);
         assert_eq!(r.found, None, "{kind} {name}");
         match r.order_change {
@@ -660,7 +685,417 @@ fn file_names_and_listed_names_per_kind() {
         "sprite-animations",
         "sequences",
         "audio",
+        "scripts",
+        "specs",
+        "prefabs",
+        "wooze",
+        "files",
+        "particle-textures",
+        "scenes",
     ] {
         assert!(AssetKind::from_label(label).is_some(), "{label}");
     }
+}
+
+// ── Scripts ──────────────────────────────────────────────────────────────
+
+#[test]
+fn a_scripts_folder_beside_the_scene_no_longer_hides_the_projects() {
+    // Before, the first `scripts/` that existed was the only one read: with
+    // one beside the scene, `hud.rhai` in the project's was "File not found".
+    with_files(
+        &[
+            "game/flint.toml",
+            "game/scripts/hud.rhai",
+            "game/scripts/lib/util.rhai",
+            "game/scripts/shared.rhai",
+            "game/scenes/scripts/local.rhai",
+            "game/scenes/scripts/shared.rhai",
+            "game/scenes/a.scene.toml",
+        ],
+        || {
+            let p = project("game/scenes/a.scene.toml");
+            let dir = Path::new("game/scenes");
+            let k = AssetKind::Scripts;
+            for (name, file) in [
+                ("hud.rhai", "game/scripts/hud.rhai"),
+                ("lib/util.rhai", "game/scripts/lib/util.rhai"),
+                ("local.rhai", "game/scenes/scripts/local.rhai"),
+                // Of two of one name the nearer wins, as it did.
+                ("shared.rhai", "game/scenes/scripts/shared.rhai"),
+            ] {
+                let r = p.explain(k, name, dir);
+                assert_eq!(r.found, Some(PathBuf::from(file)), "{name}");
+                // Found where nothing was, or the same file as before:
+                // neither is a change of order.
+                assert_eq!(r.order_change, None, "{name}");
+            }
+            // The listing goes into subfolders, each file under the name a
+            // scene (or an import) uses for it.
+            let names: Vec<String> = p.list(k, dir).into_iter().map(|l| l.name).collect();
+            assert_eq!(
+                names,
+                ["local.rhai", "shared.rhai", "hud.rhai", "lib/util.rhai"]
+            );
+            assert!(p.list_order_changes(k, dir).is_empty());
+        },
+    );
+}
+
+#[test]
+fn the_script_order_changed_only_where_the_old_folder_is_outside_the_project() {
+    // A scene at the project's root whose scripts sat one level up, outside
+    // it: the old search read that folder, the one rule reads the engine's.
+    with_files(
+        &[
+            "work/scripts/hud.rhai",
+            "work/game/flint.toml",
+            "work/game/engine/scripts/hud.rhai",
+            "work/game/a.scene.toml",
+        ],
+        || {
+            let p = project("work/game/a.scene.toml");
+            let r = p.explain(AssetKind::Scripts, "hud.rhai", Path::new("work/game"));
+            let change = r
+                .order_change
+                .expect("the old folder is outside the project");
+            assert_eq!(change.old, Path::new("work/scripts/hud.rhai"));
+            assert_eq!(
+                change.new.as_deref(),
+                Some(Path::new("work/game/engine/scripts/hud.rhai"))
+            );
+            let text = change.to_string();
+            assert!(text.contains("work/scripts/hud.rhai"), "{text}");
+            assert!(text.contains("work/game/engine/scripts/hud.rhai"), "{text}");
+        },
+    );
+}
+
+// ── Procgen specs: found by the name inside ──────────────────────────────
+
+/// Run `f` over a memory source holding `files` with their text.
+fn with_texts<R>(files: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+    let mut source = MemorySource::new();
+    for (path, text) in files {
+        source.insert(path, *text);
+    }
+    vfs::scoped(Arc::new(source), f)
+}
+
+const OAK: &str = "generator = \"mock\"\n[meta]\nname = \"oak_tree\"\n";
+const ROCK: &str = "[meta]\nname = \"rock\"\n";
+const PEBBLE: &str = "[meta]\nname = \"pebble\"\n";
+
+#[test]
+fn a_spec_is_found_by_the_name_inside_it_from_two_folders_down() {
+    with_texts(
+        &[
+            ("game/flint.toml", ""),
+            // Its file is called something else, and sits in a subfolder.
+            ("game/specs/trees/big_oak.procgen.toml", OAK),
+            ("game/models/rock.procgen.toml", ROCK),
+            ("game/specs/broken.procgen.toml", "not toml ["),
+            ("game/specs/notes.txt", OAK),
+            ("game/engine/specs/pebble.procgen.toml", PEBBLE),
+            ("game/scenes/act1/cave/a.scene.toml", ""),
+        ],
+        || {
+            let p = project("game/scenes/act1/cave/a.scene.toml");
+            let dir = Path::new("game/scenes/act1/cave");
+            let k = AssetKind::Specs;
+            assert_eq!(
+                p.resolve(k, "oak_tree", dir),
+                Ok(PathBuf::from("game/specs/trees/big_oak.procgen.toml"))
+            );
+            assert_eq!(
+                p.resolve(k, "rock", dir),
+                Ok(PathBuf::from("game/models/rock.procgen.toml"))
+            );
+            assert_eq!(
+                p.resolve(k, "pebble", dir),
+                Ok(PathBuf::from("game/engine/specs/pebble.procgen.toml"))
+            );
+            // Not by file name, and a file that states no name is not one.
+            assert!(p.resolve(k, "big_oak", dir).is_err());
+            let names: Vec<String> = p.list(k, dir).into_iter().map(|l| l.name).collect();
+            assert_eq!(names, ["oak_tree", "rock", "pebble"]);
+            assert!(p.list_order_changes(k, dir).is_empty());
+
+            // Not found: every folder read, in order, each on its own line.
+            let err = p.resolve(k, "birch", dir).unwrap_err();
+            let tried: Vec<String> = err.tried.iter().map(|t| shown(t)).collect();
+            assert_eq!(
+                tried,
+                [
+                    "game/scenes/act1/cave/specs",
+                    "game/scenes/act1/cave/models",
+                    "game/scenes/act1/specs",
+                    "game/scenes/act1/models",
+                    "game/scenes/specs",
+                    "game/scenes/models",
+                    "game/specs",
+                    "game/models",
+                    "game/engine/specs",
+                    "game/engine/models",
+                ]
+            );
+            assert!(err
+                .to_string()
+                .starts_with("procgen spec 'birch' not found. Tried:"));
+            // Found: the folders read before the one that had it.
+            let r = p.explain(k, "rock", dir);
+            assert_eq!(r.tried.len(), 7);
+        },
+    );
+}
+
+#[test]
+fn a_spec_beside_the_scene_beats_the_games_under_both_rules() {
+    // The old search read the parent's specs/ first and let the scene's
+    // overwrite them: the scene's won then, and wins now. No change.
+    with_texts(
+        &[
+            ("game/flint.toml", ""),
+            ("game/specs/oak.procgen.toml", OAK),
+            ("game/levels/specs/my_oak.procgen.toml", OAK),
+            ("game/levels/a.scene.toml", ""),
+        ],
+        || {
+            let p = project("game/levels/a.scene.toml");
+            let dir = Path::new("game/levels");
+            let r = p.explain(AssetKind::Specs, "oak_tree", dir);
+            assert_eq!(
+                r.found,
+                Some(PathBuf::from("game/levels/specs/my_oak.procgen.toml"))
+            );
+            assert_eq!(r.order_change, None);
+            assert!(p.list_order_changes(AssetKind::Specs, dir).is_empty());
+        },
+    );
+}
+
+#[test]
+fn the_spec_order_changed_where_models_met_specs_beside_the_scene() {
+    // Beside the scene, the old search read specs/ then models/, the later
+    // overwriting: models/ won. The one rule reads a kind's folders in the
+    // order it names them, specs/ first.
+    with_texts(
+        &[
+            ("game/flint.toml", ""),
+            ("game/levels/specs/oak.procgen.toml", OAK),
+            ("game/levels/models/oak.procgen.toml", OAK),
+            ("game/levels/a.scene.toml", ""),
+        ],
+        || {
+            let p = project("game/levels/a.scene.toml");
+            let dir = Path::new("game/levels");
+            let r = p.explain(AssetKind::Specs, "oak_tree", dir);
+            let new = PathBuf::from("game/levels/specs/oak.procgen.toml");
+            assert_eq!(r.found, Some(new.clone()));
+            let change = r.order_change.expect("models/ used to win");
+            assert_eq!(change.old, Path::new("game/levels/models/oak.procgen.toml"));
+            assert_eq!(change.new, Some(new));
+            let text = change.to_string();
+            assert!(text.contains("procgen spec 'oak_tree'"), "{text}");
+            assert!(
+                text.contains("game/levels/models/oak.procgen.toml"),
+                "{text}"
+            );
+            assert!(
+                text.contains("game/levels/specs/oak.procgen.toml"),
+                "{text}"
+            );
+            // The loader lists; the list says the same, once.
+            let listed = p.list_order_changes(AssetKind::Specs, dir);
+            assert_eq!(listed, [change]);
+        },
+    );
+}
+
+#[test]
+fn the_spec_order_changed_where_two_files_in_a_folder_state_one_name() {
+    // The old index kept the one read later; the one rule keeps the first
+    // by file name.
+    with_texts(
+        &[
+            ("game/flint.toml", ""),
+            ("game/specs/a_oak.procgen.toml", OAK),
+            ("game/specs/b_oak.procgen.toml", OAK),
+            ("game/levels/a.scene.toml", ""),
+        ],
+        || {
+            let p = project("game/levels/a.scene.toml");
+            let r = p.explain(AssetKind::Specs, "oak_tree", Path::new("game/levels"));
+            assert_eq!(
+                r.found,
+                Some(PathBuf::from("game/specs/a_oak.procgen.toml"))
+            );
+            let change = r.order_change.expect("the later file used to win");
+            assert_eq!(change.old, Path::new("game/specs/b_oak.procgen.toml"));
+        },
+    );
+}
+
+#[test]
+fn a_spec_outside_the_project_is_no_longer_read() {
+    with_texts(
+        &[
+            ("work/specs/oak.procgen.toml", OAK),
+            ("work/game/flint.toml", ""),
+            ("work/game/a.scene.toml", ""),
+        ],
+        || {
+            let p = project("work/game/a.scene.toml");
+            let dir = Path::new("work/game");
+            let r = p.explain(AssetKind::Specs, "oak_tree", dir);
+            assert_eq!(r.found, None);
+            let change = r.order_change.expect("the old search read it");
+            assert_eq!(change.old, Path::new("work/specs/oak.procgen.toml"));
+            assert_eq!(change.new, None);
+            assert_eq!(p.list_order_changes(AssetKind::Specs, dir), [change]);
+        },
+    );
+}
+
+// ── Prefabs ──────────────────────────────────────────────────────────────
+
+#[test]
+fn a_prefab_three_levels_up_is_new_and_not_a_change_of_order() {
+    with_files(
+        &[
+            "game/flint.toml",
+            "game/prefabs/lamp.prefab.toml",
+            "game/scenes/act1/cave/a.scene.toml",
+        ],
+        || {
+            let p = project("game/scenes/act1/cave/a.scene.toml");
+            let dir = Path::new("game/scenes/act1/cave");
+            let r = p.explain(AssetKind::Prefabs, "lamp", dir);
+            assert_eq!(
+                r.found,
+                Some(PathBuf::from("game/prefabs/lamp.prefab.toml"))
+            );
+            assert_eq!(r.order_change, None);
+            assert_eq!(r.tried.len(), 3);
+        },
+    );
+}
+
+// ── Path-named files, particle textures, transition targets ──────────────
+
+#[test]
+fn a_file_named_by_a_path_is_found_from_each_level_and_says_where_it_looked() {
+    with_files(
+        &[
+            "game/flint.toml",
+            "game/terrain/height.png",
+            "game/scenes/act1/terrain/splat.png",
+            "game/scenes/act1/cave/a.scene.toml",
+        ],
+        || {
+            let p = project("game/scenes/act1/cave/a.scene.toml");
+            let dir = Path::new("game/scenes/act1/cave");
+            assert_eq!(
+                p.file_or_beside("terrain heightmap", "terrain/height.png", dir),
+                Path::new("game/terrain/height.png")
+            );
+            assert_eq!(
+                p.file_or_beside("terrain splat map", "terrain/splat.png", dir),
+                Path::new("game/scenes/act1/terrain/splat.png")
+            );
+            // A miss: the path beside the scene, for the loader's own error;
+            // the warning lists what `resolve` tried.
+            assert_eq!(
+                p.file_or_beside("skybox", "sky.hdr", dir),
+                Path::new("game/scenes/act1/cave/sky.hdr")
+            );
+            let err = p.resolve(AssetKind::Files, "sky.hdr", dir).unwrap_err();
+            let tried: Vec<String> = err.tried.iter().map(|t| shown(t)).collect();
+            assert_eq!(
+                tried,
+                [
+                    "game/scenes/act1/cave/sky.hdr",
+                    "game/scenes/act1/sky.hdr",
+                    "game/scenes/sky.hdr",
+                    "game/sky.hdr",
+                ]
+            );
+        },
+    );
+}
+
+#[test]
+fn the_particle_texture_order_changed_where_particles_a_level_up_met_a_file_beside_the_scene() {
+    // Before: the one particles/ effects came from (here the game's), then
+    // beside the scene. Now: particles/ and the directory itself, level by
+    // level, so the file beside the scene is nearer.
+    with_files(
+        &[
+            "game/flint.toml",
+            "game/particles/spark.png",
+            "game/scenes/spark.png",
+            "game/scenes/a.scene.toml",
+        ],
+        || {
+            let p = project("game/scenes/a.scene.toml");
+            let r = p.explain(
+                AssetKind::ParticleTextures,
+                "spark.png",
+                Path::new("game/scenes"),
+            );
+            assert_eq!(r.found, Some(PathBuf::from("game/scenes/spark.png")));
+            let change = r.order_change.expect("particles/ a level up used to win");
+            assert_eq!(change.old, Path::new("game/particles/spark.png"));
+        },
+    );
+    // With only the one, or with particles/ beside the scene: no change.
+    with_files(
+        &[
+            "game/flint.toml",
+            "game/particles/spark.png",
+            "game/scenes/particles/spark.png",
+            "game/scenes/a.scene.toml",
+        ],
+        || {
+            let p = project("game/scenes/a.scene.toml");
+            let r = p.explain(
+                AssetKind::ParticleTextures,
+                "spark.png",
+                Path::new("game/scenes"),
+            );
+            assert_eq!(
+                r.found,
+                Some(PathBuf::from("game/scenes/particles/spark.png"))
+            );
+            assert_eq!(r.order_change, None);
+        },
+    );
+}
+
+#[test]
+fn a_transition_target_written_from_the_working_directory_is_seen_by_the_old_rule() {
+    // The old search tried the target as written first, which is a path
+    // from the working directory (here, the top of the file source).
+    with_files(
+        &[
+            "levels/two.scene.toml",
+            "game/flint.toml",
+            "game/levels/two.scene.toml",
+            "game/levels/one.scene.toml",
+        ],
+        || {
+            let p = project("game/levels/one.scene.toml");
+            let dir = Path::new("game/levels");
+            // Named from the game's root: the walk finds the game's own,
+            // the old rule found the other one first.
+            let r = p.explain(AssetKind::Scenes, "levels/two.scene.toml", dir);
+            assert_eq!(r.found, Some(PathBuf::from("game/levels/two.scene.toml")));
+            let change = r.order_change.expect("the working directory came first");
+            assert_eq!(change.old, Path::new("levels/two.scene.toml"));
+            // Named beside the current scene: both rules agree.
+            let r = p.explain(AssetKind::Scenes, "two.scene.toml", dir);
+            assert_eq!(r.found, Some(PathBuf::from("game/levels/two.scene.toml")));
+            assert_eq!(r.order_change, None);
+        },
+    );
 }

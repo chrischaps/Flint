@@ -3,9 +3,10 @@
 //! brings them on the web.
 
 use super::*;
-use flint_core::vfs::MemorySource;
+use flint_core::vfs::{self, MemorySource};
 use flint_procgen::{GenerationCost, Generator, OutputKind, ProcGenSpec, SeededRng};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// What the renderer was asked to do, in order.
@@ -129,8 +130,14 @@ fn source(specs: &[(&str, &str)]) -> Arc<MemorySource> {
 fn resolver_for(src: &Arc<MemorySource>) -> ProcGenResolver {
     let mut resolver = ProcGenResolver::new();
     resolver.register_generator(Box::new(Broken));
-    vfs::scoped(src.clone(), || discover_specs(&mut resolver, SCENE));
+    vfs::scoped(src.clone(), || discover(&mut resolver, SCENE));
     resolver
+}
+
+/// `discover_specs` in the project the scene is found in.
+fn discover(resolver: &mut ProcGenResolver, scene: &str) {
+    let project = flint_core::project::Project::for_scene(Path::new(scene));
+    discover_specs(resolver, &project, scene);
 }
 
 /// A world of entities naming `model.asset`s, and one ground naming a texture.
@@ -162,28 +169,42 @@ fn outcomes(results: &[(AssetRequest, Outcome)]) -> Vec<(&str, &Outcome)> {
 }
 
 #[test]
-fn spec_dirs_put_the_scene_after_the_game() {
+fn the_scenes_own_spec_beats_the_games() {
     let mut src = MemorySource::new();
     src.insert("game/specs/a.procgen.toml", spec("shared", "mock"));
     src.insert("game/levels/specs/b.procgen.toml", spec("shared", "broken"));
-    let src = Arc::new(src);
-    let dirs = vfs::scoped(src.clone(), || spec_dirs(SCENE));
-    assert_eq!(
-        dirs,
-        vec![
-            PathBuf::from("game/specs"),
-            PathBuf::from("game/levels/specs")
-        ]
-    );
-    // The scene's own spec wins over the game-wide one of the same name.
+    // The scene's own spec wins over the game-wide one of the same name,
+    // whatever their files are called.
     let mut resolver = ProcGenResolver::new();
     resolver.register_generator(Box::new(Broken));
-    vfs::scoped(src, || discover_specs(&mut resolver, SCENE));
+    vfs::scoped(Arc::new(src), || discover(&mut resolver, SCENE));
     assert!(resolver.check_generator("shared").is_ok());
     assert!(
         resolver.generate("shared").is_err(),
         "the broken one, from beside the scene"
     );
+}
+
+#[test]
+fn a_scene_two_folders_deep_finds_the_projects_specs() {
+    // Before the one resolver a spec was looked for beside the scene and
+    // one level up, so a scene at levels/act1/cave/ saw none of the game's.
+    let mut src = MemorySource::new();
+    src.insert("game/flint.toml", "");
+    src.insert("game/specs/oak.procgen.toml", spec("oak_tree", "mock"));
+    src.insert("game/specs/props/crate.procgen.toml", spec("crate", "mock"));
+    src.insert("game/models/rock.procgen.toml", spec("rock", "mock"));
+    src.insert(
+        "game/engine/specs/pebble.procgen.toml",
+        spec("pebble", "mock"),
+    );
+    let mut resolver = ProcGenResolver::new();
+    vfs::scoped(Arc::new(src), || {
+        discover(&mut resolver, "game/levels/act1/cave/a.scene.toml")
+    });
+    for name in ["oak_tree", "crate", "rock", "pebble"] {
+        assert!(resolver.has_spec(name), "{name}");
+    }
 }
 
 #[test]

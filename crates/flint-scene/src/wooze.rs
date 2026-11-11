@@ -10,6 +10,7 @@ use crate::format::{
     LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef, SceneFile, WoozeDef,
     WoozePreset,
 };
+use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::wooze::{check_knob_named, preset, WoozeField, WoozeSample};
 use flint_schema::{validate_component_data, SchemaRegistry};
@@ -19,24 +20,35 @@ use std::path::{Path, PathBuf};
 /// What a preset file's name ends in: `<name>.wooze.toml`.
 pub const PRESET_SUFFIX: &str = ".wooze.toml";
 
-/// The folder preset files live in, beside a scene or at its game's root.
-const PRESET_DIR: &str = "wooze";
-
-/// The folders a scene's presets can be in, the nearer first: `wooze/` beside it,
-/// for a scene at a game's root, and one level up, for one in `levels/`.
-fn preset_dirs(scene_path: &Path) -> [PathBuf; 2] {
-    let dir = scene_path.parent().unwrap_or_else(|| Path::new(""));
-    [dir.join(PRESET_DIR), dir.join("..").join(PRESET_DIR)]
+/// The directory a scene file is in (`.` for a bare file name).
+fn scene_dir_of(scene_path: &Path) -> &Path {
+    scene_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 /// The preset file named `name` that a scene can see, read. `None` if there's no
 /// such file, and it may yet be a built-in. A file comes before a built-in of its
 /// name, as a game's schemas come before the engine's.
+///
+/// The file is found by the project's one asset search (`AssetKind::WoozePresets`,
+/// ADR 0114): `wooze/<name>.wooze.toml` beside the scene, in each directory above
+/// it up to the project root, then in the engine. The project is the one the scene
+/// file is found in; a host that holds it calls [`read_preset_in`].
 pub fn read_preset(scene_path: &Path, name: &str) -> Option<Result<WoozePreset, String>> {
-    let path = preset_dirs(scene_path)
-        .into_iter()
-        .map(|dir| dir.join(format!("{name}{PRESET_SUFFIX}")))
-        .find(|path| vfs::is_file(path))?;
+    read_preset_in(&Project::for_scene(scene_path), scene_path, name)
+}
+
+/// [`read_preset`] in a project the host already holds.
+pub fn read_preset_in(
+    project: &Project,
+    scene_path: &Path,
+    name: &str,
+) -> Option<Result<WoozePreset, String>> {
+    let path = project
+        .resolve(AssetKind::WoozePresets, name, scene_dir_of(scene_path))
+        .ok()?;
     let parsed = vfs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|text| WoozePreset::parse(&text));
@@ -45,25 +57,53 @@ pub fn read_preset(scene_path: &Path, name: &str) -> Option<Result<WoozePreset, 
 
 /// The preset files a scene can see, by name, in order.
 pub fn list_presets(scene_path: &Path) -> Vec<String> {
-    let mut names: Vec<String> = preset_dirs(scene_path)
-        .iter()
-        .filter(|dir| vfs::is_dir(dir))
-        .filter_map(|dir| vfs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(|path| {
-            let file = path.file_name()?.to_str()?;
-            file.strip_suffix(PRESET_SUFFIX).map(str::to_string)
-        })
+    list_presets_in(&Project::for_scene(scene_path), scene_path)
+}
+
+/// [`list_presets`] in a project the host already holds.
+pub fn list_presets_in(project: &Project, scene_path: &Path) -> Vec<String> {
+    let mut names: Vec<String> = project
+        .list(AssetKind::WoozePresets, scene_dir_of(scene_path))
+        .into_iter()
+        .map(|listed| listed.name)
         .collect();
     names.sort();
-    names.dedup();
     names
 }
 
-/// Save a preset where a scene can name it, in whichever of its folders exists,
-/// or beside the scene if neither does. Returns the file written. Not for the web,
-/// which has no folders to put it in.
+/// Where [`write_preset`] puts a scene's presets: the nearest `wooze/` that
+/// exists, from beside the scene up to the project root (never the mounted
+/// engine's, which a game doesn't write into), or `wooze/` beside the scene when
+/// there is none yet. A file saved there is the one the scene's search finds first
+/// among those that exist.
+pub fn preset_save_dir(project: &Project, scene_path: &Path) -> PathBuf {
+    let scene_dir = scene_dir_of(scene_path);
+    let engine = project.engine_mount();
+    let dirs: Vec<PathBuf> = project
+        .search_dirs(AssetKind::WoozePresets, scene_dir)
+        .into_iter()
+        .filter(|dir| !engine.as_ref().is_some_and(|e| dir.starts_with(e)))
+        .collect();
+    dirs.iter()
+        .find(|dir| vfs::is_dir(dir))
+        .or(dirs.first())
+        .cloned()
+        .unwrap_or_else(|| scene_dir.join("wooze"))
+}
+
+/// Save a preset where a scene can name it: in [`preset_save_dir`]. Returns the
+/// file written. Not for the web, which has no folders to put it in.
 pub fn write_preset(
+    scene_path: &Path,
+    name: &str,
+    preset: &WoozePreset,
+) -> Result<PathBuf, String> {
+    write_preset_in(&Project::for_scene(scene_path), scene_path, name, preset)
+}
+
+/// [`write_preset`] in a project the host already holds.
+pub fn write_preset_in(
+    project: &Project,
     scene_path: &Path,
     name: &str,
     preset: &WoozePreset,
@@ -74,8 +114,7 @@ pub fn write_preset(
             "'{name}' can't name a preset: use letters, digits, '_' and '-'"
         ));
     }
-    let dirs = preset_dirs(scene_path);
-    let dir = dirs.iter().find(|dir| vfs::is_dir(dir)).unwrap_or(&dirs[0]);
+    let dir = &preset_save_dir(project, scene_path);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join(format!("{name}{PRESET_SUFFIX}"));
     std::fs::write(&path, preset.to_toml(name)).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -628,6 +667,39 @@ mod preset_tests {
         write_preset(&scene_path, "misty", &tuned()).unwrap();
         assert!(folder.0.join("wooze/misty.wooze.toml").is_file());
         assert!(!levels.join("wooze").exists());
+        assert_eq!(list_presets(&scene_path), ["misty"]);
+    }
+
+    #[test]
+    fn a_scene_two_folders_deep_finds_and_saves_to_the_projects_presets() {
+        // ADR 0114: before the one resolver a preset was looked for beside
+        // the scene and one level up, and no further.
+        let folder = Folder::new("deep");
+        let deep = folder.0.join("scenes/act1/cave");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(folder.0.join("wooze")).unwrap();
+        std::fs::write(folder.0.join("flint.toml"), "").unwrap();
+        let scene_path = deep.join("grove.scene.toml");
+        std::fs::write(&scene_path, "").unwrap();
+
+        // Saved into the nearest wooze/ that exists: the project's.
+        let saved = write_preset(&scene_path, "misty", &tuned()).unwrap();
+        assert_eq!(saved, folder.0.join("wooze").join("misty.wooze.toml"));
+        assert!(!deep.join("wooze").exists());
+        assert_eq!(list_presets(&scene_path), ["misty"]);
+        assert_eq!(read_preset(&scene_path, "misty").unwrap().unwrap(), tuned());
+
+        // A nearer folder, once there is one, is where the next save goes,
+        // and its file hides the project's of the same name.
+        std::fs::create_dir_all(folder.0.join("scenes/wooze")).unwrap();
+        let mut nearer = tuned();
+        nearer.wooze.step = Some(0.125);
+        let saved = write_preset(&scene_path, "misty", &nearer).unwrap();
+        assert_eq!(
+            saved,
+            folder.0.join("scenes/wooze").join("misty.wooze.toml")
+        );
+        assert_eq!(read_preset(&scene_path, "misty").unwrap().unwrap(), nearer);
         assert_eq!(list_presets(&scene_path), ["misty"]);
     }
 

@@ -169,7 +169,7 @@ Asset emitters can add `[[emitters.forces]]`:
 |---|---|
 | `blend_mode` | `alpha`, `additive`, `premultiplied`, `multiply` |
 | `sort` | `none`, `back_to_front` (correct alpha), `youngest_first`, `oldest_first` — per emitter, using the camera position |
-| `texture` | Sprite image, searched in the nearest `particles/`, the scene dir, its parent, then the other `particles/` folders effects are found in. Empty draws a procedural soft disc |
+| `texture` | Sprite image, by file name: `particles/<name>`, then `<name>` beside the scene, the same beside each directory above it up to the project root, then the engine's ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)). Empty draws a procedural soft disc |
 | `frames_x`, `frames_y`, `animate_frames`, `frame_rate`, `random_start_frame` | Sprite sheets: frames follow lifetime, or run at `frame_rate` fps, optionally from a random start frame |
 | `stretch` | Velocity-aligned billboard stretch in seconds (rain streaks ~0.03) |
 | `soft_distance`, `fade_near`, `fade_far`, `lighting`, `fog` | Parsed and saved now; the soft-particle / fade pass is scheduled with the depth-grab work |

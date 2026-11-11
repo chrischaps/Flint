@@ -6,7 +6,7 @@
 
 use crate::api;
 use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
-use crate::module_resolver::VfsModuleResolver;
+use crate::module_resolver::{ModuleBase, VfsModuleResolver};
 use flint_core::callbacks as cb;
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
@@ -177,7 +177,7 @@ pub struct ScriptEngine {
     pub(crate) scripts: HashMap<EntityId, ScriptInstance>,
     /// Base directory for `import "name"` (`<scripts>/lib`). `None` until a
     /// scene sets it; the resolver then maps `import "x"` to `<lib>/x.rhai`.
-    module_base: Option<std::path::PathBuf>,
+    module_base: Option<ModuleBase>,
     /// Each script's last `on_update`, ms, by source path: kept only while
     /// [`set_update_timing`](Self::set_update_timing) is on (the perf
     /// readout, Flint#120). Scripts sharing a file add up.
@@ -214,16 +214,22 @@ impl ScriptEngine {
     /// Modules are read through the vfs, so `import` resolves on every
     /// target, from the disk or a memory source.
     pub fn set_module_base(&mut self, dir: std::path::PathBuf) {
+        self.set_module_search(ModuleBase::Dir(dir));
+    }
+
+    /// [`Self::set_module_base`] for any [`ModuleBase`]: a scene's is the
+    /// project's one search for `scripts/lib/<name>.rhai` (ADR 0114).
+    pub fn set_module_search(&mut self, base: ModuleBase) {
         self.engine
-            .set_module_resolver(VfsModuleResolver::new(dir.clone()));
-        self.module_base = Some(dir);
+            .set_module_resolver(VfsModuleResolver::over(base.clone()));
+        self.module_base = Some(base);
     }
 
     /// Re-install the module resolver on the same base path, discarding
     /// every cached module (used when a `scripts/lib` file changes).
     pub fn reset_module_cache(&mut self) {
-        if let Some(dir) = self.module_base.clone() {
-            self.set_module_base(dir);
+        if let Some(base) = self.module_base.clone() {
+            self.set_module_search(base);
         }
     }
 
@@ -234,15 +240,15 @@ impl ScriptEngine {
         &mut self,
         compiled: std::collections::HashMap<std::path::PathBuf, Result<AST, String>>,
     ) {
-        if let Some(dir) = self.module_base.clone() {
+        if let Some(base) = self.module_base.clone() {
             self.engine
-                .set_module_resolver(VfsModuleResolver::new(dir).with_compiled(compiled));
+                .set_module_resolver(VfsModuleResolver::over(base).with_compiled(compiled));
         }
     }
 
-    /// Current module base directory, if a scene has set one.
-    pub fn module_base(&self) -> Option<&std::path::Path> {
-        self.module_base.as_deref()
+    /// Where `import` looks, if a scene has set it.
+    pub fn module_base(&self) -> Option<&ModuleBase> {
+        self.module_base.as_ref()
     }
 
     /// The underlying Rhai engine, for registering native functions on top
@@ -1632,7 +1638,7 @@ mod tests {
         let mut sync = ScriptSync::new();
         sync.use_reload_worker();
         sync.set_scripts_dir(dir.clone());
-        engine.set_module_base(sync.lib_dir().unwrap());
+        engine.set_module_search(sync.module_base().unwrap());
         let ast = engine.compile_file(&script).unwrap();
         engine.add_script(id, ast, "greeter.rhai".into());
 
@@ -1686,6 +1692,164 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An entity named `name` with the probe component and a script.
+    fn scripted(world: &mut FlintWorld, name: &str, source: &str) -> flint_core::EntityId {
+        let id = world.spawn(name).unwrap();
+        probe_component(world, id);
+        world
+            .set_component(
+                id,
+                comp::SCRIPT,
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("source".into(), toml::Value::String(source.into()));
+                    m
+                }),
+            )
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn test_a_scripts_folder_beside_the_scene_does_not_hide_the_projects() {
+        // ADR 0114: before the one resolver the first `scripts/` that
+        // existed was the only one read, so a `scripts/` beside a scene hid
+        // every script and module in the project's.
+        use crate::sync::{load_scripts_from_scene, ScriptSync};
+        use flint_core::vfs::{self, MemorySource};
+
+        let mut bundle = MemorySource::new();
+        bundle.insert("game/flint.toml", "");
+        bundle.insert(
+            "game/scripts/greeter.rhai",
+            r#"fn on_init() {
+            import "greet" as greet;
+            set_field(self_entity(), "probe", "coh", greet::value());
+        }"#,
+        );
+        bundle.insert("game/scripts/lib/greet.rhai", "fn value() { 3.0 }");
+        bundle.insert(
+            "game/levels/act1/scripts/local.rhai",
+            r#"fn on_init() { set_field(self_entity(), "probe", "lx", 7.0); }"#,
+        );
+        // Two of one name: the nearer one runs.
+        bundle.insert(
+            "game/scripts/both.rhai",
+            r#"fn on_init() { set_field(self_entity(), "probe", "ty", 1.0); }"#,
+        );
+        bundle.insert(
+            "game/levels/act1/scripts/both.rhai",
+            r#"fn on_init() { set_field(self_entity(), "probe", "ty", 2.0); }"#,
+        );
+        vfs::scoped(Arc::new(bundle), || {
+            let mut engine = ScriptEngine::new();
+            let mut world = FlintWorld::new();
+            let greeter = scripted(&mut world, "greeter", "greeter.rhai");
+            let local = scripted(&mut world, "local", "local.rhai");
+            let both = scripted(&mut world, "both", "both.rhai");
+            let missing = scripted(&mut world, "missing", "nope.rhai");
+
+            // Two folders below the root, with a scripts/ of its own.
+            let scene = "game/levels/act1/cave.scene.toml";
+            let project = flint_core::project::Project::for_scene(std::path::Path::new(scene));
+            let mut sync = ScriptSync::new();
+            load_scripts_from_scene(scene, &project, &mut sync);
+            engine.set_module_search(sync.module_base().unwrap());
+            sync.discover_and_load(&world, &mut engine);
+            assert_eq!(engine.scripts.len(), 3, "all but the missing one load");
+
+            engine.call_inits(&mut world);
+            assert_eq!(probe_float(&world, greeter, "coh"), 3.0, "project's");
+            assert_eq!(probe_float(&world, local, "lx"), 7.0, "the scene's own");
+            assert_eq!(probe_float(&world, both, "ty"), 2.0, "the nearer of two");
+
+            // What isn't anywhere says every place it was looked for.
+            let err = sync
+                .locate_for(
+                    missing,
+                    "nope.rhai",
+                    std::path::Path::new("game/levels/act1"),
+                )
+                .unwrap_err();
+            assert!(
+                err.starts_with("script 'nope.rhai' not found. Tried:"),
+                "{err}"
+            );
+            for tried in [
+                "game/levels/act1/scripts/nope.rhai",
+                "game/levels/scripts/nope.rhai",
+                "game/scripts/nope.rhai",
+            ] {
+                assert!(err.contains(tried), "{tried} in {err}");
+            }
+        });
+    }
+
+    #[test]
+    fn test_hot_reload_takes_a_nearer_script_that_appears_later() {
+        // The poll follows the resolver's search: a script loaded from the
+        // project's scripts/ is replaced by one of the same name written
+        // beside the scene afterwards, and a module likewise.
+        use crate::sync::{load_scripts_from_scene, ScriptSync};
+        let root = std::env::temp_dir().join(format!("flint-reload-nearer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("scripts/lib")).unwrap();
+        std::fs::create_dir_all(root.join("levels")).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        let scene = root.join("levels/a.scene.toml");
+        std::fs::write(&scene, "").unwrap();
+        let body = |field: &str| {
+            format!(
+                r#"fn on_update() {{
+                    import "greet" as greet;
+                    set_field(self_entity(), "probe", "{field}", greet::value());
+                }}"#
+            )
+        };
+        std::fs::write(root.join("scripts/greeter.rhai"), body("coh")).unwrap();
+        std::fs::write(root.join("scripts/lib/greet.rhai"), "fn value() { 1.0 }").unwrap();
+
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = scripted(&mut world, "greeter", "greeter.rhai");
+        let scene = scene.to_string_lossy().into_owned();
+        let project = flint_core::project::Project::for_scene(std::path::Path::new(&scene));
+        assert_eq!(project.found, flint_core::project::Found::Manifest);
+        let mut sync = ScriptSync::new();
+        load_scripts_from_scene(&scene, &project, &mut sync);
+        engine.set_module_search(sync.module_base().unwrap());
+        sync.discover_and_load(&world, &mut engine);
+        assert_eq!(engine.scripts.len(), 1);
+
+        let mut frame = |engine: &mut ScriptEngine, world: &mut FlintWorld| {
+            // One changed script is recompiled a call
+            for _ in 0..3 {
+                sync.check_hot_reload(engine);
+            }
+            engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+            engine.call_updates(world);
+        };
+        frame(&mut engine, &mut world);
+        assert_eq!(probe_float(&world, id, "coh"), 1.0);
+        assert_eq!(probe_float(&world, id, "lx"), -1.0);
+
+        // A script of the same name appears beside the scene: it takes over.
+        std::fs::create_dir_all(root.join("levels/scripts/lib")).unwrap();
+        std::fs::write(root.join("levels/scripts/greeter.rhai"), body("lx")).unwrap();
+        frame(&mut engine, &mut world);
+        assert_eq!(probe_float(&world, id, "lx"), 1.0, "the nearer script runs");
+
+        // And a module of the same name, nearer than the one imported.
+        std::fs::write(
+            root.join("levels/scripts/lib/greet.rhai"),
+            "fn value() { 5.0 }",
+        )
+        .unwrap();
+        frame(&mut engine, &mut world);
+        assert_eq!(probe_float(&world, id, "lx"), 5.0, "the nearer module runs");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn test_script_loads_from_memory_source() {
         // A web build has no disk: the scene's scripts/ folder is found, and
@@ -1720,11 +1884,13 @@ mod tests {
                 )
                 .unwrap();
 
-            // scenes/ and scripts/ are siblings, so this takes the parent
-            // fallback in load_scripts_from_scene.
+            // levels/ and scripts/ are siblings: with no project marker the
+            // search still looks one level above the scene.
             let mut sync = ScriptSync::new();
-            load_scripts_from_scene("game/levels/demo.scene.toml", &mut sync);
-            engine.set_module_base(sync.lib_dir().unwrap());
+            let scene = "game/levels/demo.scene.toml";
+            let project = flint_core::project::Project::for_scene(std::path::Path::new(scene));
+            load_scripts_from_scene(scene, &project, &mut sync);
+            engine.set_module_search(sync.module_base().unwrap());
             sync.discover_and_load(&world, &mut engine);
             assert_eq!(engine.scripts.len(), 1, "the script must load");
 

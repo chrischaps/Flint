@@ -731,13 +731,13 @@ impl ViewerApp {
                 &mut self.particles,
             );
             self.particles.sync.sync_from_world(&state.world);
-            let dirs = flint_particles::texture_search_dirs(project, &state.scene_path);
-            flint_render::load_particle_textures(
+            flint_render::load_scene_particle_textures(
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
                 &self.particles.sync,
-                &dirs,
+                project,
+                scene_dir_of(&state.scene_path),
             );
         }
 
@@ -2177,13 +2177,13 @@ impl ViewerApp {
                             &mut self.particles,
                         );
                         self.particles.sync.sync_from_world(&state.world);
-                        let dirs = flint_particles::texture_search_dirs(project, &state.scene_path);
-                        flint_render::load_particle_textures(
+                        flint_render::load_scene_particle_textures(
                             renderer,
                             &context.device,
                             &context.queue,
                             &self.particles.sync,
-                            &dirs,
+                            project,
+                            scene_dir_of(&state.scene_path),
                         );
 
                         // Re-derive the authored post-process so [post_process]

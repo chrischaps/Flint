@@ -679,17 +679,15 @@ impl PlayerApp {
                 .parent()
                 .unwrap_or_else(|| Path::new("."));
 
-            // Search scene dir first, then parent (game root)
-            let skybox_path = {
-                let p = scene_dir.join(skybox_rel);
-                if vfs::exists(&p) {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join(skybox_rel)
-                } else {
-                    p
-                }
-            };
+            // A path found by the project's one search (`AssetKind::Files`);
+            // a miss is warned about there, with every path tried
+            let skybox_path = self
+                .project
+                .resolve(flint_core::project::AssetKind::Files, skybox_rel, scene_dir)
+                .unwrap_or_else(|not_found| {
+                    tracing::warn!("skybox: {not_found}");
+                    scene_dir.join(skybox_rel)
+                });
 
             if vfs::exists(&skybox_path) {
                 scene_renderer.load_skybox(
@@ -697,8 +695,6 @@ impl PlayerApp {
                     &render_context.queue,
                     &skybox_path,
                 );
-            } else {
-                tracing::warn!("Skybox file not found: {}", skybox_path.display());
             }
         }
 
@@ -774,7 +770,7 @@ impl PlayerApp {
         self.load_particle_textures();
 
         // Initialize scripting (state_scope required so on_init can access persist store)
-        load_scripts_from_world(&self.scene_path, &mut self.script);
+        load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
         self.script.set_current_scene(&self.scene_path);
         {
             let _state_scope = self.script.state_scope(
@@ -891,6 +887,7 @@ impl PlayerApp {
             .context("failed to load built-in input defaults")?;
 
         let mut paths = resolve_input_paths(
+            &self.project,
             Path::new(&self.scene_path),
             self.scene_input_config.as_deref(),
             self.input_config_override.as_deref(),

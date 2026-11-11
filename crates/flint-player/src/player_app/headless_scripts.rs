@@ -87,18 +87,19 @@ pub struct ScriptLook {
 }
 
 impl HeadlessScripts {
-    /// Load the scripts of the scene at `scene_path` from its `scripts/` folder
-    /// and run their `on_init`, as the player does once its models are loaded.
+    /// Load the scripts of the scene at `scene_path`, found in `project` as
+    /// the player finds them, and run their `on_init`, as the player does once its models are loaded.
     /// `screen` is the capture's size, for `screen_width()` and the like.
     pub fn load(
         scene_path: &str,
+        project: &flint_core::project::Project,
         world: &mut FlintWorld,
         timeline: Option<ExpressionTimeline>,
         screen: (f32, f32),
     ) -> Self {
         let mut system = ScriptSystem::new();
         system.make_deterministic(SCRIPT_SEED);
-        system.load_scripts_from_scene(scene_path);
+        system.load_scripts_from_scene(scene_path, project);
         system.set_current_scene(scene_path);
         system.set_screen_size(screen.0, screen.1);
         let mut run = Self {

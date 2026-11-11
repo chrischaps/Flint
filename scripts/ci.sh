@@ -5,7 +5,8 @@
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
 #   scripts/ci.sh --full   also what CI's clippy and wasm jobs run: native
-#                          `cargo clippy --all-targets` and scripts/wasm-check.sh.
+#                          `cargo clippy --all-targets`, the book's crate table
+#                          (tools/arch-analyzer --check-book) and scripts/wasm-check.sh.
 #                          Minutes, and two builds.
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
@@ -25,6 +26,8 @@ fi
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
     cargo clippy --all-targets --keep-going
+    echo "ci: flint-arch-analyzer --check-book"
+    cargo run --locked -q -p flint-arch-analyzer -- --check-book
     echo "ci: scripts/wasm-check.sh"
     bash scripts/wasm-check.sh
 fi

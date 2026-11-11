@@ -299,17 +299,15 @@ fn sweep_v_coords(
     dist.into_iter().map(|d| d / length).collect()
 }
 
-/// Resolve a path written in a scene: next to the scene, then one directory
-/// up (where a game's `splines/`, `textures/` sit beside `scenes/`).
+/// Resolve a path written in a scene by the project's one search
+/// (`AssetKind::Files`, ADR 0114): from the scene's directory, then from each
+/// directory above it up to the project root (where a game's `splines/`,
+/// `textures/` sit), then the engine. A miss is warned about with every path
+/// tried, and the path beside the scene is returned for the loader's error.
 fn resolve_scene_path(scene_dir: &Path, rel: &str) -> std::path::PathBuf {
-    let p = scene_dir.join(rel);
-    if vfs::exists(&p) {
-        p
-    } else if let Some(parent) = scene_dir.parent() {
-        parent.join(rel)
-    } else {
-        p
-    }
+    // The scene's project, found from its folder (`--project` pins it)
+    let project = flint_core::project::Project::for_scene(&scene_dir.join("scene.toml"));
+    project.file_or_beside("spline file", rel, scene_dir)
 }
 
 /// Load a spline mesh's texture into the renderer's cache, with mipmaps, keyed
