@@ -136,7 +136,7 @@ impl PlayerExtension for Pinger {
 
 /// Registers `record(s)` on the app's script engine and attaches `src` to a
 /// new entity. Returns the log `record` appends to.
-fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
+pub(super) fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
     let log = Log::default();
     {
         let log = log.clone();

@@ -341,8 +341,11 @@ position = [0, 0, 0]
 | `quit_game()` | --- | End the run as closing the window does (exit code 0; on the web, back to the page's doorway) |
 | `push_state("paused")` | --- | Push a game state (e.g., pause) |
 | `pop_state()` | --- | Pop to previous game state |
-| `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to `save/persist.toml` 1 s later, on transitions and on exit |
-| `persist_save()` | --- | Write `save/persist.toml` now |
+| `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to the game's save file (`<config>/<id>/saves/default.toml`) 1 s later, on transitions and on exit |
+| `persist_save()` | --- | Write the save file now |
+| `persist_slot(name)` / `persist_slots()` | `bool` / `Array` | Switch to another save slot (saving the one held first); list the slots saved |
+| `persist_version()` | `i64` | The version of the save loaded; `on_persist_migrate(from)` runs when it is below `[project] save_version` |
+| `persist_corrupt()` | `Map`/`()` | Set when the save file didn't parse and was kept as `.bak` |
 | `load_data(path)` | `Map`/`()` | Read a TOML data file relative to the project root (cached; `load_data(path, true)` re-reads) |
 | `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
 | `ui_set_text(id, text)` | --- | Set element text content |

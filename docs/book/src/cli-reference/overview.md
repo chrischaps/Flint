@@ -88,6 +88,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--always-on-top` | Keep the window above other windows |
 | `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
+| `--save-dir <dir>` | Keep this run's save data in `<dir>`, as `<dir>/<slot>.toml`, and read no other save. Without it: `<config>/<game id>/saves/` under the OS user directory, or the project's `save/` for a game with no id (see [Where saves live](../concepts/scripting.md#where-saves-live)). Also on `flint-player` |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |

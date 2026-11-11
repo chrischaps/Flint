@@ -70,6 +70,13 @@ pub struct PlayArgs {
     /// reload, and nothing polls the disk. For captures and shipped builds
     #[arg(long)]
     pub no_hot_reload: bool,
+
+    /// Keep this run's save data in DIR, as DIR/<slot>.toml, and read no
+    /// other save (#726). Without it: the OS user directory,
+    /// <config>/<game id>/saves/, or the project's save/ for a game with
+    /// no id
+    #[arg(long, value_name = "DIR")]
+    pub save_dir: Option<std::path::PathBuf>,
 }
 
 pub fn run(mut args: PlayArgs) -> Result<()> {
@@ -150,6 +157,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     );
 
     app.scene_preload_audio = scene_file.scene.preload_audio;
+    app.save_dir = args.save_dir.clone();
     app.window_size = args.window.size();
     app.window_options = args.window.clone();
     app.expression_feed = expression_feed;

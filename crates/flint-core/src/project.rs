@@ -30,6 +30,7 @@
 //! scene = "scenes/main.scene.toml"          # the scene to open by default
 //! input = "config/input.toml"
 //! strict = true                             # an undeclared component field is an error
+//! save_version = 2                          # the version saves are written at
 //! ```
 //!
 //! Every key is optional and so is the table: an empty `flint.toml` is a
@@ -78,7 +79,7 @@ pub use root::guessed_root;
 pub const MANIFEST_FILE: &str = "flint.toml";
 
 /// The keys `[project]` may hold.
-const PROJECT_KEYS: [&str; 5] = ["id", "schemas", "scene", "input", "strict"];
+const PROJECT_KEYS: [&str; 6] = ["id", "schemas", "scene", "input", "strict", "save_version"];
 
 /// Why a directory was taken as the project root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +138,7 @@ pub enum ProjectError {
 
     /// `[project]` holds a key this version doesn't know.
     #[error(
-        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict)",
+        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version)",
         file.display()
     )]
     UnknownKey { file: PathBuf, key: String },
@@ -167,6 +168,10 @@ pub struct Project {
     /// `[project] strict`: a field no schema declares is an error, not a
     /// warning (ADR 0115), as `flint validate --strict` makes it for a run.
     pub strict: bool,
+    /// `[project] save_version`: the version the game's save data is at
+    /// (#726). A save file at a lower one is handed to the scripts'
+    /// `on_persist_migrate(from)`. 0 when the manifest doesn't say.
+    pub save_version: i64,
 }
 
 static OVERRIDE: OnceLock<Project> = OnceLock::new();
@@ -271,6 +276,7 @@ impl Project {
             scene: None,
             input: None,
             strict: false,
+            save_version: 0,
         }
     }
 
@@ -339,6 +345,25 @@ impl Project {
             Some(toml::Value::Boolean(strict)) => self.strict = *strict,
             Some(other) => return Err(wrong("project.strict".into(), "true or false", other)),
         }
+        self.save_version = match table.get("save_version") {
+            None => 0,
+            Some(toml::Value::Integer(v)) if *v >= 0 => *v,
+            Some(toml::Value::Integer(_)) => {
+                return Err(ProjectError::WrongType {
+                    file: file.to_path_buf(),
+                    key: "project.save_version".into(),
+                    expected: "a whole number, 0 or more",
+                    got: "a negative number",
+                })
+            }
+            Some(other) => {
+                return Err(wrong(
+                    "project.save_version".into(),
+                    "a whole number, 0 or more",
+                    other,
+                ))
+            }
+        };
         if let Some(value) = table.get("schemas") {
             let list = value
                 .as_array()
@@ -953,6 +978,66 @@ strict = true
                 assert_eq!(p.id, None);
             },
         );
+    }
+
+    /// #726: the version the game's saves are at.
+    #[test]
+    fn save_version_is_a_whole_number_and_0_when_unsaid() {
+        with_files(
+            &[(
+                "flint.toml",
+                "[project]
+id = \"x\"
+",
+            )],
+            || {
+                assert_eq!(discover(".").unwrap().save_version, 0);
+            },
+        );
+        with_files(
+            &[(
+                "flint.toml",
+                "[project]
+save_version = 3
+",
+            )],
+            || {
+                assert_eq!(discover(".").unwrap().save_version, 3);
+            },
+        );
+        for (text, got) in [
+            (
+                "[project]
+save_version = -1
+",
+                "a negative number",
+            ),
+            (
+                "[project]
+save_version = \"2\"
+",
+                "a string",
+            ),
+            (
+                "[project]
+save_version = 1.5
+",
+                "a float",
+            ),
+        ] {
+            with_files(&[("flint.toml", text)], || {
+                assert_eq!(
+                    discover(".").unwrap_err(),
+                    ProjectError::WrongType {
+                        file: Path::new(".").join("flint.toml"),
+                        key: "project.save_version".into(),
+                        expected: "a whole number, 0 or more",
+                        got,
+                    },
+                    "{text}"
+                );
+            });
+        }
     }
 
     #[test]

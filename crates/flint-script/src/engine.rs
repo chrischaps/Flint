@@ -38,6 +38,7 @@ pub struct ScriptInstance {
     pub has_on_sequence_cue: bool,
     pub has_on_event: bool,
     pub has_on_expression: bool,
+    pub has_on_persist_migrate: bool,
     pub init_called: bool,
     /// The name of the entity the script is on, which decides the order scripts
     /// run in (empty until [`ScriptEngine::name_script`]). Entity ids differ run
@@ -63,6 +64,7 @@ impl ScriptInstance {
         let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         let has_on_event = has_function(&ast, cb::ON_EVENT);
         let has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
+        let has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
 
         Self {
             ast,
@@ -83,6 +85,7 @@ impl ScriptInstance {
             has_on_sequence_cue,
             has_on_event,
             has_on_expression,
+            has_on_persist_migrate,
             init_called: false,
             entity_name: String::new(),
         }
@@ -106,6 +109,7 @@ impl ScriptInstance {
         self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         self.has_on_event = has_function(&ast, cb::ON_EVENT);
         self.has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
+        self.has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -132,6 +136,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_ANIMATION_END, 1),
     (cb::ON_EVENT, 2),
     (cb::ON_EXPRESSION, 1),
+    (cb::ON_PERSIST_MIGRATE, 1),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -760,6 +765,57 @@ impl ScriptEngine {
         c.draw_commands.clear();
         c.clip_stack.clear();
         c.ui_system.clear();
+    }
+
+    /// Hand save data loaded at an older version to the scripts (#726).
+    ///
+    /// When the store in scope holds data loaded at a version lower than
+    /// the game's (`PersistentStore::pending_migration`) and at least one
+    /// loaded script defines `on_persist_migrate(from)`, every such script
+    /// is called with that version, in [`Self::in_order`], and the store is
+    /// then stamped with the game's version. With no such script loaded the
+    /// data stays pending, at its old version, for a later scene's. Does
+    /// nothing outside a state scope.
+    pub fn migrate_persistent_store(&mut self, world: &mut FlintWorld) {
+        let store = crate::lock_or_recover(&self.ctx).persistent_store;
+        if store.is_null() {
+            return;
+        }
+        // SAFETY: the pointer is the state scope's, valid until it drops,
+        // and the context lock is not held across the script calls below.
+        let Some(from) = (unsafe { &*store }).pending_migration() else {
+            return;
+        };
+        let entity_ids = self.in_order(|s| s.has_on_persist_migrate);
+        if entity_ids.is_empty() {
+            return;
+        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            {
+                let mut c = crate::lock_or_recover(&self.ctx);
+                c.current_entity = entity_id;
+            }
+            if let Err(e) = self.engine.call_fn::<()>(
+                &mut script.scope,
+                &script.ast,
+                cb::ON_PERSIST_MIGRATE,
+                (from,),
+            ) {
+                tracing::warn!("on_persist_migrate error ({}): {}", script.source_path, e);
+            }
+        }
+        let store = unsafe { &mut *store };
+        // A script that switched slots mid-migration left another slot's
+        // data pending; that one gets its own call
+        if store.pending_migration() == Some(from) {
+            store.finish_migration();
+            tracing::info!(
+                "persist: save data migrated from version {from} to {}",
+                store.version()
+            );
+        }
     }
 
     /// Call on_scene_exit() for all scripts that define it
@@ -3055,14 +3111,28 @@ mod tests {
                 persist_set("key", 42);
                 let val = persist_get("key");
                 let has = persist_has("key");
+                // #726: slots, version and the corrupt report have answers
+                // with no store too
+                if persist_slot() != "default" { throw "slot"; }
+                if persist_slot("b") { throw "switched with no store"; }
+                if persist_slots().len() != 0 { throw "slots"; }
+                if persist_version() != 0 { throw "version"; }
+                persist_set_version(2);
+                if persist_corrupt() != () { throw "corrupt"; }
+                set_field(self_entity(), "probe", "age", 1.0);
             }
+            fn on_persist_migrate(from) { throw "no store, nothing to migrate"; }
         "#,
             )
             .unwrap();
 
+        probe_component(&mut world, id);
         engine.add_script(id, ast, "test.rhai".into());
-        // Should not panic
+        assert!(engine.scripts[&id].has_on_persist_migrate);
+        // Should not panic, and with no store in scope migrates nothing
+        engine.migrate_persistent_store(&mut world);
         engine.call_inits(&mut world);
+        assert_eq!(probe_float(&world, id, "age"), 1.0, "on_init ran through");
     }
 
     #[test]
