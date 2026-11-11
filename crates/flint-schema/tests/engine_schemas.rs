@@ -12,15 +12,16 @@
 //!   exceptions)
 //! - the engine's set holds none of the examples' room-builder vocabulary,
 //!   which lives in the `schemas/examples` layer
-//! - the scenes in this repository write nothing the `model`, `light`,
-//!   `spline` and `spline_mesh` schemas don't describe, and no example
+//! - the scenes in this repository write nothing the schemas in
+//!   [`CHECKED_AGAINST_SCENES`] don't describe, and no example
 //!   carries a light table that nothing reads
 //!
 //! And the schema files themselves say what the loader reads (#684):
 //!
 //! - every type is written in its one spelling (`f32`, not `float`)
-//! - no file holds a key the loader ignores ([`FIELDS_NOT_LOADED`] names the
-//!   eleven that do, so the hole is visible and can't grow)
+//! - no file holds a key the loader ignores (the eleven that once held
+//!   their fields beside `description` were repaired by #792, and the loader
+//!   now refuses such a file)
 //!
 //! "Read by code" is a search of `crates/*/src` with the test modules cut
 //! off: the constant used as `comp::NAME` / `components::NAME`, or the name
@@ -46,38 +47,9 @@ const NO_SCHEMA: &[(&str, &str)] = &[
 ];
 
 /// Schemas no code outside tests mentions, and why they stay.
-const NO_READER: &[(&str, &str)] = &[(
-    "audio_listener",
-    "nothing reads it: the listener is the camera. The `player` archetype lists it, and its \
-     file declares `active` outside a `fields` table, so the schema has no fields either. \
-     Left for the audio pass of ADR 0115 step 4 (#685) to give a reader or delete",
-)];
-
-/// Engine components whose file writes its fields under `[component.<name>]`
-/// instead of `[component.<name>.fields]`. The loader reads `fields` only,
-/// so each of these loads with NO fields: it is open (nothing in it is
-/// checked: a misspelled `collider.shape` passes) and none of its defaults
-/// is applied at load.
-///
-/// Left as they are on purpose (#684): moving the fields under `fields`
-/// starts applying their defaults into every world, which changes what
-/// readers see (a `rigidbody` with no `mass` gains `mass = 1.0`), and that
-/// is Chris's call with the typed read view (#685). The list is exact:
-/// a file that joins it fails `no_schema_file_holds_a_key_the_loader_ignores`,
-/// and so does one that is repaired and not taken off.
-const FIELDS_NOT_LOADED: &[&str] = &[
-    "audio_listener",
-    "audio_source",
-    "audio_trigger",
-    "character_controller",
-    "collider",
-    "joint",
-    "parallax",
-    "rigidbody",
-    "screen_anchor",
-    "ui_fill",
-    "ui_text",
-];
+/// (`audio_listener` was the last: nothing read it, the listener is the
+/// camera, and #792 deleted it.)
+const NO_READER: &[(&str, &str)] = &[];
 
 /// The examples' room-builder vocabulary (#681): in `schemas/examples`,
 /// never in the engine's set.
@@ -92,9 +64,25 @@ const EXAMPLE_ARCHETYPES: &[&str] = &[
 ];
 const EXAMPLE_COMPONENTS: &[&str] = &["door"];
 
-/// The components written first (#681), checked field by field against
-/// every scene in the repository.
-const CHECKED_AGAINST_SCENES: &[&str] = &["model", "light", "spline", "spline_mesh"];
+/// The components written first (#681) and the ten whose fields once sat
+/// outside `fields` (#792), checked field by field against every scene in
+/// the repository.
+const CHECKED_AGAINST_SCENES: &[&str] = &[
+    "model",
+    "light",
+    "spline",
+    "spline_mesh",
+    "collider",
+    "rigidbody",
+    "character_controller",
+    "audio_source",
+    "audio_trigger",
+    "joint",
+    "parallax",
+    "screen_anchor",
+    "ui_fill",
+    "ui_text",
+];
 
 /// Tables that look like a light and that nothing reads.
 const STALE_LIGHT_TABLES: &[&str] = &["directional_light", "point_light", "spot_light"];
@@ -642,9 +630,10 @@ fn every_type_in_schemas_is_written_in_its_one_spelling() {
 
 /// A key the loader ignores is a check that silently doesn't happen: a
 /// field written beside `description` instead of under `fields`, a
-/// misspelled key of a field. None may be added; the eleven files that
-/// already hold their fields in the wrong table are named, and stay named
-/// until they are repaired.
+/// misspelled key of a field. None is allowed: the eleven files that once
+/// held their fields in the wrong table were repaired by #792, and the
+/// loader now refuses a component key other than `description` and
+/// `fields` outright.
 #[test]
 fn no_schema_file_holds_a_key_the_loader_ignores() {
     let registry = SchemaRegistry::load_from_directories(&[
@@ -661,32 +650,30 @@ fn no_schema_file_holds_a_key_the_loader_ignores() {
                 .push(d.one_line());
         }
     }
-    let unexpected: Vec<String> = ignored
-        .iter()
-        .filter(|(component, _)| !FIELDS_NOT_LOADED.contains(&component.as_str()))
-        .flat_map(|(_, lines)| lines.clone())
-        .collect();
+    let unexpected: Vec<String> = ignored.into_values().flatten().collect();
     assert!(
         unexpected.is_empty(),
         "the loader ignores these keys, so they check nothing and their defaults are never \
          applied:\n  {}",
         unexpected.join("\n  ")
     );
-    let repaired: Vec<&str> = FIELDS_NOT_LOADED
-        .iter()
-        .copied()
-        .filter(|component| !ignored.contains_key(*component))
-        .collect();
-    assert!(
-        repaired.is_empty(),
-        "these load their fields now: take them off FIELDS_NOT_LOADED: {repaired:?}"
-    );
-    // What the hole costs, stated: each of them is open
-    for component in FIELDS_NOT_LOADED {
+    // The eleven #792 repaired (less `audio_listener`, deleted) have fields
+    for component in [
+        "audio_source",
+        "audio_trigger",
+        "character_controller",
+        "collider",
+        "joint",
+        "parallax",
+        "rigidbody",
+        "screen_anchor",
+        "ui_fill",
+        "ui_text",
+    ] {
         let schema = registry
             .get_component(component)
             .unwrap_or_else(|| panic!("no schema for `{component}`"));
-        assert!(schema.is_open(), "`{component}` has fields after all");
+        assert!(!schema.is_open(), "`{component}` loads with no fields");
     }
 }
 

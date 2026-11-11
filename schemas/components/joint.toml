@@ -3,8 +3,12 @@
 # parent is usually kinematic (script-posed) or static. Anchors and axes are in
 # this entity's local frame; every entity on the physics chain must have unit
 # scale. Angles are degrees, distances metres; the engine converts for Rapier.
+# Every default below is the value the reader falls back to (#792).
 [component.joint]
-type = { type = "enum", values = ["hinge", "prismatic", "spherical", "fixed"], default = "hinge", description = "Joint kind: hinge (one rotation axis), prismatic (one slide axis), spherical (ball), fixed (welded)" }
+description = "Rapier impulse joint from this entity's rigidbody to another body"
+
+[component.joint.fields]
+type = { type = "enum", values = ["hinge", "prismatic", "slider", "spherical", "ball", "fixed"], default = "hinge", description = "Joint kind: hinge (one rotation axis), prismatic or slider (one slide axis), spherical or ball (ball joint), fixed (welded)" }
 parent = { type = "string", default = "", description = "Entity name the joint attaches to; empty uses the transform parent" }
 anchor = { type = "vec3", default = [0, 0, 0], description = "Pivot point in this entity's local frame" }
 axis = { type = "vec3", default = [1, 0, 0], description = "Hinge rotation axis or prismatic slide axis, local frame" }

@@ -1,4 +1,9 @@
+# Collision shape on a rigidbody (flint-physics `sync.rs`). Every default
+# below is the value the reader falls back to (#792).
 [component.collider]
+description = "Collision shape attached to the entity's rigidbody"
+
+[component.collider.fields]
 shape = { type = "enum", values = ["box", "sphere", "capsule", "cylinder", "sprite"], default = "box", description = "Collision shape type ('sprite' auto-sizes from sprite component)" }
 size = { type = "vec3", default = [1, 1, 1], description = "Shape dimensions (width/height/depth for box, diameter for sphere/capsule, [diameter, height] for a Y-axis cylinder)" }
 is_sensor = { type = "bool", default = false, description = "Sensor colliders detect overlap but don't create contacts" }

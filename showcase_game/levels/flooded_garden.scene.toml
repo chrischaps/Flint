@@ -60,9 +60,6 @@ height = 1.8
 radius = 0.3
 camera_mode = "first_person"
 
-[entities.player.audio_listener]
-active = true
-
 [entities.player.script]
 source = "footsteps.rhai"
 

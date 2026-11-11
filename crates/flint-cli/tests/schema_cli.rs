@@ -104,7 +104,21 @@ fn list_json_names_every_component_and_archetype() {
             .unwrap_or_else(|| panic!("no `{name}`"))
             .clone()
     };
-    assert_eq!(find("collider")["open"], true);
+    assert_eq!(find("material_overrides")["open"], true);
+    // ...and `collider`, open until #792 moved its fields under `fields`
+    assert_eq!(find("collider")["open"], false);
+    assert_eq!(
+        find("collider")["fields"],
+        serde_json::json!([
+            "friction",
+            "is_sensor",
+            "offset",
+            "restitution",
+            "rotation",
+            "shape",
+            "size"
+        ])
+    );
     assert_eq!(
         find("ik_two_bone")["fields"],
         serde_json::json!(["enabled", "pole", "target", "tip", "weight"])
@@ -424,8 +438,9 @@ fn json_of_failure(out: &Output) -> serde_json::Value {
 
 /// Decision 3 of ADR 0115: an old spelling is warned about in a game's
 /// schema file. The engine's files are inside an engine checkout, which is
-/// how they are told apart: nothing is said about them, though eleven hold
-/// keys the loader ignores.
+/// how they are told apart: nothing is said about them. (A field written
+/// beside `description` is no lint now but a load error, #792, so the
+/// ignored key here is a misspelled key of a field.)
 #[test]
 fn a_games_old_type_spelling_is_a_warning_naming_the_file() {
     let game = Game::new(
@@ -436,7 +451,7 @@ fn a_games_old_type_spelling_is_a_warning_naming_the_file() {
                 "schemas/components/loot.toml",
                 "[component.loot.fields]\ngold = { type = \"integer\", default = 0 }\n\
                  weight = { type = \"float\" }\n\n\
-                 [component.lock]\npicked = { type = \"bool\", default = false }\n",
+                 [component.lock.fields]\npicked = { type = \"bool\", defualt = false }\n",
             ),
             (
                 "scenes/a.scene.toml",
@@ -456,8 +471,8 @@ fn a_games_old_type_spelling_is_a_warning_naming_the_file() {
          spelling of `i32`",
         "schemas/components/loot.toml: warning[old-type-name] loot.weight: `float` is an old \
          spelling of `f32`",
-        "schemas/components/loot.toml: warning[ignored-schema-key] lock.picked: `picked` is \
-         ignored",
+        "schemas/components/loot.toml: warning[ignored-schema-key] lock.picked.defualt: \
+         `defualt` is ignored",
     ] {
         assert!(text.contains(line), "missing `{line}` in:\n{text}");
     }

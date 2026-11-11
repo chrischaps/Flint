@@ -47,9 +47,6 @@ jump_force = 6.0
 height = 1.8
 radius = 0.3
 
-[entities.player.audio_listener]
-enabled = true
-
 
 # ============================================================
 #  WORLD GEOMETRY — floor, walls, ceiling

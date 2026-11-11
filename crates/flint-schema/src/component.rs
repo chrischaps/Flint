@@ -245,6 +245,11 @@ pub struct ComponentSchemaDefinition {
     pub description: Option<String>,
     #[serde(default)]
     pub fields: HashMap<String, FieldSchemaDefinition>,
+    /// Keys beside `description` and `fields`, which the loader refuses
+    /// (#792): eleven engine files once declared their fields here, under
+    /// `[component.x]` instead of `[component.x.fields]`, and loaded empty.
+    #[serde(flatten)]
+    pub stray: std::collections::BTreeMap<String, toml::Value>,
 }
 
 /// The keys a `[component.<name>]` table may hold; any other is ignored by
