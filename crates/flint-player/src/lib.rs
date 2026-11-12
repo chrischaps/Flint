@@ -56,3 +56,17 @@ pub use player_app::web_page::begin as web_begin;
 pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use window_args::WindowArgs;
+
+/// A script system with the player's whole API: flint-script's core and
+/// the modules its optional features own (`living`, `wooze`, `debug`,
+/// `conducted`; #698), declared and not yet enabled. A host enables a
+/// module where the subsystem that owns it runs (`GameCore` does, for the
+/// player and `flint render --scripts`); `flint script api` and `flint
+/// script check` list and check against this one.
+pub fn script_system() -> flint_script::ScriptSystem {
+    let mut system = flint_script::ScriptSystem::new();
+    for module in player_app::subsystem::subsystem_script_modules() {
+        system.declare_module(module);
+    }
+    system
+}

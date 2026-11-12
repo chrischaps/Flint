@@ -1,39 +1,46 @@
-//! Integration tests: scripts asking for changes to the wooze field (#213).
-//!
-//! The commands land in the player, which owns the field; here the script's half
-//! is held to what `flint_core::wooze::WoozeField` takes.
+//! Scripts asking for changes to the wooze field and Living Props (#213,
+//! #218, #246), through the modules the living subsystem owns (#698): the
+//! script's half, held to what `flint_core::wooze::WoozeField` and a
+//! `.wooze.toml` take, and the "not enabled" error in a scene without the
+//! subsystem. The player's half is `living_props_tests.rs`.
 
+use super::LivingCommand;
 use flint_core::wooze::{WoozeField, WoozeSample};
-use flint_ecs::FlintWorld;
-use flint_script::context::ScriptCommand;
-use flint_script::engine::ScriptEngine;
 
-/// What a script asked for in its `on_init`.
-fn commands_of(src: &str) -> Vec<ScriptCommand> {
-    let mut engine = ScriptEngine::new();
-    let mut world = FlintWorld::new();
-    let id = world.spawn("director").unwrap();
-    let ast = engine.compile(src).unwrap();
-    engine.add_script(id, ast, "director.rhai".into());
-    engine.call_inits(&mut world);
-    engine.drain_commands()
+/// What a script asked for, with the living modules enabled.
+fn commands_of(src: &str) -> Vec<LivingCommand> {
+    let mut system = crate::script_system();
+    system.set_enabled_modules(vec!["wooze", "living", "debug"]);
+    system
+        .rhai_engine_mut()
+        .run(src)
+        .unwrap_or_else(|e| panic!("{src}: {e}"));
+    system
+        .drain_commands()
+        .into_iter()
+        .map(|c| match c {
+            flint_script::context::ScriptCommand::Module(m) => m
+                .payload::<LivingCommand>()
+                .expect("a living command")
+                .clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect()
 }
 
 #[test]
 fn set_wooze_takes_a_map_with_seconds_as_either_kind_of_number() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             set_wooze(#{ step: 0.25 });
             set_wooze(#{ glide: 1 }, 2.5);
             set_wooze(#{ preset: "boil" }, 3);
-        }
         "#,
     );
     let mut field = WoozeField::new(WoozeSample::NEUTRAL);
     let mut seconds_seen = Vec::new();
     for command in &commands {
-        let ScriptCommand::SetWooze { knobs, seconds } = command else {
+        let LivingCommand::SetWooze { knobs, seconds } = command else {
             panic!("{command:?}");
         };
         seconds_seen.push(*seconds);
@@ -54,7 +61,6 @@ fn set_wooze_takes_a_map_with_seconds_as_either_kind_of_number() {
 fn set_wooze_zone_can_make_a_zone_from_a_map() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             set_wooze_zone("pocket", #{
                 shape: "sphere",
                 center: [0.0, 0, 12.0],
@@ -64,13 +70,12 @@ fn set_wooze_zone_can_make_a_zone_from_a_map() {
             }, 1.5);
             set_wooze_zone("pocket", #{ center: [1.0, 2.0, 3.0] });
             set_wooze_zone("pocket", #{ jitter: 2.0 }, 1);
-        }
         "#,
     );
     let mut field = WoozeField::new(WoozeSample::NEUTRAL);
     let mut seconds_seen = Vec::new();
     for command in &commands {
-        let ScriptCommand::SetWoozeZone {
+        let LivingCommand::SetWoozeZone {
             name,
             fields,
             seconds,
@@ -94,17 +99,15 @@ fn set_wooze_zone_can_make_a_zone_from_a_map() {
 fn remove_wooze_zone_names_it_and_can_fade() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             remove_wooze_zone("a");
             remove_wooze_zone("b", 0.5);
             remove_wooze_zone("c", 2);
-        }
         "#,
     );
     let found: Vec<(String, f64)> = commands
         .into_iter()
         .map(|command| match command {
-            ScriptCommand::RemoveWoozeZone { name, seconds } => (name, seconds),
+            LivingCommand::RemoveWoozeZone { name, seconds } => (name, seconds),
             other => panic!("{other:?}"),
         })
         .collect();
@@ -124,7 +127,6 @@ fn remove_wooze_zone_names_it_and_can_fade() {
 fn tune_living_takes_what_a_preset_file_holds() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             tune_living(#{
                 wooze: #{ step: 0.25, glide: 1 },
                 living: #{
@@ -134,10 +136,9 @@ fn tune_living_takes_what_a_preset_file_holds() {
                 },
                 boil: #{ enabled: true, contour: 0.5, on: 3 },
             });
-        }
         "#,
     );
-    let [ScriptCommand::TuneLiving { knobs }] = &commands[..] else {
+    let [LivingCommand::Tune { knobs }] = &commands[..] else {
         panic!("{commands:?}");
     };
     let tune: flint_procgen::WoozePreset = knobs.clone().try_into().unwrap();
@@ -158,28 +159,26 @@ fn tune_living_takes_what_a_preset_file_holds() {
 fn a_script_can_freeze_step_save_and_load() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             freeze_living(true);
             step_living();
             save_living_preset("misty");
             load_living_preset("calm");
             freeze_living(false);
-        }
         "#,
     );
     assert!(matches!(
         commands[..],
         [
-            ScriptCommand::FreezeLiving { frozen: true },
-            ScriptCommand::StepLiving,
-            ScriptCommand::SaveLivingPreset { .. },
-            ScriptCommand::LoadLivingPreset { .. },
-            ScriptCommand::FreezeLiving { frozen: false },
+            LivingCommand::Freeze { frozen: true },
+            LivingCommand::Step,
+            LivingCommand::SavePreset { .. },
+            LivingCommand::LoadPreset { .. },
+            LivingCommand::Freeze { frozen: false },
         ]
     ));
     assert!(commands
         .iter()
-        .any(|c| matches!(c, ScriptCommand::SaveLivingPreset { name } if name == "misty")));
+        .any(|c| matches!(c, LivingCommand::SavePreset { name } if name == "misty")));
 }
 
 /// One species' own values (#246): the flat form, with a species named, arrives
@@ -188,17 +187,15 @@ fn a_script_can_freeze_step_save_and_load() {
 fn a_script_can_tune_and_clear_one_species() {
     let commands = commands_of(
         r#"
-        fn on_init() {
             tune_living(#{ species: "grove_thorn", step: 0.25, echoes: #{ count: 1 } });
             clear_living("grove_thorn", ["echoes", "step"]);
             clear_living("grove_oak");
-        }
         "#,
     );
-    let [ScriptCommand::TuneLiving { knobs }, ScriptCommand::ClearLiving {
+    let [LivingCommand::Tune { knobs }, LivingCommand::Clear {
         species: thorn,
         keys,
-    }, ScriptCommand::ClearLiving {
+    }, LivingCommand::Clear {
         species: oak,
         keys: none,
     }] = &commands[..]
@@ -211,4 +208,59 @@ fn a_script_can_tune_and_clear_one_species() {
     assert_eq!(keys, &["echoes".to_string(), "step".to_string()]);
     assert_eq!(oak, "grove_oak");
     assert!(none.is_empty());
+}
+
+/// A scene without the living subsystem never enabled its modules: each
+/// call is a script error naming the module and when it is enabled, at
+/// the call, and queues nothing (#698).
+#[test]
+fn without_living_props_a_call_says_the_module_is_not_enabled() {
+    let mut system = crate::script_system();
+    for (call, module) in [
+        ("tune_living(#{ wooze: #{ step: 0.25 } })", "living"),
+        ("set_wooze(#{ step: 0.25 }, 1.0)", "wooze"),
+        ("compare_living(\"\", \"calm\")", "debug"),
+    ] {
+        let err = system
+            .rhai_engine_mut()
+            .run(&format!("let a = 1;\n{call};"))
+            .unwrap_err()
+            .to_string();
+        let function = &call[..call.find('(').unwrap()];
+        assert!(
+            err.contains(&format!(
+                "{function}: the {module} module is not enabled here; it is enabled when the \
+                 scene has living props, a [living] or [wooze] table, a shallow_wooze entity \
+                 or woozy grass"
+            )),
+            "{err}"
+        );
+        assert!(err.contains("line 2"), "{err}");
+    }
+    assert!(system.drain_commands().is_empty(), "nothing queued");
+}
+
+/// They are listed under their own modules, each saying when it is enabled.
+#[test]
+fn the_living_modules_are_listed_with_when_they_are_enabled() {
+    let listing = crate::script_system().api_listing();
+    let count = |module: &str| {
+        listing
+            .declared
+            .iter()
+            .filter(|e| e.module == module)
+            .count()
+    };
+    assert_eq!(count("living"), 7);
+    assert_eq!(count("wooze"), 6);
+    assert_eq!(count("debug"), 5);
+    for module in ["living", "wooze", "debug"] {
+        assert!(
+            listing
+                .enabled_when(module)
+                .unwrap()
+                .contains("living props"),
+            "{module}"
+        );
+    }
 }

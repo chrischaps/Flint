@@ -171,48 +171,12 @@ pub trait ScriptHost {
         self.unsupported("set_cursor_captured");
     }
 
-    // ── The wooze field and Living Props ──
-    fn set_wooze(&mut self, knobs: toml::Value, seconds: f64) {
-        self.unsupported("set_wooze");
-    }
-    fn set_wooze_zone(&mut self, name: String, fields: toml::Value, seconds: f64) {
-        self.unsupported("set_wooze_zone");
-    }
-    fn remove_wooze_zone(&mut self, name: String, seconds: f64) {
-        self.unsupported("remove_wooze_zone");
-    }
-    fn tune_living(&mut self, knobs: toml::Value) {
-        self.unsupported("tune_living");
-    }
-    fn clear_living(&mut self, species: String, keys: Vec<String>) {
-        self.unsupported("clear_living");
-    }
-    fn freeze_living(&mut self, frozen: bool) {
-        self.unsupported("freeze_living");
-    }
-    fn step_living(&mut self) {
-        self.unsupported("step_living");
-    }
-    fn save_living_preset(&mut self, name: String) {
-        self.unsupported("save_living_preset");
-    }
-    fn load_living_preset(&mut self, name: String) {
-        self.unsupported("load_living_preset");
-    }
-    fn commit_living(&mut self) {
-        self.unsupported("commit_living");
-    }
-    fn compare_living(&mut self, a: String, b: String) {
-        self.unsupported("compare_living");
-    }
-    fn flip_living(&mut self) {
-        self.unsupported("flip_living");
-    }
-    fn split_living(&mut self, split: bool) {
-        self.unsupported("split_living");
-    }
-    fn stop_comparing_living(&mut self) {
-        self.unsupported("stop_comparing_living");
+    // ── A module an optional feature owns (#698) ──
+    /// A command of a module a subsystem owns (`living`, `wooze`, `debug`)
+    /// that no subsystem took: the module's subsystem is gone (a command
+    /// queued as its scene unloaded) or the host has none.
+    fn module_command(&mut self, command: crate::module::ModuleCommand) {
+        self.unsupported(command.function());
     }
 
     // ── Scenes, states, the run ──
@@ -322,24 +286,7 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::SetTimeScale { scale } => host.set_time_scale(scale),
         C::SetTouchControls { enabled } => host.set_touch_controls(enabled),
         C::SetCursorCaptured { captured } => host.set_cursor_captured(captured),
-        C::SetWooze { knobs, seconds } => host.set_wooze(knobs, seconds),
-        C::SetWoozeZone {
-            name,
-            fields,
-            seconds,
-        } => host.set_wooze_zone(name, fields, seconds),
-        C::RemoveWoozeZone { name, seconds } => host.remove_wooze_zone(name, seconds),
-        C::TuneLiving { knobs } => host.tune_living(knobs),
-        C::ClearLiving { species, keys } => host.clear_living(species, keys),
-        C::FreezeLiving { frozen } => host.freeze_living(frozen),
-        C::StepLiving => host.step_living(),
-        C::SaveLivingPreset { name } => host.save_living_preset(name),
-        C::LoadLivingPreset { name } => host.load_living_preset(name),
-        C::CommitLiving => host.commit_living(),
-        C::CompareLiving { a, b } => host.compare_living(a, b),
-        C::FlipLiving => host.flip_living(),
-        C::SplitLiving { split } => host.split_living(split),
-        C::StopComparingLiving => host.stop_comparing_living(),
+        C::Module(command) => host.module_command(command),
         C::LoadScene { path } => host.load_scene(path),
         C::ReloadScene => host.reload_scene(),
         C::QuitGame => host.quit_game(),

@@ -87,6 +87,22 @@ impl<'a> ScriptApi<'a> {
             ctx: &self.ctx,
             registry: self.registry,
             name,
+            gate: None,
+        }
+    }
+
+    /// Declare a module an optional feature owns (#698): its functions run
+    /// only while the host has `gate.module` enabled, and are a script
+    /// error saying so anywhere else. `ScriptSystem::declare_module` is the
+    /// way in, from a [`crate::ScriptModule`].
+    pub fn gated_module(&mut self, gate: crate::module::Gate) -> Module<'_> {
+        self.registry.add_gate(gate);
+        Module {
+            engine: self.engine,
+            ctx: &self.ctx,
+            registry: self.registry,
+            name: gate.module,
+            gate: Some(gate),
         }
     }
 
@@ -109,6 +125,7 @@ pub struct Module<'m> {
     registry: &'m mut ApiRegistry,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     name: &'static str,
+    gate: Option<crate::module::Gate>,
 }
 
 impl Module<'_> {
@@ -124,6 +141,7 @@ impl Module<'_> {
             ctx: self.ctx,
             registry: self.registry,
             name,
+            gate: self.gate,
             params: Vec::new(),
             fallback: None,
             preferred_signature: true,
@@ -152,6 +170,8 @@ pub struct Func<'f, K> {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     registry: &'f mut ApiRegistry,
     name: &'static str,
+    /// The module's gate, when an optional feature owns it.
+    gate: Option<crate::module::Gate>,
     params: Vec<&'static str>,
     fallback: Option<Dynamic>,
     preferred_signature: bool,
@@ -175,6 +195,7 @@ impl<'f, K: Kinds> Func<'f, K> {
             ctx: self.ctx,
             registry: self.registry,
             name: self.name,
+            gate: self.gate,
             params,
             fallback: self.fallback,
             preferred_signature: self.preferred_signature,
@@ -281,11 +302,17 @@ impl<'f, K: Kinds> Func<'f, K> {
         let fallback = self.fallback.clone().unwrap_or_else(R::fallback);
         let params: Arc<[&'static str]> = self.params.clone().into();
         let name = self.name;
+        let gate = self.gate;
         let ctx = self.ctx.clone();
         let body = Arc::new(
             move |nctx: NativeCallContext, args: &mut [&mut Dynamic]| -> RhaiResult {
                 let mut guard = crate::lock_or_recover(&ctx);
                 let mut call = Call::new(&mut guard, name, nctx.call_position());
+                if let Some(gate) = gate {
+                    if !call.ctx_ref().module_enabled(gate.module) {
+                        return Err(not_enabled(name, gate, call.position()));
+                    }
+                }
                 match K::convert(&mut call, args, &params) {
                     Ok(out) => f(&mut call, out).into_result(),
                     Err(ArgFail::Skip) => Ok(fallback.clone()),
@@ -308,6 +335,11 @@ impl<'f, K: Kinds> Func<'f, K> {
         F: Fn(K::Out) -> R + Send + Sync + 'static,
         R: ScriptReturn,
     {
+        assert!(
+            self.gate.is_none(),
+            "{}: a gated module's functions are declared with .run(), which checks the gate",
+            self.name
+        );
         let params: Arc<[&'static str]> = self.params.clone().into();
         let name = self.name;
         let body = Arc::new(
@@ -367,6 +399,11 @@ impl<'f, K: Kinds> Func<'f, K> {
         F: Fn(&mut Call<'_>, K::Out) -> R + Send + Sync + 'static,
         R: ScriptReturn,
     {
+        assert!(
+            self.gate.is_none(),
+            "{}: a gated module's functions are declared with .run(), which checks the gate",
+            self.name
+        );
         let fallback = self.fallback.clone().unwrap_or_else(R::fallback);
         let params: Arc<[&'static str]> = self.params.clone().into();
         K::register_typed(
@@ -470,6 +507,18 @@ impl<'c> Call<'c> {
 fn error_at(func: &'static str, pos: Position, message: impl std::fmt::Display) -> CallError {
     Box::new(EvalAltResult::ErrorRuntime(
         format!("{func}: {message}").into(),
+        pos,
+    ))
+}
+
+/// A call into a module the host hasn't enabled (#698).
+fn not_enabled(func: &'static str, gate: crate::module::Gate, pos: Position) -> CallError {
+    Box::new(EvalAltResult::ErrorRuntime(
+        format!(
+            "{func}: the {} module is not enabled here; it is enabled when {}",
+            gate.module, gate.enabled_when
+        )
+        .into(),
         pos,
     ))
 }

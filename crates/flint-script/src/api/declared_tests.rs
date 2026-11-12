@@ -1,7 +1,7 @@
 //! The declared API (ADR 0116): the registry, the argument kinds, the
 //! world handle and the `entity` module ported through the builder.
 
-use super::builder::kind::{Color, Entity, Num, Str};
+use super::builder::kind::{Color, Entity, Int, Num, Str};
 use crate::context::WorldScope;
 use crate::engine::ScriptEngine;
 use flint_ecs::FlintWorld;
@@ -475,8 +475,7 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     let ints = commands(
         &mut world,
         &format!(
-            "set_wooze(#{{ step: 1 }}, 2); set_wooze_zone(\"z\", #{{}}, 3); \
-             remove_wooze_zone(\"z\", 1); tween_style_param({id}, \"cell\", 8, 1); \
+            "tween_style_param({id}, \"cell\", 8, 1); \
              tween_style_param({id}, \"cell\", 8, 1, \"linear\"); emit_burst({id}, 3.0); \
              set_effect_param(1.0, \"scale\", 2); load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
         ),
@@ -484,17 +483,16 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     let floats = commands(
         &mut world,
         &format!(
-            "set_wooze(#{{ step: 1 }}, 2.0); set_wooze_zone(\"z\", #{{}}, 3.0); \
-             remove_wooze_zone(\"z\", 1.0); tween_style_param({id}, \"cell\", 8, 1.0); \
+            "tween_style_param({id}, \"cell\", 8, 1.0); \
              tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); emit_burst({id}, 3); \
              set_effect_param(1, \"scale\", 2.0); load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
         ),
     );
-    assert_eq!(ints.len(), 8, "{ints:?}");
+    assert_eq!(ints.len(), 5, "{ints:?}");
     assert_eq!(ints, floats);
     let eid = flint_core::EntityId::from_raw(id as u64);
     assert_eq!(
-        ints[5],
+        ints[2],
         format!(
             "{:?}",
             ScriptCommand::EmitBurst {
@@ -558,6 +556,98 @@ fn a_variable_passed_first_is_left_as_it_was() {
     assert_eq!(kept["a"].clone().into_array().unwrap().len(), 3);
 }
 
+/// A module an optional feature owns (#698): declared through a
+/// `ScriptModule`, listed with when it is enabled, and a script error
+/// saying it is not enabled until the host enables it.
+#[test]
+fn a_gated_module_runs_only_where_the_host_enabled_it() {
+    struct Bells;
+    impl crate::ScriptModule for Bells {
+        fn name(&self) -> &'static str {
+            "bells"
+        }
+        fn enabled_when(&self) -> &'static str {
+            "the scene has a belfry"
+        }
+        fn declare(&self, m: &mut crate::api::Module<'_>) {
+            m.func("ring", "Ring a bell, counting the rings.")
+                .arg("times", Int)
+                .returns(Int, "rings so far")
+                .run(|call, (times,)| {
+                    let rung = call.ctx().module_state.get_mut::<Rung>();
+                    rung.0 += times;
+                    rung.0
+                });
+        }
+    }
+    #[derive(Debug, Default)]
+    struct Rung(i64);
+
+    let mut system = crate::ScriptSystem::new();
+    system.declare_module(&Bells);
+    system.declare_module(&Bells);
+    let listing = system.api_listing();
+    let rings: Vec<_> = listing
+        .declared
+        .iter()
+        .filter(|e| e.name == "ring")
+        .collect();
+    assert_eq!(rings.len(), 1, "declared once, however often");
+    assert_eq!(rings[0].module, "bells");
+    assert_eq!(
+        listing.enabled_when("bells"),
+        Some("the scene has a belfry")
+    );
+    assert_eq!(listing.enabled_when("entity"), None, "core");
+
+    let err = system
+        .rhai_engine_mut()
+        .eval::<i64>("let a = 1;\nring(2)")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(
+            "ring: the bells module is not enabled here; it is enabled when the scene has a belfry"
+        ),
+        "{err}"
+    );
+    assert!(err.contains("line 2"), "{err}");
+    // A wrong argument is still the gate's to answer first: nothing runs
+    assert!(system.rhai_engine_mut().eval::<i64>("ring(\"x\")").is_err());
+
+    system.set_enabled_modules(vec!["bells"]);
+    assert_eq!(system.enabled_modules(), ["bells"]);
+    let rung: i64 = system.rhai_engine_mut().eval("ring(2); ring(3.0)").unwrap();
+    assert_eq!(rung, 5, "ints and whole floats, state kept between calls");
+    system.set_module_state(Rung(10));
+    let rung: i64 = system.rhai_engine_mut().eval("ring(1)").unwrap();
+    assert_eq!(rung, 11, "the host's state");
+
+    system.set_enabled_modules(Vec::new());
+    assert!(system.rhai_engine_mut().eval::<i64>("ring(1)").is_err());
+}
+
+/// Flint's core declares no module an optional feature owns: those are
+/// declared by the crate that has the feature (#698, the player's living
+/// props and music).
+#[test]
+fn the_core_declares_no_feature_modules() {
+    let engine = ScriptEngine::new();
+    let reg = engine.api_registry();
+    assert!(reg.gates().is_empty());
+    for gone in [
+        "tune_living",
+        "set_wooze",
+        "compare_living",
+        "conducted_lean",
+    ] {
+        assert!(
+            !reg.entries().iter().any(|e| e.name == gone),
+            "{gone} is the player's"
+        );
+    }
+}
+
 #[test]
 fn the_last_modules_are_declared_under_their_subsystems() {
     let engine = ScriptEngine::new();
@@ -565,7 +655,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
     for (module, name, arity) in [
         ("quality", "set_quality", 1),
         ("quality", "set_quality", 2),
-        ("conducted", "conducted_cues", 0),
         ("ocean", "ocean_normal", 2),
         ("spline", "spline_sample_at", 2),
         ("particle", "play_effect", 4),
@@ -574,11 +663,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("expression", "expression", 0),
         ("state", "register_state", 2),
         ("scene", "quit_game", 0),
-        ("wooze", "remove_wooze_zone", 2),
-        ("living", "tune_living", 1),
-        ("living", "clear_living", 2),
-        ("debug", "compare_living", 2),
-        ("debug", "stop_comparing_living", 0),
         ("persistence", "persist_slot", 1),
         ("data", "load_data", 2),
         ("terrain", "terrain_height", 2),

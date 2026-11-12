@@ -118,7 +118,18 @@ the tickets' blocked-by links. The steps get no sub-issues.
    `flint_player::PRESENTATION_ONLY` with the test that holds every variant
    to it or to being applied headless.
 4. `flint script check`, on the registry (#694). Naming conventions and
-   opts-map forms (#702). Modules owned by subsystems (#698).
+   opts-map forms (#702). Modules owned by subsystems (#698). Done
+   2026-11-12 for #698: a `ScriptModule` (`flint_script::module`)
+   declared by the crate with the feature through `ScriptSystem::declare_module`,
+   whose functions check the host's enabled set (`set_enabled_modules`)
+   and are a "not enabled" script error outside it; one
+   `ScriptCommand::Module` variant with the owner's payload; module state
+   for per-frame inputs. The player's living props declare `living`,
+   `wooze` and `debug` and its music `conducted`, each enabled by the
+   presence of its subsystem (not a manifest list: no game edits a file,
+   and the headless host, holding the same subsystems, agrees). The
+   `debug` module is enabled with living props, not yet off in shipped
+   builds.
 
 ## Alternatives considered
 

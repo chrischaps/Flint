@@ -329,7 +329,7 @@ position = [0, 0, 0]
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |
 | `set_desaturation(amount)` | --- | Drain colour toward ash-grey (0–1) |
 | `set_camera_roll(radians)` | --- | Roll the camera about its view axis |
-| `conducted_lean()` / `conducted_coherence()` | `#{x,y}` / `f64` | Read the running music session (neutral values when none) |
+| `conducted_lean()` / `conducted_coherence()` | `#{x,y}` / `f64` | Read the running music session (neutral until it runs; a charted scene only, #698) |
 | `play_clip(id, clip)` | --- | Play an animation clip |
 | `set_anim_layer(id, idx, clip, w)` | --- | Play a clip on an animation layer |
 | `set_anim_layer_weight(id, idx, w)` | --- | Set a layer's weight instantly |

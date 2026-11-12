@@ -36,16 +36,29 @@ fn declared_variants() -> BTreeSet<String> {
         .collect()
 }
 
-/// A command's variant name, as its `Debug` starts.
+/// A command's variant name, as its `Debug` starts; a module's command
+/// (#698) is `Module:` and its function.
 fn variant(cmd: &ScriptCommand) -> String {
+    if let ScriptCommand::Module(m) = cmd {
+        return format!("Module:{}", m.function());
+    }
     format!("{cmd:?}")
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric())
         .collect()
 }
 
+/// A living-subsystem module command, as `function` queues it.
+fn module(
+    function: &'static str,
+    command: crate::player_app::living_api::LivingCommand,
+) -> ScriptCommand {
+    ScriptCommand::Module(flint_script::ModuleCommand::new(function, command))
+}
+
 /// One of each command, aimed at `entity`, a live one.
 fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
+    use crate::player_app::living_api::LivingCommand as L;
     use ScriptCommand as C;
     let s = |v: &str| v.to_string();
     let table = |k: &str, v: f64| {
@@ -127,38 +140,57 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         C::SetLook {
             name: Some(s("graphite")),
         },
-        C::SetWooze {
-            knobs: table("amplitude", 0.5),
-            seconds: 0.0,
-        },
-        C::SetWoozeZone {
-            name: s("pond"),
-            fields: table("amplitude", 0.5),
-            seconds: 0.0,
-        },
-        C::RemoveWoozeZone {
-            name: s("pond"),
-            seconds: 0.0,
-        },
-        C::TuneLiving {
-            knobs: toml::Value::Table(toml::Table::new()),
-        },
-        C::ClearLiving {
-            species: s("oak"),
-            keys: Vec::new(),
-        },
-        C::FreezeLiving { frozen: true },
-        C::StepLiving,
-        C::SaveLivingPreset { name: s("mine") },
-        C::LoadLivingPreset { name: s("calm") },
-        C::CommitLiving,
-        C::CompareLiving {
-            a: s("calm"),
-            b: String::new(),
-        },
-        C::FlipLiving,
-        C::SplitLiving { split: true },
-        C::StopComparingLiving,
+        // The living subsystem's module commands (#698), one a function
+        module(
+            "set_wooze",
+            L::SetWooze {
+                knobs: table("amplitude", 0.5),
+                seconds: 0.0,
+            },
+        ),
+        module(
+            "set_wooze_zone",
+            L::SetWoozeZone {
+                name: s("pond"),
+                fields: table("amplitude", 0.5),
+                seconds: 0.0,
+            },
+        ),
+        module(
+            "remove_wooze_zone",
+            L::RemoveWoozeZone {
+                name: s("pond"),
+                seconds: 0.0,
+            },
+        ),
+        module(
+            "tune_living",
+            L::Tune {
+                knobs: toml::Value::Table(toml::Table::new()),
+            },
+        ),
+        module(
+            "clear_living",
+            L::Clear {
+                species: s("oak"),
+                keys: Vec::new(),
+            },
+        ),
+        module("freeze_living", L::Freeze { frozen: true }),
+        module("step_living", L::Step),
+        module("save_living_preset", L::SavePreset { name: s("mine") }),
+        module("load_living_preset", L::LoadPreset { name: s("calm") }),
+        module("commit_living", L::Commit),
+        module(
+            "compare_living",
+            L::Compare {
+                a: s("calm"),
+                b: String::new(),
+            },
+        ),
+        module("flip_living", L::Flip),
+        module("split_living", L::Split { split: true }),
+        module("stop_comparing_living", L::StopComparing),
         C::LoadScene {
             path: s("levels/next.scene.toml"),
         },
@@ -255,11 +287,16 @@ fn every_command_is_applied_headless_or_presentation_only() {
     }
     let _ = std::fs::remove_dir_all(dir);
 
-    // The samples are every variant, and only those
+    // The samples are every variant, and only those (a module's commands
+    // are one variant, sampled once a function)
     let sampled: BTreeSet<String> = samples.iter().map(variant).collect();
     assert_eq!(sampled.len(), samples.len(), "one sample per variant");
+    let sampled: BTreeSet<String> = sampled
+        .iter()
+        .map(|v| v.split(':').next().unwrap().to_string())
+        .collect();
     let declared = declared_variants();
-    assert!(declared.len() >= 52, "the enum wasn't read: {declared:?}");
+    assert!(declared.len() >= 39, "the enum wasn't read: {declared:?}");
     let unsampled: Vec<_> = declared.difference(&sampled).collect();
     assert!(
         unsampled.is_empty(),

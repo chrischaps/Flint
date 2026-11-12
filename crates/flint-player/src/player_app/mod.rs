@@ -31,6 +31,7 @@ mod input_config;
 pub mod input_script;
 mod key_note;
 mod living_ab;
+mod living_api;
 pub mod living_props;
 mod living_subsystem;
 pub(crate) mod living_tuning;

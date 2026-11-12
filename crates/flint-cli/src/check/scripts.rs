@@ -49,7 +49,7 @@ impl ScriptApiArgs {
 /// The engine's own API and Rhai's packages, built once a process.
 pub fn engine_api() -> &'static Api {
     static API: OnceLock<Api> = OnceLock::new();
-    API.get_or_init(|| Api::of(&mut flint_script::ScriptSystem::new()))
+    API.get_or_init(|| Api::of(&mut flint_player::script_system()))
 }
 
 /// Add every function of a `flint script api --json` listing.

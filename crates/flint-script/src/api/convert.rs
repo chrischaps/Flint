@@ -58,7 +58,7 @@ pub fn dynamic_to_toml(val: &Dynamic) -> Option<toml::Value> {
 }
 
 /// A script map as a TOML table, dropping the keys TOML can't hold.
-pub(crate) fn map_to_toml(map: &Map) -> toml::Value {
+pub fn map_to_toml(map: &Map) -> toml::Value {
     let mut table = toml::map::Map::new();
     for (k, v) in map {
         if let Some(tv) = dynamic_to_toml(v) {

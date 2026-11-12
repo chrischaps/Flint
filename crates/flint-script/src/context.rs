@@ -88,38 +88,6 @@ pub struct InputSnapshot {
     pub touch_swipes: Vec<(String, f64, f64)>,
 }
 
-/// One judged pulse event from the music session, for scripts. A plain POD
-/// mirror — flint-script never depends on flint-music (ADR 0020).
-#[derive(Clone, Debug, PartialEq)]
-pub struct ConductedPulse {
-    /// Seconds before "now" the event was stamped (suite-time arithmetic).
-    pub age: f64,
-    /// Timing error in ms (hits only; 0.0 for miss/spurious).
-    pub err_ms: f64,
-    /// "hit" | "miss" | "spurious".
-    pub kind: String,
-}
-
-/// One typed value from a chart cue's free-form `params` table (ADR 0033).
-/// A plain POD — flint-script never depends on flint-music or toml shapes.
-#[derive(Clone, Debug, PartialEq)]
-pub enum CueParam {
-    Number(f64),
-    Text(String),
-    Flag(bool),
-}
-
-/// One chart cue fired this frame (ADR 0033), for scene bindings.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ConductedCue {
-    pub name: String,
-    /// Seconds since the cue's authored beat (suite-time arithmetic).
-    pub age: f64,
-    /// The chart's `params` table, flattened to primitives (nested tables
-    /// and arrays are dropped by the host — author flat params).
-    pub params: Vec<(String, CueParam)>,
-}
-
 /// Where a scene's music is this frame (#745): what `music_beat()`,
 /// `music_bar()` and `music_section()` read. Set by the host's music
 /// subsystem before scripts run; [`MusicClock::default`] (nothing playing)
@@ -144,88 +112,6 @@ impl Default for MusicClock {
             beat: -1.0,
             bar: -1,
             section: String::new(),
-        }
-    }
-}
-
-/// Per-frame conducted-parameters snapshot (Phase 4 decision 4 / ADR 0020).
-/// Filled by the host (flint-player) from the music session every frame;
-/// neutral defaults when no session so scripts never branch on existence.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ConductedSnapshot {
-    /// Player lean and the chart's lean target, both in [-1,1]².
-    pub lean: [f64; 2],
-    pub target: [f64; 2],
-    /// Player sway (right stick; zeros under the prototype input map).
-    pub sway: [f64; 2],
-    /// Trigger depths in [0,1] (zeros under the prototype input map).
-    pub pressure_l: f64,
-    pub pressure_r: f64,
-    /// Cues fired this frame (empty most frames — ADR 0033).
-    pub cues: Vec<ConductedCue>,
-    /// The next authored lean key's value (ADR 0023); `target` when nothing
-    /// is upcoming.
-    pub next_target: [f64; 2],
-    /// Suite beats until that key's anchor; 1e6 = nothing upcoming.
-    pub next_target_beats: f64,
-    /// Suite beats until the next unconsumed judgment window's anchor beat
-    /// (any kind); 1e6 = nothing upcoming. Lets the world telegraph that
-    /// input is expected (P5 immediate-feedback pass).
-    pub next_pulse_beats: f64,
-    /// True while that window is open right now (a press would land).
-    pub pulse_window_open: bool,
-    pub coherence: f64,
-    /// 0..1 within the current beat / bar (0 at the boundary).
-    pub beat_phase: f64,
-    pub bar_phase: f64,
-    pub bar: i64,
-    /// Suite beats from zero, accumulated across tempo changes.
-    pub beat: f64,
-    /// Current section name; "" when none.
-    pub section: String,
-    /// Pulses judged this frame (empty most frames).
-    pub pulses: Vec<ConductedPulse>,
-    /// Ladder visual params (0 = clean).
-    pub desaturate: f64,
-    pub blur: f64,
-    pub chromatic: f64,
-    /// Reassembly progress: 1 = normal play, 0→1 while re-gathering.
-    pub reassembly: f64,
-    /// Rewind interlude progress: 0 = not rewinding.
-    pub rewind: f64,
-    pub no_input: bool,
-    pub preroll: bool,
-}
-
-impl Default for ConductedSnapshot {
-    /// The neutral no-session state: a clean, settled world (coherence and
-    /// reassembly at 1.0) so bindings mapping `1 - coherence` show nothing.
-    fn default() -> Self {
-        Self {
-            lean: [0.0; 2],
-            target: [0.0; 2],
-            sway: [0.0; 2],
-            pressure_l: 0.0,
-            pressure_r: 0.0,
-            cues: Vec::new(),
-            next_target: [0.0; 2],
-            next_target_beats: 1e6,
-            next_pulse_beats: 1e6,
-            pulse_window_open: false,
-            coherence: 1.0,
-            beat_phase: 0.0,
-            bar_phase: 0.0,
-            bar: 0,
-            beat: 0.0,
-            section: String::new(),
-            pulses: Vec::new(),
-            desaturate: 0.0,
-            blur: 0.0,
-            chromatic: 0.0,
-            reassembly: 1.0,
-            rewind: 0.0,
-            no_input: false,
-            preroll: false,
         }
     }
 }
@@ -362,65 +248,10 @@ pub enum ScriptCommand {
     SetLook {
         name: Option<String>,
     },
-    /// Change the wooze field's global knobs (#213): any of `amplitude`, `step`,
-    /// `glide`, `jitter` and `preset`, over `seconds`.
-    SetWooze {
-        knobs: toml::Value,
-        seconds: f64,
-    },
-    /// Change a wooze zone, or add it if there's none of that name, over `seconds`.
-    SetWoozeZone {
-        name: String,
-        fields: toml::Value,
-        seconds: f64,
-    },
-    /// Fade a wooze zone out over `seconds` and drop it.
-    RemoveWoozeZone {
-        name: String,
-        seconds: f64,
-    },
-    /// Turn Living Props' knobs (#218): a table shaped like a `.wooze.toml`, with
-    /// any of `wooze`, `living` and `boil`.
-    TuneLiving {
-        knobs: toml::Value,
-    },
-    /// Clear one species' own Living Props values (#246), so the layers below
-    /// decide them again: the named keys, or every one with none named.
-    ClearLiving {
-        species: String,
-        keys: Vec<String>,
-    },
-    /// Stop or start the clock living props run on.
-    FreezeLiving {
-        frozen: bool,
-    },
-    /// Move that clock on by exactly one beat.
-    StepLiving,
-    /// Save every Living Props knob as `wooze/<name>.wooze.toml`.
-    SaveLivingPreset {
-        name: String,
-    },
-    /// Load a preset file or a built-in, live.
-    LoadLivingPreset {
-        name: String,
-    },
-    /// Write every Living Props value the scene file doesn't give into it
-    /// (#249), as the F3 panel's Commit to File does.
-    CommitLiving,
-    /// Compare two presets on the same grove (#238). An empty name is the knobs
-    /// as they stand.
-    CompareLiving {
-        a: String,
-        b: String,
-    },
-    /// Show the other side of the comparison.
-    FlipLiving,
-    /// Show both sides at once, A left and B right, or one at a time.
-    SplitLiving {
-        split: bool,
-    },
-    /// End the comparison, keeping the side that's shown.
-    StopComparingLiving,
+    /// A function of a module an optional feature owns (#698): Living
+    /// Props' knobs, the wooze field, the A/B. The subsystem that declared
+    /// the module takes it (`crate::module`); the core names none of them.
+    Module(crate::module::ModuleCommand),
     LoadScene {
         path: String,
     },
@@ -874,9 +705,13 @@ pub struct ScriptCallContext {
     pub shake: ShakeState,
     /// Set of currently loaded chunk IDs (synced from PlayerApp before scripts run)
     pub loaded_chunk_ids: HashSet<String>,
-    /// Conducted-parameters snapshot for this frame (set by the host before
-    /// scripts run; neutral defaults when no music session — ADR 0020)
-    pub conducted: ConductedSnapshot,
+    /// The modules an optional feature owns that may run now (#698): what
+    /// the host's subsystems for the scene are (`living`, `conducted`...).
+    /// A gated module's function checks it before it runs.
+    pub enabled_modules: Vec<&'static str>,
+    /// What the host hands those modules' functions (a rhythm session's
+    /// snapshot), one value of each type.
+    pub module_state: crate::module::ModuleState,
     /// Where the scene's music is this frame (#745); nothing playing when
     /// the scene has none.
     pub music: MusicClock,
@@ -983,7 +818,8 @@ impl ScriptCallContext {
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),
-            conducted: ConductedSnapshot::default(),
+            enabled_modules: Vec::new(),
+            module_state: Default::default(),
             music: MusicClock::default(),
             expression: rhai::Map::new(),
             bad_target_warned: HashSet::new(),
@@ -991,6 +827,12 @@ impl ScriptCallContext {
             audio_positions: std::collections::HashMap::new(),
             audio_output_latency: None,
         }
+    }
+
+    /// Whether the host has enabled `module`, one an optional feature owns
+    /// (#698).
+    pub fn module_enabled(&self, module: &str) -> bool {
+        self.enabled_modules.contains(&module)
     }
 
     /// The entity a setter named in a script was given, or `None` when there

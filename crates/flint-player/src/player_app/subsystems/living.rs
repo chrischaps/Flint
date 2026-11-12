@@ -8,6 +8,14 @@ use crate::player_app::living_subsystem::LivingSubsystem;
 /// A game state pauses the grove's clock by `living: "pause"` (#727).
 pub(crate) const POLICY: Option<&str> = Some(LivingSubsystem::NAME);
 
+/// Its script modules (#698): the wooze field, the knobs and the A/B,
+/// enabled in a scene the subsystem runs in.
+pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[
+    &crate::player_app::living_api::WOOZE,
+    &crate::player_app::living_api::LIVING,
+    &crate::player_app::living_api::DEBUG,
+];
+
 /// The subsystem for the scene being entered, if it has living props or wooze.
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     LivingSubsystem::for_scene(ctx)

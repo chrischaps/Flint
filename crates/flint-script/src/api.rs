@@ -8,6 +8,10 @@
 //! (`ScriptSystem::rhai_engine_mut`, `PlayerExtension::register_script_api`)
 //! is the only undeclared part; `PlayerExtension::declare_script_api`
 //! declares into the same registry instead.
+//!
+//! A module an optional feature owns (`living`, `wooze`, `debug`,
+//! `conducted`) isn't declared here: the feature's crate declares it
+//! through a [`crate::ScriptModule`] (#698, `crate::module`).
 
 mod animation;
 mod audio;
@@ -15,12 +19,8 @@ pub mod builder;
 mod camera;
 mod camera_2d;
 mod chunk;
-mod conducted;
-#[cfg(test)]
-mod conducted_tests;
 mod convert;
 mod data;
-mod debug;
 #[cfg(test)]
 mod declared_tests;
 mod draw;
@@ -33,7 +33,6 @@ mod expression;
 #[cfg(test)]
 mod host_io_tests;
 mod input;
-mod living;
 mod log;
 mod math;
 mod music;
@@ -61,11 +60,9 @@ mod time;
 mod touch;
 mod ui;
 mod view;
-mod wooze;
 
 pub use builder::{Call, CallError, CallResult, Func, Module, ScriptApi};
-pub(crate) use convert::map_to_toml;
-pub use convert::{dynamic_to_toml, toml_to_dynamic};
+pub use convert::{dynamic_to_toml, map_to_toml, toml_to_dynamic};
 pub use registry::ApiRegistry;
 
 /// Declare the deterministic run's `timestamp()`, which fails (see
@@ -109,8 +106,4 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     data::register(api);
     expression::register(api);
     music::register(api);
-    wooze::register(api);
-    living::register(api);
-    debug::register(api);
-    conducted::register(api);
 }
