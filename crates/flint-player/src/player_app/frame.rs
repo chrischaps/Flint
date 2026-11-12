@@ -7,6 +7,7 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
+use super::subsystem::{RenderCtx, Stage};
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -624,6 +625,17 @@ impl PlayerApp {
                 }
             }
         }
+        // The subsystems' last word before the frame is encoded
+        if !self.subsystems.is_empty() {
+            let mut ctx = RenderCtx {
+                renderer: &mut *renderer,
+                device: &context.device,
+                queue: &context.queue,
+                camera: &self.camera,
+                clock: &self.clock,
+            };
+            self.subsystems.pre_render(&mut ctx);
+        }
         renderer.encode_to(
             &context.device,
             &context.queue,
@@ -790,6 +802,9 @@ impl PlayerApp {
             }
         }
         self.print_living_report();
+        for line in self.subsystem_report() {
+            eprintln!("{line}");
+        }
     }
 
     /// Whether the rings stayed full and within budget. Silent with no props.
@@ -983,14 +998,9 @@ impl PlayerApp {
             }
         }
 
-        // Expression states due by now (Flint#518): the timeline on the game
-        // clock, then what the socket's reader threads have parsed. Queued
-        // for the scripts' update below, which hears them before on_update.
-        if let Some(feed) = &mut self.launch.expression_feed {
-            for state in feed.poll(self.clock.total_time) {
-                self.script.queue_expression(state);
-            }
-        }
+        // Outside input for scripts, queued for their update below (the
+        // expression feed, Flint#518, is a subsystem: ADR 0117)
+        self.run_stage(Stage::Input, None);
 
         // Advance transition phase timing
         self.advance_transition();
@@ -1009,6 +1019,7 @@ impl PlayerApp {
         // step that produced it.
         let game_events = self.collect_game_events();
         self.perf_mark(Phase::Input);
+        self.run_stage(Stage::PreScripts, Some(&config));
 
         // on_update runs BEFORE the fixed physics loop. Scripts pose kinematic
         // bodies with this frame's delta_time, and PhysicsSystem::begin_frame
@@ -1043,11 +1054,13 @@ impl PlayerApp {
         if let Some(perf) = &mut self.stats.perf {
             perf.record_scripts(self.script.update_times());
         }
+        self.run_stage(Stage::Scripts, Some(&config));
 
         // Fixed-timestep physics + FPS camera/listener follow, against the
         // poses and joint targets the scripts just wrote
         self.tick_fixed_physics(&config, has_fps_player);
         self.perf_mark(Phase::Physics);
+        self.run_stage(Stage::Physics, Some(&config));
 
         // Script pointers again for every remaining script call this frame —
         // including the sprite-anim-end callbacks inside tick_av_systems —
@@ -1078,15 +1091,18 @@ impl PlayerApp {
             .set_camera(self.camera.position_array(), self.camera.forward_vector());
         self.script
             .set_camera_view_proj(self.camera.view_projection_matrix());
+        self.run_stage(Stage::PostPhysics, Some(&config));
 
         // on_draw_ui (always runs), script commands, draw-command collection
         self.drive_script_ui();
         self.perf_mark(Phase::ScriptUi);
+        self.run_stage(Stage::ScriptUi, Some(&config));
 
         // Audio triggers, animations + sprite-end callbacks, bone matrices,
         // bone probes, particles
         self.tick_av_systems(&config, &game_events);
         self.perf_mark(Phase::AnimFx);
+        self.run_stage(Stage::Animation, Some(&config));
 
         // Frame-budgeted procgen queue, then whatever it left to living props,
         // whose clock stops when animation does
@@ -1098,6 +1114,7 @@ impl PlayerApp {
             0.0
         };
         self.tick_procgen(living_dt);
+        self.run_stage(Stage::Procgen, Some(&config));
 
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
@@ -1108,6 +1125,7 @@ impl PlayerApp {
         // A script's set_quality (FlintKart#55), applied here, between the
         // frame's scripts and its draw
         self.apply_script_quality();
+        self.run_stage(Stage::Sync, Some(&config));
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();

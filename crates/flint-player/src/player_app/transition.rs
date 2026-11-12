@@ -346,6 +346,8 @@ impl PlayerApp {
             );
             self.script.call_scene_exits(&mut self.world);
         }
+        // Each subsystem lets go of the scene, before anything is cleared
+        self.subsystems_leave_scene();
 
         // Music session first: capture guard drops and stems stop BEFORE the
         // audio system clears (ADR 0017 producer→handles→device order).

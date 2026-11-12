@@ -47,6 +47,9 @@ pub mod script_commands;
 mod shallow_wooze;
 mod state;
 pub mod style_commands;
+pub(crate) mod subsystem;
+#[cfg(test)]
+mod subsystem_tests;
 mod text_halo;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
@@ -270,6 +273,10 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
+    /// The optional parts a scene uses (ADR 0117): the expression feed so
+    /// far. Declared before `audio`, and torn down last added first, so
+    /// whatever one holds of the audio engine goes before the engine.
+    subsystems: subsystem::Subsystems,
     // Scene-declared music session (F3, ADR 0019): declared before `audio`
     // so the suite's kira handles drop before the shared AudioManager
     // (ADR 0017 drop-order rule).

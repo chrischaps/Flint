@@ -68,6 +68,7 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
+            subsystems: Default::default(),
             music: Default::default(),
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
