@@ -23,8 +23,9 @@ pub(crate) mod session;
 #[cfg(feature = "debug-hud")]
 pub(crate) mod timeline_panel;
 
+use crate::music::conducted::ConductedSnapshot;
 use crate::player_app::subsystem::{KeyPress, Pads, SceneCtx, Stage, StageCtx, Subsystem};
-use flint_script::{ConductedSnapshot, MusicClock};
+use flint_script::MusicClock;
 use session::{LadderPostBase, MusicSession};
 use std::path::PathBuf;
 
@@ -118,7 +119,7 @@ impl RhythmSubsystem {
         if let Some(pads) = pads {
             pads.give_back();
         }
-        script.set_conducted(ConductedSnapshot::default());
+        script.set_module_state(ConductedSnapshot::default());
         script.set_music(MusicClock::default());
         println!("[music] session ended — gamepad returned to player polling");
     }
@@ -211,6 +212,11 @@ impl Subsystem for RhythmSubsystem {
         Self::NAME
     }
 
+    /// The session's state for scripts (`music/conducted.rs`, #698).
+    fn script_modules(&self) -> &[&'static str] {
+        &["conducted"]
+    }
+
     fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
         self.start(ctx.audio.as_deref_mut(), ctx.pads.as_mut());
     }
@@ -235,7 +241,7 @@ impl Subsystem for RhythmSubsystem {
                         bar: snapshot.bar,
                         section: snapshot.section.clone(),
                     });
-                    ctx.script.set_conducted(snapshot);
+                    ctx.script.set_module_state(snapshot);
                 }
             }
             // Before the renderer's sync takes the frame's post values.

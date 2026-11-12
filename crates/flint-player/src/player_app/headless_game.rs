@@ -232,6 +232,7 @@ impl HeadlessGame {
             .step_living_now(0.0, field.as_ref().map(|field| (field, 0.0)));
         core.subsystems
             .push(Box::new(LivingSubsystem::for_capture(field, moment)));
+        core.enable_script_modules();
     }
 
     /// Load the scene's scripts, found in its project as the player finds
@@ -272,6 +273,9 @@ impl HeadlessGame {
         {
             core.subsystems.push(music);
         }
+        // The modules the capture's subsystems own (#698), as the player
+        // enables them before its scripts load
+        core.enable_script_modules();
         core.script
             .load_scripts_from_scene(&core.scene_path, &core.project);
         core.script

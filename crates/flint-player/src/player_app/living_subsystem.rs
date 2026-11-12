@@ -314,11 +314,18 @@ impl LivingSubsystem {
         }
     }
 
-    /// A script's living-props or wooze command, as the player's host
-    /// applied them before (#8, #218, #238); `false` for any other.
+    /// A script's living-props or wooze command (`living_api.rs`), as the
+    /// player's host applied them before (#8, #218, #238); `false` for any
+    /// other.
     fn command(&mut self, command: &ScriptCommand, ctx: &mut StageCtx) -> bool {
+        use super::living_api::LivingCommand as C;
         use super::script_commands::table_of;
-        use ScriptCommand as C;
+        let ScriptCommand::Module(command) = command else {
+            return false;
+        };
+        let Some(command) = command.payload::<C>() else {
+            return false;
+        };
         match command {
             C::SetWooze { knobs, seconds } => self.change_wooze(|field, time| {
                 let table = table_of(knobs)?;
@@ -341,50 +348,49 @@ impl LivingSubsystem {
                     Err(format!("there's no zone named '{name}' to remove"))
                 }
             }),
-            C::TuneLiving { knobs } => {
+            C::Tune { knobs } => {
                 if let Err(problem) = self.tune_living_from_script(ctx, knobs.clone()) {
                     tracing::warn!(target: "script", "tune_living: {problem}");
                 }
             }
-            C::ClearLiving { species, keys } => {
+            C::Clear { species, keys } => {
                 if let Err(problem) = self.clear_living_species(ctx, species, keys) {
                     tracing::warn!(target: "script", "clear_living: {problem}");
                 }
             }
-            C::FreezeLiving { frozen } => self.tune.frozen = *frozen,
-            C::StepLiving => self.step_living(),
-            C::SaveLivingPreset { name } => match self.save_living_preset(ctx, name) {
+            C::Freeze { frozen } => self.tune.frozen = *frozen,
+            C::Step => self.step_living(),
+            C::SavePreset { name } => match self.save_living_preset(ctx, name) {
                 Ok(path) => println!("[living] saved {}", path.display()),
                 Err(problem) => {
                     tracing::warn!(target: "script", "save_living_preset: {problem}");
                 }
             },
-            C::LoadLivingPreset { name } => {
+            C::LoadPreset { name } => {
                 if let Err(problem) = self.load_living_preset(ctx, name) {
                     tracing::warn!(target: "script", "load_living_preset: {problem}");
                 }
             }
-            C::CommitLiving => match self.commit_living(ctx) {
+            C::Commit => match self.commit_living(ctx) {
                 Ok(said) => println!("[living] {said}"),
                 Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
             },
-            C::CompareLiving { a, b } => {
+            C::Compare { a, b } => {
                 if let Err(problem) = self.compare_living(ctx, a, b) {
                     tracing::warn!(target: "script", "compare_living: {problem}");
                 }
             }
-            C::FlipLiving => {
+            C::Flip => {
                 if !self.flip_living(ctx) {
                     tracing::warn!(target: "script", "flip_living: nothing is being compared");
                 }
             }
-            C::SplitLiving { split } => {
+            C::Split { split } => {
                 if !self.split_living(ctx, *split) {
                     tracing::warn!(target: "script", "split_living: nothing is being compared");
                 }
             }
-            C::StopComparingLiving => self.stop_comparing_living(ctx),
-            _ => return false,
+            C::StopComparing => self.stop_comparing_living(ctx),
         }
         true
     }
@@ -393,6 +399,12 @@ impl LivingSubsystem {
 impl Subsystem for LivingSubsystem {
     fn name(&self) -> &'static str {
         Self::NAME
+    }
+
+    /// Its three script modules (`living_api.rs`, #698): a script can turn
+    /// the knobs, the field and the A/B wherever it runs.
+    fn script_modules(&self) -> &[&'static str] {
+        &["wooze", "living", "debug"]
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {

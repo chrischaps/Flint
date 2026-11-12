@@ -17,6 +17,7 @@ pub mod engine;
 pub mod host;
 #[cfg(test)]
 mod layout_tests;
+pub mod module;
 pub mod module_resolver;
 pub mod projector;
 pub mod random;
@@ -26,9 +27,9 @@ pub mod style_reader;
 pub mod sync;
 pub mod ui;
 
+pub use context::MusicClock;
 pub use context::StateScope;
 pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
-pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam, MusicClock};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
@@ -36,6 +37,7 @@ use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
 pub use host::ScriptHost;
+pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
@@ -49,6 +51,8 @@ pub struct ScriptSystem {
     /// `update` (Flint#518). Not cleared by a scene change: they describe the
     /// world outside the game.
     pending_expressions: std::collections::VecDeque<rhai::Map>,
+    /// The optional features' modules declared so far (#698).
+    declared_modules: std::collections::HashSet<&'static str>,
 }
 
 /// The most expression states held for scripts that aren't running (a paused
@@ -74,6 +78,7 @@ impl ScriptSystem {
             sync: ScriptSync::new(),
             pending_events: Vec::new(),
             pending_expressions: std::collections::VecDeque::new(),
+            declared_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -324,19 +329,52 @@ impl ScriptSystem {
         c.loaded_chunk_ids = ids;
     }
 
-    /// Set the conducted-parameters snapshot for this frame (ADR 0020).
-    /// Persistent, not take(): the host re-sets it every frame, passing
-    /// `ConductedSnapshot::default()` (the neutral, settled-world state)
-    /// when no music session is active.
-    pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.conducted = conducted;
+    /// Declare a module an optional feature owns (#698): its functions,
+    /// listed under its name, run only while it is enabled
+    /// ([`ScriptSystem::set_enabled_modules`]) and are a script error
+    /// saying so anywhere else. Declaring one twice declares it once.
+    pub fn declare_module(&mut self, module: &dyn ScriptModule) {
+        let gate = module::Gate {
+            module: module.name(),
+            enabled_when: module.enabled_when(),
+        };
+        if !self.declared_modules.insert(gate.module) {
+            return;
+        }
+        let mut api = self.script_api();
+        let mut m = api.gated_module(gate);
+        module.declare(&mut m);
+    }
+
+    /// The modules a host's subsystems for this scene own, which may run
+    /// now (#698); every other declared module's functions are "not
+    /// enabled". A host sets it when its subsystems change, before the
+    /// scene's scripts load.
+    pub fn set_enabled_modules(&mut self, modules: Vec<&'static str>) {
+        crate::lock_or_recover(&self.engine.ctx).enabled_modules = modules;
+    }
+
+    /// What [`ScriptSystem::set_enabled_modules`] set.
+    pub fn enabled_modules(&self) -> Vec<&'static str> {
+        crate::lock_or_recover(&self.engine.ctx)
+            .enabled_modules
+            .clone()
+    }
+
+    /// Hand a module's functions their state for this frame (a rhythm
+    /// session's snapshot): one value of each type, which a function reads
+    /// with `call.ctx().module_state.get_mut::<T>()`. Persistent until set
+    /// again; never set, it is `T::default()`.
+    pub fn set_module_state<T: std::any::Any + Send>(&mut self, value: T) {
+        crate::lock_or_recover(&self.engine.ctx)
+            .module_state
+            .set(value);
     }
 
     /// Where the scene's music is this frame, for `music_beat()`,
-    /// `music_bar()` and `music_section()` (#745). Persistent, as
-    /// [`ScriptSystem::set_conducted`] is: the host's music subsystem sets
-    /// it every frame and [`MusicClock::default`] when the music goes.
+    /// `music_bar()` and `music_section()` (#745). Persistent: the host's
+    /// music subsystem sets it every frame and [`MusicClock::default`]
+    /// when the music goes.
     pub fn set_music(&mut self, music: MusicClock) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.music = music;
@@ -552,6 +590,7 @@ impl ScriptSystem {
             undeclared,
             undeclared_listed,
             callbacks: api::registry::CALLBACKS.to_vec(),
+            gates: registry.gates().to_vec(),
         }
     }
 

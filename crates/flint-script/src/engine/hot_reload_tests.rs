@@ -8,7 +8,7 @@ use flint_ecs::FlintWorld;
 use std::sync::Arc;
 
 #[test]
-fn test_conducted_hot_reload_and_bad_edit() {
+fn test_hot_reload_and_bad_edit() {
     // Hot-reload picks up a binding edit; a syntax error keeps the old
     // AST running (the compile-error branch in check_hot_reload).
     use crate::sync::ScriptSync;
@@ -21,7 +21,7 @@ fn test_conducted_hot_reload_and_bad_edit() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("binder.rhai");
     let v1 = r#"fn on_update() {
-        set_field(self_entity(), "probe", "coh", conducted_coherence());
+        set_field(self_entity(), "probe", "coh", music_beat());
     }"#;
     std::fs::write(&path, v1).unwrap();
 
@@ -33,12 +33,12 @@ fn test_conducted_hot_reload_and_bad_edit() {
 
     engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
     engine.call_updates(&mut world);
-    assert_eq!(probe_float(&world, id, "coh"), 1.0);
+    assert_eq!(probe_float(&world, id, "coh"), -1.0);
 
     // v2 writes a different field; bump mtime explicitly (Windows mtime
     // granularity would otherwise swallow a fast rewrite).
     let v2 = r#"fn on_update() {
-        set_field(self_entity(), "probe", "lx", conducted_lean().x + 2.0);
+        set_field(self_entity(), "probe", "lx", music_bar().to_float() + 3.0);
     }"#;
     std::fs::write(&path, v2).unwrap();
     let f = std::fs::OpenOptions::new()

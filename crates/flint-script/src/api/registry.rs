@@ -10,6 +10,20 @@
 pub struct ApiRegistry {
     #[cfg(not(target_arch = "wasm32"))]
     entries: Vec<ApiEntry>,
+    /// The modules an optional feature owns, and when each is enabled
+    /// (#698), in declaration order.
+    #[cfg(not(target_arch = "wasm32"))]
+    gates: Vec<crate::module::Gate>,
+}
+
+impl ApiRegistry {
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
+    pub(crate) fn add_gate(&mut self, gate: crate::module::Gate) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.gates.contains(&gate) {
+            self.gates.push(gate);
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -71,6 +85,20 @@ mod native {
         /// Every entry, in declaration order.
         pub fn entries(&self) -> &[ApiEntry] {
             &self.entries
+        }
+
+        /// The modules an optional feature owns (#698): each one's name and
+        /// when it is enabled. A module not here is core: always enabled.
+        pub fn gates(&self) -> &[crate::module::Gate] {
+            &self.gates
+        }
+
+        /// When `module` is enabled, if an optional feature owns it.
+        pub fn enabled_when(&self, module: &str) -> Option<&'static str> {
+            self.gates
+                .iter()
+                .find(|g| g.module == module)
+                .map(|g| g.enabled_when)
         }
 
         /// Whether `name` is declared at `arity`.
@@ -136,6 +164,16 @@ mod native {
              key. A map costs a call 0.15 to 0.22 us more than four colour numbers \
              (draw_rect: 315 ns positional, 534 ns with a three-key map), so a loop of \
              hundreds of draws a frame that needs only a colour keeps the positional form.",
+        ),
+        (
+            "modules",
+            "Most modules are core: every scene can call them. A module an optional \
+             feature owns (living, wooze, debug, conducted) is declared by that feature \
+             and enabled where its subsystem runs: living, wooze and debug in a scene with \
+             living props, a [living] or [wooze] table, shallow wooze or woozy grass; \
+             conducted in a scene whose music_session has a chart. Each such module's \
+             heading says when it is enabled. Calling one of its functions anywhere else \
+             is a script error saying the module is not enabled, at the call's line.",
         ),
     ];
 
@@ -251,6 +289,19 @@ mod native {
         /// undeclared part is then unknown, not empty.
         pub undeclared_listed: bool,
         pub callbacks: Vec<CallbackDoc>,
+        /// The modules an optional feature owns and when each is enabled
+        /// (#698); every other module is core.
+        pub gates: Vec<crate::module::Gate>,
+    }
+
+    impl ApiListing {
+        /// When `module` is enabled, if an optional feature owns it.
+        pub fn enabled_when(&self, module: &str) -> Option<&'static str> {
+            self.gates
+                .iter()
+                .find(|g| g.module == module)
+                .map(|g| g.enabled_when)
+        }
     }
 
     /// Parse one of Rhai's signature lines, `name(a: T, b: U) -> R`, or

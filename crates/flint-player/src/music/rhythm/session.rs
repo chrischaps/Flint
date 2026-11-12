@@ -476,9 +476,9 @@ impl MusicSession {
     }
 
     /// The frame → script-POD conversion (ADR 0020): the only place
-    /// flint-rhythm types meet flint-script types — flint-script never
-    /// depends on flint-rhythm.
-    pub fn conducted_snapshot(&self) -> flint_script::ConductedSnapshot {
+    /// flint-rhythm types meet the `conducted` module's (`music/conducted.rs`,
+    /// which needs no rhythm).
+    pub(crate) fn conducted_snapshot(&self) -> crate::music::conducted::ConductedSnapshot {
         let vf = self.session.visual_frame();
         // Next-window telegraph (P5 immediate-feedback pass): the nearest
         // unconsumed judgment window inside a short horizon, so the scene
@@ -496,7 +496,7 @@ impl MusicSession {
                 gf.windows.iter().any(|w| w.open_now),
             )
         };
-        flint_script::ConductedSnapshot {
+        crate::music::conducted::ConductedSnapshot {
             next_pulse_beats,
             pulse_window_open,
             lean: [vf.lean[0] as f64, vf.lean[1] as f64],
@@ -506,7 +506,7 @@ impl MusicSession {
             cues: vf
                 .cues
                 .iter()
-                .map(|c| flint_script::ConductedCue {
+                .map(|c| crate::music::conducted::ConductedCue {
                     name: c.name.clone(),
                     age: c.age_s,
                     // Flatten to primitives; nested tables/arrays dropped
@@ -516,12 +516,18 @@ impl MusicSession {
                         .iter()
                         .filter_map(|(k, v)| {
                             let p = match v {
-                                toml::Value::Float(f) => flint_script::CueParam::Number(*f),
-                                toml::Value::Integer(i) => {
-                                    flint_script::CueParam::Number(*i as f64)
+                                toml::Value::Float(f) => {
+                                    crate::music::conducted::CueParam::Number(*f)
                                 }
-                                toml::Value::String(s) => flint_script::CueParam::Text(s.clone()),
-                                toml::Value::Boolean(b) => flint_script::CueParam::Flag(*b),
+                                toml::Value::Integer(i) => {
+                                    crate::music::conducted::CueParam::Number(*i as f64)
+                                }
+                                toml::Value::String(s) => {
+                                    crate::music::conducted::CueParam::Text(s.clone())
+                                }
+                                toml::Value::Boolean(b) => {
+                                    crate::music::conducted::CueParam::Flag(*b)
+                                }
                                 _ => return None,
                             };
                             Some((k.clone(), p))
@@ -541,7 +547,7 @@ impl MusicSession {
             pulses: vf
                 .pulses
                 .iter()
-                .map(|p| flint_script::ConductedPulse {
+                .map(|p| crate::music::conducted::ConductedPulse {
                     age: p.age_s,
                     err_ms: p.err_ms,
                     kind: p.kind.as_str().to_string(),

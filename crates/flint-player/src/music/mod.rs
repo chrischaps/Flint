@@ -13,13 +13,16 @@
 //!   a component with a `chart` is judged too, through flint-rhythm's
 //!   `ChartSession`, which takes the pads for its capture thread (ADR 0018),
 //!   drives the post-processing ladder (ADR 0021) and feeds the `conducted_*`
-//!   functions (ADR 0020). A player built without the feature plays a
-//!   charted suite as music and says the chart isn't judged.
+//!   functions (ADR 0020), the `conducted` script module this file's
+//!   [`conducted`] declares (#698). A player built without the feature
+//!   plays a charted suite as music and says the chart isn't judged; its
+//!   `conducted_*` read the neutral state, as a capture's do.
 //!
 //! Nothing here runs in a scene without the component, and nothing in
 //! `player_app/` names it: `player_app/subsystems/music.rs` hands the
 //! scene to [`for_scene`].
 
+pub(crate) mod conducted;
 #[cfg(feature = "rhythm")]
 pub(crate) mod rhythm;
 
@@ -194,6 +197,11 @@ pub(crate) struct MusicSubsystem {
     /// isn't tried every frame; a device arriving later (the web's Begin
     /// click) tries once more.
     tried_with_device: bool,
+    /// Whether the component has a chart that nothing here judges (a
+    /// capture, a player built without `rhythm`): the `conducted` module
+    /// is still enabled, reading the neutral state, so the scene's scripts
+    /// run as they do in the rhythm game before its session starts (#698).
+    charted: bool,
 }
 
 impl MusicSubsystem {
@@ -237,6 +245,7 @@ impl MusicSubsystem {
             latency_ms,
             session: None,
             tried_with_device: false,
+            charted: comp_str(comp, "chart").is_some(),
         })
     }
 
@@ -306,6 +315,14 @@ impl MusicSubsystem {
 impl Subsystem for MusicSubsystem {
     fn name(&self) -> &'static str {
         Self::NAME
+    }
+
+    fn script_modules(&self) -> &[&'static str] {
+        if self.charted {
+            &["conducted"]
+        } else {
+            &[]
+        }
     }
 
     fn scene_loaded(&mut self, ctx: &mut SceneCtx) {

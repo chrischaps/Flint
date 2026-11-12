@@ -81,7 +81,7 @@ impl PlayerApp {
 
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
-        self.subsystems_enter_scene(entry);
+        self.subsystems_enter_scene();
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person
@@ -356,6 +356,10 @@ impl PlayerApp {
             .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
         self.load_particle_textures();
+
+        // The subsystems this scene uses, and the script modules they own
+        // (#698), before the scripts that may call them load
+        self.subsystems_build(entry);
 
         // Scripts: on_init with the state machine and the persistent store
         // in reach, then, at a transition, on_scene_enter

@@ -216,7 +216,7 @@ fn api(args: &ApiArgs) -> Result<()> {
     if let Some(dir) = args.book.as_deref() {
         return book_cmd(dir, false);
     }
-    let listing = flint_script::ScriptSystem::new().api_listing();
+    let listing = flint_player::script_system().api_listing();
     let filter = args.filter.as_deref().map(str::to_lowercase);
     let listing = filtered(listing, filter.as_deref());
     let text = if args.json {
@@ -236,7 +236,7 @@ fn api(args: &ApiArgs) -> Result<()> {
 
 /// The engine's listing, and the signatures Rhai's own packages register.
 fn listing_and_packages() -> (ApiListing, Vec<String>) {
-    let mut system = flint_script::ScriptSystem::new();
+    let mut system = flint_player::script_system();
     let listing = system.api_listing();
     let engine = system.rhai_engine_mut();
     let packages = book::package_signatures(
@@ -316,9 +316,10 @@ fn filtered(mut listing: ApiListing, filter: Option<&str>) -> ApiListing {
     listing
 }
 
-fn declared_json(e: &ApiEntry) -> Value {
+fn declared_json(e: &ApiEntry, listing: &ApiListing) -> Value {
     json!({
         "module": e.module,
+        "enabled_when": listing.enabled_when(e.module),
         "name": e.name,
         "declared": true,
         "params": e.params.iter().map(|p| json!({ "name": p.name, "kind": p.kind })).collect::<Vec<_>>(),
@@ -343,7 +344,11 @@ fn undeclared_json(u: &UndeclaredFn) -> Value {
 }
 
 fn to_json(listing: &ApiListing) -> Value {
-    let mut functions: Vec<Value> = listing.declared.iter().map(declared_json).collect();
+    let mut functions: Vec<Value> = listing
+        .declared
+        .iter()
+        .map(|e| declared_json(e, listing))
+        .collect();
     functions.extend(listing.undeclared.iter().map(undeclared_json));
     json!({
         "counts": {
@@ -352,6 +357,12 @@ fn to_json(listing: &ApiListing) -> Value {
             "callbacks": listing.callbacks.len(),
         },
         "undeclared_listed": listing.undeclared_listed,
+        // The modules an optional feature owns (#698); every other is core
+        "gated_modules": listing
+            .gates
+            .iter()
+            .map(|g| json!({ "module": g.module, "enabled_when": g.enabled_when }))
+            .collect::<Vec<_>>(),
         "conventions": CONVENTIONS
             .iter()
             .map(|(k, v)| (k.to_string(), Value::from(*v)))
@@ -385,7 +396,19 @@ fn to_text(listing: &ApiListing) -> String {
             .iter()
             .filter(|e| e.module == module)
             .collect();
-        let _ = writeln!(out, "{module} ({} functions)", entries.len());
+        match listing.enabled_when(module) {
+            // A module an optional feature owns (#698)
+            Some(when) => {
+                let _ = writeln!(
+                    out,
+                    "{module} ({} functions; enabled when {when})",
+                    entries.len()
+                );
+            }
+            None => {
+                let _ = writeln!(out, "{module} ({} functions)", entries.len());
+            }
+        }
         for e in entries {
             let typed = if e.typed { "  [typed]" } else { "" };
             let _ = writeln!(out, "  {}{typed}", e.signature());
@@ -432,7 +455,7 @@ mod tests {
     use super::*;
 
     fn listing() -> ApiListing {
-        flint_script::ScriptSystem::new().api_listing()
+        flint_player::script_system().api_listing()
     }
 
     #[test]
@@ -488,7 +511,7 @@ mod tests {
         let undeclared: Vec<&str> = l.undeclared.iter().map(|u| u.signature.as_str()).collect();
         assert!(undeclared.is_empty(), "undeclared: {undeclared:?}");
         assert!(!to_text(&l).contains("undeclared"));
-        let mut system = flint_script::ScriptSystem::new();
+        let mut system = flint_player::script_system();
         system
             .rhai_engine_mut()
             .register_fn("game_raw", |n: i64| n + 1);

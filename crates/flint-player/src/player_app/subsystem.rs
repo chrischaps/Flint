@@ -343,6 +343,14 @@ pub(crate) trait Subsystem: Any {
     /// A stage of the frame. See [`Stage`] for where each falls.
     fn update(&mut self, _stage: Stage, _ctx: &mut StageCtx) {}
 
+    /// The script modules this subsystem owns and enables while it runs
+    /// (#698): their functions are a "not enabled" error in a scene
+    /// without it. The modules themselves are declared from its file's
+    /// `SCRIPT_MODULES`, once, for every scene.
+    fn script_modules(&self) -> &[&'static str] {
+        &[]
+    }
+
     /// A script's command, before the player's dispatcher sees it. Return
     /// `true` to take it: the player then never applies it.
     fn script_command(&mut self, _command: &ScriptCommand, _ctx: &mut StageCtx) -> bool {
@@ -441,6 +449,19 @@ impl Subsystems {
         for s in &mut self.list {
             s.update(stage, ctx);
         }
+    }
+
+    /// Every module the subsystems here enable (#698).
+    pub(crate) fn script_modules(&self) -> Vec<&'static str> {
+        let mut modules: Vec<&'static str> = Vec::new();
+        for s in &self.list {
+            for m in s.script_modules() {
+                if !modules.contains(m) {
+                    modules.push(m);
+                }
+            }
+        }
+        modules
     }
 
     /// Whether a subsystem took `command`.
@@ -554,9 +575,11 @@ macro_rules! scene_ctx {
 impl super::PlayerApp {
     /// The subsystems a scene being entered has: those the run brought (the
     /// expression feed, at `Start`) and this scene's own, each only if the
-    /// scene uses it; then each hears `scene_loaded`. Called last in
-    /// `enter_scene`, once the scene's systems and scripts are up.
-    pub(super) fn subsystems_enter_scene(&mut self, entry: super::scene_entry::SceneEntry) {
+    /// scene uses it, with the script modules they own enabled (#698).
+    /// Called before the scene's scripts load, so their `on_init` can call
+    /// those modules, as a capture's can (`HeadlessGame::start_scripts`);
+    /// they hear `scene_loaded` once the scripts are up.
+    pub(super) fn subsystems_build(&mut self, entry: super::scene_entry::SceneEntry) {
         if entry == super::scene_entry::SceneEntry::Start {
             // The feed belongs to the run (#518), so it outlives every scene
             if let Some(feed) = self.launch.expression_feed.take() {
@@ -571,9 +594,16 @@ impl super::PlayerApp {
                 self.core.subsystems.push(subsystem);
             }
         }
+        self.core.enable_script_modules();
+    }
+
+    /// The scene is up: each subsystem hears `scene_loaded`. Called last in
+    /// `enter_scene`, once the scene's systems and scripts are up.
+    pub(super) fn subsystems_enter_scene(&mut self) {
         if self.core.subsystems.is_empty() {
             return;
         }
+        let mut ctx = scene_ctx!(self);
         self.core.subsystems.scene_loaded(&mut ctx);
     }
 
@@ -586,6 +616,7 @@ impl super::PlayerApp {
         let mut ctx = scene_ctx!(self);
         self.core.subsystems.scene_unloading(&mut ctx);
         self.core.subsystems.drop_scene_ones();
+        self.core.enable_script_modules();
     }
 
     /// Whether a subsystem took a debug key.

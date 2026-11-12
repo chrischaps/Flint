@@ -91,7 +91,7 @@ impl GameCore {
             events: EventBus::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
-            script: ScriptSystem::new(),
+            script: crate::script_system(),
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             style_tweens: Default::default(),
@@ -100,6 +100,17 @@ impl GameCore {
             script_requests: Default::default(),
             commands_warned: Default::default(),
         }
+    }
+}
+
+impl GameCore {
+    /// Tell the scripts which modules the subsystems here own (#698), so a
+    /// call into one they don't is "not enabled". Called whenever the list
+    /// changes: a scene's subsystems built (before its scripts load) or
+    /// dropped.
+    pub(crate) fn enable_script_modules(&mut self) {
+        let modules = self.subsystems.script_modules();
+        self.script.set_enabled_modules(modules);
     }
 }
 
@@ -763,19 +774,16 @@ impl CoreCommands<'_> {
         edit_post_styles(self.core, self.renderer.as_deref_mut(), edit);
     }
 
-    /// A wooze or living-props command in a scene with neither, which has
-    /// no living subsystem to take it: said once a run, since a script may
-    /// ask every frame.
-    fn no_living(&mut self, command: &'static str) {
-        if self.core.commands_warned.insert(command) {
-            if command.contains("wooze") {
-                tracing::warn!(
-                    "A script tried to change the wooze field, and this scene has none: \
-                     give it a [wooze] table, even an empty one, to opt in"
-                );
-            } else {
-                tracing::warn!(target: "script", "{command}: this scene has no living props");
-            }
+    /// A module's command no subsystem took (#698): its subsystem went
+    /// with its scene after the call (a command queued in `on_scene_exit`).
+    /// A call where the module isn't enabled never queues one. Said once a
+    /// run, since a script may ask every frame.
+    fn module_gone(&mut self, function: &'static str) {
+        if self.core.commands_warned.insert(function) {
+            tracing::warn!(
+                target: "script",
+                "{function}: the subsystem its module belongs to is gone with its scene; dropped"
+            );
         }
     }
 
@@ -950,57 +958,11 @@ impl ScriptHost for CoreCommands<'_> {
         self.core.script_requests.cursor_captured = Some(captured);
     }
 
-    // The living subsystem takes these (`LivingSubsystem::command`) before
-    // they reach here; a scene without one has no field and no props.
-    fn set_wooze(&mut self, _knobs: toml::Value, _seconds: f64) {
-        self.no_living("set_wooze");
+    // A subsystem takes its module's commands (`LivingSubsystem::command`)
+    // before they reach here.
+    fn module_command(&mut self, command: flint_script::ModuleCommand) {
+        self.module_gone(command.function());
     }
-
-    fn set_wooze_zone(&mut self, _name: String, _fields: toml::Value, _seconds: f64) {
-        self.no_living("set_wooze_zone");
-    }
-
-    fn remove_wooze_zone(&mut self, _name: String, _seconds: f64) {
-        self.no_living("remove_wooze_zone");
-    }
-
-    fn tune_living(&mut self, _knobs: toml::Value) {
-        self.no_living("tune_living");
-    }
-
-    fn clear_living(&mut self, _species: String, _keys: Vec<String>) {
-        self.no_living("clear_living");
-    }
-
-    fn freeze_living(&mut self, _frozen: bool) {}
-
-    fn step_living(&mut self) {}
-
-    fn save_living_preset(&mut self, _name: String) {
-        self.no_living("save_living_preset");
-    }
-
-    fn load_living_preset(&mut self, _name: String) {
-        self.no_living("load_living_preset");
-    }
-
-    fn commit_living(&mut self) {
-        self.no_living("commit_living");
-    }
-
-    fn compare_living(&mut self, _a: String, _b: String) {
-        self.no_living("compare_living");
-    }
-
-    fn flip_living(&mut self) {
-        self.no_living("flip_living");
-    }
-
-    fn split_living(&mut self, _split: bool) {
-        self.no_living("split_living");
-    }
-
-    fn stop_comparing_living(&mut self) {}
 
     fn push_state(&mut self, name: String) {
         if self.core.state_machine.push_state(&name) {
