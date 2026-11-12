@@ -208,6 +208,95 @@ fn strict_makes_an_unknown_field_an_error() {
     );
 }
 
+/// #339's scene: three mistakes in one component, with a constraint that
+/// passes. Before ADR 0115 the loader logged a warning for the first field
+/// (`cell`), and validate printed "All constraints passed." and exited 0.
+/// Every field is named, and the scene fails although every constraint
+/// passes. The schema copies the three fields of the engine's `ascii_style`
+/// as they were when #339 was filed, so the engine's file can change under it.
+#[test]
+fn every_field_of_one_component_is_named_and_fails_when_constraints_pass() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_diagnostics_cli")
+        .join("one_component");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in [
+        ("flint.toml", MANIFEST),
+        (
+            "schemas/components/ascii_style.toml",
+            "[component.ascii_style]\ndescription = \"#339's copy\"\n\n\
+             [component.ascii_style.fields]\n\
+             cell = { type = \"f32\", min = 4.0, max = 32.0 }\n\
+             color = { type = \"enum\", values = [\"source\", \"tint\", \"raw\", \"mono\", \
+             \"palette\"] }\n\
+             tint = { type = \"vec3\" }\n",
+        ),
+        (
+            // Passes: the scene has no lamp
+            "schemas/constraints/lamps.toml",
+            "[[constraint]]\nname = \"lamps_have_transform\"\n\
+             query = \"entities where archetype == 'lamp'\"\nseverity = \"error\"\n\
+             message = \"Lamp '{name}' has no transform\"\n\n\
+             [constraint.kind]\ntype = \"required_component\"\narchetype = \"lamp\"\n\
+             component = \"transform\"\n",
+        ),
+        (
+            "bad.scene.toml",
+            "[scene]\nname = \"Bad\"\n\n\
+             [entities.a.ascii_style]\ncolor = \"plaid\"\ncell = 99\ntint = [1, 2]\n",
+        ),
+    ] {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let run = |format: &str| flint(&dir, &["validate", "bad.scene.toml", "--format", format]);
+
+    let o = run("text");
+    let out = stdout(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.starts_with("bad.scene.toml: 3 errors\n"), "{out}");
+    for expected in [
+        "  error[out-of-range] entity 'a' ascii_style.cell: 99 is above the maximum 32\n\
+         \x20     hint: the range is 4 to 32\n",
+        "  error[bad-enum-value] entity 'a' ascii_style.color: \"plaid\" is not a value of \
+         `color`\n      hint: allowed values: mono, palette, raw, source, tint\n",
+        "  error[bad-type] entity 'a' ascii_style.tint: a vec3 is 3 numbers, got 2\n",
+    ] {
+        assert!(out.contains(expected), "missing:\n{expected}\nin:\n{out}");
+    }
+    // The constraints did load and pass; the scene fails anyway
+    assert!(out.contains("All constraints passed."), "{out}");
+
+    let o = run("json");
+    assert_eq!(o.status.code(), Some(1));
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("one JSON document");
+    assert_eq!(doc["valid"], false);
+    assert_eq!(doc["errors"], 3);
+    assert_eq!(doc["violations"].as_array().map(Vec::len), Some(0));
+    let found: Vec<(&str, &str, &str, &str)> = doc["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap(),
+                d["entity"].as_str().unwrap(),
+                d["component"].as_str().unwrap(),
+                d["field"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("out-of-range", "a", "ascii_style", "cell"),
+            ("bad-enum-value", "a", "ascii_style", "color"),
+            ("bad-type", "a", "ascii_style", "tint"),
+        ]
+    );
+}
+
 /// The ticket's fourth box: a file that is not TOML is named, by validate
 /// and by a command that loads the scene.
 #[test]
