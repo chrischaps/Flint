@@ -1,8 +1,8 @@
 //! Scene-transition lifecycle for `PlayerApp` — code-motion sibling of
 //! `mod.rs` (player_app decomposition; see the decomposition ADR).
 //! Owns the `TransitionPhase` state machine, chunk streaming, and the
-//! transition executor (teardown ordering per ADR 0017: music session
-//! stops before `audio.clear()`).
+//! transition executor (teardown ordering per ADR 0017: a subsystem
+//! lets go before `audio.clear()`).
 
 use super::scene_loading::resolve_scene_path;
 use super::PlayerApp;
@@ -321,9 +321,9 @@ impl PlayerApp {
             }
         };
 
-        // Teardown: scripts told, music session stopped BEFORE audio.clear()
-        // (ADR 0017 producer→handles→device order), systems/world/terrain/
-        // transient render state cleared.
+        // Teardown: scripts told, subsystems let go (the music's stems stop
+        // BEFORE audio.clear(), ADR 0017's producer→handles→device order),
+        // systems/world/terrain/transient render state cleared.
         self.teardown_current_scene();
 
         // The outgoing scene's on_scene_exit has run: persist whatever it
@@ -352,17 +352,12 @@ impl PlayerApp {
             );
             self.core.script.call_scene_exits(&mut self.core.world);
         }
-        // Each subsystem lets go of the scene, before anything is cleared
+        // Each subsystem lets go of the scene, before anything is cleared:
+        // the music's capture guard drops and its stems stop BEFORE the
+        // audio system clears (ADR 0017's producer→handles→device order)
         self.subsystems_leave_scene();
 
-        // Music session first: capture guard drops and stems stop BEFORE the
-        // audio system clears (ADR 0017 producer→handles→device order).
-        self.stop_music_session();
-        // The session's post restore belongs to this scene: the next one's
-        // config replaces the renderer's whole (`stage_scene`), and a restore
-        // landing after it would stamp this scene's values over it
-        self.music.pp_restore = None;
-        // ...as does a render mode a script held on: the next frame would
+        // A render mode a script held on: the next frame would
         // otherwise switch the new scene's authored mode off
         self.post.mode_was_active = false;
 

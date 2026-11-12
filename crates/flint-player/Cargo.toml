@@ -24,13 +24,19 @@ name = "flint-web-shims"
 path = "src/bin/flint_web_shims.rs"
 
 [features]
-default = ["debug-hud", "audio", "gamepad"]
+default = ["debug-hud", "audio", "gamepad", "rhythm"]
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
-# silent and a music session won't start, as on a machine without a device.
-audio = ["flint-audio/device", "flint-music/device", "flint-rhythm/device"]
+# silent and a music session's stems don't play, as on a machine without a
+# device (its beat still counts, on the game clock).
+audio = ["flint-audio/device", "flint-music/device", "flint-rhythm?/device"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
-gamepad = ["flint-runtime/gamepad", "flint-input-capture/gamepad"]
+gamepad = ["flint-runtime/gamepad", "flint-input-capture?/gamepad"]
+# The rhythm game (ADR 0117 decision 2, #745): a `music_session` with a
+# `chart` is judged by flint-rhythm (coherence, the ladder, reintegration,
+# the 1 kHz pad capture of flint-input-capture). Off, the player links none
+# of it, and a charted suite plays as music, its chart not judged.
+rhythm = ["dep:flint-rhythm", "dep:flint-input-capture"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
@@ -53,8 +59,8 @@ flint-physics = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
 flint-music = { workspace = true }
-flint-rhythm = { workspace = true }
-flint-input-capture = { workspace = true }
+flint-rhythm = { workspace = true, optional = true }
+flint-input-capture = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 flint-animation = { workspace = true }

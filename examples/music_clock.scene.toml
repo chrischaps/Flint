@@ -1,0 +1,189 @@
+# ================================================================
+#  MUSIC CLOCK (#745)
+# ================================================================
+#
+#  A suite with no chart: two stems, a pad and a bell, on buses the
+#  suite names itself (music/clock.suite.toml), and an event script
+#  that opens the pad's low-pass on the way into the second section.
+#  The music_session component starts them; the script keeps time by
+#  music_beat(), music_bar() and music_section() alone. Four pads
+#  light on the beats of the bar, eight tiles fill with the bars, the
+#  dawn's in amber and the rise's in teal.
+#
+#  In play the beat is the audio clock's. Under --frame-step and in
+#  flint render --scripts it is the game clock's, so a capture lands
+#  each beat on the same frame every run.
+#
+#  Stems:  python examples/tools/music_clock.py
+#  Play:   cargo run --bin flint -- play examples/music_clock.scene.toml
+#  Still:  cargo run --bin flint -- render examples/music_clock.scene.toml --scripts --time 8.4
+# ================================================================
+
+[scene]
+name = "Music Clock"
+version = "1.0"
+description = "Pads and tiles kept in time by music_beat(), music_bar() and music_section()"
+
+[camera]
+position = [0.0, 3.6, 6.4]
+target = [0.0, 0.3, 0.2]
+fov = 46.0
+
+[environment]
+default_lights = false
+shadows = false
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.14
+bloom_threshold = 0.85
+vignette_enabled = true
+vignette_intensity = 0.4
+
+# A dark room for the pads to light
+[entities.sky_dome]
+[entities.sky_dome.sky]
+zenith_color = [0.010, 0.010, 0.020, 1.0]
+horizon_color = [0.030, 0.028, 0.050, 1.0]
+haze_color = [0.05, 0.04, 0.07, 0.3]
+cloud_coverage = 0.0
+star_opacity = 0.0
+ambient_sky = [0.06, 0.06, 0.09]
+ambient_ground = [0.03, 0.03, 0.04]
+
+[entities.conductor]
+[entities.conductor.music_session]
+manifest = "examples/music/clock.suite.toml"
+events = "examples/music/clock.events.toml"
+[entities.conductor.script]
+source = "music_clock.rhai"
+
+[entities.floor]
+[entities.floor.transform]
+position = [0, -0.05, 0]
+[entities.floor.bounds]
+min = [-7, -0.05, -4]
+max = [7, 0.0, 3]
+[entities.floor.material]
+color = [0.045, 0.045, 0.065, 1.0]
+unlit = true
+
+[entities.beat_1]
+[entities.beat_1.transform]
+position = [-2.7, 0.55, -0.5]
+[entities.beat_1.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.beat_1.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.beat_2]
+[entities.beat_2.transform]
+position = [-0.9, 0.55, -0.5]
+[entities.beat_2.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.beat_2.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.beat_3]
+[entities.beat_3.transform]
+position = [0.9, 0.55, -0.5]
+[entities.beat_3.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.beat_3.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.beat_4]
+[entities.beat_4.transform]
+position = [2.7, 0.55, -0.5]
+[entities.beat_4.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.beat_4.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_1]
+[entities.bar_1.transform]
+position = [-3.5, 0.12, 1.5]
+[entities.bar_1.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_1.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_2]
+[entities.bar_2.transform]
+position = [-2.5, 0.12, 1.5]
+[entities.bar_2.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_2.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_3]
+[entities.bar_3.transform]
+position = [-1.5, 0.12, 1.5]
+[entities.bar_3.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_3.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_4]
+[entities.bar_4.transform]
+position = [-0.5, 0.12, 1.5]
+[entities.bar_4.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_4.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_5]
+[entities.bar_5.transform]
+position = [0.5, 0.12, 1.5]
+[entities.bar_5.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_5.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_6]
+[entities.bar_6.transform]
+position = [1.5, 0.12, 1.5]
+[entities.bar_6.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_6.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_7]
+[entities.bar_7.transform]
+position = [2.5, 0.12, 1.5]
+[entities.bar_7.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_7.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true
+
+[entities.bar_8]
+[entities.bar_8.transform]
+position = [3.5, 0.12, 1.5]
+[entities.bar_8.bounds]
+min = [-0.42, -0.12, -0.3]
+max = [0.42, 0.12, 0.3]
+[entities.bar_8.material]
+color = [0.03, 0.03, 0.045, 1.0]
+unlit = true

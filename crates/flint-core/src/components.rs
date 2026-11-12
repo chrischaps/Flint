@@ -39,6 +39,10 @@ pub const CHARACTER_CONTROLLER: &str = "character_controller";
 // --- Audio ---
 pub const AUDIO_SOURCE: &str = "audio_source";
 pub const AUDIO_TRIGGER: &str = "audio_trigger";
+/// A scene's suite (#745): its stems play on their buses, sample-locked, and
+/// scripts read the beat; with a `chart`, the rhythm layer judges it too.
+/// Read by flint-player's music subsystem.
+pub const MUSIC_SESSION: &str = "music_session";
 
 // --- Particles ---
 pub const PARTICLE_EMITTER: &str = "particle_emitter";

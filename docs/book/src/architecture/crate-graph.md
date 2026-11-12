@@ -68,14 +68,14 @@ The workspace has 29 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 1 | `flint-terrain` | core | cli, debug-ui, player, render, script |
 | 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, particles, physics, player, query, render, runtime, scene, script, viewer |
 | 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
-| 2 | `flint-rhythm` | core, music | cli, input-capture, player |
+| 2 | `flint-rhythm` | core, music | cli, input-capture, player (optional) |
 | 3 | `flint-query` | core, ecs | cli, constraint |
 | 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script |
 | 3 | `flint-scene` | core, ecs, schema | android, cli, debug-ui, player, procgen, render, viewer |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
 | 4 | `flint-audio` | core, ecs, runtime | player |
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
-| 4 | `flint-input-capture` | core, music, rhythm, runtime | cli, player |
+| 4 | `flint-input-capture` | core, music, rhythm, runtime | cli, player (optional) |
 | 4 | `flint-particles` | core, ecs, runtime | cli, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, player, script |
 | 4 | `flint-procgen` | core, import, scene, schema | asset-gen, cli, debug-ui, player, procgen-ai, viewer |
@@ -84,7 +84,7 @@ The workspace has 29 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 5 | `flint-render` | core, ecs, import, particles, pixels, scene, terrain | cli, debug-ui, player, viewer |
 | 5 | `flint-script` | animation, core, ecs, physics, runtime, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, procgen, render, scene, terrain | cli, player (optional), viewer |
-| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, import, input-capture, music, particles, physics, procgen, render, rhythm, runtime, scene, schema, script, terrain | android, cli |
+| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, import, input-capture (optional), music, particles, physics, procgen, render, rhythm (optional), runtime, scene, schema, script, terrain | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, import, particles, procgen, render, scene, schema | cli |
 | 8 | `flint-android` | ecs, player, scene, schema | *(none)* |
 | 8 | `flint-cli` | animation, asset, asset-gen, constraint, core, debug-ui, ecs, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer | *(none)* |

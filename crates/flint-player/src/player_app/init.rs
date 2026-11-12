@@ -61,7 +61,6 @@ impl PlayerApp {
         Self {
             core: super::GameCore::new(world, scene_path, project),
             input: InputState::new(),
-            music: Default::default(),
             audio: AudioSystem::new(),
             launch: LaunchOptions {
                 fullscreen,
@@ -91,6 +90,7 @@ impl PlayerApp {
             input_layers: InputLayers::new(input_config_override),
             gilrs: None,
             pad_rumble: flint_runtime::PadRumble::new(),
+            pads_lent: false,
             saves: Default::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),

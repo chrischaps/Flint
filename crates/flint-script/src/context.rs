@@ -120,6 +120,34 @@ pub struct ConductedCue {
     pub params: Vec<(String, CueParam)>,
 }
 
+/// Where a scene's music is this frame (#745): what `music_beat()`,
+/// `music_bar()` and `music_section()` read. Set by the host's music
+/// subsystem before scripts run; [`MusicClock::default`] (nothing playing)
+/// with no music, so a script asks the same way in any scene.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MusicClock {
+    /// Whether a suite is playing (its clock is running).
+    pub playing: bool,
+    /// Beats from the suite's first beat, accumulated across tempo
+    /// changes; negative in the count-in before it.
+    pub beat: f64,
+    /// The bar, counted from 0 at the suite's first beat.
+    pub bar: i64,
+    /// The section the music is in; "" before the first, or with none.
+    pub section: String,
+}
+
+impl Default for MusicClock {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            beat: -1.0,
+            bar: -1,
+            section: String::new(),
+        }
+    }
+}
+
 /// Per-frame conducted-parameters snapshot (Phase 4 decision 4 / ADR 0020).
 /// Filled by the host (flint-player) from the music session every frame;
 /// neutral defaults when no session so scripts never branch on existence.
@@ -849,6 +877,9 @@ pub struct ScriptCallContext {
     /// Conducted-parameters snapshot for this frame (set by the host before
     /// scripts run; neutral defaults when no music session — ADR 0020)
     pub conducted: ConductedSnapshot,
+    /// Where the scene's music is this frame (#745); nothing playing when
+    /// the scene has none.
+    pub music: MusicClock,
     /// The latest expression state from outside the process (Flint#518):
     /// a timeline or a localhost socket, as the host feeds it. Empty until
     /// the first one arrives. `expression()` reads it; it outlives scene
@@ -953,6 +984,7 @@ impl ScriptCallContext {
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),
             conducted: ConductedSnapshot::default(),
+            music: MusicClock::default(),
             expression: rhai::Map::new(),
             bad_target_warned: HashSet::new(),
             opts_warned: HashSet::new(),

@@ -10,10 +10,6 @@ use super::input_config::{
     write_user_override_file, PendingRebind,
 };
 use super::input_script::{PointerEvent, ScriptEvent};
-#[cfg(feature = "debug-hud")]
-use super::music_guide_panel;
-#[cfg(feature = "debug-hud")]
-use super::timeline_panel;
 use super::PlayerApp;
 use anyhow::Result;
 use flint_runtime::pad::{Axis, EventType};
@@ -583,7 +579,7 @@ impl ApplicationHandler for PlayerApp {
                 self.web_frame_end();
                 // The frame's end, for the profiler (ADR 0109).
                 profiling::finish_frame!();
-                if self.music.exit_requested || self.outcome.exit_requested {
+                if self.outcome.exit_requested {
                     event_loop.exit();
                 }
             }
@@ -796,8 +792,9 @@ impl PlayerApp {
         }
     }
 
-    /// The player's debug keys: F2 stats overlay, F3/F4 panels, the music
-    /// guide and timeline, F9 force-fail, F11 fullscreen. Called for a real
+    /// The player's debug keys: F2 stats overlay, F3/F4 panels, F11
+    /// fullscreen; a subsystem's own first (the rhythm session's guide, map
+    /// and F9 force-fail, the living props' F5-F8). Called for a real
     /// key press and for one the input script presses, so a capture can
     /// open the overlay (H9). A real Escape exits only when no action binds
     /// it (`Escape::decide`, #639); a scripted one never does.
@@ -807,7 +804,22 @@ impl PlayerApp {
             code: key_code,
             shift: self.focus.key_modifiers.shift_key(),
         };
+        #[cfg(feature = "debug-hud")]
+        let open_before = self.debug_panels.iter().filter(|p| p.is_open()).count();
         if self.subsystems_take_key(key) {
+            // A subsystem's panel opened or closed: the cursor follows the
+            // panels, as F3's do
+            #[cfg(feature = "debug-hud")]
+            {
+                let open = self.debug_panels.iter().filter(|p| p.is_open()).count();
+                if open != open_before {
+                    if open > 0 {
+                        self.release_cursor();
+                    } else if self.core.physics.has_player_entity() {
+                        self.capture_cursor();
+                    }
+                }
+            }
             return;
         }
         match key_code {
@@ -845,41 +857,18 @@ impl PlayerApp {
                     }
                 }
             }
-            // Music Guide overlay (ADR 0035): the Phase 4
-            // debug-surface key — all F-keys are taken.
+            // Backquote, Backslash and F9 are the rhythm subsystem's (its
+            // guide, map and forced fail); with no chart playing they say so
             #[cfg(feature = "debug-hud")]
-            KeyCode::Backquote => {
-                self.toggle_named_panel(
-                    music_guide_panel::MUSIC_GUIDE_PANEL,
-                    "`",
-                    "no music session running — nothing to guide",
-                );
-            }
-            // Manifest Map timeline strip: Backslash
-            // (unbound elsewhere; Backquote is the guide's).
-            #[cfg(feature = "debug-hud")]
-            KeyCode::Backslash => {
-                self.toggle_named_panel(
-                    timeline_panel::MANIFEST_MAP_PANEL,
-                    "\\",
-                    "no music session running — nothing to map",
-                );
-            }
-            // Debug force-fail: trigger the full
-            // reintegration (rewind → seam → reassembly)
-            // without having to play to a fail — seam
-            // iteration must not depend on first clearing
-            // the arming threshold (ADR 0064 follow-up).
-            #[cfg(feature = "debug-hud")]
-            KeyCode::F9 => {
-                if let Some(ms) = self.music.session.as_mut() {
-                    ms.debug_force_fail();
-                    println!("[music] DEBUG: full-fail forced — rewind incoming");
-                } else {
-                    self.hud
-                        .key_note
-                        .say("F9", "no music session running — nothing to fail");
-                }
+            KeyCode::Backquote | KeyCode::Backslash | KeyCode::F9 => {
+                let key = match key_code {
+                    KeyCode::Backquote => "`",
+                    KeyCode::Backslash => "\\",
+                    _ => "F9",
+                };
+                self.hud
+                    .key_note
+                    .say(key, "no chart is playing in this scene — nothing to show");
             }
             // Rendering & Effects menu (ADR 0053): the
             // one home for every render/post debug

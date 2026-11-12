@@ -340,6 +340,11 @@ topic = "runtime"
 purpose = "Pads lit by audio_position() on a looping click track"
 
 [[example]]
+scene = "music_clock.scene.toml"
+topic = "runtime"
+purpose = "A suite with no chart: two named stems, and pads kept in time by music_beat(), music_bar() and music_section()"
+
+[[example]]
 scene = "seeded_stars.scene.toml"
 topic = "runtime"
 purpose = "random() under --frame-step and --seed: the same skies every run (#635)"

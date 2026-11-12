@@ -1,13 +1,10 @@
-//! The music-session lifecycle inside the player app (Phase 4 F3, ADR 0019).
-//!
-//! A scene declares its suite with a `music_session` component
-//! (`schemas/components/music_session.toml`, game-side); the player starts a
-//! [`ChartSession`] on the shared kira `AudioManager` (ADR 0017), hands the
-//! gamepad to the 1 kHz capture thread for the session's duration, and
-//! down-samples the same capture drain into `InputState` so the script/action
-//! surface keeps working frame-quantized (ADR 0018). Headless (no audio
-//! device) degrades to no-session, matching the engine's Option-audio
-//! convention.
+//! The chart session itself (Phase 4 F3, ADR 0019), which
+//! [`super::RhythmSubsystem`] drives: a flint-rhythm [`ChartSession`] on
+//! the shared kira `AudioManager` (ADR 0017), the gamepad handed to the 1 kHz
+//! capture thread for the session's duration, and the same capture drain
+//! down-sampled into `InputState` so the script/action surface keeps working
+//! frame-quantized (ADR 0018). Headless (no audio device) degrades to no
+//! session, matching the engine's Option-audio convention.
 //!
 //! While a session is active only lean + pulse reach `InputState` — every
 //! other pad control is dropped inside the capture crate (accepted gap,
@@ -24,16 +21,13 @@ use flint_runtime::InputState;
 use std::path::Path;
 use web_time::Instant;
 
-/// Component name in scene TOML (schema: `schemas/components/music_session.toml`).
-pub const MUSIC_SESSION: &str = "music_session";
-
 /// Gamepad slot the down-sampled events claim in `InputState`.
 const GAMEPAD_SLOT: u32 = 0;
 /// The pulse verb's button name in `InputState`'s gamepad vocabulary.
 const PULSE_BUTTON: &str = "South";
 /// Teardown fade: long enough to avoid a click, short enough to feel like
 /// the world simply lets go.
-const STOP_FADE_MS: f64 = 50.0;
+const STOP_FADE_MS: f64 = crate::music::STOP_FADE_MS;
 
 /// Ladder visuals → engine post params (ADR 0021; F4/F6 move authorship into
 /// scripts via conducted params, superseding this direct path script-wins).
@@ -107,7 +101,8 @@ pub fn restore_ladder_postprocess(
 /// counters (the F2 pass criteria, re-checked on every real run).
 ///
 /// `ChartSession`'s internal field order drops the capture guard before the
-/// kira handles; `PlayerApp`'s field order drops those handles before the
+/// kira handles; the subsystem list, in `GameCore` and declared before the
+/// player's `audio`, drops those handles before the
 /// shared manager (ADR 0017).
 pub struct MusicSession {
     session: ChartSession,
