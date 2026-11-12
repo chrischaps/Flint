@@ -28,10 +28,20 @@ export function parsePerfLine(line) {
       out.frame = { p50: num(m[1]), p90: num(m[2]), p99: num(m[3]), max: num(m[4]), frames: num(m[5]), secs: num(m[6]) };
     } else if ((m = /^cpu ([\d.]+) ms/.exec(part))) {
       out.cpu = num(m[1]);
-    } else if ((m = /^gpu ([\d.]+) ms: (.*)$/.exec(part))) {
+    } else if ((m = /^present (\S+)$/.exec(part))) {
+      out.present = m[1];
+    } else if ((m = /^gpu ([\d.]+) ms( [^:]*)?: (.*)$/.exec(part))) {
+      // since #380 the times may say how they were taken: " under vsync",
+      // " no vsync", or " under vsync at idle clocks (31% busy, reads high; ...)"
       out.gpu = { frame: num(m[1]), passes: {} };
+      const note = m[2]?.trim();
+      if (note) {
+        out.gpu.vsync = note.startsWith('under vsync');
+        const busy = /\((\d+)% busy/.exec(note);
+        if (busy) out.gpu.idleClocks = num(busy[1]) / 100;
+      }
       // a pass's label may hold spaces ("Style mask"); its time is the last word
-      for (const pass of m[2].split(', ')) {
+      for (const pass of m[3].split(', ')) {
         const p = /^(.*) ([\d.]+)$/.exec(pass);
         if (p) out.gpu.passes[p[1]] = num(p[2]);
       }

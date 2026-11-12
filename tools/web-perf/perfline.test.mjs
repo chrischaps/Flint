@@ -60,6 +60,16 @@ test('a line a page wrote is read', () => {
   assert.equal(p.tris, '663.1K');
 });
 
+test('the GPU part says how it was timed (#380)', () => {
+  const idle = parsePerfLine(
+    'present fifo | gpu 4.91 ms under vsync at idle clocks (31% busy, reads high; FLINT_VSYNC=0 for pass costs): Scene 1.62, Style mask 0.04',
+  );
+  assert.equal(idle.present, 'fifo');
+  assert.deepEqual(idle.gpu, { frame: 4.91, passes: { Scene: 1.62, 'Style mask': 0.04 }, vsync: true, idleClocks: 0.31 });
+  assert.deepEqual(parsePerfLine('gpu 15.00 ms no vsync: Scene 15.00').gpu, { frame: 15, passes: { Scene: 15 }, vsync: false });
+  assert.deepEqual(parsePerfLine('gpu 3.90 ms under vsync: SSAO 0.80').gpu, { frame: 3.9, passes: { SSAO: 0.8 }, vsync: true });
+});
+
 test('a line without GPU timing says so', () => {
   assert.deepEqual(parsePerfLine('flint perf · x · t=3s | gpu off').gpu, { frame: null, passes: {}, note: 'gpu off' });
   assert.deepEqual(parsePerfLine(undefined), {});

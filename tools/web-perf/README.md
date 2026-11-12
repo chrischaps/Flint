@@ -23,17 +23,20 @@ node tools/web-perf/run.mjs <work>/site games/asciiweb/asciiweb.flintpack \
 stylize passes ("Stylize passes (#270)"). On 2026-11-12 (RTX 4070 laptop,
 Chrome 157) it read:
 
-| page | canvas | scene | Style mask ms | ASCII ms | GPU frame ms | bind groups a frame | passes a frame | frame p50 ms |
-|---|---|---|---|---|---|---|---|---|
-| DPR 1, ascii_none | 1920x1080 | 1920x1080 |  |  | 4.19--4.59 | 0.0 | 17.0 | 16.7 |
-| DPR 1, ascii_entities | 1920x1080 | 1920x1080 | 0.04 | 0.34--0.41 | 4.91--5.30 | 0.0 | 26.0 | 16.7 |
-| DPR 1, ascii_full | 1920x1080 | 1920x1080 | 0.02--0.04 | 0.52--0.92 | 3.22--4.85 | 0.0 | 26.0 | 16.7 |
-| DPR 2, ascii_none | 1920x1080 | 1440x810 |  |  | 3.87--3.88 | 0.0 | 18.0 | 16.7 |
-| DPR 2, ascii_entities | 1920x1080 | 1440x810 | 0.03--0.04 | 0.69--0.70 | 4.41--4.42 | 0.0 | 27.0 | 16.7 |
-| DPR 2, ascii_full | 1920x1080 | 1440x810 | 0.02--0.69 | 0.49--0.90 | 2.56--4.44 | 0.0 | 27.0 | 16.7 |
+| page | canvas | scene | Style mask ms | ASCII ms | GPU frame ms | GPU timed | bind groups a frame | passes a frame | frame p50 ms |
+|---|---|---|---|---|---|---|---|---|---|
+| DPR 1, ascii_none | 1920x1080 | 1920x1080 |  |  | 3.15--3.96 | vsync, idle clocks (17--24% busy) | 0.0 | 17.0 | 16.7 |
+| DPR 1, ascii_entities | 1920x1080 | 1920x1080 | 0.04 | 0.40--0.53 | 4.18--4.41 | vsync, idle clocks (25--26% busy) | 0.0 | 26.0 | 16.7 |
+| DPR 1, ascii_full | 1920x1080 | 1920x1080 | 0.03--0.05 | 0.72--0.80 | 4.38--4.43 | vsync, idle clocks (26--27% busy) | 0.0 | 26.0 | 16.7 |
+| DPR 2, ascii_none | 1920x1080 | 1440x810 |  |  | 2.98--3.07 | vsync, idle clocks (18% busy) | 0.0 | 18.0 | 16.7 |
+| DPR 2, ascii_entities | 1920x1080 | 1440x810 | 0.02--0.03 | 0.99--1.00 | 4.24--4.25 | vsync, idle clocks (25% busy) | 0.0 | 27.0 | 16.7 |
+| DPR 2, ascii_full | 1920x1080 | 1440x810 | 0.02 | 0.80--1.23 | 3.20--3.89 | vsync, idle clocks (19--23% busy) | 0.0 | 27.0 | 16.7 |
 
-A second run read per-entity ASCII at DPR 1 as 0.54--0.60: another job had
-the GPU. Run it more than once.
+Two earlier runs that day put per-entity ASCII at DPR 1 at 0.34--0.41 and
+0.54--0.60 ms: other jobs share the GPU. A page presents on the browser's
+frame, so its GPU times are always taken under vsync, and the column says
+when the GPU idled at low clocks and read high (#380). Run it more than once,
+and compare a pass against a control page from the same run.
 
 The first argument is a folder to serve (on 127.0.0.1, for the run only) or
 the URL of a site already up. A scene may carry its own query after `+`:

@@ -279,7 +279,16 @@ const passNames = flags.passes
   : [...new Set(pages.flatMap((p) => p.reads.flatMap((r) => Object.keys(r.parsed.gpu?.passes ?? {}))))];
 const over = (p, f) => p.reads.map((r) => f(r.parsed)).filter((v) => v !== undefined);
 const sizeOf = (p, f) => [...new Set(over(p, f).map((s) => s.join('x')))].join(', ');
-const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'bind groups a frame', 'passes a frame', 'frame p50 ms'];
+const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms'];
+// how the readout says its GPU times were taken (#380): under vsync an idle GPU
+// clocks down and its passes read high
+const timed = (p) => {
+  const g = p.reads.map((r) => r.parsed.gpu).filter((x) => x && x.vsync !== undefined);
+  if (!g.length) return '';
+  if (!g.some((x) => x.vsync)) return 'no vsync';
+  const busy = g.map((x) => x.idleClocks).filter((x) => x !== undefined);
+  return busy.length ? `vsync, idle clocks (${range(busy.map((b) => b * 100), 0)}% busy)` : 'vsync';
+};
 const rows = pages.map((p) =>
   p.error
     ? [`DPR ${p.dpr}, ${p.scene}`, p.error, ...head.slice(2).map(() => '')]
@@ -289,6 +298,7 @@ const rows = pages.map((p) =>
         sizeOf(p, (x) => x.scene),
         ...passNames.map((n) => range(over(p, (x) => x.gpu?.passes?.[n]))),
         range(over(p, (x) => x.gpu?.frame ?? undefined)),
+        timed(p),
         range(over(p, (x) => x.webgpu?.bindGroups), 1),
         range(over(p, (x) => x.webgpu?.passes), 1),
         range(over(p, (x) => x.frame?.p50), 1),

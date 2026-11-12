@@ -812,7 +812,7 @@ too (measured below the table, "Bind groups over the caller's depth").
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three
-scenes (`tools/web-perf/README.md`), Chrome 157, same machine, two runs of
+scenes (`tools/web-perf/README.md`), Chrome 157, same machine, three runs of
 two 10 s windows each:
 
 | page | scene | Style mask | ASCII | bind groups a frame | passes |
@@ -821,8 +821,14 @@ two 10 s windows each:
 | DPR 1, per entity | 1920x1080 | 0.03--0.04 | 0.34--0.60 | 0 | 26 |
 | DPR 1, full screen | 1920x1080 | 0.02--0.19 | 0.52--1.17 | 0 | 26 |
 | DPR 2 (cap 1.5), no style | 1440x810 | | | 0 | 18 |
-| DPR 2, per entity | 1440x810 | 0.02--0.04 | 0.28--0.70 | 0 | 27 |
-| DPR 2, full screen | 1440x810 | 0.02--0.69 | 0.49--0.90 | 0 | 27 |
+| DPR 2, per entity | 1440x810 | 0.02--0.04 | 0.28--1.00 | 0 | 27 |
+| DPR 2, full screen | 1440x810 | 0.02--0.69 | 0.49--1.23 | 0 | 27 |
+
+The last run had #380's note in the readout, and every page said `under
+vsync at idle clocks` (17--27% busy). A page always presents on the
+browser's frame, and it has no `FLINT_VSYNC=0`, so the browser's pass times
+read high; #270's did too. Compare a pass with a control page in the same
+run (here `ascii_none`), not with the desktop's figures.
 
 The scene sizes and the no-style pages' passes match. What moved is the
 style itself: it adds nine passes a frame where it added three, since edges
