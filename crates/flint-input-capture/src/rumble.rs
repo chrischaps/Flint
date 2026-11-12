@@ -546,8 +546,8 @@ pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
 
 #[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 fn time_effect_play() -> flint_core::Result<CallStats> {
-    use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
-    let mut gilrs = gilrs::Gilrs::new().map_err(|e| {
+    use crate::pad::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
+    let mut gilrs = crate::pad::Gilrs::new().map_err(|e| {
         flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
     })?;
     let ids: Vec<_> = gilrs

@@ -86,6 +86,7 @@ pub const PRESENTATION_ONLY: &[Skipped] = &[
     quiet("set_audio_lowpass"),
     quiet("set_touch_controls"),
     quiet("set_cursor_captured"),
+    quiet("rumble"),
     noted(
         "set_time_scale",
         "the capture's clock is its own fixed step",

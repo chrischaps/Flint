@@ -117,6 +117,11 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         },
         C::ResetStyleHistory,
         C::SetCameraCutDetection { enabled: false },
+        C::Rumble {
+            pad: -1,
+            strength: 0.5,
+            seconds: 0.2,
+        },
         C::SetLook {
             name: Some(s("graphite")),
         },

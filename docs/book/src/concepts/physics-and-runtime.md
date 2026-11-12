@@ -326,6 +326,9 @@ Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs)
 - **Axes** support deadzone filtering, scale, invert, and optional threshold for button-like behavior
 - **Multi-gamepad** is supported via `GamepadSelector::Any` (first match) or `GamepadSelector::Index(n)` (specific controller)
 - Disconnected gamepads are automatically cleaned up
+- **Rumble**: a script's `rumble(pad, strength, seconds)` buzzes both motors of a pad, or every pad with `-1` ([Scripting](scripting.md#input-and-cursor-api)). It goes through gilrs's force-feedback server, so lengths are whole 50 ms ticks; a music session's haptics are a separate, clock-stamped path in `flint-input-capture`, and own the motors while a session runs
+
+The backend lives in `flint-runtime` (`flint_runtime::pad`), beside `InputState`: gilrs with the `gamepad` feature, or a stand-in that never finds a backend without it, so a headless build has no gamepad code to cut around. Read pads through it, never `gilrs` directly. The player's ordinary pad polling and rumble don't touch the rhythm crates; `flint-input-capture` reads pads through the same module for its 1 kHz capture thread.
 
 ### Runtime Rebinding
 

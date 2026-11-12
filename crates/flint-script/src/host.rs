@@ -132,6 +132,9 @@ pub trait ScriptHost {
     fn set_camera_cut_detection(&mut self, enabled: bool) {
         self.unsupported("set_camera_cut_detection");
     }
+    fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
+        self.unsupported("rumble");
+    }
     /// `set_look(name)`, or `clear_look()` with `None`.
     fn set_look(&mut self, name: Option<String>) {
         self.unsupported("set_look");
@@ -301,6 +304,11 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::ResetPostStyle { style } => host.reset_post_style(style),
         C::ResetStyleHistory => host.reset_style_history(),
         C::SetCameraCutDetection { enabled } => host.set_camera_cut_detection(enabled),
+        C::Rumble {
+            pad,
+            strength,
+            seconds,
+        } => host.rumble(pad, strength, seconds),
         C::SetLook { name } => host.set_look(name),
         C::SetCamera { camera } => host.set_camera(camera),
         C::SetPostProcess { post } => host.set_post_process(post),

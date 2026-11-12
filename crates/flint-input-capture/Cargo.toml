@@ -7,15 +7,16 @@ description = "High-rate gamepad capture producing audio-clock-timestamped verb-
 
 [features]
 default = ["gamepad"]
-# Gamepads through gilrs (libudev on Linux). Off, `pad` is a stand-in whose
-# `Gilrs::new()` always fails: no pads, capture refuses to start (#221).
-gamepad = ["dep:gilrs", "dep:gilrs-core"]
+# Gamepads through gilrs (libudev on Linux), read through flint-runtime's
+# `pad` (#748). Off, `pad` is a stand-in whose `Gilrs::new()` always fails:
+# no pads, capture refuses to start (#221).
+gamepad = ["flint-runtime/gamepad", "dep:gilrs-core"]
 
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-music = { workspace = true }
-gilrs = { workspace = true, optional = true }
+flint-runtime = { workspace = true }
 tracing = { workspace = true }
 
 # The capture thread and its rumble engine are native only: a browser has no

@@ -1,13 +1,18 @@
 //! The gamepad backend, as one path for every crate that reads pads (#221).
 //!
-//! With the `gamepad` feature (the default) this is gilrs itself. Without it,
+//! With the `gamepad` feature this is gilrs itself. The feature is off by
+//! default in this crate, which every runtime crate links for `InputState`;
+//! flint-player's and flint-input-capture's `gamepad` turn it on. Without it,
 //! it's a stand-in with the slice of gilrs's API Flint touches, so that a
 //! headless CLI builds with no libudev and no gamepad code to cut around:
 //! [`Gilrs`] is an enum with no values, `Gilrs::new()` always fails the way
 //! it does on a machine with no backend, and everything that would hold one
 //! compiles and is never reached.
 //!
-//! Read pads through `flint_input_capture::pad`, never `gilrs` directly, or
+//! It lives here, beside [`InputState`](crate::InputState), so the player's
+//! ordinary pad polling and a script's [`rumble`](crate::rumble) need no
+//! rhythm crate (#748); flint-input-capture's 1 kHz thread reads pads through
+//! it too. Read pads through `flint_runtime::pad`, never `gilrs` directly, or
 //! the build without the feature breaks.
 
 #[cfg(feature = "gamepad")]

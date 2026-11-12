@@ -320,6 +320,14 @@ pub enum ScriptCommand {
     SetCameraCutDetection {
         enabled: bool,
     },
+    /// `rumble(pad, strength, seconds)` (#748): both motors of a pad (`pad`
+    /// negative: every pad) at `strength` (0..1) for `seconds`; zero of
+    /// either stops it. The host clamps both (`flint_runtime::RumbleRequest`).
+    Rumble {
+        pad: i64,
+        strength: f64,
+        seconds: f64,
+    },
     /// Lay a look under the scene's `[post_process]` keys in place of the
     /// one it has (#356): a `styles/<name>.look.toml` or a built-in.
     /// `None` takes the look off (the scene's keys alone).
