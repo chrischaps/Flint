@@ -53,6 +53,12 @@ pub struct PlayArgs {
     /// kept through transitions, and `--style-time` (#328)
     #[command(flatten)]
     pub style: crate::commands::common_args::StyleArgs,
+    /// Motion on twos for the whole frame (#405): every entity's drawn position
+    /// and pose change only this many times a second, as does the post time
+    /// styles read (12 = on twos at 24 fps; 0 = off). Over every scene's
+    /// [post_process] motion_hold, kept through transitions
+    #[arg(long, value_name = "RATE")]
+    pub motion_hold: Option<f32>,
     /// Play expression states from a JSON timeline on the game clock:
     /// `{"events": [{..., "t": secs}, ...]}`. Scripts read the latest with
     /// `expression()` and hear each in `on_expression(state)` (Flint#518)
@@ -173,6 +179,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
 
     app.launch.style_specs = args.style.styles.clone();
     app.launch.style_time = args.style.style_time;
+    app.launch.motion_hold = args.motion_hold;
 
     // Everything the scene file says (skybox, ambient and shading levers,
     // camera, post-processing with its look, living props, wooze and the

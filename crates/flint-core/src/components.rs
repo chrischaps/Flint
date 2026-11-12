@@ -23,6 +23,10 @@ pub const LIGHT: &str = "light";
 /// `visibility { visible = false }` keeps an entity and its descendants out of
 /// every draw, shadow, light and ray target (#628). See `FlintWorld::hidden_entities`.
 pub const VISIBILITY: &str = "visibility";
+/// `motion_hold { rate = 12 }` draws an entity and its descendants on ticks,
+/// `rate` a second, as a rotoscoped film holds its drawings (#405). Only what
+/// the renderer draws is held. See `flint_render::motion_hold`.
+pub const MOTION_HOLD: &str = "motion_hold";
 
 // --- Scripting & interaction ---
 pub const SCRIPT: &str = "script";

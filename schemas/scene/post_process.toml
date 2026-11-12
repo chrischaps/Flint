@@ -72,6 +72,7 @@ grade_gain = { type = "vec3", default = [1.0, 1.0, 1.0], description = "Colour g
 edge_depth = { type = "f32", default = 0.6, description = "The relative view-distance step that is a silhouette, for every style that reads the shared geometry edges" }
 edge_normal = { type = "f32", default = 2.5, description = "The normal change that is a crease, for every style that reads the shared geometry edges" }
 boil_on = { type = "i32", default = 2, min = 0.0, description = "Film frames each drawing of the shading boil is held: 1, 2 or 3 (on twos). Shared by both styles' boils" }
+motion_hold = { type = "f32", default = 0.0, min = 0.0, description = "Motion on twos for the whole frame: entities with no motion_hold of their own are drawn on ticks, this many a second, and the post time styles read holds to them (12 = on twos at 24 fps). 0 = off" }
 
 look = { type = "string", description = "A look laid under this table's own keys: a styles/<name>.look.toml beside the scene or its parent, or a built-in (ascii_noir, graphite, ...)" }
 styles = { type = "table", description = "Stylize passes by name: [post_process.styles.<style>] with enabled (default true) and the style's parameters, which the renderer checks against its registry" }

@@ -636,6 +636,31 @@ enabled = false        # stays painted
 
 ![examples/pencil_sketch.scene.toml: six props, each its own hand; the world around them stays painted](../images/pencil-sketch-entities.png)
 
+### Motion on twos
+
+Rotoscoped film holds each drawing for two or three frames, and its lines redraw on the same beat. A `boil` redraws the lines that many times a second, but on its own the animation under them still moves smoothly, so the line redraw and the motion read as two separate things. `motion_hold` (#405) draws an entity's position and pose on ticks too:
+
+```toml
+[entities.dancer.motion_hold]
+rate = 12.0              # drawings a second: on twos at 24 fps
+
+[entities.dancer.pencil_style]
+boil = 12.0              # the lines redraw on the same ticks
+```
+
+![Eight frames of examples/motion_hold.scene.toml captured by flint-player at --frame-step 1/48: the pendulum, the YBot and the pencil lines change on frames 0 and 4 and hold on the three frames after each](../images/motion-hold-strip.png)
+
+- **What is held.** The component holds the entity and everything below it: the world matrix it is drawn with and a skinned model's bone palette, kept from the first frame of each tick until the next tick. The nearest `motion_hold` up the hierarchy wins, so `rate = 0` on a child lets that branch move smoothly. Lights, particles, the ocean and the camera keep moving smoothly.
+- **Only the drawing is held.** Physics (fixed at 1/60 s), IK and scripts read the world, which goes on moving smoothly, so a held crate still falls and collides at 60 Hz and a held hand still reaches its IK target. In `examples/motion_hold.scene.toml` two pendulums swing as mirrors of each other, one held and one smooth. Captured in `flint-player` at `--frame-step 1/48`, every frame on a tick is byte-identical to the same scene with no hold.
+- **Same tick as the lines.** A tick is `floor(time x rate)` of the post time, the clock `boil` reads. Pencil's boil steps its seed through the same function, so at `boil = 12` and `rate = 12` the pose and the lines change in exactly the same frames. A tick lands a thousandth of a tick early, so a clock that sums 1/60 steps to a hair under 1/12 still turns on frame 5.
+- **The whole frame.** `[post_process] motion_hold = 12` (or `--motion-hold 12` on `flint render`, `flint play` and `flint-player`) holds every entity that names no rate of its own. It also holds the post time that styles, film grain and the tear read to the start of each tick, so a whole-frame pencil boiling at 24 still redraws once a tick.
+- **Scripts.** `set_motion_hold(id, rate)`, `clear_motion_hold(id)` and `get_motion_hold(id)` write and read the component directly, so a hold set in `on_update` draws from that frame.
+- **Deterministic.** The host stamps the renderer with the frame's game time (`SceneRenderer::set_motion_time`) before it uploads bones: the player's clock, a capture's moment. A `--frame-step` capture is byte-identical run to run. `flint render --time 0..2 --fps 24` draws it. A renderer that is never stamped holds nothing (the `flint edit` viewer, for now).
+
+```bash
+flint render examples/motion_hold.scene.toml --no-grid --anim-time 0 --time 0..2 --fps 24 -o twos.gif
+```
+
 ### Blending in and out
 
 `blend` draws an entity part-way into its style, from 0 (its own shading) to 1 (the style's, and the default when it's left out). A script ramps it to fade a prop into text and back (#278):

@@ -1100,6 +1100,8 @@ impl PlayerApp {
                 10.0
             };
             renderer.aspect_ratio = self.camera.aspect;
+            // As in bones_posed (#405), for a frame that skipped it
+            renderer.set_motion_time(self.core.clock.total_time);
             renderer.update_from_world(&self.core.world, &context.device);
             // Next frame's scripts cast against what this one draws (ADR 0105).
             self.core.script.set_ray_scene(renderer.ray_scene());
@@ -1605,6 +1607,10 @@ impl super::game_core::FrameHost for PlayerApp {
     fn bones_posed(&mut self) {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            // The clock poses held on twos tick by (#405), before the bones
+            // go up: the same seconds the post time reads, so a held pose
+            // and a style's boil turn on the same frame
+            renderer.set_motion_time(self.core.clock.total_time);
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
                 if let Some(matrices) = self.core.animation.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(

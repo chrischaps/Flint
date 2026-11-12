@@ -245,6 +245,11 @@ pub struct PostProcessDef {
     /// both styles' boils.
     #[serde(default = "default_boil_on")]
     pub boil_on: u32,
+    /// Motion on twos for the whole frame (#405): every entity that names no
+    /// `motion_hold` rate of its own is drawn on ticks, this many a second,
+    /// and the post time styles read holds to the same ticks. 0 = off.
+    #[serde(default)]
+    pub motion_hold: f32,
     /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
     #[serde(default)]
     pub film_grain: f32,

@@ -95,6 +95,9 @@ pub struct LaunchOptions {
     /// `--style-time`: hold the post time styles (and the ocean, grain and
     /// render modes, which share it) see at this many seconds.
     pub style_time: Option<f32>,
+    /// `--motion-hold`: the whole-frame motion on twos rate (#405), written
+    /// over every scene's `[post_process] motion_hold` at load.
+    pub motion_hold: Option<f32>,
     /// `--save-dir`: keep this run's saves in this folder
     /// (`<dir>/<slot>.toml`) and read no other (#726).
     pub save_dir: Option<std::path::PathBuf>,
@@ -128,6 +131,7 @@ impl Default for LaunchOptions {
             look: None,
             style_specs: Vec::new(),
             style_time: None,
+            motion_hold: None,
             save_dir: None,
             expression_feed: None,
             compare: None,

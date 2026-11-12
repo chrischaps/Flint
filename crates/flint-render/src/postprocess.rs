@@ -127,6 +127,11 @@ pub struct PostProcessConfig {
     /// or 3. Shared by the boils of the `kuwahara` and `contour` styles,
     /// whose amounts are their own `boil` parameters (#599).
     pub boil_on: u32,
+    /// Motion on twos for the whole frame (#405): entities that name no
+    /// `motion_hold` rate of their own are drawn on ticks, this many a
+    /// second, and the post time styles, grain and the tear read holds to
+    /// the start of each tick. 0 = off. See [`crate::motion_hold`].
+    pub motion_hold: f32,
     /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
     /// does, and its amount of 0 turns both boils off.
@@ -215,6 +220,7 @@ impl Default for PostProcessConfig {
             edge_depth: 0.6,
             edge_normal: 2.5,
             boil_on: 2,
+            motion_hold: 0.0,
             boil: Default::default(),
             render_mode: 0,
             mode_mix: 0.0,
@@ -307,6 +313,7 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.edge_depth = pp_def.edge_depth;
     config.edge_normal = pp_def.edge_normal;
     config.boil_on = pp_def.boil_on;
+    config.motion_hold = pp_def.motion_hold;
     config.film_grain = pp_def.film_grain;
     config.grade_lift = pp_def.grade_lift;
     config.grade_gamma = pp_def.grade_gamma;
