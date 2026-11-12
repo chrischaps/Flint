@@ -98,6 +98,8 @@ impl LivingSubsystem {
             self.pick_living(ctx, None);
             return true;
         }
+        #[cfg(not(feature = "debug-hud"))]
+        let _ = ctx;
         false
     }
 
@@ -319,7 +321,6 @@ impl LivingSubsystem {
     /// other.
     fn command(&mut self, command: &ScriptCommand, ctx: &mut StageCtx) -> bool {
         use super::living_api::LivingCommand as C;
-        use super::script_commands::table_of;
         let ScriptCommand::Module(command) = command else {
             return false;
         };
@@ -558,4 +559,10 @@ impl super::PlayerApp {
         self.launch.compare = Some((a.to_string(), b.to_string()));
         self.launch.compare_at_start = Some(split);
     }
+}
+
+fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
+    value
+        .as_table()
+        .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }

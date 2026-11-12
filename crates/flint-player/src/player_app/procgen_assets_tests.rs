@@ -16,7 +16,9 @@ pub(crate) enum Event {
     Image(String),
     Placeholder(String, AssetKind),
     File(String, AssetKind),
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     Living(String),
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     Bones(EntityId, String, usize),
 }
 

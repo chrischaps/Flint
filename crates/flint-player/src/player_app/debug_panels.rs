@@ -156,7 +156,7 @@ impl PlayerApp {
 
     /// Create the Living Props panel when the scene has any `living_prop` entity
     /// (#218). The drain in `living_tuning.rs` mirrors the grove into it.
-    #[cfg(feature = "debug-hud")]
+    #[cfg(all(feature = "debug-hud", feature = "living"))]
     pub(super) fn create_living_debug_panel(&mut self) {
         if self
             .core

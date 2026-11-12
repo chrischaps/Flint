@@ -8,13 +8,24 @@
 //! did, and every read and write is the same one through the group.
 
 use super::input_config::{InputConfigPaths, PendingRebind};
-use super::{camera_cut, expression_feed, fonts, perf, procgen_assets};
+use super::{camera_cut, expression_feed, fonts, perf};
 use super::{egui_input, render_scale, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_runtime::{InputConfig, SaveDebounce};
 use flint_script::context::DrawItem;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// When the player generates a scene's procgen assets (`LaunchOptions::procgen_mode`).
+/// A build without the `procgen` feature (#754) generates none either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProcGenMode {
+    /// Generate during scene load; the first frame shows the real assets.
+    #[default]
+    Immediate,
+    /// Show placeholders at once and generate on the frame-budgeted queue.
+    Deferred,
+}
 
 /// What the host asked for before the event loop started: the command line's
 /// flags (`flint-player`, `flint play`), the web page's query, an Android dev
@@ -35,7 +46,7 @@ pub struct LaunchOptions {
     pub msaa_sample_count: u32,
     /// When scene procgen assets are made (#32): during load, or behind
     /// placeholders on the frame-budgeted queue (`--procgen-defer`).
-    pub procgen_mode: procgen_assets::ProcGenMode,
+    pub procgen_mode: ProcGenMode,
     /// The scene's render scale: a ceiling (fixed, and capped by pixel
     /// ratio) and whether to step under it to hold the frame rate (#122).
     /// The desktop's default draws at the surface; a page's caps DPR 1.5.
@@ -105,7 +116,7 @@ impl Default for LaunchOptions {
             window_size: (1280, 720),
             window_options: crate::WindowArgs::default(),
             msaa_sample_count: 1,
-            procgen_mode: procgen_assets::ProcGenMode::Immediate,
+            procgen_mode: ProcGenMode::Immediate,
             render_scale: Default::default(),
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
             scene_file_writable: cfg!(not(target_arch = "wasm32")),
@@ -161,7 +172,9 @@ pub struct SceneSettings {
     pub input_config: Option<String>,
     /// The scene's `[living]` and `[wooze]` tables (living props, #211-#252),
     /// with a `[wooze] preset` filled in.
+    #[cfg(feature = "living")]
     pub living: Option<flint_procgen::LivingDef>,
+    #[cfg(feature = "living")]
     pub wooze: Option<flint_procgen::WoozeDef>,
 }
 
@@ -180,7 +193,9 @@ impl Default for SceneSettings {
             tables: toml::Table::new(),
             preload_audio: true,
             input_config: None,
+            #[cfg(feature = "living")]
             living: None,
+            #[cfg(feature = "living")]
             wooze: None,
         }
     }

@@ -37,15 +37,7 @@ use flint_procgen::{
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
 
-/// When the player generates a scene's procgen assets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ProcGenMode {
-    /// Generate during scene load; the first frame shows the real assets.
-    #[default]
-    Immediate,
-    /// Show placeholders at once and generate on the frame-budgeted queue.
-    Deferred,
-}
+pub use super::state::ProcGenMode;
 
 /// The magenta of "this asset is missing or still coming", in linear RGB.
 pub const PLACEHOLDER_RGBA: [f32; 4] = [0.85, 0.05, 0.7, 1.0];
@@ -89,8 +81,10 @@ pub trait AssetSink {
     /// Upload (or replace) the mesh `name`.
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData);
     /// Upload (or replace) a living lineage's skinned rest mesh as `name`.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     fn upload_living(&mut self, name: &str, rig: &LivingRig);
     /// Write one entity's own bone buffer, drawing the skinned mesh `name`.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]);
     /// Upload (or replace) the texture `name`.
     fn upload_image(&mut self, name: &str, image: &ImageData);
@@ -457,9 +451,16 @@ impl AssetSink for GpuSink<'_> {
     fn upload_living(&mut self, name: &str, rig: &LivingRig) {
         // A placeholder may be standing under this name.
         self.renderer.remove_mesh(name);
-        let import = super::living_props::import_of(name, rig);
-        self.renderer
-            .load_skinned_model(self.device, self.queue, name, &import);
+        // Only living props make rigs, and a build without them (#754)
+        // never asks for one.
+        #[cfg(feature = "living")]
+        {
+            let import = super::living_props::import_of(name, rig);
+            self.renderer
+                .load_skinned_model(self.device, self.queue, name, &import);
+        }
+        #[cfg(not(feature = "living"))]
+        let _ = rig;
     }
 
     fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
@@ -568,6 +569,7 @@ pub fn resolve_scene(
 ) {
     let started = web_time::Instant::now();
     discover_specs(resolver, &sink.config.project, scene_path);
+    #[cfg(feature = "living")]
     super::living_props::resolve(world, sink.config, resolver, &mut sink, mode);
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {

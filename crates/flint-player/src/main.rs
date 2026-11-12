@@ -307,9 +307,11 @@ fn main() -> Result<()> {
     }
 
     // Load scene
+    #[cfg_attr(not(feature = "living"), allow(unused_mut))]
     let (world, mut scene_file) =
         load_scene(&args.scene, &registry).context("Failed to load scene")?;
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    #[cfg(feature = "living")]
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&args.scene))
         .context("Failed to load scene")?;
 
@@ -421,7 +423,13 @@ fn main() -> Result<()> {
         if b.trim().is_empty() {
             anyhow::bail!("--compare {compare}: B needs a preset's name");
         }
+        #[cfg(feature = "living")]
         app.compare_living_at_start(a.trim(), b.trim(), args.split);
+        #[cfg(not(feature = "living"))]
+        println!(
+            "[living] --compare {}: this player is built without the `living` feature",
+            a.trim().to_owned() + "," + b.trim()
+        );
     }
     if args.perf {
         app.enable_perf(true);

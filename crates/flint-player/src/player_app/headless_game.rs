@@ -27,9 +27,11 @@ use std::collections::BTreeSet;
 
 use flint_core::project::Project;
 use flint_core::quality::QualitySettings;
+#[cfg(feature = "living")]
 use flint_core::wooze::{BoilFrame, WoozeField};
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
+#[cfg(feature = "living")]
 use flint_procgen::LivingProps;
 use flint_render::{Camera, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
@@ -39,6 +41,7 @@ use flint_script::{PostProcessOverrides, ScriptHost};
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};
 use super::headless_animation::HeadlessAnimation;
+#[cfg(feature = "living")]
 use super::living_subsystem::LivingSubsystem;
 use super::style_commands::SceneStyles;
 
@@ -189,14 +192,18 @@ impl HeadlessGame {
     /// Resolve the scene's procgen assets as the player does at load, before
     /// the model loader, every one at once, with every living prop's lineage
     /// built and ring full. `living` is the scene's `[living]`.
+    #[cfg(feature = "procgen")]
     pub fn resolve_procgen(
         &mut self,
         living: Option<&flint_procgen::LivingDef>,
         sink: super::procgen_assets::GpuSink<'_>,
     ) {
         let core = &mut self.core;
+        #[cfg(feature = "living")]
         core.procgen_resolver
             .set_living_defaults(super::living_props::defaults_of(living));
+        #[cfg(not(feature = "living"))]
+        let _ = living;
         super::procgen_assets::resolve_scene(
             &core.scene_path,
             &mut core.world,
@@ -207,12 +214,14 @@ impl HeadlessGame {
     }
 
     /// The living props, if the scene grew any.
+    #[cfg(feature = "living")]
     pub fn living_props(&self) -> Option<&LivingProps> {
         let props = self.core.procgen_resolver.living_props();
         (!props.is_empty()).then_some(props)
     }
 
     /// The living props, to lay a preset over.
+    #[cfg(feature = "living")]
     pub fn living_props_mut(&mut self) -> &mut LivingProps {
         self.core.procgen_resolver.living_props_mut()
     }
@@ -223,6 +232,7 @@ impl HeadlessGame {
     /// woozy grass, shallow wooze in a capture of a `moment`, and the
     /// scripts' tunes. As the player's first frame, the props read the field
     /// without moving.
+    #[cfg(feature = "living")]
     pub fn start_living(&mut self, field: Option<WoozeField>, moment: bool) {
         let core = &mut self.core;
         if core.procgen_resolver.living_props().is_empty() && field.is_none() {
@@ -269,6 +279,7 @@ impl HeadlessGame {
         }
         // The scene's music, for the scripts' beat: on the game clock, with
         // no sound (#745)
+        #[cfg(feature = "music")]
         if let Some(music) = crate::music::for_capture(&core.world, &core.project, &core.scene_path)
         {
             core.subsystems.push(music);
@@ -334,7 +345,7 @@ impl HeadlessGame {
     }
 
     /// `commands` as if the scripts had just asked for them (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "living"))]
     pub(crate) fn dispatch_for_test(&mut self, commands: Vec<ScriptCommand>) {
         let mut camera = Camera::new();
         let mut frame = CaptureFrame {
@@ -346,11 +357,13 @@ impl HeadlessGame {
         game_core::dispatch_commands(&mut frame, commands);
     }
 
+    #[cfg(feature = "living")]
     fn living(&self) -> Option<&LivingSubsystem> {
         self.core.subsystems.find::<LivingSubsystem>()
     }
 
     /// The wooze field and the time its clock has reached, with one.
+    #[cfg(feature = "living")]
     pub fn wooze(&self) -> Option<(&WoozeField, f64)> {
         let living = self.living()?;
         Some((living.wooze.as_ref()?, living.wooze_time))
@@ -358,6 +371,7 @@ impl HeadlessGame {
 
     /// The shading boil's drawing where the field's clock stands, for a
     /// viewer at `viewer`, with a field (#214).
+    #[cfg(feature = "living")]
     pub fn boil(&self, viewer: [f32; 3], on: u32) -> Option<BoilFrame> {
         let living = self.living()?;
         let field = living.wooze.as_ref()?;
@@ -368,6 +382,11 @@ impl HeadlessGame {
     /// The grass's clock at `t`: the field's, for grass that woozes (#252),
     /// else the wall clock's.
     pub fn apply_grass(&self, renderer: &mut SceneRenderer, t: f64) {
+        #[cfg(not(feature = "living"))]
+        {
+            renderer.grass_time = t as f32;
+        }
+        #[cfg(feature = "living")]
         match self.living().filter(|living| living.wooze.is_some()) {
             Some(living) => living.grass_wooze.apply(renderer, t),
             None => renderer.grass_time = t as f32,
@@ -376,6 +395,7 @@ impl HeadlessGame {
 
     /// Blend every prop where its clock stands and write what moved, as a
     /// frame of the player does.
+    #[cfg(feature = "living")]
     pub fn upload_living(
         &mut self,
         renderer: &mut SceneRenderer,
@@ -685,6 +705,7 @@ pub fn apply_look(config: &mut PostProcessConfig, look: &ScriptLook, before: &Sc
     }
 }
 
-#[cfg(test)]
+// Every command is sampled, the living module's among them.
+#[cfg(all(test, feature = "living"))]
 #[path = "headless_host_tests.rs"]
 mod tests;

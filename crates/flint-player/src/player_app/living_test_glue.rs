@@ -125,6 +125,7 @@ impl PlayerApp {
         })
     }
 
+    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_let_go(&mut self) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -169,6 +170,7 @@ impl PlayerApp {
         })
     }
 
+    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_species(&mut self) -> Vec<String> {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -194,6 +196,7 @@ impl PlayerApp {
         })
     }
 
+    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_takes_click(
         &mut self,
         state: winit::event::ElementState,

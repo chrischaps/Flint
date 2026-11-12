@@ -151,11 +151,22 @@ impl PlayerApp {
 
         // What the scene says about living props, for the props procgen
         // adds (their clocks and field are the living subsystem's)
+        #[cfg(feature = "living")]
         self.core
             .procgen_resolver
             .set_living_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
         // Procgen before the model loader: catalog > procgen > file (#32).
+        // A build without it (#754) says what it won't make.
+        #[cfg(not(feature = "procgen"))]
+        if let Some(line) = super::missing_features::procgen_line(
+            &self.core.world,
+            &self.core.project,
+            &self.core.scene_path,
+        ) {
+            println!("{line}");
+        }
+        #[cfg(feature = "procgen")]
         super::procgen_assets::resolve_scene(
             &self.core.scene_path,
             &mut self.core.world,
@@ -285,6 +296,7 @@ impl PlayerApp {
         self.create_dead_calm_debug_panel();
         self.create_camera_debug_panel();
         self.create_particles_debug_panel();
+        #[cfg(feature = "living")]
         self.create_living_debug_panel();
         self.create_styles_debug_panel();
         // Rendering & Effects (ADR 0053): unconditional, F4 summons it
