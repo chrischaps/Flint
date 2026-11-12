@@ -57,6 +57,8 @@ impl PlayerApp {
     /// frame that applies it.
     pub(super) fn dispatch_script_commands(&mut self) {
         let commands = self.script.drain_commands();
+        // A subsystem's own commands first; the player applies the rest
+        let commands = self.commands_for_the_player(commands);
         flint_script::host::apply_all(self, commands);
     }
 

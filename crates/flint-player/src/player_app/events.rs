@@ -800,6 +800,10 @@ impl PlayerApp {
     /// open the overlay (H9). A real Escape exits only when no action binds
     /// it (`Escape::decide`, #639); a scripted one never does.
     pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
+        // A subsystem's own debug keys come first (ADR 0117)
+        if self.subsystems.on_key(key_code) {
+            return;
+        }
         match key_code {
             KeyCode::F2 => {
                 self.stats.show = !self.stats.show;

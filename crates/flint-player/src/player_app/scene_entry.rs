@@ -80,6 +80,8 @@ impl PlayerApp {
         }
 
         self.start_scene_systems(entry)?;
+        // The subsystems this scene uses, each told it is up
+        self.subsystems_enter_scene(entry);
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person
