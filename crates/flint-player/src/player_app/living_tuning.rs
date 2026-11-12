@@ -786,9 +786,13 @@ impl PlayerApp {
             self.living.wooze_time += seconds;
             // Shallow wooze runs its own clocks in seconds, so inside a zone with
             // its own step this isn't a whole beat of theirs.
-            self.living
-                .shallow_wooze
-                .advance(&self.world, field, self.living.wooze_time, seconds);
+            if let Some(own) = self
+                .subsystems
+                .find_mut::<super::shallow_wooze::ShallowWoozeSubsystem>()
+            {
+                own.shallow
+                    .advance(&self.world, field, self.living.wooze_time, seconds);
+            }
         }
         0.0
     }

@@ -9,7 +9,7 @@
 
 use super::input_config::{InputConfigPaths, PendingRebind};
 use super::{camera_cut, expression_feed, fonts, music_session, perf, procgen_assets};
-use super::{egui_input, render_scale, shallow_wooze, style_commands, text_halo, world_text};
+use super::{egui_input, render_scale, style_commands, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_runtime::{InputConfig, PersistentStore, SaveDebounce};
 use flint_script::context::DrawItem;
@@ -306,12 +306,8 @@ pub(crate) struct LivingState {
     pub(super) wooze: Option<flint_core::wooze::WoozeField>,
     pub(super) wooze_time: f64,
     pub(super) wooze_missing_warned: bool,
-    /// Shallow wooze (#215): the clocks of the meshes on the field with no poses.
-    pub(super) shallow_wooze: shallow_wooze::ShallowWooze,
     /// The shading boil's beats (#214), on the same clock as the field.
     pub(super) boil_clock: flint_core::wooze::BoilClock,
-    /// Woozy grass (#252): the grass's sway and comb on the same clock.
-    pub(super) grass_wooze: shallow_wooze::GrassWooze,
     /// What's been done to a running grove by hand (#218).
     pub(crate) tune: super::living_tuning::LivingTune,
 }

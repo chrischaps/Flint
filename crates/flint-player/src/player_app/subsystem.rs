@@ -18,6 +18,13 @@
 //! far have needed, and it grows with the next ones (shallow wooze, living
 //! props); see each context's notes.
 //!
+//! **Lifetimes.** A subsystem lasts for the run (the expression feed, which
+//! the host hands over) or for one scene (shallow wooze). The scene ones are
+//! built when a scene is entered, by the builders in [`FOR_SCENE`], each of
+//! which looks at the scene and makes its subsystem only if the scene uses
+//! it, and they are dropped when the scene unloads. Nothing of one scene's
+//! carries into the next.
+//!
 //! **Order.** Subsystems run in the order they were added. They are torn down
 //! the other way round, last added first, at a scene's unloading and when the
 //! player drops: [`Subsystems`] drops its members in that order itself, and is
@@ -25,11 +32,13 @@
 //! engine goes before the engine (ADR 0017).
 
 use flint_core::project::Project;
+use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::{GameClock, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
 use flint_script::ScriptSystem;
+use std::any::Any;
 use winit::keyboard::KeyCode;
 
 /// The stages of a frame, in the order `tick` runs them (ADR 0117
@@ -100,6 +109,9 @@ pub(crate) struct SceneCtx<'a> {
     pub script: &'a mut ScriptSystem,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
+    /// The scene's wooze field, made from its `[wooze]` table; `None` without
+    /// one. Living props own it (`LivingState`) until they are a subsystem.
+    pub wooze: Option<&'a WoozeField>,
 }
 
 /// What a subsystem may touch at a stage of the frame.
@@ -115,7 +127,43 @@ pub(crate) struct StageCtx<'a> {
     /// `Stage::Input`, which runs before the frame reads it (a transition
     /// may still change the state that frame).
     pub policy: Option<&'a StateConfig>,
+    /// `None` in a headless test.
+    pub renderer: Option<&'a mut SceneRenderer>,
+    /// The wooze field where its clock stands, with the living clock's step
+    /// this frame. Lent at `Stage::Procgen` only, once living props have
+    /// moved the clock on; `None` elsewhere and in a scene with no field.
+    pub wooze: Option<WoozeNow<'a>>,
 }
+
+/// The wooze field as living props left it this frame: what shallow wooze and
+/// woozy grass read, on the same clock (#215, #252).
+#[derive(Clone, Copy)]
+pub(crate) struct WoozeNow<'a> {
+    pub field: &'a WoozeField,
+    /// Seconds on the field's own clock
+    pub time: f64,
+    /// This frame's step of that clock: 0 while animation is paused or the
+    /// grove is frozen
+    pub dt: f64,
+}
+
+/// How long a subsystem lasts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Lasts {
+    /// The whole run: the host made it (the expression feed).
+    Run,
+    /// One scene: built by its `FOR_SCENE` builder when a scene that uses it
+    /// is entered, dropped when that scene unloads.
+    Scene,
+}
+
+/// The builders of scene subsystems, in the order they run. Each looks at the
+/// scene being entered and makes its subsystem only if the scene uses it.
+pub(crate) const FOR_SCENE: &[BuildForScene] =
+    &[super::shallow_wooze::ShallowWoozeSubsystem::for_scene];
+
+/// A scene subsystem's builder: its subsystem, if the scene uses it.
+pub(crate) type BuildForScene = fn(&SceneCtx) -> Option<Box<dyn Subsystem>>;
 
 /// What a subsystem may touch before the frame is encoded.
 #[allow(dead_code)]
@@ -144,15 +192,13 @@ impl ExitReport {
 /// An optional part of the player (ADR 0117 decision 2). Internal for now;
 /// `PlayerExtension` gains the same hooks once the engine's own features
 /// have shown what they must carry (decision 5).
-pub(crate) trait Subsystem {
+pub(crate) trait Subsystem: Any {
     /// For logs and the debug panels.
     fn name(&self) -> &'static str;
 
-    /// Whether the scene being entered still wants this subsystem. One that
-    /// doesn't is dropped before the scene comes up; a subsystem for the
-    /// whole run (the expression feed) keeps the default.
-    fn wanted_by(&self, _ctx: &SceneCtx) -> bool {
-        true
+    /// For one scene (the default) or the whole run.
+    fn lasts(&self) -> Lasts {
+        Lasts::Scene
     }
 
     /// The scene is up: its world, settings and renderer state are in and
@@ -209,19 +255,32 @@ impl Subsystems {
         self.list.iter().map(|s| s.name()).collect()
     }
 
-    /// Drop those the scene being entered doesn't want, last added first.
-    pub(crate) fn keep_wanted(&mut self, ctx: &SceneCtx) {
+    /// Drop the scene's subsystems, last added first, keeping the run's.
+    pub(crate) fn drop_scene_ones(&mut self) {
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
-            if !self.list[i].wanted_by(ctx) {
+            if self.list[i].lasts() == Lasts::Scene {
                 let gone = self.list.remove(i);
-                tracing::debug!(
-                    "subsystem {} dropped: the scene doesn't use it",
-                    gone.name()
-                );
+                tracing::debug!("subsystem {} dropped with its scene", gone.name());
             }
         }
+    }
+
+    /// The subsystem of type `T`, if there is one.
+    pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
+        self.list
+            .iter()
+            .find_map(|s| (s.as_ref() as &dyn Any).downcast_ref::<T>())
+    }
+
+    /// The subsystem of type `T`, if there is one, to change. For the few
+    /// places that still reach a subsystem from outside its hooks (the
+    /// Living Props A/B and hand tuning, until living props are one).
+    pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
+        self.list
+            .iter_mut()
+            .find_map(|s| (s.as_mut() as &mut dyn Any).downcast_mut::<T>())
     }
 
     pub(crate) fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
@@ -291,9 +350,6 @@ impl super::PlayerApp {
                     )));
             }
         }
-        if self.subsystems.is_empty() {
-            return;
-        }
         let mut ctx = SceneCtx {
             world: &mut self.world,
             scene_path: &self.scene_path,
@@ -301,8 +357,17 @@ impl super::PlayerApp {
             project: &self.project,
             script: &mut self.script,
             renderer: self.scene_renderer.as_mut(),
+            wooze: self.living.wooze.as_ref(),
         };
-        self.subsystems.keep_wanted(&ctx);
+        // This scene's own, each only if the scene uses it
+        for build in FOR_SCENE {
+            if let Some(subsystem) = build(&ctx) {
+                self.subsystems.push(subsystem);
+            }
+        }
+        if self.subsystems.is_empty() {
+            return;
+        }
         self.subsystems.scene_loaded(&mut ctx);
     }
 
@@ -319,16 +384,39 @@ impl super::PlayerApp {
             project: &self.project,
             script: &mut self.script,
             renderer: self.scene_renderer.as_mut(),
+            wooze: self.living.wooze.as_ref(),
         };
         self.subsystems.scene_unloading(&mut ctx);
+        // ...and the scene's own go with it
+        self.subsystems.drop_scene_ones();
     }
 
     /// Run `stage` on every subsystem. Nothing to do, and no context made,
     /// when there are none.
     pub(super) fn run_stage(&mut self, stage: Stage, policy: Option<&StateConfig>) {
+        self.run_stage_with(stage, policy, None);
+    }
+
+    /// [`Self::run_stage`], lending `Stage::Procgen` the living clock's step
+    /// this frame (`living_dt`), so what reads the wooze field moves on with
+    /// living props.
+    pub(super) fn run_stage_with(
+        &mut self,
+        stage: Stage,
+        policy: Option<&StateConfig>,
+        living_dt: Option<f64>,
+    ) {
         if self.subsystems.is_empty() {
             return;
         }
+        let wooze = match (&self.living.wooze, living_dt) {
+            (Some(field), Some(dt)) => Some(WoozeNow {
+                field,
+                time: self.living.wooze_time,
+                dt,
+            }),
+            _ => None,
+        };
         let mut ctx = StageCtx {
             world: &mut self.world,
             clock: &self.clock,
@@ -336,6 +424,8 @@ impl super::PlayerApp {
             script: &mut self.script,
             camera: &self.camera,
             policy,
+            renderer: self.scene_renderer.as_mut(),
+            wooze,
         };
         self.subsystems.update(stage, &mut ctx);
     }
@@ -355,6 +445,8 @@ impl super::PlayerApp {
             script: &mut self.script,
             camera: &self.camera,
             policy: None,
+            renderer: self.scene_renderer.as_mut(),
+            wooze: None,
         };
         let subsystems = &mut self.subsystems;
         commands.retain(|command| !subsystems.script_command(command, &mut ctx));

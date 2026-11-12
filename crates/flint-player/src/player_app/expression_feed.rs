@@ -32,7 +32,7 @@
 //! whether the sender wrote `1` or `1.0`. What the fields mean, and how strict
 //! to be about them, belongs to whoever writes the messages.
 
-use super::subsystem::{Stage, StageCtx, Subsystem};
+use super::subsystem::{Lasts, Stage, StageCtx, Subsystem};
 use rhai::{Dynamic, Map};
 use serde_json::Value;
 
@@ -629,6 +629,10 @@ impl ExpressionSubsystem {
 impl Subsystem for ExpressionSubsystem {
     fn name(&self) -> &'static str {
         "expression feed"
+    }
+
+    fn lasts(&self) -> Lasts {
+        Lasts::Run
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {

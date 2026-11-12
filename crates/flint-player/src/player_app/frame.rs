@@ -7,6 +7,7 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
+use super::shallow_wooze::{ShallowWooze, ShallowWoozeSubsystem};
 use super::subsystem::{RenderCtx, Stage};
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
@@ -654,6 +655,8 @@ impl PlayerApp {
             .as_deref_mut()
             .filter(|ab| ab.is_split())
         {
+            // What this side's shallow wooze draws with, or nothing
+            let no_shallow = ShallowWooze::default();
             let first = std::mem::replace(
                 &mut encoder,
                 context
@@ -675,7 +678,10 @@ impl PlayerApp {
                     world: &self.world,
                     camera: &self.camera,
                     own_boil: boil,
-                    own_shallow: &self.living.shallow_wooze,
+                    own_shallow: self
+                        .subsystems
+                        .find::<ShallowWoozeSubsystem>()
+                        .map_or(&no_shallow, |s| &s.shallow),
                 },
                 renderer,
                 &context.device,
@@ -850,10 +856,11 @@ impl PlayerApp {
         }
         if let Some(field) = &self.living.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
+            let shallow = self.subsystems.find::<ShallowWoozeSubsystem>();
             eprintln!(
                 "[wooze] shallow: {} entities on {} clocks",
-                self.living.shallow_wooze.draw_count(),
-                self.living.shallow_wooze.clock_count()
+                shallow.map_or(0, |s| s.shallow.draw_count()),
+                shallow.map_or(0, |s| s.shallow.clock_count())
             );
         }
         if let Some(renderer) = &self.scene_renderer {
@@ -1113,8 +1120,8 @@ impl PlayerApp {
         } else {
             0.0
         };
-        self.tick_procgen(living_dt);
-        self.run_stage(Stage::Procgen, Some(&config));
+        let living_dt = self.tick_procgen(living_dt);
+        self.run_stage_with(Stage::Procgen, Some(&config), Some(living_dt));
 
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
@@ -1575,7 +1582,9 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    pub(super) fn tick_procgen(&mut self, living_dt: f64) {
+    /// Returns the living clock's step this frame, which shallow wooze and
+    /// woozy grass take at `Stage::Procgen`.
+    pub(super) fn tick_procgen(&mut self, living_dt: f64) -> f64 {
         let living_dt = living_dt + self.before_living_tick();
         // Process procgen generation queue (frame-budgeted)
         {
@@ -1623,24 +1632,8 @@ impl PlayerApp {
                 .as_ref()
                 .map(|field| (field, self.living.wooze_time));
             let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
-            // Hand-made meshes read the same field on the same dt (#215).
-            if let (Some(field), Some(renderer)) = (&self.living.wooze, &mut self.scene_renderer) {
-                let draws = self.living.shallow_wooze.advance(
-                    &self.world,
-                    field,
-                    self.living.wooze_time,
-                    living_dt,
-                );
-                renderer.set_shallow_wooze(draws.iter().copied());
-                // And so does grass that asks to (#252), where the viewer stands.
-                self.living.grass_wooze.advance(
-                    renderer.grass_config(),
-                    field,
-                    self.camera.position_array(),
-                    self.living.wooze_time,
-                    living_dt,
-                );
-            }
+            // Hand-made meshes and woozy grass read the same field on the
+            // same dt: the shallow wooze subsystem, at Stage::Procgen
             if !lineages.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)
@@ -1671,6 +1664,7 @@ impl PlayerApp {
         }
         // The other side of an A/B (#238), on the same dt, after the scene's own.
         self.tick_hidden_side(living_dt);
+        living_dt
     }
 
     #[profiling::function]
@@ -1753,10 +1747,10 @@ impl PlayerApp {
 
         // Update grass time and entity positions for bend-on-contact
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            // The wall clock, unless the grass is on the wooze field's (#252).
-            self.living
-                .grass_wooze
-                .apply(renderer, self.clock.total_time);
+            // The wall clock, unless the grass is on the wooze field's (#252):
+            // then the shallow wooze subsystem sets it at Stage::Sync
+            renderer.grass_time = self.clock.total_time as f32;
+            renderer.grass_wooze = None;
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;
