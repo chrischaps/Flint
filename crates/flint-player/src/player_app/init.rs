@@ -124,6 +124,12 @@ impl PlayerApp {
         extension.declare_script_api(&mut self.core.script.script_api());
         #[cfg(feature = "procgen")]
         extension.register_generators(self.core.procgen_resolver.registry_mut());
+        // The game's Rust styles (#419), before any scene's tables are read
+        for descriptor in extension.styles() {
+            if let Err(e) = flint_render::stylize::register(descriptor) {
+                tracing::error!("player extension style: {e}");
+            }
+        }
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
         if self.hud.fonts_installed {

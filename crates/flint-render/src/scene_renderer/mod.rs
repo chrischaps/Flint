@@ -5889,6 +5889,21 @@ impl SceneRenderer {
                     .set_enabled(failed.name, false);
                 continue;
             }
+            if crate::stylize::is_game_style(failed.name) {
+                // A game's Rust style (#419) whose `create` panicked is the
+                // game's bug too: off, said once, the device kept
+                tracing::error!(
+                    "game style '{}' panicked building its pipelines; it stays off",
+                    failed.name
+                );
+                self.postprocess_config
+                    .styles
+                    .set_enabled(failed.name, false);
+                self.authored_postprocess
+                    .styles
+                    .set_enabled(failed.name, false);
+                continue;
+            }
             tracing::warn!(
                 "{} style unavailable: GPU driver crashed during shader compilation. \
                  Try updating your graphics drivers.",

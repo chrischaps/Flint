@@ -212,6 +212,174 @@ fn a_display_style_inverts_the_frame_and_lets_it_go() {
     }
 }
 
+/// A style from outside the engine (#419): this test crate is another
+/// crate, so everything below is public API. Two passes: the first fills a
+/// target of the style's own with one colour, the second draws that target.
+mod game_style {
+    use bytemuck::{Pod, Zeroable};
+    use flint_render::stylize::{
+        kit, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
+        StyleStage,
+    };
+
+    pub static TWO_PASS: StyleDescriptor = StyleDescriptor::new(
+        "utest_game_two_pass",
+        "Two pass",
+        StyleStage::Display,
+        create,
+    )
+    .params(&[StyleParam::new("level", 0.5, 0.0..=1.0)]);
+
+    const WGSL: &str = r#"
+struct U { level: f32, _p0: f32, _p1: f32, _p2: f32 };
+@group(0) @binding(0) var<uniform> u: U;
+@group(1) @binding(0) var t: texture_2d<f32>;
+@group(1) @binding(1) var s: sampler;
+struct V { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) i: u32) -> V {
+    let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return V(vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0), vec2<f32>(uv.x, 1.0 - uv.y));
+}
+@fragment fn fs_fill(v: V) -> @location(0) vec4<f32> {
+    return vec4<f32>(u.level, 0.25, 0.75, 1.0);
+}
+@fragment fn fs_draw(v: V) -> @location(0) vec4<f32> {
+    return textureSample(t, s, v.uv);
+}
+"#;
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable)]
+    struct U {
+        level: f32,
+        _p: [f32; 3],
+    }
+
+    struct TwoPass {
+        fill: wgpu::RenderPipeline,
+        draw: wgpu::RenderPipeline,
+        uniforms: wgpu::Buffer,
+        uniform_bgl: wgpu::BindGroupLayout,
+        sampled_bgl: wgpu::BindGroupLayout,
+    }
+
+    const FILL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+    fn create(d: &StyleDevice) -> Box<dyn StylePass> {
+        let uniform_bgl = kit::uniform_layout(d.device, "TwoPass U");
+        let sampled_bgl = kit::sampled_layout(d.device, "TwoPass S");
+        let module = kit::shader(d.device, "TwoPass", WGSL);
+        Box::new(TwoPass {
+            fill: kit::fullscreen_pipeline_entry(
+                d.device,
+                "TwoPass Fill",
+                &module,
+                "fs_fill",
+                &[&uniform_bgl],
+                FILL_FORMAT,
+            ),
+            draw: kit::fullscreen_pipeline_entry(
+                d.device,
+                "TwoPass Draw",
+                &module,
+                "fs_draw",
+                &[&uniform_bgl, &sampled_bgl],
+                d.format,
+            ),
+            uniforms: kit::uniform_buffer::<U>(d.device, "TwoPass Uniforms"),
+            uniform_bgl,
+            sampled_bgl,
+        })
+    }
+
+    impl StylePass for TwoPass {
+        fn encode(
+            &self,
+            frame: &StyleFrame<'_>,
+            encoder: &mut wgpu::CommandEncoder,
+            _input: &StyleInput<'_>,
+            output: &wgpu::TextureView,
+        ) {
+            let u = U {
+                level: frame.param("level"),
+                _p: [0.0; 3],
+            };
+            frame
+                .queue
+                .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[u]));
+            let target = frame.target("utest_game_two_pass.fill", FILL_FORMAT);
+            let params = frame.uniform("TwoPass U BG", &self.uniform_bgl, &self.uniforms);
+            kit::fullscreen_pass(
+                encoder,
+                "TwoPass Fill",
+                &target.view,
+                &self.fill,
+                &[&params],
+            );
+            let sampled = frame.sampled("TwoPass S BG", &self.sampled_bgl, &target.view);
+            kit::fullscreen_pass(
+                encoder,
+                "TwoPass Draw",
+                output,
+                &self.draw,
+                &[&params, &sampled],
+            );
+        }
+    }
+}
+
+/// #419: a style registered from another crate is switched on by a scene
+/// table's settings and by a `--style` word, and draws both its passes.
+#[test]
+fn a_style_registered_from_another_crate_draws_its_two_passes() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    flint_render::stylize::register(&game_style::TWO_PASS).unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = FlintWorld::new();
+    let plain = gpu.frame(&mut renderer, &world);
+
+    // As a scene says it
+    let tables: std::collections::BTreeMap<String, toml::Table> =
+        toml::from_str("[utest_game_two_pass]\nlevel = 1.0\n").unwrap();
+    let (styles, warnings) = flint_render::stylize::StyleSettings::from_tables(&tables);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let mut config = renderer.post_process_config().clone();
+    config.styles = styles;
+    renderer.set_post_process_config(config);
+    let drawn = gpu.frame(&mut renderer, &world);
+    assert_ne!(drawn, plain);
+    // Linear (1, 0.25, 0.75) on an sRGB target
+    let want = [255u8, 137, 225, 255];
+    for (i, px) in drawn.chunks(4).enumerate() {
+        for c in 0..4 {
+            assert!(
+                px[c].abs_diff(want[c]) <= 1,
+                "pixel {i}: {px:?}, want {want:?}"
+            );
+        }
+    }
+
+    // As a `--style` word says it, over the defaults
+    let mut config = flint_render::PostProcessConfig::default();
+    let errors =
+        flint_render::stylize::apply_style_specs(&mut config, &["utest_game_two_pass".into()]);
+    assert!(errors.is_empty(), "{errors:?}");
+    renderer.set_post_process_config(config);
+    let drawn = gpu.frame(&mut renderer, &world);
+    // level 0.5 linear is 188 in sRGB
+    assert!(drawn[0].abs_diff(188) <= 1, "{:?}", &drawn[..4]);
+}
+
 #[test]
 fn hdr_and_display_styles_chain_in_one_frame() {
     let Some(gpu) = gpu() else {

@@ -19,6 +19,11 @@ name = "cave_game"
 path = "examples/cave_game/main.rs"
 required-features = ["procgen"]
 
+# A game binary with a Rust style of its own, in two passes (#419).
+[[example]]
+name = "cyanotype"
+path = "examples/cyanotype/main.rs"
+
 # The player in a browser (#99): `trunk serve` in this directory.
 [[bin]]
 name = "flint-web"

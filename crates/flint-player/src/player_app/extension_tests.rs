@@ -740,3 +740,80 @@ position = [0, 0, 0]
         assert!(scene_file.tables.contains_key("wether"));
     }
 }
+
+/// A game's Rust styles (#419): `PlayerExtension::styles` registers them at
+/// `add_extension`, so a scene's `[post_process.styles.<name>]` and a
+/// `--style` word read after it find the style. Headless, so nothing builds
+/// the passes; `create` is never called.
+mod game_styles {
+    use super::*;
+    use flint_render::stylize::{
+        self, StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage,
+    };
+
+    fn never_built(_: &StyleDevice) -> Box<dyn StylePass> {
+        unreachable!("a headless test builds no style")
+    }
+
+    static SEPIA: StyleDescriptor = StyleDescriptor::new(
+        "utest_ext_sepia",
+        "Sepia (test)",
+        StyleStage::Display,
+        never_built,
+    )
+    .params(&[StyleParam::new("warmth", 0.5, 0.0..=1.0)]);
+
+    /// Takes a built-in's name: refused, and the extension's other style
+    /// still registers.
+    static TAKEN: StyleDescriptor =
+        StyleDescriptor::new("invert", "Not invert", StyleStage::Display, never_built);
+
+    struct Sepia;
+
+    impl PlayerExtension for Sepia {
+        fn styles(&self) -> Vec<&'static StyleDescriptor> {
+            vec![&TAKEN, &SEPIA]
+        }
+    }
+
+    #[test]
+    fn an_extensions_style_is_read_from_the_scene_and_from_style_words() {
+        let mut app = headless_app();
+        // The scene is read before the extension is added, as the example
+        // games do: its tables are kept as written and read against the
+        // registry only when the config is made
+        let scene = flint_scene::SceneFile::parse(
+            "[scene]\nname = \"t\"\n\
+             [post_process.styles.utest_ext_sepia]\nwarmth = 0.8\n",
+        )
+        .unwrap();
+        app.apply_scene_settings(&scene);
+        app.add_extension(Box::new(Sepia));
+
+        let sepia = stylize::find("utest_ext_sepia").expect("registered by add_extension");
+        assert!(std::ptr::eq(sepia, &SEPIA));
+        assert!(stylize::is_game_style("utest_ext_sepia"));
+        // The built-in kept its place
+        assert_eq!(stylize::find("invert").unwrap().label, "Invert");
+        assert!(!stylize::is_game_style("invert"));
+
+        let config = app.scene_post_config();
+        assert!(config.styles.is_enabled("utest_ext_sepia"));
+        assert_eq!(config.styles.param("utest_ext_sepia", "warmth"), Some(0.8));
+
+        // A `--style` word over it
+        app.launch.style_specs = vec!["utest_ext_sepia:warmth=0.25".into()];
+        let config = app.scene_post_config();
+        assert_eq!(config.styles.param("utest_ext_sepia", "warmth"), Some(0.25));
+
+        // A second player in the process, the same extension: no error, one
+        // entry
+        let mut again = headless_app();
+        again.add_extension(Box::new(Sepia));
+        let entries = stylize::registry()
+            .iter()
+            .filter(|d| d.name == "utest_ext_sepia")
+            .count();
+        assert_eq!(entries, 1);
+    }
+}

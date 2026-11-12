@@ -5,7 +5,7 @@
 //! once [`custom::load_dir`](super::custom::load_dir) has run) appears with
 //! no change here.
 
-use super::{is_builtin, registry, ChoiceScope, StyleDescriptor, StyleStage};
+use super::{is_builtin, is_game_style, registry, ChoiceScope, StyleDescriptor, StyleStage};
 use flint_core::project::AssetScope;
 use serde::Serialize;
 use std::path::Path;
@@ -18,7 +18,9 @@ pub struct StyleListing {
     /// `"hdr"` (linear, before fog/bloom/tonemap) or `"display"` (after
     /// the composite, at output resolution).
     pub stage: &'static str,
-    /// `"builtin"`, or `"user"` for a `styles/<name>.shader.toml`.
+    /// `"builtin"`, `"game"` for a Rust style a game binary registered
+    /// ([`register`](super::register), #419), or `"user"` for a
+    /// `styles/<name>.shader.toml`.
     pub source: &'static str,
     /// Where a scene sets it: `[post_process.styles.<name>]`.
     pub table: String,
@@ -122,6 +124,8 @@ pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleList
         },
         source: if is_builtin(d.name) {
             "builtin"
+        } else if is_game_style(d.name) {
+            "game"
         } else {
             "user"
         },
@@ -300,9 +304,17 @@ mod tests {
 
     #[test]
     fn json_parses_and_lists_every_style() {
+        // Tests beside this one register styles (user styles, #419's game
+        // styles), so the registry may grow while the catalog is made
+        let before = registry().len();
         let json = serde_json::to_string(&catalog()).unwrap();
+        let after = registry().len();
         let back: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.as_array().unwrap().len(), registry().len());
+        let listed = back.as_array().unwrap().len();
+        assert!(
+            (before..=after).contains(&listed),
+            "{listed} of {before}..{after}"
+        );
     }
 
     #[test]
@@ -340,8 +352,10 @@ mod tests {
 
     #[test]
     fn text_names_every_style() {
+        // The registry as it was first: tests beside this one add to it
+        let registered = registry();
         let text = catalog_text();
-        for d in registry() {
+        for d in registered {
             assert!(text.contains(&format!("{} (", d.name)), "{}", d.name);
         }
     }
