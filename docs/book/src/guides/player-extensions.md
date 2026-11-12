@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, ADR 0117): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order, the one `flint render --scripts` runs too.
+`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, [ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order, the one `flint render --scripts` runs too.
 
 ## The Hooks
 
@@ -60,13 +60,13 @@ fn main() -> anyhow::Result<()> {
 |---|---|---|
 | `register_script_api(&mut rhai::Engine)` | Once, inside `add_extension` | Native functions and types for scripts |
 | `declare_script_api(&mut ScriptApi)` | Once, inside `add_extension`, after `register_script_api` | Functions declared through Flint's API builder: listed with the engine's, integers taken for numbers |
-| `register_generators(&mut GeneratorRegistry)` | Once, inside `add_extension` | The game's own [procgen generators](#procgen-generators) (ADR 0119) |
+| `register_generators(&mut GeneratorRegistry)` | Once, inside `add_extension` | The game's own [procgen generators](#procgen-generators) ([ADR 0119](https://github.com/chrischaps/Flint/blob/main/docs/adr/0119-game-generators-through-player-extensions.md)) |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
 | `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
 | `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
-| `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) (ADR 0107) |
+| `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | `debug_panel_ui(name, &mut egui::Ui)` | Every frame one of them is open, after `ui` | Drawing that panel's contents from the game's state |
 
 Extensions run in the order they were added.
@@ -79,7 +79,7 @@ The engine uses rhai's `sync` feature, so a registered closure and everything it
 
 ### Declaring functions
 
-`declare_script_api` declares functions through the builder Flint's own API uses (ADR 0116). Each gets a module, a one-line doc and a kind for each parameter, which converts the script's value before your code runs: `Num` takes an int or a float, `Entity` a live entity (given `-1` or a despawned id it warns once and returns the empty value), `Str`, `Map`, `Array`, `Color` (`[r, g, b]` or `"#rrggbb"`), `Any` and more (`flint_script::api::builder::kind`). The body reaches the world through `call.world()` / `call.world_mut()`, which are a script error, not a panic, when there is no world:
+`declare_script_api` declares functions through the builder Flint's own API uses ([ADR 0116](https://github.com/chrischaps/Flint/blob/main/docs/adr/0116-declared-script-api.md)). Each gets a module, a one-line doc and a kind for each parameter, which converts the script's value before your code runs: `Num` takes an int or a float, `Entity` a live entity (given `-1` or a despawned id it warns once and returns the empty value), `Str`, `Map`, `Array`, `Color` (`[r, g, b]` or `"#rrggbb"`), `Any` and more (`flint_script::api::builder::kind`). The body reaches the world through `call.world()` / `call.world_mut()`, which are a script error, not a panic, when there is no world:
 
 ```rust
 fn declare_script_api(&mut self, api: &mut flint_script::api::ScriptApi) {
@@ -148,7 +148,7 @@ In the other direction, scripts call the native functions the extension register
 
 ### Reading components
 
-Components are TOML tables, so reading one by hand is a chain of `get`, a type test and a default, and each link fails in silence: `as_float` reads the integer `8` as nothing, and a misspelled option falls through to whatever the `match` ends with. Read through a **view** instead (ADR 0115), as the engine's physics and audio do:
+Components are TOML tables, so reading one by hand is a chain of `get`, a type test and a default, and each link fails in silence: `as_float` reads the integer `8` as nothing, and a misspelled option falls through to whatever the `match` ends with. Read through a **view** instead ([ADR 0115](https://github.com/chrischaps/Flint/blob/main/docs/adr/0115-scene-diagnostics-and-complete-schemas.md)), as the engine's physics and audio do:
 
 ```rust
 use flint_core::components as comp;
@@ -274,7 +274,7 @@ Loading needs no audio device. Without one, `play` does nothing and returns `Ok`
 
 `ExtensionGpu::upload_mesh(name, vertices, indices, material)` creates or replaces a named mesh. `remove_mesh(name)` removes it. `ctx.attach_mesh(entity, name)` makes an entity draw it. A mesh can be rebuilt as often as its data changes, and the old GPU buffers are freed once the frame lets go of them. Vertex colours, culling and the `runtime = true` scene flag are covered in [Rendering: Runtime meshes](../concepts/rendering.md#runtime-meshes).
 
-`upload_mesh_with(name, vertices, indices, material, MeshOptions { ray_target: true })` uploads a mesh that rays meet too (ADR 0105): wherever an entity draws it, `ctx.rays` and scripts' `raycast_meshes` and `screen_to_mesh` find its triangles. `ctx.rays` is the scene as the last frame drew it:
+`upload_mesh_with(name, vertices, indices, material, MeshOptions { ray_target: true })` uploads a mesh that rays meet too ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)): wherever an entity draws it, `ctx.rays` and scripts' `raycast_meshes` and `screen_to_mesh` find its triangles. `ctx.rays` is the scene as the last frame drew it:
 
 ```rust
 gpu.upload_mesh_with("houses", &vertices, &indices, material, MeshOptions { ray_target: true });
@@ -286,9 +286,9 @@ if let Some(hit) = ctx.rays.segment(head, camera_wants) {
 
 An upload without the option, or `remove_mesh`, stops it being a target. The triangles are kept on the CPU under a bounding volume hierarchy, built at each upload, so make targets of what rays need to meet. Native functions reach the same scene through `Projector::ray_scene()`, and `Projector::screen_to_mesh(x, y)` picks under a screen point.
 
-`set_ground_fog(&GroundFog { origin, size, width, depth, texels })` lays a fog on floors of the game's own (ADR 0106): each texel a `[floor, amount]`, so a mist can fill valleys at many heights. Its look is the post-process config's `ground_fog_*`, so set the map when the ground changes and the density and colour by the hour. See [Post-processing: Ground fog](../concepts/post-processing.md#ground-fog).
+`set_ground_fog(&GroundFog { origin, size, width, depth, texels })` lays a fog on floors of the game's own ([ADR 0106](https://github.com/chrischaps/Flint/blob/main/docs/adr/0106-ground-fog-on-own-floors.md)): each texel a `[floor, amount]`, so a mist can fill valleys at many heights. Its look is the post-process config's `ground_fog_*`, so set the map when the ground changes and the density and colour by the hour. See [Post-processing: Ground fog](../concepts/post-processing.md#ground-fog).
 
-`renderer.set_gpu_timing(device, queue, true)` times the frame's phases on the GPU (ADR 0108), and `renderer.collect_stats()` then carries each phase's milliseconds in `gpu_passes` and the frame's in `gpu_frame_ms`, for a game's own frame graph. See [Profiling](profiling.md).
+`renderer.set_gpu_timing(device, queue, true)` times the frame's phases on the GPU ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)), and `renderer.collect_stats()` then carries each phase's milliseconds in `gpu_passes` and the frame's in `gpu_frame_ms`, for a game's own frame graph. See [Profiling](profiling.md).
 
 ## Game UI with egui
 
@@ -314,7 +314,7 @@ Once any extension is installed, or any debug panel is open, every window event 
 
 Next, `on_window_event` offers each remaining event to the extensions in order. Returning `true` consumes it, and later extensions and the player don't see it. Only input events can be consumed. Lifecycle events such as `Resized`, `CloseRequested` and `RedrawRequested` always reach every extension and the player, whatever an extension returns.
 
-A key then goes to the same extension's `on_key`, unless its `on_window_event` took it. `KeyInput` holds the key's `KeyCode`, whether it went down or up, whether the OS is repeating it, the character it stands for (winit's `logical_key`, on the release too), the modifiers held, and whether `--input-script` pressed it. `pressed()` is a first press. A scripted key comes **only** to `on_key` (ADR 0103): winit's `KeyEvent` can't be built outside winit, so there is no `KeyboardInput` to show `on_window_event`. Read keys in `on_key`, then, and a capture can press them; handle each key in one hook or the other, not both. Keys winit can't name, and the synthetic presses it sends for keys held as the window gains focus, come only to `on_window_event`.
+A key then goes to the same extension's `on_key`, unless its `on_window_event` took it. `KeyInput` holds the key's `KeyCode`, whether it went down or up, whether the OS is repeating it, the character it stands for (winit's `logical_key`, on the release too), the modifiers held, and whether `--input-script` pressed it. `pressed()` is a first press. A scripted key comes **only** to `on_key` ([ADR 0103](https://github.com/chrischaps/Flint/blob/main/docs/adr/0103-extensions-see-scripted-keys.md)): winit's `KeyEvent` can't be built outside winit, so there is no `KeyboardInput` to show `on_window_event`. Read keys in `on_key`, then, and a capture can press them; handle each key in one hook or the other, not both. Keys winit can't name, and the synthetic presses it sends for keys held as the window gains focus, come only to `on_window_event`.
 
 ```rust
 fn on_key(&mut self, key: &KeyInput) -> bool {
@@ -334,7 +334,7 @@ egui's verdicts come from the previous frame. A key pressed in the same frame as
 
 The player owns egui's fonts. It installs them from the project's `fonts/` folder at start and again on a scene change into another project root, and each install replaces every font egui has. So don't call `Context::set_fonts` from `ui()`: the next install drops what it set.
 
-Usually the folder is enough. Name your egui UI's faces in `fonts/fonts.toml` (ADR 0081):
+Usually the folder is enough. Name your egui UI's faces in `fonts/fonts.toml` ([ADR 0081](https://github.com/chrischaps/Flint/blob/main/docs/adr/0081-project-fonts-name-egui-defaults.md)):
 
 ```toml
 [[font]]
@@ -360,7 +360,7 @@ For fonts that don't come from the folder (embedded with `include_bytes!`, or ch
 
 ## Projecting from Native Functions
 
-A native function that places things on the screen needs the camera scripts project with, and `ExtensionCtx::camera` is a frame old by the time `on_draw_ui` runs. `PlayerApp::projector()` returns a `Projector`, a cloneable handle on the scripts' camera (ADR 0087). Take it before `add_extension`, hand it to the extension, and clone it into the closures it registers:
+A native function that places things on the screen needs the camera scripts project with, and `ExtensionCtx::camera` is a frame old by the time `on_draw_ui` runs. `PlayerApp::projector()` returns a `Projector`, a cloneable handle on the scripts' camera ([ADR 0087](https://github.com/chrischaps/Flint/blob/main/docs/adr/0087-native-code-projects-with-frame-camera.md)). Take it before `add_extension`, hand it to the extension, and clone it into the closures it registers:
 
 ```rust
 let projector = player.projector();
@@ -379,7 +379,7 @@ engine.register_fn("my_labels", move || -> rhai::Array {
 
 ### Picking a ground that isn't flat
 
-`screen_to_ground` cuts a plane, which is wrong on a hill. A game that builds its own ground registers it with the projector as a `GroundField` (ADR 0095): a `Heightmap` placed in the world, with its first sample at `origin` and its last at `origin + size`, and world y `sample × height_scale + base_y`. Both types are re-exported by `flint-player`.
+`screen_to_ground` cuts a plane, which is wrong on a hill. A game that builds its own ground registers it with the projector as a `GroundField` ([ADR 0095](https://github.com/chrischaps/Flint/blob/main/docs/adr/0095-ray-against-placed-height-field.md)): a `Heightmap` placed in the world, with its first sample at `origin` and its last at `origin + size`, and world y `sample × height_scale + base_y`. Both types are re-exported by `flint-player`.
 
 ```rust
 let heights: Vec<f32> = /* cols × rows samples, row-major, in metres */;

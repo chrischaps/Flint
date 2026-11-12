@@ -123,7 +123,7 @@ On the GPU the ASCII style packs each step's band start beside its glyph in the 
 - a bare name such as `terminal` to `fonts/terminal.glyphs.toml`, found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `glyph-sets`): beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/fonts/`);
 - a path ending `.glyphs.toml` (`art/terminal.glyphs.toml`) from each of those same directories.
 
-`builtin` is never searched for, so no file can take its place. The working directory is not searched (it was, before ADR 0114): from a project's root it is the root, which the search reaches. The font file a set names (`[font] file`) is read from beside the set, wherever the set was found. `flint asset where glyph-sets terminal --scene <scene>` prints the file and the places tried before it.
+`builtin` is never searched for, so no file can take its place. The working directory is not searched (it was, before [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md)): from a project's root it is the root, which the search reaches. The font file a set names (`[font] file`) is read from beside the set, wherever the set was found. `flint asset where glyph-sets terminal --scene <scene>` prints the file and the places tried before it.
 
 Failures are cached too, so a bad name warns once rather than every frame, and the warning lists every path tried.
 

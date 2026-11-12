@@ -17,7 +17,7 @@ The loop structure:
 7. **Run scripts** --- execute Rhai scripts (`on_update`, event callbacks), process deferred commands (audio, events)
 8. **Render** --- draw the frame with the current entity positions, HUD overlay (crosshair, interaction prompts)
 
-Scripts, audio, animation and particles implement the `RuntimeSystem` trait: `initialize()` when a scene is entered and `update()` once a frame. Nothing holds a list of them: the player calls each by its type, in the order above, and skips one the game state pauses (see [Game states](scripting.md#game-state-machine-api)). Physics is stepped at the fixed rate instead, by `PhysicsSystem::fixed_update(world, dt, events)`. Optional parts of the player, such as living props, are its subsystems (ADR 0117).
+Scripts, audio, animation and particles implement the `RuntimeSystem` trait: `initialize()` when a scene is entered and `update()` once a frame. Nothing holds a list of them: the player calls each by its type, in the order above, and skips one the game state pauses (see [Game states](scripting.md#game-state-machine-api)). Physics is stepped at the fixed rate instead, by `PhysicsSystem::fixed_update(world, dt, events)`. Optional parts of the player, such as living props, are its subsystems ([ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)).
 
 The frame's events live in one `EventBus`, which the player owns. Each fixed physics step pushes its collisions and triggers onto it, and player extensions, style changes and scripts' `fire_event` push their own; the frame hands the whole batch to scripts and audio before `on_update`. Clearing physics at a scene transition doesn't touch it: a script's event fired as it leaves reaches the next scene's scripts, and only the old scene's contacts are dropped.
 
@@ -106,7 +106,7 @@ flint play my_scene.scene.toml
 
 ## Joints
 
-Joints (ADR 0069) connect a **dynamic** body to a parent body so that Rapier
+Joints ([ADR 0069](https://github.com/chrischaps/Flint/blob/main/docs/adr/0069-physics-joints-and-world-space-bodies.md)) connect a **dynamic** body to a parent body so that Rapier
 supplies the secondary motion --- overshoot, settle, bounce --- while scripts
 keep authoring the primary motion. The intended pattern is a hybrid: the root
 and most nodes stay kinematic and script-posed, and a few nodes (a folding

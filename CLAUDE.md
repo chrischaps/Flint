@@ -24,7 +24,8 @@ cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
-bash scripts/ci.sh             # What a PR must pass: formatting, in seconds. `issue.sh land` runs it.
+bash scripts/ci.sh             # What a PR must pass: formatting and a record for every cited ADR
+                               #   (scripts/adr-check.sh), in seconds. `issue.sh land` runs it.
 bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 

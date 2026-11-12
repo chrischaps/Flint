@@ -1,6 +1,6 @@
 # Particles
 
-Flint's particle system (`flint-particles`) provides GPU-instanced visual effects: fire, smoke, sparks, rain, dust, magic — any effect made of hundreds or thousands of small, short-lived elements. Since ADR 0068 it has two authoring paths, a deterministic simulation that headless renders can step, and its own editor.
+Flint's particle system (`flint-particles`) provides GPU-instanced visual effects: fire, smoke, sparks, rain, dust, magic — any effect made of hundreds or thousands of small, short-lived elements. Since [ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md) it has two authoring paths, a deterministic simulation that headless renders can step, and its own editor.
 
 ![Campfire effect: flames, embers, puffs and smoke from one asset](../images/particles-campfire-scene.png)
 
@@ -137,7 +137,7 @@ Over-lifetime curves: `size` (`[w, h]`), `color` (RGBA), `alpha` (multiplies col
 | `cone` | `{ kind = "cone", radius = 0.15, angle = 10 }` — spawns on a disc of `radius` perpendicular to `direction`, moving within `angle` degrees | `shape = "cone"`, `shape_angle`, `shape_radius` (cones spawn from a point unless set) |
 | `box` | `{ kind = "box", extents = [x, y, z] }` | `shape = "box"`, `shape_extents` |
 
-`shape_offset` translates the spawn region relative to the emitter. `shape_axis_u` / `shape_axis_v` orient a box (ADR 0061): `extents.x` runs along `u`, `extents.y` along `v`, `extents.z` along their cross product; zero or parallel axes fall back to axis-aligned.
+`shape_offset` translates the spawn region relative to the emitter. `shape_axis_u` / `shape_axis_v` orient a box ([ADR 0061](https://github.com/chrischaps/Flint/blob/main/docs/adr/0061-flight-trails-from-script-driven-emitters.md)): `extents.x` runs along `u`, `extents.y` along `v`, `extents.z` along their cross product; zero or parallel axes fall back to axis-aligned.
 
 `local_axes` decides whether `direction`, `shape_offset` and the shape axes rotate with the entity's world rotation (and scale with its scale). Assets default to `true`; inline components default to `false` so existing scripts that drive `shape_axis_u` in world space (the prologue flight trails) keep working.
 
@@ -282,7 +282,7 @@ fn on_update() {
 - **`ParticleSystem`** — the `RuntimeSystem`; `step`, `simulate_to`, `pack`
 - **`flint-render` `scene_renderer/particles.rs`** — the single upload bridge used by the player, viewer, editor and `flint render`; four blend pipelines over one shared instance buffer
 
-Deferred by ADR 0068: GPU compute simulation, ribbons/trails (the `trail` key is reserved), mesh particles, soft particles and distance fade, collision.
+Deferred by [ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md): GPU compute simulation, ribbons/trails (the `trail` key is reserved), mesh particles, soft particles and distance fade, collision.
 
 ## Recipes
 

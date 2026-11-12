@@ -280,7 +280,7 @@ Rhai scripting engine for runtime game logic:
 - `ScriptSync` --- discovers entities with `script` components, monitors file timestamps for hot-reload
 - `ScriptSystem` --- `RuntimeSystem` implementation running in `update()` (variable-rate)
 - Full API: entity CRUD, input, time, audio, animation, physics (raycast, camera), math, events, logging, UI draw
-- `ScriptCommand` pattern --- every effect on the host (sound, styles, scenes, the camera's and post-processing's per-frame requests), carried out through one `ScriptHost` interface by `host::apply`, the one dispatcher the player and `flint render --scripts` share (ADR 0116, #697)
+- `ScriptCommand` pattern --- every effect on the host (sound, styles, scenes, the camera's and post-processing's per-frame requests), carried out through one `ScriptHost` interface by `host::apply`, the one dispatcher the player and `flint render --scripts` share ([ADR 0116](https://github.com/chrischaps/Flint/blob/main/docs/adr/0116-declared-script-api.md), #697)
 - `DrawCommand` pattern --- immediate-mode 2D draw primitives (text, rect, circle, line, sprite) rendered via egui
 - `ScriptCallContext` with raw `*mut FlintWorld` pointer for world access during call batches, reached only through `try_world`/`call.world()`; `unsafe` is in `context.rs` alone
 - Depends on `flint-physics` for raycast and camera direction access
@@ -335,7 +335,7 @@ Android entry point (excluded from default workspace members):
 
 ### flint-player
 
-Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, music sessions, and rendering. The `player_app` module is decomposed into named lifecycle files (ADR 0062): `init` (construction and loading), `frame` (the per-frame loop), `events` (window and key handling), `transition` (scene transitions), `scene_loading`, `script_commands`, `input_config`, `hud_render`, `debug_panels`, `music_session`, `music_guide_panel`, and `timeline_panel`.
+Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, music sessions, and rendering. The `player_app` module is decomposed into named lifecycle files ([ADR 0062](https://github.com/chrischaps/Flint/blob/main/docs/adr/0062-player-app-split-into-lifecycle-files.md)): `init` (construction and loading), `frame` (the per-frame loop), `events` (window and key handling), `transition` (scene transitions), `scene_loading`, `script_commands`, `input_config`, `hud_render`, `debug_panels`, `music_session`, `music_guide_panel`, and `timeline_panel`.
 - Full game loop: clock tick, fixed-step physics, audio sync, animation advance, script update, first-person rendering
 - Scene loading with physics body creation from TOML collider/rigidbody components
 - Audio source loading and spatial listener tracking

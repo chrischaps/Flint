@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # What a change must pass before it lands (#757).
 #
-#   scripts/ci.sh          formatting only: seconds, no build. `scripts/issue.sh
+#   scripts/ci.sh          formatting, and every cited ADR has a record
+#                          (scripts/adr-check.sh): seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
 #   scripts/ci.sh --full   also what CI's clippy and wasm jobs run: native
@@ -25,6 +26,9 @@ if ! cargo fmt --all -- --check >/dev/null 2>&1; then
     echo "ci: run \`cargo fmt --all\`, commit, and try again" >&2
     exit 1
 fi
+
+echo "ci: scripts/adr-check.sh"
+bash scripts/adr-check.sh
 
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"

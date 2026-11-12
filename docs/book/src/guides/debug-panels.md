@@ -20,7 +20,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player says so instead: a short note at the top of the window for about two seconds, and the same line in the console (`[debug] F3: no debug panels in this scene`).
 
-The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose (ADR 0053, consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
+The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose ([ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md), consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
 
 ## Layout
 
@@ -192,7 +192,7 @@ For the render panel the player adds **Freeze script post overrides**: while fro
 
 ## Adding a Panel from a Game
 
-A game that wraps the player adds its own panels through its [extension](player-extensions.md) (ADR 0107). Name them in `debug_panels`, and draw each one's contents in `debug_panel_ui`:
+A game that wraps the player adds its own panels through its [extension](player-extensions.md) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)). Name them in `debug_panels`, and draw each one's contents in `debug_panel_ui`:
 
 ```rust
 impl PlayerExtension for MyGame {

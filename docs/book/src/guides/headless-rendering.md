@@ -194,7 +194,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
 - **Animation runs only when asked.** Without a flag skinned meshes render at bind pose. `--anim-time <s>` runs the scene's animation to that time first, as the player has it there ([Posed Characters](#posed-characters)). For one model on its own, the model previewer's render mode does the same: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
-- **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes (ADR 0052), which matters when a CI job renders dozens of frames.
+- **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)), which matters when a CI job renders dozens of frames.
 
 ## Frame sequences
 

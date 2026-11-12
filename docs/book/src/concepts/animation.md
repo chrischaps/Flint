@@ -392,7 +392,7 @@ Entities with both `animator` and `skeleton` components use the skeletal animati
 
 ## Two-Bone IK
 
-`ik_two_bone` (ADR 0070) pins the end of a two-segment transform chain to a
+`ik_two_bone` ([ADR 0070](https://github.com/chrischaps/Flint/blob/main/docs/adr/0070-two-bone-ik-on-transform-chains.md)) pins the end of a two-segment transform chain to a
 target entity every frame, after scripts, physics and clip playback have posed
 the world. It works on *entities*, not skeleton joints, so it suits models whose
 articulation is a glTF node hierarchy expanded by an `animator` (a driver's
