@@ -170,6 +170,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--list-gpus` | Print available GPU adapters and exit |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
+| `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
 
@@ -498,6 +499,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
 | `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
 | `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--motion-hold <rate>` | `0` | Motion on twos for the whole frame (#405): entities' drawn positions and poses, and the post time styles read, change only this many times a second (sets `[post_process] motion_hold`; 0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |

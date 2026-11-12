@@ -24,6 +24,7 @@ pub mod ground_fog;
 mod headless;
 pub mod look;
 pub mod model_loader;
+pub mod motion_hold;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod palette;

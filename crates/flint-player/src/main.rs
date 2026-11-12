@@ -119,6 +119,13 @@ struct Args {
     #[arg(long, value_name = "SECONDS")]
     style_time: Option<f32>,
 
+    /// Motion on twos for the whole frame (#405): every entity's drawn
+    /// position and pose change only this many times a second, as does the
+    /// post time styles read (12 = on twos at 24 fps; 0 = off). Over every
+    /// scene's `[post_process] motion_hold`, kept through transitions
+    #[arg(long, value_name = "RATE")]
+    motion_hold: Option<f32>,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -398,6 +405,7 @@ fn main() -> Result<()> {
     }
     app.launch.style_specs = args.styles.clone();
     app.launch.style_time = args.style_time;
+    app.launch.motion_hold = args.motion_hold;
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
     app.launch.window_size = args.window.size();

@@ -1482,7 +1482,8 @@ impl SceneRenderer {
                 style_bounds: &style_bounds,
                 edges: None,
                 linear_sampler: &pp.linear_sampler,
-                time: (self.ocean_time % 100_000.0) as f32,
+                // held on twos under a whole-frame motion_hold (#405)
+                time: self.post_time(),
                 dt: self.style_dt,
                 frame: self
                     .style_frame_serial
@@ -1644,7 +1645,8 @@ impl SceneRenderer {
             camera,
             // Same f64 phase wrap as the ocean upload — keeps mode animation
             // precise over long sessions. Headless render leaves this 0.0.
-            (self.ocean_time % 100_000.0) as f32,
+            // Held on twos under a whole-frame motion_hold (#405).
+            self.post_time(),
             self.ground_fog.as_ref(),
             &scene,
             if fxaa_active {

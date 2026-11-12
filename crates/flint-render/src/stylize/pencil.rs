@@ -448,13 +448,14 @@ pub fn direction_mode(name: &str) -> f32 {
 
 /// The seed a frame draws with: `seed`, moved on `boil` times a second of
 /// post time, so a still drawing (boil 0) never changes and a boiling one
-/// changes in steps, the same steps at the same `--style-time`.
+/// changes in steps, the same steps at the same `--style-time`. The steps
+/// are [`motion_hold::tick`](crate::motion_hold::tick)'s, so a pose held at
+/// `rate = boil` moves in the same frames the lines redraw (#405).
 pub fn effective_seed(seed: f32, boil: f32, time: f32) -> f32 {
     let base = seed.max(0.0).floor();
-    if boil > 0.0 && time.is_finite() {
-        base + (time.max(0.0) * boil).floor()
-    } else {
-        base
+    match crate::motion_hold::tick(time, boil) {
+        Some(step) => base + step as f32,
+        None => base,
     }
 }
 
