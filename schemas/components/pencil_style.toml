@@ -5,6 +5,8 @@ description = "Draws this entity (and its descendants) as a pencil sketch, with 
 # in, and a filled-in field would hide the scene's own setting (as ascii_style).
 [component.pencil_style.fields]
 enabled = { type = "bool", description = "false keeps this entity and its subtree out of pencil, even when the scene's style covers the whole frame" }
+blend = { type = "f32", min = 0.0, max = 1.0, description = "How much of the pencil look this entity (and its subtree) is drawn with: 0 its own shading, 1 the style's (the default when left out); between, the framework cross-fades (#396). Rides in the style mask beside the id (#278)" }
+blend_source = { type = "enum", values = ["own", "tear"], description = "What the blend follows (#397): own (the default) is the blend alone; tear is the blend times the reality tear at each pixel, so the sketch turns only where render modes 1-4 and 6 tear (6 is the tear with no look of its own: only these props show it). With no tear on, the entity draws as at blend 0. Like the blend, the root's, inherited" }
 spacing = { type = "f32", min = 2.0, max = 24.0, description = "Hatch line spacing in points" }
 thickness = { type = "f32", min = 0.25, max = 4.0, description = "Hatch stroke width in points" }
 layers = { type = "f32", min = 0.0, max = 4.0, description = "Hatch layers (0-4); each joins, crossing the last, as the tone darkens" }

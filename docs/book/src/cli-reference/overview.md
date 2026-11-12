@@ -520,7 +520,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
 | `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |
 | `--sheen-color <r,g,b>` | `1,1,1` | Charlie-sheen rim tint |
-| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
+| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only `blend_source = "tear"` props show (#397) |
 | `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
 | `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |

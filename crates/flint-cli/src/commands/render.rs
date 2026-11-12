@@ -593,7 +593,7 @@ pub struct RenderArgs {
     pub edge_normal: Option<f32>,
 
     /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
-    /// 5=underwater)
+    /// 5=underwater, 6=tear: a tear only `blend_source = "tear"` props show)
     #[arg(long)]
     pub render_mode: Option<u32>,
 
@@ -601,8 +601,9 @@ pub struct RenderArgs {
     #[arg(long)]
     pub mode_mix: Option<f32>,
 
-    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale, mask style,
-    /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
+    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale (0 = 3), mask
+    /// style, rate (0 = 6), spare. Underwater 5: eye depth m, sea energy,
+    /// daylight, biolum
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
 

@@ -493,7 +493,7 @@ There are no longer per-effect function keys. [ADR 0053](https://github.com/chri
 | Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
 | Contour | Enabled, width, threshold, strength, luma, ink colour, fade, boil |
 | Shading boil | Paint boil (Kuwahara's), hold each drawing (ones, twos, threes), and what the wooze field says now: step, jitter and the drawing |
-| Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater), mix, params |
+| Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater, Tear (props)), mix, params |
 | Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
 | Lighting | Ambient sky, ambient ground, diffuse wrap, Oren-Nayar, sheen color, sheen strength, Reset lighting |
@@ -563,16 +563,17 @@ depth and luminance.*
 | 3 | Drunk | Pre-sample UV sway warping the whole composite chain, plus a ghosting double-tap. |
 | 4 | Tron | Depth Sobel + luminance edges in cyan over a dimmed scene, with a world-space grid reconstructed from depth so it rides real geometry. |
 | 5 | Underwater | Masks per pixel against a **waterline plane**, not a patch mask. Banded murk absorption, a wobbled foam lip on the line, light shafts, Snell-window brightening. |
+| 6 | Tear (props) | A tear with no look of its own (#397): the composite draws nothing, and only entities whose style has `blend_source = "tear"` show it, turning to their style where it passes ([A blend that follows the tear](stylize-passes.md#a-blend-that-follows-the-tear)). |
 
 Four uniforms carry the state: `render_mode`, `mode_mix` (0..1 blend),
 `mode_time`, and a `mode_params` vec4 whose meaning is per-mode.
 
 | Mode | `mode_params` |
 |------|---------------|
-| 1--4 | `x` = bleed-mask scale, `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate, `w` = spare |
+| 1--4, 6 | `x` = bleed-mask scale (0 or less = the default 3), `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate (Matrix glyph rerolls per second; 0 = the default 6), `w` = spare |
 | 5 | `x` = signed eye depth in meters (+ = submerged), `y` = sea energy 0..1, `z` = daylight 0..1, `w` = bioluminescence 0..1 |
 
-Modes 1--4 fade in through an fbm **bleed mask** whose threshold sweeps across
+Modes 1--4 and 6 fade in through an fbm **bleed mask** whose threshold sweeps across
 the noise span, so patch coverage grows with `mode_mix` and pins to full
 coverage at 1. Mode 5 ignores the mask entirely: being underwater is a fact
 about where your eye is, not a patch that spreads.

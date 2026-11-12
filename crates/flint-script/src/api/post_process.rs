@@ -92,7 +92,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "set_render_mode",
-        "A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater) at a mix of 0..1; call it every frame it shows.",
+        "A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only props with blend_source = \"tear\" show) at a mix of 0..1; call it every frame it shows.",
     )
     .arg("mode", Int)
     .arg("mix", Num)

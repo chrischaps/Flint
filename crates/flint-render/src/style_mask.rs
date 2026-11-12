@@ -130,10 +130,25 @@ pub const BLEND_ONE: u32 = u16::MAX as u32;
 /// `transition = "dissolve"` the share of cells that have turned).
 pub const BLEND_FIELD: &str = "blend";
 
+/// The field that says what an entity's blend follows (#397): `"own"` (the
+/// default), its `blend` alone, or `"tear"`, its `blend` times the reality
+/// tear's mask at each pixel, so the style shows only where render modes
+/// 1-4 and 6 tear. Like the blend, it is the root's, inherited.
+pub const BLEND_SOURCE_FIELD: &str = "blend_source";
+
+/// [`BLEND_SOURCE_FIELD`]'s choices: the entity's own blend, or the tear.
+pub const BLEND_SOURCES: [&str; 2] = ["own", "tear"];
+
 /// A blend in the mask's `.g` encoding.
 pub fn encode_blend(blend: f32) -> u32 {
     (blend.clamp(0.0, 1.0) * BLEND_ONE as f32).round() as u32
 }
+
+/// The mask's shader: the tear's mask (#397), then `style_mask.wgsl`.
+pub(crate) const STYLE_MASK_WGSL: &str = concat!(
+    include_str!("tear_mask.wgsl"),
+    include_str!("style_mask.wgsl")
+);
 
 /// The id of a pixel no style drew.
 pub const NO_STYLE: u16 = 0;
@@ -250,6 +265,12 @@ pub struct StyleIds {
     /// finds them where it left them, but asks for nothing: a style whose
     /// entities have all faded is off, its pass and the mask not drawn.
     faded: Vec<bool>,
+    /// Beside `names` (#397): whether a root drawn in the id at its own
+    /// blend is above 0, and whether one following the tear is. A torn
+    /// root shows only while a tear does ([`Self::set_tear`]).
+    shown: Vec<(bool, bool)>,
+    /// Whether the frame tears ([`crate::postprocess::tear_active`]).
+    tear_on: bool,
 }
 
 impl StyleIds {
@@ -290,10 +311,33 @@ impl StyleIds {
             .unwrap_or(false)
     }
 
-    /// Mark which ids have faded: `faded(id)` for every id.
-    fn set_faded(&mut self, faded: impl Fn(u16) -> bool) {
-        for (i, slot) in self.faded.iter_mut().enumerate() {
-            *slot = faded((i + 1) as u16);
+    /// Say which ids show: `shown(id)` is (a root at its own blend above
+    /// 0, a root following the tear above 0) for every id.
+    fn set_shown(&mut self, shown: impl Fn(u16) -> (bool, bool)) {
+        for (i, slot) in self.shown.iter_mut().enumerate() {
+            *slot = shown((i + 1) as u16);
+        }
+        self.refade();
+    }
+
+    /// Whether the frame tears (#397): an id whose shown roots all follow
+    /// the tear is faded while it doesn't, so with no tear a torn prop's
+    /// style is off, pass and mask skipped, as at blend 0. Hosts call it
+    /// each frame with the config the composite draws (`render_mode` and
+    /// `mode_mix` are a script's, set every frame). Returns whether it
+    /// changed.
+    pub fn set_tear(&mut self, on: bool) -> bool {
+        if self.tear_on == on {
+            return false;
+        }
+        self.tear_on = on;
+        self.refade();
+        true
+    }
+
+    fn refade(&mut self) {
+        for (faded, &(own, torn)) in self.faded.iter_mut().zip(&self.shown) {
+            *faded = !(own || (torn && self.tear_on));
         }
     }
 
@@ -317,10 +361,12 @@ impl StyleIds {
                 *slot = v;
             }
             self.faded.fill(false);
+            self.shown.fill((true, true));
             return false;
         }
         (self.names, self.variants) = entries.into_iter().unzip();
         self.faded = vec![false; self.names.len()];
+        self.shown = vec![(true, true); self.names.len()];
         true
     }
 
@@ -499,6 +545,25 @@ pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
         .map_or(1.0, |b| (b as f32).clamp(0.0, 1.0))
 }
 
+/// Whether a styled root's blend follows the tear (#397): its style
+/// component's `blend_source`, else its `style_mask`'s, is `"tear"`. Any
+/// other value is its own blend (the schema warns about a wrong one).
+pub(crate) fn follows_tear(world: &FlintWorld, root: EntityId) -> bool {
+    let from = |c: &str| {
+        world
+            .get_component(root, c)?
+            .get(BLEND_SOURCE_FIELD)
+            .and_then(|v| v.as_str())
+            .map(|s| s == "tear")
+    };
+    crate::stylize::registry()
+        .iter()
+        .filter_map(|d| d.component)
+        .chain([STYLE_MASK_COMPONENT])
+        .find_map(from)
+        .unwrap_or(false)
+}
+
 /// What one entity's `style_mask` component asks for: `Some(name)` for a
 /// style, `None` to opt out (`enabled = false`, or an empty name).
 fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
@@ -657,7 +722,14 @@ pub(crate) fn resolve(
     ids: &mut StyleIds,
     out: &mut HashMap<EntityId, u16>,
 ) {
-    resolve_blended(world, config, ids, out, &mut HashMap::new());
+    resolve_blended(
+        world,
+        config,
+        ids,
+        out,
+        &mut HashMap::new(),
+        &mut HashSet::new(),
+    );
 }
 
 /// [`resolve`], and the blend of every styled entity drawn at less than 1
@@ -668,15 +740,22 @@ pub(crate) fn resolve(
 /// faded in `ids` (#400): it keeps its number and its entities stay in
 /// `out`, so the mask is the same whenever another style draws it, but it
 /// no longer switches its style on.
+///
+/// Entities whose root's blend follows the tear (#397, [`follows_tear`])
+/// go into `torn` (cleared first); their ids are faded while `config`
+/// draws no tear, as [`StyleIds::set_tear`] keeps them.
 pub(crate) fn resolve_blended(
     world: &FlintWorld,
     config: &PostProcessConfig,
     ids: &mut StyleIds,
     out: &mut HashMap<EntityId, u16>,
     blends: &mut HashMap<EntityId, f32>,
+    torn: &mut HashSet<EntityId>,
 ) {
     out.clear();
     blends.clear();
+    torn.clear();
+    ids.set_tear(crate::postprocess::tear_active(config));
     if !any_styled(world) {
         ids.set(Vec::new());
         return;
@@ -694,22 +773,33 @@ pub(crate) fn resolve_blended(
         .collect();
     ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
     let mut stack = Vec::new();
-    // Ids with a root above blend 0 (#400), a flag per id
-    let mut shown = vec![false; ids.len() + 1];
+    // Ids with a root above blend 0 (#400), a pair of flags per id: one at
+    // its own blend, one following the tear (#397)
+    let mut shown = vec![(false, false); ids.len() + 1];
     for (root, req) in &requests {
         let root = *root;
         let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
         let blend = requested_blend(world, root);
+        let tear = follows_tear(world, root);
         // As the mask's `.g` holds it: a blend that rounds to 0 shows nothing
-        shown[id as usize] |= encode_blend(blend) > 0;
+        let above = encode_blend(blend) > 0;
+        let flags = &mut shown[id as usize];
+        if tear {
+            flags.1 |= above;
+        } else {
+            flags.0 |= above;
+        }
         stack.clear();
         stack.push(root);
         while let Some(e) = stack.pop() {
             out.insert(e, id);
             if blend < 1.0 {
                 blends.insert(e, blend);
+            }
+            if tear {
+                torn.insert(e);
             }
             // A descendant with a style_mask of its own is a root itself
             stack.extend(
@@ -720,7 +810,7 @@ pub(crate) fn resolve_blended(
             );
         }
     }
-    ids.set_faded(|id| !shown[id as usize]);
+    ids.set_shown(|id| shown[id as usize]);
 }
 
 /// The debug view's colour for style `id`: hues a golden angle apart, so
@@ -821,7 +911,28 @@ struct MaskDrawUniform {
     slope_tolerance: f32,
     /// The draw's blend in the mask's `.g` encoding (#278).
     blend: u32,
-    _pad: f32,
+    /// 1 when the blend follows the tear (#397).
+    torn: u32,
+    /// The frame's tear (#397): the composite's `mode_params`, `mode_mix`
+    /// and post time, and the mask's size in pixels.
+    tear_params: [f32; 4],
+    tear_mix: f32,
+    tear_time: f32,
+    size: [f32; 2],
+}
+
+/// The frame's reality tear, as the composite draws it (#397), for the
+/// mask draws whose blend follows it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Tear {
+    /// Whether the frame tears at all; while it doesn't, a torn draw
+    /// writes blend 0 (the fbm reaches past the threshold of mix 0 in
+    /// places, and the composite draws no tear below a mix of 0.001).
+    pub on: bool,
+    pub mode_params: [f32; 4],
+    pub mix: f32,
+    /// The post time the composite reads (`mode_time`).
+    pub time: f32,
 }
 
 /// One masked static (or procedural box) draw.
@@ -835,6 +946,8 @@ pub(crate) struct MaskDraw<'a> {
     pub id: u16,
     /// How much of the style the entity is drawn with, 0..1 (#278).
     pub blend: f32,
+    /// Whether the blend is scaled by the tear at each pixel (#397).
+    pub torn: bool,
 }
 
 /// One transparent mesh in front of whatever it covers, for the veil
@@ -1222,7 +1335,7 @@ impl StyleMaskPass {
         let (transform_bgl, bone_bgl) = (layouts.transform, layouts.bones);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("style_mask.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(STYLE_MASK_WGSL.into()),
         });
         let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Style Mask Draw BGL"),
@@ -1510,6 +1623,7 @@ impl StyleMaskPass {
         msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
         veil: &Veil<'_>,
+        tear: Tear,
     ) {
         // Only a styled pixel reads the veil: with none, it isn't drawn
         if !draws.is_empty() {
@@ -1529,8 +1643,12 @@ impl StyleMaskPass {
             let uniform = MaskDrawUniform {
                 id: u32::from(d.id),
                 slope_tolerance: SLOPE_TOLERANCE,
-                blend: encode_blend(d.blend),
-                _pad: 0.0,
+                blend: encode_blend(if d.torn && !tear.on { 0.0 } else { d.blend }),
+                torn: u32::from(d.torn && tear.on),
+                tear_params: tear.mode_params,
+                tear_mix: tear.mix,
+                tear_time: tear.time,
+                size: [mask.width as f32, mask.height as f32],
             };
             self.scratch[at..at + std::mem::size_of::<MaskDrawUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -1707,7 +1825,7 @@ mod tests {
 
     #[test]
     fn uniform_fits_its_stride() {
-        assert_eq!(std::mem::size_of::<MaskDrawUniform>(), 16);
+        assert_eq!(std::mem::size_of::<MaskDrawUniform>(), 48);
         assert!(std::mem::size_of::<MaskDrawUniform>() as u64 <= DRAW_STRIDE);
     }
 
@@ -1951,7 +2069,14 @@ mod tests {
         let config = PostProcessConfig::default();
         let resolve_at = |world: &FlintWorld, ids: &mut StyleIds| {
             let mut out = HashMap::new();
-            resolve_blended(world, &config, ids, &mut out, &mut HashMap::new());
+            resolve_blended(
+                world,
+                &config,
+                ids,
+                &mut out,
+                &mut HashMap::new(),
+                &mut HashSet::new(),
+            );
             out
         };
         let mut ids = StyleIds::default();
@@ -2189,5 +2314,152 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert_eq!(over, ["display_bloom", "mask_view", "edges_view"]);
+    }
+
+    /// #397: a root whose blend follows the tear is faded while the frame
+    /// draws no tear (its style off, as at blend 0), shown while one is on,
+    /// and its entities are named as torn for the mask.
+    #[test]
+    fn a_prop_that_follows_the_tear_shows_only_while_the_frame_tears() {
+        let mut world = FlintWorld::new();
+        with_component(
+            &mut world,
+            "barrel",
+            "ascii_style",
+            "blend_source = \"tear\"",
+        );
+        with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
+        let resolve_at = |world: &FlintWorld, config: &PostProcessConfig, ids: &mut StyleIds| {
+            let (mut out, mut torn) = (HashMap::new(), HashSet::new());
+            resolve_blended(world, config, ids, &mut out, &mut HashMap::new(), &mut torn);
+            (out, torn)
+        };
+        let barrel_e = world.get_id("barrel").unwrap();
+        let mut calm = PostProcessConfig::default();
+        let mut ids = StyleIds::default();
+        let (out, torn) = resolve_at(&world, &calm, &mut ids);
+        let (barrel, bench) = (out[&barrel_e], out[&world.get_id("bench").unwrap()]);
+        assert_ne!(barrel, bench, "a ramp of its own is a variant of its own");
+        assert_eq!(torn.iter().copied().collect::<Vec<_>>(), [barrel_e]);
+        assert!(ids.is_faded(barrel), "no tear: the torn prop is at blend 0");
+        assert!(!ids.is_faded(bench), "a prop at its own blend doesn't care");
+
+        // A tearing mode at a mix: shown, without resolving the world again
+        // (a script sets the mode each frame, after the world was read)
+        let mut tearing = calm.clone();
+        tearing.render_mode = 6;
+        tearing.mode_mix = 0.5;
+        assert!(crate::postprocess::tear_active(&tearing));
+        assert!(ids.set_tear(true));
+        assert!(!ids.is_faded(barrel));
+        assert!(!ids.set_tear(true), "no change, no work");
+        resolve_at(&world, &tearing, &mut ids);
+        assert!(!ids.is_faded(barrel), "resolving under the tear agrees");
+
+        // Every tearing mode tears; none, underwater and a mix of 0 don't
+        for mode in [1, 2, 3, 4, 6] {
+            tearing.render_mode = mode;
+            assert!(crate::postprocess::tear_active(&tearing), "mode {mode}");
+        }
+        for (mode, mix) in [(0, 0.5), (5, 0.5), (1, 0.0), (6, 0.001)] {
+            calm.render_mode = mode;
+            calm.mode_mix = mix;
+            assert!(
+                !crate::postprocess::tear_active(&calm),
+                "mode {mode} at {mix}"
+            );
+        }
+        assert!(ids.set_tear(false));
+        assert!(ids.is_faded(barrel));
+
+        // A torn root at blend 0 stays faded even under a tear
+        with_component(
+            &mut world,
+            "barrel",
+            "ascii_style",
+            "blend_source = \"tear\"\nblend = 0.0",
+        );
+        tearing.render_mode = 1;
+        let mut ids = StyleIds::default();
+        let (out, _) = resolve_at(&world, &tearing, &mut ids);
+        assert!(ids.is_faded(out[&barrel_e]));
+    }
+
+    /// #397: `blend_source` is the root's, from its style component, else
+    /// its `style_mask`; anything but "tear" is its own blend.
+    #[test]
+    fn blend_source_comes_from_the_style_component_then_the_mask() {
+        let mut world = FlintWorld::new();
+        with_component(
+            &mut world,
+            "a",
+            "style_mask",
+            "style = \"ascii\"\nblend_source = \"tear\"",
+        );
+        with_component(&mut world, "b", "ascii_style", "blend_source = \"own\"");
+        with_component(
+            &mut world,
+            "b",
+            "style_mask",
+            "style = \"ascii\"\nblend_source = \"tear\"",
+        );
+        with_component(
+            &mut world,
+            "c",
+            "ascii_style",
+            "blend_source = \"sideways\"",
+        );
+        with_component(&mut world, "d", "pencil_style", "blend_source = \"tear\"");
+        let follows = |n: &str| follows_tear(&world, world.get_id(n).unwrap());
+        assert!(follows("a"));
+        assert!(!follows("b"), "the style component's own wins");
+        assert!(!follows("c"), "an unknown source is the entity's own");
+        assert!(follows("d"));
+    }
+
+    /// The Rust uniform is laid out as the WGSL `MaskDraw` reads it (#397
+    /// grew it from 16 to 48 bytes), and the composed shader validates.
+    #[test]
+    fn the_mask_uniform_matches_the_wgsl_and_the_shader_validates() {
+        let module = naga::front::wgsl::parse_str(STYLE_MASK_WGSL).expect("style mask parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("style mask validates");
+        let members = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { members, span }
+                    if ty.name.as_deref() == Some("MaskDraw") =>
+                {
+                    Some((members.clone(), *span))
+                }
+                _ => None,
+            })
+            .expect("MaskDraw in the shader");
+        use std::mem::offset_of;
+        let rust = [
+            ("id", offset_of!(MaskDrawUniform, id)),
+            (
+                "slope_tolerance",
+                offset_of!(MaskDrawUniform, slope_tolerance),
+            ),
+            ("blend", offset_of!(MaskDrawUniform, blend)),
+            ("torn", offset_of!(MaskDrawUniform, torn)),
+            ("tear_params", offset_of!(MaskDrawUniform, tear_params)),
+            ("tear_mix", offset_of!(MaskDrawUniform, tear_mix)),
+            ("tear_time", offset_of!(MaskDrawUniform, tear_time)),
+            ("size", offset_of!(MaskDrawUniform, size)),
+        ];
+        let wgsl: Vec<_> = members
+            .0
+            .iter()
+            .map(|m| (m.name.as_deref().unwrap_or(""), m.offset as usize))
+            .collect();
+        assert_eq!(wgsl, rust);
+        assert_eq!(members.1 as usize, std::mem::size_of::<MaskDrawUniform>());
     }
 }
