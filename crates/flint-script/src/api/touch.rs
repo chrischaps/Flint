@@ -1,7 +1,9 @@
 //! The `touch` module: fingers down this frame, taps and swipes (ADR
-//! 0116). A touch is named by its id while it lasts; taps and swipes are
-//! this frame's, by index from 0. Positions are 0..1 of the screen's
-//! width and height (multiply by screen_width() for points).
+//! 0116). A touch is named by its id while it lasts (the platform's
+//! pointer id: not 0, 1, 2 in general, so `touch_id(i)` for `i` in
+//! `0..touch_count()` gives each); taps and swipes are this frame's, by
+//! index from 0. Positions are 0..1 of the screen's width and height
+//! (multiply by screen_width() for points).
 
 use super::builder::kind::{Bool, Int, Num, Str};
 use super::builder::ScriptApi;
@@ -13,35 +15,55 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .returns(Int, "")
         .run(|call, ()| call.ctx_ref().input.touches.len() as i64);
 
-    m.func("touch_x", "A touch's x.")
-        .arg("id", Int)
-        .returns(
-            Num,
-            "0..1 across the screen; -1.0 for no touch with that id",
-        )
-        .run(|call, (id,)| {
-            call.ctx_ref()
-                .input
-                .touches
-                .iter()
-                .find(|(tid, _, _)| *tid == id)
-                .map_or(-1.0, |(_, x, _)| *x)
-        });
+    m.func(
+        "touch_id",
+        "The id of the index-th finger down (0 to touch_count() - 1, lowest id first), for touch_x and the rest.",
+    )
+    .arg("index", Int)
+    .returns(Int, "-1 past the last touch")
+    .run(|call, (index,)| {
+        let touches = &call.ctx_ref().input.touches;
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| touches.get(i))
+            .map_or(-1, |(id, _, _)| *id)
+    });
 
-    m.func("touch_y", "A touch's y.")
-        .arg("id", Int)
-        .returns(
-            Num,
-            "0..1 across the screen; -1.0 for no touch with that id",
-        )
-        .run(|call, (id,)| {
-            call.ctx_ref()
-                .input
-                .touches
-                .iter()
-                .find(|(tid, _, _)| *tid == id)
-                .map_or(-1.0, |(_, _, y)| *y)
-        });
+    m.func(
+        "touch_x",
+        "The x of the touch with this id (touch_id gives them).",
+    )
+    .arg("id", Int)
+    .returns(
+        Num,
+        "0..1 across the screen; -1.0 for no touch with that id",
+    )
+    .run(|call, (id,)| {
+        call.ctx_ref()
+            .input
+            .touches
+            .iter()
+            .find(|(tid, _, _)| *tid == id)
+            .map_or(-1.0, |(_, x, _)| *x)
+    });
+
+    m.func(
+        "touch_y",
+        "The y of the touch with this id (touch_id gives them).",
+    )
+    .arg("id", Int)
+    .returns(
+        Num,
+        "0..1 across the screen; -1.0 for no touch with that id",
+    )
+    .run(|call, (id,)| {
+        call.ctx_ref()
+            .input
+            .touches
+            .iter()
+            .find(|(tid, _, _)| *tid == id)
+            .map_or(-1.0, |(_, _, y)| *y)
+    });
 
     m.func("is_touching", "Whether a touch with this id is down.")
         .arg("id", Int)

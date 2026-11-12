@@ -7,7 +7,7 @@ let cycle_index = 0;
 
 fn on_init() {
     let me = self_entity();
-    sprite_play(me, "idle");
+    play_sprite(me, "idle");
     log("[sprite_anim] Started idle animation");
 }
 
@@ -23,27 +23,27 @@ fn on_update() {
         cycle_index += 1;
 
         if cycle_index % 4 == 1 {
-            sprite_play(me, "run");
-            sprite_set_speed(me, 1.0);
+            play_sprite(me, "run");
+            set_sprite_speed(me, 1.0);
             current_clip = "run";
             log("[sprite_anim] Switched to run (loop)");
         } else if cycle_index % 4 == 2 {
-            sprite_play(me, "jump");
+            play_sprite(me, "jump");
             current_clip = "jump";
             log("[sprite_anim] Switched to jump (once)");
         } else if cycle_index % 4 == 3 {
-            sprite_play(me, "celebrate");
+            play_sprite(me, "celebrate");
             current_clip = "celebrate";
             log("[sprite_anim] Switched to celebrate (ping_pong)");
         } else {
-            sprite_play(me, "idle");
+            play_sprite(me, "idle");
             current_clip = "idle";
             log("[sprite_anim] Switched to idle (loop)");
         }
     }
 
-    // Test sprite_is_playing
-    let playing = sprite_is_playing(me);
+    // Test is_sprite_playing
+    let playing = is_sprite_playing(me);
     if !playing && current_clip == "jump" {
         log("[sprite_anim] Jump animation ended (playing=false detected)");
     }
@@ -54,7 +54,7 @@ fn on_animation_end(clip_name) {
     let me = self_entity();
     // After jump finishes, go back to idle
     if clip_name == "jump" {
-        sprite_play(me, "idle");
+        play_sprite(me, "idle");
         current_clip = "idle";
         log("[sprite_anim] Returned to idle after jump");
     }

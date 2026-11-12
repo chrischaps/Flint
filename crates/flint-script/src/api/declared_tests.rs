@@ -311,6 +311,7 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
     for name in [
         "set_position",
         "play_clip",
+        "set_anim_layer",
         "set_anim_layer_ex",
         "play_sequence",
         "audio_position",
@@ -318,9 +319,11 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "get_velocity_2d",
         "set_sprite_tint",
         "get_sprite_layer",
+        "play_sprite",
         "sprite_play",
         "set_text",
         "set_text_color",
+        "follow_with_camera",
         "camera_follow",
         "move_character",
         "get_collider_extents",
@@ -674,7 +677,11 @@ fn a_many_number_function_registers_its_all_int_copy() {
         .into_iter()
         .filter(|s| s.starts_with("draw_rect(") || s.starts_with("set_position("))
         .collect();
-    let rects = sigs.iter().filter(|s| s.starts_with("draw_rect(")).count();
+    // The eight-number form (the opts form is draw_rect/5)
+    let rects = sigs
+        .iter()
+        .filter(|s| s.starts_with("draw_rect(") && s.matches(',').count() == 7)
+        .count();
     assert_eq!(
         rects, 3,
         "the float twin, the all-int copy, Dynamic: {sigs:?}"
@@ -692,24 +699,28 @@ fn the_draw_and_ui_modules_are_declared() {
     let reg = engine.api_registry();
     for (module, name, arity) in [
         ("draw", "draw_rect", 8),
+        ("draw", "draw_rect", 5),
         ("draw", "draw_text_stroked_ex", 14),
         ("draw", "draw_rect_gradient", 14),
+        ("draw", "draw_rect_gradient", 5),
         ("draw", "screen_width", 0),
         ("draw_world", "draw_world_text", 6),
         ("view", "world_to_screen", 3),
         ("ui", "load_ui", 1),
         ("screen_ui", "set_text", 2),
+        ("sprite", "play_sprite", 2),
         ("sprite", "sprite_play", 2),
-        ("camera_2d", "camera_follow", 6),
+        ("camera_2d", "follow_with_camera", 6),
         ("touch", "touch_x", 1),
+        ("touch", "touch_id", 1),
         ("physics", "move_character", 4),
         ("entity", "find_nearest_interactable", 0),
     ] {
         let e = reg
             .entries()
             .iter()
-            .find(|e| e.name == name)
-            .unwrap_or_else(|| panic!("{name} not declared"));
-        assert_eq!((e.module, e.params.len()), (module, arity), "{name}");
+            .find(|e| e.name == name && e.params.len() == arity)
+            .unwrap_or_else(|| panic!("{name}/{arity} not declared"));
+        assert_eq!(e.module, module, "{name}");
     }
 }

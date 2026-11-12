@@ -64,7 +64,7 @@ fn a_typo_a_wrong_count_and_a_misspelt_callback_are_found_where_they_are() {
     );
     assert!(found[1]
         .message
-        .contains("takes 9 arguments; this call passes 8"));
+        .contains("takes 5 or 9 arguments; this call passes 8"));
     assert_eq!(
         lines[2],
         "scripts/t.rhai:6:1 unknown-callback did you mean `on_collision`?"
@@ -276,6 +276,36 @@ fn a_deprecated_function_warns() {
     assert_eq!(found[0].code, codes::DEPRECATED_FUNCTION);
     assert_eq!(found[0].hint.as_deref(), Some("use paint(colour, amount)"));
     assert_eq!(found[1].code, codes::WRONG_ARITY);
+}
+
+/// #702: an old name warns with the new one, its opts form passes, and a
+/// wrong count offers only the forms that aren't deprecated.
+#[test]
+fn the_renamed_draw_calls_check_as_the_convention_says() {
+    let c = checker();
+    assert_eq!(
+        found(
+            &c,
+            "fn on_draw_ui() {\n    draw_rect_ex(0.0, 0.0, 9.0, 9.0, 1.0, 1.0, 1.0, 1.0, 4.0, 2);\n    \
+             draw_rect(0.0, 0.0, 9.0, 9.0, #{ color: \"#ff8800\", rounding: 4.0, layer: 2 });\n    \
+             sprite_play(self_entity(), \"run\");\n}\n"
+        ),
+        vec![
+            "2:5 deprecated-function `draw_rect_ex` is deprecated",
+            "4:5 deprecated-function `sprite_play` is deprecated",
+        ]
+    );
+    let d = c.check_source(
+        Path::new("t.rhai"),
+        "fn on_draw_ui() { draw_rect_gradient(0.0, 0.0, 9.0, 9.0, 1.0, 1.0); }",
+        false,
+    );
+    assert_eq!(d.len(), 1, "{d:#?}");
+    assert_eq!(d[0].code, codes::WRONG_ARITY);
+    assert_eq!(
+        d[0].message,
+        "`draw_rect_gradient` takes 5 arguments; this call passes 6"
+    );
 }
 
 /// The built-in set comes from the engine's metadata, not a hand list.

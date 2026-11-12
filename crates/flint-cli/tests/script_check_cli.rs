@@ -90,8 +90,9 @@ fn a_typo_a_wrong_count_and_a_misspelt_callback_fail_with_file_and_line() {
     for line in [
         "scripts/keeper.rhai:5:5: error[unknown-function]: no script function `set_postion`\n    \
          hint: did you mean `set_position`?\n",
-        "scripts/keeper.rhai:6:5: error[wrong-arity]: `draw_line` takes 9 arguments; this call passes 8\n    \
-         hint: declared: draw_line(x1: num, y1: num, x2: num, y2: num, r: num, g: num, b: num, a: num, thickness: num)\n",
+        "scripts/keeper.rhai:6:5: error[wrong-arity]: `draw_line` takes 5 or 9 arguments; this call passes 8\n    \
+         hint: declared: draw_line(x1: num, y1: num, x2: num, y2: num, r: num, g: num, b: num, a: num, thickness: num); \
+         draw_line(x1: num, y1: num, x2: num, y2: num, opts: map)\n",
         "scripts/keeper.rhai:8:5: error[unknown-function]: no script function `game_ring_bell`\n",
         "scripts/keeper.rhai:11:1: error[unknown-callback]: `fn on_colision` is not a callback, and nothing in this script calls it\n    \
          hint: did you mean `on_collision`?\n",

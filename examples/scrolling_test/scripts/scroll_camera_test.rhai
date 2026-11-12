@@ -11,7 +11,7 @@ fn on_init() {
     me = self_entity();
     // Teleport camera to player position initially
     let pos = get_position(me);
-    camera_follow_set(pos.x, pos.y + 2.0);
+    set_camera_follow_position(pos.x, pos.y + 2.0);
 }
 
 fn on_update() {
@@ -41,15 +41,15 @@ fn on_update() {
     // --- Camera follow with deadzone ---
     // offset_y=2 looks ahead; speed=8 for responsive tracking
     // deadzone 1.5 wide, 2.0 tall — small movements don't jerk camera
-    camera_follow(me, 0.0, 2.0, 8.0, 1.5, 2.0);
+    follow_with_camera(me, 0.0, 2.0, 8.0, 1.5, 2.0);
 
     // --- Screen shake on interact action ---
     if is_action_just_pressed("interact") {
-        camera_shake(0.3, 20.0, 6.0);
+        shake_camera(0.3, 20.0, 6.0);
     }
 
     // --- Chunk streaming ---
-    let cam = camera_follow_position();
+    let cam = get_camera_follow_position();
     if cam.y > chunk_threshold && !is_chunk_loaded("upper_platforms") {
         load_chunk("chunks/platforms.chunk.toml", 0.0, 15.0, "upper_platforms");
     }
@@ -59,7 +59,7 @@ fn on_update() {
 }
 
 fn on_draw_ui() {
-    let cam = camera_follow_position();
+    let cam = get_camera_follow_position();
     draw_text(10.0, 10.0, "WP5: Scrolling Test", 18.0, 1.0, 1.0, 1.0, 1.0);
     draw_text(10.0, 32.0, "A/D: move | Space: jump | E: shake", 14.0, 0.8, 0.8, 0.8, 1.0);
     draw_text(10.0, 50.0, "Camera Y: " + cam.y, 14.0, 0.7, 0.9, 0.7, 1.0);

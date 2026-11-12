@@ -22,9 +22,9 @@ fn on_draw_ui() {
     let pad = 16.0;
     let ink = [0.98, 0.95, 0.88, 1.0];
     let dim = [0.72, 0.7, 0.8, 1.0];
-    draw_text_opts(s.left + pad, s.top + pad, "SCORE 004210", 22.0, #{ color: ink, spacing: 2.0 });
-    draw_text_opts(s.left + pad, s.top + pad + 28.0, "STAGE 3  ·  AFTERGLOW", 13.0, #{ color: dim, spacing: 2.0 });
-    draw_text_opts(sw - s.right - pad, s.top + pad, "01:42", 22.0, #{ color: ink, align: "right", spacing: 2.0 });
+    draw_text(s.left + pad, s.top + pad, "SCORE 004210", 22.0, #{ color: ink, spacing: 2.0 });
+    draw_text(s.left + pad, s.top + pad + 28.0, "STAGE 3  ·  AFTERGLOW", 13.0, #{ color: dim, spacing: 2.0 });
+    draw_text(sw - s.right - pad, s.top + pad, "01:42", 22.0, #{ color: ink, align: "right", spacing: 2.0 });
 
     // The menu: rows a thumb can hit on a touch device, tighter elsewhere.
     let row = if touch { 44.0 } else { 30.0 };
@@ -38,16 +38,16 @@ fn on_draw_ui() {
             draw_rect(x, y + 3.0, w, row - 6.0, 1.0, 0.55, 0.3, 0.28);
         }
         draw_rect_outline(x, y + 3.0, w, row - 6.0, 1.0, 0.85, 0.7, 0.35, 1.0);
-        draw_text_opts(sw * 0.5, y + row * 0.5 - 9.0, items[i], 17.0, #{ color: ink, align: "center", spacing: 3.0 });
+        draw_text(sw * 0.5, y + row * 0.5 - 9.0, items[i], 17.0, #{ color: ink, align: "center", spacing: 3.0 });
     }
 
     // The prompt, in the words of the device in hand, before any input.
     let prompt = if touch { "TAP TO START" } else { "ENTER  TO START" };
     let device = if touch { "touch-first device" } else { "keyboard & mouse" };
     let py = sh - s.bottom - pad - 48.0;
-    draw_text_opts(sw * 0.5, py, prompt, 20.0, #{ color: [1.0, 0.78, 0.55, 1.0], align: "center", spacing: 4.0 });
-    draw_text_opts(sw * 0.5, py + 28.0, "is_touch_device() = " + touch + "  ·  " + device + "  ·  last_input_device() = " + last_input_device(),
+    draw_text(sw * 0.5, py, prompt, 20.0, #{ color: [1.0, 0.78, 0.55, 1.0], align: "center", spacing: 4.0 });
+    draw_text(sw * 0.5, py + 28.0, "is_touch_device() = " + touch + "  ·  " + device + "  ·  last_input_device() = " + last_input_device(),
         12.0, #{ color: dim, align: "center", spacing: 1.0 });
     let insets = "safe_area() = #{ left: " + s.left + ", top: " + s.top + ", right: " + s.right + ", bottom: " + s.bottom + " }";
-    draw_text_opts(s.left + pad, s.top + pad + 50.0, insets, 12.0, #{ color: dim, spacing: 1.0 });
+    draw_text(s.left + pad, s.top + pad + 50.0, insets, 12.0, #{ color: dim, spacing: 1.0 });
 }

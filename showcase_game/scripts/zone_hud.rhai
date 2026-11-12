@@ -23,12 +23,12 @@ fn get_zone_title(scene) {
 }
 
 fn on_init() {
-    let scene = current_scene();
+    let scene = get_current_scene();
     scene_title = get_zone_title(scene);
 }
 
 fn on_scene_enter() {
-    let scene = current_scene();
+    let scene = get_current_scene();
     scene_title = get_zone_title(scene);
     title_alpha = 1.0;
     title_timer = 3.5;
@@ -70,7 +70,7 @@ fn on_update() {
         if !entered {
             transition_timer = 0.0;
             entered = true;
-            let scene = current_scene();
+            let scene = get_current_scene();
             scene_title = get_zone_title(scene);
             title_alpha = 1.0;
             title_timer = 3.5;
@@ -120,12 +120,12 @@ fn on_draw_ui() {
     let ey = 28.0;
 
     // Background pill
-    draw_rect_ex(ex - 28.0, ey - 10.0, etm.width + 50.0, 28.0, 0.02, 0.04, 0.06, 0.6, 14.0, 1);
+    draw_rect(ex - 28.0, ey - 10.0, etm.width + 50.0, 28.0, #{ color: [0.02, 0.04, 0.06, 0.6], rounding: 14.0, layer: 1 });
     // Essence icon (cyan glow)
     draw_circle(ex - 10.0, ey + 4.0, 6.0, 0.3, 0.8, 1.0, 0.9);
     draw_circle(ex - 10.0, ey + 2.0, 3.0, 0.6, 0.95, 1.0, 0.7);
     // Text
-    draw_text_ex(ex + 4.0, ey, essence_text, 16.0, 0.4, 0.9, 1.0, 0.9, 2);
+    draw_text(ex + 4.0, ey, essence_text, 16.0, #{ color: [0.4, 0.9, 1.0, 0.9], layer: 2 });
 
     // --- Interaction prompt ---
     if prompt_alpha > 0.01 {
@@ -142,9 +142,8 @@ fn on_draw_ui() {
             let px = (sw - pm.width) / 2.0;
             let py = sh * 0.62;
 
-            draw_rect_ex(px - 14.0, py - 8.0, pm.width + 28.0, 30.0,
-                         0.04, 0.04, 0.04, 0.7 * prompt_alpha, 12.0, -1);
-            draw_text_ex(px, py, prompt, 16.0, 0.94, 0.92, 0.86, prompt_alpha, 1);
+            draw_rect(px - 14.0, py - 8.0, pm.width + 28.0, 30.0, #{ color: [0.04, 0.04, 0.04, 0.7 * prompt_alpha], rounding: 12.0, layer: -1 });
+            draw_text(px, py, prompt, 16.0, #{ color: [0.94, 0.92, 0.86, prompt_alpha], layer: 1 });
         }
     }
 
@@ -153,12 +152,12 @@ fn on_draw_ui() {
         let tm = measure_text(scene_title, 36.0);
         let tx = (sw - tm.width) / 2.0;
         let ty = sh * 0.25;
-        draw_text_ex(tx + 2.0, ty + 2.0, scene_title, 36.0, 0.0, 0.0, 0.0, title_alpha * 0.5, 4);
-        draw_text_ex(tx, ty, scene_title, 36.0, 0.4, 0.85, 0.95, title_alpha, 4);
+        draw_text(tx + 2.0, ty + 2.0, scene_title, 36.0, #{ color: [0.0, 0.0, 0.0, title_alpha * 0.5], layer: 4 });
+        draw_text(tx, ty, scene_title, 36.0, #{ color: [0.4, 0.85, 0.95, title_alpha], layer: 4 });
 
         let sub = "A Procgen Showcase";
         let sm = measure_text(sub, 14.0);
         let subx = (sw - sm.width) / 2.0;
-        draw_text_ex(subx, ty + 40.0, sub, 14.0, 0.5, 0.7, 0.75, title_alpha * 0.7, 4);
+        draw_text(subx, ty + 40.0, sub, 14.0, #{ color: [0.5, 0.7, 0.75, title_alpha * 0.7], layer: 4 });
     }
 }

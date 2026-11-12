@@ -9,7 +9,7 @@ let me;
 
 fn on_init() {
     me = self_entity();
-    camera_follow(me, 0.0, 0.0, 5.0, 1.0, 1.0);
+    follow_with_camera(me, 0.0, 0.0, 5.0, 1.0, 1.0);
 }
 
 fn on_update() {

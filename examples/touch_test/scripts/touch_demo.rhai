@@ -12,7 +12,7 @@ let vel_y = 0.0;
 let ground_y = -3.0;
 
 fn on_init() {
-    log_info("Touch demo initialized — tap / click to test");
+    log("Touch demo initialized — tap / click to test");
 }
 
 fn on_update() {
@@ -58,23 +58,25 @@ fn on_draw_ui() {
     let sh = screen_height();
 
     // Draw a subtle dividing line at screen center
-    draw_line_ex(sw / 2.0, 0.0, sw / 2.0, sh, 0.3, 0.3, 0.4, 0.3, 1.0, -1);
+    draw_line(sw / 2.0, 0.0, sw / 2.0, sh, #{ color: [0.3, 0.3, 0.4, 0.3], thickness: 1.0, layer: -1 });
 
     // Label the zones
-    draw_text_ex(10.0, 20.0, "LEFT", 18.0, 0.5, 0.5, 0.6, 0.5, -1);
-    draw_text_ex(sw / 2.0 + 10.0, 20.0, "RIGHT", 18.0, 0.5, 0.5, 0.6, 0.5, -1);
+    draw_text(10.0, 20.0, "LEFT", 18.0, #{ color: [0.5, 0.5, 0.6, 0.5], layer: -1 });
+    draw_text(sw / 2.0 + 10.0, 20.0, "RIGHT", 18.0, #{ color: [0.5, 0.5, 0.6, 0.5], layer: -1 });
 
     // Draw circles at all active touch points
     let count = touch_count();
     let i = 0;
     while i < count {
-        let tx = touch_x(i);
-        let ty = touch_y(i);
+        // touch_x takes a touch's id, not its index: touch_id(i) gives it
+        let id = touch_id(i);
+        let tx = touch_x(id);
+        let ty = touch_y(id);
         if tx >= 0.0 {
             // Convert normalized coords to screen coords
             let sx = tx * sw;
             let sy = ty * sh;
-            draw_circle_ex(sx, sy, 20.0, 1.0, 0.4, 0.2, 0.6, 1);
+            draw_circle(sx, sy, 20.0, #{ color: [1.0, 0.4, 0.2, 0.6], layer: 1 });
         }
         i += 1;
     }
@@ -85,11 +87,11 @@ fn on_draw_ui() {
     while j < tc {
         let tx = tap_x(j) * sw;
         let ty = tap_y(j) * sh;
-        draw_circle_ex(tx, ty, 30.0, 0.2, 1.0, 0.4, 0.8, 2);
+        draw_circle(tx, ty, 30.0, #{ color: [0.2, 1.0, 0.4, 0.8], layer: 2 });
         j += 1;
     }
 
     // Status line
     let status = "Touches: " + count + "  Taps: " + tc;
-    draw_text_ex(10.0, sh - 30.0, status, 16.0, 0.7, 0.7, 0.7, 1.0, 0);
+    draw_text(10.0, sh - 30.0, status, 16.0, 0.7, 0.7, 0.7, 1.0);
 }

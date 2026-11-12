@@ -5,7 +5,7 @@
 
 use super::builder::kind::{Any, Array as ArrayKind, Bool, Int, Map as MapKind, Num, Str};
 use super::builder::ScriptApi;
-use super::text_opts::array_to_f32s;
+use super::opts::array_to_f32s;
 use crate::ui::element::StyleValue;
 use rhai::{Dynamic, Map};
 

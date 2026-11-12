@@ -60,7 +60,7 @@ fn on_draw_ui() {
         draw_circle(s.x * sw, s.y * sh, s.r * 2.6, r, g, b, 0.12 * a);
         draw_circle(s.x * sw, s.y * sh, s.r, r, g, b, a);
     }
-    draw_text_opts(sw * 0.5, sh * 0.88, `sky ${skies}`, 22.0, #{
+    draw_text(sw * 0.5, sh * 0.88, `sky ${skies}`, 22.0, #{
         color: [0.7, 0.72, 0.9, 1.0],
         align: "center",
         spacing: 3.0,

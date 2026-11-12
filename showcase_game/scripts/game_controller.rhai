@@ -72,19 +72,19 @@ fn on_draw_ui() {
         let tm = measure_text(title, 48.0);
         let tx = (sw - tm.width) / 2.0;
         let ty = sh * 0.38;
-        draw_text_ex(tx + 2.0, ty + 2.0, title, 48.0, 0.0, 0.0, 0.0, 0.6, 5);
-        draw_text_ex(tx, ty, title, 48.0, 0.95, 0.85, 0.5, 1.0, 5);
+        draw_text(tx + 2.0, ty + 2.0, title, 48.0, #{ color: [0.0, 0.0, 0.0, 0.6], layer: 5 });
+        draw_text(tx, ty, title, 48.0, #{ color: [0.95, 0.85, 0.5, 1.0], layer: 5 });
 
         // Separator line
         let line_w = 180.0;
         let line_y = ty + 50.0;
-        draw_rect_ex((sw - line_w) / 2.0, line_y, line_w, 2.0, 0.7, 0.55, 0.25, 0.5, 0.0, 5);
+        draw_rect((sw - line_w) / 2.0, line_y, line_w, 2.0, #{ color: [0.7, 0.55, 0.25, 0.5], layer: 5 });
 
         // Subtitle
         let sub = "Press [ESC] to resume";
         let sm = measure_text(sub, 18.0);
         let sx = (sw - sm.width) / 2.0;
-        draw_text_ex(sx, line_y + 24.0, sub, 18.0, 0.8, 0.75, 0.65, 0.7, 5);
+        draw_text(sx, line_y + 24.0, sub, 18.0, #{ color: [0.8, 0.75, 0.65, 0.7], layer: 5 });
 
         // Decorative corners
         let m = 40.0;

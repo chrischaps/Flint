@@ -461,7 +461,7 @@ Animations can be controlled from [Rhai scripts](scripting.md) by writing direct
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
 | `set_anim_layer(entity_id, index, clip, weight)` | Play `clip` on a layer (additive, unmasked) |
-| `set_anim_layer_ex(entity_id, index, clip, weight, mode, mask)` | Same with `"additive"`/`"override"` and a root-joint mask |
+| `set_anim_layer(entity_id, index, clip, weight, #{mode, mask})` | Same with a `mode` (`"additive"`/`"override"`) and a root-joint `mask` |
 | `set_anim_layer_weight(entity_id, index, weight)` | Set a layer's weight instantly (cancels a fade) |
 | `fade_anim_layer(entity_id, index, weight, seconds)` | Ramp a layer's weight over `seconds` |
 | `clear_anim_layer(entity_id, index)` | Leave an inactive slot |

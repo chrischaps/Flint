@@ -60,7 +60,7 @@ pub(crate) fn advance_shake(s: &mut ShakeState, dt: f32) -> [f32; 2] {
     offset
 }
 
-/// `camera_follow`'s frame: follow, shake, and set the camera override.
+/// `follow_with_camera`'s frame: follow, shake, and set the camera override.
 fn follow(c: &mut ScriptCallContext, target: [f32; 2], speed: f32, deadzone: [f32; 2], dt: f32) {
     follow_step(&mut c.camera_follow, target, speed, deadzone, dt);
     let shake = if c.shake.amplitude > SHAKE_FLOOR {
@@ -75,7 +75,7 @@ fn follow(c: &mut ScriptCallContext, target: [f32; 2], speed: f32, deadzone: [f3
     c.requests.camera.target = Some([x, y, -1.0]);
 }
 
-/// `camera_apply_shake`: shake whatever camera the script has set.
+/// `apply_camera_shake`: shake whatever camera the script has set.
 fn apply_shake(c: &mut ScriptCallContext, dt: f32) {
     if dt <= 0.0 || c.shake.amplitude < SHAKE_FLOOR {
         return;
@@ -100,91 +100,129 @@ fn apply_shake(c: &mut ScriptCallContext, dt: f32) {
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("camera_2d");
 
-    m.func(
-        "camera_follow",
-        "Follow an entity from an offset, at a speed, moving only once it leaves a deadzone; call every frame.",
-    )
-    .arg("id", Entity)
-    .arg("offset_x", Num)
-    .arg("offset_y", Num)
-    .arg("speed", Num)
-    .arg("deadzone_w", Num)
-    .arg("deadzone_h", Num)
-    .run(|call, (id, offset_x, offset_y, speed, deadzone_w, deadzone_h)| {
-        let dt = call.ctx_ref().delta_time as f32;
-        if dt <= 0.0 {
-            return Ok(());
-        }
-        let Some(t) = call.world()?.get_transform(id) else {
-            return Ok(());
-        };
-        let target = [
-            t.position.x + offset_x as f32,
-            t.position.y + offset_y as f32,
-        ];
-        let deadzone = [deadzone_w as f32, deadzone_h as f32];
-        follow(call.ctx(), target, speed as f32, deadzone, dt);
-        Ok(())
-    });
-
-    m.func(
-        "camera_follow_position",
-        "Where camera_follow has the camera.",
-    )
-    .returns(MapKind, "#{x, y}")
-    .run(|call, ()| {
-        let f = &call.ctx_ref().camera_follow;
-        let mut map = Map::new();
-        map.insert("x".into(), Dynamic::from(f.current_x as f64));
-        map.insert("y".into(), Dynamic::from(f.current_y as f64));
-        map
-    });
-
-    m.func(
-        "camera_follow_set",
-        "Put camera_follow's camera at a point at once, without smoothing.",
-    )
-    .arg("x", Num)
-    .arg("y", Num)
-    .run(|call, (x, y)| {
-        let f = &mut call.ctx().camera_follow;
-        f.current_x = x as f32;
-        f.current_y = y as f32;
-        f.initialized = true;
-    });
-
-    m.func(
-        "camera_shake",
-        "Shake the camera: an amplitude (stacking on a shake under way), a frequency and a decay rate.",
-    )
-    .arg("amplitude", Num)
-    .arg("frequency", Num)
-    .arg("decay", Num)
-    .run(|call, (amplitude, frequency, decay)| {
-        let s = &mut call.ctx().shake;
-        let amplitude = amplitude as f32;
-        s.amplitude = (s.amplitude + amplitude).max(amplitude);
-        s.frequency = frequency as f32;
-        s.decay = decay as f32;
-        // The phase carries on
-    });
-
-    m.func("camera_shake_stop", "Stop the camera shake at once.")
-        .run(|call, ()| {
-            let s = &mut call.ctx().shake;
-            s.amplitude = 0.0;
-            s.phase = 0.0;
+    // Verb first (#702); each under its name and, for one release, its old
+    // one
+    for (name, old) in [
+        ("follow_with_camera", None),
+        ("camera_follow", Some("use follow_with_camera")),
+    ] {
+        m.func(
+            name,
+            "Follow an entity with the camera from an offset, at a speed, moving only once it leaves a deadzone; call every frame.",
+        )
+        .arg("id", Entity)
+        .arg("offset_x", Num)
+        .arg("offset_y", Num)
+        .arg("speed", Num)
+        .arg("deadzone_w", Num)
+        .arg("deadzone_h", Num)
+        .deprecated(old)
+        .run(|call, (id, offset_x, offset_y, speed, deadzone_w, deadzone_h)| {
+            let dt = call.ctx_ref().delta_time as f32;
+            if dt <= 0.0 {
+                return Ok(());
+            }
+            let Some(t) = call.world()?.get_transform(id) else {
+                return Ok(());
+            };
+            let target = [
+                t.position.x + offset_x as f32,
+                t.position.y + offset_y as f32,
+            ];
+            let deadzone = [deadzone_w as f32, deadzone_h as f32];
+            follow(call.ctx(), target, speed as f32, deadzone, dt);
+            Ok(())
         });
+    }
 
-    m.func(
-        "camera_apply_shake",
-        "Add this frame's shake to a camera the script sets itself, without camera_follow.",
-    )
-    .run(|call, ()| {
-        let c = call.ctx();
-        let dt = c.delta_time as f32;
-        apply_shake(c, dt);
-    });
+    for (name, old) in [
+        ("get_camera_follow_position", None),
+        (
+            "camera_follow_position",
+            Some("use get_camera_follow_position"),
+        ),
+    ] {
+        m.func(name, "Where follow_with_camera has the camera.")
+            .returns(MapKind, "#{x, y}")
+            .deprecated(old)
+            .run(|call, ()| {
+                let f = &call.ctx_ref().camera_follow;
+                let mut map = Map::new();
+                map.insert("x".into(), Dynamic::from(f.current_x as f64));
+                map.insert("y".into(), Dynamic::from(f.current_y as f64));
+                map
+            });
+    }
+
+    for (name, old) in [
+        ("set_camera_follow_position", None),
+        ("camera_follow_set", Some("use set_camera_follow_position")),
+    ] {
+        m.func(
+            name,
+            "Put follow_with_camera's camera at a point at once, without smoothing.",
+        )
+        .arg("x", Num)
+        .arg("y", Num)
+        .deprecated(old)
+        .run(|call, (x, y)| {
+            let f = &mut call.ctx().camera_follow;
+            f.current_x = x as f32;
+            f.current_y = y as f32;
+            f.initialized = true;
+        });
+    }
+
+    for (name, old) in [
+        ("shake_camera", None),
+        ("camera_shake", Some("use shake_camera")),
+    ] {
+        m.func(
+            name,
+            "Shake the camera: an amplitude (stacking on a shake under way), a frequency and a decay rate.",
+        )
+        .arg("amplitude", Num)
+        .arg("frequency", Num)
+        .arg("decay", Num)
+        .deprecated(old)
+        .run(|call, (amplitude, frequency, decay)| {
+            let s = &mut call.ctx().shake;
+            let amplitude = amplitude as f32;
+            s.amplitude = (s.amplitude + amplitude).max(amplitude);
+            s.frequency = frequency as f32;
+            s.decay = decay as f32;
+            // The phase carries on
+        });
+    }
+
+    for (name, old) in [
+        ("stop_camera_shake", None),
+        ("camera_shake_stop", Some("use stop_camera_shake")),
+    ] {
+        m.func(name, "Stop the camera shake at once.")
+            .deprecated(old)
+            .run(|call, ()| {
+                let s = &mut call.ctx().shake;
+                s.amplitude = 0.0;
+                s.phase = 0.0;
+            });
+    }
+
+    for (name, old) in [
+        ("apply_camera_shake", None),
+        ("camera_apply_shake", Some("use apply_camera_shake")),
+    ] {
+        m.func(
+            name,
+            "Add this frame's shake to a camera the script sets itself, without follow_with_camera.",
+        )
+        .deprecated(old)
+        .run(|call, ()| {
+            let c = call.ctx();
+            let dt = c.delta_time as f32;
+            apply_shake(c, dt);
+        });
+    }
 }
 
 #[cfg(test)]

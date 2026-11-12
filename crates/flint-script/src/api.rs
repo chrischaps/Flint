@@ -36,7 +36,10 @@ mod input;
 mod living;
 mod log;
 mod math;
+#[cfg(test)]
+mod naming_tests;
 mod ocean;
+mod opts;
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub mod overhead;
@@ -53,7 +56,6 @@ mod sprite;
 mod state;
 mod style;
 mod terrain;
-mod text_opts;
 mod time;
 mod touch;
 mod ui;

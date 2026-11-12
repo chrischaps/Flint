@@ -10,7 +10,7 @@ let transition_timer = 0.0;
 let entered = false;
 
 fn on_init() {
-    let scene = current_scene();
+    let scene = get_current_scene();
     if scene == "" {
         scene_title = "THE RUSTY FLINT";
     } else if scene == "examples/showcase_crucible.scene.toml" {
@@ -63,7 +63,7 @@ fn on_update() {
             transition_timer = 0.0;
             entered = true;
             // Re-read scene title for destination
-            let scene = current_scene();
+            let scene = get_current_scene();
             if scene == "examples/showcase_crucible.scene.toml" {
                 scene_title = "THE CRUCIBLE";
             } else {
@@ -120,12 +120,12 @@ fn on_draw_ui() {
     let sy = 28.0;
 
     // Background pill
-    draw_rect_ex(sx - 28.0, sy - 10.0, stm.width + 50.0, 28.0, 0.05, 0.04, 0.02, 0.6, 14.0, 1);
+    draw_rect(sx - 28.0, sy - 10.0, stm.width + 50.0, 28.0, #{ color: [0.05, 0.04, 0.02, 0.6], rounding: 14.0, layer: 1 });
     // Spark icon (small orange circle)
     draw_circle(sx - 10.0, sy + 4.0, 6.0, 0.95, 0.6, 0.15, 0.9);
     draw_circle(sx - 10.0, sy + 2.0, 3.0, 1.0, 0.9, 0.5, 0.7);
     // Text
-    draw_text_ex(sx + 4.0, sy, spark_text, 16.0, 0.95, 0.85, 0.5, 0.9, 2);
+    draw_text(sx + 4.0, sy, spark_text, 16.0, #{ color: [0.95, 0.85, 0.5, 0.9], layer: 2 });
 
     // --- Interaction prompt ---
     if prompt_alpha > 0.01 {
@@ -143,10 +143,9 @@ fn on_draw_ui() {
             let py = sh * 0.62;
 
             // Background pill
-            draw_rect_ex(px - 14.0, py - 8.0, pm.width + 28.0, 30.0,
-                         0.04, 0.04, 0.04, 0.7 * prompt_alpha, 12.0, -1);
+            draw_rect(px - 14.0, py - 8.0, pm.width + 28.0, 30.0, #{ color: [0.04, 0.04, 0.04, 0.7 * prompt_alpha], rounding: 12.0, layer: -1 });
             // Prompt text
-            draw_text_ex(px, py, prompt, 16.0, 0.94, 0.92, 0.86, prompt_alpha, 1);
+            draw_text(px, py, prompt, 16.0, #{ color: [0.94, 0.92, 0.86, prompt_alpha], layer: 1 });
         }
     }
 
@@ -156,14 +155,14 @@ fn on_draw_ui() {
         let tx = (sw - tm.width) / 2.0;
         let ty = sh * 0.25;
         // Shadow
-        draw_text_ex(tx + 2.0, ty + 2.0, scene_title, 36.0, 0.0, 0.0, 0.0, title_alpha * 0.5, 4);
+        draw_text(tx + 2.0, ty + 2.0, scene_title, 36.0, #{ color: [0.0, 0.0, 0.0, title_alpha * 0.5], layer: 4 });
         // Title
-        draw_text_ex(tx, ty, scene_title, 36.0, 0.95, 0.85, 0.5, title_alpha, 4);
+        draw_text(tx, ty, scene_title, 36.0, #{ color: [0.95, 0.85, 0.5, title_alpha], layer: 4 });
 
         // Subtitle line
         let sub = "A Flint Engine Showcase";
         let sm = measure_text(sub, 14.0);
         let subx = (sw - sm.width) / 2.0;
-        draw_text_ex(subx, ty + 40.0, sub, 14.0, 0.7, 0.65, 0.55, title_alpha * 0.7, 4);
+        draw_text(subx, ty + 40.0, sub, 14.0, #{ color: [0.7, 0.65, 0.55, title_alpha * 0.7], layer: 4 });
     }
 }

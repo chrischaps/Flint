@@ -2,8 +2,9 @@
 //! straight onto the entity's `animator` component, which the animation
 //! system follows next frame (ADR 0116).
 
-use super::builder::kind::{Entity, Int, Num, Str};
+use super::builder::kind::{Entity, Int, Map, Num, Str};
 use super::builder::{CallResult, ScriptApi};
+use super::opts::read_opts;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -96,6 +97,27 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "set_anim_layer",
+        "Play a clip on layer `index` at a weight; opts: mode (\"additive\", the default, or \"override\"), mask (a root joint; \"\" unmasked).",
+    )
+    .arg("id", Entity)
+    .arg("index", Int)
+    .arg("clip", Str)
+    .arg("weight", Num)
+    .arg("opts", Map)
+    .run(|call, (id, index, clip, weight, map)| {
+        let o = read_opts(call.ctx(), "set_anim_layer", &map, &["mode", "mask"]);
+        let mode = o.mode.unwrap_or_else(|| "additive".into());
+        let mask = o.mask.unwrap_or_default();
+        edit_anim_layer(call.world_mut()?, id, index, |t| {
+            t.insert("clip".into(), toml::Value::String(clip.to_string()));
+            t.insert("mode".into(), toml::Value::String(mode));
+            t.insert("mask".into(), toml::Value::String(mask));
+            flint_animation::layer_edit::set_weight(t, weight);
+        })
+    });
+
+    m.func(
         "set_anim_layer_ex",
         "Play a clip on a layer with a mode (\"additive\" or \"override\") and a root-joint mask.",
     )
@@ -105,6 +127,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("weight", Num)
     .arg("mode", Str)
     .arg("mask", Str)
+    .deprecated("use set_anim_layer(id, index, clip, weight, #{mode, mask})")
     .run(|call, (id, index, clip, weight, mode, mask)| {
         edit_anim_layer(call.world_mut()?, id, index, |t| {
             t.insert("clip".into(), toml::Value::String(clip.to_string()));
