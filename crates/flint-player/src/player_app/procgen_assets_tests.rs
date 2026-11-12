@@ -551,13 +551,15 @@ fn cave_game() -> crate::PlayerApp {
 
 /// Resolve `models` through the app's own resolver, as a scene load does.
 fn load(app: &mut crate::PlayerApp, src: &Arc<MemorySource>, models: &[&str]) -> Recorder {
-    vfs::scoped(src.clone(), || discover(&mut app.procgen_resolver, SCENE));
+    vfs::scoped(src.clone(), || {
+        discover(&mut app.core.procgen_resolver, SCENE)
+    });
     let world = world(models, None);
     let mut sink = Recorder::default();
-    let requests = collect_requests(&world, &config(), &app.procgen_resolver, &sink);
+    let requests = collect_requests(&world, &config(), &app.core.procgen_resolver, &sink);
     resolve(
         &requests,
-        &mut app.procgen_resolver,
+        &mut app.core.procgen_resolver,
         &mut sink,
         ProcGenMode::Immediate,
     );
@@ -597,9 +599,22 @@ fn a_games_generators_survive_the_disk_tier() {
     let mut app = cave_game();
     let dir = std::env::temp_dir().join(format!("flint-195-disk-{}", std::process::id()));
     app.use_procgen_disk(flint_procgen::DiskCacheConfig::new(&dir));
-    assert!(app.procgen_resolver.disk_stats().is_some(), "now on disk");
-    assert!(app.procgen_resolver.registry().get("rock_v1").is_some());
-    assert!(app.procgen_resolver.registry().get("tree_v1").is_some());
+    assert!(
+        app.core.procgen_resolver.disk_stats().is_some(),
+        "now on disk"
+    );
+    assert!(app
+        .core
+        .procgen_resolver
+        .registry()
+        .get("rock_v1")
+        .is_some());
+    assert!(app
+        .core
+        .procgen_resolver
+        .registry()
+        .get("tree_v1")
+        .is_some());
 
     let src = source(&[("cave_rock", "rock_v1")]);
     let sink = load(&mut app, &src, &["cave_rock"]);

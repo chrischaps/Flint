@@ -93,7 +93,7 @@ fn started_in(path: &str, test: &str) -> PlayerApp {
             dropped: Vec::new(),
         },
     );
-    app.clock.frame_step = Some(1.0 / 30.0);
+    app.core.clock.frame_step = Some(1.0 / 30.0);
     app.launch.save_dir =
         Some(std::env::temp_dir().join(format!("flint_727_{test}_{}", std::process::id())));
     app.enter_scene(SceneEntry::Start)
@@ -102,7 +102,7 @@ fn started_in(path: &str, test: &str) -> PlayerApp {
 }
 
 fn stored(app: &PlayerApp, key: &str) -> Option<i64> {
-    app.saves.store.get(key).and_then(|v| v.as_integer())
+    app.core.store.get(key).and_then(|v| v.as_integer())
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn physics_clear_leaves_a_scripts_event_on_the_bus() {
         app.tick();
         app.fire_event("kept".into(), toml::Value::Integer(7));
         // What a transition does to physics; it used to drop the event
-        app.physics.clear();
+        app.core.physics.clear();
         app.tick();
         assert_eq!(stored(&app, "kept"), Some(7));
     });
@@ -141,23 +141,23 @@ fn a_scripts_event_crosses_a_transition_and_the_old_scenes_contacts_do_not() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in("game/scenes/drop.scene.toml", "transition");
         app.tick();
-        let ball = app.world.get_id("ball").expect("the ball");
-        let floor = app.world.get_id("floor").expect("the floor");
-        app.events.push(GameEvent::CollisionStarted {
+        let ball = app.core.world.get_id("ball").expect("the ball");
+        let floor = app.core.world.get_id("floor").expect("the floor");
+        app.core.events.push(GameEvent::CollisionStarted {
             entity_a: ball,
             entity_b: floor,
         });
         app.fire_event("kept".into(), toml::Value::Integer(9));
 
         assert!(app.execute_scene_transition("b.scene.toml"));
-        let left: Vec<_> = app.events.drain();
+        let left: Vec<_> = app.core.events.drain();
         assert!(
             left.iter().all(|e| !e.is_contact()),
             "the old scene's contacts went with it: {left:?}"
         );
         // Put back what was kept, as the next frame would find it
         for event in left {
-            app.events.push(event);
+            app.core.events.push(event);
         }
         app.tick();
         assert_eq!(stored(&app, "kept_in_b"), Some(9));

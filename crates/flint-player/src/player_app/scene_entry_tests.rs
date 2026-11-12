@@ -151,7 +151,7 @@ fn a_transition_takes_the_next_scenes_settings_and_bindings() {
 
         assert!(app.execute_scene_transition("b.scene.toml"));
         assert_eq!(
-            std::path::Path::new(&app.scene_path),
+            std::path::Path::new(&app.core.scene_path),
             std::path::Path::new("game/scenes/b.scene.toml")
         );
         assert!(
@@ -178,14 +178,14 @@ fn a_transition_takes_the_next_scenes_settings_and_bindings() {
 fn a_scene_that_cannot_load_leaves_the_current_one_and_fails_the_run() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in_a(None);
-        let entities = app.world.entity_count();
-        assert!(app.world.get_id("marker").is_some());
+        let entities = app.core.world.entity_count();
+        assert!(app.core.world.get_id("marker").is_some());
 
         assert!(!app.execute_scene_transition("missing.scene.toml"));
-        assert_eq!(app.scene_path, A, "the scene playing is kept");
-        assert_eq!(app.world.entity_count(), entities);
+        assert_eq!(app.core.scene_path, A, "the scene playing is kept");
+        assert_eq!(app.core.world.entity_count(), entities);
         assert!(
-            app.world.get_id("marker").is_some(),
+            app.core.world.get_id("marker").is_some(),
             "its world was not torn down"
         );
         assert!(has_action(&app, "a_only"));
@@ -225,13 +225,13 @@ fn a_scene_that_cannot_load_fades_back_in_over_the_current_one() {
     files.insert("game/scripts/fader.rhai", FADER);
     vfs::scoped(Arc::new(files), || {
         let mut app = started_in_a(None);
-        assert!(app.script.can_complete_transition());
+        assert!(app.core.script.can_complete_transition());
 
         app.transition_phase = super::TransitionPhase::Loading {
             target_scene: "missing.scene.toml".into(),
         };
         app.advance_transition();
-        assert_eq!(app.scene_path, A, "the scene playing is kept");
+        assert_eq!(app.core.scene_path, A, "the scene playing is kept");
         assert!(app.run_failure().is_some());
         assert!(
             matches!(
@@ -403,7 +403,7 @@ fn fonts_resolve_beside_the_scene_a_transition_reaches() {
 
         assert!(app.execute_scene_transition("dungeon/dungeon.scene.toml"));
         assert_eq!(
-            std::path::Path::new(&app.scene_path),
+            std::path::Path::new(&app.core.scene_path),
             std::path::Path::new("game/levels/dungeon/dungeon.scene.toml")
         );
         assert_eq!(

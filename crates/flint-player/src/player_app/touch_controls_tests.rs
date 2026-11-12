@@ -17,7 +17,7 @@ fn headless_app(script: &str) -> PlayerApp {
         None,
     );
     app.capture.input_script = Some(InputScript::parse(script).unwrap());
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.input.set_screen_size(1000.0, 500.0);
     app.input
         .load_bindings(

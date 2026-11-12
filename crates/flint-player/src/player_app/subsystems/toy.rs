@@ -54,7 +54,7 @@ fn app_in(scene: &str) -> PlayerApp {
             dropped: Vec::new(),
         },
     );
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.enter_scene(crate::player_app::scene_entry::SceneEntry::Start)
         .expect("the scene starts");
     app
@@ -76,16 +76,20 @@ fn a_toy_in_its_own_file_comes_with_a_scene_that_asks_and_hears_its_frames() {
         let mut app = app_in("toys/scenes/with.scene.toml");
         app.tick();
         app.tick();
-        let toy = app.subsystems.find::<Toy>().expect("a [toy] scene has one");
+        let toy = app
+            .core
+            .subsystems
+            .find::<Toy>()
+            .expect("a [toy] scene has one");
         assert_eq!(toy.frames, 2);
 
         assert!(app.execute_scene_transition("without.scene.toml"));
         assert!(
-            app.subsystems.find::<Toy>().is_none(),
+            app.core.subsystems.find::<Toy>().is_none(),
             "it went with its scene"
         );
 
         let app = app_in("toys/scenes/without.scene.toml");
-        assert!(app.subsystems.find::<Toy>().is_none());
+        assert!(app.core.subsystems.find::<Toy>().is_none());
     });
 }

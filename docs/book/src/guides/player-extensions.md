@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's.
+`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, ADR 0117): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order.
 
 ## The Hooks
 
@@ -96,7 +96,7 @@ fn declare_script_api(&mut self, api: &mut flint_script::api::ScriptApi) {
 }
 ```
 
-A declared function is listed with its parameters and doc by `app.script.api_listing()`, the data behind `flint script api`; a game binary prints its own listing from it. Functions from `register_script_api` keep working and are listed with their types only.
+A declared function is listed with its parameters and doc by `app.core.script.api_listing()`, the data behind `flint script api`; a game binary prints its own listing from it. Functions from `register_script_api` keep working and are listed with their types only.
 
 ### Procgen generators
 

@@ -20,7 +20,7 @@ fn headless_app(script: &str) -> PlayerApp {
         None,
     );
     app.capture.input_script = Some(InputScript::parse(script).unwrap());
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.input.set_screen_size(1280.0, 720.0);
     app.input
         .load_bindings(
@@ -114,7 +114,7 @@ fn a_captured_cursor_reads_the_centre_and_still_clicks() {
     assert!(app.is_cursor_captured());
     assert_eq!(app.input.mouse_position, (640.0, 360.0));
     frame(&mut app);
-    assert!(app.script.cursor_captured(), "scripts read it too");
+    assert!(app.core.script.cursor_captured(), "scripts read it too");
     // The click's move reaches no one; its button reaches the game.
     app.tick();
     assert_eq!(app.input.mouse_position, (640.0, 360.0));

@@ -14,14 +14,14 @@ use flint_debug_ui::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpec
 impl PlayerApp {
     /// The living subsystem, a bare one if the scene made none.
     pub(crate) fn living(&mut self) -> &mut LivingSubsystem {
-        if self.subsystems.find::<LivingSubsystem>().is_none() {
+        if self.core.subsystems.find::<LivingSubsystem>().is_none() {
             // As a scene's builder makes it: the comparison --compare asked for
             let mut living = LivingSubsystem::default();
             living.tune.ab_picks = self.launch.compare.clone();
             living.tune.compare_at_start = self.launch.compare_at_start.take();
-            self.subsystems.push(Box::new(living));
+            self.core.subsystems.push(Box::new(living));
         }
-        self.subsystems.find_mut::<LivingSubsystem>().unwrap()
+        self.core.subsystems.find_mut::<LivingSubsystem>().unwrap()
     }
 
     /// Run `f` on the living subsystem with its context.
@@ -30,7 +30,7 @@ impl PlayerApp {
         f: impl FnOnce(&mut LivingSubsystem, &mut crate::player_app::subsystem::StageCtx) -> R,
     ) -> R {
         self.living();
-        let living = self.subsystems.find_mut::<LivingSubsystem>().unwrap();
+        let living = self.core.subsystems.find_mut::<LivingSubsystem>().unwrap();
         let mut ctx = stage_ctx!(self, None);
         f(living, &mut ctx)
     }

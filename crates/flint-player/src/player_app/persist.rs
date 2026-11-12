@@ -388,8 +388,8 @@ impl PlayerApp {
     pub(super) fn load_persistent_store(&mut self) {
         self.refresh_project();
         let files = SaveFiles::locate(
-            &self.project,
-            &self.scene_path,
+            &self.core.project,
+            &self.core.scene_path,
             &self.input.config().game_id,
             self.launch.save_dir.as_deref(),
             self.saves.user_config_dir.as_deref(),
@@ -399,27 +399,29 @@ impl PlayerApp {
             shown(&files.file(DEFAULT_SLOT)),
             files.why
         );
-        self.saves.store.set_game_version(self.project.save_version);
-        self.saves.store.set_backend(Box::new(files));
-        let loaded = self.saves.store.load();
+        self.core
+            .store
+            .set_game_version(self.core.project.save_version);
+        self.core.store.set_backend(Box::new(files));
+        let loaded = self.core.store.load();
         log_loaded(&loaded);
     }
 
     /// Write the slot held now (a temp file, renamed over the slot's).
     /// `reason` is for the log line only.
     pub(super) fn save_persistent_store(&mut self, reason: &str) {
-        if !self.saves.store.has_backend() {
+        if !self.core.store.has_backend() {
             // A player that never loaded a store (a headless test) has
             // nowhere to keep one
-            self.saves.store.mark_clean();
+            self.core.store.mark_clean();
             return;
         }
-        match self.saves.store.save() {
+        match self.core.store.save() {
             Ok(place) => {
                 self.saves.error = None;
                 tracing::info!(
                     "persist: saved {} keys to {place} ({reason})",
-                    self.saves.store.keys().len()
+                    self.core.store.keys().len()
                 );
             }
             Err(e) => {
@@ -432,7 +434,7 @@ impl PlayerApp {
                 // localStorage would otherwise be retried every second for
                 // the session.
                 if cfg!(target_arch = "wasm32") {
-                    self.saves.store.mark_clean();
+                    self.core.store.mark_clean();
                 }
             }
         }
@@ -443,10 +445,10 @@ impl PlayerApp {
     /// also forces.
     pub(super) fn flush_persistent_store(&mut self, force: bool, reason: &str) {
         let now = Instant::now();
-        if self.saves.store.is_dirty() {
+        if self.core.store.is_dirty() {
             self.saves.debounce.note_dirty(now);
         }
-        let force = force || self.saves.store.take_flush_request();
+        let force = force || self.core.store.take_flush_request();
         if self.saves.debounce.should_flush(now, force) {
             self.save_persistent_store(reason);
         }
@@ -765,11 +767,11 @@ mod tests {
     }
 
     fn coins(app: &PlayerApp) -> Option<i64> {
-        app.saves.store.get("coins").and_then(|v| v.as_integer())
+        app.core.store.get("coins").and_then(|v| v.as_integer())
     }
 
     fn set_coins(app: &mut PlayerApp, coins: i64) {
-        app.saves.store.set("coins", toml::Value::Integer(coins));
+        app.core.store.set("coins", toml::Value::Integer(coins));
     }
 
     const SCENE: &str = "[scene]\nname = \"s\"\n";
@@ -803,9 +805,9 @@ mod tests {
 
         app.execute_scene_transition("levels/one.scene.toml");
         assert!(
-            Path::new(&app.scene_path).ends_with("scenes/levels/one.scene.toml"),
+            Path::new(&app.core.scene_path).ends_with("scenes/levels/one.scene.toml"),
             "the transition happened: {}",
-            app.scene_path
+            app.core.scene_path
         );
         set_coins(&mut app, 2);
         app.save_persistent_store("test");
@@ -874,7 +876,7 @@ mod tests {
             "set aside at load, before any save"
         );
         assert_eq!(coins(&app), None);
-        let report = app.saves.store.corrupt().expect("reported").clone();
+        let report = app.core.store.corrupt().expect("reported").clone();
         assert_eq!(report.file, save.join("persist.toml").display().to_string());
         assert_eq!(
             report.backup,
@@ -930,7 +932,7 @@ fn on_init() {
         // A clean load reports nothing
         let mut clean = app_at(&scene, &user);
         clean.load_persistent_store();
-        assert_eq!(clean.saves.store.corrupt(), None);
+        assert_eq!(clean.core.store.corrupt(), None);
         assert_eq!(coins(&clean), Some(1));
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
@@ -1005,7 +1007,7 @@ fn on_init() {
             first.load_persistent_store();
             assert_eq!(coins(&first), Some(7), "{name}: read from the old place");
             assert!(
-                first.saves.store.is_dirty(),
+                first.core.store.is_dirty(),
                 "owed to the new place, so the debounce writes it"
             );
             first.flush_persistent_store(true, "test");
@@ -1021,7 +1023,7 @@ fn on_init() {
             let mut second = app_at(&scene, &user);
             second.load_persistent_store();
             assert_eq!(coins(&second), Some(8), "{name}: the new place wins");
-            assert!(!second.saves.store.is_dirty());
+            assert!(!second.core.store.is_dirty());
             let _ = std::fs::remove_dir_all(root.parent().unwrap());
         }
     }
@@ -1052,7 +1054,7 @@ fn on_init() {
         assert_eq!(coins(&app), None, "neither other save is read");
         set_coins(&mut app, 1);
         app.save_persistent_store("test");
-        assert!(app.saves.store.open_slot("b").is_ok());
+        assert!(app.core.store.open_slot("b").is_ok());
         set_coins(&mut app, 2);
         app.save_persistent_store("test");
 
@@ -1092,7 +1094,7 @@ fn on_init() {
         app.load_persistent_store();
         set_coins(&mut app, 3);
         app.flush_persistent_store(true, "exit");
-        assert!(app.saves.store.open_slot("second").is_ok());
+        assert!(app.core.store.open_slot("second").is_ok());
         set_coins(&mut app, 4);
         app.flush_persistent_store(true, "exit");
 
@@ -1254,13 +1256,13 @@ fn on_update() {
 
         let mut app = app_at(&root.join("scenes/menu.scene.toml"), &user);
         app.load_persistent_store();
-        assert_eq!(app.saves.store.version(), 3, "a fresh store is current");
+        assert_eq!(app.core.store.version(), 3, "a fresh store is current");
         // No script yet: a slot at version 1 stays at 1, pending
-        app.saves.store.open_slot("old").unwrap();
+        app.core.store.open_slot("old").unwrap();
         app.tick();
-        assert_eq!(app.saves.store.version(), 1);
-        assert_eq!(app.saves.store.pending_migration(), Some(1));
-        app.saves.store.open_slot("default").unwrap();
+        assert_eq!(app.core.store.version(), 1);
+        assert_eq!(app.core.store.pending_migration(), Some(1));
+        app.core.store.open_slot("default").unwrap();
 
         let log = attach_recording_script(
             &mut app,

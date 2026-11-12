@@ -188,10 +188,10 @@ impl super::PlayerApp {
     /// The renderer only rebuilds its targets when the size changes.
     pub(super) fn update_render_scale(&mut self) {
         let setting = self.launch.render_scale;
-        if setting.dynamic && self.clock.frame_step.is_none() {
+        if setting.dynamic && self.core.clock.frame_step.is_none() {
             // A paced page's budget is its period (#140), not the refresh.
-            let refresh = self.paced_period().or(self.clock.vsync_period());
-            let dt = self.clock.raw_delta_time;
+            let refresh = self.paced_period().or(self.core.clock.vsync_period());
+            let dt = self.core.clock.raw_delta_time;
             if self.quality.dynamic_scale.frame(dt, refresh) {
                 tracing::info!(
                     "[render-scale] {} of the ceiling",

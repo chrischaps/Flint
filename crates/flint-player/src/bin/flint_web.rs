@@ -267,12 +267,12 @@ mod web {
         // start: the scene's user styles register later, at init (#274)
         app.launch.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
-        app.clock.frame_step = args.frame_step;
+        app.core.clock.frame_step = args.frame_step;
         if let Some(seed) = args
             .seed
             .or(args.frame_step.map(|_| flint_player::SCRIPT_SEED))
         {
-            app.script.seed_random(seed);
+            app.core.script.seed_random(seed);
         }
         app.launch.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);

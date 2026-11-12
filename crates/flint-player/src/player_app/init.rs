@@ -13,17 +13,13 @@ use super::AndroidGamepadTracker;
 use super::TransitionPhase;
 use super::{CaptureConfig, LaunchOptions, PlayerApp, SceneSettings};
 use anyhow::{Context, Result};
-use flint_animation::AnimationSystem;
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
-use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{EventBus, GameClock, InputConfig, InputState};
+use flint_runtime::{InputConfig, InputState};
 use flint_script::context::DrawCommand;
-use flint_script::ScriptSystem;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -63,18 +59,10 @@ impl PlayerApp {
         // later): `refresh_project` asks again when the scene loads.
         let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
         Self {
-            world,
-            scene_path,
-            clock: GameClock::new(),
+            core: super::GameCore::new(world, scene_path, project),
             input: InputState::new(),
-            physics: PhysicsSystem::new(),
-            events: EventBus::new(),
-            subsystems: Default::default(),
             music: Default::default(),
             audio: AudioSystem::new(),
-            animation: AnimationSystem::new(),
-            particles: ParticleSystem::new(),
-            script: ScriptSystem::new(),
             launch: LaunchOptions {
                 fullscreen,
                 ..Default::default()
@@ -94,7 +82,6 @@ impl PlayerApp {
             hud: Default::default(),
             assets: AssetSources::from_working_dir(),
             focus: Default::default(),
-            script_requests: Default::default(),
             commands_warned: Default::default(),
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
@@ -105,18 +92,15 @@ impl PlayerApp {
             input_layers: InputLayers::new(input_config_override),
             gilrs: None,
             pad_rumble: flint_runtime::PadRumble::new(),
-            state_machine: super::subsystem::state_machine(),
             saves: Default::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
             schemas: Default::default(),
-            project,
             terrain: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
             particles_render_enabled: true,
             stats: Default::default(),
-            procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]
             android_gamepad: AndroidGamepadTracker::new(),
@@ -137,9 +121,9 @@ impl PlayerApp {
     /// already compiled still see the new functions, because Rhai resolves
     /// calls when they run. See `PlayerExtension` for when each hook runs.
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
-        extension.register_script_api(self.script.rhai_engine_mut());
-        extension.declare_script_api(&mut self.script.script_api());
-        extension.register_generators(self.procgen_resolver.registry_mut());
+        extension.register_script_api(self.core.script.rhai_engine_mut());
+        extension.declare_script_api(&mut self.core.script.script_api());
+        extension.register_generators(self.core.procgen_resolver.registry_mut());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
         if self.hud.fonts_installed {
@@ -155,8 +139,8 @@ impl PlayerApp {
     /// rebuilt around it, and its generators move across, built-ins and the
     /// ones extensions registered alike (#195).
     pub(super) fn use_procgen_disk(&mut self, disk: flint_procgen::DiskCacheConfig) {
-        let registry = std::mem::take(self.procgen_resolver.registry_mut());
-        self.procgen_resolver = flint_procgen::ProcGenResolver::with_registry(
+        let registry = std::mem::take(self.core.procgen_resolver.registry_mut());
+        self.core.procgen_resolver = flint_procgen::ProcGenResolver::with_registry(
             flint_procgen::ProcGenCacheConfig {
                 disk: Some(disk),
                 ..Default::default()
@@ -173,7 +157,7 @@ impl PlayerApp {
     /// `world_to_screen` does; from `pre_update`, last frame's, like
     /// `ExtensionCtx::camera`.
     pub fn projector(&self) -> crate::Projector {
-        self.script.projector()
+        self.core.script.projector()
     }
 
     /// Take the scene file's player settings: audio preload, input config,
@@ -225,7 +209,7 @@ impl PlayerApp {
         let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
         settled.tables = scene_file.tables.clone();
         settled.post_process = scene_file.post_process.clone();
-        let scene_path = std::path::PathBuf::from(&self.scene_path);
+        let scene_path = std::path::PathBuf::from(&self.core.scene_path);
         if let Err(problem) = flint_procgen::settle_scene(&mut settled, &scene_path) {
             tracing::warn!("{problem}");
         }
@@ -245,7 +229,7 @@ impl PlayerApp {
         let scope = self.asset_scope();
         self.scene.post_process = super::scene_loading::scene_post_process_in(
             self.launch.look.as_deref(),
-            &self.scene_path,
+            &self.core.scene_path,
             &scope,
             def,
         );
@@ -473,14 +457,14 @@ impl PlayerApp {
     /// The procgen disk tier (#181), once: a resolver made with it is kept
     /// for the run, transitions included.
     fn init_procgen_disk_cache(&mut self) {
-        if self.procgen_resolver.disk_stats().is_some() {
+        if self.core.procgen_resolver.disk_stats().is_some() {
             return;
         }
         let scene_dir = self.scene_dir();
         if let Some(disk) = self
             .launch
             .procgen_disk_cache
-            .then(|| procgen_disk_config(&self.project, &scene_dir))
+            .then(|| procgen_disk_config(&self.core.project, &scene_dir))
             .flatten()
         {
             println!("[procgen] disk cache: {}", disk.dir.display());
@@ -530,7 +514,8 @@ impl PlayerApp {
             let world_w = config.width;
             let world_d = config.depth;
             let height_scale = config.height_scale;
-            self.script
+            self.core
+                .script
                 .set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
                     // Convert world coords to normalized UV
                     let u = x / world_w;
@@ -554,7 +539,7 @@ impl PlayerApp {
                     h * height_scale
                 })));
         } else {
-            self.script.set_terrain_height_fn(None);
+            self.core.script.set_terrain_height_fn(None);
         }
     }
 
@@ -564,8 +549,8 @@ impl PlayerApp {
             .context("failed to load built-in input defaults")?;
 
         let mut paths = resolve_input_paths(
-            &self.project,
-            Path::new(&self.scene_path),
+            &self.core.project,
+            Path::new(&self.core.scene_path),
             self.scene.input_config.as_deref(),
             self.input_layers.config_override.as_deref(),
         );
@@ -584,8 +569,8 @@ impl PlayerApp {
         // Now the game default has set the game id, find the player's own
         // rebinds: they're saved under it.
         paths.user_override = resolve_user_override(
-            &self.project,
-            Path::new(&self.scene_path),
+            &self.core.project,
+            Path::new(&self.core.scene_path),
             &self.input.config().game_id,
         );
         // The player's copy (crate::user_files, localStorage on the web), else
@@ -626,12 +611,12 @@ impl PlayerApp {
 
     /// The project the current scene belongs to (ADR 0114).
     pub fn project(&self) -> &flint_core::project::Project {
-        &self.project
+        &self.core.project
     }
 
     /// The current scene's directory: where every asset search starts.
     pub(super) fn scene_dir(&self) -> std::path::PathBuf {
-        Path::new(&self.scene_path)
+        Path::new(&self.core.scene_path)
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."))
@@ -650,7 +635,7 @@ impl PlayerApp {
     /// [`asset_scope`](Self::asset_scope) with the project as last found,
     /// for a poll.
     pub(super) fn kept_asset_scope(&self) -> flint_core::project::AssetScope {
-        flint_core::project::AssetScope::new(self.project.clone(), self.scene_dir())
+        flint_core::project::AssetScope::new(self.core.project.clone(), self.scene_dir())
     }
 
     /// Ask again which project the current scene belongs to, and take the
@@ -658,14 +643,14 @@ impl PlayerApp {
     /// which may cross into another project's root (or a `flint.toml` may
     /// have changed under a long session). `--project` pins one answer.
     pub(super) fn refresh_project(&mut self) {
-        let next = flint_core::project::Project::for_scene(Path::new(&self.scene_path));
-        if next != self.project {
+        let next = flint_core::project::Project::for_scene(Path::new(&self.core.scene_path));
+        if next != self.core.project {
             tracing::info!(
                 "project root: {} ({})",
                 next.root.display(),
                 next.found.describe()
             );
-            self.project = next;
+            self.core.project = next;
         }
     }
 
@@ -678,12 +663,12 @@ impl PlayerApp {
             return;
         };
         load_particle_textures_from_world(
-            &self.particles,
+            &self.core.particles,
             renderer,
             &context.device,
             &context.queue,
-            &self.project,
-            &self.scene_path,
+            &self.core.project,
+            &self.core.scene_path,
         );
     }
 
@@ -715,7 +700,7 @@ impl PlayerApp {
     pub(super) fn install_text_measurer(&mut self) {
         let ctx = self.hud.egui_ctx.clone();
         let ready = self.hud.egui_fonts_ready.clone();
-        self.script.set_text_measurer(Some(Arc::new(
+        self.core.script.set_text_measurer(Some(Arc::new(
             move |text: &str, size: f32, font: Option<&str>, spacing: f32| {
                 if !ready.load(std::sync::atomic::Ordering::Relaxed) {
                     let chars = text.chars().count() as f32;
@@ -749,12 +734,16 @@ impl PlayerApp {
         // The project's one search (ADR 0114): `sprites/<name>` then `<name>`
         // beside the scene, then the same beside each directory up to the
         // project root, then in the mounted engine.
-        let scene_dir = Path::new(&self.scene_path)
+        let scene_dir = Path::new(&self.core.scene_path)
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         use flint_core::project::AssetKind;
-        let problem = match self.project.resolve(AssetKind::Sprites, name, scene_dir) {
+        let problem = match self
+            .core
+            .project
+            .resolve(AssetKind::Sprites, name, scene_dir)
+        {
             Ok(path) => match flint_render::open_image(&path) {
                 Ok(img) => {
                     let rgba = img.to_rgba8();

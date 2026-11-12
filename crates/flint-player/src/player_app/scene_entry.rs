@@ -35,7 +35,7 @@ pub(super) enum SceneEntry {
 }
 
 impl PlayerApp {
-    /// Bring the current scene (`self.world`, `self.scene_path` and the
+    /// Bring the current scene (`self.core.world`, `self.core.scene_path` and the
     /// settings `apply_scene_settings` took) up: input bindings, camera,
     /// fonts, the renderer's share (models, lights, skybox, post-processing,
     /// terrain), the debug panels, then physics, audio, the music session,
@@ -44,7 +44,7 @@ impl PlayerApp {
     /// An error is a startup failure (physics would not initialize); at a
     /// transition the same failure is logged and the scene plays on.
     pub(super) fn enter_scene(&mut self, entry: SceneEntry) -> Result<()> {
-        self.world.rebuild_component_index();
+        self.core.world.rebuild_component_index();
         // Which project the scene is in, before anything is searched for
         self.refresh_project();
 
@@ -91,7 +91,7 @@ impl PlayerApp {
             self.focus.cursor_captured = true;
         }
         #[cfg(not(target_os = "android"))]
-        if self.physics.has_player_entity() && !self.focus.cursor_captured {
+        if self.core.physics.has_player_entity() && !self.focus.cursor_captured {
             self.capture_cursor();
         }
         Ok(())
@@ -142,23 +142,24 @@ impl PlayerApp {
         renderer.set_asset_scope(self.kept_asset_scope());
 
         let config = build_model_load_config(
-            &self.project,
-            &self.scene_path,
-            &self.world,
+            &self.core.project,
+            &self.core.scene_path,
+            &self.core.world,
             self.assets.catalog.as_ref(),
             self.assets.content_store.as_ref(),
         );
 
         // What the scene says about living props, for the props procgen
         // adds (their clocks and field are the living subsystem's)
-        self.procgen_resolver
+        self.core
+            .procgen_resolver
             .set_living_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
         // Procgen before the model loader: catalog > procgen > file (#32).
         super::procgen_assets::resolve_scene(
-            &self.scene_path,
-            &mut self.world,
-            &mut self.procgen_resolver,
+            &self.core.scene_path,
+            &mut self.core.world,
+            &mut self.core.procgen_resolver,
             self.launch.procgen_mode,
             super::procgen_assets::GpuSink {
                 renderer,
@@ -168,23 +169,28 @@ impl PlayerApp {
             },
         );
 
-        let load_result =
-            model_loader::load_models_from_world(&mut self.world, renderer, device, queue, &config);
-        register_skeletal_data(&load_result, &mut self.animation);
-        register_node_animation_data(&load_result, &mut self.animation);
+        let load_result = model_loader::load_models_from_world(
+            &mut self.core.world,
+            renderer,
+            device,
+            queue,
+            &config,
+        );
+        register_skeletal_data(&load_result, &mut self.core.animation);
+        register_node_animation_data(&load_result, &mut self.core.animation);
         self.skeletal_entity_assets = load_result.skinned_entities;
-        renderer.update_from_world(&self.world, device);
+        renderer.update_from_world(&self.core.world, device);
 
         // Procedural geometry from spline + spline_mesh entities
         crate::spline_gen::load_splines(
-            &self.scene_path,
-            &mut self.world,
+            &self.core.scene_path,
+            &mut self.core.world,
             renderer,
-            Some(&mut self.physics),
+            Some(&mut self.core.physics),
             device,
             queue,
         );
-        renderer.update_from_world(&self.world, device);
+        renderer.update_from_world(&self.core.world, device);
 
         // The scene's first frame has no past: styles that keep history
         // (ASCII's temporal stability, #277) start over, and its first
@@ -217,6 +223,7 @@ impl PlayerApp {
         if let Some(skybox_rel) = &self.scene.skybox_path {
             let scene_dir = self.scene_dir();
             let skybox_path = self
+                .core
                 .project
                 .resolve(
                     flint_core::project::AssetKind::Files,
@@ -242,12 +249,12 @@ impl PlayerApp {
         // Terrain, its colliders and grass
         let mut grass = None;
         load_terrain_from_world_inner(
-            &self.world,
-            &self.scene_path,
+            &self.core.world,
+            &self.core.scene_path,
             device,
             queue,
             renderer,
-            &mut self.physics,
+            &mut self.core.physics,
             &mut self.terrain,
             &mut grass,
         );
@@ -264,7 +271,7 @@ impl PlayerApp {
         if let Some(info) = grass {
             let panel = flint_debug_ui::GrassDebugPanel::new(
                 info.config,
-                std::path::PathBuf::from(&self.scene_path),
+                std::path::PathBuf::from(&self.core.scene_path),
                 info.terrain_entity_name,
             )
             .with_component(info.component);
@@ -292,8 +299,9 @@ impl PlayerApp {
     /// scripts' first frame (F3/F4).
     fn start_scene_systems(&mut self, entry: SceneEntry) -> Result<()> {
         let physics = self
+            .core
             .physics
-            .initialize(&mut self.world)
+            .initialize(&mut self.core.world)
             .context("Failed to initialize physics");
         match (physics, entry) {
             (Err(e), SceneEntry::Start) => return Err(e),
@@ -302,10 +310,10 @@ impl PlayerApp {
         }
 
         load_audio_from_world(
-            &self.world,
+            &self.core.world,
             &mut self.audio,
-            &self.project,
-            &self.scene_path,
+            &self.core.project,
+            &self.core.scene_path,
             self.scene.preload_audio,
             // In the browser the audio may already be here, and decoding it
             // all in one frame is the stall #124 removed: queue it. The
@@ -313,7 +321,7 @@ impl PlayerApp {
             cfg!(target_arch = "wasm32"),
         );
         self.audio
-            .initialize(&mut self.world)
+            .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
 
         // The scene-declared music session (F3) on the freshly initialized
@@ -321,42 +329,62 @@ impl PlayerApp {
         // dropped again by the new session's handoff.
         self.start_music_session();
 
-        load_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sprite_animations_from_world(&self.project, &self.scene_path, &mut self.animation);
-        load_sequences_from_world(&self.project, &self.scene_path, &mut self.animation);
-        self.animation
-            .initialize(&mut self.world)
+        load_animations_from_world(
+            &self.core.project,
+            &self.core.scene_path,
+            &mut self.core.animation,
+        );
+        load_sprite_animations_from_world(
+            &self.core.project,
+            &self.core.scene_path,
+            &mut self.core.animation,
+        );
+        load_sequences_from_world(
+            &self.core.project,
+            &self.core.scene_path,
+            &mut self.core.animation,
+        );
+        self.core
+            .animation
+            .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
         // `particles/*.particles.toml` registered first, so `particle_effect`
         // components resolve on the first sync
         self.refresh_project();
         flint_particles::load_particle_effects_from_world(
-            &self.project,
-            &self.scene_path,
-            &mut self.particles,
+            &self.core.project,
+            &self.core.scene_path,
+            &mut self.core.particles,
         );
-        self.particles
-            .initialize(&mut self.world)
+        self.core
+            .particles
+            .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
         self.load_particle_textures();
 
         // Scripts: on_init with the state machine and the persistent store
         // in reach, then, at a transition, on_scene_enter
-        load_scripts_from_world(&self.project, &self.scene_path, &mut self.script);
-        self.script
-            .set_current_scene(&self.scene_path, &self.project);
+        load_scripts_from_world(
+            &self.core.project,
+            &self.core.scene_path,
+            &mut self.core.script,
+        );
+        self.core
+            .script
+            .set_current_scene(&self.core.scene_path, &self.core.project);
         {
-            let _state_scope = self.script.state_scope(
-                &mut self.state_machine,
-                &mut self.saves.store,
-                &self.physics,
+            let _state_scope = self.core.script.state_scope(
+                &mut self.core.state_machine,
+                &mut self.core.store,
+                &self.core.physics,
             );
-            self.script
-                .initialize(&mut self.world)
+            self.core
+                .script
+                .initialize(&mut self.core.world)
                 .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
             if entry == SceneEntry::Transition {
-                self.script.call_scene_enters(&mut self.world);
+                self.core.script.call_scene_enters(&mut self.core.world);
             }
         }
         Ok(())

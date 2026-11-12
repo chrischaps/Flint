@@ -9,9 +9,9 @@
 
 use super::input_config::{InputConfigPaths, PendingRebind};
 use super::{camera_cut, expression_feed, fonts, music_session, perf, procgen_assets};
-use super::{egui_input, render_scale, style_commands, text_halo, world_text};
+use super::{egui_input, render_scale, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
-use flint_runtime::{InputConfig, PersistentStore, SaveDebounce};
+use flint_runtime::{InputConfig, SaveDebounce};
 use flint_script::context::DrawItem;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -397,10 +397,9 @@ pub(super) struct Stats {
     pub(super) perf: Option<perf::PerfRecorder>,
 }
 
-/// The `persist_*` store and when it is written (see `persist.rs`). It
-/// survives scene transitions.
+/// When the `persist_*` store (the game core's) is written (see
+/// `persist.rs`).
 pub(super) struct Saves {
-    pub(super) store: PersistentStore,
     /// When to write the save file after a change.
     pub(super) debounce: SaveDebounce,
     /// The last save failure logged, so one that lasts is said once.
@@ -413,7 +412,6 @@ pub(super) struct Saves {
 impl Default for Saves {
     fn default() -> Self {
         Self {
-            store: PersistentStore::new(),
             debounce: SaveDebounce::default(),
             error: None,
             user_config_dir: crate::user_files::config_dir(),
@@ -439,11 +437,6 @@ pub(super) struct Outcome {
 pub(super) struct StyleState {
     /// Resets style history when the camera cuts (#343)
     pub(super) camera_cut: camera_cut::CameraCutDetector,
-    /// Style settings the engine is easing for scripts (#370)
-    pub(super) tweens: style_commands::StyleTweens,
-    /// The renderer's `post_config_generation` scripts' style reads were
-    /// last handed (#372); `None` until the first.
-    pub(super) reader_generation: Option<u64>,
     /// A look F4's picker chose this frame (#356; `Some(None)`: none),
     /// laid under the scene's keys at the start of the next render.
     pub(super) pending_look: Option<Option<String>>,

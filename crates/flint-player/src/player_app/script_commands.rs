@@ -56,7 +56,7 @@ impl PlayerApp {
     /// cursor and touch) is held in `script_requests` until the step of the
     /// frame that applies it.
     pub(super) fn dispatch_script_commands(&mut self) {
-        let commands = self.script.drain_commands();
+        let commands = self.core.script.drain_commands();
         // A subsystem's own commands first; the player applies the rest
         let commands = self.commands_for_the_player(commands);
         flint_script::host::apply_all(self, commands);
@@ -66,7 +66,7 @@ impl PlayerApp {
     /// (next frame, off the frame's bus), its refusal to the log.
     fn style_applied(&mut self, applied: StyleApplied) {
         match applied {
-            StyleApplied::Done(Some(event)) => self.events.push(event),
+            StyleApplied::Done(Some(event)) => self.core.events.push(event),
             StyleApplied::Done(None) => {}
             StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
         }
@@ -120,6 +120,7 @@ impl PlayerApp {
         #[cfg(target_arch = "wasm32")]
         if !had_sound
             && !self
+                .core
                 .world
                 .entities_with_component(music_session::MUSIC_SESSION)
                 .is_empty()
@@ -131,7 +132,7 @@ impl PlayerApp {
                 .engine
                 .set_web_mixer(flint_audio::engine::WebMixer::MainThread);
         }
-        if !self.audio.start(&self.world) {
+        if !self.audio.start(&self.core.world) {
             return false;
         }
         if !had_sound && self.music.session.is_none() {
@@ -148,8 +149,9 @@ impl PlayerApp {
     /// Headless or component-less scenes: no session, nothing changes.
     pub(super) fn start_music_session(&mut self) {
         let mut found = None;
-        for entity in self.world.all_entities() {
+        for entity in self.core.world.all_entities() {
             let comp = self
+                .core
                 .world
                 .get_components(entity.id)
                 .and_then(|c| c.get(music_session::MUSIC_SESSION).cloned());
@@ -171,7 +173,8 @@ impl PlayerApp {
         // is still read from there, with a warning.
         let manifest = comp.get("manifest").and_then(|v| v.as_str()).unwrap_or("");
         let base_dir =
-            self.project
+            self.core
+                .project
                 .root_holding("music_session", manifest.trim(), &self.scene_dir());
         match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
             Ok(Some(session)) => {
@@ -300,7 +303,7 @@ impl ScriptHost for PlayerApp {
     }
 
     fn set_audio_lowpass(&mut self, cutoff_hz: f32) {
-        self.script_requests.audio_lowpass = Some(cutoff_hz);
+        self.core.script_requests.audio_lowpass = Some(cutoff_hz);
     }
 
     fn fire_event(&mut self, name: String, data: toml::Value) {
@@ -321,30 +324,38 @@ impl ScriptHost for PlayerApp {
             }
             return;
         }
-        self.events.push(GameEvent::Custom { name, data });
+        self.core.events.push(GameEvent::Custom { name, data });
     }
 
     fn emit_burst(&mut self, entity: EntityId, count: i64) {
-        self.particles.sync.queue_burst(entity, count.max(0) as u32);
+        self.core
+            .particles
+            .sync
+            .queue_burst(entity, count.max(0) as u32);
     }
 
     fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
         let pos = [position.0 as f32, position.1 as f32, position.2 as f32];
-        if !self.particles.sync.spawn_effect(handle, &name, pos) {
+        if !self.core.particles.sync.spawn_effect(handle, &name, pos) {
             tracing::warn!(
                 target: "script",
                 "play_effect: {}",
-                self.particles.sync.missing_effect_report(&name)
+                self.core.particles.sync.missing_effect_report(&name)
             );
         }
     }
 
     fn stop_effect(&mut self, handle: u64) {
-        self.particles.sync.stop_effect(handle);
+        self.core.particles.sync.stop_effect(handle);
     }
 
     fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
-        if !self.particles.sync.set_effect_param(handle, &param, value) {
+        if !self
+            .core
+            .particles
+            .sync
+            .set_effect_param(handle, &param, value)
+        {
             tracing::warn!(
                 target: "script",
                 "set_effect_param: unknown handle {} or param '{}'",
@@ -356,17 +367,17 @@ impl ScriptHost for PlayerApp {
 
     fn set_entity_style(&mut self, entity: EntityId, style: String) {
         let applied = self
-            .style
-            .tweens
-            .set_entity_style(&mut self.world, entity, &style);
+            .core
+            .style_tweens
+            .set_entity_style(&mut self.core.world, entity, &style);
         self.style_applied(applied);
     }
 
     fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
-        let applied = self
-            .style
-            .tweens
-            .set_style_param(&mut self.world, entity, &param, value);
+        let applied =
+            self.core
+                .style_tweens
+                .set_style_param(&mut self.core.world, entity, &param, value);
         self.style_applied(applied);
     }
 
@@ -389,8 +400,8 @@ impl ScriptHost for PlayerApp {
                     &fallback
                 }
             };
-            self.style.tweens.tween(
-                &mut self.world,
+            self.core.style_tweens.tween(
+                &mut self.core.world,
                 config,
                 entity,
                 &param,
@@ -404,9 +415,9 @@ impl ScriptHost for PlayerApp {
 
     fn clear_entity_style(&mut self, entity: EntityId) {
         let applied = self
-            .style
-            .tweens
-            .clear_entity_style(&mut self.world, entity);
+            .core
+            .style_tweens
+            .clear_entity_style(&mut self.core.world, entity);
         self.style_applied(applied);
     }
 
@@ -460,25 +471,25 @@ impl ScriptHost for PlayerApp {
     }
 
     fn set_camera(&mut self, camera: CameraOverrides) {
-        self.script_requests.camera.merge(camera);
+        self.core.script_requests.camera.merge(camera);
     }
 
     fn set_post_process(&mut self, post: PostProcessOverrides) {
-        self.script_requests.post.merge(post);
+        self.core.script_requests.post.merge(post);
     }
 
     fn set_fog_color(&mut self, color: [f32; 3]) {
-        self.script_requests.fog_color = Some(color);
+        self.core.script_requests.fog_color = Some(color);
     }
 
     fn set_render_mode(&mut self, mode: Option<(u32, f32)>, params: Option<[f32; 4]>) {
-        let r = &mut self.script_requests;
+        let r = &mut self.core.script_requests;
         r.render_mode = mode.or(r.render_mode);
         r.mode_params = params.or(r.mode_params);
     }
 
     fn set_lod_scales(&mut self, lod_scale: Option<f32>, draw_distance_scale: Option<f32>) {
-        let r = &mut self.script_requests;
+        let r = &mut self.core.script_requests;
         r.lod_scale = lod_scale.or(r.lod_scale);
         r.draw_distance_scale = draw_distance_scale.or(r.draw_distance_scale);
     }
@@ -490,15 +501,15 @@ impl ScriptHost for PlayerApp {
     fn set_time_scale(&mut self, scale: f64) {
         // This frame's clock has ticked, so the new scale starts with the
         // next frame's
-        self.clock.time_scale = scale;
+        self.core.clock.time_scale = scale;
     }
 
     fn set_touch_controls(&mut self, enabled: bool) {
-        self.script_requests.touch_controls = Some(enabled);
+        self.core.script_requests.touch_controls = Some(enabled);
     }
 
     fn set_cursor_captured(&mut self, captured: bool) {
-        self.script_requests.cursor_captured = Some(captured);
+        self.core.script_requests.cursor_captured = Some(captured);
     }
 
     // The living subsystem takes these (`LivingSubsystem::command`) before
@@ -565,7 +576,7 @@ impl ScriptHost for PlayerApp {
 
     fn reload_scene(&mut self) {
         if self.transition_phase.is_idle() {
-            let path = self.scene_path.clone();
+            let path = self.core.scene_path.clone();
             println!("[transition] Reloading current scene");
             self.transition_phase = TransitionPhase::Exiting {
                 target_scene: path,
@@ -579,7 +590,7 @@ impl ScriptHost for PlayerApp {
     }
 
     fn push_state(&mut self, name: String) {
-        if self.state_machine.push_state(&name) {
+        if self.core.state_machine.push_state(&name) {
             println!("[state] Pushed '{}'", name);
         } else {
             tracing::warn!("Unknown state template: '{}'", name);
@@ -587,13 +598,13 @@ impl ScriptHost for PlayerApp {
     }
 
     fn pop_state(&mut self) {
-        if let Some(popped) = self.state_machine.pop_state() {
+        if let Some(popped) = self.core.state_machine.pop_state() {
             println!("[state] Popped '{}'", popped.name);
         }
     }
 
     fn replace_state(&mut self, name: String) {
-        if self.state_machine.replace_state(&name) {
+        if self.core.state_machine.replace_state(&name) {
             println!("[state] Replaced top with '{}'", name);
         } else {
             tracing::warn!("Unknown state template: '{}'", name);
@@ -609,7 +620,9 @@ impl ScriptHost for PlayerApp {
     }
 
     fn set_velocity_2d(&mut self, entity: EntityId, vx: f64, vy: f64) {
-        self.physics.set_velocity_2d(entity, vx as f32, vy as f32);
+        self.core
+            .physics
+            .set_velocity_2d(entity, vx as f32, vy as f32);
     }
 }
 

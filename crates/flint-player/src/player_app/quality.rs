@@ -53,7 +53,7 @@ impl PlayerApp {
                 info.backend,
                 info.class
             );
-            self.script.set_gpu_info(info);
+            self.core.script.set_gpu_info(info);
         }
         let q = self.startup_quality();
         self.apply_quality(q);
@@ -86,7 +86,7 @@ impl PlayerApp {
             };
         }
         self.quality.settings = applied;
-        self.script.set_quality_state(applied);
+        self.core.script.set_quality_state(applied);
     }
 
     /// A script's `set_quality` from this frame, applied before the frame
@@ -98,7 +98,7 @@ impl PlayerApp {
                 self.apply_quality(q);
             } else {
                 // Asked for what's in force; just hand the state back.
-                self.script.set_quality_state(self.quality.settings);
+                self.core.script.set_quality_state(self.quality.settings);
             }
         }
     }

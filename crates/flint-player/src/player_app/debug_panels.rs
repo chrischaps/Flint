@@ -20,10 +20,12 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_particles_debug_panel(&mut self) {
         let has_any = !self
+            .core
             .world
             .entities_with_component(comp::PARTICLE_EMITTER)
             .is_empty()
             || !self
+                .core
                 .world
                 .entities_with_component(comp::PARTICLE_EFFECT)
                 .is_empty();
@@ -60,7 +62,7 @@ impl PlayerApp {
     fn styles_scene_file(&self) -> Option<std::path::PathBuf> {
         self.launch
             .scene_file_writable
-            .then(|| std::path::PathBuf::from(&self.scene_path))
+            .then(|| std::path::PathBuf::from(&self.core.scene_path))
     }
 
     /// Create the Rendering & Effects panel (ADR 0053), or point the one
@@ -73,7 +75,7 @@ impl PlayerApp {
         let authored = self.authored_styles();
         let scene_dir = self.styles_scene_dir();
         let looks = flint_render::look::list_in(&scene_dir.clone().unwrap_or_else(|| {
-            flint_core::project::AssetScope::new(self.project.clone(), self.scene_dir())
+            flint_core::project::AssetScope::new(self.core.project.clone(), self.scene_dir())
         }));
         let current = self.current_look().map(str::to_string);
         let scene_file = self.styles_scene_file();
@@ -139,6 +141,7 @@ impl PlayerApp {
         let authored = self.authored_styles();
         let has_table = authored.iter().next().is_some();
         let has_mask = !self
+            .core
             .world
             .entities_with_component(flint_render::style_mask::STYLE_MASK_COMPONENT)
             .is_empty();
@@ -156,6 +159,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_living_debug_panel(&mut self) {
         if self
+            .core
             .world
             .entities_with_component(comp::LIVING_PROP)
             .is_empty()
@@ -170,6 +174,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_ocean_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(comp::OCEAN)
             .iter()
@@ -177,10 +182,11 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let Some(ocean_comp) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(comp::OCEAN).cloned())
@@ -190,7 +196,7 @@ impl PlayerApp {
         let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean_comp);
         let panel = flint_debug_ui::OceanDebugPanel::new(
             config,
-            std::path::PathBuf::from(&self.scene_path),
+            std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
         self.debug_panels.push(Box::new(panel));
@@ -201,6 +207,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_tod_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(TIME_OF_DAY_COMPONENT)
             .iter()
@@ -208,10 +215,11 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let Some(tod_comp) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT).cloned())
@@ -221,7 +229,7 @@ impl PlayerApp {
         let config = flint_debug_ui::TimeOfDayPanelConfig::from_component(&tod_comp);
         let panel = flint_debug_ui::TimeOfDayDebugPanel::new(
             config,
-            std::path::PathBuf::from(&self.scene_path),
+            std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
         self.debug_panels.push(Box::new(panel));
@@ -232,6 +240,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_weather_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(WEATHER_COMPONENT)
             .iter()
@@ -239,10 +248,11 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let Some(weather_comp) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(WEATHER_COMPONENT).cloned())
@@ -252,7 +262,7 @@ impl PlayerApp {
         let config = flint_debug_ui::WeatherPanelConfig::from_component(&weather_comp);
         let panel = flint_debug_ui::WeatherDebugPanel::new(
             config,
-            std::path::PathBuf::from(&self.scene_path),
+            std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
         self.debug_panels.push(Box::new(panel));
@@ -263,6 +273,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_reality_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(REALITY_COMPONENT)
             .iter()
@@ -270,10 +281,11 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let Some(reality_comp) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(REALITY_COMPONENT).cloned())
@@ -283,7 +295,7 @@ impl PlayerApp {
         let config = flint_debug_ui::RealityPanelConfig::from_component(&reality_comp);
         let panel = flint_debug_ui::RealityDebugPanel::new(
             config,
-            std::path::PathBuf::from(&self.scene_path),
+            std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
         self.debug_panels.push(Box::new(panel));
@@ -294,6 +306,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_visitor_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(RAFT_VISITOR_COMPONENT)
             .iter()
@@ -301,7 +314,7 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let panel = flint_debug_ui::VisitorDebugPanel::new(name);
@@ -313,6 +326,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_dead_calm_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(DEAD_CALM_COMPONENT)
             .iter()
@@ -320,7 +334,7 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let panel = flint_debug_ui::DeadCalmDebugPanel::new(name);
@@ -332,6 +346,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_camera_debug_panel(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(CAMERA_TUNING_COMPONENT)
             .iter()
@@ -339,10 +354,11 @@ impl PlayerApp {
         else {
             return;
         };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
         let Some(cam_comp) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT).cloned())
@@ -352,7 +368,7 @@ impl PlayerApp {
         let config = flint_debug_ui::CameraPanelConfig::from_component(&cam_comp);
         let panel = flint_debug_ui::CameraDebugPanel::new(
             config,
-            std::path::PathBuf::from(&self.scene_path),
+            std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
         self.debug_panels.push(Box::new(panel));
@@ -363,6 +379,7 @@ impl PlayerApp {
     /// scene declares both.
     pub(super) fn apply_camera_tuning(&mut self) {
         let Some(&entity_id) = self
+            .core
             .world
             .entities_with_component(CAMERA_TUNING_COMPONENT)
             .iter()
@@ -371,6 +388,7 @@ impl PlayerApp {
             return;
         };
         if let Some(fov) = self
+            .core
             .world
             .get_components(entity_id)
             .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT))
@@ -399,7 +417,7 @@ impl PlayerApp {
         if exists {
             if opened {
                 self.release_cursor();
-            } else if self.physics.has_player_entity() {
+            } else if self.core.physics.has_player_entity() {
                 self.capture_cursor();
             }
         } else {
