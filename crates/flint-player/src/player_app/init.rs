@@ -21,7 +21,7 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState};
+use flint_runtime::{EventBus, GameClock, InputConfig, InputState};
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use std::collections::HashMap;
@@ -68,6 +68,7 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
+            events: EventBus::new(),
             subsystems: Default::default(),
             music: Default::default(),
             audio: AudioSystem::new(),
@@ -104,7 +105,7 @@ impl PlayerApp {
             input_layers: InputLayers::new(input_config_override),
             gilrs: None,
             pad_rumble: flint_runtime::PadRumble::new(),
-            state_machine: GameStateMachine::new(),
+            state_machine: super::subsystem::state_machine(),
             saves: Default::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),

@@ -36,9 +36,7 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_procgen::{BoilDef, WoozePreset};
 use flint_render::PostProcessConfig;
-use flint_runtime::{
-    GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem, SystemPolicy,
-};
+use flint_runtime::{GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem};
 use flint_script::context::ScriptCommand;
 use flint_script::{CameraOverrides, PostProcessOverrides, ScriptHost, ScriptSystem};
 
@@ -219,7 +217,7 @@ impl HeadlessScripts {
         let mut run = Self {
             system,
             timeline,
-            state_machine: GameStateMachine::new(),
+            state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             physics: PhysicsSystem::new(),
             input: InputState::new(),
@@ -285,7 +283,10 @@ impl HeadlessScripts {
             }
         }
         let events = std::mem::take(&mut self.events);
-        let running = self.state_machine.active_config().scripts == SystemPolicy::Run;
+        let running = self
+            .state_machine
+            .active_config()
+            .runs(flint_runtime::state::SCRIPTS);
         let _scope =
             self.system
                 .state_scope(&mut self.state_machine, &mut self.store, &self.physics);
