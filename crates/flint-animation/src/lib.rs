@@ -417,11 +417,6 @@ impl RuntimeSystem for AnimationSystem {
         Ok(())
     }
 
-    fn fixed_update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Animation interpolates smoothly in variable update — no-op here
-        Ok(())
-    }
-
     fn update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
         // Tier 1: Property animation
         self.sync.sync_from_world(world, &self.player);
@@ -447,14 +442,5 @@ impl RuntimeSystem for AnimationSystem {
         self.sprite_sync.advance_and_write(world, dt);
 
         Ok(())
-    }
-
-    fn shutdown(&mut self) -> Result<()> {
-        println!("Animation system shut down");
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "animation"
     }
 }

@@ -448,7 +448,7 @@ The `animator` component controls playback for both tiers:
 - **SkeletalSync** --- bridges ECS to skeletal animation, manages per-entity skeleton state and bone matrix computation
 - **AnimationSystem** --- top-level `RuntimeSystem` implementation that ticks both tiers
 
-Animation runs in `update()` (variable-rate), not `fixed_update()`, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
+Animation runs in `update()` (variable-rate), not at the fixed physics rate, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
 
 ## Scripting Integration
 

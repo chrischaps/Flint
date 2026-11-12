@@ -194,11 +194,6 @@ impl RuntimeSystem for AudioSystem {
         Ok(())
     }
 
-    fn fixed_update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Audio doesn't need fixed timestep
-        Ok(())
-    }
-
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         if !self.engine.is_available() {
             return Ok(());
@@ -240,15 +235,6 @@ impl RuntimeSystem for AudioSystem {
 
         Ok(())
     }
-
-    fn shutdown(&mut self) -> Result<()> {
-        // Kira cleans up when AudioManager is dropped
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "audio"
-    }
 }
 
 #[cfg(test)]
@@ -269,12 +255,6 @@ mod tests {
         // Update should not error
         let result = system.update(&mut world, 0.016);
         assert!(result.is_ok());
-
-        // Shutdown should not error
-        let result = system.shutdown();
-        assert!(result.is_ok());
-
-        assert_eq!(system.name(), "audio");
     }
 
     #[test]

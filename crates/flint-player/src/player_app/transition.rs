@@ -370,6 +370,10 @@ impl PlayerApp {
         self.core.script.clear();
         self.audio.clear();
         self.core.physics.clear();
+        // The old scene's contacts name entities that are going; a script's
+        // or an extension's own events go on to the next scene's scripts
+        // (#727: they used to be lost with physics' queue).
+        self.core.events.retain(|event| !event.is_contact());
         self.core.animation.clear();
         self.core.particles.clear();
         self.core.procgen_resolver.clear_queue();
