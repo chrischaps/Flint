@@ -19,6 +19,7 @@ shade = { type = "f32", min = 0.0, max = 1.0, description = "Soft rubbed graphit
 contour = { type = "f32", min = 0.0, max = 2.0, description = "Outline strength (0 = no outlines)" }
 contour_width = { type = "f32", min = 0.5, max = 4.0, description = "Outline width in points" }
 depth = { type = "f32", min = 0.0, max = 4.0, description = "Sensitivity of outlines to depth steps (silhouettes)" }
+grazing = { type = "f32", min = 0.0, max = 1.0, description = "How much a plane seen edge-on is spared silhouette lines: 1 draws a depth step only where the neighbours lie on another surface, so a floor near the horizon is not inked in a band; 0 (the default) draws every depth step (#404)" }
 crease = { type = "f32", min = 0.0, max = 4.0, description = "Sensitivity of outlines to creases, where the surface turns" }
 detail = { type = "f32", min = 0.0, max = 2.0, description = "Outlines from the picture's own luminance edges (texture detail)" }
 wobble = { type = "f32", min = 0.0, max = 8.0, description = "How far lines wander off true, in points" }

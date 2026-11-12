@@ -99,7 +99,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          param's default/range/help; with a scene, its user styles too)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor|
-   #                          coloured_pencil|blueprint|charcoal (#391);
+   #                          coloured_pencil|blueprint|charcoal (#391)|rotoscope (#404);
    #                          `--look help` lists them with their tune sweeps. #356: a scene's
    #                          `[post_process] look = "<name>"` goes UNDER its keys (loader records
    #                          them in PostProcessDef::authored; flint_render::look::resolve, vfs reads);

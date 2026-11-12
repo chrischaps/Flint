@@ -1,0 +1,66 @@
+# Rotoscope: the world traced in pencil on blank paper. Mostly line:
+# silhouettes and creases in a soft black lead, one sparse layer of
+# hatching at one angle only where the picture is darkest, and a white
+# sheet where the sky and the ground were. The floor keeps one line, its
+# horizon. In the player the lines boil, redrawn twelve times a second as
+# a traced film is from drawing to drawing.
+#
+#   flint render <scene> --look rotoscope -o rotoscope.png
+#   flint render <scene> --look rotoscope --sweep pencil.contour_width=1,1.5,2.2 --sweep pencil.wobble=0.8,2,3.5 -o weight.png
+#   flint render <scene> --look rotoscope --style pencil:layers=0 -o lines-only.png
+#   flint render <scene> --look rotoscope --style-time 0.5 -o boiled.png
+#
+# A look is a [post_process] block in the scene format, merged over the
+# scene's own key by key (#279). `flint render --look help` lists them all.
+# The first look of #402 (a rotoscoped sketch world), #404.
+
+[look]
+name = "rotoscope"
+description = "Rotoscope: ink-forward pencil lines on a blank sheet, sparse hatching only in the darks, boiling lines"
+tune = [
+    "pencil.contour_width=1,1.5,2.2",
+    "pencil.wobble=0.8,2,3.5",
+    "pencil.brightness=0.35,0.5,0.65",
+    "pencil.layers=0,1,2",
+    "pencil.grazing=0,0.5,1",
+]
+notes = """
+Brightness decides what is shaded at all. One hatch layer joins wherever the
+tone is under 0.88, so on stylize_props brightness 0.35 still hatched the
+whole brown floor; at 0.5 the floor is blank and only the dark barrels and
+the cast shadows keep strokes. Raise it for a darker scene. layers = 0 with
+shade = 0 is the line-only drawing (and skips the stroke flow, so it is the
+cheapest pencil); layers = 2 crosses the barrels' strokes and leaves the
+floor blank. grazing = 1 is what keeps the sheet blank: without it a
+floor seen edge-on steps in depth from row to row like a silhouette and
+inks a thick band along the horizon; at 1 the horizon is one line.
+direction = screen, one hand at one angle, read most like a traced frame:
+surface and tensor both swirled round the barrels.
+contour_width 1.5 and wobble 2 are the middle of the sweep: 1 looked like a
+technical pen, 2.2 like a marker, and wobble 3.5 doubled every outline.
+boil only moves the picture with a clock (the player, --style-time);
+renders at time 0 are byte-identical run to run.
+"""
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = false
+vignette_enabled = false
+
+[post_process.styles.pencil]
+layers = 1
+shade = 0.0
+direction = "screen"
+angle = 55.0
+brightness = 0.5
+contrast = 1.6
+grazing = 1.0
+contour = 1.6
+contour_width = 1.5
+wobble = 2.0
+sketchy = 0.5
+detail = 0.3
+grain = 0.15
+paper = [0.97, 0.96, 0.93]
+lead = [0.1, 0.1, 0.12]
+boil = 12.0

@@ -9,6 +9,7 @@
 //! direction = "surface"  # surface | screen | tensor
 //! angle = 50.0           # the base angle, degrees
 //! contour = 1.0          # outline strength
+//! grazing = 0.0          # 1 spares planes seen edge-on from depth lines (#404)
 //! wobble = 1.5           # how far lines wander, points
 //! sketchy = 0.6          # a second, offset outline
 //! grain = 0.5            # paper grain, and how much it breaks strokes
@@ -128,6 +129,7 @@ const PARAMS: &[StyleParam] = &[
     StyleParam::new("contour", 1.0, 0.0..=2.0),
     StyleParam::new("contour_width", 1.25, 0.5..=4.0),
     StyleParam::new("depth", 1.0, 0.0..=4.0),
+    StyleParam::new("grazing", 0.0, 0.0..=1.0),
     StyleParam::new("crease", 1.0, 0.0..=4.0),
     StyleParam::new("detail", 0.35, 0.0..=2.0),
     StyleParam::new("wobble", 1.5, 0.0..=8.0),
@@ -194,6 +196,7 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("contour", "Outline", "Outline strength; 0 = none"),
     StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
     StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
+    StyleHint::new("grazing", "Spare grazing planes", "1 draws a silhouette only at a true step, so a floor seen edge-on doesn't ink the horizon in a band; 0 = every depth step"),
     StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
     StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
     StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
@@ -369,17 +372,18 @@ fn prep_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 }
 
 /// Whether any row in use hatches along the picture's edges, so the flow
-/// blur has to run.
+/// blur has to run. A row with no hatch layers draws no strokes (#404).
 pub fn any_tensor(rows: &[PencilRow]) -> bool {
-    rows.iter()
-        .any(|r| r.v[6][2] != PASS_THROUGH && r.v[4][3] == TENSOR)
+    rows.iter().any(|r| {
+        r.v[6][2] != PASS_THROUGH && r.v[4][3] == TENSOR && (r.v[0][2] + 0.5) as u32 > 0
+    })
 }
 
-/// One variant's settings, eight vec4s (see `PencilRow` in the shader).
+/// One variant's settings, nine vec4s (see `PencilRow` in the shader).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq)]
 pub struct PencilRow {
-    pub v: [[f32; 4]; 8],
+    pub v: [[f32; 4]; 9],
 }
 
 /// The paper and stroke images, kept with the style (#390).
@@ -517,6 +521,7 @@ pub fn row(
                 names_image(&option("paper_image")) as u32 as f32,
                 names_image(&option("stroke_image")) as u32 as f32,
             ],
+            [param("grazing").clamp(0.0, 1.0), 0.0, 0.0, 0.0],
         ],
     }
 }
@@ -896,11 +901,11 @@ mod tests {
     }
 
     #[test]
-    fn a_row_is_eight_vec4s() {
-        assert_eq!(std::mem::size_of::<PencilRow>(), 128);
+    fn a_row_is_nine_vec4s() {
+        assert_eq!(std::mem::size_of::<PencilRow>(), 144);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
-            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 128 + MAX_IDS * 4
+            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 144 + MAX_IDS * 4
         );
     }
 
@@ -1005,6 +1010,12 @@ mod tests {
         assert!(
             !any_tensor(&[surface, tensor_off]),
             "an opt-out row draws nothing"
+        );
+        let mut lines_only = tensor;
+        lines_only.v[0][2] = 0.0;
+        assert!(
+            !any_tensor(&[surface, lines_only]),
+            "a row with no hatch layers draws no strokes (#404)"
         );
     }
 
