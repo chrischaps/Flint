@@ -13,7 +13,6 @@ use super::{
     REALITY_COMPONENT, TIME_OF_DAY_COMPONENT, WEATHER_COMPONENT,
 };
 #[cfg(feature = "debug-hud")]
-use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::GrassEntityPosition;
@@ -339,7 +338,7 @@ impl PlayerApp {
                 if let Some(entity_id) = self.core.world.get_id(ocean_panel.entity_name()) {
                     if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                         for (field, value) in ocean_panel.config().to_fields() {
-                            comps.set_field(comp::OCEAN, field, value);
+                            comps.set_field(flint_geometry::components::OCEAN, field, value);
                         }
                     }
                 }

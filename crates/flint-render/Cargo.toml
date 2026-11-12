@@ -7,6 +7,8 @@ description = "wgpu renderer for Flint"
 
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-import = { workspace = true }

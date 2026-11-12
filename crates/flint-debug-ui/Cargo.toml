@@ -14,6 +14,8 @@ living = ["dep:flint-procgen"]
 
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-render = { workspace = true }
 flint-terrain = { workspace = true }
 flint-scene = { workspace = true }

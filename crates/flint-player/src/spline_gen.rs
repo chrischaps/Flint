@@ -17,11 +17,11 @@
 //! scenery such as verges.
 
 use flint_core::components as comp;
-use flint_core::spline::{self, SplineControlPoint, SplineSample};
 use flint_core::toml_util::{toml_f32, toml_f32_slice};
 use flint_core::vfs;
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
+use flint_geometry::spline::{self, SplineControlPoint, SplineSample};
 use flint_import::ImportedMaterial;
 use flint_physics::PhysicsSystem;
 use flint_render::{SceneRenderer, Vertex};
@@ -150,7 +150,11 @@ fn store_spline_data(
         toml::Value::Integer(gap_ranges.len() as i64),
     );
 
-    let _ = world.set_component(entity_id, comp::SPLINE_DATA, toml::Value::Table(table));
+    let _ = world.set_component(
+        entity_id,
+        flint_geometry::components::SPLINE_DATA,
+        toml::Value::Table(table),
+    );
 }
 
 // ─── Pass 2: generate cross-section meshes ───────────────
@@ -750,7 +754,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let spline_file = world
             .get_components(entity.id)
-            .and_then(|c| c.get(comp::SPLINE).cloned())
+            .and_then(|c| c.get(flint_geometry::components::SPLINE).cloned())
             .and_then(|s| s.get("file").and_then(|v| v.as_str().map(String::from)));
 
         if let Some(file_rel) = spline_file {
@@ -819,7 +823,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let mesh_comp = world
             .get_components(entity.id)
-            .and_then(|c| c.get(comp::SPLINE_MESH).cloned());
+            .and_then(|c| c.get(flint_geometry::components::SPLINE_MESH).cloned());
 
         if let Some(comp) = mesh_comp {
             match parse_spline_mesh_component(&comp) {
@@ -989,7 +993,7 @@ pub fn load_splines(
                 chunk_table.insert("t_end".into(), toml::Value::Float(t_end as f64));
                 let _ = world.set_component(
                     chunk_id,
-                    comp::SPLINE_CHUNK,
+                    flint_geometry::components::SPLINE_CHUNK,
                     toml::Value::Table(chunk_table),
                 );
 

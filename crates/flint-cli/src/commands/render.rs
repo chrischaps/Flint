@@ -3120,7 +3120,7 @@ fn check_wooze_sweep(args: &RenderArgs, grid: &super::sweep::SweepGrid) -> Resul
         let (_, Some(table)) = cell_knobs(args, Some(grid), (column, row))? else {
             continue;
         };
-        let mut field = flint_core::wooze::WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL);
+        let mut field = flint_wooze::WoozeField::new(flint_wooze::WoozeSample::NEUTRAL);
         field
             .set_global(&table, 0.0, 0.0)
             .map_err(|reason| anyhow!("--sweep {}: {reason}", grid.name()))?;

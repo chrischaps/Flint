@@ -21,7 +21,9 @@
 //! until that cycle ends, because neither can change mid-cycle continuously:
 //! a new glide would move the eased weight, and a new amplitude the whole pose.
 
-use crate::toml_util::{toml_f32, toml_vec3};
+use flint_core::toml_util::{toml_f32, toml_vec3};
+
+pub mod components;
 
 /// The shortest step, in seconds. A step under a frame can't be seen anyway, and
 /// it asks for poses far faster than any budget can make them.

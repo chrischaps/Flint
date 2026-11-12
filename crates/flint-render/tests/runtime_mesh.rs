@@ -1562,7 +1562,7 @@ fn a_double_sided_sheet_casts_from_either_side() {
 
 #[test]
 fn a_ray_target_is_met_where_each_entity_draws_it() {
-    use flint_core::ray_mesh::RayMesh;
+    use flint_geometry::ray_mesh::RayMesh;
     use std::sync::Arc;
 
     let gpu = gpu_or_skip!();

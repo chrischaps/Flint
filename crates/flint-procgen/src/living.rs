@@ -135,7 +135,7 @@ impl WarpedTime {
     /// The design's formula, with time counted in steps. Before the start
     /// reads as the start.
     fn at_beat(beats: f64, glide: f32) -> Self {
-        let (index, weight) = flint_core::wooze::warp(beats, glide);
+        let (index, weight) = flint_wooze::warp(beats, glide);
         Self { index, weight }
     }
 }

@@ -266,7 +266,7 @@ impl ScriptSystem {
     /// `screen_to_mesh` and [`Projector::ray_scene`] cast against. The host
     /// hands over the renderer's after each update, so scripts see where the
     /// last frame drew them.
-    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_core::ray_mesh::RayScene>) {
+    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_geometry::ray_mesh::RayScene>) {
         crate::lock_or_recover(&self.engine.ctx).ray_scene = scene;
     }
 

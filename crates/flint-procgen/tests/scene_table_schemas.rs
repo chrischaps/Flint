@@ -82,7 +82,7 @@ fn living_and_wooze_schemas_declare_only_what_is_read() {
     };
     let mut declared: Vec<&str> = fields.keys().map(String::as_str).collect();
     declared.sort_unstable();
-    let mut keys = flint_core::wooze::ZONE_KEYS.to_vec();
+    let mut keys = flint_wooze::ZONE_KEYS.to_vec();
     keys.sort_unstable();
     assert_eq!(declared, keys);
 }

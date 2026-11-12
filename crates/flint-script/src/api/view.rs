@@ -10,7 +10,7 @@ use crate::projector::{project_clip, View};
 use rhai::{Dynamic, Map};
 
 /// A mesh ray's hit as scripts see it: the keys `raycast` answers with.
-fn ray_hit_dynamic(hit: Option<flint_core::ray_mesh::RayHit>) -> Dynamic {
+fn ray_hit_dynamic(hit: Option<flint_geometry::ray_mesh::RayHit>) -> Dynamic {
     let Some(hit) = hit else {
         return Dynamic::UNIT;
     };

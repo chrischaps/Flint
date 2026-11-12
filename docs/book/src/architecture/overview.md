@@ -34,6 +34,8 @@ flint/
 │   ├── flint-scene/        # TOML scene serialization/deserialization
 │   ├── flint-ecs/          # hecs wrapper with stable IDs, names, hierarchy
 │   ├── flint-schema/       # Component/archetype schema loading and validation
+│   ├── flint-wooze/        # The wooze field
+│   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
@@ -138,6 +140,21 @@ Fundamental types shared by all crates. Minimal external dependencies (`thiserro
 - `ContentHash` --- SHA-256 based content addressing
 - `Transform`, `Vec3`, `Color` --- geometric primitives
 - `FlintError` --- base error type
+
+What only some features read lives a layer up, so an edit there doesn't rebuild every crate (#754): the wooze field is `flint-wooze`, and the ocean's wave spectrum, spline sampling and ray meshes are `flint-geometry`.
+
+### flint-wooze
+
+The wooze field (#213): how woozy any place in a scene is, one function of position and time that living props, shallow wooze, woozy grass and the shading boil all read. Also the `shallow_wooze` component's name. Depends only on `flint-core`; the renderer, procgen, the debug panels, the viewer, the player and the CLI read it.
+
+### flint-geometry
+
+- `ocean` --- the Gerstner wave spectrum, the one source of the ocean surface for the renderer and for scripts' buoyancy
+- `spline` --- Catmull-Rom path sampling with twist
+- `ray_mesh` --- rays against the triangles a game draws (ADR 0105)
+- `components` --- the `ocean`, `ocean_contact`, `water_body` and `spline` component names
+
+Depends only on `flint-core`.
 
 ### flint-schema
 

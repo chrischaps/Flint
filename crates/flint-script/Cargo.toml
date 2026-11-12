@@ -18,6 +18,7 @@ check = ["metadata", "rhai/internals"]
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
+flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }

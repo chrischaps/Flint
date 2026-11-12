@@ -14,7 +14,6 @@ use super::subsystem::{
     EncodeCtx, ExitReport, KeyPress, PlayerInput, RenderCtx, ReportCtx, SceneCtx, Stage, StageCtx,
     Subsystem,
 };
-use flint_core::components as comp;
 use flint_script::context::ScriptCommand;
 use winit::keyboard::KeyCode;
 
@@ -25,13 +24,13 @@ pub(crate) struct LivingSubsystem {
     pub(crate) blend: flint_procgen::BlendFrame,
     /// The field made from it, sampled on a clock of its own that stops
     /// when a game state pauses `living`. No table: no field, no samples.
-    pub(crate) wooze: Option<flint_core::wooze::WoozeField>,
+    pub(crate) wooze: Option<flint_wooze::WoozeField>,
     pub(crate) wooze_time: f64,
     pub(crate) wooze_missing_warned: bool,
     /// The shading boil's beats (#214), on the same clock as the field.
-    pub(crate) boil_clock: flint_core::wooze::BoilClock,
+    pub(crate) boil_clock: flint_wooze::BoilClock,
     /// The boil drawn this frame, for the A/B's other side
-    pub(crate) boil_now: flint_core::wooze::BoilFrame,
+    pub(crate) boil_now: flint_wooze::BoilFrame,
     /// Shallow wooze (#215): the clocks of the meshes on the field with no poses.
     pub(crate) shallow_wooze: ShallowWooze,
     /// Woozy grass (#252): the grass's sway and comb on the same clock.
@@ -115,7 +114,7 @@ impl LivingSubsystem {
         let woozy_grass = grass.is_some_and(|c| c.enabled && c.wooze);
         let shallow = !ctx
             .world
-            .entities_with_component(comp::SHALLOW_WOOZE)
+            .entities_with_component(flint_wooze::components::SHALLOW_WOOZE)
             .is_empty();
         let used = !ctx.resolver.living_props().is_empty()
             || ctx.scene.living.is_some()
@@ -142,7 +141,7 @@ impl LivingSubsystem {
     /// The subsystem a capture's grove runs on: its field (the scene's
     /// `[wooze]` with any sweep's knobs over it), and whether it's a capture
     /// of a moment, which draws shallow wooze.
-    pub(crate) fn for_capture(wooze: Option<flint_core::wooze::WoozeField>, moment: bool) -> Self {
+    pub(crate) fn for_capture(wooze: Option<flint_wooze::WoozeField>, moment: bool) -> Self {
         Self {
             wooze,
             capture: Some(Capture { shallow: moment }),
@@ -296,7 +295,7 @@ impl LivingSubsystem {
     /// it doesn't get one; it says so once, since a script may ask every frame.
     fn change_wooze(
         &mut self,
-        change: impl FnOnce(&mut flint_core::wooze::WoozeField, f64) -> Result<(), String>,
+        change: impl FnOnce(&mut flint_wooze::WoozeField, f64) -> Result<(), String>,
     ) {
         let time = self.wooze_time;
         match &mut self.wooze {

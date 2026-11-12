@@ -602,9 +602,9 @@ fn the_boil_clock_runs_with_the_field_and_only_with_it() {
     app.tick_procgen_for_test(1.0);
     assert_eq!(app.living().boil_clock.drawing(1), 0, "no field, no clock");
 
-    app.living().wooze = Some(WoozeField::new(flint_core::wooze::WoozeSample {
+    app.living().wooze = Some(WoozeField::new(flint_wooze::WoozeSample {
         step: 0.25,
-        ..flint_core::wooze::WoozeSample::NEUTRAL
+        ..flint_wooze::WoozeSample::NEUTRAL
     }));
     app.tick_procgen_for_test(0.5);
     // Half a second is two beats, twelve film frames, six drawings on twos.

@@ -1970,9 +1970,9 @@ fn paint_mark(ui: &mut egui::Ui, mark: &Mark) -> bool {
 }
 
 /// How far toward the next pose a part is, `frac` of the way through a step: the
-/// design's t', as `flint_core::wooze::warp` works it out.
+/// design's t', as `flint_wooze::warp` works it out.
 fn eased(frac: f64, glide: f32) -> f32 {
-    flint_core::wooze::warp(frac.clamp(0.0, 0.999_999), glide).1
+    flint_wooze::warp(frac.clamp(0.0, 0.999_999), glide).1
 }
 
 /// The warped clock as what it is: a step's worth of hold, then the ease to the
