@@ -78,7 +78,7 @@ pub struct RenderArgs {
 
     /// A look over the scene's post-processing (#279): a built-in
     /// (ascii_noir, matrix, ink_wash, graphite, watercolor,
-    /// coloured_pencil, blueprint, charcoal), a
+    /// coloured_pencil, blueprint, charcoal, rotoscope), a
     /// `styles/<name>.look.toml` beside the scene, or a path. Merged over
     /// the scene's [post_process] key by key; the other flags apply over
     /// it. `--look help` lists every look and what to tune
@@ -650,6 +650,12 @@ pub struct RenderArgs {
     /// Film frames each boil drawing is held: 1, 2 or 3 (default: 2)
     #[arg(long)]
     pub boil_on: Option<u32>,
+
+    /// Motion on twos for the whole frame (#405): draw every entity's position and
+    /// pose on ticks, this many a second, and hold the post time styles read to them
+    /// (12 = on twos at 24 fps; 0 = off). Sets [post_process] motion_hold
+    #[arg(long, value_name = "RATE")]
+    pub motion_hold: Option<f32>,
 
     /// Seconds of the scene's wooze field to run before capturing, which picks
     /// the boil's drawing (default 0: same value, same pixels)
@@ -1266,6 +1272,9 @@ pub fn run_in(mut args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     if let Some(t) = args.style.style_time.or(args.grain_time) {
         renderer.ocean_time = t as f64;
     }
+    // Poses held on twos (#405) tick with the post time from the first
+    // frame, so a --frames sequence holds frame 0's pose through its tick
+    renderer.set_motion_time(renderer.ocean_time);
 
     // Load terrain (if any)
     load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
@@ -2035,6 +2044,8 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
             camera.target = target;
         }
         renderer.ocean_time = base_time + t as f64;
+        // Held poses tick with the post time (#405)
+        renderer.set_motion_time(base_time + t as f64);
         renderer.grass_time = t;
         // History smoothing scales by the frame's game time (#342)
         renderer.style_dt = dt;
@@ -2360,6 +2371,9 @@ fn apply_boil_flags(args: &RenderArgs, pp: &mut flint_render::PostProcessConfig)
     }
     if let Some(on) = args.boil_on {
         pp.boil_on = on;
+    }
+    if let Some(rate) = args.motion_hold {
+        pp.motion_hold = rate.max(0.0);
     }
 }
 
@@ -3820,6 +3834,9 @@ impl Stage {
         frame_step: f64,
     ) -> Result<image::RgbaImage> {
         self.advance(ctx, t, frame_step);
+        // Poses held on twos tick on the capture's moment (#405), the post
+        // time's own seconds, stamped before the bones go up
+        self.renderer.set_motion_time(t);
         self.game
             .upload_living(&mut self.renderer, &ctx.device, &ctx.queue);
         if let Some(posed) = self.game.animation() {

@@ -21,6 +21,8 @@ struct PencilRow {
     g: vec4<f32>,
     // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
     h: vec4<f32>,
+    // grazing (#404), unused x3
+    i: vec4<f32>,
 };
 
 struct PencilUniforms {

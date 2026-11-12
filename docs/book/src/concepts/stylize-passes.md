@@ -545,6 +545,7 @@ angle = 50.0           # the base angle, degrees
 contrast = 1.2         # tone contrast before it picks layers (brightness too)
 contour = 1.0          # outline strength; contour_width in points
 depth = 1.0            # outline sensitivity to depth steps; crease to creases
+grazing = 0.0          # 1 spares a plane seen edge-on: the floor inks one horizon, not a band
 detail = 0.35          # outlines from the picture's own luminance edges
 wobble = 1.5           # how far lines wander, points
 sketchy = 0.6          # a second, offset outline beside the first
@@ -569,7 +570,8 @@ How it draws:
 
 - **Hatching builds tone the way a hand does.** Each layer switches on as the tone darkens past its threshold, and its strokes thicken from nothing rather than popping in. A layer crosses the one before it off the square (at 0°, +65°, −40° and +25°), so layers never make a grid. Each stroke is a dash of its own length that tapers at both ends, is jittered off its row and is bent by a slow wobble. A few dashes are left out.
 - **Stroke direction.** `surface` runs strokes along the surface's iso-depth lines, taken from the gradient of 1/z. That gradient is constant over a plane, so a box face hatches straight, and it turns smoothly round a barrel and across a floor. `screen` hatches everything at `angle`. `tensor` follows the picture's luminance edges, a structure tensor blurred over about three stroke spacings in two separable passes at half resolution (#392). In that blur each pixel's direction is weighted by its contour strength, so silhouettes and creases steer the flow and a flat, noisy patch (soft shadow, ambient occlusion) barely counts. The strokes sweep round a shadow's edge instead of fraying into short crossing patches. Where a surface or tensor direction is unsure (a face turned square to the camera, a flat colour), `angle` shows through. Directions are quantized to 15° bins with neighbouring bins blended, so strokes stay straight within a patch, as hand hatching does.
-- **Contours** come from depth steps (drawn on the near side), creases (the normal rebuilt from depth turns), the edge of a styled entity's mask, and luminance edges by `detail`. They are read back through a noise offset (`wobble`), twice when `sketchy` is set.
+- **Contours** come from depth steps (drawn on the near side), creases (the normal rebuilt from depth turns), the edge of a styled entity's mask, and luminance edges by `detail`. They are read back through a noise offset (`wobble`), twice when `sketchy` is set. A floor seen edge-on steps in depth from row to row as much as a silhouette does, so near the horizon it inks a thick band; `grazing = 1` keeps a depth step only where the second difference of 1/z (zero across any plane) says the neighbours lie on another surface, and the floor draws one horizon line (#404). No crease is drawn within two pixels of the frame's edge, where the neighbours are clamped (before #404 every pencil look outlined the frame).
+- **Line only.** `layers = 0` with `shade = 0` draws contours on paper and nothing else, and skips the stroke-direction work, so it is the cheapest pencil.
 - **Deterministic.** Every random choice is an integer hash of the stroke's row, dash, layer and `seed`, so the same seed draws byte-identical frames. `boil` moves the seed in whole steps of post time, which `--style-time` fixes.
 
 ![The three stroke directions on stylize_props](../images/pencil-directions.png)
@@ -635,6 +637,31 @@ enabled = false        # stays painted
 ```
 
 ![examples/pencil_sketch.scene.toml: six props, each its own hand; the world around them stays painted](../images/pencil-sketch-entities.png)
+
+### Motion on twos
+
+Rotoscoped film holds each drawing for two or three frames, and its lines redraw on the same beat. A `boil` redraws the lines that many times a second, but on its own the animation under them still moves smoothly, so the line redraw and the motion read as two separate things. `motion_hold` (#405) draws an entity's position and pose on ticks too:
+
+```toml
+[entities.dancer.motion_hold]
+rate = 12.0              # drawings a second: on twos at 24 fps
+
+[entities.dancer.pencil_style]
+boil = 12.0              # the lines redraw on the same ticks
+```
+
+![Eight frames of examples/motion_hold.scene.toml captured by flint-player at --frame-step 1/48: the pendulum, the YBot and the pencil lines change on frames 0 and 4 and hold on the three frames after each](../images/motion-hold-strip.png)
+
+- **What is held.** The component holds the entity and everything below it: the world matrix it is drawn with and a skinned model's bone palette, kept from the first frame of each tick until the next tick. The nearest `motion_hold` up the hierarchy wins, so `rate = 0` on a child lets that branch move smoothly. Lights, particles, the ocean and the camera keep moving smoothly.
+- **Only the drawing is held.** Physics (fixed at 1/60 s), IK and scripts read the world, which goes on moving smoothly, so a held crate still falls and collides at 60 Hz and a held hand still reaches its IK target. In `examples/motion_hold.scene.toml` two pendulums swing as mirrors of each other, one held and one smooth. Captured in `flint-player` at `--frame-step 1/48`, every frame on a tick is byte-identical to the same scene with no hold.
+- **Same tick as the lines.** A tick is `floor(time x rate)` of the post time, the clock `boil` reads. Pencil's boil steps its seed through the same function, so at `boil = 12` and `rate = 12` the pose and the lines change in exactly the same frames. A tick lands a thousandth of a tick early, so a clock that sums 1/60 steps to a hair under 1/12 still turns on frame 5.
+- **The whole frame.** `[post_process] motion_hold = 12` (or `--motion-hold 12` on `flint render`, `flint play` and `flint-player`) holds every entity that names no rate of its own. It also holds the post time that styles, film grain and the tear read to the start of each tick, so a whole-frame pencil boiling at 24 still redraws once a tick.
+- **Scripts.** `set_motion_hold(id, rate)`, `clear_motion_hold(id)` and `get_motion_hold(id)` write and read the component directly, so a hold set in `on_update` draws from that frame.
+- **Deterministic.** The host stamps the renderer with the frame's game time (`SceneRenderer::set_motion_time`) before it uploads bones: the player's clock, a capture's moment. A `--frame-step` capture is byte-identical run to run. `flint render --time 0..2 --fps 24` draws it. A renderer that is never stamped holds nothing (the `flint edit` viewer, for now).
+
+```bash
+flint render examples/motion_hold.scene.toml --no-grid --anim-time 0 --time 0..2 --fps 24 -o twos.gif
+```
 
 ### Blending in and out
 
@@ -952,7 +979,7 @@ contrast = 1.4
 wobble = 1.8
 ```
 
-Eight looks ship, compiled into the engine (`flint_render::look`) so they work from a game repo and on the web as well. A look is found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `looks`): `styles/<name>.look.toml` beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/styles/`, where a game's engine subtree keeps these eight as files). A file found there takes the place of a built-in with the same name; the built-in is what is used when there is no file. `--look` also takes a path ending `.look.toml` (or `.toml`), tried from the scene's folder and each folder above it. The working directory's `styles/` is not searched: run from a project's root it is the root's, which the search reaches anyway. `flint asset where looks graphite --scene <scene>` shows which it is.
+Nine looks ship, compiled into the engine (`flint_render::look`) so they work from a game repo and on the web as well. A look is found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `looks`): `styles/<name>.look.toml` beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/styles/`, where a game's engine subtree keeps these nine as files). A file found there takes the place of a built-in with the same name; the built-in is what is used when there is no file. `--look` also takes a path ending `.look.toml` (or `.toml`), tried from the scene's folder and each folder above it. The working directory's `styles/` is not searched: run from a project's root it is the root's, which the search reaches anyway. `flint asset where looks graphite --scene <scene>` shows which it is.
 
 | Look | Built from |
 |------|------------|
@@ -964,6 +991,7 @@ Eight looks ship, compiled into the engine (`flint_render::look`) so they work f
 | `coloured_pencil` | the pencil style at `color = 0.6`: the scene's colours in a warm lead on cream paper, two layers, heavy grain (#391) |
 | `blueprint` | the pencil style in white lead on blue paper, `direction = "screen"`, no wobble, sketch or texture lines: a technical drawing (#391) |
 | `charcoal` | the pencil style at an 11-point spacing and 3-point strokes, rubbed shade 0.8, heavy grain, doubled outlines (#391) |
+| `rotoscope` | the pencil style ink-forward on a blank white sheet: contours at 1.5 points, one layer of screen hatching only in the darks (brightness 0.5), `grazing = 1` so the floor is one horizon line, boil 12 a second; no bloom, SSAO or vignette (#404) |
 
 ![The four pencil looks on stylize_props: graphite, coloured_pencil, blueprint, charcoal](../images/look-sweep-pencil.png)
 

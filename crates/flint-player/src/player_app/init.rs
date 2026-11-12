@@ -350,6 +350,9 @@ impl PlayerApp {
         for e in flint_render::stylize::apply_style_specs(&mut config, &self.launch.style_specs) {
             tracing::warn!("{e}");
         }
+        if let Some(rate) = self.launch.motion_hold {
+            config.motion_hold = rate.max(0.0);
+        }
         config
     }
 

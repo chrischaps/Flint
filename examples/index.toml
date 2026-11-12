@@ -214,6 +214,11 @@ topic = "stylize"
 purpose = "Pencil on chosen props: hatching, contours and paper (#273)"
 
 [[example]]
+scene = "motion_hold.scene.toml"
+topic = "stylize"
+purpose = "Motion on twos: a pose and a pendulum held at 12 a second with the pencil's boil, beside the same swing drawn smoothly (#405)"
+
+[[example]]
 scene = "watercolor.scene.toml"
 topic = "stylize"
 purpose = "Some props painted in watercolor, the meadow left as it is (#272)"

@@ -34,6 +34,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #   --kuwahara-boil 0.5  --contour-boil 1  --boil-on 2  --boil-time 0.5
    #     (the boils are kuwahara:boil / contour:boil; boil_on stays a [post_process] key)
    #     (shading boil, #214: boil needs the scene's [wooze]; --boil-time picks the drawing)
+   #   --motion-hold 12       (#405: [post_process] motion_hold, the whole frame on twos: drawn positions,
+   #                          poses and the post time on 12 Hz ticks; per entity, a motion_hold component.
+   #                          Also on flint play / flint-player. tests/render_motion_hold_cli.rs)
    #   --oren-nayar 0.7          --sheen-strength 0.15  --sheen-color 1,0.9,0.8
    #   --grade-lift 0.03,0.02,0.015  --grade-gamma 1,1,1  --grade-gain 1.04,1,0.94
    #   --film-grain 0.03         --grain-time 0  --fxaa
@@ -102,7 +105,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          param's default/range/help; with a scene, its user styles too)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor|
-   #                          coloured_pencil|blueprint|charcoal (#391);
+   #                          coloured_pencil|blueprint|charcoal (#391)|rotoscope (#404);
    #                          `--look help` lists them with their tune sweeps. #356: a scene's
    #                          `[post_process] look = "<name>"` goes UNDER its keys (loader records
    #                          them in PostProcessDef::authored; flint_render::look::resolve, vfs reads);

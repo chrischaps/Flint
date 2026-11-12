@@ -651,6 +651,21 @@ name = "look-charcoal"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "charcoal"]
 
+# Ink-forward pencil on a blank sheet (#404): lines, one horizon (grazing = 1
+# spares the floor's depth steps), hatching only on the dark barrels and in
+# the cast shadows. On the plain bench, so only the look draws
+[[case]]
+name = "look-rotoscope"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same as an entities preset on the pencil bench: the cask and crate
+# blank paper with lines, the rest of the scene as it is
+[[case]]
+name = "look-rotoscope-entities"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:scope=entities"]
+
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"

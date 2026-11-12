@@ -789,6 +789,9 @@ pub struct SceneRenderer {
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
     pub ocean_time: f64,
+    /// Motion on twos (#405): who is drawn on ticks, what they last showed,
+    /// and the clock hosts stamp with [`Self::set_motion_time`].
+    motion_hold: crate::motion_hold::MotionHold,
     /// Seconds of game time this frame stepped, for styles whose history
     /// is a rate (ASCII's smoothing, #342): the player sets it from its
     /// clock's `delta_time` (so it follows `--frame-step`), the viewer from
@@ -1140,6 +1143,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            motion_hold: Default::default(),
             style_dt: 1.0 / 60.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
@@ -2698,6 +2702,7 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
+            motion_hold: Default::default(),
             style_dt: 1.0 / 60.0,
             // Headless particles (ADR 0068): zero instances until a caller
             // steps a ParticleSystem, so existing pixel gates are unchanged.
@@ -2871,6 +2876,13 @@ impl SceneRenderer {
         matrices: &[[[f32; 4]; 4]],
     ) {
         if self.device_lost {
+            return;
+        }
+        // A pose held on twos (#405) is written once a tick; the frames
+        // between draw the buffer as it was, CPU copies included
+        if self.entity_bone_buffers.contains_key(&entity_id)
+            && !self.motion_hold.bones_due(entity_id)
+        {
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(matrices);
@@ -3084,8 +3096,32 @@ impl SceneRenderer {
         parts[part] = softness;
     }
 
+    /// This frame's game time, for motion held on twos (#405): call it each
+    /// frame before uploading bones and before `update_from_world`, with the
+    /// clock the post time follows (the player's `total_time`, a capture's
+    /// moment), so poses and a style's `boil` turn on the same frames. A
+    /// renderer never stamped holds nothing: every pose is live.
+    pub fn set_motion_time(&mut self, seconds: f64) {
+        self.motion_hold.set_time(seconds);
+    }
+
+    /// The post time styles, grain and the tear read this frame: the
+    /// `ocean_time` clock wrapped as [`motion_hold::post_time`]
+    /// (crate::motion_hold::post_time) does, held to the start of its tick
+    /// under a whole-frame `[post_process] motion_hold` (#405).
+    pub fn post_time(&self) -> f32 {
+        let time = crate::motion_hold::post_time(self.ocean_time);
+        crate::motion_hold::held_time(time, self.postprocess_config.motion_hold)
+    }
+
+    /// Whether anything is drawn on ticks this frame (#405).
+    pub fn motion_held(&self) -> bool {
+        self.motion_hold.any()
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
+        self.motion_hold.clear();
         self.entity_bone_buffers.clear();
         self.entity_bone_matrices.clear();
         self.asset_bone_matrices.clear();
@@ -4027,6 +4063,20 @@ impl SceneRenderer {
         // (#628): empty and unwalked in a scene that never hides anything.
         let hidden = world.hidden_entities();
 
+        // Who is drawn on ticks this frame (#405): empty, and unwalked, in a
+        // scene with no motion_hold and no whole-frame rate
+        self.motion_hold.set_rates(crate::motion_hold::held_rates(
+            world,
+            self.postprocess_config.motion_hold,
+        ));
+        if self.motion_hold.any() {
+            // Bones went up before the rates were known: a hold that starts
+            // this frame keeps what they show
+            for id in self.entity_bone_buffers.keys() {
+                self.motion_hold.bones_shown(*id);
+            }
+        }
+
         for entity in world.all_entities() {
             if hidden.contains(&entity.id) {
                 continue;
@@ -4045,6 +4095,8 @@ impl SceneRenderer {
             let model_matrix = world
                 .get_world_matrix(entity.id)
                 .unwrap_or_else(|| Transform::default().to_matrix());
+            // Held on twos (#405): where it was drawn when its tick began
+            let model_matrix = self.motion_hold.matrix(entity.id, model_matrix);
             let world_pos = [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]];
 
             // Check if entity has a model component
@@ -5594,7 +5646,7 @@ impl SceneRenderer {
             on: crate::postprocess::tear_active(config),
             mode_params: config.mode_params,
             mix: config.mode_mix,
-            time: (self.ocean_time % 100_000.0) as f32,
+            time: self.post_time(),
         };
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(

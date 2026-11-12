@@ -285,6 +285,8 @@ Each style's `boil` is its own amount; how long each drawing is held is one `[po
 |-------|------|---------|-------------|
 | `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
 
+The shading boil's drawings are held on the wooze field's beat. To hold the motion under the lines too, so poses and positions change on the same ticks as a style's `boil`, see [Motion on twos](stylize-passes.md#motion-on-twos) and `[post_process] motion_hold`.
+
 A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `examples/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
 The field's `jitter` sets how hard it boils: both styles' `boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.

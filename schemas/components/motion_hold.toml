@@ -1,0 +1,25 @@
+# Motion on twos (#405): draw an entity, and everything below it, on ticks.
+#
+# A rotoscoped film holds each drawing for two or three frames, and its lines
+# redraw on the same beat. Put this on an entity and its drawn position and its
+# pose (a skinned model's bones) change only `rate` times a second, holding in
+# between:
+#
+#   [entities.dancer.motion_hold]
+#   rate = 12            # drawings a second: on twos at 24 fps
+#
+# Give a pencil style the same `boil` and the lines redraw in exactly the frames
+# the pose moves. Only the drawing is held: physics, IK and scripts see the world
+# move smoothly, so a held crate still falls and collides at 60 Hz.
+#
+# The nearest `motion_hold` up the hierarchy wins, so `rate = 0` on a child lets
+# that branch move smoothly. `[post_process] motion_hold = 12` holds every entity
+# that names no rate of its own (and the post time styles read), and the
+# --motion-hold flag on flint render, flint play and flint-player sets it.
+# Scripts: set_motion_hold(id, rate) / get_motion_hold(id).
+
+[component.motion_hold]
+description = "Draw this entity and its descendants on ticks, rate a second, holding the drawn position and pose in between (motion on twos). Physics and scripts still see smooth motion."
+
+[component.motion_hold.fields]
+rate = { type = "f32", default = 12.0, min = 0.0, description = "Drawings a second (12 = on twos at 24 fps). 0 lets this branch move smoothly, even under a whole-frame hold" }

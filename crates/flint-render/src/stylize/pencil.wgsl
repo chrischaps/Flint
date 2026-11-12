@@ -204,7 +204,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let direction = u32(row.e.w + 0.5);
     // World strokes on a surface need no flow; the sky keeps the screen's
     let on_world = world_grid(row) && wp.w > 0.5;
-    if direction == 2u && !on_world {
+    // A row with no hatch layers (line only, #404) draws no strokes, so it
+    // skips the flow's taps: the same picture, cheaper
+    let layers = u32(clamp(row.a.z, 0.0, 4.0) + 0.5);
+    if layers == 0u {
+        // no strokes, no flow
+    } else if direction == 2u && !on_world {
         v = textureSampleLevel(flow_texture, prep_sampler, in.uv, 0.0).xy + screen * 0.12;
     } else if direction == 0u && !on_world {
         let reach = row.a.x * ppp * 1.5;
@@ -235,7 +240,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Hatching: layer i joins once the darkness passes its threshold
     let dark = 1.0 - prep.x;
-    let layers = u32(clamp(row.a.z, 0.0, 4.0) + 0.5);
     // Each layer crosses the last off the square, so no two make a grid
     var offsets = array<f32, 4>(0.0, 0.36 * PI, -0.22 * PI, 0.14 * PI);
     var light = 1.0;

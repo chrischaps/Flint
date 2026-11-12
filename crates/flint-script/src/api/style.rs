@@ -15,6 +15,7 @@ use super::builder::{Call, CallResult, ScriptApi};
 use super::convert::{dynamic_to_toml, toml_to_dynamic};
 use crate::context::{LogLevel, ScriptCommand};
 use crate::style_reader::StyleReader;
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use rhai::{Dynamic, ImmutableString};
@@ -92,6 +93,66 @@ pub(crate) fn register(api: &mut ScriptApi) {
         call.ctx()
             .commands
             .push(ScriptCommand::ClearEntityStyle { entity });
+    });
+
+    // ── Motion on twos (#405) ──
+    // The component is world state the renderer reads, so these write it
+    // directly: a hold set in on_update draws from this frame.
+    m.func(
+        "set_motion_hold",
+        "Draw the entity and its descendants on ticks, rate a second (12 = on twos); 0 lets them move smoothly.",
+    )
+    .arg("id", Entity)
+    .arg("rate", Num)
+    .run(|call, (id, rate)| {
+        let rate = if rate.is_finite() { rate.max(0.0) } else { 0.0 };
+        let world = call.world_mut()?;
+        // Unchanged: no write, so a script that re-asserts it every frame
+        // doesn't touch the component
+        let own = world
+            .get_components(id)
+            .and_then(|c| c.get(comp::MOTION_HOLD))
+            .is_some();
+        if own && (world.view(id, comp::MOTION_HOLD).f64("rate", -1.0) - rate).abs() < 1e-9 {
+            return Ok(());
+        }
+        // World-level set_field keeps the component index the renderer walks
+        let _ = world.set_field(
+            id,
+            comp::MOTION_HOLD,
+            "rate",
+            toml::Value::Float(rate),
+        );
+        Ok(())
+    });
+
+    m.func(
+        "clear_motion_hold",
+        "Take the entity's own motion hold off: it moves as its parent does (or the whole frame's hold) again.",
+    )
+    .arg("id", Entity)
+    .run(|call, (id,)| {
+        let _ = call.world_mut()?.remove_component(id, comp::MOTION_HOLD);
+        Ok(())
+    });
+
+    m.func(
+        "get_motion_hold",
+        "The entity's own motion hold rate (drawings a second).",
+    )
+    .arg("id", Entity)
+    .returns(Num, "-1 when it has none of its own")
+    .run(|call, (id,)| -> CallResult<f64> {
+        let world = call.world()?;
+        let own = world
+            .get_components(id)
+            .and_then(|c| c.get(comp::MOTION_HOLD))
+            .is_some();
+        Ok(if own {
+            world.view(id, comp::MOTION_HOLD).f64("rate", 12.0)
+        } else {
+            -1.0
+        })
     });
 
     // ── Reading it back ──
