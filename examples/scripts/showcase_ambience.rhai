@@ -5,7 +5,7 @@ let base_bloom = 0.06;
 let in_crucible = false;
 
 fn on_init() {
-    let scene = current_scene();
+    let scene = get_current_scene();
     if scene == "examples/showcase_crucible.scene.toml" {
         in_crucible = true;
         base_bloom = 0.10;

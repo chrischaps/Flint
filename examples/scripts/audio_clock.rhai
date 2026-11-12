@@ -60,8 +60,8 @@ fn on_draw_ui() {
     let sw = screen_width();
     let ink = [0.92, 0.9, 0.86, 1.0];
     let dim = [0.6, 0.6, 0.66, 1.0];
-    draw_text_opts(sw * 0.5, 40.0, "AUDIO CLOCK", 22.0, #{ color: ink, align: "center", spacing: 4.0 });
-    draw_text_opts(sw * 0.5, screen_height() - 36.0, "SPACE  stall the frame 500 ms        E  pause", 13.0, #{ color: dim, align: "center", spacing: 2.0 });
+    draw_text(sw * 0.5, 40.0, "AUDIO CLOCK", 22.0, #{ color: ink, align: "center", spacing: 4.0 });
+    draw_text(sw * 0.5, screen_height() - 36.0, "SPACE  stall the frame 500 ms        E  pause", 13.0, #{ color: dim, align: "center", spacing: 2.0 });
 
     if is_action_just_pressed("jump") && has_wall {
         // Hold the frame: the music plays on in its own thread.
@@ -76,7 +76,7 @@ fn on_draw_ui() {
 
     let pos = audio_position(track);
     if pos < 0.0 {
-        draw_text_opts(sw * 0.5, 80.0, "waiting for the music to start", 15.0, #{ color: dim, align: "center" });
+        draw_text(sw * 0.5, 80.0, "waiting for the music to start", 15.0, #{ color: dim, align: "center" });
         return;
     }
     if last_pos >= 0.0 && pos < last_pos - 1.0 {
@@ -92,7 +92,7 @@ fn on_draw_ui() {
         } catch {
             has_wall = false;
         }
-        log_info(`[audio_clock] the music started: ${music} s in`);
+        log(`[audio_clock] the music started: ${music} s in`);
     }
 
     // Light what is heard: what is mixed now reaches the ear a little later.
@@ -105,11 +105,11 @@ fn on_draw_ui() {
 
     let wall = if has_wall { wall0.elapsed } else { -1.0 };
     let y = 80.0;
-    draw_text_opts(sw * 0.5, y, `music  ${secs(music)}`, 16.0, #{ color: ink, align: "center" });
-    draw_text_opts(sw * 0.5, y + 24.0, `summed delta_time  ${secs(summed)}   (${ms(summed - music)} from the music)`, 15.0, #{ color: dim, align: "center" });
+    draw_text(sw * 0.5, y, `music  ${secs(music)}`, 16.0, #{ color: ink, align: "center" });
+    draw_text(sw * 0.5, y + 24.0, `summed delta_time  ${secs(summed)}   (${ms(summed - music)} from the music)`, 15.0, #{ color: dim, align: "center" });
     let lat = if latency < 0.0 { "unknown here" } else { ms(latency) };
     let state = if paused { "    PAUSED" } else { "" };
-    draw_text_opts(sw * 0.5, y + 48.0, `output latency  ${lat}    stalls  ${stalls}${state}`, 13.0, #{ color: dim, align: "center" });
+    draw_text(sw * 0.5, y + 48.0, `output latency  ${lat}    stalls  ${stalls}${state}`, 13.0, #{ color: dim, align: "center" });
 
     // A line every five seconds: how far the music is from the wall clock,
     // within the two-second loop (so it doesn't depend on seeing every
@@ -120,6 +120,6 @@ fn on_draw_ui() {
         let off = (pos - music0 % 2.0 - wall) % 2.0;
         if off > 1.0 { off -= 2.0; }
         if off < -1.0 { off += 2.0; }
-        log_info(`[audio_clock] wall ${wall} pos ${pos} music-wall ${ms(off)} summed-music ${ms(summed - music)} stalls ${stalls}`);
+        log(`[audio_clock] wall ${wall} pos ${pos} music-wall ${ms(off)} summed-music ${ms(summed - music)} stalls ${stalls}`);
     }
 }

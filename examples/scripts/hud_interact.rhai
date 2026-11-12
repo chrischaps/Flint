@@ -55,10 +55,10 @@ fn on_draw_ui() {
     let box_y = sh - 80.0;
 
     // Background pill
-    draw_rect_ex(box_x, box_y, box_w, box_h, 0.04, 0.04, 0.04, 0.71 * prompt_alpha, 12.0, -1);
+    draw_rect(box_x, box_y, box_w, box_h, #{ color: [0.04, 0.04, 0.04, 0.71 * prompt_alpha], rounding: 12.0, layer: -1 });
 
     // Prompt text
     let tx = box_x + pad_x;
     let ty = box_y + pad_y;
-    draw_text_ex(tx, ty, prompt, text_size, 0.94, 0.92, 0.86, prompt_alpha, 1);
+    draw_text(tx, ty, prompt, text_size, #{ color: [0.94, 0.92, 0.86, prompt_alpha], layer: 1 });
 }
