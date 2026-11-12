@@ -15,7 +15,6 @@ use super::subsystem::{
     Subsystem,
 };
 use flint_core::components as comp;
-use flint_runtime::SystemPolicy;
 use flint_script::context::ScriptCommand;
 use winit::keyboard::KeyCode;
 
@@ -25,7 +24,7 @@ pub(crate) struct LivingSubsystem {
     /// Room to blend the props each frame
     pub(crate) blend: flint_procgen::BlendFrame,
     /// The field made from it, sampled on a clock of its own that stops
-    /// when animation does. No table: no field, no samples.
+    /// when a game state pauses `living`. No table: no field, no samples.
     pub(crate) wooze: Option<flint_core::wooze::WoozeField>,
     pub(crate) wooze_time: f64,
     pub(crate) wooze_missing_warned: bool,
@@ -42,6 +41,9 @@ pub(crate) struct LivingSubsystem {
 }
 
 impl LivingSubsystem {
+    /// Its name, and the key a game state pauses its clock by (#727).
+    pub(crate) const NAME: &'static str = "living";
+
     /// A left click on a living prop while the Living Props panel is open picks
     /// it (#248), and the click, press and release, stops there: the game never
     /// hears it. One that lands on no prop goes on as it would have.
@@ -180,12 +182,10 @@ impl LivingSubsystem {
     }
 
     /// This frame's step of the living clock: the frame's, unless the game
-    /// state pauses animation or the grove is frozen (F5).
+    /// state pauses `living` (`paused` and `loading` do) or the grove is
+    /// frozen (F5).
     fn living_dt(&self, ctx: &StageCtx) -> f64 {
-        let runs = ctx
-            .policy
-            .is_none_or(|policy| policy.animation == SystemPolicy::Run);
-        if runs && !self.tune.frozen {
+        if ctx.runs(self.name()) && !self.tune.frozen {
             ctx.clock.delta_time
         } else {
             0.0
@@ -359,7 +359,7 @@ impl LivingSubsystem {
 
 impl Subsystem for LivingSubsystem {
     fn name(&self) -> &'static str {
-        "living props"
+        Self::NAME
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {

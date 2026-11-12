@@ -2,42 +2,28 @@
 //! a stack of states each saying which systems run (ADR 0116). The pushes
 //! and pops are commands the host runs after the batch; the reads and
 //! `register_state` reach the machine the host lends for the call.
+//! `register_state` is a script error for a key no system answers to, or one
+//! that was documented and never did anything (`rendering`, `transparent`,
+//! `"hidden"`; #727).
 
 use super::builder::kind::{Array, Map, Str};
 use super::builder::ScriptApi;
 use crate::context::ScriptCommand;
-use flint_runtime::{StateConfig, SystemPolicy};
+use flint_runtime::{StateConfig, StateError};
 use rhai::Dynamic;
 
 /// What a host without a state machine is in.
 const PLAYING: &str = "playing";
 
-/// `register_state`'s config: each system's policy (`"run"`, the default,
-/// `"pause"` or `"hidden"`) and whether the state below shows through.
-pub(crate) fn state_config(config: &rhai::Map) -> StateConfig {
-    let policy = |key: &str| -> SystemPolicy {
-        match config
-            .get(key)
-            .and_then(|v| v.clone().into_string().ok())
-            .as_deref()
-        {
-            Some("pause") | Some("Pause") => SystemPolicy::Pause,
-            Some("hidden") | Some("Hidden") => SystemPolicy::Hidden,
-            _ => SystemPolicy::Run,
-        }
-    };
-    StateConfig {
-        physics: policy("physics"),
-        scripts: policy("scripts"),
-        animation: policy("animation"),
-        particles: policy("particles"),
-        audio: policy("audio"),
-        rendering: policy("rendering"),
-        transparent: config
-            .get("transparent")
-            .and_then(|v| v.as_bool().ok())
-            .unwrap_or(false),
-    }
+/// `register_state`'s config: a policy, `"run"` or `"pause"`, for each
+/// system it names; the systems it leaves out run. Which names a system
+/// answers to is the host's machine's to check.
+pub(crate) fn state_config(config: &rhai::Map) -> Result<StateConfig, StateError> {
+    let entries: Vec<(String, String)> = config
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+    StateConfig::parse(entries.iter().map(|(k, v)| (k.as_str(), v.as_str())))
 }
 
 pub(crate) fn register(api: &mut ScriptApi) {
@@ -100,14 +86,20 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "register_state",
-        "Make a state: each of physics, scripts, animation, particles, audio, rendering \"run\", \"pause\" or \"hidden\", and transparent.",
+        "Make a state: a system's name (physics, scripts, animation, particles, audio, living) to \"run\" or \"pause\"; one left out runs. An unknown name is an error.",
     )
     .arg("name", Str)
     .arg("config", Map)
     .run(|call, (name, config)| {
-        if let Some(sm) = call.ctx().try_state_machine_mut() {
-            sm.register_state(&name, state_config(&config));
-        }
+        let refused = |call: &super::builder::Call, e: StateError| {
+            call.error(format_args!("state \"{name}\": {e}"))
+        };
+        let config = state_config(&config).map_err(|e| refused(call, e))?;
+        let registered = match call.ctx().try_state_machine_mut() {
+            Some(sm) => sm.register_state(&name, config),
+            None => Ok(()),
+        };
+        registered.map_err(|e| refused(call, e))
     });
 }
 
@@ -115,20 +107,66 @@ pub(crate) fn register(api: &mut ScriptApi) {
 mod tests {
     use super::*;
 
+    use flint_runtime::state::{AUDIO, PHYSICS, SCRIPTS};
+    use flint_runtime::{GameStateMachine, PersistentStore};
+
     #[test]
-    fn a_state_config_reads_each_policy_and_defaults_to_run() {
+    fn a_state_config_reads_each_policy_and_the_rest_run() {
         let mut config = rhai::Map::new();
         config.insert("physics".into(), "pause".into());
-        config.insert("rendering".into(), "Hidden".into());
-        config.insert("audio".into(), "loud".into());
-        config.insert("transparent".into(), true.into());
-        let c = state_config(&config);
-        assert_eq!(c.physics, SystemPolicy::Pause);
-        assert_eq!(c.rendering, SystemPolicy::Hidden);
-        assert_eq!(c.audio, SystemPolicy::Run);
-        assert_eq!(c.scripts, SystemPolicy::Run);
-        assert!(c.transparent);
-        assert!(!state_config(&rhai::Map::new()).transparent);
+        config.insert("audio".into(), "Run".into());
+        let c = state_config(&config).unwrap();
+        assert!(!c.runs(PHYSICS));
+        assert!(c.runs(AUDIO));
+        assert!(c.runs(SCRIPTS));
+    }
+
+    #[test]
+    fn a_key_or_policy_nothing_implements_is_refused() {
+        for (key, value) in [
+            ("rendering", Dynamic::from("run")),
+            ("transparent", Dynamic::from(true)),
+            ("physics", Dynamic::from("hidden")),
+            ("audio", Dynamic::from("loud")),
+        ] {
+            let mut config = rhai::Map::new();
+            config.insert(key.into(), value);
+            let err = state_config(&config).expect_err(key);
+            assert!(err.to_string().contains(key), "{err}");
+        }
+    }
+
+    /// The script's error names the state, the key and why, at the call.
+    fn register_error(sm: &mut GameStateMachine, script: &str) -> String {
+        let engine = crate::engine::ScriptEngine::new();
+        let mut store = PersistentStore::new();
+        let physics = flint_physics::PhysicsSystem::new();
+        let _scope = crate::context::StateScope::new(&engine.ctx, sm, &mut store, &physics);
+        match engine.rhai_engine().eval::<()>(script) {
+            Ok(()) => String::new(),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn register_state_is_a_script_error_naming_what_it_refused() {
+        let mut sm = GameStateMachine::new();
+        let err = register_error(
+            &mut sm,
+            "register_state(\"menu\", #{ physics: \"pause\", transparent: true })",
+        );
+        assert!(err.contains("register_state: state \"menu\""), "{err}");
+        assert!(err.contains("`transparent` is not implemented"), "{err}");
+        assert!(!sm.push_state("menu"), "nothing was registered");
+
+        let err = register_error(&mut sm, "register_state(\"menu\", #{ grass: \"pause\" })");
+        assert!(err.contains("`grass` is not a system"), "{err}");
+        assert!(!sm.push_state("menu"));
+
+        let err = register_error(&mut sm, "register_state(\"menu\", #{ physics: \"pause\" })");
+        assert_eq!(err, "");
+        assert!(sm.push_state("menu"));
+        assert!(!sm.active_config().runs(PHYSICS));
     }
 
     #[test]

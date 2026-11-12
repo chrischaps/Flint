@@ -22,7 +22,8 @@ use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::GrassEntityPosition;
-use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
+use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
+use flint_runtime::{RuntimeSystem, StateConfig};
 use std::collections::HashSet;
 
 /// Frame time given to decoding sounds while a late audio bundle settles in
@@ -1003,7 +1004,7 @@ impl PlayerApp {
         self.run_stage(Stage::Animation, Some(&config));
 
         // Frame-budgeted procgen queue, then whatever it left to living props,
-        // whose clock stops when animation does
+        // whose clock stops when the game state pauses `living`
         self.tick_procgen();
         self.run_stage(Stage::Procgen, Some(&config));
 
@@ -1058,10 +1059,10 @@ impl PlayerApp {
             };
             ext.pre_update(&mut ctx);
         }
-        // Queued with the physics events, so collect_game_events hands them
-        // to scripts and audio this frame.
+        // Onto the frame's bus, so collect_game_events hands them to scripts
+        // and audio this frame.
         for event in fired_events {
-            self.physics.push_event(event);
+            self.events.push(event);
         }
     }
 
@@ -1177,13 +1178,13 @@ impl PlayerApp {
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
-            if config.physics == SystemPolicy::Run {
+            if config.runs(PHYSICS) {
                 if has_fps_player {
                     self.physics
                         .update_character(&self.input, &mut self.world, dt);
                 }
                 self.physics
-                    .fixed_update(&mut self.world, dt)
+                    .fixed_update(&mut self.world, dt, &mut self.events)
                     .unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
             }
 
@@ -1201,7 +1202,7 @@ impl PlayerApp {
             );
             self.camera.target = cam_target;
 
-            if config.audio == SystemPolicy::Run {
+            if config.runs(AUDIO) {
                 self.audio.update_listener(
                     cam_pos,
                     self.physics.camera_yaw(),
@@ -1212,9 +1213,10 @@ impl PlayerApp {
     }
 
     fn collect_game_events(&mut self) -> Vec<flint_runtime::GameEvent> {
-        // Process physics events — scripts + audio both consume them
+        // The bus's events (the last frame's physics contacts, extension,
+        // style-tween and script events) — scripts + audio both consume them.
         // Always collect events (input always processed so pause/unpause keybinds work)
-        let mut game_events = self.physics.drain_events();
+        let mut game_events = self.events.drain();
         for action in self.input.actions_just_pressed() {
             game_events.push(flint_runtime::GameEvent::ActionPressed(action));
         }
@@ -1305,7 +1307,7 @@ impl PlayerApp {
         );
 
         // Only run on_update when scripts are not paused
-        if config.scripts == SystemPolicy::Run {
+        if config.runs(SCRIPTS) {
             self.script
                 .update(&mut self.world, self.clock.delta_time)
                 .unwrap_or_else(|e| tracing::warn!("Script error: {:?}", e));
@@ -1335,13 +1337,13 @@ impl PlayerApp {
     /// Move the style tweens on by this frame's game time (#370), while
     /// scripts run.
     fn step_style_tweens(&mut self) {
-        if self.state_machine.active_config().scripts == SystemPolicy::Run {
+        if self.state_machine.active_config().runs(SCRIPTS) {
             let step = self
                 .style
                 .tweens
                 .step(&mut self.world, self.clock.delta_time);
             for event in step.events {
-                self.physics.push_event(event);
+                self.events.push(event);
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
@@ -1399,7 +1401,7 @@ impl PlayerApp {
         self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
 
         // Audio triggers from game events (skip when paused)
-        if config.audio == SystemPolicy::Run {
+        if config.runs(AUDIO) {
             self.audio.process_events(&game_events, &self.world);
             self.audio
                 .update(&mut self.world, self.clock.delta_time)
@@ -1407,7 +1409,7 @@ impl PlayerApp {
         }
 
         // Advance animations (skip when paused)
-        if config.animation == SystemPolicy::Run {
+        if config.runs(ANIMATION) {
             self.animation
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();
@@ -1458,7 +1460,7 @@ impl PlayerApp {
         self.animation.run_ik(&mut self.world);
 
         // Advance particle simulation (skip when paused)
-        if config.particles == SystemPolicy::Run {
+        if config.runs(PARTICLES) {
             self.particles
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();

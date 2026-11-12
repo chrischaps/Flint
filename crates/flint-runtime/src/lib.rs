@@ -3,8 +3,8 @@
 //! Provides the core game loop building blocks:
 //! - `GameClock` — fixed-timestep accumulator for deterministic physics
 //! - `InputState` — keyboard and mouse input tracking with action bindings
-//! - `GameEvent` / `EventBus` — typed event queue for inter-system communication
-//! - `RuntimeSystem` — trait for systems ticked by the game loop
+//! - `GameEvent` / `EventBus` — the frame's event queue, owned by the player
+//! - `RuntimeSystem` — what the player's per-frame systems share (called by type, no registry)
 //! - `pad` — the gamepad backend (gilrs, or a stand-in without `gamepad`)
 //! - `rumble` — a general pad rumble, `PadRumble` (#748)
 
@@ -33,6 +33,6 @@ pub use persist::{
     DEFAULT_SLOT,
 };
 pub use rumble::{PadRumble, PadTarget, RumbleError, RumbleRequest, MAX_RUMBLE_SECONDS};
-pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
+pub use state::{GameState, GameStateMachine, StateConfig, StateError, SystemPolicy};
 pub use system::RuntimeSystem;
 pub use touch_controls::{TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget};

@@ -209,9 +209,9 @@ The summonable debug overlay shared by the viewer and the player:
 Game loop infrastructure for interactive scenes:
 - `GameClock` --- fixed-timestep accumulator (1/60s default)
 - `InputState` and `InputConfig` --- keyboard/mouse/gamepad tracking with TOML-configured action bindings
-- `EventBus` --- decoupled event dispatch between systems
-- `RuntimeSystem` trait --- standard interface for update/render systems
-- `GameStateMachine` --- pushdown automaton for game states (play, pause, menu) with per-system `SystemPolicy`
+- `EventBus` --- the frame's game events; the player owns it, physics pushes its contacts into it, and extensions, style changes and scripts push their own
+- `RuntimeSystem` trait --- `initialize` and `update`, shared by scripts, audio, animation and particles; the player calls each by type (there is no registry)
+- `GameStateMachine` --- a stack of game states (play, pause, menu), each a `StateConfig` of `SystemPolicy` (`Run` or `Pause`) by system name; `register_state` refuses a name the host has no system for
 - `PersistentStore` --- key-value data that survives scene transitions
 - `pad` --- the gamepad backend every pad reader goes through: gilrs with the `gamepad` feature (off by default here; the player's turns it on), else a stand-in that never finds a backend
 - `PadRumble` --- a script's `rumble(pad, strength, seconds)`: both motors through gilrs's force-feedback server, in 50 ms ticks
