@@ -30,7 +30,8 @@ pub struct ChartCommonArgs {
 pub struct StyleArgs {
     /// Turn on a registered style over the scene's post-processing:
     /// `name[:key=value,...]`, e.g. `ascii`, `ascii:cell=12,ramp=blocks`,
-    /// `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable;
+    /// `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off` (off
+    /// everywhere, entities' own `ascii_style` included). Repeatable;
     /// a later word wins. `--style help` lists every style and its keys
     #[arg(long = "style", value_parser = parse_style_spec)]
     pub styles: Vec<String>,

@@ -702,8 +702,12 @@ impl StyleDescriptor {
 
     /// Whether this style runs this frame: `config` draws it over the
     /// frame ([`Self::covers_frame`]), or it is per-entity and an entity
-    /// asks for it (#266) at a blend above 0 (#400).
+    /// asks for it (#266) at a blend above 0 (#400). Never while `config`
+    /// has it off everywhere (#376, `--style <name>:off`).
     pub fn is_on(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
+        if config.styles.is_off_everywhere(self.name) {
+            return false;
+        }
         self.covers_frame(config) || (self.component.is_some() && ids.requests(self.name))
     }
 
@@ -1515,6 +1519,12 @@ pub struct StyleSetting {
     /// and out by ramping it (the stage draws what the style read back over
     /// its result, [`run_stage`]).
     pub blend: Option<f32>,
+    /// Off everywhere (#376): not only the table but every entity whose
+    /// component or `style_mask` would switch the style on for its own
+    /// pixels. `--style <name>:off` sets it, so a styled scene renders
+    /// unstyled with the rest of its post-processing kept; switching the
+    /// style on clears it. A scene's table never sets it.
+    pub off_everywhere: bool,
 }
 
 /// Keys every style's table reads besides its own parameters and options;
@@ -1532,8 +1542,31 @@ impl StyleSettings {
         self.styles.get(name).is_some_and(|s| s.enabled)
     }
 
+    /// Switch style `name`'s table on or off. On also lifts an
+    /// [`off_everywhere`](Self::set_off_everywhere); off leaves the style's
+    /// entities to switch it on for their own pixels.
     pub fn set_enabled(&mut self, name: &str, enabled: bool) {
-        self.styles.entry(name.to_string()).or_default().enabled = enabled;
+        let setting = self.styles.entry(name.to_string()).or_default();
+        setting.enabled = enabled;
+        if enabled {
+            setting.off_everywhere = false;
+        }
+    }
+
+    /// Whether style `name` is off everywhere (#376), its entities'
+    /// own components and `style_mask`s included.
+    pub fn is_off_everywhere(&self, name: &str) -> bool {
+        self.styles.get(name).is_some_and(|s| s.off_everywhere)
+    }
+
+    /// Turn style `name` off everywhere (#376): its table, and every
+    /// entity that would switch it on for its own pixels. What
+    /// `--style <name>:off` does; [`set_enabled`](Self::set_enabled)`(name,
+    /// true)` undoes it.
+    pub fn set_off_everywhere(&mut self, name: &str) {
+        let setting = self.styles.entry(name.to_string()).or_default();
+        setting.enabled = false;
+        setting.off_everywhere = true;
     }
 
     pub fn param(&self, name: &str, param: &str) -> Option<f32> {
@@ -2377,7 +2410,9 @@ pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
 /// style is registered and on and the variant isn't an opt-out. A faded id
 /// (#400: its entities all at blend 0) keeps its style as owner though the
 /// style is off for it, so a whole-frame style leaves the prop as it came,
-/// as it did while the faded style still ran. Id 0 (unstyled) is always
+/// as it did while the faded style still ran; a style off everywhere
+/// (#376) owns nothing, so its props are plain scene to every other
+/// style. Id 0 (unstyled) is always
 /// none; the table is [`ownership::MAX_IDS`] long.
 pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
     let registry = registry();
@@ -2392,10 +2427,11 @@ pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
         if v.off {
             continue;
         }
-        if let Some(i) = registry
-            .iter()
-            .position(|d| d.name == v.style && (ids.is_faded(id) || d.is_on(config, ids)))
-        {
+        if let Some(i) = registry.iter().position(|d| {
+            d.name == v.style
+                && !config.styles.is_off_everywhere(d.name)
+                && (ids.is_faded(id) || d.is_on(config, ids))
+        }) {
             *slot = i as u32;
         }
     }
