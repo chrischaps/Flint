@@ -57,7 +57,7 @@ Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `rend
 | Feature | Off means |
 |---------|-----------|
 | `audio` | `flint play` runs silent, as on a machine with no sound card (sounds still load, scripts still play them). `calibrate` and `play-chart` won't start. `render-suite` renders offline either way. |
-| `gamepad` | No pads are seen; `spike-rumble` says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
+| `gamepad` | No pads are seen and a script's `rumble()` does nothing; `spike-rumble` says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
 | `dialogs` | The editors' Save As, Export and Browse buttons open no dialog and say why on stderr. |
 
 Put back any one of them with `--features`, for example `--no-default-features --features audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and CI builds it on a Linux runner with the ALSA and libudev headers removed.

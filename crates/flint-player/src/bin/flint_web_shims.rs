@@ -47,8 +47,8 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use flint_input_capture::pad::{Axis, EventType, Gilrs};
     use flint_player::user_files;
+    use flint_runtime::pad::{Axis, EventType, Gilrs};
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
     };

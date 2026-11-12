@@ -34,13 +34,17 @@
 //! Without the `gamepad` feature (#221) the same goes natively: [`pad`] is a
 //! stand-in that never finds a backend, so capture, the granularity probe
 //! and the rumble spike each fail at their start, and nothing links libudev.
+//!
+//! [`pad`] is flint-runtime's (#748): the ordinary gamepad path and a
+//! script's general `rumble()` live there, and this crate is the rhythm
+//! layer's alone.
 
 #![cfg_attr(
     any(target_arch = "wasm32", not(feature = "gamepad")),
     allow(dead_code, unused_imports)
 )]
 
-pub mod pad;
+pub use flint_runtime::pad;
 pub mod rumble;
 
 use flint_music::clock_bridge::ClockBridge;

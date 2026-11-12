@@ -73,10 +73,10 @@ use events::AndroidGamepadTracker;
 use flint_animation::AnimationSystem;
 use flint_audio::AudioSystem;
 use flint_ecs::FlintWorld;
-use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_runtime::pad::Gilrs;
 use flint_runtime::{GameClock, GameStateMachine, InputState};
 use flint_script::ScriptSystem;
 pub use state::{LaunchOptions, SceneSettings};
@@ -343,6 +343,8 @@ pub struct PlayerApp {
 
     // Optional gamepad backend
     gilrs: Option<Gilrs>,
+    /// A script's `rumble()`s playing now, through `gilrs` (#748).
+    pad_rumble: flint_runtime::PadRumble,
 
     // State machine + persistence (survive scene transitions)
     state_machine: GameStateMachine,

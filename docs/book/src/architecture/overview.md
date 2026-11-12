@@ -22,7 +22,7 @@ flint/
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-terrain/      # Heightmap terrain with splat-map blending
-│   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine)
+│   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
 │   ├── flint-import/       # File importers (glTF/GLB with skeleton/skin extraction)
@@ -80,7 +80,7 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
 | Audio | Kira 0.11 | Rust-native, game-focused, spatial audio |
 | GUI | egui 0.30 | Immediate-mode, easy integration with wgpu; also drives the debug panels and player HUD |
-| Gamepads | gilrs + gilrs-core | Frame-rate polling in the player; direct 1 kHz polling and rumble in `flint-input-capture` |
+| Gamepads | gilrs + gilrs-core | Frame-rate polling and a script's `rumble()` through `flint-runtime`'s `pad`; direct 1 kHz polling and clock-stamped rumble in `flint-input-capture` |
 | Audio decoding | symphonia, hound | Stem decoding and WAV output for offline suite renders in `flint-music` |
 | Noise / RNG | noise, rand, rand_chacha | Deterministic procgen and terrain generation |
 | Node editor | egui-snarl | The texture pipeline editor inside `flint edit` |
@@ -213,6 +213,8 @@ Game loop infrastructure for interactive scenes:
 - `RuntimeSystem` trait --- standard interface for update/render systems
 - `GameStateMachine` --- pushdown automaton for game states (play, pause, menu) with per-system `SystemPolicy`
 - `PersistentStore` --- key-value data that survives scene transitions
+- `pad` --- the gamepad backend every pad reader goes through: gilrs with the `gamepad` feature (off by default here; the player's turns it on), else a stand-in that never finds a backend
+- `PadRumble` --- a script's `rumble(pad, strength, seconds)`: both motors through gilrs's force-feedback server, in 50 ms ticks
 
 ### flint-physics
 
@@ -249,7 +251,8 @@ A dedicated thread that owns `Gilrs` and polls it at 1 kHz (`CaptureConfig::poll
 - `VerbMap::{Prototype, Full}` maps sticks, buttons and triggers onto the chart verb space (`lean`, `sway`, `pulse`, `press`, `flick`, `pressure_l/r`); charts never see buttons
 - `measure_granularity` reports the driver's real poll cadence; `rumble` drives haptics directly over XInput
 - Uses the gilrs XInput backend on Windows because the default WGI backend delivers nothing to console apps
-- Depends on `flint-core` and `flint-music`
+- Reads pads through `flint-runtime`'s `pad`, as the player does; nothing outside the rhythm layer needs this crate
+- Depends on `flint-core`, `flint-music` and `flint-runtime`
 
 ### flint-animation
 

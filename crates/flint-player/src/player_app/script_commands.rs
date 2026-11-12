@@ -16,7 +16,7 @@ use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::quality::QualitySettings;
 use flint_core::EntityId;
 use flint_core::Vec3 as FlintVec3;
-use flint_input_capture::pad::Gilrs;
+use flint_runtime::pad::Gilrs;
 use flint_runtime::GameEvent;
 use flint_script::{CameraOverrides, PostProcessOverrides, ScriptHost};
 
@@ -196,6 +196,8 @@ impl PlayerApp {
                     chromatic_aberration: authored.chromatic_aberration,
                     desaturate: authored.desaturate,
                 });
+                // The capture thread's rumble engine owns the motors now.
+                self.pad_rumble.stop_all();
                 self.gilrs = None;
                 println!(
                     "[music] gamepad handed to capture thread \
@@ -439,6 +441,23 @@ impl ScriptHost for PlayerApp {
 
     fn set_camera_cut_detection(&mut self, enabled: bool) {
         self.style.camera_cut.enabled = enabled;
+    }
+
+    fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
+        // No backend (headless build, a failed `Gilrs::new()`), or a music
+        // session has the pads: nothing to rumble, as with no pad (#748).
+        let Some(gilrs) = &mut self.gilrs else {
+            return;
+        };
+        let target = flint_runtime::PadTarget::from_script(pad);
+        let request = flint_runtime::RumbleRequest::new(target, strength, seconds);
+        if let Err(e) = self
+            .pad_rumble
+            .rumble(gilrs, request, web_time::Instant::now())
+        {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| tracing::warn!("rumble: {e} (said once)"));
+        }
     }
 
     fn set_look(&mut self, name: Option<String>) {
@@ -695,4 +714,49 @@ fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
     value
         .as_table()
         .ok_or_else(|| format!("{value} isn't a map of knobs"))
+}
+
+/// A script's `rumble()` in the player, with no music session (#748).
+#[cfg(test)]
+mod rumble_tests {
+    use super::PlayerApp;
+    use flint_ecs::FlintWorld;
+    use flint_runtime::pad::Gilrs;
+    use flint_script::context::ScriptCommand;
+
+    fn buzz() -> ScriptCommand {
+        ScriptCommand::Rumble {
+            pad: -1,
+            strength: 0.7,
+            seconds: 0.3,
+        }
+    }
+
+    #[test]
+    fn a_rumble_with_no_backend_or_no_pad_does_nothing() {
+        let mut app = PlayerApp::new(
+            FlintWorld::new(),
+            "rumble_test.scene.toml".into(),
+            false,
+            None,
+            None,
+        );
+        // Before the window (or in a build without `gamepad`) there's no
+        // backend: the command lands and nothing rumbles.
+        assert!(app.gilrs.is_none());
+        flint_script::host::apply(&mut app, buzz());
+        assert_eq!(app.pad_rumble.playing(), 0);
+
+        // A backend with no pad (CI, this machine without a controller).
+        app.gilrs = Gilrs::new().ok();
+        let no_pad = app
+            .gilrs
+            .as_ref()
+            .is_some_and(|g| g.gamepads().next().is_none());
+        flint_script::host::apply(&mut app, buzz());
+        if no_pad {
+            assert_eq!(app.pad_rumble.playing(), 0);
+        }
+        app.poll_gamepad_events();
+    }
 }

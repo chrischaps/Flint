@@ -16,7 +16,7 @@ use super::music_guide_panel;
 use super::timeline_panel;
 use super::PlayerApp;
 use anyhow::Result;
-use flint_input_capture::pad::{Axis, EventType};
+use flint_runtime::pad::{Axis, EventType};
 use flint_runtime::{Binding, RebindMode};
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
@@ -126,6 +126,8 @@ impl PlayerApp {
     }
 
     pub(super) fn poll_gamepad_events(&mut self) {
+        // A script's finished `rumble()`s let go of their effects (#748).
+        self.pad_rumble.update(web_time::Instant::now());
         let mut events = Vec::new();
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(event) = gilrs.next_event() {

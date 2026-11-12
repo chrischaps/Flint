@@ -17,10 +17,10 @@ use flint_animation::AnimationSystem;
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
-use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_runtime::pad::Gilrs;
 use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState};
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
@@ -102,6 +102,7 @@ impl PlayerApp {
             test_gpu: None,
             input_layers: InputLayers::new(input_config_override),
             gilrs: None,
+            pad_rumble: flint_runtime::PadRumble::new(),
             state_machine: GameStateMachine::new(),
             saves: Default::default(),
             transition_phase: TransitionPhase::Idle,

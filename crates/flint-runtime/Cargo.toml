@@ -5,6 +5,14 @@ edition.workspace = true
 license.workspace = true
 description = "Game loop, input, and event system for Flint engine"
 
+[features]
+# Gamepads through gilrs (libudev on Linux), behind `pad` and `rumble`. Off
+# by default: every runtime crate links this one for `InputState`, and only
+# the player and the rhythm capture read pads; their own `gamepad` features
+# turn it on (#221, #748). Off, `pad` is a stand-in whose `Gilrs::new()`
+# always fails.
+gamepad = ["dep:gilrs"]
+
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
@@ -12,3 +20,4 @@ flint-ecs = { workspace = true }
 toml = { workspace = true }
 winit = { workspace = true }
 serde = { workspace = true }
+gilrs = { workspace = true, optional = true }
