@@ -33,7 +33,7 @@
           {
             "type": "command",
             "if": "Bash(bash scripts/issue.sh claim *)",
-            "command": "bash\"$CLAUDE_PROJECT_DIR/scripts/build-space.sh\" check --hook",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/build-space.sh\" check --hook",
             "timeout": 30
           }
         ]
