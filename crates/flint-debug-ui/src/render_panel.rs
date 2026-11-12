@@ -720,7 +720,7 @@ fn fov_label(fov_deg: f32) -> &'static str {
 
 /// What the wooze field is telling the boil here and now. Its sliders are shares
 /// of this, so a scene with no field needs to say why they do nothing.
-fn boil_status(boil: &flint_core::wooze::BoilFrame) -> String {
+fn boil_status(boil: &flint_wooze::BoilFrame) -> String {
     if boil.step <= 0.0 {
         "No [wooze] table here, so nothing boils.".to_string()
     } else {

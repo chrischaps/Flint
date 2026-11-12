@@ -77,7 +77,7 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-29-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
+31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, serve, preview, play, check,
@@ -111,6 +111,8 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-pixels   Texel loops on load (RGBA widening, mip chains); no deps, optimized in debug builds
   ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap)
   ├── flint-schema   Component/archetype schema system
+  ├── flint-wooze    The wooze field (how woozy a place is, as a function of position and time) and the boil clock
+  ├── flint-geometry Gerstner ocean spectrum, spline sampling, rays against drawn meshes; their component names
   └── flint-core     EntityId, ContentHash, Transform, Vec3, Color, FlintError, vfs (read-only file layer)
 ```
 

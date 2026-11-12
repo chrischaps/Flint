@@ -1,6 +1,6 @@
 //! The `ocean` module: the scene ocean's surface, sampled from the same
 //! Gerstner spectrum the renderer displaces vertices with
-//! (`flint_core::ocean` is the one source, and `total_time` is the clock
+//! (`flint_geometry::ocean` is the one source, and `total_time` is the clock
 //! the player hands the renderer as its ocean time). ADR 0116.
 //!
 //! The spectrum is cached, and made again only when the `ocean`
@@ -9,9 +9,8 @@
 
 use super::builder::kind::{Map as MapKind, Num};
 use super::builder::ScriptApi;
-use flint_core::components as comp;
-use flint_core::ocean::{OceanParams, WaveSpectrum};
 use flint_ecs::FlintWorld;
+use flint_geometry::ocean::{OceanParams, WaveSpectrum};
 use rhai::{Dynamic, Map};
 use std::sync::{Arc, Mutex};
 
@@ -21,11 +20,14 @@ type SpectrumCache = Arc<Mutex<Option<WaveSpectrum>>>;
 /// The first `ocean` component's parameters, or `None` without one.
 pub(crate) fn scene_ocean(world: &FlintWorld) -> Option<OceanParams> {
     let id = world
-        .entities_with_component(comp::OCEAN)
+        .entities_with_component(flint_geometry::components::OCEAN)
         .iter()
         .next()
         .copied()?;
-    let component = world.get_components(id)?.get(comp::OCEAN)?.clone();
+    let component = world
+        .get_components(id)?
+        .get(flint_geometry::components::OCEAN)?
+        .clone();
     Some(OceanParams::from_component(&component))
 }
 

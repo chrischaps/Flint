@@ -420,7 +420,7 @@ softness = 0.45
 
 ### The wooze field
 
-Once anything in a scene drifts, anything that holds still looks wrong, so how woozy a place is belongs to the world and not to each prop. A scene with a `[wooze]` table has one function of position and time that everything reads: `flint_core::wooze::WoozeField::sample(position, time)` returns `{ amplitude, step, glide, jitter }`.
+Once anything in a scene drifts, anything that holds still looks wrong, so how woozy a place is belongs to the world and not to each prop. A scene with a `[wooze]` table has one function of position and time that everything reads: `flint_wooze::WoozeField::sample(position, time)` returns `{ amplitude, step, glide, jitter }`.
 
 ```toml
 [wooze]

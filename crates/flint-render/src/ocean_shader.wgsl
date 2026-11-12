@@ -1,6 +1,6 @@
 // Flint ocean shader — Gerstner displacement + stylized cel-banded shading.
 //
-// The wave array is generated on the CPU (flint-core/src/ocean.rs) and
+// The wave array is generated on the CPU (flint-geometry/src/ocean.rs) and
 // uploaded verbatim; this shader only sums it. Keep the summation formulas
 // IDENTICAL to WaveSpectrum::displacement()/normal() — CPU/GPU parity is
 // what buoyancy relies on (tested by gpu_packing_matches_cpu_evaluation).

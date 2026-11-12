@@ -176,7 +176,7 @@ impl PlayerApp {
         let Some(&entity_id) = self
             .core
             .world
-            .entities_with_component(comp::OCEAN)
+            .entities_with_component(flint_geometry::components::OCEAN)
             .iter()
             .next()
         else {
@@ -189,7 +189,7 @@ impl PlayerApp {
             .core
             .world
             .get_components(entity_id)
-            .and_then(|comps| comps.get(comp::OCEAN).cloned())
+            .and_then(|comps| comps.get(flint_geometry::components::OCEAN).cloned())
         else {
             return;
         };

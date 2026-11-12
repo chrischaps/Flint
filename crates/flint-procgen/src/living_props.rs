@@ -33,8 +33,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
-use flint_core::wooze::{Cycle, WoozeField, WoozeSample};
 use flint_core::{ContentHash, EntityId};
+use flint_wooze::{Cycle, WoozeField, WoozeSample};
 use web_time::Instant;
 
 use crate::generator::LivingGenerator;
@@ -4017,10 +4017,8 @@ value = 1
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    let (index, weight) = flint_core::wooze::warp(
-                        prop.beats() + prop.clock.phase(s),
-                        prop.clock.glide,
-                    );
+                    let (index, weight) =
+                        flint_wooze::warp(prop.beats() + prop.clock.phase(s), prop.clock.glide);
                     SegmentPose::blend(
                         &prop.pose(index).unwrap().segments[i],
                         &prop.pose(index + 1).unwrap().segments[i],
@@ -4199,7 +4197,7 @@ value = 1
                     .iter()
                     .enumerate()
                     .map(|(i, s)| {
-                        let (index, weight) = flint_core::wooze::warp(
+                        let (index, weight) = flint_wooze::warp(
                             prop.echo_beats(echo) + prop.clock.phase(s),
                             prop.clock.glide,
                         );
@@ -4251,7 +4249,7 @@ value = 1
                     .iter()
                     .enumerate()
                     .map(|(i, s)| {
-                        let (index, weight) = flint_core::wooze::warp(
+                        let (index, weight) = flint_wooze::warp(
                             prop.echo_beats(echo) + prop.clock.phase(s),
                             prop.clock.glide,
                         );
@@ -4313,7 +4311,7 @@ value = 1
             resolver.process_living(1.0 / 60.0);
             let props = resolver.living_props_mut();
             let prop = props.prop(id);
-            let slow = flint_core::wooze::warp(prop.beats() / 2.0, prop.clock.glide).0;
+            let slow = flint_wooze::warp(prop.beats() / 2.0, prop.clock.glide).0;
             let (from, to) = LivingClock::slow_pair(slow);
             assert!(prop.pose(from).is_some() && prop.pose(to).is_some());
             wrote += u32::from(props.blend_prop(id, &mut frame).shadow_changed);

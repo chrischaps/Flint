@@ -1,6 +1,7 @@
 //! The engine's schema set against the engine's code (ADR 0115 decision 3, #681).
 //!
-//! Three things have to agree: the constants in `flint_core::components`,
+//! Three things have to agree: the constants in `flint_core::components`
+//! and the feature crates' own ([`COMPONENT_FILES`], #754),
 //! the files in `schemas/components/`, and the code that reads a component.
 //! When they don't, a scene's mistake passes in silence: `flint schema light`
 //! printed nothing for years, so a `directional_light` table validated and
@@ -100,10 +101,22 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+/// Where component-name constants are declared: the core's, and the feature
+/// crates that own their components' names (#754).
+const COMPONENT_FILES: &[&str] = &[
+    "crates/flint-core/src/components.rs",
+    "crates/flint-geometry/src/components.rs",
+    "crates/flint-wooze/src/components.rs",
+];
+
 /// `(IDENT, "value")` for every `pub const IDENT: &str = "value";` in
-/// `flint_core::components`.
+/// [`COMPONENT_FILES`].
 fn constants() -> Vec<(String, String)> {
-    let text = read(&repo().join("crates/flint-core/src/components.rs"));
+    let text: String = COMPONENT_FILES
+        .iter()
+        .map(|file| read(&repo().join(file)))
+        .collect::<Vec<_>>()
+        .join("\n");
     let found: Vec<(String, String)> = text
         .lines()
         .filter_map(|line| {
@@ -195,11 +208,16 @@ fn has_path(code: &str, needle: &str) -> bool {
     })
 }
 
+/// Whether `path` is one of the [`COMPONENT_FILES`].
+fn is_component_file(path: &str) -> bool {
+    COMPONENT_FILES.iter().any(|file| path.ends_with(file))
+}
+
 /// Whether code outside tests uses the constant `ident`.
 fn constant_is_used(source: &[(String, String)], ident: &str) -> bool {
     source
         .iter()
-        .filter(|(path, _)| !path.ends_with("flint-core/src/components.rs"))
+        .filter(|(path, _)| !is_component_file(path))
         .any(|(_, code)| {
             has_path(code, &format!("comp::{ident}"))
                 || has_path(code, &format!("components::{ident}"))
@@ -211,7 +229,7 @@ fn literal_is_used(source: &[(String, String)], name: &str) -> bool {
     let literal = format!("\"{name}\"");
     source
         .iter()
-        .filter(|(path, _)| !path.ends_with("flint-core/src/components.rs"))
+        .filter(|(path, _)| !is_component_file(path))
         .any(|(_, code)| code.contains(&literal))
 }
 

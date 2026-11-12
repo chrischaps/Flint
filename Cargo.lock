@@ -1721,6 +1721,7 @@ dependencies = [
  "flint-script",
  "flint-terrain",
  "flint-viewer",
+ "flint-wooze",
  "gif",
  "glam",
  "hound",
@@ -1771,10 +1772,12 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "flint-core",
+ "flint-geometry",
  "flint-procgen",
  "flint-render",
  "flint-scene",
  "flint-terrain",
+ "flint-wooze",
  "toml",
  "tracing",
 ]
@@ -1791,6 +1794,14 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "flint-geometry"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "toml",
 ]
 
 [[package]]
@@ -1882,6 +1893,7 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-geometry",
  "flint-import",
  "flint-input-capture",
  "flint-music",
@@ -1895,6 +1907,7 @@ dependencies = [
  "flint-schema",
  "flint-script",
  "flint-terrain",
+ "flint-wooze",
  "getrandom 0.3.4",
  "image",
  "js-sys",
@@ -1924,9 +1937,11 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "flint-core",
+ "flint-geometry",
  "flint-import",
  "flint-scene",
  "flint-schema",
+ "flint-wooze",
  "gltf",
  "image",
  "rand 0.9.2",
@@ -1976,11 +1991,13 @@ dependencies = [
  "flint-asset",
  "flint-core",
  "flint-ecs",
+ "flint-geometry",
  "flint-import",
  "flint-particles",
  "flint-pixels",
  "flint-scene",
  "flint-terrain",
+ "flint-wooze",
  "image",
  "naga",
  "pollster",
@@ -2053,6 +2070,7 @@ dependencies = [
  "flint-animation",
  "flint-core",
  "flint-ecs",
+ "flint-geometry",
  "flint-physics",
  "flint-procgen",
  "flint-runtime",
@@ -2090,12 +2108,14 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-geometry",
  "flint-import",
  "flint-particles",
  "flint-procgen",
  "flint-render",
  "flint-scene",
  "flint-schema",
+ "flint-wooze",
  "notify",
  "notify-debouncer-mini",
  "pollster",
@@ -2103,6 +2123,14 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "flint-wooze"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "toml",
 ]
 
 [[package]]

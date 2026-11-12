@@ -5,7 +5,7 @@
 # load check against it, so `flint schema wooze` says what the table and a zone
 # take and a game's own schemas can tighten it. A zone's rules that a field
 # can't state, such as a sphere needing a radius, are checked by
-# `flint_core::wooze`.
+# `flint_wooze`.
 #
 # A scene with a `[wooze]` table has every living prop follow it, whatever each
 # spec's `[living]` table says about step and glide, and every `shallow_wooze` mesh

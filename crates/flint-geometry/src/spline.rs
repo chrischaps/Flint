@@ -4,7 +4,7 @@
 //! producing evenly-spaced samples with position, forward, right, up
 //! basis vectors and parametric t values.
 
-use crate::Vec3;
+use flint_core::Vec3;
 
 /// A single control point on a Catmull-Rom spline.
 #[derive(Debug, Clone)]

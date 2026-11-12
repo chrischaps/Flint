@@ -229,7 +229,7 @@ pub struct ExtensionCtx<'a> {
     /// where the last frame drew them (ADR 0105): cast a ray or a segment
     /// through it to find the first thing drawn along it. Empty until the
     /// first frame is drawn. Scripts cast through the same scene.
-    pub rays: std::sync::Arc<flint_core::ray_mesh::RayScene>,
+    pub rays: std::sync::Arc<flint_geometry::ray_mesh::RayScene>,
     /// The current scene's top-level tables, as its file wrote them (#686):
     /// `[post_process]`, `[camera]`, and any table of the game's own. See
     /// [`scene_table`](Self::scene_table). A scene transition replaces
@@ -529,7 +529,7 @@ impl ExtensionGpu<'_> {
         self.upload_mesh(name, vertices, indices, material);
         if options.ray_target {
             let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
-            let mesh = flint_core::ray_mesh::RayMesh::new(&positions, indices);
+            let mesh = flint_geometry::ray_mesh::RayMesh::new(&positions, indices);
             self.renderer
                 .set_ray_mesh(name, Some(std::sync::Arc::new(mesh)));
         }

@@ -13,7 +13,6 @@ use super::{
     REALITY_COMPONENT, TIME_OF_DAY_COMPONENT, WEATHER_COMPONENT,
 };
 #[cfg(feature = "debug-hud")]
-use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::GrassEntityPosition;
@@ -339,7 +338,7 @@ impl PlayerApp {
                 if let Some(entity_id) = self.core.world.get_id(ocean_panel.entity_name()) {
                     if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                         for (field, value) in ocean_panel.config().to_fields() {
-                            comps.set_field(comp::OCEAN, field, value);
+                            comps.set_field(flint_geometry::components::OCEAN, field, value);
                         }
                     }
                 }
@@ -1213,9 +1212,15 @@ impl PlayerApp {
             None
         };
 
-        // User styles that don't compile (#275): shown until they do
+        // User styles that don't compile (#275), and built-in shaders
+        // read from FLINT_STYLE_SHADER_DIR that don't (#418): shown until
+        // they do
         #[cfg(feature = "debug-hud")]
-        let style_errors = flint_render::stylize::custom::errors();
+        let style_errors = {
+            let mut errors = flint_render::stylize::custom::errors();
+            errors.extend(flint_render::stylize::dev_shader::errors());
+            errors
+        };
 
         let full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
             // Layers, back to front: script UI, game egui, debug panels.

@@ -52,7 +52,7 @@ pub(crate) fn living_uses(
     if tables.contains_key("wooze") {
         uses.push("[wooze]");
     }
-    if has(comp::SHALLOW_WOOZE) {
+    if has(flint_wooze::components::SHALLOW_WOOZE) {
         uses.push("shallow_wooze meshes");
     }
     if grass.is_some_and(|c| c.enabled && c.wooze) {

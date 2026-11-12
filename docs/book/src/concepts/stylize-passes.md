@@ -1186,6 +1186,14 @@ impl StylePass for Invert {
 
 `stylize::kit` has the parts most styles are made of: `fullscreen_pipeline`, `uniform_layout`, `sampled_layout`, `uniform_buffer`, `shader` and `fullscreen_pass`. `stylize/invert.rs` and `invert.wgsl` together are about 140 lines.
 
+A style's WGSL goes into `kit::shader` as `kit::wgsl!("common.wgsl", "mine.wgsl")`: the files' `include_str!`s concatenated, plus their names. The names are what let a shader be tuned without a rebuild (#418). With `FLINT_STYLE_SHADER_DIR=crates/flint-render/src/stylize` set, natively, every built-in style reads its files from that folder rather than from the binary, shared files such as `ascii_common.wgsl` and `../palette.wgsl` included. The viewer and the player build again each style whose file was saved, a quarter-second poll on the frame thread, and `flint render` reads the folder on every run:
+
+```bash
+FLINT_STYLE_SHADER_DIR=crates/flint-render/src/stylize flint edit examples/watercolor.scene.toml
+```
+
+Saved in `watercolor.wgsl`, a tweak showed in the open viewer 470--672 ms later (nine edits). A debug rebuild after the same tweak took 35 s, and the release rebuild #272 measured took 3--7 minutes, each followed by a restart. naga checks what is read first. A file that doesn't parse or validate goes to the style error card as `file:line:col` with the line quoted, as a user style's does, and the shader last built from disk keeps drawing (else the compiled-in one). A shader naga takes and wgpu refuses, such as a renamed entry point, panics while the style is built. The style is then built from the last good shaders, and the card says so. Saving a good file clears the card. The variable is read once at start-up, which also logs a warning that it's on. It does nothing on the web, and a shipping build never reads the files.
+
 What a style gets from `StyleFrame`:
 
 | | |

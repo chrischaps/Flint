@@ -77,6 +77,8 @@ profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-asset = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }

@@ -121,7 +121,7 @@ impl Kuwahara {
             &kit::shader(
                 device,
                 "Kuwahara Tensor Shader",
-                include_str!("kuwahara_tensor.wgsl"),
+                kit::wgsl!("kuwahara_tensor.wgsl"),
             ),
             &layouts,
             HDR_FORMAT,
@@ -132,7 +132,7 @@ impl Kuwahara {
             &kit::shader(
                 device,
                 "Kuwahara Tensor Blur Shader",
-                include_str!("kuwahara_tensor_blur.wgsl"),
+                kit::wgsl!("kuwahara_tensor_blur.wgsl"),
             ),
             &layouts,
             HDR_FORMAT,
@@ -140,7 +140,7 @@ impl Kuwahara {
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Kuwahara Pipeline",
-            &kit::shader(device, "Kuwahara Shader", include_str!("kuwahara.wgsl")),
+            &kit::shader(device, "Kuwahara Shader", kit::wgsl!("kuwahara.wgsl")),
             &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
             d.format,
         );

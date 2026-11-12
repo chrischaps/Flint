@@ -130,7 +130,7 @@ pub struct PostProcessConfig {
     /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
     /// does, and its amount of 0 turns both boils off.
-    pub boil: flint_core::wooze::BoilFrame,
+    pub boil: flint_wooze::BoilFrame,
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the

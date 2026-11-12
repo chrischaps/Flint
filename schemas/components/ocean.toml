@@ -2,7 +2,7 @@
 description = "Endless Gerstner-wave ocean surface with stylized cel shading. One per scene; the grid follows the camera."
 
 [component.ocean.fields]
-# ── Simulation (flint_core::ocean::OceanParams) ─────────────────────────
+# ── Simulation (flint_geometry::ocean::OceanParams) ─────────────────────────
 seed = { type = "i32", description = "Wave spectrum RNG seed (same seed = same ocean)", default = 7 }
 num_waves = { type = "i32", description = "Number of Gerstner waves, 1-16", default = 12 }
 wavelength_min = { type = "f32", description = "Shortest wavelength in meters", default = 4.0 }

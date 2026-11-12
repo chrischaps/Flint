@@ -7,8 +7,8 @@
 
 use crate::widgets::drag_f32;
 use crate::DebugPanel;
-use flint_core::ocean::OceanParams;
 use flint_core::toml_util::{toml_color, toml_f32};
+use flint_geometry::ocean::OceanParams;
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
 

@@ -28,7 +28,7 @@
 
 use std::sync::{Arc, Mutex};
 
-pub use flint_core::ray_mesh::{RayHit, RayScene};
+pub use flint_geometry::ray_mesh::{RayHit, RayScene};
 pub use flint_terrain::GroundField;
 
 use crate::context::ScriptCallContext;
@@ -449,7 +449,7 @@ mod tests {
             .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
             .collect();
         let mut scene = super::RayScene::new();
-        let mesh = std::sync::Arc::new(flint_core::ray_mesh::RayMesh::new(&p, &i));
+        let mesh = std::sync::Arc::new(flint_geometry::ray_mesh::RayMesh::new(&p, &i));
         let identity = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],

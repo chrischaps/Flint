@@ -46,7 +46,7 @@ struct ViewerState {
     scene_post: Option<PostProcessDef>,
     /// The scene's wooze field, if it has a `[wooze]` table. The viewer reads it
     /// for the shading boil only (#214); it doesn't run living props.
-    wooze: Option<flint_core::wooze::WoozeField>,
+    wooze: Option<flint_wooze::WoozeField>,
     /// The scene's authored `[camera]` block, if any — seeds the orbit camera
     /// on load (and on Space reset) so the viewer opens on the authored
     /// framing instead of the generic default.
@@ -449,7 +449,7 @@ pub struct ViewerApp {
     particle_alive: usize,
     last_particle_tick: Instant,
     /// The shading boil's clock (#214): beats, and seconds for the field's ramps.
-    boil_clock: flint_core::wooze::BoilClock,
+    boil_clock: flint_wooze::BoilClock,
     boil_time: f64,
     last_boil_tick: Instant,
 }
@@ -1446,8 +1446,10 @@ impl ViewerApp {
         let mut gizmo_edits: Vec<EditAction> = Vec::new();
         let mut gizmo_drag_just_ended = false;
 
-        // User styles that don't compile (#275), shown until they do
-        let style_errors = flint_render::stylize::custom::errors();
+        // User styles that don't compile (#275), and built-in shaders read
+        // from FLINT_STYLE_SHADER_DIR that don't (#418), shown until they do
+        let mut style_errors = flint_render::stylize::custom::errors();
+        style_errors.extend(flint_render::stylize::dev_shader::errors());
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
@@ -2802,7 +2804,7 @@ impl ApplicationHandler for ViewerApp {
 
 /// The wooze field a scene describes, naming what's wrong with it and going on
 /// without that part, as the player does.
-fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_core::wooze::WoozeField> {
+fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_wooze::WoozeField> {
     let (field, issues) = flint_procgen::LivingTables::or_warn(scene).wooze?.field();
     for issue in issues {
         tracing::warn!("{issue}; going without it");

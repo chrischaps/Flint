@@ -8,6 +8,8 @@ description = "Procedural generation subsystem for the Flint engine"
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-import = { workspace = true }
 # The scene tables living props own (`[living]`, `[wooze]`; #686) are read out
 # of a `SceneFile`, checked against their `[table.*]` schemas, and written back

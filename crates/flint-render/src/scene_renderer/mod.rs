@@ -607,9 +607,9 @@ pub struct SceneRenderer {
     /// Bumped once per `update_from_world`; stamps cache entries.
     extract_frame: u64,
     /// Runtime meshes uploaded as ray targets, by name (ADR 0105).
-    ray_meshes: HashMap<String, Arc<flint_core::ray_mesh::RayMesh>>,
+    ray_meshes: HashMap<String, Arc<flint_geometry::ray_mesh::RayMesh>>,
     /// Where the ray targets stood at the last `update_from_world`.
-    ray_scene: Arc<flint_core::ray_mesh::RayScene>,
+    ray_scene: Arc<flint_geometry::ray_mesh::RayScene>,
     grid_draw: Option<DrawCall>,
     entity_draws: Vec<DrawCall>,
     skinned_entity_draws: Vec<SkinnedDrawCall>,
@@ -767,7 +767,7 @@ pub struct SceneRenderer {
     /// when the component didn't describe a mesh; the warning said why.
     scene_water_bodies:
         std::collections::BTreeMap<String, (toml::Value, Option<crate::water_body::GpuWaterBody>)>,
-    ocean_spectrum: Option<flint_core::ocean::WaveSpectrum>,
+    ocean_spectrum: Option<flint_geometry::ocean::WaveSpectrum>,
     ocean_visuals: crate::ocean_pipeline::OceanVisuals,
     ocean_active: bool,
     /// Contact-foam hull: ([x, z, cos_yaw, sin_yaw], [half_x, half_z]).
@@ -3323,7 +3323,11 @@ impl SceneRenderer {
     /// the positions and indices the mesh was uploaded with. `None` stops it
     /// being one. Uploading the mesh again, or removing it, also stops it,
     /// so set it again after each upload.
-    pub fn set_ray_mesh(&mut self, name: &str, mesh: Option<Arc<flint_core::ray_mesh::RayMesh>>) {
+    pub fn set_ray_mesh(
+        &mut self,
+        name: &str,
+        mesh: Option<Arc<flint_geometry::ray_mesh::RayMesh>>,
+    ) {
         match mesh {
             Some(m) => {
                 self.ray_meshes.insert(name.to_string(), m);
@@ -3339,7 +3343,7 @@ impl SceneRenderer {
     /// at its world matrix (ADR 0105). Cast rays through it to find what's
     /// drawn along a line. A new scene is made each update, so a clone held
     /// across frames goes on answering for the frame it came from.
-    pub fn ray_scene(&self) -> Arc<flint_core::ray_mesh::RayScene> {
+    pub fn ray_scene(&self) -> Arc<flint_geometry::ray_mesh::RayScene> {
         self.ray_scene.clone()
     }
 
@@ -4017,7 +4021,7 @@ impl SceneRenderer {
         let tex_cache_ref = tex_cache.as_ref().unwrap();
 
         // The ray targets, placed afresh (ADR 0105).
-        let mut ray_scene = flint_core::ray_mesh::RayScene::new();
+        let mut ray_scene = flint_geometry::ray_mesh::RayScene::new();
 
         // What `visibility { visible = false }` hides, descendants included
         // (#628): empty and unwalked in a scene that never hides anything.
@@ -4697,22 +4701,22 @@ impl SceneRenderer {
     /// coefficient sets), so live-tweaking any field takes effect next frame.
     fn extract_ocean_from_world(&mut self, world: &FlintWorld) {
         self.ocean_active = false;
-        for &entity_id in world.entities_with_component(comp::OCEAN) {
+        for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN) {
             let ocean_comp = world
                 .get_components(entity_id)
-                .and_then(|components| components.get(comp::OCEAN).cloned());
+                .and_then(|components| components.get(flint_geometry::components::OCEAN).cloned());
             let Some(ocean_comp) = ocean_comp else {
                 continue;
             };
 
-            let params = flint_core::ocean::OceanParams::from_component(&ocean_comp);
+            let params = flint_geometry::ocean::OceanParams::from_component(&ocean_comp);
             let needs_regen = self
                 .ocean_spectrum
                 .as_ref()
                 .map(|s| s.params != params)
                 .unwrap_or(true);
             if needs_regen {
-                self.ocean_spectrum = Some(flint_core::ocean::WaveSpectrum::generate(&params));
+                self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(&params));
             }
             self.ocean_visuals = crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
             self.ocean_active = self.ocean_pipeline.is_some();
@@ -4771,11 +4775,11 @@ impl SceneRenderer {
     /// only when its component changes, and dropped with its entity.
     fn extract_water_bodies_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         let mut seen = std::collections::BTreeSet::new();
-        for &entity_id in world.entities_with_component(comp::WATER_BODY) {
+        for &entity_id in world.entities_with_component(flint_geometry::components::WATER_BODY) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
-            let Some(value) = components.get(comp::WATER_BODY) else {
+            let Some(value) = components.get(flint_geometry::components::WATER_BODY) else {
                 continue;
             };
             let name = world
@@ -4808,8 +4812,8 @@ impl SceneRenderer {
         // Bodies take the sea's look and waves; a scene with bodies and no
         // ocean gets the default ocean's.
         if !self.ocean_active && self.has_water_bodies() && self.ocean_spectrum.is_none() {
-            self.ocean_spectrum = Some(flint_core::ocean::WaveSpectrum::generate(
-                &flint_core::ocean::OceanParams::default(),
+            self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(
+                &flint_geometry::ocean::OceanParams::default(),
             ));
         }
     }
@@ -4855,8 +4859,8 @@ impl SceneRenderer {
         let body = self.build_water_body(device, id, mesh, look)?;
         self.water_bodies.insert(id.to_string(), body);
         if !self.ocean_active && self.ocean_spectrum.is_none() {
-            self.ocean_spectrum = Some(flint_core::ocean::WaveSpectrum::generate(
-                &flint_core::ocean::OceanParams::default(),
+            self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(
+                &flint_geometry::ocean::OceanParams::default(),
             ));
         }
         Ok(())
@@ -4895,11 +4899,11 @@ impl SceneRenderer {
     fn extract_ocean_contact_from_world(&mut self, world: &FlintWorld) {
         use flint_core::toml_util::{toml_f32, toml_vec3};
         self.ocean_contact = None;
-        for &entity_id in world.entities_with_component(comp::OCEAN_CONTACT) {
+        for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN_CONTACT) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
-            let Some(contact) = components.get(comp::OCEAN_CONTACT) else {
+            let Some(contact) = components.get(flint_geometry::components::OCEAN_CONTACT) else {
                 continue;
             };
             let Some(tf) = components.get(comp::TRANSFORM) else {
@@ -5675,7 +5679,7 @@ impl SceneRenderer {
     }
 
     /// This frame's drawing for the shading boil (#214), from the wooze field.
-    pub fn set_boil(&mut self, boil: flint_core::wooze::BoilFrame) {
+    pub fn set_boil(&mut self, boil: flint_wooze::BoilFrame) {
         self.postprocess_config.boil = boil;
         self.authored_postprocess.boil = boil;
     }
@@ -5874,12 +5878,23 @@ impl SceneRenderer {
             return;
         };
         let surface_format = pp.surface_format;
+        let mut failures = Vec::new();
         for failed in pp.styles.ensure(
             device,
             surface_format,
             &self.postprocess_config,
             &self.style_ids,
         ) {
+            failures.push(failed);
+        }
+        // A style built again from a changed shader file (#418) made new
+        // buffers: the kept bind groups hold the old ones
+        if pp.styles.take_rebuilt() {
+            if let Some(resources) = &self.postprocess_resources {
+                resources.binds.clear();
+            }
+        }
+        for failed in failures {
             if !crate::stylize::is_builtin(failed.name) {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so

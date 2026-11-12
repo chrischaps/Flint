@@ -17,7 +17,7 @@ pub use extension::{
 };
 pub use flint_audio::Bus;
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
-pub use flint_core::ray_mesh::{RayHit, RayMesh, RayScene};
+pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_render::{
     river_points, GrassGround, GrassHeight, GroundFog, RiverPoint, WaterBodyLook, WaterBodyMesh,
     WaterVertex,
