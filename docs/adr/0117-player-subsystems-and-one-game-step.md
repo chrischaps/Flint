@@ -151,3 +151,17 @@ Chris accepted the recommendations on 2026-11-10:
 2. **The rhythm layer stays in this repo**, behind a Cargo feature.
 3. **A/B compare stays a living-props tool** behind its subsystem. A general
    split-screen comparison would be a separate proposal.
+
+## Outcome
+
+All six steps landed by 2026-11-12: the grouped fields and one bring-up
+(#724, #723), `Stage` and the internal `Subsystem` with the expression feed,
+shallow wooze and living props behind it (#724), `GameCore::step` shared by
+the player and `flint render --scripts` (#725), the music behind the trait
+with the rhythm layer as its own crate and policies as a map (#745, #727),
+script modules owned by their subsystems (#698), and the features and
+`PlayerExtension`'s hooks (#754). `flint-player --no-default-features` links
+neither flint-music nor flint-procgen; a game's extension hears the same
+stages and scene events the subsystems do and can bring its own script
+module. Not made public, for want of a client: `on_input`, `pre_render`,
+`post_encode` and `exit_report`.

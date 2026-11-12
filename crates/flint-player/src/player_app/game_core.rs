@@ -78,6 +78,9 @@ pub struct GameCore {
     /// Script commands no part of this scene takes that have been warned
     /// about, once a run each (`set_wooze` in a scene with no field).
     pub(crate) commands_warned: std::collections::HashSet<&'static str>,
+    /// The script modules the game's extensions declared (#754): enabled
+    /// for the whole run, beside the subsystems'.
+    pub(crate) extension_modules: Vec<&'static str>,
 }
 
 impl GameCore {
@@ -102,17 +105,24 @@ impl GameCore {
             procgen_resolver: ProcGenResolver::new(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
+            extension_modules: Vec::new(),
         }
     }
 }
 
 impl GameCore {
-    /// Tell the scripts which modules the subsystems here own (#698), so a
-    /// call into one they don't is "not enabled". Called whenever the list
-    /// changes: a scene's subsystems built (before its scripts load) or
-    /// dropped.
+    /// Tell the scripts which modules are enabled (#698): those the
+    /// subsystems here own and those the game's extensions declared (#754),
+    /// so a call into any other is "not enabled". Called whenever either
+    /// list changes: a scene's subsystems built (before its scripts load) or
+    /// dropped, an extension added.
     pub(crate) fn enable_script_modules(&mut self) {
-        let modules = self.subsystems.script_modules();
+        let mut modules = self.subsystems.script_modules();
+        for name in &self.extension_modules {
+            if !modules.contains(name) {
+                modules.push(name);
+            }
+        }
         self.script.set_enabled_modules(modules);
     }
 }
@@ -166,6 +176,15 @@ pub(crate) trait FrameHost {
     /// its events: a scene transition moves on, and extensions'
     /// `pre_update` runs.
     fn before_events(&mut self) {}
+
+    /// The game's extensions at `stage`, after the subsystems (#754). Only
+    /// the player has extensions; a capture has none.
+    fn extensions_at(&mut self, _stage: Stage) {}
+
+    /// Whether one of the game's extensions took `command` (#754).
+    fn extension_takes(&mut self, _command: &ScriptCommand) -> bool {
+        false
+    }
 
     /// A phase of the frame is done (the perf readout).
     fn phase_done(&mut self, _phase: Phase) {}
@@ -373,13 +392,14 @@ pub(crate) fn run_stage<H: FrameHost + ?Sized>(
     stage: Stage,
     policy: Option<&StateConfig>,
 ) {
-    if host.core().subsystems.is_empty() {
-        return;
+    if !host.core().subsystems.is_empty() {
+        let (core, lent) = host.lend();
+        core.with_subsystems(lent, policy, |subsystems, ctx| {
+            subsystems.update(stage, ctx)
+        });
     }
-    let (core, lent) = host.lend();
-    core.with_subsystems(lent, policy, |subsystems, ctx| {
-        subsystems.update(stage, ctx)
-    });
+    // Then the game's extensions (ADR 0117 decision 5, #754)
+    host.extensions_at(stage);
 }
 
 impl GameCore {
@@ -668,6 +688,8 @@ pub(crate) fn dispatch_commands<H: FrameHost + ?Sized>(
             commands.retain(|command| !subsystems.script_command(command, ctx));
         });
     }
+    // Then the game's extensions, for their modules' commands (#754)
+    commands.retain(|command| !host.extension_takes(command));
     let quiet = host.capture();
     for command in commands {
         if for_the_host(&command) {

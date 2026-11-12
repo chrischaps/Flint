@@ -84,6 +84,10 @@ A scene that uses a part the build left out prints one line when it's entered, n
 | `declare_script_api(&mut ScriptApi)` | Once, inside `add_extension`, after `register_script_api` | Functions declared through Flint's API builder: listed with the engine's, integers taken for numbers |
 | `register_generators(&mut GeneratorRegistry)` | Once, inside `add_extension` | The game's own [procgen generators](#procgen-generators) ([ADR 0119](https://github.com/chrischaps/Flint/blob/main/docs/adr/0119-game-generators-through-player-extensions.md)) |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
+| `update(Stage, &mut ExtensionCtx)` | Every frame, at each [stage](#stages), after the engine's own subsystems | Work that belongs after physics, after the scripts' UI, before the renderer's sync |
+| `scene_loaded(&mut ExtensionCtx)` / `scene_unloading(&mut ExtensionCtx)` | At the end of every scene's entry; before a transition tears the scene down | Per-scene state: what names the scene's entities |
+| `script_modules() -> &[&dyn ScriptModule]` | Once, inside `add_extension` | The game's own [script module](#a-script-module-of-the-games-own), enabled for the whole run |
+| `script_command(&ScriptCommand, &mut ExtensionCtx) -> bool` | Each script command, after the scene's subsystems pass on it | Carrying out what the module's functions queued |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
 | `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
@@ -91,7 +95,7 @@ A scene that uses a part the build left out prints one line when it's entered, n
 | `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | `debug_panel_ui(name, &mut egui::Ui)` | Every frame one of them is open, after `ui` | Drawing that panel's contents from the game's state |
 
-Extensions run in the order they were added.
+Extensions run in the order they were added. These are the hooks the engine's own optional parts (the music, living props, the expression feed) are built on, as internal subsystems ([ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)), so a game's Rust reaches the frame where they do.
 
 ### Script functions
 
@@ -149,10 +153,100 @@ Each frame the player ticks the clock, applies any input script, advances a scen
 - `world`: the ECS world, mutable.
 - `clock`: already ticked for this frame.
 - `input`: this frame's input state, before scripts read it.
-- `camera`: **last** frame's camera. Scripts and physics may move it later this frame.
+- `camera`: **last** frame's camera in `pre_update`. Scripts and physics may move it later this frame.
 - `gpu`: `Option<ExtensionGpu>`, with the renderer, device and queue. It's `None` until the window and renderer exist, and in headless runs, so check it every frame rather than once.
 - `persist`: the persistent store scripts use, mutable (see [Saved data](#saved-data)).
 - `audio`: play sounds, load sounds made in memory, and set the mixer buses (see [Sound](#sound)).
+
+`update`, the scene hooks and `script_command` get the same `ExtensionCtx`. At a later stage the camera has moved on: from `Stage::PostPhysics` it is the one the frame draws.
+
+### Stages
+
+`update(stage, ctx)` is called at each stage of the frame, in this order, right after the engine's subsystems hear the same stage:
+
+| Stage | Falls |
+|---|---|
+| `Clock` | The frame's very start, before the clock ticks (`ctx.clock` is last frame's) |
+| `Input` | The clock has ticked and scripted input is in; before a transition advances and before `pre_update` |
+| `PreScripts` | After `pre_update`, before the scripts' `on_update`: set what a module's functions read here |
+| `Scripts` | After `on_update`, before the fixed physics steps |
+| `Physics` | After the physics steps and the first-person camera |
+| `PostPhysics` | After script commands and camera overrides: the camera is final for the frame |
+| `ScriptUi` | After `on_draw_ui` and the draw commands |
+| `Animation` | After audio triggers, animation and particles |
+| `Procgen` | After the procgen queue and living props |
+| `Sync` | After the renderer's sync, the frame's post overrides and quality; before the frame's input is cleared |
+
+`Stage` is `#[non_exhaustive]`: match the stages you want and let the rest fall through.
+
+```rust
+use flint_player::{ExtensionCtx, PlayerExtension, Stage};
+
+impl PlayerExtension for MyGame {
+    fn update(&mut self, stage: Stage, ctx: &mut ExtensionCtx) {
+        if stage == Stage::Physics {
+            // the bodies have moved this frame
+        }
+    }
+}
+```
+
+The hooks run only in the player. `flint render --scripts` is the engine's binary and links no game's Rust, so a capture of a scene that needs the extension comes from the game's own binary, with `--frame-step` and `--screenshot-every`.
+
+### A script module of the game's own
+
+A game can give its scripts a module of functions, declared like the engine's own (`living`, `wooze`, `conducted`) with the same builder ([ADR 0116](https://github.com/chrischaps/Flint/blob/main/docs/adr/0116-declared-script-api.md)): listed under its name, taking integers where they want numbers. Hand it over from `script_modules`; it is declared once and enabled for the whole run, through every scene:
+
+```rust
+use flint_script::api::builder::kind::Int;
+use flint_script::api::Module;
+use flint_script::context::ScriptCommand;
+use flint_script::{ModuleCommand, ScriptModule};
+
+#[derive(Default)]
+struct LapState { laps: i64 }
+#[derive(Debug)]
+struct MarkLap(i64);
+
+struct LapModule;
+static LAPS: LapModule = LapModule;
+const MODULES: &[&dyn ScriptModule] = &[&LAPS];
+
+impl ScriptModule for LapModule {
+    fn name(&self) -> &'static str { "laps" }
+    fn enabled_when(&self) -> &'static str { "the game is running" }
+    fn declare(&self, m: &mut Module<'_>) {
+        m.func("laps", "The laps counted when this frame's scripts began.")
+            .returns(Int, "laps so far")
+            .run(|call, ()| call.ctx().module_state.get_mut::<LapState>().laps);
+        m.func("mark_lap", "Count n more laps.")
+            .arg("n", Int)
+            .run(|call, (n,)| {
+                let function = call.name();
+                call.ctx().commands.push(ScriptCommand::Module(ModuleCommand::new(function, MarkLap(n))));
+            });
+    }
+}
+
+impl PlayerExtension for Laps {
+    fn script_modules(&self) -> &[&'static dyn ScriptModule] { MODULES }
+
+    fn update(&mut self, stage: Stage, ctx: &mut ExtensionCtx) {
+        if stage == Stage::PreScripts {
+            ctx.set_module_state(LapState { laps: self.laps });
+        }
+    }
+
+    fn script_command(&mut self, command: &ScriptCommand, _ctx: &mut ExtensionCtx) -> bool {
+        let ScriptCommand::Module(command) = command else { return false };
+        let Some(MarkLap(n)) = command.payload::<MarkLap>() else { return false };
+        self.laps += n;
+        true
+    }
+}
+```
+
+A function reads what the extension set with `ctx.set_module_state(value)` (one value per type, its `Default` until set), and a function that changes the game queues a command with a payload of the game's own type, which the extension takes in `script_command`. The frame drains commands after the physics steps and again after `on_draw_ui`. Hold the module in a `static` and the list in a `const`, so the slice is `'static`. This is the extension in `crates/flint-player/src/player_app/extension_hooks_tests.rs`.
 
 ### Talking to scripts
 
