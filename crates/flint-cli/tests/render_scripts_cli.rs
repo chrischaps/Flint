@@ -283,6 +283,76 @@ fn without_scripts_a_scene_with_one_says_so() {
     assert!(stderr(&o).contains("--scripts"), "{}", stderr(&o));
 }
 
+/// A still has no clock, so its scripts never run: it says so too (#371),
+/// naming the flag that would run them.
+#[test]
+fn a_still_of_a_scene_with_scripts_says_so() {
+    let dir = project("still-warns");
+    let o = render(&dir, "s.png", &[]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let err = stderr(&o);
+    assert!(
+        err.contains("director") && err.contains("--script-time"),
+        "{err}"
+    );
+}
+
+/// `--script-time T` is `--scripts --time T` (#371): the same bytes, and a
+/// run whose scripts ran doesn't also warn that they didn't.
+#[test]
+fn script_time_is_scripts_at_that_time() {
+    let dir = project("script-time");
+    let tl = timeline(&dir);
+    let short = render(
+        &dir,
+        "short.png",
+        &["--script-time", "1.5", "--expression-timeline", &tl],
+    );
+    if no_gpu(&short) {
+        return;
+    }
+    ok(&short);
+    let long = render(
+        &dir,
+        "long.png",
+        &["--scripts", "--time", "1.5", "--expression-timeline", &tl],
+    );
+    ok(&long);
+    let a = std::fs::read(dir.join("short.png")).unwrap();
+    let b = std::fs::read(dir.join("long.png")).unwrap();
+    assert!(a == b, "--script-time 1.5 and --scripts --time 1.5 differ");
+    let err = stderr(&short);
+    assert!(!err.contains("don't run"), "{err}");
+    assert!(!err.contains("living props"), "{err}");
+    // A span, --fps and --frame-step come with it, as with --time
+    let span = ["0..1", "--fps", "4", "--frame-step", "0.05"];
+    ok(&render(
+        &dir,
+        "short.gif",
+        &[&["--script-time"][..], &span].concat(),
+    ));
+    ok(&render(
+        &dir,
+        "long.gif",
+        &[&["--scripts", "--time"][..], &span].concat(),
+    ));
+    assert_eq!(gif_frames(&dir.join("short.gif")).len(), 4);
+    let a = std::fs::read(dir.join("short.gif")).unwrap();
+    let b = std::fs::read(dir.join("long.gif")).unwrap();
+    assert!(a == b, "the spans differ");
+}
+
+#[test]
+fn script_time_and_time_are_one_clock() {
+    let dir = project("both");
+    let o = render(&dir, "x.png", &["--script-time", "1", "--time", "2"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--time"), "{}", stderr(&o));
+}
+
 const SAPLING: &str = r#"
 generator = "tree_v1"
 [meta]

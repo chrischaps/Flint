@@ -233,6 +233,28 @@ args = ["--no-grid"]
 # space (the picture passes through)
 text = "ascii-style-entities.txt"
 
+# A style a script sets (#371): the same bench, its props held smooth by
+# tests/fixtures/scenes/scripts/story_beat.rhai until a beat at 2 s.
+# At 3 s the script has given the glyphs back, and the frame is the one the
+# scene draws as authored with no script run, byte for byte; at 1 s the
+# props are smooth
+[[case]]
+name = "script-beat-is-the-authored-style"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "3"]
+matches = ["--no-grid", "--time", "3"]
+
+[[case]]
+name = "script-beat"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "3"]
+text = "script-beat.txt"
+
+[[case]]
+name = "script-before-the-beat"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "1"]
+
 # Each pixel one style's (#384): whole-frame ASCII leaves the pencil cask,
 # crate and lid sketched (pencil draws them from the scene, not from the
 # glyphs); the tag, opted out of pencil, is ASCII's

@@ -317,7 +317,17 @@ What doesn't run: physics, so a ragdoll or a character pushed by its controller 
 
 ## Scripts and an Expression Timeline
 
-`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--expression-timeline` feeds them [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
+`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--script-time <t>` is `--scripts --time <t>` in one flag (#371), named like `--particle-time` and `--anim-time`: the scripts run to game time `t` and the capture is taken there. `examples/ascii_story.scene.toml` styles nothing until its script does, so a still of it is a plain clearing; at its beats it isn't:
+
+```bash
+flint render examples/ascii_story.scene.toml --script-time 3 -o barrel.png   # the barrel in glyphs
+flint render examples/ascii_story.scene.toml --script-time 5 -o bench.png    # the bench in amber blocks
+flint render examples/ascii_story.scene.toml --script-time 0..8 -o story.gif # the whole loop
+```
+
+A render that doesn't run a scene's scripts, a still included, names them in a warning and the flag that would. The stylize goldens hold it (`script-beat-is-the-authored-style`): a scene whose script takes its props' authored ASCII off at the first frame and gives it back at 2 s renders, at `--script-time 3`, the same bytes as `--time 3` with no script run.
+
+`--expression-timeline` feeds scripts [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
 
 ```bash
 flint render scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json \
@@ -487,7 +497,7 @@ flint render examples/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report j
     }]
   }],
   "still_props": [],
-  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it"]
+  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it (--script-time T runs them to game time T)"]
 }
 ```
 

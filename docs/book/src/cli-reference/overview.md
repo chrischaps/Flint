@@ -506,8 +506,9 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
 | `--anim-time <s>` | (none) | Run the scene's animation (skeletal clips, layers, sequences, property tweens, node and sprite clips, then IK) to this time at a fixed 1/60 s step before capturing, as the player poses it there. Deterministic; with `--time` or `--frames` it runs on with the clock. Without it skinned meshes draw in their bind pose. See [Headless Rendering](../guides/headless-rendering.md#posed-characters) |
 | `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`, or a PNG a frame to `--output frames/f-%05d.png`; either runs in about one frame's memory however long. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
-| `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
+| `--frame-step <s>` | `1/60` | With `--time` or `--script-time`: how far each clock tick moves, as `flint-player --frame-step` |
 | `--scripts` | `false` | Run the scene's scripts, a clock step at a time through the player's own frame (its game core), deterministically (seeded `random()`, no wall clock). Commands go through the player's dispatcher, so styles, tweens, style reads, looks and the camera apply as in the player; what a capture can't do (sound, the window, other scenes, physics) is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
+| `--script-time <t>` | (none) | `--scripts --time <t>` in one flag, beside `--particle-time` and `--anim-time`: run the scene's scripts to game time `t` and capture there, so a look a script sets is in the picture. Takes what `--time` takes (a span, a list) |
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
@@ -526,7 +527,8 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
-> **`flint render` runs no scripts unless you pass `--scripts`.** Without it,
+> **`flint render` runs no scripts unless you pass `--scripts` (or `--script-time <t>`),**
+> and a render of a scene with scripts says so on stderr, naming them. Without it,
 > anything your game drives from a script — a render mode, a time of day, a
 > floating hull, an animated character — will not happen. With it, what scripts
 > write to the world, Living Props and the wooze field is drawn, but physics,

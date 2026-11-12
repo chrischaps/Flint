@@ -54,7 +54,8 @@ const REPORT_TO_STDOUT: &str = "json";
 
 #[derive(clap::Args)]
 #[command(group(clap::ArgGroup::new("sequence").multiple(true).args(["frames", "mesh"])))]
-#[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "mesh"])))]
+#[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "script_time", "mesh"])))]
+#[command(group(clap::ArgGroup::new("clock").multiple(true).args(["time", "script_time"])))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(
@@ -697,15 +698,22 @@ pub struct RenderArgs {
     #[arg(long)]
     pub scripts: bool,
 
+    /// Run the scene's scripts to game time T and capture there: --scripts
+    /// --time T in one flag, beside --particle-time and --anim-time (#371), so a
+    /// style beat, a flickering light or a door a script drives is in the
+    /// picture. Takes what --time takes: 3, a span 0..8 with -o x.gif, a list 2,5
+    #[arg(long, value_name = "T", value_parser = render_plan::parse_time, conflicts_with = "time")]
+    pub script_time: Option<TimeSpec>,
+
     /// An expression timeline (`{"events": [{"t": 0, ...}, ...]}`, as
     /// flint-player's flag) whose states scripts hear through expression() and
     /// on_expression(state), each once the clock reaches its t. Implies --scripts
     #[arg(long, value_name = "FILE")]
     pub expression_timeline: Option<String>,
 
-    /// With --time: the seconds each clock tick moves, as flint-player's
-    /// --frame-step, to reproduce a player run to the bit [default: 1/60]
-    #[arg(long, requires = "time", value_parser = parse_frame_step)]
+    /// With --time or --script-time: the seconds each clock tick moves, as
+    /// flint-player's --frame-step, to reproduce a player run to the bit [default: 1/60]
+    #[arg(long, requires = "clock", value_parser = parse_frame_step)]
     pub frame_step: Option<f64>,
 
     /// With a --time span: frames per second of game time in the GIF. With
@@ -852,7 +860,12 @@ pub fn run(args: RenderArgs) -> Result<()> {
 }
 
 /// `flint render` on `host`'s GPU (made on first use).
-pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
+pub fn run_in(mut args: RenderArgs, host: &mut RenderHost) -> Result<()> {
+    // --script-time T is --scripts --time T (#371): everything below reads those
+    if let Some(t) = args.script_time.take() {
+        args.time = Some(t);
+        args.scripts = true;
+    }
     if args.list_gpus {
         let adapters = flint_render::list_adapters();
         if adapters.is_empty() {
@@ -1051,6 +1064,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
                 camera_path: camera_path.as_ref(),
             },
         );
+    }
+    // A still draws the scene as authored, before any script (#371): said, as
+    // the clocked path says it, since a look a script sets is otherwise missing
+    // from the picture with no word why
+    let scripted = named_with(&world, comp::SCRIPT);
+    if !scripted.is_empty() {
+        eprintln!("Warning: {}", scripts_not_run(&scripted));
     }
 
     let ctx = host.context(width, height, &args.gpu)?;
@@ -3113,6 +3133,30 @@ fn is_moment(args: &RenderArgs, grid: Option<&super::sweep::SweepGrid>) -> bool 
     on_clock(args) || grid.is_some_and(|g| g.wooze_knob().is_some())
 }
 
+/// The names of `world`'s entities that carry `component`.
+fn named_with(world: &flint_ecs::FlintWorld, component: &str) -> Vec<String> {
+    world
+        .all_entities()
+        .into_iter()
+        .filter(|entity| {
+            world
+                .get_components(entity.id)
+                .is_some_and(|comps| comps.get(component).is_some())
+        })
+        .map(|entity| entity.name)
+        .collect()
+}
+
+/// What a render that didn't run `scripted`'s scripts is missing (#371): a
+/// scene whose look a script sets draws plain without them.
+fn scripts_not_run(scripted: &[String]) -> String {
+    format!(
+        "scripts don't run without --scripts, so what {} would do to this scene isn't in it \
+         (--script-time T runs them to game time T)",
+        scripted.join(", ")
+    )
+}
+
 /// What a reader of this capture has to be told about what it isn't showing.
 fn stage_warnings(
     args: &RenderArgs,
@@ -3123,31 +3167,14 @@ fn stage_warnings(
     if !is_moment(args, grid) {
         return warnings;
     }
-    if stage.game.living_props().is_none() {
+    // Scripts are a clock of their own, so with them running this says nothing
+    if stage.game.living_props().is_none() && !stage.scripted {
         warnings.push("this scene has no living props, so only its other clocks move".to_string());
     }
-    let with = |component: &str| -> Vec<String> {
-        stage
-            .game
-            .world()
-            .all_entities()
-            .into_iter()
-            .filter(|entity| {
-                stage
-                    .game
-                    .world()
-                    .get_components(entity.id)
-                    .is_some_and(|comps| comps.get(component).is_some())
-            })
-            .map(|entity| entity.name)
-            .collect()
-    };
+    let with = |component: &str| named_with(stage.game.world(), component);
     let scripts = with(comp::SCRIPT);
     if !scripts.is_empty() && !stage.scripted {
-        warnings.push(format!(
-            "scripts don't run without --scripts, so what {} would do to this scene isn't in it",
-            scripts.join(", ")
-        ));
+        warnings.push(scripts_not_run(&scripts));
     }
     let animated = with(comp::ANIMATOR);
     if !animated.is_empty() && stage.game.animation().is_none() {

@@ -144,6 +144,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           (Stage::lay_script_requests), then the post overrides. Particles made at
    #                           load step on the clock, Stage::step_particles_to; what a capture can't do
    #                           is PRESENTATION_ONLY)
+   #   --script-time 3        (#371: --scripts --time 3 in one flag, folded into those two at the top of
+   #                           render::run_in, so goldens and variants get it; takes any TimeSpec, and
+   #                           --frame-step / --fps through the `clock` / `span` groups. A render that
+   #                           doesn't run a scene's scripts names them, a still too (scripts_not_run);
+   #                           goldens script-beat*: tests/fixtures/scenes/stylize_props_scripted)
    #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers;
    #                           frames wait on disk as deflated deltas, x.gif.frames~, so memory stays flat, #588;
