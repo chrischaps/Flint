@@ -10,6 +10,10 @@ description = "Rhai scripting system for Flint engine"
 # tools only; the player and the web build leave it off.
 [features]
 metadata = ["rhai/metadata"]
+# `check`: `flint script check` (#694) walks a script's syntax tree, which
+# Rhai exposes under `internals`, and needs `metadata` for its packages'
+# functions. Native tools only, like `metadata`.
+check = ["metadata", "rhai/internals"]
 
 [dependencies]
 web-time = { workspace = true }

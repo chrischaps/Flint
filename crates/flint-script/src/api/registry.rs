@@ -33,6 +33,10 @@ mod native {
         /// Registered on Rhai's typed path (`run_typed`): its kinds are
         /// exact types and convert nothing.
         pub typed: bool,
+        /// Kept for a release and going (ADR 0116 decision 3): what to use
+        /// instead. `flint script api` marks it and `flint script check`
+        /// warns at each call (#694).
+        pub deprecated: Option<&'static str>,
     }
 
     /// A parameter: its name and the kind it accepts (`num`, `entity`, ...).

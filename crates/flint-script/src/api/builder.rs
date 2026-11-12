@@ -137,6 +137,7 @@ impl Module<'_> {
                 returns: None,
                 doc,
                 typed: false,
+                deprecated: None,
             },
             _kinds: std::marker::PhantomData,
         }
@@ -193,6 +194,22 @@ impl<'f, K: Kinds> Func<'f, K> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.entry.returns = Some((R::NAME, note));
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = note;
+        self
+    }
+
+    /// Mark it deprecated (ADR 0116 decision 3): it stays for one release,
+    /// `flint script api` lists it with `note` (what to use instead) and
+    /// `flint script check` warns at every call. Then it goes, with a
+    /// changelog entry.
+    #[cfg_attr(target_arch = "wasm32", inline(always))]
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+    pub fn deprecated(mut self, note: &'static str) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.entry.deprecated = Some(note);
         }
         #[cfg(target_arch = "wasm32")]
         let _ = note;

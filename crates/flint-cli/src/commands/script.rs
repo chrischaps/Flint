@@ -1,4 +1,5 @@
 //! `flint script api` (ADR 0116, #695): every function a script can call.
+//! `flint script check` (#694): every script held to it.
 //!
 //! ```bash
 //! flint script api                  # by module: signature, return, one-line doc
@@ -6,6 +7,9 @@
 //! flint script api --json           # one JSON document, for agents and the book
 //! flint script api --book           # write the book's generated reference and tables
 //! flint script api --check-book     # exit 1 if they're stale or a chapter calls a ghost (CI)
+//! flint script check examples/      # every script of a folder: file:line:col and a hint
+//! flint script check level.scene.toml --json
+//! flint script check . --api game-api.json --allow game_only_fn
 //! ```
 //!
 //! Every engine function is declared through the builder
@@ -30,6 +34,31 @@ pub enum ScriptCommands {
     /// return and a one-line doc (types only for the undeclared ones), and
     /// the callbacks
     Api(Box<ApiArgs>),
+    /// Compile every script a project or scene runs, and the modules they
+    /// import, and check each call's name and argument count against the
+    /// script API, each callback's name and parameters, and each import.
+    /// Exit 1 on an error
+    Check(Box<CheckArgs>),
+}
+
+#[derive(clap::Args)]
+pub struct CheckArgs {
+    /// A project folder (every script under it, each scene's with the
+    /// scene's search), one scene file (its scripts), or one .rhai file
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+
+    /// Print one JSON document instead of text, in `flint check`'s shape
+    #[arg(long)]
+    pub json: bool,
+
+    /// Schema directories (repeatable), for loading the scenes whose
+    /// scripts are checked. Without it: the project's, as `flint check`
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub schemas: Vec<String>,
+
+    #[command(flatten)]
+    pub script: crate::check::scripts::ScriptApiArgs,
 }
 
 #[derive(clap::Args)]
@@ -61,7 +90,123 @@ pub struct ApiArgs {
 pub fn run(cmd: ScriptCommands) -> Result<()> {
     match cmd {
         ScriptCommands::Api(args) => api(&args),
+        ScriptCommands::Check(args) => check(&args),
     }
+}
+
+/// `flint script check`.
+fn check(args: &CheckArgs) -> Result<()> {
+    let report = check_report(args)?;
+    let text = if args.json {
+        let mut text = serde_json::to_string_pretty(&check_json(&report))?;
+        text.push('\n');
+        text
+    } else {
+        check_text(&report)
+    };
+    use std::io::Write;
+    match std::io::stdout().lock().write_all(text.as_bytes()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e.into()),
+        _ => {}
+    }
+    if report.has_errors() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// What `flint script check` finds, without printing it.
+pub fn check_report(args: &CheckArgs) -> Result<crate::check::Report> {
+    use crate::check::{self, Checks, Subject};
+    let api = args.script.api()?;
+    let path = &args.path;
+    let is_script = path.extension().is_some_and(|e| e == "rhai");
+    if is_script && path.is_file() {
+        let file = flint_script::check::ScriptFile::found(path.clone());
+        let (diagnostics, scripts) = check::scripts::check(&api, vec![file]);
+        return Ok(check::Report {
+            scripts,
+            diagnostics,
+            ..Default::default()
+        });
+    }
+    let mut subject = if path.is_dir() {
+        Subject::project(path, super::bundle::project_files(path)?, &args.schemas)
+    } else if path.is_file() {
+        Subject::scene(path, &args.schemas)
+    } else {
+        bail!(
+            "{} is neither a folder, a scene nor a script",
+            flint_core::project::shown(path)
+        );
+    };
+    subject.script_api = Some(api);
+    Ok(check::run(&subject, Checks::SCRIPTS))
+}
+
+/// `checked 55 scripts (84 scenes): 2 errors, 1 warning`.
+fn check_summary(report: &crate::check::Report) -> String {
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    let scenes = match report.scenes.len() {
+        0 => String::new(),
+        n => format!(" ({})", plural(n, "scene")),
+    };
+    format!(
+        "checked {}{scenes}: {}",
+        plural(report.scripts.len(), "script"),
+        report.counts()
+    )
+}
+
+/// Each problem as a compiler prints one, `file:line:col: error[code]:
+/// message`, the hint and the paths tried under it, then the count.
+fn check_text(report: &crate::check::Report) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut list: Vec<&flint_core::diagnostic::Diagnostic> = report.diagnostics.iter().collect();
+    // Errors first, the files in the order read
+    list.sort_by_key(|d| d.severity);
+    for d in list {
+        let mut place = d
+            .file
+            .as_deref()
+            .map(flint_core::project::shown)
+            .unwrap_or_else(|| "(project)".to_string());
+        if let (Some(line), Some(col)) = (d.line, d.column) {
+            let _ = write!(place, ":{line}:{col}");
+        }
+        let mut at = d.clone();
+        (at.line, at.column) = (None, None);
+        let location = at.location();
+        let location = if location.is_empty() {
+            String::new()
+        } else {
+            format!(" {location}")
+        };
+        let _ = writeln!(
+            out,
+            "{place}: {}[{}]{location}: {}",
+            d.severity, d.code, d.message
+        );
+        if let Some(hint) = &d.hint {
+            let _ = writeln!(out, "    hint: {hint}");
+        }
+        if !d.tried.is_empty() {
+            let _ = writeln!(out, "    tried:");
+            for path in d.tried.iter().take(6) {
+                let _ = writeln!(out, "      {}", flint_core::project::shown(path));
+            }
+        }
+    }
+    let _ = writeln!(out, "{}", check_summary(report));
+    out
+}
+
+/// One document in `flint check`'s shape, with the scripts read.
+fn check_json(report: &crate::check::Report) -> Value {
+    let mut doc = crate::check::json(report);
+    doc["summary"] = Value::from(check_summary(report));
+    doc
 }
 
 fn api(args: &ApiArgs) -> Result<()> {
@@ -180,6 +325,7 @@ fn declared_json(e: &ApiEntry) -> Value {
         "returns": e.returns.map(|(kind, note)| json!({ "kind": kind, "note": note })),
         "doc": e.doc,
         "typed": e.typed,
+        "deprecated": e.deprecated,
         "signature": e.signature(),
     })
 }
@@ -243,6 +389,9 @@ fn to_text(listing: &ApiListing) -> String {
         for e in entries {
             let typed = if e.typed { "  [typed]" } else { "" };
             let _ = writeln!(out, "  {}{typed}", e.signature());
+            if let Some(note) = e.deprecated {
+                let _ = writeln!(out, "      deprecated: {note}");
+            }
             let _ = writeln!(out, "      {}", e.doc);
             if let Some((_, note)) = e.returns.filter(|(_, n)| !n.is_empty()) {
                 let _ = writeln!(out, "      returns {note}");

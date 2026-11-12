@@ -9,6 +9,8 @@
 //! control animation and audio, and hot-reload while the game is running.
 
 pub mod api;
+#[cfg(feature = "check")]
+pub mod check;
 pub mod context;
 pub mod draw2d;
 pub mod engine;

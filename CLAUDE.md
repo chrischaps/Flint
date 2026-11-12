@@ -72,7 +72,7 @@ Flint uses an **edit -> validate -> play** loop:
    ```
    More: `crates/flint-player/CLAUDE.md`.
 
-**For AI agents:** Before playing, rendering or bundling, `flint check <dir|scene> [--json]` is the pre-flight (#687): every problem of a project in one run, each with its file, entity, field, a hint and the paths tried, exit 1 on an error (`crates/flint-cli/CLAUDE.md`). After visual changes, always run `flint render` to verify before moving on. The render command loads models (found by the project's one asset search: `models/` beside the scene, beside each directory up to the project root, then `engine/`; `flint asset where models <name> --scene <scene>` shows it), generates geometry, and computes the full transform hierarchy.
+**For AI agents:** Before playing, rendering or bundling, `flint check <dir|scene> [--json]` is the pre-flight (#687): every problem of a project in one run, each with its file, entity, field, a hint and the paths tried, exit 1 on an error, scripts included (`flint script check` alone gives each script's mistakes as `file:line:col`, #694; `crates/flint-cli/CLAUDE.md`). After visual changes, always run `flint render` to verify before moving on. The render command loads models (found by the project's one asset search: `models/` beside the scene, beside each directory up to the project root, then `engine/`; `flint asset where models <name> --scene <scene>` shows it), generates geometry, and computes the full transform hierarchy.
 
 ## Architecture
 
