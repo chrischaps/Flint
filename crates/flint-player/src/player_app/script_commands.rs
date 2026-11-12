@@ -1,20 +1,11 @@
-//! The player as a script host (`impl ScriptHost for PlayerApp`, #697) and
-//! the PlayerApp-side music-session entry points — code-motion sibling of `mod.rs` (player_app decomposition; see
-//! the decomposition ADR). `music_session.rs` (the session integration
-//! itself) is deliberately separate and unchanged.
+//! The player as a script host (`impl ScriptHost for PlayerApp`, #697), and
+//! the start of sound and quitting.
 
-#[cfg(feature = "debug-hud")]
-use super::music_guide_panel;
-use super::music_session;
-use super::scene_loading;
-#[cfg(feature = "debug-hud")]
-use super::timeline_panel;
 use super::PlayerApp;
 use super::TransitionPhase;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::quality::QualitySettings;
 use flint_core::Vec3 as FlintVec3;
-use flint_runtime::pad::Gilrs;
 use flint_script::{CameraOverrides, ScriptHost};
 
 impl PlayerApp {
@@ -47,21 +38,15 @@ impl PlayerApp {
     /// browser gives no sound before one, so the web player runs silent
     /// until this is called from its Begin click; on the desktop the device
     /// opened at start and this does nothing new. Loops already in the
-    /// scene start, and so does the scene's music session if it was skipped
-    /// for want of a device. Says whether there is sound.
+    /// scene start, and a subsystem that waited for a device (the scene's
+    /// music) starts at the next frame's first stage. Says whether there is
+    /// sound.
     pub fn start_audio(&mut self) -> bool {
-        let had_sound = self.audio.engine.is_available();
         // A music session clocks its suite on kira's manager itself, which
         // the browser's worklet mix (#136) keeps on the audio thread; such a
         // scene mixes on the main thread, as before.
         #[cfg(target_arch = "wasm32")]
-        if !had_sound
-            && !self
-                .core
-                .world
-                .entities_with_component(music_session::MUSIC_SESSION)
-                .is_empty()
-        {
+        if !self.audio.engine.is_available() && crate::music::plays_music(&self.core.world) {
             tracing::info!(
                 "[flint-audio] a music_session needs kira here: mixing on the main thread"
             );
@@ -69,125 +54,7 @@ impl PlayerApp {
                 .engine
                 .set_web_mixer(flint_audio::engine::WebMixer::MainThread);
         }
-        if !self.audio.start(&self.core.world) {
-            return false;
-        }
-        if !had_sound && self.music.session.is_none() {
-            self.start_music_session();
-        }
-        true
-    }
-
-    /// Start the scene-declared music session, if any (F3, ADR 0019): find
-    /// the first `music_session` component, resolve its repo-root-relative
-    /// paths against the scene's base dir (scene file's parent's parent —
-    /// `scenes/` sits at the repo root), start the suite on the shared
-    /// manager, and hand the gamepad to the capture thread (ADR 0018).
-    /// Headless or component-less scenes: no session, nothing changes.
-    pub(super) fn start_music_session(&mut self) {
-        let mut found = None;
-        for entity in self.core.world.all_entities() {
-            let comp = self
-                .core
-                .world
-                .get_components(entity.id)
-                .and_then(|c| c.get(music_session::MUSIC_SESSION).cloned());
-            if let Some(comp) = comp {
-                if found.is_some() {
-                    tracing::warn!(
-                        "multiple music_session components in scene; using the first \
-                         (extra on entity {})",
-                        entity.id
-                    );
-                } else {
-                    found = Some(comp);
-                }
-            }
-        }
-        let Some(comp) = found else { return };
-        // The suite's paths are from the project root (ADR 0114). For one
-        // release a manifest that is only where the root used to be guessed
-        // is still read from there, with a warning.
-        let manifest = comp.get("manifest").and_then(|v| v.as_str()).unwrap_or("");
-        let base_dir =
-            self.core
-                .project
-                .root_holding("music_session", manifest.trim(), &self.scene_dir());
-        match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
-            Ok(Some(session)) => {
-                self.music.session = Some(session);
-                // The scene's authored post values are the ladder merge's
-                // base and the post-teardown restore target (ADR 0021).
-                let authored = self
-                    .scene
-                    .post_process
-                    .as_ref()
-                    .map(scene_loading::post_process_config_from_def)
-                    .unwrap_or_default();
-                self.music.pp_base = Some(music_session::LadderPostBase {
-                    radial_blur: authored.radial_blur,
-                    chromatic_aberration: authored.chromatic_aberration,
-                    desaturate: authored.desaturate,
-                });
-                // The capture thread's rumble engine owns the motors now.
-                self.pad_rumble.stop_all();
-                self.gilrs = None;
-                println!(
-                    "[music] gamepad handed to capture thread \
-                     (player polling suspended for the session)"
-                );
-                // Music Guide debug panel (ADR 0035): registered closed;
-                // Backquote summons it. Lives only as long as a session
-                // could feed it.
-                #[cfg(feature = "debug-hud")]
-                {
-                    if !self
-                        .debug_panels
-                        .iter()
-                        .any(|p| p.name() == music_guide_panel::MUSIC_GUIDE_PANEL)
-                    {
-                        self.debug_panels
-                            .push(Box::new(music_guide_panel::MusicGuidePanel::new()));
-                        println!("[music] debug guide available — press ` (Backquote)");
-                    }
-                    // Manifest Map timeline strip: registered closed with the
-                    // suite's static map baked in; Backslash summons it.
-                    if !self
-                        .debug_panels
-                        .iter()
-                        .any(|p| p.name() == timeline_panel::MANIFEST_MAP_PANEL)
-                    {
-                        let mut panel = timeline_panel::ManifestMapPanel::new();
-                        if let Some(ms) = &self.music.session {
-                            panel.set_map(ms.timeline_map());
-                        }
-                        self.debug_panels.push(Box::new(panel));
-                        println!("[music] manifest map available — press \\ (Backslash)");
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(e) => eprintln!("[music] session failed to start: {e:#}"),
-        }
-    }
-
-    /// Tear the music session down (stems stopped with a fade, capture guard
-    /// dropped first inside) and give the gamepad back to player polling.
-    /// Must run before `audio.clear()` in a scene transition (ADR 0017).
-    pub(super) fn stop_music_session(&mut self) {
-        if let Some(session) = self.music.session.take() {
-            session.stop();
-            // Queue the one-shot authored-values restore for the next merge
-            // pass (setting overrides here would be wiped by the drain).
-            self.music.pp_restore = self.music.pp_base.take();
-            self.gilrs = Gilrs::new().ok();
-            println!("[music] session ended — gamepad returned to player polling");
-            #[cfg(feature = "debug-hud")]
-            self.debug_panels.retain(|p| {
-                p.name() != music_guide_panel::MUSIC_GUIDE_PANEL
-                    && p.name() != timeline_panel::MANIFEST_MAP_PANEL
-            });
-        }
+        self.audio.start(&self.core.world)
     }
 }
 
@@ -281,8 +148,9 @@ impl ScriptHost for PlayerApp {
     }
 
     fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
-        // No backend (headless build, a failed `Gilrs::new()`), or a music
-        // session has the pads: nothing to rumble, as with no pad (#748).
+        // No backend (headless build, a failed `Gilrs::new()`), or a
+        // subsystem holds the pads (the rhythm session's capture): nothing
+        // to rumble, as with no pad (#748).
         let Some(gilrs) = &mut self.gilrs else {
             return;
         };
@@ -399,7 +267,7 @@ pub(super) fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
         .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }
 
-/// A script's `rumble()` in the player, with no music session (#748).
+/// A script's `rumble()` in the player, with the pads its own (#748).
 #[cfg(test)]
 mod rumble_tests {
     use super::PlayerApp;

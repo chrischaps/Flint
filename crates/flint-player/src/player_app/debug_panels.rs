@@ -400,9 +400,9 @@ impl PlayerApp {
     }
 
     /// Toggle a named debug panel, adjusting cursor capture to match its new
-    /// state; when no such panel is registered (no music session running),
+    /// state; when no such panel is registered (no renderer),
     /// `key` says `absent_msg` on screen and in the console (#367). One body
-    /// for the F4, Backquote and Backslash key handlers.
+    /// for the F4 key handler.
     #[cfg(feature = "debug-hud")]
     pub(super) fn toggle_named_panel(&mut self, name: &str, key: &'static str, absent_msg: &str) {
         let mut opened = false;

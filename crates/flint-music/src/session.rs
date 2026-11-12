@@ -255,6 +255,16 @@ impl SuiteSession {
         Ok(())
     }
 
+    /// Stop every stem, fading over `fade_ms`. On a manager the session
+    /// shares with others, dropping its handles doesn't stop its sounds, so
+    /// a host stops them first.
+    pub fn stop(&mut self, fade_ms: f64) {
+        self.mixer.stop_all(kira::Tween {
+            duration: std::time::Duration::from_secs_f64(fade_ms.max(0.0) / 1000.0),
+            ..Default::default()
+        });
+    }
+
     /// Latency-compensated musical position ("what the ear hears now").
     pub fn now(&self) -> crate::conductor::MusicalPosition {
         self.conductor.now(self.clock_sample())

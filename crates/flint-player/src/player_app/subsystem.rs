@@ -34,10 +34,12 @@
 //! engine goes before the engine (ADR 0017).
 
 use super::{LaunchOptions, SceneSettings};
+use flint_audio::engine::AudioEngine;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
+use flint_runtime::pad::Gilrs;
 use flint_runtime::{GameClock, GameStateMachine, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
 use flint_script::ScriptSystem;
@@ -49,6 +51,12 @@ use winit::keyboard::KeyCode;
 /// own work of the stage before it and before its own work of this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stage {
+    /// The frame's very start, before the clock ticks, in place of the
+    /// player's pad polling while a subsystem has the pads ([`Pads`]): where
+    /// the rhythm session drains its capture into input (ADR 0018). Run by
+    /// the host, which owns the clock, not by `game_core::step`; a host with
+    /// no pads (a capture) skips it.
+    Clock,
     /// The clock has ticked and scripted input is in; before the transition
     /// advances and before extensions' `pre_update`. Where outside input for
     /// scripts is queued (the expression feed).
@@ -79,9 +87,11 @@ pub(crate) enum Stage {
 }
 
 impl Stage {
-    /// Every stage `update` hears, in order.
+    /// Every stage `update` hears in the player's frame, in order: the
+    /// host's [`Stage::Clock`], then `game_core::step`'s.
     #[cfg(test)]
-    pub(crate) const UPDATES: [Stage; 9] = [
+    pub(crate) const UPDATES: [Stage; 10] = [
+        Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
         Stage::Scripts,
@@ -115,6 +125,40 @@ pub(crate) struct SceneCtx<'a> {
     pub resolver: &'a mut ProcGenResolver,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
+    /// The sound, when the host has it: a subsystem that plays on the
+    /// shared kira manager (the music, ADR 0017) starts there.
+    pub audio: Option<&'a mut AudioEngine>,
+    /// The pads, when the host has them.
+    pub pads: Option<Pads<'a>>,
+}
+
+/// The host's pads, lent to a subsystem that reads them its own way (the
+/// rhythm session's 1 kHz capture thread, ADR 0018): [`Pads::take`] stops
+/// the player's polling and its rumble, [`Pads::give_back`] opens them
+/// again. A subsystem that takes them gives them back when it goes.
+pub(crate) struct Pads<'a> {
+    pub(crate) gilrs: &'a mut Option<Gilrs>,
+    pub(crate) rumble: &'a mut flint_runtime::PadRumble,
+    /// Whether a subsystem holds them: the player then skips its polling.
+    pub(crate) lent: &'a mut bool,
+}
+
+impl Pads<'_> {
+    /// The pads are the subsystem's until it gives them back: the player's
+    /// polling stops and a script's rumble does nothing.
+    #[allow(dead_code)]
+    pub(crate) fn take(&mut self) {
+        self.rumble.stop_all();
+        *self.gilrs = None;
+        *self.lent = true;
+    }
+
+    /// The player polls the pads again, through a fresh backend.
+    #[allow(dead_code)]
+    pub(crate) fn give_back(&mut self) {
+        *self.gilrs = Gilrs::new().ok();
+        *self.lent = false;
+    }
 }
 
 /// What a subsystem may touch at a stage of the frame, and at a script
@@ -123,7 +167,9 @@ pub(crate) struct SceneCtx<'a> {
 pub(crate) struct StageCtx<'a> {
     pub world: &'a mut FlintWorld,
     pub clock: &'a GameClock,
-    pub input: &'a InputState,
+    /// The frame's input, which a subsystem may also write (the rhythm
+    /// session's pad drain, at [`Stage::Clock`]).
+    pub input: &'a mut InputState,
     pub script: &'a mut ScriptSystem,
     /// The camera as it stands at this stage (final from `PostPhysics` on).
     pub camera: &'a Camera,
@@ -152,6 +198,17 @@ pub(crate) struct StageCtx<'a> {
     /// The F3/F4 panels, for a subsystem that has one.
     #[cfg(feature = "debug-hud")]
     pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+    /// What scripts asked of the frame, before the host applies it: a
+    /// subsystem may fill what they left (the rhythm ladder's post values,
+    /// at [`Stage::Procgen`], before the renderer's sync).
+    pub requests: &'a mut flint_script::FrameRequests,
+    /// The sound, when the host has it.
+    pub audio: Option<&'a mut AudioEngine>,
+    /// The pads, when the host has them.
+    pub pads: Option<Pads<'a>>,
+    /// Set to end the run as closing the window would (`quit_on_finish`);
+    /// `None` for a host with no run to end.
+    pub quit: Option<&'a mut bool>,
 }
 
 impl StageCtx<'_> {
@@ -440,7 +497,7 @@ macro_rules! stage_ctx {
         $crate::player_app::subsystem::StageCtx {
             world: &mut $app.core.world,
             clock: &$app.core.clock,
-            input: &$app.input,
+            input: &mut $app.input,
             script: &mut $app.core.script,
             camera: &$app.camera,
             policy: $policy,
@@ -455,6 +512,14 @@ macro_rules! stage_ctx {
             note: &mut $app.hud.key_note,
             #[cfg(feature = "debug-hud")]
             panels: &mut $app.debug_panels,
+            requests: &mut $app.core.script_requests,
+            audio: Some(&mut $app.audio.engine),
+            pads: Some($crate::player_app::subsystem::Pads {
+                gilrs: &mut $app.gilrs,
+                rumble: &mut $app.pad_rumble,
+                lent: &mut $app.pads_lent,
+            }),
+            quit: Some(&mut $app.outcome.exit_requested),
         }
     };
 }
@@ -474,6 +539,12 @@ macro_rules! scene_ctx {
             script: &mut $app.core.script,
             resolver: &mut $app.core.procgen_resolver,
             renderer: $app.scene_renderer.as_mut(),
+            audio: Some(&mut $app.audio.engine),
+            pads: Some($crate::player_app::subsystem::Pads {
+                gilrs: &mut $app.gilrs,
+                rumble: &mut $app.pad_rumble,
+                lent: &mut $app.pads_lent,
+            }),
         }
     };
 }

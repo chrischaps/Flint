@@ -1,15 +1,10 @@
 //! Frame loop for `PlayerApp` — code-motion sibling of `mod.rs`
 //! (player_app decomposition; see the decomposition ADR). Owns per-frame
-//! tick (scripts, music session, transitions), render, the egui HUD pass,
+//! tick (scripts, subsystems, transitions), render, the egui HUD pass,
 //! and the stats overlay.
 
 use super::hud_render::render_draw_commands;
-#[cfg(feature = "debug-hud")]
-use super::music_guide_panel;
-use super::music_session;
 use super::subsystem::{EncodeCtx, RenderCtx};
-#[cfg(feature = "debug-hud")]
-use super::timeline_panel;
 use super::PlayerApp;
 use super::TransitionPhase;
 #[cfg(feature = "debug-hud")]
@@ -880,8 +875,13 @@ impl PlayerApp {
         // The touch controls' layout follows the window and page (#133).
         self.sync_touch_controls();
 
-        // Music session drain + guide/timeline panel feed (F3, ADR 0018).
-        self.tick_music_session();
+        // Before the clock ticks: a subsystem that reads the pads its own
+        // way does it here (the rhythm session's capture drain, ADR 0018),
+        // and the player polls them only while none holds them.
+        super::game_core::run_stage(self, super::subsystem::Stage::Clock, None);
+        if !self.pads_lent {
+            self.poll_gamepad_events();
+        }
 
         // Advance game clock
         self.core.clock.tick();
@@ -1010,63 +1010,6 @@ impl PlayerApp {
         self.input.end_frame();
     }
 
-    #[profiling::function]
-    fn tick_music_session(&mut self) {
-        // Music session (F3, ADR 0018): while a session is active the capture
-        // thread owns the pad — its drain replaces the player's own polling,
-        // feeding the Judge at full precision and InputState down-sampled.
-        let session_finished = if let Some(ms) = &mut self.music.session {
-            ms.tick(&mut self.input)
-        } else {
-            self.poll_gamepad_events();
-            false
-        };
-        if session_finished {
-            // Natural mid-scene finish: gilrs back, the scene keeps running —
-            // unless the component asked for `quit_on_finish`.
-            let quit = self
-                .music
-                .session
-                .as_ref()
-                .is_some_and(music_session::MusicSession::quit_on_finish);
-            self.stop_music_session();
-            if quit {
-                println!("[music] quit_on_finish — exiting player");
-                self.music.exit_requested = true;
-            }
-        }
-
-        // Feed the Music Guide + Manifest Map panels — only while summoned,
-        // so a closed panel costs nothing (history accumulates in the core
-        // regardless).
-        #[cfg(feature = "debug-hud")]
-        if let Some(ms) = &self.music.session {
-            for panel in &mut self.debug_panels {
-                if !panel.is_open() {
-                    continue;
-                }
-                if panel.name() == music_guide_panel::MUSIC_GUIDE_PANEL {
-                    if let Some(p) = panel
-                        .as_any_mut()
-                        .downcast_mut::<music_guide_panel::MusicGuidePanel>()
-                    {
-                        p.set_data(
-                            ms.visual_frame(),
-                            ms.guide_frame(music_guide_panel::GUIDE_HORIZON_BEATS),
-                        );
-                    }
-                } else if panel.name() == timeline_panel::MANIFEST_MAP_PANEL {
-                    if let Some(p) = panel
-                        .as_any_mut()
-                        .downcast_mut::<timeline_panel::ManifestMapPanel>()
-                    {
-                        p.set_frame(ms.timeline_frame());
-                    }
-                }
-            }
-        }
-    }
-
     /// The frame-budgeted procgen queue, as the frame runs it (tests).
     #[cfg(test)]
     pub(super) fn tick_procgen(&mut self) {
@@ -1182,35 +1125,10 @@ impl PlayerApp {
     fn drain_post_overrides(&mut self) {
         // Script post-processing overrides for this frame (the commands
         // are in by now: both drains run before this), in place of last
-        // frame's. DoF is script-owned (ADR 0027) — never touched by the
-        // ladder merge below; there is no restore machinery because owning
-        // scripts write it every frame and scene loads reset the sticky
-        // config from the def.
+        // frame's, with what a subsystem filled in at the procgen stage (the
+        // rhythm ladder's values, ADR 0021). DoF is script-owned (ADR 0027);
+        // scene loads reset the sticky config from the def.
         self.post.take_from(&mut self.core.script_requests);
-
-        // Music-session ladder/reintegration visuals (ADR 0021). Script
-        // overrides win — F4/F6 script-authored rung visuals supersede this
-        // direct path with no code change and no double application. The
-        // merge writes base + rung every frame so a recovered ladder actively
-        // restores the scene's authored post config (the renderer config is
-        // sticky); after teardown a one-shot restore does the same.
-        if let Some(ms) = &self.music.session {
-            let vf = ms.visual_frame();
-            music_session::merge_ladder_postprocess(
-                &mut self.post.script.radial_blur,
-                &mut self.post.script.chromatic_aberration,
-                &mut self.post.script.desaturation,
-                &vf,
-                self.music.pp_base.unwrap_or_default(),
-            );
-        } else if let Some(base) = self.music.pp_restore.take() {
-            music_session::restore_ladder_postprocess(
-                &mut self.post.script.radial_blur,
-                &mut self.post.script.chromatic_aberration,
-                &mut self.post.script.desaturation,
-                base,
-            );
-        }
     }
 
     #[profiling::function]
@@ -1487,7 +1405,7 @@ impl super::game_core::FrameHost for PlayerApp {
         (
             &mut self.core,
             super::game_core::Lent {
-                input: &self.input,
+                input: &mut self.input,
                 camera: &mut self.camera,
                 renderer: self.scene_renderer.as_mut(),
                 gpu: self.render_context.as_ref().map(|c| (&c.device, &c.queue)),
@@ -1497,6 +1415,13 @@ impl super::game_core::FrameHost for PlayerApp {
                 note: &mut self.hud.key_note,
                 #[cfg(feature = "debug-hud")]
                 panels: &mut self.debug_panels,
+                audio: Some(&mut self.audio.engine),
+                pads: Some(super::subsystem::Pads {
+                    gilrs: &mut self.gilrs,
+                    rumble: &mut self.pad_rumble,
+                    lent: &mut self.pads_lent,
+                }),
+                quit: Some(&mut self.outcome.exit_requested),
             },
         )
     }
@@ -1558,18 +1483,8 @@ impl super::game_core::FrameHost for PlayerApp {
         // paused or not: loops play on under a pause menu.
         self.audio.sample_positions();
         script.set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
-
-        // Conducted parameters (F4, ADR 0020): the music session's per-frame
-        // state for scene bindings; neutral defaults when no session (also
-        // resets the frame after a session ends). The session's tick, at
-        // the frame's start, precedes this, which precedes on_update.
-        script.set_conducted(
-            self.music
-                .session
-                .as_ref()
-                .map(|ms| ms.conducted_snapshot())
-                .unwrap_or_default(),
-        );
+        // The music clock and the conducted snapshot are the music
+        // subsystem's, set at `Stage::PreScripts`, just before this
     }
 
     fn listener(&mut self, at: super::game_core::Listener) {
@@ -1668,7 +1583,7 @@ impl super::game_core::FrameHost for PlayerApp {
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
 
-        // Script post-override drain + music-session ladder merge (ADR 0021)
+        // Script post-override drain (a subsystem's share is in by now)
         self.drain_post_overrides();
 
         // A script's set_quality (FlintKart#55), applied here, between the

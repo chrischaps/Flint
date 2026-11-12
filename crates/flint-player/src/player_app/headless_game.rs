@@ -236,7 +236,8 @@ impl HeadlessGame {
 
     /// Load the scene's scripts, found in its project as the player finds
     /// them, and run their `on_init`, as the player does once its models
-    /// are loaded; and feed `timeline` to their `expression()`. With neither
+    /// are loaded, with the scene's music on the game clock for their
+    /// `music_beat()`; and feed `timeline` to their `expression()`. With neither
     /// (no `--scripts`), the scene's scripts stay unloaded. `screen` is the
     /// capture's size, for `screen_width()` and the like; `post` the
     /// post-processing it draws with, for `on_init`'s style reads (each
@@ -264,6 +265,12 @@ impl HeadlessGame {
         }
         if !scripts {
             return;
+        }
+        // The scene's music, for the scripts' beat: on the game clock, with
+        // no sound (#745)
+        if let Some(music) = crate::music::for_capture(&core.world, &core.project, &core.scene_path)
+        {
+            core.subsystems.push(music);
         }
         core.script
             .load_scripts_from_scene(&core.scene_path, &core.project);
@@ -448,7 +455,7 @@ impl FrameHost for CaptureFrame<'_> {
         (
             &mut game.core,
             Lent {
-                input: &game.input,
+                input: &mut game.input,
                 camera: &mut *self.camera,
                 renderer: self.renderer.as_deref_mut(),
                 gpu: self.gpu,
@@ -458,6 +465,9 @@ impl FrameHost for CaptureFrame<'_> {
                 note: &mut game.key_note,
                 #[cfg(feature = "debug-hud")]
                 panels: &mut game.panels,
+                audio: None,
+                pads: None,
+                quit: None,
             },
         )
     }

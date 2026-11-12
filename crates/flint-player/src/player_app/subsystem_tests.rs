@@ -154,7 +154,10 @@ fn a_toy_hears_every_stage_in_order() {
         let heard = take(&log);
         let stages: Vec<String> = Stage::UPDATES
             .iter()
-            .map(|s| format!("toy {s:?} policy={}", *s != Stage::Input))
+            .map(|s| {
+                let policy = !matches!(s, Stage::Clock | Stage::Input);
+                format!("toy {s:?} policy={policy}")
+            })
             .collect();
         assert_eq!(heard, stages);
     });

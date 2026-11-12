@@ -34,9 +34,6 @@ mod living_ab;
 pub mod living_props;
 mod living_subsystem;
 pub(crate) mod living_tuning;
-#[cfg(feature = "debug-hud")]
-mod music_guide_panel;
-mod music_session;
 mod pacing;
 mod perf;
 mod persist;
@@ -56,8 +53,6 @@ pub(crate) mod subsystem;
 #[cfg(test)]
 mod subsystem_tests;
 mod text_halo;
-#[cfg(feature = "debug-hud")]
-mod timeline_panel;
 #[cfg(test)]
 mod touch_controls_tests;
 mod touch_overlay;
@@ -115,9 +110,7 @@ const DEAD_CALM_COMPONENT: &str = "dead_calm";
 /// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
 const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 
-/// Panel name for the terrain grass debug overlay (F3) — the engine-side
-/// sibling of `music_guide_panel::MUSIC_GUIDE_PANEL` /
-/// `timeline_panel::MANIFEST_MAP_PANEL`.
+/// Panel name for the terrain grass debug overlay (F3).
 #[cfg(feature = "debug-hud")]
 const GRASS_DEBUG_PANEL: &str = "Grass Debug";
 
@@ -273,10 +266,6 @@ pub struct PlayerApp {
     /// engine.
     pub core: GameCore,
     pub input: InputState,
-    // Scene-declared music session (F3, ADR 0019): declared before `audio`
-    // so the suite's kira handles drop before the shared AudioManager
-    // (ADR 0017 drop-order rule).
-    music: state::MusicState,
     pub audio: AudioSystem,
 
     /// What the host asked for before the event loop started (the command
@@ -338,6 +327,9 @@ pub struct PlayerApp {
     gilrs: Option<Gilrs>,
     /// A script's `rumble()`s playing now, through `gilrs` (#748).
     pad_rumble: flint_runtime::PadRumble,
+    /// A subsystem holds the pads (`subsystem::Pads::take`): the frame skips
+    /// the player's polling until it gives them back.
+    pads_lent: bool,
 
     // Where the persistent store saves, and when
     saves: state::Saves,

@@ -4,6 +4,7 @@
 //! for running Flint scenes with physics and first-person controls.
 
 pub mod extension;
+mod music;
 mod player_app;
 pub mod spline_gen;
 pub mod user_files;

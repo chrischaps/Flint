@@ -28,7 +28,7 @@ pub mod ui;
 
 pub use context::StateScope;
 pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
-pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
+pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam, MusicClock};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
@@ -331,6 +331,15 @@ impl ScriptSystem {
     pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.conducted = conducted;
+    }
+
+    /// Where the scene's music is this frame, for `music_beat()`,
+    /// `music_bar()` and `music_section()` (#745). Persistent, as
+    /// [`ScriptSystem::set_conducted`] is: the host's music subsystem sets
+    /// it every frame and [`MusicClock::default`] when the music goes.
+    pub fn set_music(&mut self, music: MusicClock) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.music = music;
     }
 
     /// Where each playing `audio_source` is in its sound, and the output

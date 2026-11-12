@@ -8,7 +8,7 @@
 //! did, and every read and write is the same one through the group.
 
 use super::input_config::{InputConfigPaths, PendingRebind};
-use super::{camera_cut, expression_feed, fonts, music_session, perf, procgen_assets};
+use super::{camera_cut, expression_feed, fonts, perf, procgen_assets};
 use super::{egui_input, render_scale, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_runtime::{InputConfig, SaveDebounce};
@@ -365,22 +365,6 @@ impl Default for Hud {
             key_note: Default::default(),
         }
     }
-}
-
-/// The scene-declared music session (F3, ADR 0019) and what it changed.
-/// `PlayerApp` declares it before `audio`, so the suite's kira handles drop
-/// before the shared AudioManager (ADR 0017 drop-order rule).
-#[derive(Default)]
-pub(super) struct MusicState {
-    pub(super) session: Option<music_session::MusicSession>,
-    /// Set when a session with `quit_on_finish` ends on its own; the event
-    /// loop exits at the end of that frame (checked in RedrawRequested,
-    /// where the ActiveEventLoop is in scope).
-    pub(super) exit_requested: bool,
-    /// Ladder-driven post params: the scene's authored base, captured at
-    /// session start and written back after teardown (ADR 0021).
-    pub(super) pp_base: Option<music_session::LadderPostBase>,
-    pub(super) pp_restore: Option<music_session::LadderPostBase>,
 }
 
 /// The F2 stats overlay and the perf readout.

@@ -106,8 +106,8 @@ impl GameCore {
 /// What a host lends the core for a stage of the frame.
 pub(crate) struct Lent<'a> {
     /// What the frame's input reads as. Filled by the host, cleared by it
-    /// after the frame.
-    pub input: &'a InputState,
+    /// after the frame; a subsystem may write it too.
+    pub input: &'a mut InputState,
     pub camera: &'a mut Camera,
     /// `None` with no renderer (a test, a run with no GPU).
     pub renderer: Option<&'a mut SceneRenderer>,
@@ -121,6 +121,12 @@ pub(crate) struct Lent<'a> {
     pub note: &'a mut super::key_note::KeyNote,
     #[cfg(feature = "debug-hud")]
     pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+    /// The sound engine, when the host has one (the music plays on it).
+    pub audio: Option<&'a mut flint_audio::engine::AudioEngine>,
+    /// The pads, when the host has them.
+    pub pads: Option<super::subsystem::Pads<'a>>,
+    /// The run's exit flag, when the host has a run to end.
+    pub quit: Option<&'a mut bool>,
 }
 
 /// Where the sound's listener goes, when the camera moved it this frame.
@@ -153,7 +159,8 @@ pub(crate) trait FrameHost {
     /// What the scripts read of the window, set on the core's scripts
     /// before their `on_update`: the transition's phase, the screen's size,
     /// the pointer, the cursor, the chunks loaded, the sounds' clocks and
-    /// the music session's conducted parameters.
+    /// the music session's conducted parameters (the music subsystem sets
+    /// those at `Stage::PreScripts`).
     fn window_for_scripts(&mut self) {}
 
     /// The camera moved the sound's listener.
@@ -387,6 +394,10 @@ impl GameCore {
             note: lent.note,
             #[cfg(feature = "debug-hud")]
             panels: lent.panels,
+            requests: &mut self.script_requests,
+            audio: lent.audio,
+            pads: lent.pads,
+            quit: lent.quit,
         };
         f(&mut self.subsystems, &mut ctx)
     }

@@ -36,6 +36,7 @@ mod input;
 mod living;
 mod log;
 mod math;
+mod music;
 #[cfg(test)]
 mod naming_tests;
 mod ocean;
@@ -107,6 +108,7 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     persistence::register(api);
     data::register(api);
     expression::register(api);
+    music::register(api);
     wooze::register(api);
     living::register(api);
     debug::register(api);

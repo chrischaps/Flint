@@ -38,7 +38,7 @@ impl PlayerApp {
     /// Bring the current scene (`self.core.world`, `self.core.scene_path` and the
     /// settings `apply_scene_settings` took) up: input bindings, camera,
     /// fonts, the renderer's share (models, lights, skybox, post-processing,
-    /// terrain), the debug panels, then physics, audio, the music session,
+    /// terrain), the debug panels, then physics, audio,
     /// animation, particles and scripts, in that order.
     ///
     /// An error is a startup failure (physics would not initialize); at a
@@ -293,10 +293,9 @@ impl PlayerApp {
         self.create_extension_debug_panels();
     }
 
-    /// Physics, audio, the music session, animation, particles and scripts,
-    /// in that order: audio before the scene-declared music session, the
-    /// session before script init so a conducted context exists from the
-    /// scripts' first frame (F3/F4).
+    /// Physics, audio, animation, particles and scripts, in that order. The
+    /// scene's music is a subsystem, started on this audio when the
+    /// subsystems hear the scene loaded, before the scripts' first frame.
     fn start_scene_systems(&mut self, entry: SceneEntry) -> Result<()> {
         let physics = self
             .core
@@ -323,11 +322,6 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
-
-        // The scene-declared music session (F3) on the freshly initialized
-        // audio. Music to music: the fresh gilrs the teardown made is
-        // dropped again by the new session's handoff.
-        self.start_music_session();
 
         load_animations_from_world(
             &self.core.project,
