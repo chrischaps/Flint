@@ -13,7 +13,7 @@ pub mod window_args;
 
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
-    SoundOptions,
+    SoundOptions, Stage,
 };
 pub use flint_audio::Bus;
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};

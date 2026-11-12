@@ -21,6 +21,7 @@
 //! player.add_extension(Box::new(MyGame { .. }));
 //! ```
 
+pub use crate::player_app::subsystem::Stage;
 use flint_audio::{AudioSystem, Bus};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
@@ -117,8 +118,80 @@ pub trait PlayerExtension {
 
     /// Per-frame Rust, run after the clock ticks and before the scripts'
     /// `on_update`, so anything written to the world here is visible to
-    /// scripts in the same frame.
+    /// scripts in the same frame. It falls between [`Stage::Input`] and
+    /// [`Stage::PreScripts`].
     fn pre_update(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// The game's own script modules (ADR 0116, #698, #754): declared once,
+    /// from `add_extension`, and enabled for the whole run, beside the
+    /// modules the scene's subsystems enable. A module is a type
+    /// implementing [`flint_script::ScriptModule`] held in a `static`:
+    ///
+    /// ```ignore
+    /// static KART: KartModule = KartModule;
+    /// const MODULES: &[&dyn flint_script::ScriptModule] = &[&KART];
+    ///
+    /// fn script_modules(&self) -> &[&'static dyn flint_script::ScriptModule] {
+    ///     MODULES
+    /// }
+    /// ```
+    ///
+    /// Its functions are listed under its name with the engine's
+    /// (`ScriptSystem::api_listing`), read what the extension left them
+    /// with [`ExtensionCtx::set_module_state`], and may queue a
+    /// `ScriptCommand::Module` that [`script_command`](Self::script_command)
+    /// takes. Add the extension before the event loop starts, so the first
+    /// scene's `on_init` can call them.
+    fn script_modules(&self) -> &[&'static dyn flint_script::ScriptModule] {
+        &[]
+    }
+
+    /// The scene is up: its world, settings and renderer state are in and
+    /// its scripts have run `on_init`. Called at the end of every scene's
+    /// entry, the first one and each transition's, after the engine's own
+    /// subsystems have heard it.
+    fn scene_loaded(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// The scene is going: its scripts have heard `on_scene_exit` and
+    /// nothing has been cleared yet, so drop here what names its entities.
+    /// Called before a transition tears the scene down, and before the
+    /// engine's subsystems hear it (they go the other way round from
+    /// `scene_loaded`, last added first).
+    fn scene_unloading(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// A stage of the frame (ADR 0117 decision 1): called at each [`Stage`]
+    /// the engine's own subsystems hear, after them. See [`Stage`] for where
+    /// each falls: [`Stage::Clock`] before the clock ticks, the rest in the
+    /// core's one frame order.
+    ///
+    /// ```ignore
+    /// fn update(&mut self, stage: Stage, ctx: &mut ExtensionCtx) {
+    ///     if stage == Stage::Physics {
+    ///         // the bodies have moved; the camera hasn't followed yet
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Only the player calls it, as it does every hook here:
+    /// `flint render --scripts` is the engine's own binary and links no
+    /// game's Rust, so a capture of a scene that needs the extension is the
+    /// game binary's, with `--frame-step`.
+    fn update(&mut self, _stage: Stage, _ctx: &mut ExtensionCtx) {}
+
+    /// A script's command, before the engine applies it and after the
+    /// scene's subsystems have passed on it. Return `true` to take it: then
+    /// nothing else sees it. Here the game carries out what its modules'
+    /// functions queued as a `ScriptCommand::Module` with a payload of its
+    /// own type (`ScriptCommand::Module(m)`, then `m.payload::<MyCommand>()`). The frame drains its
+    /// commands twice: after the physics steps, for what `on_update` asked,
+    /// and after `on_draw_ui`.
+    fn script_command(
+        &mut self,
+        _command: &flint_script::context::ScriptCommand,
+        _ctx: &mut ExtensionCtx,
+    ) -> bool {
+        false
+    }
 
     /// See a window event before the player does. Return `true` to consume
     /// it. Only input events (keyboard, IME, mouse buttons, wheel, cursor
@@ -203,14 +276,16 @@ pub trait PlayerExtension {
     fn debug_panel_ui(&mut self, _name: &str, _ui: &mut egui::Ui) {}
 }
 
-/// What an extension can reach during `pre_update`.
+/// What an extension can reach in `pre_update`, at a [`Stage`], as a scene
+/// comes or goes, and at a script command.
 pub struct ExtensionCtx<'a> {
     pub world: &'a mut FlintWorld,
-    /// Already ticked for this frame.
+    /// Already ticked for this frame (at [`Stage::Clock`], last frame's).
     pub clock: &'a GameClock,
-    /// This frame's input, before scripts read it.
+    /// This frame's input.
     pub input: &'a InputState,
-    /// Last frame's camera; scripts and physics may move it later this frame.
+    /// The camera as it stands: last frame's until [`Stage::Physics`],
+    /// final for the frame from [`Stage::PostPhysics`] on.
     pub camera: &'a Camera,
     /// The renderer and GPU handles, for uploading meshes and textures.
     /// `None` until the window and renderer exist.
@@ -239,9 +314,20 @@ pub struct ExtensionCtx<'a> {
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
     pub(crate) cursor_captured: bool,
+    /// For [`ExtensionCtx::set_module_state`].
+    pub(crate) script: &'a mut flint_script::ScriptSystem,
 }
 
 impl ExtensionCtx<'_> {
+    /// Hand the game's script modules ([`PlayerExtension::script_modules`])
+    /// what their functions read, one value per type: a module function
+    /// gets it back with `call.ctx().module_state.get_mut::<T>()` (the
+    /// type's `Default` until a value is set). Set it at the stage before
+    /// the scripts that read it run, [`Stage::PreScripts`] for `on_update`.
+    pub fn set_module_state<T: std::any::Any + Send>(&mut self, value: T) {
+        self.script.set_module_state(value);
+    }
+
     /// Whether the cursor is captured now (ADR 0110), as scripts'
     /// `is_cursor_captured()` reads it. While it is, `input.mouse_position`
     /// is the window centre and clicks skip egui.

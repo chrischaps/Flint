@@ -49,9 +49,11 @@ use winit::keyboard::KeyCode;
 
 /// The stages of a frame, in the order `tick` runs them (ADR 0117
 /// decision 1). A subsystem's `update` is called at each, after the player's
-/// own work of the stage before it and before its own work of this one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Stage {
+/// own work of the stage before it and before its own work of this one, and
+/// then each extension's `PlayerExtension::update` (decision 5, #754).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Stage {
     /// The frame's very start, before the clock ticks, in place of the
     /// player's pad polling while a subsystem has the pads ([`Pads`]): where
     /// the rhythm session drains its capture into input (ADR 0018). Run by
@@ -609,19 +611,28 @@ impl super::PlayerApp {
         self.core.enable_script_modules();
     }
 
-    /// The scene is up: each subsystem hears `scene_loaded`. Called last in
-    /// `enter_scene`, once the scene's systems and scripts are up.
+    /// The scene is up: each subsystem hears `scene_loaded`, then each of
+    /// the game's extensions (#754). Called last in `enter_scene`, once the
+    /// scene's systems and scripts are up.
     pub(super) fn subsystems_enter_scene(&mut self) {
-        if self.core.subsystems.is_empty() {
-            return;
+        if !self.core.subsystems.is_empty() {
+            let mut ctx = scene_ctx!(self);
+            self.core.subsystems.scene_loaded(&mut ctx);
         }
-        let mut ctx = scene_ctx!(self);
-        self.core.subsystems.scene_loaded(&mut ctx);
+        self.each_extension(|ext, ctx| {
+            ext.scene_loaded(ctx);
+            false
+        });
     }
 
-    /// The scene is going: each subsystem hears `scene_unloading`, last
-    /// added first, before anything is cleared, and the scene's own go.
+    /// The scene is going: the game's extensions hear `scene_unloading`
+    /// (#754), then each subsystem, last added first, before anything is
+    /// cleared, and the scene's own go.
     pub(super) fn subsystems_leave_scene(&mut self) {
+        self.each_extension(|ext, ctx| {
+            ext.scene_unloading(ctx);
+            false
+        });
         if self.core.subsystems.is_empty() {
             return;
         }

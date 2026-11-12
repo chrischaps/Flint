@@ -16,6 +16,8 @@ mod event_bus_tests;
 mod events;
 pub mod expression_feed;
 #[cfg(test)]
+mod extension_hooks_tests;
+#[cfg(test)]
 mod extension_tests;
 pub mod fonts;
 mod frame;

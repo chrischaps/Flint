@@ -124,6 +124,17 @@ impl PlayerApp {
         extension.declare_script_api(&mut self.core.script.script_api());
         #[cfg(feature = "procgen")]
         extension.register_generators(self.core.procgen_resolver.registry_mut());
+        // The game's own script modules (#754): declared, and enabled for
+        // the run beside whatever the scene's subsystems enable
+        for module in extension.script_modules() {
+            self.core.script.declare_module(*module);
+            if !self.core.extension_modules.contains(&module.name()) {
+                self.core.extension_modules.push(module.name());
+            }
+        }
+        if !extension.script_modules().is_empty() {
+            self.core.enable_script_modules();
+        }
         // The game's Rust styles (#419), before any scene's tables are read
         for descriptor in extension.styles() {
             if let Err(e) = flint_render::stylize::register(descriptor) {

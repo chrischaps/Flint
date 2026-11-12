@@ -921,8 +921,25 @@ impl PlayerApp {
 
     #[profiling::function]
     fn run_extension_pre_updates(&mut self) {
+        self.each_extension(|ext, ctx| {
+            ext.pre_update(ctx);
+            false
+        });
+    }
+
+    /// `f` for each extension in the order they were added, with an
+    /// `ExtensionCtx` over the player's fields, until one returns `true`
+    /// (which this returns). Events they fire join the frame's bus. With no
+    /// extension it returns at once.
+    pub(super) fn each_extension(
+        &mut self,
+        mut f: impl FnMut(
+            &mut dyn crate::extension::PlayerExtension,
+            &mut crate::extension::ExtensionCtx,
+        ) -> bool,
+    ) -> bool {
         if self.extensions.is_empty() {
-            return;
+            return false;
         }
         let mut fired_events = Vec::new();
         let rays = self
@@ -930,6 +947,7 @@ impl PlayerApp {
             .as_ref()
             .map(|r| r.ray_scene())
             .unwrap_or_default();
+        let mut taken = false;
         for ext in &mut self.extensions {
             let gpu = match (&mut self.scene_renderer, &self.render_context) {
                 (Some(renderer), Some(context)) => Some(crate::extension::ExtensionGpu {
@@ -951,14 +969,19 @@ impl PlayerApp {
                 scene_tables: &self.scene.tables,
                 fired_events: &mut fired_events,
                 cursor_captured: self.focus.cursor_captured,
+                script: &mut self.core.script,
             };
-            ext.pre_update(&mut ctx);
+            if f(ext.as_mut(), &mut ctx) {
+                taken = true;
+                break;
+            }
         }
         // Onto the frame's bus, so collect_game_events hands them to scripts
-        // and audio this frame.
+        // and audio this frame (or the next, from a later stage).
         for event in fired_events {
             self.core.events.push(event);
         }
+        taken
     }
 
     fn finish_frame(&mut self) {
@@ -1441,6 +1464,17 @@ impl super::game_core::FrameHost for PlayerApp {
         self.advance_transition();
         // Game extensions, before anything below reads the world
         self.run_extension_pre_updates();
+    }
+
+    fn extensions_at(&mut self, stage: super::subsystem::Stage) {
+        self.each_extension(|ext, ctx| {
+            ext.update(stage, ctx);
+            false
+        });
+    }
+
+    fn extension_takes(&mut self, command: &flint_script::context::ScriptCommand) -> bool {
+        self.each_extension(|ext, ctx| ext.script_command(command, ctx))
     }
 
     fn phase_done(&mut self, phase: super::perf::Phase) {
